@@ -233,17 +233,17 @@ export function registerConfigAuditCommand(configCmd: Command): void {
 }
 
 /**
- * Pretty-print one config-audit record (design §9.2).
+ * Pretty-print one config-audit record.
  *
  * Header columns: `ts  callerSource  result`. `callerSource` is the
  * call-site provenance (e.g., `last-known-good-save`, `config-patch-rpc`,
  * `cli-sync-tooling`) — that's what operators want to see when triaging.
- * The design §9.2 `source` field is the fixed literal `"config-io"` for
+ * The `source` field is the fixed literal `"config-io"` for
  * every write, so it's omitted from the header.
  */
 function renderConfigAuditRecord(r: Record<string, unknown>): void {
   const ts = typeof r.ts === "string" ? r.ts : "(no-ts)";
-  // Prefer the design §9.2 `callerSource`; fall back to legacy `source`
+  // Prefer the `callerSource` field; fall back to legacy `source`
   // when reading an older record (the daemon scrubber is the
   // documented path to migrate those; this fallback keeps a transitional
   // log readable until scrub runs).

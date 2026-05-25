@@ -4,9 +4,9 @@ Read `AGENTS.md` before any code change — it is the authoritative engineering 
 
 This file is a Claude-specific operational supplement. If anything here conflicts with `AGENTS.md`, follow `AGENTS.md` and update this file.
 
-## TDD-First
+## Tests-First
 
-Every fix and every feature in `packages/*/src/**` starts with a failing test that demonstrably fails on the pre-patch code (RED), then a production patch that flips it to green (GREEN). Land the test commit first when practical so the RED state is reproducible from that commit alone. Exempt only: pure docs, comments, formatting, and build-tooling/CI/config edits — when in doubt, write the test. "I tested it locally" is not a substitute. Full normative rule: AGENTS.md §2.10.
+Every fix and every feature in `packages/*/src/**` starts with a failing test that fails on the pre-patch code, then a production patch that flips it to green. Commit the test first when practical so the failing state is reproducible from that commit alone. Exempt only: pure docs, comments, formatting, and build-tooling/CI/config edits — when in doubt, write the test.
 
 ## Project
 
@@ -82,7 +82,7 @@ pkill -f 'node.*daemon\.js' 2>/dev/null && sleep 1 && COMIS_CONFIG_PATHS="$HOME/
 
 ## Logging (Pino via `@comis/infra`)
 
-Levels, syntax, event-bus rules: see AGENTS.md §2.1 (errorKind), §2.2 (redaction), §2.7 (levels & observability).
+Levels, syntax, event-bus rules: see AGENTS.md.
 
 Canonical fields: `agentId`, `traceId` (auto-injected via AsyncLocalStorage mixin), `channelType`, `durationMs`, `toolName`, `method`, `err` (**not** `error` — matches Pino serializer), `hint`, `errorKind`, `module` (bound once via `getLogger("…")`), `submodule` (call-site scope; reuse via `deps.logger.child({ submodule: "completion-runner" })`), `step` (pipeline-stage tag).
 

@@ -125,8 +125,7 @@ export interface ToolLogger {
  * connected-server and skill arrays so the parser sees no overlaps.
  *
  * `approvalGate` is OPTIONAL — only required by the `soft-stop` mode
- * override path. Missing gate → `soft-stop` denies override
- * (fail-closed per AGENTS.md §2.1).
+ * override path. Missing gate → `soft-stop` denies override (fail-closed).
  */
 export interface ExecToolDeps {
   readonly workspacePath: string;

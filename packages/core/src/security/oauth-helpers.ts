@@ -175,8 +175,7 @@ export type OAuthErrorCode =
  * Output record carrying both UX-facing text and Pino-log-field values.
  *
  * Domain consumers switch on `code` (the OAuth discriminator); logger
- * payloads use `logErrorKind` (the closed-union mirror that satisfies the
- * AGENTS.md §2.7 logging contract).
+ * payloads use `logErrorKind` (the closed-union mirror for Pino log fields).
  *
  * `rewritten.code` carries the OAuth-domain discriminator value (one of
  * "refresh_token_reused" | "invalid_grant" | …) into the OAuthError + event

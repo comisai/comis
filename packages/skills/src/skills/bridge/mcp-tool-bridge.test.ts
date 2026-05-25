@@ -7,6 +7,7 @@
 import { ok, err } from "@comis/shared";
 import { Type } from "typebox";
 import { describe, it, expect, vi } from "vitest";
+import { runWithContext } from "@comis/core";
 import type { McpToolDefinition, McpClientManager } from "../integrations/mcp-client/index.js";
 import type { ToolSourceProfile } from "../../tools/builtin/tool-source-profiles.js";
 import { mcpToolsToAgentTools, jsonSchemaToTypeBox, sanitizeMcpToolName, extractMcpServerName, classifyMcpErrorType } from "./mcp-tool-bridge.js";
@@ -378,6 +379,133 @@ describe("mcpToolsToAgentTools source-gate truncation", () => {
     // Text is wrapped; verify the original content survives inside the wrap envelope.
     expect(text).toContain(smallText);
     expect(result.details).toEqual({ success: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// onResultTruncated callback (truncation telemetry)
+// ---------------------------------------------------------------------------
+
+describe("mcpToolsToAgentTools onResultTruncated callback", () => {
+  it("fires exactly once with correct sizes when a result exceeds maxChars", async () => {
+    const largeText = "x".repeat(60_000); // > mcp_default 50K
+    const callTool = vi.fn().mockResolvedValue(
+      ok({
+        content: [{ type: "text", text: largeText }],
+        isError: false,
+      }),
+    );
+    const onResultTruncated = vi.fn();
+    // 7th positional arg = onResultTruncated (after profiles, logger,
+    // onSuspiciousContent, serverFiltersFn).
+    const tools = mcpToolsToAgentTools(
+      [makeTool()],
+      callTool,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onResultTruncated,
+    );
+    await tools[0].execute("call-1", { query: "test" });
+
+    expect(onResultTruncated).toHaveBeenCalledTimes(1);
+    const e = onResultTruncated.mock.calls[0]![0] as {
+      server: string;
+      tool: string;
+      originalSize: number;
+      truncatedSize: number;
+      traceId: string;
+    };
+    expect(e.server).toBe("db-server");
+    expect(e.tool).toBe("search");
+    expect(e.originalSize).toBe(60_000);
+    expect(e.truncatedSize).toBeLessThan(e.originalSize);
+    expect(e.truncatedSize).toBeGreaterThan(0);
+  });
+
+  it("does NOT fire when the result fits within maxChars", async () => {
+    const smallText = "search result: found 3 items";
+    const callTool = vi.fn().mockResolvedValue(
+      ok({
+        content: [{ type: "text", text: smallText }],
+        isError: false,
+      }),
+    );
+    const onResultTruncated = vi.fn();
+    const tools = mcpToolsToAgentTools(
+      [makeTool()],
+      callTool,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onResultTruncated,
+    );
+    await tools[0].execute("call-1", { query: "test" });
+
+    expect(onResultTruncated).not.toHaveBeenCalled();
+  });
+
+  it("captures traceId from the request context when present", async () => {
+    const largeText = "y".repeat(60_000);
+    const callTool = vi.fn().mockResolvedValue(
+      ok({
+        content: [{ type: "text", text: largeText }],
+        isError: false,
+      }),
+    );
+    const onResultTruncated = vi.fn();
+    const tools = mcpToolsToAgentTools(
+      [makeTool()],
+      callTool,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onResultTruncated,
+    );
+
+    const traceId = "abcdef01-2345-6789-abcd-ef0123456789";
+    await runWithContext(
+      {
+        tenantId: "default",
+        userId: "u1",
+        sessionKey: "t1:u1:c1",
+        traceId,
+        startedAt: Date.now(),
+        trustLevel: "admin",
+      },
+      () => tools[0].execute("call-1", { query: "test" }),
+    );
+
+    expect(onResultTruncated).toHaveBeenCalledTimes(1);
+    expect(onResultTruncated.mock.calls[0]![0].traceId).toBe(traceId);
+  });
+
+  it("uses empty-string traceId outside a request scope (no throw)", async () => {
+    const largeText = "z".repeat(60_000);
+    const callTool = vi.fn().mockResolvedValue(
+      ok({
+        content: [{ type: "text", text: largeText }],
+        isError: false,
+      }),
+    );
+    const onResultTruncated = vi.fn();
+    const tools = mcpToolsToAgentTools(
+      [makeTool()],
+      callTool,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onResultTruncated,
+    );
+
+    // No runWithContext wrapper — bridge must not throw and must report "".
+    await expect(tools[0].execute("call-1", { query: "test" })).resolves.toBeDefined();
+    expect(onResultTruncated).toHaveBeenCalledTimes(1);
+    expect(onResultTruncated.mock.calls[0]![0].traceId).toBe("");
   });
 });
 

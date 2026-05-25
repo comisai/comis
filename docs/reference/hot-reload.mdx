@@ -69,7 +69,7 @@ Restores config from git history to a specific commit SHA. Calls `configGitManag
 Used by management RPC handlers (agents, tokens, channels) to persist config changes. Follows the same validate-write-restart pattern but with a **2-second debounced SIGUSR1** instead of the 200ms delay used by `config.patch`. This allows batch operations (e.g., creating 8 agents in sequence) to coalesce into a single restart.
 
 <Info>
-  **Source:** `packages/daemon/src/rpc/persist-to-config.ts` -- PERSIST-05/PERSIST-06: debounced SIGUSR1 for batch config operations.
+  **Source:** `packages/daemon/src/rpc/persist-to-config.ts` -- debounced SIGUSR1 for batch config operations.
 </Info>
 
 ### Immutable Config Keys

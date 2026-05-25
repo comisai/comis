@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 63 plan 04 SAFETY-05/06 — OSV malware check integration test.
+ * OSV malware check integration test.
  *
  * Pins the public-API contract surfaced through @comis/skills (loaded
  * from `dist/` per the Vitest alias). Covers the 5 OSV API branches
  * + 6 package-name extraction cases from a real consumer's vantage
- * point, mirroring the integration pattern Plan 02 set with
+ * point, mirroring the integration pattern set with
  * `mcp-env-scrub.test.ts`.
  *
  * The unit-level branch coverage lives in the co-located
@@ -40,7 +40,7 @@ const createMockLogger = () => {
 // osvMalwareCheck — branch coverage from public-API consumer perspective
 // ---------------------------------------------------------------------------
 
-describe("OSV malware check — SAFETY-05 integration boundary", () => {
+describe("OSV malware check — integration boundary", () => {
   let tempDir: string;
   let logger: ReturnType<typeof createMockLogger>;
 
@@ -157,7 +157,7 @@ describe("OSV malware check — SAFETY-05 integration boundary", () => {
 // extractMcpPackageName — package-name extraction boundary
 // ---------------------------------------------------------------------------
 
-describe("extractMcpPackageName — SAFETY-05 package extraction boundary", () => {
+describe("extractMcpPackageName — package extraction boundary", () => {
   it("extractMcpPackageName parses npx -y @org/pkg into npm ecosystem", () => {
     expect(
       extractMcpPackageName("npx", ["-y", "@modelcontextprotocol/server-yfinance"]),

@@ -20,6 +20,7 @@
 import type { Result } from "@comis/shared";
 import { ok, err, withTimeout } from "@comis/shared";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import PQueue from "p-queue";
 import { systemNowMs, systemScheduleTimeout } from "@comis/core";
 import type {
@@ -37,11 +38,23 @@ import {
 } from "./mcp-client-discover.js";
 import { qualifyToolName } from "./mcp-client-types.js";
 import { wireClientLifecycleCallbacks } from "./mcp-client-reconnect.js";
+import { startKeepaliveTicker, stopKeepaliveTicker } from "./mcp-client-keepalive.js";
+import { startIdleTicker, stopIdleTicker } from "./mcp-client-idle-eviction.js";
 import {
   osvMalwareCheck,
   extractMcpPackageName,
   DEFAULT_OSV_CACHE_DIR,
 } from "./mcp-client-osv-check.js";
+// The OAuth connect seam lives in a sibling leaf to keep this file under the
+// 500-line per-subdirectory cap (prlimit-probe split precedent).
+// isNeedsOAuthLoginError is re-exported here so the package barrel
+// keeps a stable import path.
+import {
+  NEEDS_OAUTH_LOGIN,
+  tagNeedsOAuthLogin,
+  prepareOAuthProvider,
+} from "./mcp-client-oauth-connect.js";
+export { isNeedsOAuthLoginError } from "./mcp-client-oauth-connect.js";
 
 // ---------------------------------------------------------------------------
 // connect (state-first)
@@ -67,18 +80,16 @@ export async function connectServer(
     await disconnectServer(state, deps, config.name);
   }
 
-  // Phase 63 SAFETY-05/06 + WR-03: pre-spawn OSV malware check (stdio
-  // only) runs OUTSIDE the try block. Pre-fix the check sat inside the
-  // try and a malicious-verdict throw fell into the catch — which wrote
-  // an error-state McpConnection to `state.connections` with
-  // `status: "error"` and the [osv_malware_detected] message. That
-  // orphan error entry persisted across the operator's view (mcp.list
-  // shows it as an "error"-status server), confusing operators into
-  // thinking they could `mcp.reconnect` it. WR-03 fix: run the OSV
-  // check before the try block so the throw bubbles up cleanly to the
-  // caller and `state.connections.get(name)` returns undefined for
-  // malicious-package detections. Per RESEARCH.md §"Pattern 4" +
-  // Pitfall 4.
+  // Pre-spawn OSV malware check (stdio only) runs OUTSIDE the try block.
+  // Previously the check sat inside the try and a malicious-verdict throw fell
+  // into the catch — which wrote an error-state McpConnection to
+  // `state.connections` with `status: "error"` and the [osv_malware_detected]
+  // message. That orphan error entry persisted across the operator's view
+  // (mcp.list shows it as an "error"-status server), confusing operators into
+  // thinking they could `mcp.reconnect` it. Fix: run the OSV check before the
+  // try block so the throw bubbles up cleanly to the caller and
+  // `state.connections.get(name)` returns undefined for malicious-package
+  // detections.
   if (
     config.transport === "stdio" &&
     config.command &&
@@ -129,12 +140,46 @@ export async function connectServer(
     }
   }
 
+  // For an auth:"oauth" server with the OAuth seam wired, construct the
+  // OAuthClientProvider adapter + run the discovery pre-flight BEFORE the
+  // transport is built, then thread the provider onto the runtime config so
+  // createTransport attaches it. A discovery cascade failure throws here and is
+  // surfaced as a normal connect failure below. The provider is NOT constructed
+  // for non-oauth servers or when no oauthDeps seam is injected (the SDK then
+  // runs without a provider; a 401 still surfaces needs_oauth_login via the
+  // catch below).
+  let effectiveConfig = config;
   try {
-    // Create transport (logger threaded for Phase 63 SAFETY-08 prlimit-skip WARN)
-    const transport = createTransport(config, logger);
+    if (config.auth === "oauth" && deps.oauthDeps) {
+      effectiveConfig = await prepareOAuthProvider(state, deps.oauthDeps, config, logger);
+    }
+  } catch (discoveryError: unknown) {
+    const message = discoveryError instanceof Error ? discoveryError.message : String(discoveryError);
+    state.connections.set(config.name, {
+      name: config.name,
+      client: null as unknown as Client,
+      status: "error",
+      tools: [],
+      lastHealthCheck: systemNowMs(),
+      reconnectAttempt: 0,
+      maxReconnectAttempts: state.options.reconnectOpts.maxAttempts,
+      error: message,
+      generation: state.generations.get(config.name) ?? 0,
+    });
+    logger.error(
+      { serverName: config.name, err: message, hint: "OAuth discovery pre-flight failed; verify the server publishes OAuth metadata or set oauth.authorizationEndpoint", errorKind: "config" as const },
+      "MCP OAuth discovery pre-flight failed",
+    );
+    return err(discoveryError instanceof Error ? discoveryError : new Error(message));
+  }
+
+  try {
+    // Create transport (logger threaded for prlimit-skip WARN).
+    // For an auth:"oauth" server, effectiveConfig now carries the oauthProvider.
+    const transport = createTransport(effectiveConfig, logger);
 
     // Wire stderr capture for stdio transports
-    wireStderrCapture(deps, config, transport);
+    wireStderrCapture(deps, effectiveConfig, transport);
 
     // Log transport type at INFO
     if (config.transport === "stdio") {
@@ -171,8 +216,9 @@ export async function connectServer(
     // Wire lifecycle callbacks for reconnection
     wireClientLifecycleCallbacks(state, deps, client, config.name);
 
-    // Store config for reconnection
-    state.serverConfigs.set(config.name, config);
+    // Store config for reconnection — effectiveConfig so the OAuthClientProvider
+    // (runtime-only oauthProvider field) is retained across reconnects.
+    state.serverConfigs.set(config.name, effectiveConfig);
     // Initialize generation
     state.generations.set(config.name, state.generations.get(config.name) ?? 0);
 
@@ -209,20 +255,50 @@ export async function connectServer(
       instructions: metadata.instructions,
       capabilities: metadata.capabilities,
       serverInfo: metadata.serverInfo,
+      // Mirror the per-server resources/prompts opt-out onto the connection so
+      // the platform-tool registry's capability-gate predicate honors
+      // enableResources/enablePrompts:false without a separate config lookup
+      // (the manager surfaces only runtime connections).
+      ...(config.enableResources !== undefined && { enableResources: config.enableResources }),
+      ...(config.enablePrompts !== undefined && { enablePrompts: config.enablePrompts }),
     };
 
     state.connections.set(config.name, connection);
 
-    // Create per-server call concurrency queue
-    const maxConcurrency = config.maxConcurrency
-      ?? (config.transport === "stdio" ? state.options.stdioDefaultConcurrency : state.options.httpDefaultConcurrency);
-    state.callQueues.set(config.name, new PQueue({ concurrency: maxConcurrency }));
+    // Create per-server call concurrency queue. Explicit maxConcurrency always
+    // wins; else stdio gets 4 only when supportsParallelToolCalls opts in
+    // (default stdio stays 1); sse/http keep their transport default (already 4).
+    const resolvedConcurrency =
+      config.maxConcurrency
+      ?? (config.transport === "stdio"
+            ? (config.supportsParallelToolCalls === true ? 4 : state.options.stdioDefaultConcurrency)
+            : state.options.httpDefaultConcurrency);
+    state.callQueues.set(config.name, new PQueue({ concurrency: resolvedConcurrency }));
+
+    // Per-server keepalive ticker. NO-OP when keepaliveIntervalMs === 0
+    // (disabled). Routes ping through the same PQueue as tool calls so stdio
+    // single-pipe serialization is preserved.
+    startKeepaliveTicker(state, deps, config);
+
+    // Per-server idle eviction ticker. NO-OP when idleTtlMs === 0/undefined
+    // (opt-in). Disconnects the transport after idle without setting
+    // userDisconnectedFlags, so the next callTool lazily reconnects
+    // (see mcp-client-call.ts getOrReconnect).
+    startIdleTicker(state, deps, config);
 
     logger.info(`MCP server "${config.name}" connected: ${tools.length} tool(s) discovered`);
 
     return ok(connection);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+
+    // The SDK throws UnauthorizedError from client.connect when an auth:"oauth"
+    // server has no valid token (or refresh failed). Do NOT auto-launch a
+    // browser daemon-side — return a `needs_oauth_login`-tagged Result so the
+    // daemon RPC layer tells the operator to run `comis mcp login <server>`.
+    // The error-state connection entry is still recorded so mcp.list surfaces
+    // the server's auth-needed state.
+    const isUnauthorized = error instanceof UnauthorizedError;
 
     // Store error state
     state.connections.set(config.name, {
@@ -233,9 +309,17 @@ export async function connectServer(
       lastHealthCheck: systemNowMs(),
       reconnectAttempt: 0,
       maxReconnectAttempts: state.options.reconnectOpts.maxAttempts,
-      error: message,
+      error: isUnauthorized ? `${NEEDS_OAUTH_LOGIN}: ${message}` : message,
       generation: state.generations.get(config.name) ?? 0,
     });
+
+    if (isUnauthorized) {
+      logger.warn(
+        { serverName: config.name, hint: `OAuth login required — run \`comis mcp login ${config.name}\`; no browser launched (operator-initiated)`, errorKind: "config" as const },
+        "MCP server connect requires OAuth login",
+      );
+      return err(tagNeedsOAuthLogin(config.name));
+    }
 
     logger.error({ serverName: config.name, err: message, hint: "Check MCP server configuration and ensure the server process is running", errorKind: "dependency" as const }, "MCP server connection failed");
 
@@ -274,12 +358,29 @@ export async function disconnectServer(
     logger.warn({ serverName: name, err: error instanceof Error ? error.message : String(error), hint: "MCP server disconnect failed; connection may be stale", errorKind: "dependency" as const }, "MCP server disconnect failed");
   }
 
+  // Stop the keepalive ticker BEFORE tearing down the queue (so the ticker
+  // cannot fire one last queue.add against a queue we are about to delete).
+  stopKeepaliveTicker(state, name);
+
+  // Stop the idle-eviction ticker alongside keepalive.
+  stopIdleTicker(state, name);
+
   // Clear and remove call queue -- pending .add() callers get no resolution
   // but that's acceptable since the connection is gone anyway
   const callQueue = state.callQueues.get(name);
   if (callQueue) {
     callQueue.clear();
     state.callQueues.delete(name);
+  }
+
+  // Tear down the dedicated keepalive queue (only populated when primary
+  // concurrency > 1). Mirrors the callQueue teardown so the queue cannot leak
+  // across reconnect generations. stopKeepaliveTicker above already prevents
+  // the ticker from enqueuing a new ping mid-teardown.
+  const keepaliveQueue = state.keepaliveQueues.get(name);
+  if (keepaliveQueue) {
+    keepaliveQueue.clear();
+    state.keepaliveQueues.delete(name);
   }
 
   state.connections.delete(name);

@@ -15,7 +15,7 @@
  *   3. Window bounds + agent/provider filters thread through the SQL
  *      WHERE clause + the breakdown queries in lockstep.
  *
- * Per AGENTS.md §2.5: imports from dist/ — requires `pnpm build` first.
+ * Integration tests import from dist/ — requires `pnpm build` first.
  * Vitest aliases @comis/X → packages/X/dist/index.js.
  *
  * @module

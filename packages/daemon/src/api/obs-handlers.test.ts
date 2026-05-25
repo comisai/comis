@@ -125,10 +125,10 @@ describe("createObsHandlers - billing admin guards", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Non-billing handlers: admin trust enforcement (H-1)
+// Non-billing handlers: admin trust enforcement
 // ---------------------------------------------------------------------------
 
-describe("createObsHandlers - diagnostics admin guard (H-1)", () => {
+describe("createObsHandlers - diagnostics admin guard", () => {
   it("obs.diagnostics rejects without _trustLevel", async () => {
     const deps = makeDeps();
     const handlers = createObsHandlers(deps);
@@ -157,7 +157,7 @@ describe("createObsHandlers - diagnostics admin guard (H-1)", () => {
   });
 });
 
-describe("createObsHandlers - channels admin guard (H-1)", () => {
+describe("createObsHandlers - channels admin guard", () => {
   const channelMethods = [
     { method: "obs.channels.all", params: {} },
     { method: "obs.channels.stale", params: {} },
@@ -187,7 +187,7 @@ describe("createObsHandlers - channels admin guard (H-1)", () => {
   }
 });
 
-describe("createObsHandlers - delivery admin guard (H-1)", () => {
+describe("createObsHandlers - delivery admin guard", () => {
   const deliveryMethods = [
     { method: "obs.delivery.recent", params: {} },
     { method: "obs.delivery.stats", params: {} },

@@ -194,7 +194,7 @@ export interface PiExecutorDeps {
    * pi-executor delegates recorder lifecycle (lazy-create on first turn,
    * close on session destroy) to this registry instead of constructing
    * a fresh recorder per `execute()` call. The registry guarantees the
-   * design §6.4 + §6.5 + §6.8 invariants: monotonic `seq` across all
+   * session-trajectory invariants: monotonic `seq` across all
    * turns, exactly one `session.started`/`session.ended` per session,
    * bridge subscription matches recorder lifetime.
    *

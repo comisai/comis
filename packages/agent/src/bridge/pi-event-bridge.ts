@@ -217,9 +217,8 @@ export interface PiEventBridgeDeps {
   /**
    * Session-scoped trajectory registry. When present, the bridge's
    * `agent_start` case consults `hasSessionStartedBeenEmitted(formattedKey)`
-   * to suppress per-turn `session:started` re-emits (design §6.4 mapping
-   * table — `session.started` fires once per session, NOT per pi-mono
-   * turn). The bridge itself is per-turn; the registry survives every
+   * to suppress per-turn `session:started` re-emits (`session.started`
+   * fires once per session, NOT per pi-mono turn). The bridge itself is per-turn; the registry survives every
    * turn so the latch lives there.
    *
    * When omitted (legacy/test callers), the bridge falls back to the
@@ -342,8 +341,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           if (m.agentStartMs === undefined) {
             m.agentStartMs = systemNowMs();
           }
-          // Suppress per-turn re-emits: design §6.4 makes session.started
-          // fire ONCE per session (not per pi-mono turn). The bridge is
+          // Suppress per-turn re-emits: session.started fires ONCE per
+          // session (not per pi-mono turn). The bridge is
           // per-turn, so consult the session-scoped trajectoryRegistry
           // latch — it survives across turns and resets only when the
           // session is destroyed (or the daemon restarts and rebuilds
@@ -371,9 +370,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         }
 
         case "agent_end": {
-          // session:ended is NO LONGER emitted from agent_end (design
-          // §6.4 — "(session) ended" is a session-destroy semantic, not
-          // per-turn). The emit moved to
+          // session:ended is NO LONGER emitted from agent_end —
+          // "(session) ended" is a session-destroy semantic, not
+          // per-turn. The emit moved to
           // ComisSessionManager.destroySession. Per-turn duration metrics
           // are surfaced via observability:token_usage → model.completed,
           // which already carries durationMs.

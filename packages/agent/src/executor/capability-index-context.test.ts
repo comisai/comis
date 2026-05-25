@@ -27,7 +27,7 @@ import { createCapabilityPortStub } from "../../../core/src/ports/__test-helpers
 import { TOOL_ORDER } from "../bootstrap/sections/tool-descriptions.js";
 
 // ---------------------------------------------------------------------------
-// Local fixture factories (AGENTS.md §2.5 -- inline make<X>(overrides) at file top).
+// Local fixture factories (inline make<X>(overrides) at file top).
 // ---------------------------------------------------------------------------
 
 /**

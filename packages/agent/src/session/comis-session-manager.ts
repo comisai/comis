@@ -58,7 +58,7 @@ export interface ComisSessionManagerDeps {
   /**
    * Optional TypedEventBus. When provided, `destroySession` emits a
    * `session:ended` event with `exitReason: "destroyed"` BEFORE unlinking
-   * the JSONL transcript (design §6.4 mapping table — `session.ended`
+   * the JSONL transcript (`session.ended`
    * fires on session-destroy, NOT per-turn). When omitted (legacy / test
    * harnesses, ephemeral sub-agent path), the emit step is a silent no-op
    * and `destroySession` still unlinks the file as before.
@@ -73,7 +73,7 @@ export interface ComisSessionManagerDeps {
    * the `session:ended` emit and BEFORE unlinking the JSONL — the
    * registry's `flushAndClose` drains the writer's queue tail so the
    * just-emitted `session.ended` JSONL line lands on disk before the
-   * recorder tears down (design §6.5).
+   * recorder tears down (the trajectory recorder flush-and-close contract).
    *
    * Production wiring: daemon's setup-agents-runtime threads the
    * singleton registry from setup-agents-registry here.
@@ -209,9 +209,9 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
 
       return withSessionLock(deps.fileLock, deps.lockDir, sessionKeyStr, async () => {
         // Ensure the directory tree exists for new sessions. Uses
-        // `ensureContainedDir` to honor design §1.4 mode invariant — every
+        // `ensureContainedDir` to honor the file-mode invariant — every
         // artifact dir under ~/.comis/ must be `0o700`. Result.err is logged
-        // at WARN per AGENTS.md §2.1; the contract is best-effort
+        // at WARN; the contract is best-effort
         // (SdkSessionManager.open below surfaces real errors via its own
         // throw path).
         const dirResult = ensureContainedDir({
@@ -261,8 +261,8 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
       // the EventBus emit to a recorder.recordEvent call (sync), which
       // enqueues the JSONL line. trajectoryRegistry.close then runs
       // flushAndClose which awaits the queue tail, guaranteeing the
-      // session.ended line lands on disk. Design §6.4 mapping:
-      // "(session) ended → session.ended" fires here, NOT on per-turn
+      // session.ended line lands on disk. The session.ended event
+      // fires here, NOT on per-turn
       // agent_end. Counters are zero placeholders — the session manager
       // doesn't accumulate per-session totals; the `exitReason:"destroyed"`
       // discriminator distinguishes from a normal end-of-turn close.
@@ -342,7 +342,7 @@ export function createComisSessionManager(deps: ComisSessionManagerDeps): ComisS
           lastUpdated: systemNowDate().toISOString(),
         };
         // Uses `writeRegularFile` so the sentinel metadata file lands at
-        // mode `0o600` per design §1.4. Fire-and-forget contract preserved
+        // mode `0o600` (file-mode invariant). Fire-and-forget contract preserved
         // — Result.err is logged at WARN but never propagates to the
         // caller.
         const writeResult = writeRegularFile({

@@ -588,9 +588,8 @@ async function runSessionLocked(
     //     lifetime, this `execute()` call just looks it up (or
     //     materializes it on the first turn). `flushAndClose` runs in
     //     the daemon's shutdown chain via `closeAll()`, NOT in this
-    //     execute's finally — that's what fixes design §6.4 + §6.5
-    //     + §6.8 deviations (per-turn seq reset, repeated
-    //     session.started/ended).
+    //     execute's finally — that's what fixes per-turn seq reset
+    //     and repeated session.started/ended deviations.
     //   - `deps.trajectoryRegistry` undefined → fall back to per-turn
     //     construction (legacy path; kept so tests + non-daemon callers
     //     keep working).
@@ -599,21 +598,20 @@ async function runSessionLocked(
       sessionId: formattedKey,
       sessionKey: formattedKey,
       workspaceDir: deps.workspaceDir,
-      // Pointer-file sidecar (design §6.1 + §6.2). createTrajectoryRecorder
+      // Pointer-file sidecar. createTrajectoryRecorder
       // calls writeTrajectoryPointerFileBestEffort when sessionFile is
       // set, producing <sessionFile>.trajectory-path.json next to the
       // per-session JSONL transcript. The pointer is best-effort
       // (symlinked parents / unwritable dirs no-op silently).
       // The registry's first-init-wins contract means the
-      // pointer is written exactly once at recorder creation, which is
-      // the correct moment per design §6.1.
+      // pointer is written exactly once at recorder creation.
       // sessionAdapter.getSessionPath is sync + pure (safePath under
       // the hood) — zero overhead at trajectoryInit construction.
       sessionFile: sessionAdapter.getSessionPath(sessionKey),
       // provider + modelId + modelApi live inside the `model` cluster
       // on TrajectoryRecorderInit (architecture invariant: ≤12 optional
       // fields per interface). The runtime lifts each cluster field
-      // onto the trajectory envelope when defined (design §6.2).
+      // onto the trajectory envelope when defined.
       // modelApi is not threaded from this site yet — wire it in when
       // resolvedModel exposes the API discriminator.
       model: {
@@ -1179,7 +1177,7 @@ async function runSessionLocked(
     },
     getSessionJsonlPath: () => sessionAdapter.getSessionPath(sessionKey),
     // Forward the session-scoped registry so the bridge's `agent_start`
-    // case can suppress per-turn `session:started` re-emits (design §6.4).
+    // case can suppress per-turn `session:started` re-emits (session-scoped recorder lifecycle).
     // When undefined (non-daemon callers), the bridge falls back to the
     // legacy unconditional emit.
     ...(deps.trajectoryRegistry !== undefined ? { trajectoryRegistry: deps.trajectoryRegistry } : {}),

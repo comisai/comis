@@ -57,7 +57,7 @@ describe("DEFAULT_TEMPLATES workspace prose invariants", () => {
   });
 
   it("core templates.ts and agent templates.ts remain byte-identical duplicates after the edit", () => {
-    // Per AGENTS.md §2.3 KISS, the duplicate is intentional and tracked here.
+    // The duplicate is intentional and tracked here.
     // From packages/core/src/workspace/templates.test.ts navigate up to the
     // repo root, then sibling-package into agent's copy.
     const thisDir = dirname(fileURLToPath(import.meta.url));

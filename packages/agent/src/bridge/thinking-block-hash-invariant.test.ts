@@ -30,7 +30,7 @@ import {
 } from "./thinking-block-hash-invariant.js";
 
 // ---------------------------------------------------------------------------
-// Fixtures (neutral placeholders per AGENTS.md §2.2)
+// Fixtures (neutral placeholders)
 // ---------------------------------------------------------------------------
 
 const SIG_A = "test-signature-aaa";

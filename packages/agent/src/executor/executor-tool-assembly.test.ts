@@ -577,7 +577,7 @@ describe("assembleTools — discovery-state restore from SpawnPacket on subagent
 });
 
 // ---------------------------------------------------------------------------
-// 260521-0bn FOLLOWUP-260521-0bn-03: per-message trust resolution
+// Per-message trust resolution
 //
 // The deferralCtx's `trustLevel` field gates `PRIVILEGED_TOOL_NAMES` (including
 // `mcp_manage`, `agents_manage`, `obs_query`). Previously the context used the
@@ -596,7 +596,7 @@ describe("assembleTools — discovery-state restore from SpawnPacket on subagent
 // mock — the 3rd positional argument of applyToolDeferral(tools, ctxWin, ctx).
 // ---------------------------------------------------------------------------
 
-describe("assembleTools — per-message trust resolution (260521-0bn FOLLOWUP-260521-0bn-03)", () => {
+describe("assembleTools — per-message trust resolution", () => {
   it("senderTrustMap entry for admin user resolves trustLevel=admin (privileged tools cleared)", async () => {
     await assembleTools(makeParams({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PerAgentConfig partial cast

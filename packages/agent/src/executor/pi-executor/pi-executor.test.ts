@@ -6305,7 +6305,7 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
   });
 
   it("trajectory_init_includes_sessionFile_from_sessionAdapter (pointer sidecar)", async () => {
-    // Per design §6.1, the pointer file <sessionFile>.trajectory-path.json
+    // The pointer file <sessionFile>.trajectory-path.json
     // is written by createTrajectoryRecorder ONLY when init.sessionFile
     // is provided. The recorder writer is already wired up
     // — this site is the missing production caller. Threading

@@ -34,6 +34,17 @@ export interface McpDeps {
   readonly stdioDefaultConcurrency?: number;
   /** Default concurrent calls for HTTP/SSE MCP servers (default: 4). */
   readonly httpDefaultConcurrency?: number;
+  /**
+   * Global keepalive interval (ms) from integrations.mcp. Forwarded into
+   * createMcpClientManager so a daemon-wide override (e.g. 0 to disable
+   * keepalives for all startup-connected servers) takes effect. Undefined ⇒ the
+   * factory's own default applies. Per-server overrides still win via `??`.
+   */
+  readonly keepaliveIntervalMs?: number;
+  /** Global circuit-breaker failure threshold from integrations.mcp. */
+  readonly circuitBreakerThreshold?: number;
+  /** Global circuit-breaker cooldown (ms) from integrations.mcp. */
+  readonly circuitBreakerCooldownMs?: number;
 }
 
 /** Result of MCP server setup. */
@@ -126,6 +137,12 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
     eventBus: deps.eventBus,
     stdioDefaultConcurrency: deps.stdioDefaultConcurrency,
     httpDefaultConcurrency: deps.httpDefaultConcurrency,
+    // Forward the global reliability config so daemon-wide overrides
+    // reach startup-connected servers (the factory applies ?? defaults when
+    // these are undefined; per-server McpServerConfig overrides still win).
+    keepaliveIntervalMs: deps.keepaliveIntervalMs,
+    circuitBreakerThreshold: deps.circuitBreakerThreshold,
+    circuitBreakerCooldownMs: deps.circuitBreakerCooldownMs,
   });
 
   try {
@@ -188,8 +205,33 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
           env: server.env,
           headers: server.headers,
           ...(cwd ? { cwd } : {}),
-          ...(server.maxConcurrency ? { maxConcurrency: server.maxConcurrency } : {}),
+          // Nullish (not falsy) check — schema rejects 0, but `??`-style
+          // keeps the construction consistent and is robust if the positive()
+          // constraint is ever relaxed.
+          ...(server.maxConcurrency !== undefined && { maxConcurrency: server.maxConcurrency }),
           enabled: true,
+          // Forward the five resilience/filtering fields from the persisted
+          // McpServerEntry. Without these the runtime McpServerConfig drops
+          // them and idle eviction never arms (idleTtlMs), tool filtering is
+          // lost (toolAllowlist/toolBlocklist — a security regression across
+          // restarts), and resources/prompts opt-outs are ignored
+          // (enableResources/enablePrompts) for config-defined servers.
+          // idleTtlMs has a schema default(0); 0 ⇒ disabled, so only forward
+          // a positive value (matches startIdleTicker's opt-in semantics and
+          // avoids carrying an inert field).
+          ...(server.idleTtlMs !== undefined && server.idleTtlMs > 0 && { idleTtlMs: server.idleTtlMs }),
+          ...(server.toolAllowlist !== undefined && { toolAllowlist: server.toolAllowlist }),
+          ...(server.toolBlocklist !== undefined && { toolBlocklist: server.toolBlocklist }),
+          ...(server.enableResources !== undefined && { enableResources: server.enableResources }),
+          ...(server.enablePrompts !== undefined && { enablePrompts: server.enablePrompts }),
+          // Forward the parallel-tool-calls opt-in so the manager's
+          // PQueue concurrency derivation (mcp-client-connect.ts) sees it.
+          ...(server.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: server.supportsParallelToolCalls }),
+          // Forward auth/oauth so createTransport wires the OAuthClientProvider
+          // for config-defined servers — else the boot path silently downgrades
+          // an oauth server to no-auth.
+          ...(server.auth !== undefined && { auth: server.auth }),
+          ...(server.oauth !== undefined && { oauth: server.oauth }),
         };
         return { server, result: await manager.connect(config) };
       }),

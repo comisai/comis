@@ -97,7 +97,7 @@ export interface CacheTraceInit {
   /** Model id (e.g. "claude-3-opus"). Optional metadata for downstream replay tools. */
   readonly modelId?: string;
   /**
-   * §7.2 envelope cluster — the 5 contextual fields that ride on every
+   * Envelope cluster — the 5 contextual fields that ride on every
    * cache-trace event when the executor wires them through. Clustering
    * (rather than 5 top-level optional fields) follows the precedent of
    * `TrajectoryRecorderInit.model` and keeps `CacheTraceInit` under the
@@ -105,7 +105,7 @@ export interface CacheTraceInit {
    *
    * Every event of the recorder carries these fields verbatim (the
    * envelope is per-event, not per-stage). `modelApi` is `string | null`
-   * because design §7.2 explicitly allows null for the "no API
+   * because the schema explicitly allows null for the "no API
    * discriminator" case (Anthropic provider without a sub-API split).
    */
   readonly envelope?: {
@@ -413,8 +413,8 @@ export function createCacheTrace(init: CacheTraceInit): CacheTrace | null {
       //                                                 the inline
       //                                                 snapshot field
       //                                                 `droppedBytes`)
-      //    Per AGENTS.md §2.9, the rename ships without aliases; no
-      //    live external consumer pins the prior field shape.
+      //    The rename ships without aliases; no live external consumer
+      //    pins the prior field shape.
       //    Two-sentinel-per-cap-hit-session model:
       //      sessions that hit the cap → exactly 1 inline + 1 summary
       //      sessions that never hit the cap → 0 sentinels
@@ -505,7 +505,7 @@ function buildEvent(input: BuildEventInput): CacheTraceEvent {
   // in @comis/core/runtime — direct `new Date(...)` is forbidden by the
   // globals architecture test.
   const ts = systemDateFrom(systemNowMs()).toISOString();
-  // traceId — the canonical correlation key (§1.4). Auto-derived from
+  // traceId — the canonical correlation key. Auto-derived from
   // the AsyncLocalStorage RequestContext when present, falling back to
   // sessionId. The runtime mirror of trajectory's resolveTraceId.
   const traceId = resolveTraceId(input.init.sessionId);
@@ -521,7 +521,7 @@ function buildEvent(input: BuildEventInput): CacheTraceEvent {
   };
   if (input.init.provider !== undefined) envelope.provider = input.init.provider;
   if (input.init.modelId !== undefined) envelope.modelId = input.init.modelId;
-  // §7.2 envelope fields — lift each from the cluster when defined.
+  // Envelope cluster fields — lift each from the cluster when defined.
   const env = input.init.envelope;
   if (env?.runId !== undefined) envelope.runId = env.runId;
   if (env?.sessionKey !== undefined) envelope.sessionKey = env.sessionKey;

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Co-located unit tests for `scrubStdioEnv` and the
- * `MCP_STDIO_BUILTIN_ENV_ALLOWLIST` constant introduced by Phase 63 plan 02
- * (SAFETY-01 / SAFETY-02).
+ * `MCP_STDIO_BUILTIN_ENV_ALLOWLIST` constant.
  *
  * The legacy spread `{ ...systemEnvSnapshot(), ...config.env }` at
  * `mcp-client-discover.ts:80` leaked every daemon env var (OPENAI_API_KEY,
@@ -25,15 +24,18 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import {
   scrubStdioEnv,
   MCP_STDIO_BUILTIN_ENV_ALLOWLIST,
   wrapStdioCommand,
+  createTransport,
   getPrlimitAvailable,
   __resetPrlimitWarnForTests,
   __resetPrlimitProbeForTests,
   refreshPrlimitAvailable,
 } from "./mcp-client-discover.js";
+import type { McpServerConfig } from "./mcp-client-types.js";
 
 // ---------------------------------------------------------------------------
 // Env-mutation harness
@@ -73,7 +75,7 @@ afterEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("scrubStdioEnv — built-in allowlist enforcement (SAFETY-01)", () => {
+describe("scrubStdioEnv — built-in allowlist enforcement", () => {
   it("scrubStdioEnv strips OPENAI_API_KEY from daemon env spread when not allowlisted", () => {
     process.env.PATH = "/usr/bin";
     process.env.HOME = "/h";
@@ -117,7 +119,7 @@ describe("scrubStdioEnv — built-in allowlist enforcement (SAFETY-01)", () => {
   });
 });
 
-describe("scrubStdioEnv — operator passthrough + extension (SAFETY-02)", () => {
+describe("scrubStdioEnv — operator passthrough + extension", () => {
   it("scrubStdioEnv lets operator-named config.env keys through regardless of allowlist", () => {
     // Daemon env is empty; only operator-named per-server config.env is
     // provided. Both keys (including OPENAI_API_KEY, which is NOT in the
@@ -140,7 +142,7 @@ describe("scrubStdioEnv — operator passthrough + extension (SAFETY-02)", () =>
   });
 });
 
-describe("scrubStdioEnv — Shellshock-style function-export skip (SAFETY-01)", () => {
+describe("scrubStdioEnv — Shellshock-style function-export skip", () => {
   it("scrubStdioEnv skips daemon env values starting with `()` (Bash CVE-2014-6271)", () => {
     process.env.PATH = "/u";
     process.env.LC_ALL = "() { :; }; echo pwned";
@@ -172,7 +174,7 @@ describe("MCP_STDIO_BUILTIN_ENV_ALLOWLIST — required-membership invariant", ()
 });
 
 // ---------------------------------------------------------------------------
-// Phase 63 Plan 06 (SAFETY-08) — wrapStdioCommand prlimit wrap.
+// wrapStdioCommand prlimit wrap.
 // ---------------------------------------------------------------------------
 //
 // These tests pin the deterministic wrap-shape behaviour of wrapStdioCommand:
@@ -312,7 +314,7 @@ describe("wrapStdioCommand — rlimits set with prlimit unavailable (macOS dev)"
   });
 });
 
-describe("wrapStdioCommand — WARN-once invariant (SAFETY-08)", () => {
+describe("wrapStdioCommand — WARN-once invariant", () => {
   beforeEach(() => {
     __resetPrlimitWarnForTests();
   });
@@ -338,7 +340,7 @@ describe("wrapStdioCommand — WARN-once invariant (SAFETY-08)", () => {
   });
 });
 
-describe("getPrlimitAvailable — module-init probe (SAFETY-08)", () => {
+describe("getPrlimitAvailable — module-init probe", () => {
   it("returns a boolean indicating whether prlimit(1) is on PATH at module load", () => {
     const available = getPrlimitAvailable();
     expect(typeof available).toBe("boolean");
@@ -346,9 +348,9 @@ describe("getPrlimitAvailable — module-init probe (SAFETY-08)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-02 — lazy probe + refreshPrlimitAvailable.
+// Lazy probe + refreshPrlimitAvailable.
 //
-// Pre-fix the prlimit availability check ran at module-load via an IIFE
+// Previously the prlimit availability check ran at module-load via an IIFE
 // and was cached in a const PRLIMIT_AVAILABLE. This had two
 // consequences: (a) module-load blocked by up to the spawnSync 1s
 // timeout on slow disks, and (b) if prlimit was installed AFTER daemon
@@ -356,7 +358,7 @@ describe("getPrlimitAvailable — module-init probe (SAFETY-08)", () => {
 // (cached on first call) and exposes refreshPrlimitAvailable() so
 // operators who install util-linux post-hoc can force a re-probe.
 // ---------------------------------------------------------------------------
-describe("WR-02 — lazy probe + refreshPrlimitAvailable", () => {
+describe("lazy probe + refreshPrlimitAvailable", () => {
   it("getPrlimitAvailable returns the same value on repeated calls (cache hit on first probe)", () => {
     __resetPrlimitProbeForTests();
     const a = getPrlimitAvailable();
@@ -398,5 +400,108 @@ describe("WR-02 — lazy probe + refreshPrlimitAvailable", () => {
     refreshPrlimitAvailable();
     wrapStdioCommand("node", ["x.js"], { cpu: 600 }, logger, "srv-3");
     expect(logger.warn).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createTransport authProvider attach.
+//
+// The OAuthClientProvider adapter is attached to the sse + http transports
+// when (and only when) config.auth === "oauth" AND a config.oauthProvider is
+// present. The requestInit + redirect-policy fetch wiring MUST be preserved
+// in BOTH the attached and unattached cases (no regression).
+//
+// The SDK transports store the provider on the private `_authProvider` field
+// and the fetch/requestInit on `_fetch` / `_requestInit` — we assert on those
+// via a typed cast (the transports expose no public getter; the private field
+// is the stable observation point, mirroring how the SDK itself reads them).
+// ---------------------------------------------------------------------------
+
+/** A structurally-minimal OAuthClientProvider stand-in for attach assertions. */
+const FAKE_OAUTH_PROVIDER = {
+  get redirectUrl() {
+    return undefined;
+  },
+  get clientMetadata() {
+    return { redirect_uris: [] };
+  },
+  clientInformation: () => undefined,
+  tokens: () => undefined,
+  saveTokens: () => {},
+  redirectToAuthorization: () => {},
+  saveCodeVerifier: () => {},
+  codeVerifier: () => "",
+} as unknown as OAuthClientProvider;
+
+interface TransportInternals {
+  _authProvider?: unknown;
+  _fetch?: unknown;
+  _requestInit?: unknown;
+}
+
+function baseHttpConfig(overrides: Partial<McpServerConfig>): McpServerConfig {
+  return {
+    name: "remote-oauth",
+    transport: "http",
+    url: "https://mcp.example.com/sse",
+    enabled: true,
+    ...overrides,
+  } as McpServerConfig;
+}
+
+describe("createTransport — authProvider attach", () => {
+  it("http branch attaches authProvider when auth:'oauth' + oauthProvider present", () => {
+    const transport = createTransport(
+      baseHttpConfig({ auth: "oauth", oauthProvider: FAKE_OAUTH_PROVIDER }),
+    );
+    const internals = transport as unknown as TransportInternals;
+    expect(internals._authProvider).toBe(FAKE_OAUTH_PROVIDER);
+    // No regression: the redirect-policy fetch is still wired.
+    expect(typeof internals._fetch).toBe("function");
+  });
+
+  it("http branch does NOT attach authProvider when auth is unset", () => {
+    const transport = createTransport(baseHttpConfig({}));
+    const internals = transport as unknown as TransportInternals;
+    expect(internals._authProvider).toBeUndefined();
+    expect(typeof internals._fetch).toBe("function");
+  });
+
+  it("http branch does NOT attach authProvider when auth:'none'", () => {
+    const transport = createTransport(
+      baseHttpConfig({ auth: "none", oauthProvider: FAKE_OAUTH_PROVIDER }),
+    );
+    const internals = transport as unknown as TransportInternals;
+    expect(internals._authProvider).toBeUndefined();
+  });
+
+  it("http branch preserves requestInit headers alongside an attached authProvider", () => {
+    const transport = createTransport(
+      baseHttpConfig({
+        auth: "oauth",
+        oauthProvider: FAKE_OAUTH_PROVIDER,
+        headers: { "x-custom": "v" },
+      }),
+    );
+    const internals = transport as unknown as TransportInternals;
+    expect(internals._authProvider).toBe(FAKE_OAUTH_PROVIDER);
+    expect(internals._requestInit).toEqual({ headers: { "x-custom": "v" } });
+    expect(typeof internals._fetch).toBe("function");
+  });
+
+  it("sse branch attaches authProvider when auth:'oauth' + oauthProvider present", () => {
+    const transport = createTransport(
+      baseHttpConfig({ transport: "sse", auth: "oauth", oauthProvider: FAKE_OAUTH_PROVIDER }),
+    );
+    const internals = transport as unknown as TransportInternals;
+    expect(internals._authProvider).toBe(FAKE_OAUTH_PROVIDER);
+    expect(typeof internals._fetch).toBe("function");
+  });
+
+  it("sse branch does NOT attach authProvider when auth is unset (fetch preserved)", () => {
+    const transport = createTransport(baseHttpConfig({ transport: "sse" }));
+    const internals = transport as unknown as TransportInternals;
+    expect(internals._authProvider).toBeUndefined();
+    expect(typeof internals._fetch).toBe("function");
   });
 });

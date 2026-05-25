@@ -194,14 +194,13 @@ describe("McpServerEntrySchema transport inference", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-01 regression — schema must reject inconsistent command + url
-  // combinations BEFORE the runtime gets a chance to silently ignore one
-  // of them. Pre-fix the first matching inference branch (command -> stdio)
-  // won and the unused url field passed through, silently ignored at
-  // runtime by createTransport. Operator misconfiguration produced no
-  // warning.
+  // Regression — schema must reject inconsistent command + url combinations
+  // BEFORE the runtime gets a chance to silently ignore one of them. The
+  // first matching inference branch (command -> stdio) won and the unused
+  // url field passed through, silently ignored at runtime by createTransport.
+  // Operator misconfiguration produced no warning.
   // -------------------------------------------------------------------------
-  it("rejects entries that supply BOTH command and url without an explicit transport (WR-01)", () => {
+  it("rejects entries that supply BOTH command and url without an explicit transport", () => {
     expect(() =>
       McpServerEntrySchema.parse({
         name: "both",
@@ -239,14 +238,14 @@ describe("McpServerEntrySchema transport inference", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 63-01 — additive safety-hardening fields (SAFETY-02/04/06/08).
+// Additive safety-hardening fields.
 //
 // Five additive Zod fields land on McpConfigSchema (3) and McpServerEntrySchema
 // (2). The tests pin both default values and validator rejection of bad inputs
-// so the rest of phase 63 can rely on a stable schema contract.
+// so downstream code can rely on a stable schema contract.
 // ---------------------------------------------------------------------------
 
-describe("McpConfigSchema — Phase 63 safety hardening additive fields", () => {
+describe("McpConfigSchema — safety hardening additive fields", () => {
   it("produces safety-hardening defaults from an empty input object", () => {
     const result = McpConfigSchema.parse({});
     expect(result.safetyAllowedEnvKeys).toEqual([]);
@@ -280,7 +279,7 @@ describe("McpConfigSchema — Phase 63 safety hardening additive fields", () => 
   });
 });
 
-describe("McpServerEntrySchema — Phase 63 safety hardening additive fields", () => {
+describe("McpServerEntrySchema — safety hardening additive fields", () => {
   it("parses without disablePlaintextSecretCheck or rlimits when both are omitted", () => {
     const result = McpServerEntrySchema.parse({
       name: "yfinance",
@@ -329,6 +328,222 @@ describe("McpServerEntrySchema — Phase 63 safety hardening additive fields", (
         transport: "stdio",
         command: "node",
         rlimits: { nofile: 0 },
+      }),
+    ).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Additive reliability fields (keepalive, circuit breaker). Combined
+// schema + tests because the new fields are not on the inferred type
+// pre-patch — `result.keepaliveIntervalMs` would be a TS error if tests
+// preceded the schema change.
+// ---------------------------------------------------------------------------
+
+describe("McpConfigSchema — reliability additive fields", () => {
+  it("produces reliability defaults from an empty input object", () => {
+    const result = McpConfigSchema.parse({});
+    expect(result.keepaliveIntervalMs).toBe(180_000);
+    expect(result.circuitBreakerThreshold).toBe(3);
+    expect(result.circuitBreakerCooldownMs).toBe(60_000);
+  });
+  it("accepts keepaliveIntervalMs: 0 to disable the ticker", () => {
+    expect(McpConfigSchema.parse({ keepaliveIntervalMs: 0 }).keepaliveIntervalMs).toBe(0);
+  });
+  it("rejects negative keepaliveIntervalMs", () => {
+    expect(() => McpConfigSchema.parse({ keepaliveIntervalMs: -1 })).toThrow();
+  });
+  it("rejects circuitBreakerThreshold = 0 (positive required)", () => {
+    expect(() => McpConfigSchema.parse({ circuitBreakerThreshold: 0 })).toThrow();
+  });
+  it("rejects circuitBreakerCooldownMs = 0 (positive required)", () => {
+    expect(() => McpConfigSchema.parse({ circuitBreakerCooldownMs: 0 })).toThrow();
+  });
+});
+
+describe("McpServerEntrySchema — per-server reliability overrides", () => {
+  it("accepts an explicit keepaliveIntervalMs override", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "test",
+      transport: "stdio",
+      command: "/usr/bin/test",
+      keepaliveIntervalMs: 60_000,
+    });
+    expect(result.keepaliveIntervalMs).toBe(60_000);
+  });
+  it("leaves keepaliveIntervalMs undefined when override omitted", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "test",
+      transport: "stdio",
+      command: "/usr/bin/test",
+    });
+    expect(result.keepaliveIntervalMs).toBeUndefined();
+  });
+  it("accepts per-server circuit-breaker overrides", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "test",
+      transport: "stdio",
+      command: "/usr/bin/test",
+      circuitBreakerThreshold: 5,
+      circuitBreakerCooldownMs: 30_000,
+    });
+    expect(result.circuitBreakerThreshold).toBe(5);
+    expect(result.circuitBreakerCooldownMs).toBe(30_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-server OAuth opt-in fields. Two additive optional fields land on
+// McpServerEntrySchema: `auth` (enum none/bearer/oauth) and an `oauth`
+// strictObject (authorizationEndpoint URL fallback, scope, Stripe-Account).
+// Combined schema + tests because the accept tests reference `result.auth` /
+// `result.oauth`, which would be TS errors on the pre-patch inferred type.
+// The reject tests pin strictObject + enum tampering defence.
+// ---------------------------------------------------------------------------
+
+describe("McpServerEntrySchema — OAuth opt-in fields", () => {
+  it("accepts auth='oauth' with an oauth block (scope only)", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "notion",
+      url: "https://mcp.notion.com/mcp",
+      auth: "oauth",
+      oauth: { scope: "read" },
+    });
+    expect(result.auth).toBe("oauth");
+    expect(result.oauth).toEqual({ scope: "read" });
+  });
+
+  it("accepts the full oauth block (authorizationEndpoint + scope + stripeAccount)", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "stripe",
+      url: "https://mcp.stripe.com/mcp",
+      auth: "oauth",
+      oauth: {
+        authorizationEndpoint: "https://connect.stripe.com/oauth/authorize",
+        scope: "read_write",
+        stripeAccount: "acct_1",
+      },
+    });
+    expect(result.oauth).toEqual({
+      authorizationEndpoint: "https://connect.stripe.com/oauth/authorize",
+      scope: "read_write",
+      stripeAccount: "acct_1",
+    });
+  });
+
+  it("accepts auth='none' and auth='bearer'", () => {
+    for (const auth of ["none", "bearer"] as const) {
+      const result = McpServerEntrySchema.parse({
+        name: "srv",
+        url: "https://example.com/mcp",
+        auth,
+      });
+      expect(result.auth).toBe(auth);
+    }
+  });
+
+  it("leaves auth/oauth undefined when both omitted", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "srv",
+      url: "https://example.com/mcp",
+    });
+    expect(result.auth).toBeUndefined();
+    expect(result.oauth).toBeUndefined();
+  });
+
+  // Tampering: enum rejects a bogus auth value.
+  it("rejects auth values outside {none,bearer,oauth}", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({
+        name: "srv",
+        url: "https://example.com/mcp",
+        auth: "bogus",
+      }),
+    ).toThrow();
+  });
+
+  // Tampering: strictObject rejects unknown keys inside oauth.
+  it("rejects unknown keys inside the oauth block (strictObject)", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({
+        name: "srv",
+        url: "https://example.com/mcp",
+        auth: "oauth",
+        oauth: { foo: 1 },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a non-URL authorizationEndpoint", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({
+        name: "srv",
+        url: "https://example.com/mcp",
+        auth: "oauth",
+        oauth: { authorizationEndpoint: "not-a-url" },
+      }),
+    ).toThrow();
+  });
+});
+
+describe("McpServerEntrySchema — bundle provenance + archive", () => {
+  it("persists _bundleSource when supplied (provenance marker survives parse)", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "x",
+      transport: "stdio",
+      command: "npx",
+      _bundleSource: "my-skill",
+    });
+    expect(result._bundleSource).toBe("my-skill");
+  });
+
+  it("parses a baseline entry without _bundleSource (no regression on existing fixtures)", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "x",
+      transport: "stdio",
+      command: "npx",
+    });
+    expect(result._bundleSource).toBeUndefined();
+    expect(result._bundleArchive).toBeUndefined();
+  });
+
+  it("persists a recursive _bundleArchive (a McpServerEntry inside a McpServerEntry, z.lazy)", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "x",
+      transport: "http",
+      url: "https://example.com/mcp",
+      _bundleSource: "skill-b",
+      _bundleArchive: {
+        name: "x",
+        transport: "stdio",
+        command: "npx",
+        _bundleSource: "skill-a",
+      },
+    });
+    expect(result._bundleArchive).toBeDefined();
+    expect(result._bundleArchive?.name).toBe("x");
+    expect(result._bundleArchive?._bundleSource).toBe("skill-a");
+    expect(result._bundleArchive?.transport).toBe("stdio");
+  });
+
+  it("rejects an empty-string _bundleSource (spoofing defence — min(1))", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({
+        name: "x",
+        transport: "stdio",
+        command: "npx",
+        _bundleSource: "",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a non-string _bundleSource (Zod type error)", () => {
+    expect(() =>
+      McpServerEntrySchema.parse({
+        name: "x",
+        transport: "stdio",
+        command: "npx",
+        _bundleSource: 123,
       }),
     ).toThrow();
   });

@@ -1398,6 +1398,91 @@
     "conditional": false
   },
   {
+    "name": "get_prompt",
+    "category": "mcp",
+    "schema": {
+      "properties": {
+        "arguments": {
+          "description": "Optional template arguments for the prompt, keyed by argument name",
+          "patternProperties": {
+            "^.*$": {}
+          },
+          "type": "object"
+        },
+        "name": {
+          "description": "Prompt name to fetch (from list_prompts output)",
+          "type": "string"
+        },
+        "server": {
+          "description": "MCP server name (must be a connected server advertising prompts)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "server",
+        "name"
+      ],
+      "type": "object"
+    },
+    "conditional": true
+  },
+  {
+    "name": "list_prompts",
+    "category": "mcp",
+    "schema": {
+      "properties": {
+        "server": {
+          "description": "MCP server name (must be a connected server advertising prompts)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "server"
+      ],
+      "type": "object"
+    },
+    "conditional": true
+  },
+  {
+    "name": "list_resources",
+    "category": "mcp",
+    "schema": {
+      "properties": {
+        "server": {
+          "description": "MCP server name (must be a connected server advertising resources)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "server"
+      ],
+      "type": "object"
+    },
+    "conditional": true
+  },
+  {
+    "name": "read_resource",
+    "category": "mcp",
+    "schema": {
+      "properties": {
+        "server": {
+          "description": "MCP server name (must be a connected server advertising resources)",
+          "type": "string"
+        },
+        "uri": {
+          "description": "Resource URI to read (from list_resources output)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "server",
+        "uri"
+      ],
+      "type": "object"
+    },
+    "conditional": true
+  },
+  {
     "name": "describe_video",
     "category": "media",
     "schema": {

@@ -12,11 +12,9 @@
  *   - PYTHONIOENCODING / PYTHONPATH — uvx-launched Python MCP servers.
  *   - XDG_* — config / data / cache lookup.
  *
- * Per REQUIREMENTS.md SAFETY-01 + RESEARCH.md Pattern 5.
- *
  * The negative-control assertion (last `it`) is the security-side gate —
  * accidental addition of a credential key to the built-in allowlist would
- * leak it back into every spawned child, regressing T-63-02-01.
+ * leak it back into every spawned child.
  *
  * @module
  */
@@ -38,7 +36,7 @@ const REQUIRED_ALLOWLIST_MEMBERS: readonly string[] = [
   "PYTHONIOENCODING", "PYTHONPATH",
 ];
 
-describe("MCP stdio env allowlist — required membership invariant (SAFETY-01)", () => {
+describe("MCP stdio env allowlist — required membership invariant", () => {
   it("MCP_STDIO_BUILTIN_ENV_ALLOWLIST contains every required POSIX/locale/XDG/Node/Python key", () => {
     const allowSet = new Set(MCP_STDIO_BUILTIN_ENV_ALLOWLIST);
     const missing = REQUIRED_ALLOWLIST_MEMBERS.filter((k) => !allowSet.has(k));
@@ -48,7 +46,7 @@ describe("MCP stdio env allowlist — required membership invariant (SAFETY-01)"
   it("scrubStdioEnv symbol is re-exported through @comis/skills as a function", () => {
     // Indirect — proves the symbol exists and the runtime prefix check is
     // enabled. Concrete prefix-behavior testing lives in the co-located
-    // mcp-client-discover.test.ts unit test (RED→GREEN cycle from Plan 02).
+    // mcp-client-discover.test.ts unit test.
     expect(typeof scrubStdioEnv).toBe("function");
   });
 

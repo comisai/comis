@@ -132,8 +132,8 @@ export function createTrajectoryRecorder(
       : {}),
   });
 
-  // Best-effort pointer-file sidecar at `<sessionFile>.trajectory-path.json`
-  // (design §6.1 + §2.3). Only emit when the recorder was constructed
+  // Best-effort pointer-file sidecar at `<sessionFile>.trajectory-path.json`.
+  // Only emit when the recorder was constructed
   // alongside a per-session JSONL file — the env / cwd fallback paths
   // have no session file to anchor the pointer to. Errors are swallowed
   // by the helper; a missing pointer MUST NOT block trajectory writes.
@@ -310,7 +310,7 @@ interface BuildEventInput {
    * Sanitized payload. The recorder always hands `sanitizeForPersistence`
    * output through here; `sanitizeForPersistence` returns object-shaped
    * values (or undefined when input was undefined), matching the envelope
-   * `data?: Record<string, unknown>` contract from design §6.2.
+   * `data?: Record<string, unknown>` contract.
    */
   readonly sanitized?: Record<string, unknown>;
   readonly parentEntryId?: string;
@@ -322,8 +322,7 @@ function buildEvent(input: BuildEventInput): TrajectoryEvent {
     traceSchema: "comis-trajectory",
     schemaVersion: 1,
     // Live recorder emits — `source` is a single-member union
-    // preserved for forward-compatibility of on-disk JSONL artifacts
-    // (design §6.2 + §1.4).
+    // preserved for forward-compatibility of on-disk JSONL artifacts.
     source: "runtime",
     type: input.type,
     // systemDateFrom + systemNowMs goes through the sanctioned-root

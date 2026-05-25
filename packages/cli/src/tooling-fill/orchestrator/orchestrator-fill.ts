@@ -121,8 +121,7 @@ export async function fillTools(
   // signal (NODE_ENV or VITEST) — fails LOUD if set in a production
   // environment so a poisoned ~/.comis/.env cannot silently substitute
   // attacker-controlled description/replacesPackages values into config.
-  // AGENTS.md §2.2 lists "test fault injectors" as an exception to the
-  // no-runtime-env rule.
+  // "Test fault injectors" are a documented exception to the no-runtime-env rule.
   const testAgentResponseRaw = systemGetEnv("COMIS_TOOLING_FILL_TEST_AGENT_RESPONSE");
   const isTestRuntime = systemGetEnv("NODE_ENV") === "test" || systemGetEnv("VITEST") === "true";
   if (testAgentResponseRaw !== undefined && !isTestRuntime) {
@@ -257,7 +256,7 @@ export async function fillTools(
  * Both shapes accept `${VAR}` env-substitution; the same expansion rule
  * applies to whichever shape resolves to a non-empty string first.
  *
- * Per AGENTS.md §2.2 the runtime env read is the documented exception:
+ * The runtime env read here is the documented exception:
  * CLI bootstrap before SecretManager is loaded.
  */
 function resolveGatewayConn(

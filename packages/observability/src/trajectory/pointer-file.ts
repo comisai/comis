@@ -2,8 +2,8 @@
 /**
  * Trajectory pointer-file writer (best-effort sidecar).
  *
- * Per design §6.1 and §2.3, the trajectory recorder writes a best-effort
- * pointer file alongside the per-session JSONL at
+ * The trajectory recorder writes a best-effort pointer file alongside
+ * the per-session JSONL at
  * `<sessionFile>.trajectory-path.json` with the shape:
  *
  * ```
@@ -18,7 +18,7 @@
  * The pointer lets operators tailing `~/.comis/sessions/<id>.jsonl` find
  * where the trajectory lives when `COMIS_TRAJECTORY_DIR` redirects it.
  *
- * Safety contract (design §1.4 + §2.3):
+ * Safety contract (file-mode + symlink invariants):
  *   - Open with `O_CREAT | O_TRUNC | O_WRONLY | O_NOFOLLOW`, mode `0o600`.
  *   - Reject symlinked parent dirs (`lstatSync(dir).isSymbolicLink()`).
  *   - Best-effort: any error during the lstat/open/write/close trio is
@@ -55,14 +55,12 @@ export interface WriteTrajectoryPointerFileParams {
 }
 
 /**
- * Pointer-file mode — `0o600` per design §1.4 (every artifact file mode
- * is `0o600`).
+ * Pointer-file mode — `0o600` (every artifact file mode is `0o600`).
  */
 const POINTER_FILE_MODE = 0o600 as const;
 
 /**
- * Pointer record schema literals — pinned per design §6.1 so parsers
- * fence-check on read.
+ * Pointer record schema literals — pinned so parsers fence-check on read.
  */
 const POINTER_TRACE_SCHEMA = "comis-trajectory-pointer" as const;
 const POINTER_SCHEMA_VERSION = 1 as const;
@@ -89,7 +87,7 @@ export function writeTrajectoryPointerFileBestEffort(
   const pointerPath = resolveTrajectoryPointerFilePath(params.sessionFile);
   const parentDir = dirname(pointerPath);
 
-  // Reject symlinked parents per design §2.3. lstat catches the case
+  // Reject symlinked parents (symlink-guard invariant). lstat catches the case
   // where the parent dir is a symlink (which the O_NOFOLLOW open would
   // also reject, but we want a clean no-op rather than relying on the
   // open-time errno).

@@ -57,7 +57,7 @@ describe("CacheTraceEvent — type ⇄ schema sync invariant", () => {
     ).toThrow();
   });
 
-  it("schema rejects an event missing the required `traceId` field (design §7.2)", () => {
+  it("schema rejects an event missing the required `traceId` field", () => {
     const r = CacheTraceEventSchema.safeParse({
       traceSchema: "comis-cache-trace",
       schemaVersion: 1,
@@ -74,7 +74,7 @@ describe("CacheTraceEvent — type ⇄ schema sync invariant", () => {
     }
   });
 
-  it("schema accepts the 5 §7.2 optional envelope fields when present", () => {
+  it("schema accepts the 5 optional envelope fields when present", () => {
     const ev = CacheTraceEventSchema.parse({
       traceSchema: "comis-cache-trace",
       schemaVersion: 1,
@@ -97,7 +97,7 @@ describe("CacheTraceEvent — type ⇄ schema sync invariant", () => {
     expect(ev.modelApi).toBe("messages");
   });
 
-  it("schema accepts modelApi as null per design §7.2", () => {
+  it("schema accepts modelApi as null", () => {
     const ev = CacheTraceEventSchema.parse({
       traceSchema: "comis-cache-trace",
       schemaVersion: 1,

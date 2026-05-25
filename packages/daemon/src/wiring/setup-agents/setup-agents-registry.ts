@@ -52,7 +52,7 @@ import {
   type SkillWatcherHandle,
   type McpClientManager,
 } from "@comis/skills";
-// Session-scoped trajectory recorder registry (design §6.4 + §6.5 + §6.8).
+// Session-scoped trajectory recorder registry.
 // Construct once here so every per-agent executor shares the same registry
 // and the daemon shutdown chain can drain all open recorders via closeAll().
 import {
@@ -360,8 +360,8 @@ export async function setupAgents(deps: {
   // lifecycle: getOrCreate(formattedKey, init, eventBus) on the first
   // turn, reuse across subsequent turns, close on session-destroy, and
   // closeAll() in the daemon shutdown chain. Lifting ownership out of
-  // pi-executor.runSessionLocked closes design §6.4 + §6.5 + §6.8
-  // deviations E + F.
+  // pi-executor.runSessionLocked; this ensures proper lifecycle ownership
+  // for session-scoped trajectory recorders.
   const trajectoryRegistry = createSessionTrajectoryHandleRegistry();
 
   // Construct shared deps struct once before the loop (for hot-add reuse)

@@ -13,8 +13,10 @@
  */
 import type { ZodTypeAny } from "zod";
 
-/** Trust-scope enum mirroring `DynamicMethodRouter`'s runtime check. */
-export type Scope = "rpc" | "admin";
+/** Trust-scope enum mirroring `DynamicMethodRouter`'s runtime check.
+ *  Admin and mcp-client are DISJOINT —
+ *  see GatewayTokenSchema refine in `packages/core/src/config/schema-gateway.ts`. */
+export type Scope = "rpc" | "admin" | "mcp-client";
 
 /** A single RPC contract entry. */
 export interface ApiContract<

@@ -4,12 +4,12 @@
  *
  * Lifts recorder lifecycle out of `pi-executor.runSessionLocked` (which
  * runs per-turn) into a session-scoped handle (one recorder per session,
- * spanning every turn). Closes design §6.5 by ensuring:
+ * spanning every turn). Ensures:
  *
  *   - `seq` is monotonic across all turns in a session (per-session
- *     monotonic, NOT per-turn) — design §6.2 + §6.8 invariant.
+ *     monotonic, NOT per-turn).
  *   - Exactly one `session.started` and one `session.ended` event appear
- *     in the trajectory file — design §6.4.
+ *     in the trajectory file.
  *   - The bridge subscription matches the recorder's lifetime, so events
  *     emitted between turns also reach the trajectory.
  *
@@ -48,7 +48,7 @@ interface SessionEntry {
   readonly unsubscribe: (() => void) | undefined;
   /**
    * Latch consulted by the pi-event-bridge `agent_start` case to suppress
-   * per-turn `session:started` re-emits (design §6.4 mapping table —
+   * per-turn `session:started` re-emits (mapping table —
    * `session.started` fires once per session, NOT once per pi-mono turn).
    * The bridge is created per turn, but the registry survives every turn,
    * so the latch lives here. Defaults to `false`; flipped to `true` by
@@ -69,7 +69,7 @@ export type SessionTrajectoryFilter = (
 ) => boolean;
 
 /**
- * Public registry surface. The shape mirrors the design §6.5 lifecycle:
+ * Public registry surface. The shape mirrors the lifecycle:
  *   - `getOrCreate` (called per-turn; first call materializes the
  *      recorder + bridge subscription, later calls reuse the same
  *      recorder),
@@ -118,7 +118,7 @@ export interface SessionTrajectoryHandleRegistry {
    * called for this session's registry lifetime, `false` otherwise.
    *
    * Used by the pi-event-bridge `agent_start` case to suppress per-turn
-   * `session:started` re-emits — design §6.4 mapping table makes
+   * `session:started` re-emits — the mapping table makes
    * `session.started` a once-per-session event (not once-per-turn).
    * Per-turn bridges consult this latch so the second + subsequent
    * turns short-circuit the emit.

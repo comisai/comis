@@ -40,7 +40,7 @@ describe("envelope-wrapper.ts — capability-index threading", () => {
   });
 
   it("submodule binding label is exactly 'executor.capability-index'", () => {
-    // AGENTS.md §2.7: submodule binding via deps.logger.child({ submodule: "..." }).
+    // Submodule binding via deps.logger.child({ submodule: "..." }).
     expect(source).toMatch(/submodule\s*:\s*["']executor\.capability-index["']/);
   });
 });

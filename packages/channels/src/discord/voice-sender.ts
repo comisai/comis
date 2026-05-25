@@ -53,7 +53,7 @@ const DISCORD_API_BASE = "https://discord.com/api/v10";
 const VOICE_MESSAGE_FLAG = 8192;
 
 /**
- * Allowed Discord CDN domains for voice file uploads (H-2 SSRF mitigation).
+ * Allowed Discord CDN domains for voice file uploads (SSRF mitigation).
  * Discord uses these domains for attachment upload URLs. Any URL not matching
  * these domains is rejected to prevent data exfiltration via compromised responses.
  */
@@ -153,7 +153,7 @@ export function createDiscordVoiceSender(deps: DiscordVoiceSenderDeps): DiscordV
         return err(new Error(`Step 1 request failed: ${step1Error.message}`));
       }
 
-      // H-2: Validate upload URL domain before sending any file data
+      // Validate upload URL domain before sending any file data
       if (!isAllowedUploadUrl(uploadUrl)) {
         let uploadDomain = "unknown";
         try { uploadDomain = new URL(uploadUrl).hostname; } catch { /* malformed URL */ }

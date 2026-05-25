@@ -821,7 +821,7 @@ export class IcDashboard extends LitElement {
   // this adapter just bridges per-type listeners to the single-handler shape
   // expected by `activity-feed.ts:267`.
   //
-  // Inline (YAGNI per AGENTS.md §2.3) — single consumer, no cross-file reuse
+  // Inline (YAGNI) — single consumer, no cross-file reuse
   // warrants an exported helper.
   // ---------------------------------------------------------------------------
 

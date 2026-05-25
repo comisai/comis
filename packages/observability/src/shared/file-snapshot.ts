@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * `readFileSnapshot` — sha256-hashing + POSIX stat helper for the
- * `config.observe` audit record (design §9.2) and any other consumer
+ * `config.observe` audit record and any other consumer
  * that needs a single-pass file identity + stat snapshot.
  *
  * Design intent:
- *   - One call returns everything needed to populate the §9.2 file-state
- *     block: hash, bytes, mtimeMs/ctimeMs, dev/ino/mode/nlink/uid/gid.
+ *   - One call returns everything needed to populate the config.observe
+ *     file-state block: hash, bytes, mtimeMs/ctimeMs, dev/ino/mode/nlink/uid/gid.
  *   - `dev` and `ino` are STRINGIFIED — POSIX `stat.st_dev` and
  *     `st_ino` can exceed the JavaScript safe-integer range on some
- *     filesystems; the canonical §9.2 contract is `string | null`.
+ *     filesystems; the canonical contract is `string | null`.
  *   - `lstat` (not `stat`) — symlink semantics matter for the dir-mode
- *     `0o700` invariant documented in design §1.4. A snapshot taken
+ *     `0o700` invariant (file-mode confidentiality). A snapshot taken
  *     through a symlinked parent is rejected; the caller's
  *     symlink-rejecting writers (`appendRegularFile`) already enforce
  *     this for the target, and the snapshot mirrors the policy at
@@ -45,7 +45,7 @@ import { lstatSync, readFileSync } from "node:fs";
  *   - **Size** — `bytes`: file size in bytes (`buf.byteLength`).
  *   - **Time** — `mtimeMs`, `ctimeMs`: epoch milliseconds from `lstat`.
  *   - **Identity** — `dev`, `ino`: stringified for JS-safe-integer
- *     overflow protection (design §9.2 contract).
+ *     overflow protection (config.observe contract).
  *   - **Permissions / ownership** — `mode`, `nlink`, `uid`, `gid`:
  *     POSIX-native numbers.
  */
@@ -83,7 +83,7 @@ export interface FileSnapshot {
  *
  * The `null` contract is intentional — every caller of this helper
  * is an audit-record producer, and the `exists:false` branch of the
- * design-§9.2 schema is the canonical recovery. There is no
+ * config.observe schema is the canonical recovery. There is no
  * actionable distinction between "file missing" and "file present
  * but unreadable" at the audit-record level.
  *
@@ -93,7 +93,7 @@ export interface FileSnapshot {
 export function readFileSnapshot(filePath: string): FileSnapshot | null {
   try {
     // lstat (not stat) so symlinks are rejected as non-files — the
-    // dir-mode 0o700 invariant from design §1.4 extends to read-time:
+    // dir-mode 0o700 invariant (file-mode confidentiality) extends to read-time:
     // an audit producer should not silently follow a symlink to a
     // sibling that may live outside the confined ancestor.
     const stat = lstatSync(filePath);

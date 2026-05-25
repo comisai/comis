@@ -80,7 +80,7 @@ export const TRAJECTORY_EVENT_TYPES = [
 export type TrajectoryEventType = (typeof TRAJECTORY_EVENT_TYPES)[number];
 
 /**
- * Trajectory event source (design §6.2).
+ * Trajectory event source.
  *
  * - `"runtime"` — emitted live by `createTrajectoryRecorder` during agent execution.
  *
@@ -105,7 +105,7 @@ export type TrajectoryEventSource = "runtime";
  *   metadata copied from `TrajectoryRecorderInit` when defined.
  * - `data`: typed payload (after `sanitizeForPersistence`).
  *
- * Envelope-vs-data discipline (design §6.2): `traceId`, `agentId`, `sessionId`,
+ * Envelope-vs-data discipline: `traceId`, `agentId`, `sessionId`,
  * `sessionKey` are envelope-only — they MUST NOT be duplicated into `data`.
  */
 export interface TrajectoryEvent {
@@ -134,7 +134,7 @@ export interface TrajectoryEvent {
   readonly parentEntryId?: string;
 
   // Payload — passed through `sanitizeForPersistence` before write.
-  // Shape is intentionally `Record<string, unknown>` (matches design §6.2);
+  // Shape is intentionally `Record<string, unknown>` (envelope-vs-data contract);
   // `sanitizeForPersistence` always returns an object-shaped value.
   readonly data?: Record<string, unknown>;
 }
@@ -194,7 +194,7 @@ export interface TrajectoryRecorderInit {
   readonly workspaceDir?: string;
   /**
    * Model-metadata cluster (provider id + model id + model API). Adding
-   * `modelApi` (design §6.2 deviation B) at the top level would push
+   * `modelApi` at the top level would push
    * TrajectoryRecorderInit past the ≤12-optional-fields architecture
    * invariant — clustering the three model identifiers into one
    * optional field collapses three slots into one. Resolver in
@@ -207,7 +207,7 @@ export interface TrajectoryRecorderInit {
     readonly provider?: string;
     /** Model id (e.g., "claude-sonnet-4-20250514"). */
     readonly modelId?: string;
-    /** Model API (e.g., "messages", "responses"). `null` permitted per design §6.2. */
+    /** Model API (e.g., "messages", "responses"). `null` permitted. */
     readonly modelApi?: string | null;
   };
 
@@ -263,7 +263,7 @@ export interface TrajectoryRecorder {
    * entire event is replaced with a single-key sentinel record.
    *
    * `data` is typed `Record<string, unknown> | undefined` to match the
-   * design §6.2 contract. Pass `undefined` (or omit) when there is no
+   * envelope-vs-data contract. Pass `undefined` (or omit) when there is no
    * payload — bridge translators that intentionally produce no
    * correlation data still hand back an object so consumers can grep
    * by key.

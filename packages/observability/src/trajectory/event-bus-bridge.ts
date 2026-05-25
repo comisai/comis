@@ -171,7 +171,7 @@ export function attachTrajectoryToEventBus(
  * Translate one EventBus payload into the `data` payload of a trajectory event.
  *
  * Correlation keys (`traceId`, `agentId`, `sessionKey`, `sessionId`) are
- * envelope-only per design §6.2. Bridge payload translators MUST NOT
+ * envelope-only (trajectory envelope shape). Bridge payload translators MUST NOT
  * echo them into `data` — the recorder's envelope already carries them
  * via `TrajectoryRecorderInit` + AsyncLocalStorage.
  */
@@ -347,7 +347,7 @@ function translatePayload(
 
     case "context:pipeline":
       // Envelope-only correlation keys (agentId, sessionKey) intentionally
-      // stripped per design §6.2. The trajectory envelope carries them
+      // stripped — the trajectory envelope carries them
       // via TrajectoryRecorderInit + AsyncLocalStorage.
       return {
         tokensLoaded: payload.tokensLoaded,

@@ -51,7 +51,7 @@ export function isValidLogLevel(level: string): boolean {
  * - `internal`     -- Unexpected internal errors (assertion failures, logic bugs)
  * - `platform`     -- Chat platform API errors (Discord, Telegram, Slack rate limits)
  *
- * Closed 10-member union per AGENTS.md §2.1.
+ * Closed 10-member union.
  */
 export type ErrorKind =
   | "config"
@@ -79,7 +79,7 @@ export type ErrorKind =
  *       are assignable, because contravariant parameter checking
  *       collapses when the source type uses pure rest args).
  *
- * Pino runtime invariants (object-first logging per AGENTS.md §2.7;
+ * Pino runtime invariants (object-first logging;
  * never string-interpolate the message) are enforced by lint, not by
  * the structural contract.
  */
@@ -95,7 +95,7 @@ export type LogMethod = (...args: unknown[]) => void;
  * proves the Pino impl satisfies the structural shape via
  * `expectTypeOf<PinoComisLogger>().toExtend<CoreComisLogger>()`.
  *
- * Per AGENTS.md §2.7: every WARN/ERROR call must include `errorKind`
+ * Every WARN/ERROR call must include `errorKind`
  * (closed union, see ErrorKind above) and `hint` (actionable diagnostic).
  *
  * Pino redaction (`apiKey`, `token`, `password`, etc., 3 levels deep) is

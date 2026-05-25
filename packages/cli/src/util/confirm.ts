@@ -4,8 +4,8 @@
  *
  * Consolidates four readline.createInterface confirms (agent delete,
  * memory clear, config rollback, config tooling-fill PromptIO) into one
- * helper backed by `@clack/prompts.p.confirm` (project default per
- * REQUIREMENTS.md L124; already a CLI dep at packages/cli/package.json:53).
+ * helper backed by `@clack/prompts.p.confirm` (project default; already a
+ * CLI dep at packages/cli/package.json:53).
  *
  * Treats user cancel (Ctrl+C, non-TTY) as `false` — DOES NOT throw
  * CancelError like the wizard adapter at clack-adapter.ts:222. The

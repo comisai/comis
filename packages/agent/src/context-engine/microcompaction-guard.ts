@@ -84,7 +84,7 @@ function saveToDisk(
   content: ToolResultMessage["content"],
 ): string {
   const diskPath = safePath(sessionDir, "tool-results", `${toolCallId}.json`);
-  // Honor design §1.4 — parent dir at 0o700 via the fs-safe substrate.
+  // Parent dir at 0o700 via the fs-safe substrate (file-mode invariant).
   // confinedBaseDir threads dataDir (typically ~/.comis/) so the ancestor-
   // symlink escape is rejected. Result.err is intentionally discarded:
   // the writer's existing contract is best-effort offload — a failure

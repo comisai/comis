@@ -1,0 +1,110 @@
+# MCP server endpoint integration test config (port 8569)
+#
+# Three test tokens:
+#   - rpc-only:  scope ["rpc"] -- proves /mcp/v1 rejects with 403 (missing mcp-client scope).
+#   - mcp-empty: scope ["mcp-client"], mcpClient.allowlist = [] -- only `safe` tools listed.
+#   - mcp-memory: scope ["mcp-client"], mcpClient.allowlist = ["memory_search"]
+#                 -- `safe` UNION {memory_search} listed; never-export NEVER listed.
+#
+# Uses port 8569 to avoid conflicts when running in parallel via vitest pool: "forks".
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  test-agent:
+    model: default
+    thinkingLevel: "off"
+    name: MCP Server Test Agent
+    provider: default
+    maxSteps: 5
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: "UTC"
+
+memory:
+  dbPath: "test-memory-mcp-server-tools-list.db"
+  walMode: true
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8569
+  tokens:
+    # Token 0 -- daemon's primary auth token (rpc/ws/admin so the harness
+    # health-check / RPC plumbing keeps working in tests that use rpcRequest).
+    - id: test-token
+      secret: mcp-svr-toolslist-primary-token-1
+      scopes: ["rpc", "ws", "admin"]
+    # Token 1 -- has rpc scope only. /mcp/v1 must reject with 403.
+    - id: rpc-only
+      secret: mcp-svr-toolslist-rpc-only-tok-22
+      scopes: ["rpc"]
+    # Token 2 -- mcp-client with empty allowlist. tools/list must return
+    # ONLY tools with mcpExportPolicy === "safe" (3 safe tools).
+    - id: mcp-empty
+      secret: mcp-svr-toolslist-mcp-empty-tok-3
+      scopes: ["mcp-client"]
+      mcpClient:
+        allowlist: []
+        sessionAllowlist: []
+        toolRateLimit: {}
+    # Token 3 -- mcp-client with allowlist = ["memory_search"]. tools/list
+    # returns safe UNION {memory_search}; never-export NEVER listed.
+    - id: mcp-memory
+      secret: mcp-svr-toolslist-mcp-memory-tok-4
+      scopes: ["mcp-client"]
+      mcpClient:
+        allowlist: ["memory_search"]
+        sessionAllowlist: []
+        toolRateLimit: {}
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: "UTC"
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic

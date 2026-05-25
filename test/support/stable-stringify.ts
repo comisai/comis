@@ -2,8 +2,8 @@
 /**
  * Deterministic JSON serialization helper for parity-snapshot tests.
  *
- * Extracted per AGENTS.md §2.3 rule-of-three from the original
- * section-registry-parity.test.ts implementation.
+ * Extracted from the original section-registry-parity.test.ts implementation
+ * following the rule-of-three refactoring principle.
  *
  * @module
  */

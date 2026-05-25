@@ -258,7 +258,7 @@ describe("config.patch", () => {
       expect(record.result).toBe("rejected");
     });
 
-    it("Fix D1: rejected audit record carries the validator's errorMessage", async () => {
+    it("rejected audit record carries the validator's errorMessage", async () => {
       // Pre-fix the `rejected` outcome swallowed the rejection reason — the
       // persisted JSONL line only had `result: "rejected"` with no
       // errorMessage, so operators had to grep daemon logs to find why a
@@ -945,10 +945,10 @@ describe("config.patch env var reference validation", () => {
     tempConfig.cleanup();
   });
 
-  // Phase 47 R9: gateway-patch on integrations.mcp.servers is now REJECTED
+  // The gateway-patch on integrations.mcp.servers is REJECTED
   // before the env-ref validator runs. The env-validator logic itself is
   // unchanged and still exercised by persistToConfig at the AppConfigSchema
-  // safeParse boundary (Plan 47-02). The tests below assert that the R9
+  // safeParse boundary. The tests below assert that the R9
   // guard supersedes the env-validator pathway for the gateway-patch
   // surface — the env-validator's behaviors are covered by unit tests on
   // `findUnresolvedEnvRefs` + the persistMcpServers integration tests.
@@ -1112,12 +1112,12 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  // BL-01 from 62-REVIEW: parent-path bypass shapes must produce the
+  // Parent-path bypass shapes must produce the
   // mcp_manage redirect, not the generic "immutable path" message that
   // arises if the patch slips past the R9 guard and into the
   // isImmutableConfigPath check.
 
-  it("R9 BL-01: parent-path bypass via { section:'integrations', key:'mcp', value:{ servers:[...] } } returns the mcp_manage redirect", async () => {
+  it("parent-path bypass via { section:'integrations', key:'mcp', value:{ servers:[...] } } returns the mcp_manage redirect", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1131,7 +1131,7 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("R9 BL-01: parent-path bypass via { section:'integrations', value:{ mcp:{ servers:[...] } } } returns the mcp_manage redirect", async () => {
+  it("parent-path bypass via { section:'integrations', value:{ mcp:{ servers:[...] } } } returns the mcp_manage redirect", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1144,7 +1144,7 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("R9 BL-01: parent-path bypass via { path:'integrations.mcp', value:{ servers:[...] } } returns the mcp_manage redirect", async () => {
+  it("parent-path bypass via { path:'integrations.mcp', value:{ servers:[...] } } returns the mcp_manage redirect", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1157,7 +1157,7 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("R9 BL-01: parent-path bypass via { path:'integrations', value:{ mcp:{ servers:[...] } } } returns the mcp_manage redirect", async () => {
+  it("parent-path bypass via { path:'integrations', value:{ mcp:{ servers:[...] } } } returns the mcp_manage redirect", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1170,7 +1170,7 @@ describe("config.patch env var reference validation", () => {
     ).rejects.toThrow(/integrations\.mcp\.servers is managed by mcp_manage/);
   });
 
-  it("R9 BL-01: parent-path NEGATIVE — { section:'integrations', value:{ media:{...} } } does NOT match (unrelated subtree)", async () => {
+  it("parent-path NEGATIVE — { section:'integrations', value:{ media:{...} } } does NOT match (unrelated subtree)", async () => {
     const deps = makeDepsWithEnv(tempConfig.configPath, {});
     const handlers = createConfigHandlers(deps);
 
@@ -1791,9 +1791,9 @@ describe("config.patch type coercion", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 47 R9: config.patch on integrations.mcp.servers is REJECTED — the
+  // config.patch on integrations.mcp.servers is REJECTED — the
   // z.record(string,string) env + headers preservation behavior is now
-  // exercised on the persistToConfig writer path (covered by Plan 47-02's
+  // exercised on the persistToConfig writer path (covered by the
   // mcp-handlers tests). The coerceConfigValue + AppConfigSchema.safeParse
   // logic that originally enforced the preservation invariant is unchanged
   // and still runs inside persistToConfig.
@@ -2210,7 +2210,7 @@ describe("config.patch credential guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 47 R9: gateway-patch single-writer guard for integrations.mcp.servers
+// Gateway-patch single-writer guard for integrations.mcp.servers
 //
 // The mcp_manage RPC (mcp.connect / mcp.disconnect) is the canonical writer of
 // integrations.mcp.servers via persistToConfig. Direct gateway(action:"patch")
@@ -2223,7 +2223,7 @@ describe("config.patch credential guard", () => {
 // The guard mirrors the immutable-paths precedent at config-write.ts:144-152.
 // It does NOT remove the MUTABLE_CONFIG_OVERRIDES entry for
 // integrations.mcp.servers at immutable-keys.ts:38 — persistToConfig (in
-// mcp-handlers from Plan 47-02) needs that override entry to write through.
+// mcp-handlers) needs that override entry to write through.
 // ---------------------------------------------------------------------------
 
 describe("config.patch R9 single-writer guard (integrations.mcp.servers)", () => {

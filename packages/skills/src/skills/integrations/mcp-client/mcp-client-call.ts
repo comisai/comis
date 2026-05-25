@@ -19,11 +19,67 @@ import { systemNowMs } from "@comis/core";
 import type {
   McpClientManagerDeps,
   McpClientManagerState,
+  McpConnection,
   McpToolCallContent,
   McpToolCallResult,
 } from "./mcp-client-types.js";
 import { parseQualifiedName } from "./mcp-client-types.js";
 import { handleDisconnection } from "./mcp-client-reconnect.js";
+import { reconnectServer } from "./mcp-client-connect.js";
+import { resetIdleActivity } from "./mcp-client-idle-eviction.js";
+
+// ---------------------------------------------------------------------------
+// Lazy reconnect
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a live connection for a server, lazily reconnecting when it is
+ * missing. A server that was idle-evicted has its connection deleted but its
+ * serverConfig RETAINED and userDisconnectedFlags UNSET — so a subsequent
+ * callTool transparently reconnects via reconnectServer.
+ *
+ * Synchronous fast path: when the connection is already present this returns
+ * `ok(conn)` WITHOUT awaiting (it is not async), so the overwhelmingly common
+ * case introduces no extra microtask tick before the PQueue drain — preserving
+ * the pre-patch timing the generation-counter fake-timer tests rely on. Only
+ * the missing-connection path is async (reconnectLazily).
+ *
+ * Returns err("...not connected") for the two cases that must NOT reconnect:
+ * no stored config, or an operator-initiated disconnect (flag set). On a
+ * successful reconnect, re-fetches the connection from state so the caller
+ * operates on the fresh generation (Pitfall 6 — never reuse a pre-reconnect
+ * conn reference).
+ */
+function getOrReconnect(
+  state: McpClientManagerState,
+  deps: McpClientManagerDeps,
+  serverName: string,
+): Result<McpConnection, Error> | Promise<Result<McpConnection, Error>> {
+  const existing = state.connections.get(serverName);
+  if (existing) return ok(existing);
+  return reconnectLazily(state, deps, serverName);
+}
+
+async function reconnectLazily(
+  state: McpClientManagerState,
+  deps: McpClientManagerDeps,
+  serverName: string,
+): Promise<Result<McpConnection, Error>> {
+  const storedConfig = state.serverConfigs.get(serverName);
+  if (!storedConfig || state.userDisconnectedFlags.has(serverName)) {
+    return err(new Error(`MCP server "${serverName}" not connected`));
+  }
+  const reconnectResult = await reconnectServer(state, deps, serverName);
+  if (!reconnectResult.ok) {
+    return err(
+      new Error(`MCP server "${serverName}" idle-reconnect failed: ${reconnectResult.error.message}`),
+    );
+  }
+  const conn = state.connections.get(serverName);
+  return conn
+    ? ok(conn)
+    : err(new Error(`MCP server "${serverName}" reconnected but state missing — race`));
+}
 
 // ---------------------------------------------------------------------------
 // callTool (state-first)
@@ -52,11 +108,15 @@ export async function callTool(
   }
 
   const { serverName, toolName } = parsed;
-  const conn = state.connections.get(serverName);
 
-  if (!conn) {
-    return err(new Error(`MCP server "${serverName}" not connected`));
-  }
+  // Resolve the connection, lazily reconnecting an idle-evicted server
+  // (connection gone, config retained, flag unset). The happy path is
+  // synchronous (no extra await before the PQueue drain); only the
+  // missing-connection path returns a Promise.
+  const resolved = getOrReconnect(state, deps, serverName);
+  const connResult = resolved instanceof Promise ? await resolved : resolved;
+  if (!connResult.ok) return err(connResult.error);
+  const conn = connResult.value;
 
   if (conn.status !== "connected") {
     return err(
@@ -64,10 +124,51 @@ export async function callTool(
     );
   }
 
-  // Serialize through per-server concurrency queue
+  // Serialize through per-server concurrency queue.
+  // By this point getOrReconnect has returned a connected conn, so the common
+  // "never connected" framing of the old message was misleading on the
+  // lazy-reconnect path (the caller DID go through connect). A missing queue
+  // here means the queue was torn down concurrently (e.g. a racing
+  // disconnect/eviction) or PQueue setup failed during (re)connect — say so.
   const queue = state.callQueues.get(serverName);
   if (!queue) {
-    return err(new Error(`MCP server "${serverName}" has no call queue (not connected via connect())`));
+    return err(new Error(`MCP server "${serverName}" has no call queue — connection torn down or setup failed during (re)connect; retry`));
+  }
+
+  // Resolve per-server breaker overrides (?? preserves 0 → falls through to global).
+  const config = state.serverConfigs.get(serverName);
+  const breakerThreshold = config?.circuitBreakerThreshold ?? state.options.circuitBreakerThreshold;
+  const breakerCooldownMs = config?.circuitBreakerCooldownMs ?? state.options.circuitBreakerCooldownMs;
+
+  // Per-server circuit breaker pre-check.
+  //
+  // When status === "open" AND cooldown not elapsed, return a synthetic
+  // [server_unavailable] tool-call result IMMEDIATELY (no queue slot
+  // occupied). The bracketed-sentinel return is ok({ isError: true })
+  // -- NOT err(...) -- so the LLM sees a normal-shape tool result with
+  // a readable hint and can self-correct.
+  //
+  // When status === "open" AND cooldown elapsed, transition to "half-open"
+  // and fall through (one probe attempt allowed).
+  //
+  // Revisit if supportsParallelToolCalls lands -- today stdio concurrency = 1
+  // makes per-call breaker semantics straightforward.
+  const breaker = state.circuitBreakers.get(serverName) ?? { status: "closed" as const, failureCount: 0 };
+  if (breaker.status === "open") {
+    const elapsed = systemNowMs() - breaker.openedAtMs;
+    if (elapsed >= breakerCooldownMs) {
+      state.circuitBreakers.set(serverName, { status: "half-open", failureCount: breaker.failureCount });
+      // fall through -- half-open allows one probe
+    } else {
+      const remainingS = Math.ceil((breakerCooldownMs - elapsed) / 1000);
+      return ok({
+        content: [{
+          type: "text" as const,
+          text: `[server_unavailable] MCP server "${serverName}" circuit breaker is open (${remainingS}s until half-open probe).`,
+        }],
+        isError: true,
+      });
+    }
   }
 
   return queue.add(async () => {
@@ -112,6 +213,11 @@ export async function callTool(
 
       // Successful tool call resets consecutive error counter
       state.consecutiveErrors.set(serverName, 0);
+      // Pair breaker reset with consecutiveErrors reset.
+      state.circuitBreakers.set(serverName, { status: "closed", failureCount: 0 });
+      // A successful call is the idle-eviction activity signal — refresh
+      // lastActivityMs (NO-OP when no idle ticker is armed).
+      resetIdleActivity(state, serverName);
 
       return ok({
         content,
@@ -150,6 +256,33 @@ export async function callTool(
         }
       } else {
         logger.debug?.({ serverName, toolName }, "Tool call timed out, connection status preserved");
+      }
+
+      // Increment breaker on non-session-expired failures (includes timeouts +
+      // post-call generation mismatches). isSessionExpired is EXEMPT above --
+      // it routes through handleDisconnection and the reconnect-success block
+      // re-closes the breaker.
+      const cur = state.circuitBreakers.get(serverName) ?? { status: "closed" as const, failureCount: 0 };
+      const newCount = cur.failureCount + 1;
+      if (newCount >= breakerThreshold) {
+        state.circuitBreakers.set(serverName, {
+          status: "open",
+          failureCount: newCount,
+          openedAtMs: systemNowMs(),
+        });
+        logger.warn(
+          { serverName, toolName, failureCount: newCount, threshold: breakerThreshold, hint: "Circuit breaker tripped; tool calls will return [server_unavailable] for cooldown", errorKind: "dependency" as const },
+          "MCP circuit breaker opened",
+        );
+      } else if (cur.status === "open") {
+        // Half-open probe failed -> reopen with refreshed openedAtMs.
+        state.circuitBreakers.set(serverName, {
+          status: "open",
+          failureCount: newCount,
+          openedAtMs: systemNowMs(),
+        });
+      } else {
+        state.circuitBreakers.set(serverName, { status: cur.status, failureCount: newCount });
       }
 
       return err(error instanceof Error ? error : new Error(message));

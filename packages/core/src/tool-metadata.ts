@@ -77,6 +77,16 @@ export interface ComisToolMetadata {
   ) => string | undefined | Promise<string | undefined>;
   /** Capability metadata for tool-first routing (v1.1). */
   capability?: ToolCapabilityMetadata;
+  /** Per-tool MCP-export policy for the /mcp/v1 server endpoint.
+   *  - `"safe"`: exposed to any MCP client with scope `mcp-client` (no allowlist needed).
+   *  - `"permission-gated"`: exposed only when the per-client
+   *    `mcpClient.allowlist` includes this tool name.
+   *  - `"never-export"`: NEVER exposed via the MCP server endpoint.
+   *  - `undefined` ⇒ treated as `"never-export"` (default-deny safety net;
+   *    CI gate enforces that `undefined` is impossible in committed code).
+   *  Spread-merge in `registerToolMetadata` preserves this field across multiple
+   *  registrations for the same tool name. */
+  mcpExportPolicy?: "safe" | "permission-gated" | "never-export";
 }
 
 // ---------------------------------------------------------------------------

@@ -113,8 +113,8 @@ export interface DeliveryServiceDeps {
 /**
  * DeliveryService — outbound delivery + shutdown drain.
  *
- * Per AGENTS.md §2.3 (no speculative methods — add ops only when call sites
- * exist). `abortSignal` rides on a per-call options channel (consistent with
+ * No speculative methods — add ops only when call sites exist.
+ * `abortSignal` rides on a per-call options channel (consistent with
  * the standalone function's `deps.abortSignal`).
  */
 export interface DeliveryService {
@@ -623,7 +623,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         return { drained: 0, remaining: 0, durationMs: 0 };
       }
       // Race the in-flight settles against the deadline timer. `systemSetTimeout`
-      // is the sanctioned-root indirection for `setTimeout` per AGENTS.md §2.2
+      // is the sanctioned-root indirection for `setTimeout`
       // (the only sanctioned-root in `packages/core/src/runtime/system-time.ts`).
       await Promise.race([
         Promise.allSettled([...inFlightSends]),

@@ -12,7 +12,7 @@
  * Composite key (mtime + sha256) — both must match for a cache hit, otherwise
  * recompute. `version: 1` invalidates old caches when walker logic changes.
  *
- * The valid 9-member closed union mirrors AGENTS.md §2.1 (`config | network |
+ * The valid 9-member closed union mirrors the canonical ErrorKind union (`config | network |
  * auth | validation | timeout | resource | dependency | internal | platform`).
  *
  * @module
@@ -31,7 +31,7 @@ import { resolve, dirname } from "node:path";
 import * as ts from "typescript";
 
 /**
- * Closed `ErrorKind` union — exactly 10 members per AGENTS.md §2.1. Any
+ * Closed `ErrorKind` union — exactly 10 members. Any
  * literal in `errorKind:` position not in this set is reported as a
  * violation by the walker. `precondition` was added so RPC handlers can
  * throw `PreconditionError` and

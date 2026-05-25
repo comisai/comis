@@ -63,7 +63,7 @@ function makeBus(): TypedEventBus {
 // ---------------------------------------------------------------------------
 
 describe("attachTrajectoryToEventBus -- tool events", () => {
-  it("tool_started_maps_to_tool.call with toolName + toolCallId; correlation keys stripped from data (design §6.2)", () => {
+  it("tool_started_maps_to_tool.call with toolName + toolCallId; correlation keys stripped from data", () => {
     const bus = makeBus();
     const recorder = createCaptureRecorder();
     attachTrajectoryToEventBus({ eventBus: bus, recorder });
@@ -339,7 +339,7 @@ describe("attachTrajectoryToEventBus -- unsubscribe + filter", () => {
   });
 });
 
-describe("attachTrajectoryToEventBus -- envelope-only correlation invariant (design §6.2)", () => {
+describe("attachTrajectoryToEventBus -- envelope-only correlation invariant", () => {
   // Parameterized over EVERY mapped event name. Each emit carries the
   // four correlation keys (`traceId`, `agentId`, `sessionKey`, `sessionId`);
   // the bridge MUST strip them out before handing to `recordEvent`.

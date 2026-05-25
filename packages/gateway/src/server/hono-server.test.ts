@@ -148,6 +148,63 @@ describe("createGatewayServer", () => {
         "WebSocket connection rejected: invalid token",
       );
     });
+
+    // -----------------------------------------------------------------------
+    // mcp-client-scoped tokens MUST NOT open a WebSocket.
+    //
+    // The /ws upgrade only called tokenStore.verify; no scope check
+    // rejected mcp-client-only tokens. Such a token would successfully
+    // upgrade and then silently fail every RPC method call with
+    // -32603 "Insufficient scope" (because mcp-client satisfies neither
+    // "rpc" nor "admin"). Wasting a connection slot, a rate-limit bucket,
+    // and a WsConnectionManager entry; also a confusing debugging
+    // experience for the credential holder.
+    //
+    // Fix: reject upgrades whose token has the `mcp-client` scope (which
+    // is the SOLE scope of such tokens) at upgrade time, with a structured
+    // WARN log and a 4003 close code.
+    // -----------------------------------------------------------------------
+
+    it("logs warning when WebSocket connection comes from an mcp-client-scoped token", async () => {
+      const logger = createMockLogger();
+      const token = "y".repeat(64);
+      const handle = createGatewayServer(
+        createServerDeps({
+          logger,
+          tokenStore: createTokenStore([
+            {
+              id: "mcp-only",
+              secret: token,
+              scopes: ["mcp-client"],
+              mcpClient: {
+                allowlist: [],
+                sessionAllowlist: [],
+                toolRateLimit: {},
+              },
+            },
+          ]),
+        }),
+      );
+
+      await handle.app.request("/ws", {
+        headers: {
+          authorization: `Bearer ${token}`,
+          upgrade: "websocket",
+          connection: "upgrade",
+        },
+      });
+
+      // The warn log identifies the rejection cause + suggests the
+      // correct endpoint for mcp-client tokens.
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clientId: "mcp-only",
+          errorKind: "auth",
+          hint: expect.stringContaining("mcp-client"),
+        }),
+        expect.stringMatching(/mcp-client/i),
+      );
+    });
   });
 
   describe("global rate limiting", () => {

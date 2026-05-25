@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 63 SAFETY-07 — cross-origin redirect header scrub.
+ * Cross-origin redirect header scrub.
  *
  * Stands up two `node:http` servers on different 127.0.0.1 ports (different
  * hosts in URL.host sense, since URL.host includes the port) and asserts:
@@ -60,7 +60,7 @@ function shutdownServer(server: Server): Promise<void> {
   return new Promise((resolve) => server.close(() => resolve()));
 }
 
-describe("MCP redirect scrub — SAFETY-07 cross-host header policy", () => {
+describe("MCP redirect scrub — cross-host header policy", () => {
   let serverA: { server: Server; baseUrl: string; port: number } | undefined;
   let serverB: { server: Server; baseUrl: string; port: number } | undefined;
   let capturedA: CapturedRequest[];

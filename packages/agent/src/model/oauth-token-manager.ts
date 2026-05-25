@@ -312,7 +312,7 @@ type LocalRefreshOutcome = LocalRefreshSuccess | LocalRefreshFailure;
  * use pi-ai's wrapper (which works correctly for them — they don't need the
  * wire-body classification).
  *
- * Never throws — wraps network errors in {ok:false} per AGENTS.md §2.1.
+ * Never throws — wraps network errors in {ok:false}.
  */
 async function refreshOpenAICodexTokenLocal(
   profile: OAuthProfile,
@@ -534,8 +534,7 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
   // can already be executing inside `await credentialStore.list()` when
   // dispose() is called — clearing the timer does nothing for an
   // already-fired callback. Track the promise so dispose() can await it
-  // and avoid emitting events / clearing cache against a disposed manager
-  // (WR-04).
+  // and avoid emitting events / clearing cache against a disposed manager.
   let inflightReload: Promise<void> | undefined;
   // Snapshot of profileIds the manager has seen — used to diff against
   // store.list() after a watcher fire to emit auth:profile_added for new

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for `createSessionTrajectoryHandleRegistry` — the session-scoped
- * recorder lifecycle owner (design §6.4 + §6.5 + §6.8).
+ * recorder lifecycle owner.
  *
  * Behavior verified:
  *   - getOrCreate returns the SAME recorder across N calls for one key
@@ -186,7 +186,7 @@ describe("createSessionTrajectoryHandleRegistry — handle lifecycle", () => {
   });
 });
 
-describe("SessionTrajectoryHandleRegistry — session:started latch (design §6.4)", () => {
+describe("SessionTrajectoryHandleRegistry — session:started latch", () => {
   it("has_session_started_been_emitted_returns_false_before_first_mark", () => {
     const reg = createSessionTrajectoryHandleRegistry();
     const bus = new TypedEventBus();
@@ -240,7 +240,7 @@ describe("SessionTrajectoryHandleRegistry — session:started latch (design §6.
   });
 });
 
-describe("createSessionTrajectoryHandleRegistry — monotonic seq + single session.started/ended (design §6.4 + §6.8)", () => {
+describe("createSessionTrajectoryHandleRegistry — monotonic seq + single session.started/ended", () => {
   it("seq_is_monotonic_across_multiple_event_batches_on_same_recorder", async () => {
     // Simulate two consecutive execute() calls (turns) feeding events
     // into the SAME recorder instance — that's exactly what the

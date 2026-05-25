@@ -19,7 +19,7 @@
  *     `event: "config.observe"` events (currently unused by the writer
  *     hooks, but the file format reserves space for it).
  *
- * Both shapes match the design §9.2 record schemas verbatim:
+ * Both shapes match the record schemas verbatim:
  *
  *   - `event` is the discriminant ("config.write" | "config.observe"),
  *     NOT `phase` (renamed in the deviation G fix).
@@ -30,7 +30,7 @@
  *     show, downstream forensics) keep the call-site provenance.
  *   - Stat fields are FLAT (previousDev / previousIno / previousMode /
  *     previousNlink / previousUid / previousGid plus next* mirrors).
- *     `dev` and `ino` are `string | null` per design §9.2 — POSIX
+ *     `dev` and `ino` are `string | null` — POSIX
  *     `stat.st_dev` and `st_ino` can exceed JS safe-integer range on
  *     some filesystems, so they're stringified.
  *   - `tsMs` is dropped. Filtering by time uses `Date.parse(ts)`.
@@ -58,7 +58,7 @@ const SuspiciousFlagSchema = z.enum([
 export type SuspiciousFlag = z.infer<typeof SuspiciousFlagSchema>;
 
 /**
- * Outcome of the config-write attempt (design §9.2).
+ * Outcome of the config-write attempt.
  *
  *   - `rename`        — atomic-write tmp + rename succeeded.
  *   - `copy-fallback` — atomic rename failed; the writer fell back to
@@ -89,7 +89,7 @@ export type ConfigWriteSource = string;
 
 /**
  * File-stat snapshot — POSIX fields with `dev`/`ino` stringified for
- * JS-safe-integer overflow protection (design §9.2). The internal
+ * JS-safe-integer overflow protection. The internal
  * `snapshotStat` helper in `append.ts` returns this shape and the
  * `finalize`/`createBase` helpers flatten it into the record's flat
  * fields (no nested object on disk). Kept as a plain type interface
@@ -106,7 +106,7 @@ export interface FileStatSnapshot {
 }
 
 /**
- * Full `ConfigWriteAuditRecord` shape (design §9.2).
+ * Full `ConfigWriteAuditRecord` shape.
  *
  * Field groups:
  *   - **Identity** — `traceSchema`, `schemaVersion`, `event`,
@@ -179,9 +179,9 @@ export const ConfigWriteAuditRecordSchema = z.object({
 export type ConfigWriteAuditRecord = z.infer<typeof ConfigWriteAuditRecordSchema>;
 
 /**
- * `ConfigObserveAuditRecord` — read-side audit shape (design §9.2).
+ * `ConfigObserveAuditRecord` — read-side audit shape.
  *
- * Matches design §9.2 verbatim. Field groups:
+ * Field groups:
  *   - **Identity + caller provenance** — `traceSchema`,
  *     `schemaVersion`, `ts`, `source`, `event`, `phase`, `configPath`,
  *     `callerSource`, `pid`, `ppid`, `argv`, `cwd`, `execArgv`,
@@ -195,15 +195,14 @@ export type ConfigWriteAuditRecord = z.infer<typeof ConfigWriteAuditRecordSchema
  *     `backupMtimeMs`. All nullable when no backup sibling.
  *   - **Recovery quartet** — `clobberedPath`, `restoredFromBackup`,
  *     `restoredBackupPath`, `restoreErrorCode`, `restoreErrorMessage`.
- *     Quintet by count; mismatched names follow design §9.2's
- *     "recovery state" group.
+ *     Quintet by count; grouped as the "recovery state" fields.
  *   - **Heuristics** — `suspicious` array.
  *
- * No-BC policy (AGENTS.md §2.9): every §9.2 field is REQUIRED on the
- * schema. The sole producer (`createConfigObserveAuditRecord` in
- * `append-observe.ts`) is updated in lock-step to populate them.
- * On-disk records written by prior versions of the producer will not
- * re-parse — this is the intentional forward-only contract change.
+ * Every field is REQUIRED on the schema. The sole producer
+ * (`createConfigObserveAuditRecord` in `append-observe.ts`) is updated in
+ * lock-step to populate them. On-disk records written by prior versions of
+ * the producer will not re-parse — this is the intentional forward-only
+ * contract change.
  */
 export const ConfigObserveAuditRecordSchema = z.object({
   traceSchema: z.literal("comis-config-audit"),
@@ -223,7 +222,7 @@ export const ConfigObserveAuditRecordSchema = z.object({
   execArgv: z.array(z.string()),
   watchMode: z.boolean(),
 
-  // §9.2 file-state — required, nullable when exists:false.
+  // File-state fields — required, nullable when exists:false.
   exists: z.boolean(),
   valid: z.boolean(),
   hash: z.string().nullable(),
@@ -237,17 +236,17 @@ export const ConfigObserveAuditRecordSchema = z.object({
   uid: z.number().int().nullable(),
   gid: z.number().int().nullable(),
 
-  // §9.2 LKG triple — required, nullable when no LKG sibling.
+  // LKG triple — required, nullable when no LKG sibling.
   lastKnownGoodHash: z.string().nullable(),
   lastKnownGoodBytes: z.number().int().nonnegative().nullable(),
   lastKnownGoodMtimeMs: z.number().nullable(),
 
-  // §9.2 backup triple — required, nullable when no backup sibling.
+  // Backup triple — required, nullable when no backup sibling.
   backupHash: z.string().nullable(),
   backupBytes: z.number().int().nonnegative().nullable(),
   backupMtimeMs: z.number().nullable(),
 
-  // §9.2 recovery state — required.
+  // Recovery state — required.
   clobberedPath: z.string().nullable(),
   restoredFromBackup: z.boolean(),
   restoredBackupPath: z.string().nullable(),

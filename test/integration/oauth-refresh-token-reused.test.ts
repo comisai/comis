@@ -21,7 +21,7 @@
  *   5. CRITICAL ordering invariant — refresh_token_reused beats
  *      invalid_grant when BOTH substrings are present.
  *
- * Per AGENTS.md §2.5: imports from dist/ — requires `pnpm build` first.
+ * Imports from dist/ — requires `pnpm build` first.
  * Runs sequentially (maxConcurrency: 1) per test/vitest.config.ts.
  *
  * Run with: `pnpm build && pnpm test:integration -- oauth-refresh-token-reused`.
@@ -233,10 +233,10 @@ describe("refresh-failure error classification", () => {
       });
       expect(events[0]!.hint).toContain("re-login required");
 
-      // (b) WARN log captured with module=oauth-token-manager. Per
-      //     AGENTS.md §2.7, Pino `errorKind` is a closed union, so the WARN
-      //     payload's `errorKind` is the literal `"auth"`. The OAuth domain
-      //     discriminator flows via the event payload and OAuthError instead.
+      // (b) WARN log captured with module=oauth-token-manager. Pino `errorKind`
+      //     is a closed union, so the WARN payload's `errorKind` is the literal
+      //     `"auth"`. The OAuth domain discriminator flows via the event payload
+      //     and OAuthError instead.
       const warnCalls = logger._calls("warn");
       const refreshWarn = warnCalls.find(
         (c) => c.payload?.submodule === "oauth-token-manager",

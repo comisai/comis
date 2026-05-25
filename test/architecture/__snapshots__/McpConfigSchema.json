@@ -6,97 +6,7 @@
       "default": [],
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "pattern": "^[a-zA-Z0-9_-]+$"
-          },
-          "transport": {
-            "type": "string",
-            "enum": [
-              "stdio",
-              "sse",
-              "http"
-            ]
-          },
-          "command": {
-            "type": "string",
-            "minLength": 1
-          },
-          "args": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "url": {
-            "type": "string",
-            "format": "uri"
-          },
-          "env": {
-            "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {
-              "type": "string"
-            }
-          },
-          "cwd": {
-            "type": "string",
-            "minLength": 1
-          },
-          "enabled": {
-            "default": true,
-            "type": "boolean"
-          },
-          "headers": {
-            "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {
-              "type": "string"
-            }
-          },
-          "maxConcurrency": {
-            "type": "integer",
-            "exclusiveMinimum": 0,
-            "maximum": 9007199254740991
-          },
-          "disablePlaintextSecretCheck": {
-            "type": "boolean"
-          },
-          "rlimits": {
-            "type": "object",
-            "properties": {
-              "as": {
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "nofile": {
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "cpu": {
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              }
-            },
-            "additionalProperties": false
-          }
-        },
-        "required": [
-          "name",
-          "transport",
-          "enabled"
-        ],
-        "additionalProperties": false
+        "$ref": "#/$defs/__schema0"
       }
     },
     "callToolTimeoutMs": {
@@ -134,6 +44,24 @@
       "type": "integer",
       "exclusiveMinimum": 0,
       "maximum": 9007199254740991
+    },
+    "keepaliveIntervalMs": {
+      "default": 180000,
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "circuitBreakerThreshold": {
+      "default": 3,
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "circuitBreakerCooldownMs": {
+      "default": 60000,
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
     }
   },
   "required": [
@@ -143,7 +71,181 @@
     "httpDefaultConcurrency",
     "safetyAllowedEnvKeys",
     "osvCheckEnabled",
-    "osvCacheTtlMs"
+    "osvCacheTtlMs",
+    "keepaliveIntervalMs",
+    "circuitBreakerThreshold",
+    "circuitBreakerCooldownMs"
   ],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "transport": {
+          "type": "string",
+          "enum": [
+            "stdio",
+            "sse",
+            "http"
+          ]
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "env": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "maxConcurrency": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "disablePlaintextSecretCheck": {
+          "type": "boolean"
+        },
+        "rlimits": {
+          "type": "object",
+          "properties": {
+            "as": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "nofile": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "cpu": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        },
+        "keepaliveIntervalMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "circuitBreakerThreshold": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "circuitBreakerCooldownMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "toolAllowlist": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "toolBlocklist": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "idleTtlMs": {
+          "default": 0,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "enableResources": {
+          "type": "boolean"
+        },
+        "enablePrompts": {
+          "type": "boolean"
+        },
+        "supportsParallelToolCalls": {
+          "type": "boolean"
+        },
+        "auth": {
+          "type": "string",
+          "enum": [
+            "none",
+            "bearer",
+            "oauth"
+          ]
+        },
+        "oauth": {
+          "type": "object",
+          "properties": {
+            "authorizationEndpoint": {
+              "type": "string",
+              "format": "uri"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "stripeAccount": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "_bundleSource": {
+          "type": "string",
+          "minLength": 1
+        },
+        "_bundleArchive": {
+          "$ref": "#/$defs/__schema0"
+        }
+      },
+      "required": [
+        "name",
+        "transport",
+        "enabled",
+        "idleTtlMs"
+      ],
+      "additionalProperties": false
+    }
+  }
 }

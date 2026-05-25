@@ -3,11 +3,11 @@
  * Per-package README forbidden-substring source-grep.
  *
  * Per-package READMEs must not advertise upstream-dependency relationships
- * forbidden by the target package graph (AGENTS.md §1 Package Map). The
- * substring map below is derived verbatim from "Must NOT depend on"
- * columns. Each entry is the `@comis/<name>` form to avoid false-positives
- * on legitimate domain terms ("the cron scheduler" must NOT match
- * `scheduler` in agent README).
+ * forbidden by the target package graph. The substring map below is derived
+ * verbatim from "Must NOT depend on" columns in the package graph. Each
+ * entry is the `@comis/<name>` form to avoid false-positives on legitimate
+ * domain terms ("the cron scheduler" must NOT match `scheduler` in agent
+ * README).
  *
  * Escape hatch: regions wrapped in `<!-- arch-historical --> ... <!-- /arch-historical -->`
  * HTML comments are stripped before checking. Use sparingly for legitimate
@@ -24,8 +24,7 @@ import { formatViolations } from "../support/architecture-helpers.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
 
-// Derived VERBATIM from the package graph "Must NOT depend on" columns
-// (see AGENTS.md §1 Package Map).
+// Derived VERBATIM from the package graph "Must NOT depend on" columns.
 const FORBIDDEN_SUBSTRING_MAP: Record<string, readonly string[]> = {
   "packages/agent/README.md": [
     "@comis/infra", "@comis/memory", "@comis/scheduler", "@comis/channels",
@@ -125,7 +124,6 @@ describe("readme-no-forbidden-deps", () => {
           })),
           suggestedFix:
             'Remove the forbidden mention OR wrap a legitimate historical reference in <!-- arch-historical --> ... <!-- /arch-historical --> (use sparingly). Forbidden substrings are derived verbatim from the package graph "Must NOT depend on" columns.',
-          designRef: "AGENTS.md §1 Package Map",
         }),
       ).toEqual([]);
     });

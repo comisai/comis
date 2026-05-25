@@ -178,6 +178,9 @@ vi.mock("@comis/core", () => ({
   tryGetContext: mockTryGetContext,
   parseFormattedSessionKey: mockParseFormattedSessionKey,
   sanitizeLogString: mockSanitizeLogString,
+  // getMcpTools stamps the truncation event timestamp via systemNowMs.
+  // Deterministic stub so the emit closure has a numeric clock under test.
+  systemNowMs: () => 1_700_000_000_000,
   safePath: (...segments: string[]) => segments.join("/"),
   // Trivial stub for session-lifetime tracker resolution path. Real impl lives
   // in @comis/core/session-key; this test only needs a deterministic string.
@@ -574,6 +577,71 @@ describe("setupTools", () => {
     mockAssembleToolPipeline.mock.calls[0][0].platformTools();
 
     expect(mockMcpToolsToAgentTools).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // 6b. getMcpTools wires an onResultTruncated closure that emits the
+  //     typed mcp:server:result_truncated event with a timestamp.
+  // -------------------------------------------------------------------------
+
+  it("getMcpTools passes an onResultTruncated closure that emits mcp:server:result_truncated with timestamp", async () => {
+    const mcpClientManager = {
+      getTools: vi.fn(() => [{ name: "mcp-tool-1", inputSchema: {} }]),
+      callTool: vi.fn(),
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      disconnectAll: vi.fn(),
+      getConnection: vi.fn(),
+      getAllConnections: vi.fn(),
+    };
+    const eventBus = createMockEventBus();
+    const emitSpy = vi.spyOn(eventBus, "emit");
+
+    const deps = createMinimalDeps({
+      mcpClientManager: mcpClientManager as any,
+      eventBus: eventBus as any,
+    });
+    const setupTools = await getSetupTools();
+    const { assembleToolsForAgent } = setupTools(deps);
+    await assembleToolsForAgent("agent-1");
+
+    // Drive getMcpTools (invoked lazily inside platformTools()).
+    mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+
+    expect(mockMcpToolsToAgentTools).toHaveBeenCalled();
+    // The onResultTruncated closure is the 7th positional arg (index 6),
+    // appended after the serverFiltersFn closure (index 5).
+    const call = mockMcpToolsToAgentTools.mock.calls.at(-1)!;
+    const onResultTruncated = call[6] as
+      | ((e: {
+          server: string;
+          tool: string;
+          originalSize: number;
+          truncatedSize: number;
+          traceId: string;
+        }) => void)
+      | undefined;
+    expect(typeof onResultTruncated).toBe("function");
+
+    onResultTruncated!({
+      server: "db-server",
+      tool: "search",
+      originalSize: 60_000,
+      truncatedSize: 50_000,
+      traceId: "trace-xyz",
+    });
+
+    expect(emitSpy).toHaveBeenCalledWith(
+      "mcp:server:result_truncated",
+      expect.objectContaining({
+        server: "db-server",
+        tool: "search",
+        originalSize: 60_000,
+        truncatedSize: 50_000,
+        traceId: "trace-xyz",
+        timestamp: expect.any(Number),
+      }),
+    );
   });
 
   // -------------------------------------------------------------------------

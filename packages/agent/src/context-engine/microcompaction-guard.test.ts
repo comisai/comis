@@ -775,7 +775,7 @@ describe("getInlineThreshold", () => {
 
 });
 
-describe("microcompaction-guard honors design §1.4 file/dir mode invariants", () => {
+describe("microcompaction-guard file/dir mode invariants", () => {
   let tempDir: string;
   let logger: ReturnType<typeof createMockLogger>;
 

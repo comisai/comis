@@ -5,9 +5,8 @@
  * Forbids direct calls to `Date.now()`, `new Date(...)`, `process.env[...]`,
  * `setTimeout(...)`, `setInterval(...)`, `clearTimeout(...)`,
  * `clearInterval(...)` in production source under `packages/*\/src/`
- * outside the bootstrap/runtime adapter allowlist (AGENTS.md §2.2
- * sanctioned paths — see `BOOTSTRAP_PATH_PATTERNS` in
- * test/support/globals-classifier.ts).
+ * outside the bootstrap/runtime adapter allowlist (see `BOOTSTRAP_PATH_PATTERNS` in
+ * test/support/globals-classifier.ts for the sanctioned paths).
  *
  * The classifier (`classifyGlobals`) is AST + TypeChecker-aware: it skips
  * JSDoc / type-only imports / string literals / `*.generated.ts` and
