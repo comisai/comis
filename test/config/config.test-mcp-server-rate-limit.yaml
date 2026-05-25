@@ -1,12 +1,12 @@
-# Phase 69 Plan 04 -- MCP server rate-limit stress-test config (port 8570).
+# MCP server rate-limit stress-test config (port 8570).
 #
 # Single mcp-client token with allowlist = ["memory_search"] and
 # default rate-limit (no toolRateLimit override). The dispatcher uses the
 # 30/min/tool default; the stress test fires 100 calls -> ~30 succeed,
 # ~70 return rate_limit_exceeded.
 #
-# Port 8570 to avoid conflicts with Plan 03's 8569 and Plan 04's
-# tools-call test's 8571 when running under vitest pool: "forks".
+# Port 8570 to avoid conflicts with other test ports when running under
+# vitest pool: "forks".
 
 tenantId: "test"
 logLevel: "info"

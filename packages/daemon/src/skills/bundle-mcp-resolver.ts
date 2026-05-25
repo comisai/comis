@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 68 BUNDLE-02/05/06 (Phase A): pure bundle resolver.
+ * Pure bundle resolver.
  *
  * Computes the next `integrations.mcp.servers` array + connect queue +
  * override archive given a skill's bundled `mcpServers` declaration and
  * the current user config. NO side effects: never writes files, never
  * spawns transports, never logs secret values (only structured field
- * names). The caller (Plan 04 skill-install hook OR Plan 05 boot
- * orchestrator) commits the Result via persistMcpServers + manager.connect.
+ * names). The caller (the skill-install hook OR the boot orchestrator)
+ * commits the Result via persistMcpServers + manager.connect.
  *
- * Atomic two-phase invariant (BUNDLE-06): every safety gate runs over
- * EVERY bundle entry BEFORE any caller-side commit. ANY gate failure
- * returns err and the caller MUST treat as zero-write zero-connect.
+ * Atomic two-phase invariant: every safety gate runs over EVERY bundle
+ * entry BEFORE any caller-side commit. ANY gate failure returns err and
+ * the caller MUST treat as zero-write zero-connect.
  *
- * The resolver is the transactional wrapper that Plan 04's install hook
- * and Plan 05's boot orchestrator commit-or-abort on.
+ * The resolver is the transactional wrapper that the install hook and
+ * the boot orchestrator commit-or-abort on.
  *
- * Idempotence (BUNDLE-03): identical input ⇒ identical output (sort by
- * name guarantees byte-equal JSON round-trip). Calling the resolver on
- * its own output is a fixed point.
+ * Idempotence: identical input ⇒ identical output (sort by name
+ * guarantees byte-equal JSON round-trip). Calling the resolver on its
+ * own output is a fixed point.
  *
  * Cycle-safety note: imports `looksLikePlaintextSecret` via the LEAF module
  * path (`../api/mcp-plaintext-secret.js`) rather than the `@comis/daemon`
@@ -46,12 +46,12 @@ import {
 export type { BundleError, ResolvedBundle };
 
 /**
- * Phase A resolver input.
+ * Resolver input.
  *
  * The caller assembles this from:
  *   - `skillId` ← skill being installed (becomes _bundleSource on entries).
  *   - `manifestMcpServers` ← post-preprocess array from
- *     SkillManifestSchema.parse (Plan 02 / 68-02 schema).
+ *     SkillManifestSchema.parse.
  *   - `currentServers` ← container.config.integrations.mcp.servers
  *     (or disk YAML on the boot path).
  *   - `force` ← `--force` flag from RPC params or `false` for boot.
@@ -75,7 +75,7 @@ export interface ResolveBundleInput {
   /** Pino logger; canonical fields; never logs secrets. */
   readonly logger: ComisLogger;
   /**
-   * CR-01 trust-root: the daemon-private installed-bundles state read from
+   * Trust-root: the daemon-private installed-bundles state read from
    * `${dataDir}/installed-bundles.json`. The resolver checks
    * `hasBundleRecord(state, skillId, name)` — NOT `existing._bundleSource`
    * — to decide whether an existing entry is one we previously installed
@@ -91,20 +91,20 @@ export interface ResolveBundleInput {
 }
 
 /**
- * Phase A pure resolver. Validates the manifest against the current
- * config and returns a Result the caller commits or aborts on.
+ * Pure resolver. Validates the manifest against the current config and
+ * returns a Result the caller commits or aborts on.
  *
- * Algorithm (steps map 1:1 to 68-RESEARCH.md Pattern 3, lines 411-477):
+ * Algorithm:
  *
  *   STEP 1 — Name-collision detection (synchronous, no network).
  *     Build Map<name, McpServerEntry> for O(N) lookup. Walk bundle entries:
  *       - No existing match ⇒ clean add (tag with _bundleSource).
  *       - Existing match with _bundleSource === input.skillId ⇒ idempotent
- *         replace-in-place (BUNDLE-03 invariant).
+ *         replace-in-place.
  *       - Existing match with different _bundleSource OR no _bundleSource:
- *         - force=false ⇒ accumulate to collision list (BUNDLE-05).
+ *         - force=false ⇒ accumulate to collision list.
  *         - force=true ⇒ bundle entry wins; existing entry archived to
- *           the new entry's _bundleArchive slot (CONTEXT.md decision #9).
+ *           the new entry's _bundleArchive slot.
  *
  *   STEP 2 — Plaintext-secret scan (synchronous, no network).
  *     For each bundle entry's env block (skipping entries with
@@ -157,7 +157,7 @@ export async function resolveBundle(
   }> = [];
   const newBundleEntries: McpServerEntry[] = [];
 
-  // CR-01: trust root for "did WE install this entry as a bundle?". An
+  // Trust root for "did WE install this entry as a bundle?". An
   // empty state (no file, malformed file, or absent from input) treats
   // EVERY existing entry as user-owned regardless of its _bundleSource
   // field — the fail-CLOSED stance that defeats provenance spoofing.
@@ -171,17 +171,17 @@ export async function resolveBundle(
       newBundleEntries.push({ ...bundleEntry, _bundleSource: input.skillId });
       continue;
     }
-    // CR-01: the trust-root check. The existing entry is "ours to replace"
+    // The trust-root check. The existing entry is "ours to replace"
     // ONLY IF the daemon's private state file records us (this skillId) as
     // having installed an entry with this name. The entry's own
     // `_bundleSource` field is informational — a hand-edited config.yaml
-    // could spoof it, and using it as the trust root opens the silent-
-    // replace privilege-escalation vector (CR-01).
+    // could spoof it, and using it as the trust root opens a silent-
+    // replace privilege-escalation vector.
     if (hasBundleRecord(installedBundleState, input.skillId, bundleEntry.name)) {
-      // BUNDLE-03 idempotent replace-in-place. The new entry's definition
+      // Idempotent replace-in-place. The new entry's definition
       // overwrites the existing slot; _bundleSource stays the same skill.
       // _bundleArchive (if any) is NOT carried forward — last-write-wins
-      // semantics for the archive slot (per 68-P10 / Pitfall 10).
+      // semantics for the archive slot.
       currentByName.set(bundleEntry.name, {
         ...bundleEntry,
         _bundleSource: input.skillId,
@@ -217,7 +217,7 @@ export async function resolveBundle(
   }
 
   if (collisionList.length > 0) {
-    // BUNDLE-05: reject WHOLE bundle on any collision when !force. Zero
+    // Reject the WHOLE bundle on any collision when !force. Zero
     // side effects — collisions are diagnostic only, no archive is set.
     input.logger.warn(
       {
@@ -238,7 +238,7 @@ export async function resolveBundle(
   //
   // Iterate input.manifestMcpServers (NOT currentByName) — the gate only
   // applies to entries the BUNDLE is contributing. Existing user entries
-  // were already gated by mcp.connect's pre-Zod check (Phase 63 SAFETY-03);
+  // were already gated by mcp.connect's pre-Zod check;
   // re-checking them here would surface a false-positive on already-
   // accepted operator-set values.
 
@@ -269,11 +269,11 @@ export async function resolveBundle(
   // -------------------------------------------------------------------------
   //
   // Gate is opt-out via osvCheckEnabled === false. Stops at the first
-  // malicious verdict; later entries are not queried (Phase A short-circuit).
+  // malicious verdict; later entries are not queried.
   // Non-stdio entries and stdio entries without a recognizable package
   // (extractMcpPackageName returns null for `node`, `python3`, etc.) skip
   // the OSV check — they fall through to mcp-client-connect's existing
-  // OSV gate at runtime (Phase B caller-side concern).
+  // OSV gate at runtime.
 
   if (input.osvCheckEnabled !== false) {
     for (const entry of input.manifestMcpServers) {

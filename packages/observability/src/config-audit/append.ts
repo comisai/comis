@@ -67,7 +67,7 @@ export const DEFAULT_KEEP_ROTATED = 5;
  * `callerSource` is the original `source` enum value (e.g.,
  * "last-known-good-save", "config-patch-rpc", "cli-sync-tooling") —
  * stored under `callerSource` on the persisted record so the design
- * §9.2 top-level `source` slot is reserved for the fixed literal
+ * top-level `source` slot is reserved for the fixed literal
  * `"config-io"`. Caller-site call patterns are unchanged.
  */
 export interface ConfigWriteAuditRecordBase {
@@ -116,7 +116,7 @@ export interface CreateBaseParams {
 /**
  * Stringify a POSIX dev/ino value. Both can be `bigint` on some
  * filesystems (POSIX `st_dev` and `st_ino` can exceed JS safe-integer
- * range); the design §9.2 contract for these two fields is
+ * range); the persisted-record contract for these two fields is
  * `string | null`. Returns `null` when the input is null/undefined.
  */
 function stringifyPosixId(v: number | bigint | undefined | null): string | null {
@@ -423,7 +423,7 @@ export class ConfigAuditAppendError extends Error {
  *
  *   - Existing-parent: `mkdirSync`'s `mode` arg is silently ignored
  *     on recursive EEXIST; the substrate's defensive chmod restores
- *     the §1.4 0o700 invariant, gated on a non-symlink `lstat`
+ *     the 0o700 file-mode invariant, gated on a non-symlink `lstat`
  *     (never chmod a symlinked dir — target may be shared state).
  *
  * The **file** itself is independently locked to `0o600` by the

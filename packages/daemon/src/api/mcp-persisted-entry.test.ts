@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for {@link buildPersistedMcpEntry} — the CR-01 single-source-of-truth
+ * Tests for {@link buildPersistedMcpEntry} — the single-source-of-truth
  * for which per-server fields survive an mcp.connect persist round-trip.
  *
- * Phase 66 (OAUTH-10/11) adds `auth`/`oauth`. They are config-only on the
- * mcp.connect path (no RPC params), so — exactly like the Phase 65/67
- * tool-filter / parallel-calls fields — their only source on a reconnect /
- * re-add is the input. Dropping them is a security regression (T-66-02): a
- * server silently loses its `auth:"oauth"` requirement (downgrade to no-auth).
- * These tests pin the conditional-spread so the regression cannot recur.
+ * The `auth`/`oauth` fields are config-only on the mcp.connect path (no RPC
+ * params), so — exactly like the tool-filter / parallel-calls fields — their
+ * only source on a reconnect / re-add is the input. Dropping them is a
+ * security regression: a server silently loses its `auth:"oauth"` requirement
+ * (downgrade to no-auth). These tests pin the conditional-spread so the
+ * regression cannot recur.
  *
  * @module
  */
@@ -27,7 +27,7 @@ const baseInput = {
   disablePlaintextSecretCheck: false,
 } as const;
 
-describe("buildPersistedMcpEntry — Phase 66 auth/oauth persistence (CR-01 / T-66-02)", () => {
+describe("buildPersistedMcpEntry — auth/oauth persistence", () => {
   it("persists auth AND oauth when supplied (not stripped)", () => {
     const entry = buildPersistedMcpEntry({
       ...baseInput,
@@ -58,8 +58,7 @@ describe("buildPersistedMcpEntry — Phase 66 auth/oauth persistence (CR-01 / T-
     });
 
     // Reconnect: mcp.connect has no auth/oauth params, so they arrive only via
-    // the prior persisted entry. The CR-01 invariant: a no-param reconnect must
-    // NOT strip them.
+    // the prior persisted entry. A no-param reconnect must NOT strip them.
     const second = buildPersistedMcpEntry({
       serverName: first.name,
       transport: first.transport,
@@ -98,17 +97,16 @@ describe("buildPersistedMcpEntry — Phase 66 auth/oauth persistence (CR-01 / T-
 });
 
 // ---------------------------------------------------------------------------
-// Phase 68 BUNDLE-04: _bundleSource + _bundleArchive forwarding.
+// _bundleSource + _bundleArchive forwarding.
 //
 // Differs from the OAuth fields above: bundle markers are INPUT-DRIVEN (not
 // persistedEntry-fallback). A no-marker reconnect from a manual mcp.connect
 // explicitly clears them so the audit record reflects operator-intent
-// override. Closes the Assumption A6 gap from 68-RESEARCH.md / Plan-Time
-// Risk 2 (without forwarding, _bundleSource never survives mcp.connect ->
-// restart, breaking the resolver-driven provenance contract).
+// override. Without forwarding, _bundleSource never survives mcp.connect ->
+// restart, breaking the resolver-driven provenance contract.
 // ---------------------------------------------------------------------------
 
-describe("buildPersistedMcpEntry — Phase 68 _bundleSource + _bundleArchive forwarding (BUNDLE-04 persist half)", () => {
+describe("buildPersistedMcpEntry — _bundleSource + _bundleArchive forwarding", () => {
   it("forwards _bundleSource verbatim from input to output", () => {
     const entry = buildPersistedMcpEntry({
       serverName: "x",
@@ -157,7 +155,7 @@ describe("buildPersistedMcpEntry — Phase 68 _bundleSource + _bundleArchive for
   });
 
   it("INPUT-DRIVEN semantic: does NOT preserve _bundleSource from persistedEntry when input._bundleSource is undefined (operator override clears the marker)", () => {
-    // The deliberate semantic: bundle markers are NOT in the CR-01 fallback set.
+    // The deliberate semantic: bundle markers are NOT in the fallback set.
     // A manual `mcp.connect` from the operator HAS overridden the bundle entry --
     // the persistedEntry's _bundleSource MUST be cleared so the audit reflects
     // operator intent. This contrasts with toolAllowlist/auth/oauth/rlimits

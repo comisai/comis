@@ -2,7 +2,7 @@
 /**
  * Design ↔ schema default parity for diagnostics.* fields.
  *
- * Asserts field-by-field default parity between the §12 Zod block in the
+ * Asserts field-by-field default parity between the Zod block in the
  * observability-stack design notes and the runtime
  * `DiagnosticsConfigSchema` in
  * `packages/core/src/config/schema-diagnostics.ts`.
@@ -17,7 +17,7 @@
  * threat-model mitigation).
  *
  * The 10 fields covered are exactly the 10 documented defaults in
- * design §12:
+ * diagnostics defaults:
  *   trajectory:  enabled, maxFileBytes
  *   cacheTrace:  enabled, maxFileBytes, includeMessages, includePrompt, includeSystem
  *   configAudit: enabled, rotateAtBytes, keepRotated
@@ -28,7 +28,7 @@ import { describe, it, expect } from "vitest";
 import { AppConfigSchema } from "@comis/core";
 
 /**
- * Expected defaults — must match the observability-stack design notes §12.
+ * Expected defaults — must match the observability-stack design notes.
  *
  * The DESIGN doc is the contract; this table mirrors it. The runtime
  * `DiagnosticsConfigSchema` (in
@@ -36,7 +36,7 @@ import { AppConfigSchema } from "@comis/core";
  * implementation; this test asserts the two stay in sync.
  *
  * Any change to a default value here MUST be accompanied by the same
- * change to the design doc §12 Zod block. The CHANGELOG entry must
+ * change to the design doc Zod block. The CHANGELOG entry must
  * surface the operator-visible change.
  *
  * Byte sizes use the same `N * 1024 * 1024` shape as the runtime

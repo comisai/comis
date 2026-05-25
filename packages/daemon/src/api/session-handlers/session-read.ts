@@ -82,14 +82,13 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 20;
 
-      // Phase 69 SERVE-06: snapshot the DeliveryQueuePort once per request
-      // and build the join keyset BEFORE the message loop. The key is
-      // (channelId, text) -- the queue exposes channelType + channelId +
-      // tenantId + text; we only need channelId + text because two queue
-      // entries from different channel adapters with the same channelId
-      // would be a deployment conflict the operator must avoid. The
-      // sessionKey itself carries channelId at parts[2] (after tenant +
-      // userId); we extract it once below.
+      // Snapshot the DeliveryQueuePort once per request and build the join
+      // keyset BEFORE the message loop. The key is (channelId, text) -- the
+      // queue exposes channelType + channelId + tenantId + text; we only need
+      // channelId + text because two queue entries from different channel
+      // adapters with the same channelId would be a deployment conflict the
+      // operator must avoid. The sessionKey itself carries channelId at
+      // parts[2] (after tenant + userId); we extract it once below.
       const pendingKeySet = await loadPendingKeySet(deps.deliveryQueue);
 
       let data = deps.sessionStore.loadByFormattedKey(sessionKey);
@@ -120,11 +119,10 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
         : parsed?.guildId
           ? "group"
           : "dm";
-      // Phase 69 SERVE-06: channelId for the deliveryStatus join. The
-      // DeliveryQueueEntry carries channelType + channelId + text; we match
-      // on (channelId, text) below because two queue entries for distinct
-      // channel adapters with the same channelId is a deployment conflict
-      // operators avoid by construction.
+      // ChannelId for the deliveryStatus join. The DeliveryQueueEntry carries
+      // channelType + channelId + text; we match on (channelId, text) below
+      // because two queue entries for distinct channel adapters with the same
+      // channelId is a deployment conflict operators avoid by construction.
       const sessionChannelId = parsed?.channelId ?? "";
 
       // Pre-scan: resolve gateway attachment tool calls so we can inject
@@ -235,12 +233,12 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
           }
         }
         if (text) {
-          // Phase 69 SERVE-06: deliveryStatus computation. Inbound user
-          // messages were received from the channel -- always confirmed.
-          // Outbound assistant messages are confirmed unless the delivery
-          // queue still has a pending/in_flight/failed entry for this
-          // text on the session's channelId (queue's `pendingEntries()`
-          // returns only NON-delivered, NON-expired rows scheduled <= now).
+          // DeliveryStatus computation. Inbound user messages were received
+          // from the channel -- always confirmed. Outbound assistant messages
+          // are confirmed unless the delivery queue still has a
+          // pending/in_flight/failed entry for this text on the session's
+          // channelId (queue's `pendingEntries()` returns only NON-delivered,
+          // NON-expired rows scheduled <= now).
           const deliveryStatus: "confirmed" | "pending" =
             role === "user"
               ? "confirmed"
@@ -333,7 +331,7 @@ export function bindSessionReadHandlers(deps: SessionHandlerDeps): Record<string
 }
 
 // ---------------------------------------------------------------------------
-// Phase 69 SERVE-06 -- deliveryStatus join helpers
+// DeliveryStatus join helpers
 // ---------------------------------------------------------------------------
 
 /** Stable join key: `${channelId}::${text}`. The double-colon separator is
@@ -357,9 +355,9 @@ function makePendingKey(channelId: string, text: string): string {
  *     session.history call -- the join is a defense-in-depth signal, not
  *     a correctness requirement of session.history itself).
  *
- * Per PLAN.md Step 2: if no message-id link exists, an indirect match
- * (channelId + text) is acceptable for this plan; the limitation is
- * documented in code so v2.5 can revisit if a stable message id is added.
+ * Note: if no message-id link exists, an indirect match (channelId + text)
+ * is used; this limitation is documented so a future version can revisit if
+ * a stable message id is added.
  */
 async function loadPendingKeySet(
   queue: DeliveryQueuePort | undefined,

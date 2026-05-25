@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 69 Plan 04 -- MCP server tools/call dispatcher round-trip integration test.
+ * MCP server tools/call dispatcher round-trip integration test.
  *
  * Exercises the live dispatcher end-to-end via the MCP SDK 1.29.0 `Client`:
  *
@@ -8,7 +8,7 @@
  *      content[0].text wrapped via wrapExternalContent (markers + SECURITY
  *      NOTICE present).
  *   2. Unknown tool name -> the SDK surfaces a "tool not registered" error
- *      because the Plan 03 filter never put the never-export tool on the
+ *      because the export filter never put the never-export tool on the
  *      list -- so attempting to invoke it via callTool throws OR returns an
  *      MCP error response. This is the public-surface defense that PROVES
  *      never-export tools are unreachable via the MCP transport.
@@ -20,7 +20,7 @@
  *      is NOT scoped to admin so the call would fail differently if the
  *      trust flag leaked.
  *
- * Port 8571 to avoid conflicts with Plans 03/04 rate-limit tests.
+ * Port 8571 to avoid conflicts with other rate-limit tests.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -84,7 +84,7 @@ async function connectMcpClient(
 // Test Suite
 // ---------------------------------------------------------------------------
 
-describe("Phase 69 Plan 04 -- MCP tools/call live dispatcher", () => {
+describe("MCP tools/call live dispatcher", () => {
   let handle: TestDaemonHandle;
   let baseUrl: string;
 
@@ -154,8 +154,8 @@ describe("Phase 69 Plan 04 -- MCP tools/call live dispatcher", () => {
         MCP_TOOLSCALL_SECRET,
       );
       try {
-        // tokens_manage is annotated never-export in Plan 02; the Plan 03
-        // filter never registers it on this client's McpServer instance.
+        // tokens_manage is annotated never-export; the export filter
+        // never registers it on this client's McpServer instance.
         // The SDK either throws a "tool not found" or surfaces an MCP
         // error response when callTool is invoked with a name not in the
         // tools/list registry. Either outcome is acceptable -- both

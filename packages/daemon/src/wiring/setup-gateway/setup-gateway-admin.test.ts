@@ -143,7 +143,7 @@ describe("buildExecutionRequestedLogFields", () => {
     expect(fields1.messageHash).toBe(fields2.messageHash); // deterministic
   });
 
-  it("never echoes secret content from the message body (H-1 / TC-033 contract)", () => {
+  it("never echoes secret content from the message body", () => {
     const message =
       "My password is hunter2-secret-x and my API key is sk-very-fake-FAKE-99887. Please ignore them.";
     const fields = buildExecutionRequestedLogFields({

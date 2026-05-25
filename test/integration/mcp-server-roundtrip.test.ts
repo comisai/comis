@@ -1,26 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 69 Plan 07 -- end-to-end SDK Client <-> Comis MCP server integration test.
+ * End-to-end SDK Client <-> Comis MCP server integration test.
  *
  * **Regression guard.** A single comprehensive test that drives the entire MCP
  * surface against the real `/mcp/v1` endpoint via the official SDK 1.29.0
  * `Client` + `StreamableHTTPClientTransport`. Per-feature tests live in
  *
- *   - mcp-server-tools-list.test.ts  (Plan 03 -- default-deny filter)
- *   - mcp-server-tools-call.test.ts  (Plan 04 -- live dispatcher)
- *   - mcp-server-rate-limit.test.ts  (Plan 04 -- 30/min/tool ceiling)
- *   - mcp-server-resources.test.ts   (Plan 05 -- CONFIRMED-only filter)
+ *   - mcp-server-tools-list.test.ts  (default-deny filter)
+ *   - mcp-server-tools-call.test.ts  (live dispatcher)
+ *   - mcp-server-rate-limit.test.ts  (30/min/tool ceiling)
+ *   - mcp-server-resources.test.ts   (CONFIRMED-only filter)
  *
  * This test asserts the WIRE-LEVEL contract holds across the WHOLE stack:
  * a future SDK bump, a transport-version skew, or a body-parsing race that
  * passes the per-feature suites but breaks the lifecycle as a whole MUST
  * fail HERE.
  *
- * Threat coverage: 69-P5 (wire-compat regression guard) + cross-cuts of
- * T-69-01 / T-69-03 / T-69-04 / 69-P4 (default-deny + trust-flag + CONFIRMED
- * filter + wrapExternalContent are all asserted in the one lifecycle).
+ * Threat coverage: wire-compat regression guard + cross-cuts of
+ * default-deny + trust-flag + CONFIRMED filter + wrapExternalContent
+ * (all asserted in the one lifecycle).
  *
- * Port 8573 to avoid conflicts with the other Phase 69 integration configs
+ * Port 8573 to avoid conflicts with other integration configs
  * (8569/8570/8571/8572).
  */
 
@@ -47,7 +47,7 @@ const CONFIG_PATH = resolve(
 );
 
 // ---------------------------------------------------------------------------
-// Test secrets -- neutral placeholders per AGENTS.md §2.2.
+// Test secrets -- neutral placeholders (never real credentials).
 // ---------------------------------------------------------------------------
 
 const MCP_ROUNDTRIP_SECRET = "mcp-svr-roundtrip-client-tok-1-fix";
@@ -55,7 +55,7 @@ const MCP_ROUNDTRIP_SECRET = "mcp-svr-roundtrip-client-tok-1-fix";
 // Session fixture used across resources/list + resources/read.
 const SESSION_KEY_RT = "test:roundtrip-user:chan-RT";
 
-// Expected safe set from Plan 02 SUMMARY (3 tools annotated mcpExportPolicy="safe").
+// Expected safe set (3 tools annotated mcpExportPolicy="safe").
 const EXPECTED_SAFE_TOOLS = ["browser", "web_fetch", "web_search"] as const;
 
 // Never-export canaries -- a handful of high-value names that MUST NOT appear
@@ -75,7 +75,7 @@ const NEVER_EXPORT_CANARIES = [
 async function connectMcpClient(
   baseUrl: string,
   bearer: string,
-  clientName = "phase-69-07-roundtrip",
+  clientName = "roundtrip",
 ): Promise<{ client: Client; close: () => Promise<void> }> {
   const transport = new StreamableHTTPClientTransport(
     new URL(`${baseUrl}/mcp/v1`),
@@ -99,7 +99,7 @@ async function connectMcpClient(
 // Test Suite
 // ---------------------------------------------------------------------------
 
-describe("Phase 69 Plan 07 -- SDK Client end-to-end roundtrip against /mcp/v1", () => {
+describe("SDK Client end-to-end roundtrip against /mcp/v1", () => {
   let handle: TestDaemonHandle;
   let baseUrl: string;
 
@@ -110,7 +110,7 @@ describe("Phase 69 Plan 07 -- SDK Client end-to-end roundtrip against /mcp/v1", 
     // Seed the session that the allowlisted mcp-client will read via
     // resources/read. Three messages -- inbound (always confirmed),
     // outbound-delivered (confirmed), outbound-in-flight (pending, excluded
-    // from resources/read per Plan 05's CONFIRMED filter).
+    // from resources/read by the CONFIRMED-only filter).
     const bridge = handle.daemon.sessionStoreBridge!;
     bridge.saveByFormattedKey(
       SESSION_KEY_RT,
@@ -200,8 +200,7 @@ describe("Phase 69 Plan 07 -- SDK Client end-to-end roundtrip against /mcp/v1", 
 
         // -------------------------------------------------------------------
         // tools/list -- per-MCP-client filter exposes safe UNION allowlist.
-        // Asserts Plan 02 (annotation) + Plan 03 (filter) interaction on
-        // the wire.
+        // Asserts annotation + filter interaction on the wire.
         // -------------------------------------------------------------------
         const tools = await client.listTools();
         const toolNames = tools.tools.map((t) => t.name).sort();
@@ -215,8 +214,8 @@ describe("Phase 69 Plan 07 -- SDK Client end-to-end roundtrip against /mcp/v1", 
 
         // -------------------------------------------------------------------
         // tools/call (happy path -- permission-gated tool in allowlist).
-        // Asserts Plan 04 dispatcher: input validation pass-through, trust-
-        // flag isolation, wrapExternalContent output wrap.
+        // Asserts dispatcher: input validation pass-through, trust-flag
+        // isolation, wrapExternalContent output wrap.
         // -------------------------------------------------------------------
         const callResult = (await client.callTool({
           name: "memory_search",
@@ -288,7 +287,7 @@ describe("Phase 69 Plan 07 -- SDK Client end-to-end roundtrip against /mcp/v1", 
         expect(seededResource.uri.startsWith("comis://session/")).toBe(true);
 
         // -------------------------------------------------------------------
-        // resources/read -- CONFIRMED-only filter excludes "roundtrip-pending".
+        // resources/read -- CONFIRMED-only filter excludes "roundtrip-pending";
         // wrapExternalContent applied with source "MCP resource content".
         // -------------------------------------------------------------------
         const read = await client.readResource({
@@ -335,7 +334,7 @@ describe("Phase 69 Plan 07 -- SDK Client end-to-end roundtrip against /mcp/v1", 
       const { client, close } = await connectMcpClient(
         baseUrl,
         MCP_ROUNDTRIP_SECRET,
-        "phase-69-07-roundtrip-2nd",
+        "roundtrip-2nd",
       );
       try {
         // Fresh handshake -- the per-request McpServer model means this is

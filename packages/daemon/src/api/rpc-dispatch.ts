@@ -85,8 +85,8 @@ import { createProviderHandlers } from "./provider-handlers.js";
  * are migrated to `throw new PreconditionError(...)` /
  * `throw new ValidationError(...)`. The typed-error migration of the
  * remaining bare-Error handlers in packages/daemon/src/api/ is deferred.
- * The deletion is intentional per AGENTS.md §2.9 — keeping the substring
- * fallbacks was the BC shim; the migration is incremental hardening.
+ * The deletion is intentional — keeping the substring fallbacks was the BC
+ * shim; the migration is incremental hardening.
  */
 export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: string; level: "warn" | "error" } {
   // Typed errors: instanceof checks. Add new typed classes here as
@@ -267,8 +267,8 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       } : undefined,
     }),
     // mcp-oauth-handlers consumes WorkspaceApiDeps (mcpClientManager + logger +
-    // container for the persisted server config). Phase 66 OAUTH-10: oauth_login
-    // runs the server-side discovery + loopback callback + SDK auth() flow (via
+    // container for the persisted server config). oauth_login runs the
+    // server-side discovery + loopback callback + SDK auth() flow (via
     // the @comis/skills runOauthLogin orchestrator — the daemon has no direct SDK
     // dep) and returns the authUrl for the CLI to open; oauth_logout clears the
     // three token files. The browser is NEVER launched daemon-side (the injected

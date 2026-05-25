@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * GLOBAL prompts utility platform tools (Phase 65 OPUX-10).
+ * GLOBAL prompts utility platform tools.
  *
  * Two tools — `list_prompts` and `get_prompt` — each take a required
  * `server: string` parameter naming the connected MCP server to query (and

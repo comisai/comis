@@ -77,7 +77,7 @@ export function atomicWriteFile(
   const tempPath = configPath + TEMP_SUFFIX;
   let fd: number | undefined;
 
-  // Phase 0: capture original ownership for preservation. If the file
+  // Step 0: capture original ownership for preservation. If the file
   // doesn't exist yet (first-time write), there's nothing to preserve and
   // the new file inherits the caller's uid:gid — which is the correct
   // behavior for a brand-new config.
@@ -91,7 +91,7 @@ export function atomicWriteFile(
     // ENOENT — first-time write, no ownership to preserve.
   }
 
-  // Phase 1: temp file open + write + fsync.
+  // Step 1: temp file open + write + fsync.
   try {
     fd = fs.openSync(tempPath, "w", 0o600);
     fs.writeSync(fd, content);
@@ -112,14 +112,14 @@ export function atomicWriteFile(
     return err({ code: "WRITE_FAILED", path: tempPath, cause: String(e) });
   }
 
-  // Phase 2: close the temp fd.
+  // Step 2: close the temp fd.
   try {
     fs.closeSync(fd);
   } catch (e) {
     return err({ code: "WRITE_FAILED", path: tempPath, cause: String(e) });
   }
 
-  // Phase 3: atomic rename over the target.
+  // Step 3: atomic rename over the target.
   try {
     fs.renameSync(tempPath, configPath);
   } catch (e) {
@@ -131,7 +131,7 @@ export function atomicWriteFile(
     });
   }
 
-  // Phase 4: fsync the parent directory so the rename is itself crash-safe
+  // Step 4: fsync the parent directory so the rename is itself crash-safe
   // on Linux ext4. macOS may not support directory fsync (EINVAL / ENOTSUP)
   // — swallow the error, this is a Linux-durability nice-to-have.
   try {
@@ -145,7 +145,7 @@ export function atomicWriteFile(
     // Non-fatal: macOS dev environments may reject dir-fd fsync.
   }
 
-  // Phase 5: ownership preservation. The rename creates a file owned
+  // Step 5: ownership preservation. The rename creates a file owned
   // by the calling process; if the original was owned by a different
   // uid:gid (e.g. CLI run as root, daemon runs as `comis`), chown
   // back to the original owner. Skip the chown when uid:gid already

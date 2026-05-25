@@ -40,22 +40,22 @@ import { buildRpcAdapterDeps, buildDynamicRouterAndRegister } from "./setup-gate
 import { buildMcpServerForClient } from "../../api/mcp-server-handlers.js";
 
 // ---------------------------------------------------------------------------
-// Phase 69 Plan 04 -- MCP server dispatch constants
+// MCP server dispatch constants
 // ---------------------------------------------------------------------------
 
 /**
- * Default per-MCP-client per-tool minute-bucket rate-limit ceiling. Per
- * CONTEXT.md §1.7 (Phase 69 SERVE-07), 30 calls/min/tool. Per-client
- * override via `gateway.tokens[].mcpClient.toolRateLimit[toolName]`.
+ * Default per-MCP-client per-tool minute-bucket rate-limit ceiling.
+ * 30 calls/min/tool. Per-client override via
+ * `gateway.tokens[].mcpClient.toolRateLimit[toolName]`.
  */
 const MCP_DEFAULT_TOOL_RATE_LIMIT = 30;
 
 /**
- * Default page size for `resources/read` session.history snapshots (Plan 05
- * SERVE-06). A single bounded page is returned; sessions exceeding this cap
- * surface the last N CONFIRMED messages. The MCP spec allows resources to
- * change between reads (re-reading may return additional messages as
- * outbound delivery completes) -- the bounded page keeps payloads small.
+ * Default page size for `resources/read` session.history snapshots. A single
+ * bounded page is returned; sessions exceeding this cap surface the last N
+ * CONFIRMED messages. The MCP spec allows resources to change between reads
+ * (re-reading may return additional messages as outbound delivery completes)
+ * -- the bounded page keeps payloads small.
  */
 const MCP_RESOURCE_READ_LIMIT = 1000;
 
@@ -66,9 +66,9 @@ const MCP_RESOURCE_READ_LIMIT = 1000;
  * entries. The default branch returns the tool name as-is.
  *
  * The mapping is intentionally permissive (returns the tool name when not
- * mapped) -- the security boundary is enforced UPSTREAM by Plan 02's
- * mcpExportPolicy classification + Plan 03's registration filter + Plan
- * 04's policy re-check. A typo'd tool name reaches the daemon RPC
+ * mapped) -- the security boundary is enforced UPSTREAM by the
+ * mcpExportPolicy classification, the registration filter, and the
+ * policy re-check. A typo'd tool name reaches the daemon RPC
  * dispatcher which surfaces a structured "Unknown RPC method" error via
  * the dispatch_error wrapping in the callback.
  */
@@ -153,7 +153,7 @@ export interface GatewayDeps {
     } | undefined;
   }>;
   /** Pre-resolved gateway tokens with secrets (config -> env -> auto-generated).
-   *  Phase 69 SERVE-02: optional `mcpClient` block survives resolution so the
+   *  Optional `mcpClient` block survives resolution so the
    *  TokenStore can surface it on verified TokenClient instances. */
   resolvedTokens: Array<{
     id: string;
@@ -166,7 +166,7 @@ export interface GatewayDeps {
     };
   }>;
   /** Daemon package version (read once from packages/daemon/package.json at
-   *  bootstrap). Advertised as MCP `serverInfo.version` (Phase 69 SERVE-01). */
+   *  bootstrap). Advertised as MCP `serverInfo.version`. */
   daemonVersion: string;
   /** Set of suspended agent IDs for REST API status reporting. */
   suspendedAgents?: ReadonlySet<string>;
@@ -310,19 +310,18 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     gatewayLogger.debug({ webEnabled: false }, "Web dashboard disabled");
   }
 
-  // Phase 69 SERVE-01/04 + SERVE-07 -- per-client MCP server factory. Built
-  // once at gateway-setup time and threaded into createGatewayServer so the
-  // Hono app mounts POST /mcp/v1 between rate-limit and the notFound catch-
-  // all. The factory closes over `daemonVersion` (advertised as
-  // serverInfo.version), `gatewayLogger`, the trust-flag-isolated
-  // `daemonRpcForMcpClient` indirection, the default tool rate-limit
-  // ceiling, and the tool-name-to-RPC-method mapping.
+  // Per-client MCP server factory. Built once at gateway-setup time and
+  // threaded into createGatewayServer so the Hono app mounts POST /mcp/v1
+  // between rate-limit and the notFound catch-all. The factory closes over
+  // `daemonVersion` (advertised as serverInfo.version), `gatewayLogger`, the
+  // trust-flag-isolated `daemonRpcForMcpClient` indirection, the default tool
+  // rate-limit ceiling, and the tool-name-to-RPC-method mapping.
   //
   // SECURITY -- `daemonRpcForMcpClient` is the indirection that NEVER
   // injects `_trustLevel:"admin"`. The composition root wires it to the
   // SAME `rpcCall` the LLM-side uses, but WITHOUT spreading the admin
   // trust flag (compare to setup-gateway-api.ts:80-98 which DOES spread
-  // _trustLevel:"admin" for admin-scoped contracts). Even though Plan 02's
+  // _trustLevel:"admin" for admin-scoped contracts). Even though the
   // mcpExportPolicy classification of all admin tools as `never-export`
   // means admin RPC methods are never registered on the McpServer in the
   // first place, this indirection is the belt-and-suspenders enforcer.

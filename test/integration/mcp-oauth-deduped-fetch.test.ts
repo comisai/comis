@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 66 CR-01 — integration coverage that the deduped-refresh fetch wrapper
+ * Integration coverage that the deduped-refresh fetch wrapper
  * is wired into the production 401 path (NOT calling dedupedRefresh directly).
  *
  * The pre-fix bug: `createOAuthClientProvider` accepted a `RefreshDeduper` in
  * its deps but `dedupedRefresh` was never called from any production source.
  * The SDK transport's own 401 handler routed through its internal `auth()` →
- * `refreshAuthorization` path, BYPASSING the deduper. So the OAUTH-05
- * thundering-herd protection (100 concurrent 401s → 1 refresh POST) and the
- * 66-P11 / OAUTH-11 rotation persistence were guaranteed ONLY by the
+ * `refreshAuthorization` path, BYPASSING the deduper. So the thundering-herd
+ * protection (100 concurrent 401s → 1 refresh POST) and the rotation
+ * persistence were guaranteed ONLY by the
  * roundtrip test (which calls `dedupedRefresh` directly via the public
  * surface), NOT by the production 401 path.
  *
@@ -18,7 +18,7 @@
  * the OAuth provider and threaded onto `effectiveConfig.oauthFetch`;
  * `createTransport` installs it as the SSE/HTTP transport's `fetch` option.
  *
- * ── What this test proves (CR-01 production-path coverage) ──────────────────
+ * ── What this test proves (production-path coverage) ──────────────────
  * Compose the SAME deduper + fetch wrapper the production wiring composes —
  * via the PUBLIC `@comis/skills` barrel — and drive 100 concurrent fetches
  * (each returning 401 from the inner fetch) through it. The mock OAuth
@@ -83,7 +83,7 @@ const CLIENT_INFO: OAuthClientInformationFull = {
   redirect_uris: ["http://127.0.0.1:0/callback"],
 };
 
-describe("CR-01: deduped-refresh fetch wired into the production 401 path (mock-coverage)", () => {
+describe("deduped-refresh fetch wired into the production 401 path (mock-coverage)", () => {
   let mock: MockOAuthServer;
   let baseUrl: string;
   let dir: string;
@@ -191,7 +191,7 @@ describe("CR-01: deduped-refresh fetch wired into the production 401 path (mock-
     );
     const responses = await Promise.all(promises);
 
-    // ── Headline CR-01 / OAUTH-05 assertion ─────────────────────────────
+    // ── Headline assertion ─────────────────────────────────────────────────
     // The mock /token endpoint saw EXACTLY ONE refresh POST — the 100
     // concurrent 401s coalesced into a single refresh via the deduper's
     // shared future. PRE-fix the SDK transport routed each 401 through its
@@ -206,7 +206,7 @@ describe("CR-01: deduped-refresh fetch wired into the production 401 path (mock-
 
     // The token store now holds the rotated access token (the deduper's
     // saveTokens persisted the SDK refreshAuthorization result). This is
-    // the 66-P11 / OAUTH-11 rotation-persistence half: a subsequent
+    // the rotation-persistence guarantee: a subsequent
     // refresh would read THIS access token off disk, not the original
     // EXPIRED_BEARER.
     const persisted = JSON.parse(
@@ -222,7 +222,7 @@ describe("CR-01: deduped-refresh fetch wired into the production 401 path (mock-
     }
   });
 
-  it("CR-01 wiring path: prepareOAuthProvider attaches oauthFetch to the runtime config", async () => {
+  it("wiring path: prepareOAuthProvider attaches oauthFetch to the runtime config", async () => {
     // White-box assertion that the wiring composition is in place: an
     // auth:"oauth" server with the OAuth seam wired through connectServer
     // has its runtime config carry both `oauthProvider` AND `oauthFetch`.
@@ -266,7 +266,7 @@ describe("CR-01: deduped-refresh fetch wired into the production 401 path (mock-
       logger,
     );
 
-    // Both runtime-only fields are present (CR-01 wiring contract).
+    // Both runtime-only fields are present (wiring contract).
     expect(effectiveConfig.oauthProvider).toBeDefined();
     expect(effectiveConfig.oauthFetch).toBeDefined();
     expect(typeof effectiveConfig.oauthFetch).toBe("function");

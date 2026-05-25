@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Co-located unit tests for the deduped-refresh fetch wrapper (Phase 66
- * OAUTH-05 / CR-01).
+ * Co-located unit tests for the deduped-refresh fetch wrapper.
  *
  * The wrapper composes on top of an inner FetchLike (typically the
  * redirect-policy fetch) and intercepts 401 responses, routing the refresh
- * through the deduper before retrying. RED→GREEN coverage:
+ * through the deduper before retrying. Coverage:
  *
  *   1. Non-401 pass-through: a 200 response from the inner fetch returns
  *      verbatim — no refresh, no retry.
@@ -232,7 +231,7 @@ describe("createDedupedRefreshFetch", () => {
     expect(new Headers(retryInit.headers).get("Authorization")).toBe(`Bearer ${NEW_BEARER}`);
   });
 
-  it("CR-01 dedup stress: 100 concurrent 401s → EXACTLY 1 dedupedRefresh call (shared future)", async () => {
+  it("dedup stress: 100 concurrent 401s → EXACTLY 1 dedupedRefresh call (shared future)", async () => {
     await store.saveTokens("notion", {
       access_token: EXPIRED_BEARER,
       refresh_token: REFRESH_TOKEN,
@@ -308,9 +307,9 @@ describe("createDedupedRefreshFetch", () => {
     );
     const responses = await Promise.all(promises);
 
-    // ── Headline OAUTH-05 assertion ──────────────────────────────────────
+    // ── Headline assertion ───────────────────────────────────────────────
     // The deduper coalesced 100 concurrent refresh requests into ONE
-    // execution of the underlying refresh primitive (66-P4 thundering herd).
+    // execution of the underlying refresh primitive (thundering-herd guard).
     expect(refreshExecCount).toBe(1);
     // Each of the 100 fetches routed THROUGH dedupedRefresh — all got the
     // shared future from the deduper's inflightRefreshes map.

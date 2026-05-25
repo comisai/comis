@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 69 Plan 04 -- Per-MCP-client per-tool minute-bucket rate limit.
+ * Per-MCP-client per-tool minute-bucket rate limit.
  *
  * Bucket key: `${clientId}:${toolName}` -- independent counters per pair.
  * Bucket boundary: floor(systemNowMs() / 60_000) -- bucket flips each UTC
- * minute. Per CONTEXT.md §1.7 ("bucket reset on the minute boundary"),
- * NOT a sliding window.
+ * minute (bucket reset on the minute boundary), NOT a sliding window.
  *
  * The existing ws-handler precedent (`packages/gateway/src/rpc/ws-handler.ts:299-316`)
  * is a SLIDING-window per-connection rate limit; we deliberately use

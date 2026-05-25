@@ -87,7 +87,7 @@ function parseGitHubDirUrl(url: string): { owner: string; repo: string; branch: 
   return { owner: m[1], repo: m[2], branch: m[3], path: m[4].replace(/\/$/, "") };
 }
 
-// WR-03 — bounded GitHub Contents API walk (depth, file count, timeout) lives
+// Bounded GitHub Contents API walk (depth, file count, timeout) lives
 // in `./github-skill-fetch.ts` so this file stays under the 800-line cap.
 import { fetchGitHubDir } from "./github-skill-fetch.js";
 
@@ -751,7 +751,7 @@ export function createSkillHandlers(deps: SkillHandlerDeps): Record<string, RpcH
       } else if (deps.skillRegistries) {
         deps.skillRegistries.get(callingAgentId)?.init();
       }
-      await runBundleInstallHook(deps, params.name, skill.location, rawParams); // WR-04
+      await runBundleInstallHook(deps, params.name, skill.location, rawParams);
 
       const result = { ok: true as const, name: params.name };
       if (IS_DEV) SkillsUpdateContract.response.parse(result);

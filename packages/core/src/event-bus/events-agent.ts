@@ -176,9 +176,9 @@ export interface AgentEvents {
     savedVsUncached: number;
     /** Whether this provider supports prompt caching. */
     cacheEligible: boolean;
-    /** Provider-specific response ID for log correlation (R-04). undefined when provider doesn't supply it. */
+    /** Provider-specific response ID for log correlation. undefined when provider doesn't supply it. */
     responseId?: string;
-    /** Per-TTL cache creation breakdown (R-08 pre-work). undefined until upstream pi-mono surfaces it. */
+    /** Per-TTL cache creation breakdown. undefined until upstream pi-mono surfaces it. */
     cacheCreation?: {
       shortTtl: number;
       longTtl: number;

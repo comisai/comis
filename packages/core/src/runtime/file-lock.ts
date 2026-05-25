@@ -275,7 +275,7 @@ export function createFileLock(): FileLockPort {
       for (const entry of entries) {
         if (!entry.endsWith(".lock")) continue;
         // safePath ensures the cleanup walk cannot escape lockDir even when
-        // the directory contains an attacker-injected entry. AGENTS.md §2.2.
+        // the directory contains an attacker-injected entry.
         const fullPath = safePath(lockDir, entry);
         try {
           const stat = await fs.stat(fullPath);

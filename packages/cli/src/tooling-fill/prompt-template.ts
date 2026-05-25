@@ -14,7 +14,7 @@
  *     supported (e.g. a markdown-formatter skill replaces prettier).
  *
  * Pure string template — deterministic, no Date.now, no randomness, no
- * Result wrapping (AGENTS.md §2.3 KISS).
+ * Result wrapping (KISS principle: simplest correct implementation).
  *
  * @module
  */

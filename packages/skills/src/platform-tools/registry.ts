@@ -80,9 +80,9 @@ import { createBrowserTool } from "./tools/browser-tool.js";
 import { createListResourcesTool, createReadResourceTool } from "./tools/mcp-resources-tool.js";
 import { createListPromptsTool, createGetPromptTool } from "./tools/mcp-prompts-tool.js";
 
-// Phase 65 OPUX-10: capability-gate helpers + manager type for the
-// resources/prompts descriptor conditionals. Imported from the mcp-client
-// barrel (the public surface of that integration subtree).
+// Capability-gate helpers + manager type for the resources/prompts descriptor
+// conditionals. Imported from the mcp-client barrel (the public surface of
+// that integration subtree).
 import {
   serverAdvertisesResources,
   serverAdvertisesPrompts,
@@ -119,13 +119,13 @@ export interface PlatformToolBuildContext {
   /** Typed event bus reference (unused by most descriptors; held for future use). */
   readonly eventBus?: unknown;
   /**
-   * Phase 65 OPUX-10: MCP client manager. Gates the resources/prompts
-   * descriptors (list_resources/read_resource/list_prompts/get_prompt) — each
-   * descriptor's `conditional` predicate registers the tool iff this manager
-   * is present AND any connected server advertises the matching capability
-   * (resources/prompts) without a per-server enableResources/enablePrompts:false
-   * opt-out. Optional so non-MCP build contexts (parity-test stub, agents
-   * without MCP wired) simply skip the 4 descriptors.
+   * MCP client manager. Gates the resources/prompts descriptors
+   * (list_resources/read_resource/list_prompts/get_prompt) — each descriptor's
+   * `conditional` predicate registers the tool iff this manager is present AND
+   * any connected server advertises the matching capability (resources/prompts)
+   * without a per-server enableResources/enablePrompts:false opt-out. Optional
+   * so non-MCP build contexts (parity-test stub, agents without MCP wired)
+   * simply skip the 4 descriptors.
    */
   readonly mcpClientManager?: McpClientManager;
   /**
@@ -176,7 +176,7 @@ export interface PlatformToolDescriptor {
 }
 
 // ===========================================================================
-// Capability-gate walks (Phase 65 OPUX-10)
+// Capability-gate walks
 // ===========================================================================
 
 /**
@@ -326,7 +326,7 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
       category: "mcp",
       build: (ctx) => createMcpManageTool(ctx.rpcCall as never, ctx.approvalGate as never),
     },
-    // Phase 65 OPUX-10: capability-gated resources/prompts utility tools.
+    // Capability-gated resources/prompts utility tools.
     // GLOBAL (server parameter) — exactly 4 descriptors regardless of how many
     // MCP servers are connected. Each `conditional` re-evaluates per agent
     // assemble, so the tools register on the first turn AFTER the relevant

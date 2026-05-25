@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: RPC handler module — all throws are caught and converted to JSON-RPC error responses by rpc-dispatch.ts:306-321.
 /**
- * MCP OAuth RPC handler module (Phase 66 OAUTH-10 / 66f).
+ * MCP OAuth RPC handler module.
  *
- * Two admin-only handlers, 1:1 with `mcp-oauth.ts` contracts (CI-01 parity):
+ * Two admin-only handlers, 1:1 with `mcp-oauth.ts` contracts (field parity):
  *   - `mcp.oauth_login`  — coordinate the server-side OAuth login (discovery +
  *     PKCE + the loopback browser-callback), persist tokens, reconnect, and
  *     RETURN the authorization URL for the CLI to open.
  *   - `mcp.oauth_logout` — clear the three on-disk token files so the next
  *     connect forces re-auth.
  *
- * ── Browser launch is CLI-side (resolved_scope #1 / T-66-26) ────────────────
+ * ── Browser launch is CLI-side ──────────────────────────────────────────────
  * This module NEVER imports `open` and the daemon NEVER launches a browser (it
  * may run on a remote host). `mcp.oauth_login` runs the loopback callback server
  * + the SDK `auth()` flow server-side (via the `runOauthLogin` orchestrator in
@@ -18,7 +18,7 @@
  * `portForwardHint` on a headless host) for the CLI to act on. The injected
  * `openUrl` is a daemon-side NO-OP.
  *
- * ── No throw escapes the login handler (T-66-27) ────────────────────────────
+ * ── No throw escapes the login handler ──────────────────────────────────────
  * Login failures (discovery cascade fail, callback timeout / CSRF, exchange
  * error) return `status: "failed"` — the orchestrator catches and reports rather
  * than throwing. The handler's own pre-flight guards (missing server, not an
@@ -26,7 +26,7 @@
  * parameter" / "not configured for OAuth" UX (the dispatcher converts to a
  * JSON-RPC error), matching the `mcp-handlers.ts` convention.
  *
- * ── CI-01 parity (T-66-25) ──────────────────────────────────────────────────
+ * ── Field parity ─────────────────────────────────────────────────────────────
  * Both handlers reference `server_name` literally (it keys the token store +
  * the reconnect target). `test/architecture/contract-handler-parity.test.ts`
  * auto-discovers this `-handlers.ts` file and asserts the 1:1 field parity.
@@ -79,9 +79,9 @@ export interface McpOauthHandlerDeps extends WorkspaceApiDeps {
    */
   readonly createTokenStore?: () => TokenStore;
   /**
-   * Browser-launch side effect. ALWAYS a daemon-side NO-OP (resolved_scope #1 —
-   * the daemon never opens a browser; the CLI opens the returned `authUrl`).
-   * Injectable so tests can assert it is never a real `open` import.
+   * Browser-launch side effect. ALWAYS a daemon-side NO-OP — the daemon never
+   * opens a browser; the CLI opens the returned `authUrl`. Injectable so tests
+   * can assert it is never a real `open` import.
    */
   readonly openUrl?: (url: string) => void;
 }
@@ -110,7 +110,7 @@ function findServerEntry(
 export function createMcpOauthHandlers(
   deps: McpOauthHandlerDeps,
 ): Record<string, RpcHandler> {
-  // resolved_scope #1: the daemon NEVER opens a browser. A no-op is the default
+  // The daemon NEVER opens a browser. A no-op is the default
   // (the CLI opens the returned authUrl). Injectable only so tests can assert it.
   const openUrl = deps.openUrl ?? ((): void => undefined);
   const runOauthLogin = deps.runOauthLogin ?? defaultRunOauthLogin;
@@ -127,7 +127,7 @@ export function createMcpOauthHandlers(
       // Strip dispatcher-injected _X internals BEFORE contract parse.
       const userParams = stripInternalFields(rawParams);
       const params = McpOauthLoginContract.request.parse(userParams);
-      // CI-01: reference server_name literally (it keys the token store + reconnect).
+      // Field parity: reference server_name literally (it keys the token store + reconnect).
       const server_name = params.server_name;
 
       // Resolve the persisted server config. Login requires an `auth:"oauth"`
@@ -148,7 +148,7 @@ export function createMcpOauthHandlers(
       }
 
       // Run the server-side login. The orchestrator owns the SDK auth() call +
-      // the loopback callback + saveTokens; it NEVER throws (T-66-27). The daemon
+      // the loopback callback + saveTokens; it NEVER throws. The daemon
       // openUrl is a no-op — the CLI opens the returned authUrl.
       const result = await runOauthLogin({
         serverName: server_name,
@@ -211,10 +211,10 @@ export function createMcpOauthHandlers(
       // Strip dispatcher-injected _X internals BEFORE contract parse.
       const userParams = stripInternalFields(rawParams);
       const params = McpOauthLogoutContract.request.parse(userParams);
-      // CI-01: reference server_name literally (it keys the token-store deletion).
+      // Field parity: reference server_name literally (it keys the token-store deletion).
       const server_name = params.server_name;
 
-      // WR-02: gate the destructive deleteAll() on the same persisted-server
+      // Gate the destructive deleteAll() on the same persisted-server
       // existence check the login handler uses. Without this guard an
       // admin-scope caller could clear token files for ANY string the
       // `safePath` substrate accepts under mcp-tokens/ — including names that
@@ -229,7 +229,7 @@ export function createMcpOauthHandlers(
 
       // Clear the three token files (<server>.json / .client.json / .meta.json).
       // deleteAll is idempotent — clearing an already-absent set still succeeds,
-      // so cleared:true reflects "no credentials remain" (OAUTH-10). A close()
+      // so cleared:true reflects "no credentials remain". A close()
       // releases the store's disk-watch when the default store was constructed.
       const tokenStore = makeTokenStore();
       await tokenStore.deleteAll(server_name);

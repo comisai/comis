@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 68 BUNDLE-03 (Plan 05) — boot-path skill-bundle re-merge orchestrator.
+ * Boot-path skill-bundle re-merge orchestrator.
  *
  * Runs BEFORE setupMcp in daemon.ts:bootAgents — order is critical. setupMcp
  * reads `container.config.integrations.mcp.servers` to construct the runtime
  * manager; the re-merge MUST update that array first or new bundle entries
- * persist on disk but never connect at boot (68-P-NEW-4 sequencing-bug class).
+ * persist on disk but never connect at boot (sequencing-bug class).
  *
  * Idempotent: identical disk state in ⇒ identical disk state out. The
  * skip-when-equal short-circuit at the tail suppresses a spurious YAML
  * rewrite + audit JSONL line + config:mutated event when nothing changed
  * (the boot-loop guarantee).
  *
- * Boot NEVER passes `force: true` (CONTEXT.md decisions #8 + #9): operators
+ * Boot NEVER passes `force: true`: operators
  * must explicitly run `comis skill install --force` to override user-owned
  * entries. A boot-time name collision logs WARN with `errorKind:"config"`
  * and skips that skill's bundle wiring; the skill itself remains installed,
@@ -66,7 +66,7 @@ export interface SetupSkillBundlesDeps {
    *  the orchestrator still runs Phase A resolver passes but skips the
    *  persist (logs a WARN if changes are pending). Test-only path. */
   readonly persistDeps?: WorkspaceApiDeps["persistDeps"];
-  /** EventBus for the config:mutated 500ms coalescer (Phase 64 RELY-08). */
+  /** EventBus for the config:mutated 500ms coalescer. */
   readonly eventBus?: WorkspaceApiDeps["eventBus"];
   /** Pino logger; canonical fields. The orchestrator NEVER logs secret values. */
   readonly logger: ComisLogger;
@@ -130,27 +130,25 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
         };
       }
     | undefined;
-  // WR-01: pre-sort `initialServers` so the skip-when-equal compare in Step 4
+  // Pre-sort `initialServers` so the skip-when-equal compare in Step 4
   // matches the resolver's STEP 4 sort-by-name output. Without this pre-sort,
   // an on-disk config.yaml whose servers were not written in alphabetical
-  // order (every pre-Phase-68 deployment, or any user-added entry pre-
-  // normalize) makes deepEqualServers return false on the FIRST boot post-
-  // Phase-68, triggering a spurious YAML rewrite + audit JSONL append +
-  // config:mutated event for a noop merge. With the pre-sort, the compare
-  // is apples-to-apples and the idempotence invariant (noop boot ⇒ noop YAML
-  // write) holds from boot 1.
+  // order (any user-added entry pre-normalize) makes deepEqualServers return
+  // false on the first boot post-normalize, triggering a spurious YAML
+  // rewrite + audit JSONL append + config:mutated event for a noop merge.
+  // With the pre-sort, the compare is apples-to-apples and the idempotence
+  // invariant (noop boot ⇒ noop YAML write) holds from boot 1.
   const rawInitialServers = (integrations?.mcp?.servers ?? []) as McpServerEntry[];
   const initialServers: readonly McpServerEntry[] = [...rawInitialServers].sort(
     (a, b) => a.name.localeCompare(b.name),
   );
   let currentServers: readonly McpServerEntry[] = initialServers;
 
-  // CR-01: read the daemon-private installed-bundles state file once,
-  // up-front. The resolver consults this state for the "did WE install
-  // this entry?" check on every per-skill pass. dataDir falls back to "."
-  // so the test fixture path (container.config.dataDir undefined) does
-  // not crash — readBundleInstallState gracefully returns `{}` when the
-  // file is missing.
+  // Read the daemon-private installed-bundles state file once, up-front.
+  // The resolver consults this state for the "did WE install this entry?"
+  // check on every per-skill pass. dataDir falls back to "." so the test
+  // fixture path (container.config.dataDir undefined) does not crash —
+  // readBundleInstallState gracefully returns `{}` when the file is missing.
   const dataDir =
     (deps.container?.config?.dataDir as string | undefined) ?? "";
   const installedBundleState = dataDir.length > 0
@@ -224,7 +222,7 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
       skillId,
       manifestMcpServers: bundleServers,
       currentServers,
-      // BOOT NEVER FORCES. CONTEXT.md decision #8 + #9. Operators must run
+      // BOOT NEVER FORCES. Operators must run
       // `skill.install --force` to override user-owned entries.
       force: false,
       ...(integrations?.mcp?.osvCheckEnabled !== undefined && {
@@ -238,13 +236,12 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
     });
 
     if (!resolveResult.ok) {
-      // WR-05: pass a STRING to the Pino `err` field. The Pino error
-      // serializer only fires for true `Error` instances; passing a
-      // plain `BundleError` object (a discriminated union) bypasses
-      // serialization and the log record loses `err.message` / `err.stack`.
-      // The structured fields (bundleErrorKind, skillId, hint) carry the
-      // searchable signal; `err` carries the formatted operator-readable
-      // string.
+      // Pass a STRING to the Pino `err` field. The Pino error serializer
+      // only fires for true `Error` instances; passing a plain `BundleError`
+      // object (a discriminated union) bypasses serialization and the log
+      // record loses `err.message` / `err.stack`. The structured fields
+      // (bundleErrorKind, skillId, hint) carry the searchable signal; `err`
+      // carries the formatted operator-readable string.
       deps.logger.warn(
         {
           skillId,
@@ -280,8 +277,8 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
   }
 
   // Step 5 — persist ONCE with the unified merged array. The single-writer
-  // invariant (Phase 62 R9) holds: this is the only sanctioned write path
-  // for integrations.mcp.servers at boot time.
+  // invariant holds: this is the only sanctioned write path for
+  // integrations.mcp.servers at boot time.
   await persistMcpServers(
     {
       persistDeps: deps.persistDeps,
@@ -295,13 +292,13 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
     undefined,
   );
 
-  // CR-01: refresh the daemon-private installed-bundles state file with
-  // EVERY successfully-resolved bundle from this boot. The install-helper
-  // wrote the original record on install, but a SKILL.md edit between
-  // boots (operator added/removed an entry; bundle author shipped a new
-  // version) needs the state file to track the CURRENT bundle shape, not
-  // the historical shape from first install. Best-effort: failures are
-  // logged but do NOT abort boot.
+  // Refresh the daemon-private installed-bundles state file with every
+  // successfully-resolved bundle from this boot. The install-helper wrote
+  // the original record on install, but a SKILL.md edit between boots
+  // (operator added/removed an entry; bundle author shipped a new version)
+  // needs the state file to track the CURRENT bundle shape, not the
+  // historical shape from first install. Best-effort: failures are logged
+  // but do NOT abort boot.
   if (dataDir.length > 0) {
     for (const { skillId, bundleServers } of resolvedBundlesForRecord) {
       const recordResult = recordBundleEntries(dataDir, skillId, bundleServers);
@@ -329,9 +326,9 @@ export async function setupSkillBundles(deps: SetupSkillBundlesDeps): Promise<vo
  *
  * `nextServers` (the resolver output) is sorted by name via the
  * resolver's STEP 4 determinism gate. `initialServers` is pre-sorted
- * by the orchestrator's Step 1 (WR-01) so the on-disk YAML order does
+ * by the orchestrator's Step 1 so the on-disk YAML order does
  * not introduce a spurious-rewrite path when the config was written
- * before Phase 68 (or by a `mcp.connect` call pre-normalize). Both
+ * before normalization (or by a `mcp.connect` call pre-normalize). Both
  * inputs are sorted by the time they reach this compare.
  *
  * Implementing this as `JSON.stringify(a) === JSON.stringify(b)` rather
@@ -354,7 +351,7 @@ function deepEqualServers(
 // ---------------------------------------------------------------------------
 
 /**
- * Sequencing-gate helper (68-P-NEW-4 mitigation).
+ * Sequencing-gate helper for the boot-path bundle orchestrator.
  *
  * Builds a thin Map<agentId, SkillRegistry> for the boot-path bundle
  * orchestrator BEFORE `setupAgents` runs. Each registry is constructed with

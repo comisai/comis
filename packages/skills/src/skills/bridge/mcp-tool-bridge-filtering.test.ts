@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OPUX-08 / 65-P2: per-server tool filtering at the bridge layer.
+ * Per-server tool filtering at the bridge layer.
  *
  * Verifies that `mcpToolsToAgentTools`'s optional `serverFiltersFn` 6th
  * parameter applies an allowlist/blocklist BEFORE the `.map()` so filtered
@@ -52,7 +52,7 @@ function labels(tools: ReturnType<typeof mcpToolsToAgentTools>): string[] {
 // serverFiltersFn behavior
 // ---------------------------------------------------------------------------
 
-describe("mcpToolsToAgentTools — per-server tool filtering (OPUX-08)", () => {
+describe("mcpToolsToAgentTools — per-server tool filtering", () => {
   it("Test 1 (allowlist): surfaces ONLY the allowlisted tool", () => {
     const tools = mcpToolsToAgentTools(
       threeTools(),

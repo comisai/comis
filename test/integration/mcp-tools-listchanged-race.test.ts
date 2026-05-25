@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 67 CAP-01 — PROVING integration test (Option A, NO production change).
+ * PROVING integration test (Option A, NO production change).
  *
  * Pins the existing safety of a `tools/list_changed` notification that fires
  * DURING an in-flight `callTool`. Two invariants are locked against regression:
@@ -33,12 +33,12 @@
  *     (making the swap non-atomic), the back-to-back-swap test's last-writer-wins
  *     assertion (`gamma` wins, `alpha`/`beta` gone) would be at risk.
  *
- * Per AGENTS.md §2.10, a proving/regression test for already-correct behavior may
+ * A proving/regression test for already-correct behavior may
  * land as a single commit — there is no pre-patch production change to make it
- * fail (RESOLVED SCOPE Option A); this docblock + the commit message record that
+ * fail (Option A); this docblock + the commit message record that
  * rationale.
  *
- * Per CLAUDE.md: integration tests import `@comis/skills` via `dist/` — run
+ * Integration tests import `@comis/skills` via `dist/` — run
  * `pnpm build` before vitest. The integration vitest config aliases
  * `@comis/skills` -> `packages/skills/dist/skills/index.js`.
  *
@@ -52,7 +52,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // followed the same way the dist code's own imports resolve. require.resolve
 // returns the CJS variant; we swap to ESM since the dist code loads the ESM
 // build. Vitest 4 does NOT bridge specifier-based mocks across module graphs
-// when the consumer is compiled dist .js code (RESEARCH Pitfall 7) — mocking
+// when the consumer is compiled dist .js code — mocking
 // the resolved ABSOLUTE path is the working pattern.
 // ---------------------------------------------------------------------------
 
@@ -85,8 +85,8 @@ const sdkPaths = vi.hoisted(() => {
 // SDK Client mock — vi.hoisted ensures the closure variables are initialised
 // before the (also-hoisted) vi.mock factories execute.
 //
-// CAP-01 HARNESS EXTENSION (vs the keepalive mock): the keepalive Client mock
-// IGNORES its constructor args; CAP-01 MUST CAPTURE the second arg's
+// Harness extension (vs the keepalive mock): the keepalive Client mock
+// IGNORES its constructor args; this test MUST CAPTURE the second arg's
 // `listChanged.tools.onChanged`. The manager wires that callback ONLY when an
 // eventBus is present (mcp-client-discover.ts:317), so this test constructs the
 // manager WITH an eventBus. `capturedOnChanged` is how the test fires a
@@ -116,7 +116,7 @@ const sdkMocks = vi.hoisted(() => {
     mockClose: vi.fn(),
     mockListTools: vi.fn(),
     clientInstances: [] as MockedClientInstance[],
-    // CAP-01: the captured tools/list_changed callback (undefined until the
+    // Captured tools/list_changed callback (undefined until the
     // manager constructs the Client with an eventBus and wires it).
     capturedOnChanged: undefined as ((error: unknown, tools: unknown[] | undefined) => void) | undefined,
   };
@@ -124,7 +124,7 @@ const sdkMocks = vi.hoisted(() => {
 
 vi.mock(sdkPaths.clientIndex, () => ({
   Client: vi.fn().mockImplementation(function (_info: unknown, options: any) {
-    // CAP-01 capture: discover.ts passes listChanged.tools.onChanged only when
+    // Capture: discover.ts passes listChanged.tools.onChanged only when
     // an eventBus is configured. Grab it so the test can fire list_changed.
     sdkMocks.capturedOnChanged = options?.listChanged?.tools?.onChanged;
     const instance = {
@@ -214,7 +214,7 @@ const toolNames = (mgr: ReturnType<typeof createMcpClientManager>) =>
   mgr.getTools().map((t) => t.qualifiedName);
 
 // ---------------------------------------------------------------------------
-// Tests — CAP-01 list_changed vs in-flight callTool.
+// Tests — list_changed vs in-flight callTool.
 //
 // REAL timers (NOT fake): the in-flight ordering is what matters and it is
 // driven by manual `await Promise.resolve()` microtask flushes around the slow
@@ -222,7 +222,7 @@ const toolNames = (mgr: ReturnType<typeof createMcpClientManager>) =>
 // involved, so fake timers are unnecessary (and would only obscure the order).
 // ---------------------------------------------------------------------------
 
-describe("Phase 67 CAP-01 — tools/list_changed during in-flight callTool", () => {
+describe("tools/list_changed during in-flight callTool", () => {
   beforeEach(() => {
     mockPing.mockReset().mockResolvedValue({});
     mockCallTool.mockReset();

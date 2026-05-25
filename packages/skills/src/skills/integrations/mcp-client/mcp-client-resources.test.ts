@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the Phase 65 OPUX-10 resources/prompts adapters + gate
+ * Unit tests for the resources/prompts adapters + gate
  * helpers (mcp-client-resources.ts).
  *
- * Drives RED for:
+ * Covers:
  *  - serverAdvertisesResources / serverAdvertisesPrompts gate logic:
  *      capability present + config undefined  -> true (auto-register)
  *      capability present + config === false  -> false (opt-out)
@@ -48,7 +48,7 @@ function makeManager(conn: McpConnection | undefined): McpClientManager {
  * Build a connected McpConnection wrapping the given stub SDK client.
  *
  * Defaults `capabilities` to BOTH resources + prompts advertised so the
- * happy-path adapter tests pass the CR-01 runtime capability gate. Override
+ * happy-path adapter tests pass the runtime capability gate. Override
  * `capabilities` (e.g. `{}`) to drive the gate-rejection cases.
  */
 function makeConnection(
@@ -124,7 +124,7 @@ describe("resources/prompts RPC adapters delegate to the per-server SDK client",
   });
 
   it("delegates readResourceFromServer to client.readResource and maps contents", async () => {
-    // Use a custom MCP scheme (not file:/http:/https:, which CR-01 blocks for
+    // Use a custom MCP scheme (not file:/http:/https:, which are blocked for
     // SSRF). The returned content uri is opaque and just round-trips.
     const conn = makeConnection({
       readResource: async () => ({ contents: [{ uri: "res://a", text: "hello" }] }),
@@ -162,7 +162,7 @@ describe("resources/prompts RPC adapters delegate to the per-server SDK client",
     }
   });
 
-  it("WR-03 coerces non-string getPrompt argument values to strings before the SDK call", async () => {
+  it("coerces non-string getPrompt argument values to strings before the SDK call", async () => {
     let received: Record<string, unknown> | undefined;
     const conn = makeConnection({
       getPrompt: async (req: { name: string; arguments?: Record<string, unknown> }) => {
@@ -182,10 +182,10 @@ describe("resources/prompts RPC adapters delegate to the per-server SDK client",
 });
 
 // ---------------------------------------------------------------------------
-// CR-01: runtime capability gate + URI validation
+// Runtime capability gate + URI validation
 // ---------------------------------------------------------------------------
 
-describe("CR-01 runtime capability gate — adapters reject when capability not advertised", () => {
+describe("runtime capability gate — adapters reject when capability not advertised", () => {
   it("rejects listResourcesForServer when the live connection advertises no resources capability", async () => {
     // SDK stub WOULD succeed; the gate must short-circuit before delegating.
     const listResources = vi.fn(async () => ({ resources: [{ uri: "x://a", name: "a" }] }));
@@ -237,7 +237,7 @@ describe("CR-01 runtime capability gate — adapters reject when capability not 
   });
 });
 
-describe("CR-01 readResourceFromServer rejects SSRF-prone URI schemes", () => {
+describe("readResourceFromServer rejects SSRF-prone URI schemes", () => {
   // The caller-controlled uri flows to client.readResource({ uri }); a remote
   // MCP server could be driven to fetch internal network/local resources.
   // http/https/file are rejected at the adapter boundary; the SDK call must

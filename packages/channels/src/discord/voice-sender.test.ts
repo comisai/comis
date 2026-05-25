@@ -235,10 +235,10 @@ describe("createDiscordVoiceSender", () => {
   });
 
   // -------------------------------------------------------------------------
-  // H-2: Upload URL domain validation (SSRF mitigation)
+  // Upload URL domain validation (SSRF mitigation)
   // -------------------------------------------------------------------------
 
-  it("should reject upload URL from non-Discord domain (H-2)", async () => {
+  it("should reject upload URL from non-Discord domain", async () => {
     // Step 1: Return upload URL pointing to attacker domain
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -267,7 +267,7 @@ describe("createDiscordVoiceSender", () => {
     );
   });
 
-  it("should reject upload URL with HTTP protocol (H-2)", async () => {
+  it("should reject upload URL with HTTP protocol", async () => {
     // Step 1: Return upload URL with HTTP (not HTTPS)
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -289,7 +289,7 @@ describe("createDiscordVoiceSender", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("should accept upload URL from allowed Discord CDN domain (H-2)", async () => {
+  it("should accept upload URL from allowed Discord CDN domain", async () => {
     // Step 1: Return valid upload URL
     mockFetch.mockResolvedValueOnce({
       ok: true,

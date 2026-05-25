@@ -141,8 +141,8 @@ function buildDirective(priorToolCallCount: number, priorToolNames: string[]): s
  *   4. Fire when (2) AND (≥1 tool call from step 3); else `no_match`.
  *
  * `session.followUp` errors are caught and propagated as
- * `Result<_, ContinuationError>` per AGENTS.md §2.1 + the
- * `executor-prompt-runner.ts:931` precedent.
+ * `Result<_, ContinuationError>` (the
+ * `executor-prompt-runner.ts:931` pattern).
  */
 export async function runPostBatchContinuation(
   deps: RunPostBatchContinuationDeps,

@@ -19,10 +19,9 @@ export { setupAgents, type AgentsResult } from "./setup-agents/index.js";
 export { setupSchedulers, type SchedulersResult } from "./setup-schedulers.js";
 export { setupChannels, type ChannelsResult } from "./setup-channels/index.js";
 export { setupMcp, type McpResult } from "./setup-mcp.js";
-// Phase 68 BUNDLE-03: boot-path skill-bundle re-merge orchestrator + the
-// thin discovery-only registry pre-pass it consumes. Wired in daemon.ts
-// BEFORE setupMcp so the merged servers array is in place when the manager
-// connects (Pitfall 68-P-NEW-4 sequencing gate).
+// Boot-path skill-bundle re-merge orchestrator + the thin discovery-only
+// registry pre-pass it consumes. Wired in daemon.ts BEFORE setupMcp so the
+// merged servers array is in place when the manager connects.
 export {
   setupSkillBundles,
   buildSkillRegistriesForBundles,

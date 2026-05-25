@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Interactive OAuth login orchestrator (Phase 66 OAUTH-10 / 66f).
+ * Interactive OAuth login orchestrator.
  *
  * The server-side half of `mcp.oauth_login`. Owns the SDK `auth()` runtime call
- * + the loopback browser-callback (66-05) + the disk token store (66-02) so the
- * daemon RPC handler (`mcp-oauth-handlers.ts`) never imports the MCP SDK or
- * `open` directly (the daemon depends on `@comis/skills`, not the SDK).
+ * + the loopback browser-callback + the disk token store so the daemon RPC
+ * handler (`mcp-oauth-handlers.ts`) never imports the MCP SDK or `open`
+ * directly (the daemon depends on `@comis/skills`, not the SDK).
  *
- * ── The flow (resolved_scope #1 / #3) ───────────────────────────────────────
+ * ── The flow ────────────────────────────────────────────────────────────────
  * The daemon may run on a remote host with no display, so the browser launch is
  * CLI-side. This orchestrator coordinates the server-side steps and RETURNS the
  * authorization URL for the CLI to open:
  *
  *   1. Build the token store + refresh-deduper + the `OAuthClientProvider`
- *      adapter (66-02 / 66c / 66d). The provider's `redirectUrl` + `state` are
- *      sourced from closures this orchestrator owns (ONE source of truth).
- *   2. Pre-flight discovery (66b), cold-load only — surfaces the actionable
- *      cascade-fail error (66-P9) before any browser step.
- *   3. Bind the loopback callback server (66-05, `runBrowserCallback`) with a
- *      NO-OP `openUrl` to learn the kernel-assigned port + headless decision.
+ *      adapter. The provider's `redirectUrl` + `state` are sourced from
+ *      closures this orchestrator owns (ONE source of truth).
+ *   2. Pre-flight discovery, cold-load only — surfaces the actionable
+ *      cascade-fail error before any browser step.
+ *   3. Bind the loopback callback server (`runBrowserCallback`) with a NO-OP
+ *      `openUrl` to learn the kernel-assigned port + headless decision.
  *      The orchestrator opens the browser itself AFTER the SDK produces the URL,
  *      so the callback module's URL/open coupling does not force the order.
  *   4. Drive the SDK `auth()` orchestrator (first call, no code). It runs DCR +
@@ -27,18 +27,17 @@
  *      `redirectToAuthorization(url)` — captured here into a closure.
  *   5. Headless host → return `headless_hint` + `portForwardHint` + `authUrl`
  *      (the operator forwards the port + opens the URL). Non-headless → call the
- *      injected `openUrl(authUrl)` (the CLI's `open`, wired in 66-08), still
- *      returning `authUrl`.
+ *      injected `openUrl(authUrl)` (the CLI's `open`), still returning `authUrl`.
  *   6. Await the callback code (`waitForCode()`), then `auth({ authorizationCode })`
  *      (second call) → `'AUTHORIZED'` → the provider's `saveTokens` persists the
- *      ABSOLUTE-expiresAt tokens (66-02 / 66-P3). Return `authorized`.
+ *      ABSOLUTE-expiresAt tokens. Return `authorized`.
  *
- * ── No throw escapes (T-66-27) ──────────────────────────────────────────────
+ * ── No throw escapes ────────────────────────────────────────────────────────
  * Every failure (discovery cascade fail, callback timeout / CSRF, exchange
  * error) is caught and returned as `{ status: "failed" }` with an `errorKind`
  * WARN — the caller surfaces it as an RPC response, never an exception. The
  * callback server is always closed (success / headless-return / failure) so no
- * loopback port lingers (66-P14).
+ * loopback port lingers.
  *
  * SECURITY: tokens, the PKCE `code_verifier`, the CSRF `state`, and the
  * authorization `code` are NEVER logged at any level (Pino redaction is a safety
@@ -81,11 +80,11 @@ export interface OAuthLoginLogger {
  * Kept local so this module does not depend on the manager types.
  */
 export interface OAuthLoginConfig {
-  /** OAUTH-03 discovery-cascade fallback authorization-server URL. */
+  /** Discovery-cascade fallback authorization-server URL. */
   readonly authorizationEndpoint?: string;
   /** Requested OAuth scope (threaded into clientMetadata + DCR + auth()). */
   readonly scope?: string;
-  /** OAUTH-11 / 66-P12 Stripe Connect connected-account id. */
+  /** Stripe Connect connected-account id. */
   readonly stripeAccount?: string;
 }
 
@@ -100,7 +99,7 @@ export interface OAuthLoginResult {
   /** Present on `headless_hint`: `ssh -L <port>:localhost:<port> <vps>`. */
   readonly portForwardHint?: string;
   /**
-   * The authorization URL for the CLI to open (resolved_scope #1). Present on
+   * The authorization URL for the CLI to open. Present on
    * `headless_hint` and on the non-headless path (where the daemon already called
    * the injected `openUrl`, the CLI may still surface it).
    */
@@ -121,18 +120,18 @@ export interface RunOauthLoginDeps {
    */
   readonly createTokenStore?: () => TokenStore;
   /**
-   * Browser-launch side effect (the CLI's `open`, wired in 66-08). Called with
-   * the authorization URL on a non-headless host; NEVER called when headless.
+   * Browser-launch side effect (the CLI's `open`). Called with the
+   * authorization URL on a non-headless host; NEVER called when headless.
    * `open` is not a skills dep — this is always injected.
    */
   readonly openUrl: (url: string) => void;
   /** The SDK `auth()` orchestrator. Defaults to the real SDK fn; tests inject a fake. */
   readonly auth?: typeof sdkAuth;
-  /** The loopback callback runner (66-05). Defaults to the real one; tests inject a fake. */
+  /** The loopback callback runner. Defaults to the real one; tests inject a fake. */
   readonly runBrowserCallback?: typeof runBrowserCallback;
-  /** Discovery resolver (66b). Defaults to the real cascade; tests inject a fake. */
+  /** Discovery resolver. Defaults to the real cascade; tests inject a fake. */
   readonly resolveDiscovery?: typeof resolveDiscovery;
-  /** Redirect-safe fetch threaded into the SDK auth()/discovery requests (T-66-08). */
+  /** Redirect-safe fetch threaded into the SDK auth()/discovery requests. */
   readonly fetchFn?: FetchLike;
   /** Env block for headless detection. Defaults to `process.env` (browser-callback). */
   readonly env?: NodeJS.ProcessEnv;
@@ -147,7 +146,7 @@ export interface RunOauthLoginDeps {
 
 /**
  * Run one interactive OAuth login for an `auth:"oauth"` MCP server, server-side.
- * Returns a {@link OAuthLoginResult}; NEVER throws (T-66-27). On `authorized`
+ * Returns a {@link OAuthLoginResult}; NEVER throws. On `authorized`
  * the tokens are already persisted — the caller should reconnect the server.
  */
 export async function runOauthLogin(
@@ -166,7 +165,7 @@ export async function runOauthLogin(
   const fetchFn = deps.fetchFn ?? createRedirectPolicyFetch({ maxRedirections: MAX_REDIRECTIONS });
   const tokenStore = (deps.createTokenStore ?? (() => createTokenStore({ logger })))();
 
-  // CSRF state (OAUTH-08) — generated here, validated by the callback server,
+  // CSRF state — generated here, validated by the callback server,
   // surfaced to the provider via the getState closure. NEVER logged.
   const state = randomBytes(32).toString("hex");
 
@@ -218,8 +217,8 @@ export async function runOauthLogin(
 
   let handle: BrowserCallbackHandle | undefined;
   try {
-    // Pre-flight discovery (OAUTH-03) — cold-load only. Surfaces the actionable
-    // cascade-fail error (66-P9) before binding the callback server.
+    // Pre-flight discovery — cold-load only. Surfaces the actionable
+    // cascade-fail error before binding the callback server.
     const existingDiscovery = await tokenStore.discoveryState(serverName);
     if (!existingDiscovery) {
       await discover({
@@ -242,9 +241,9 @@ export async function runOauthLogin(
       // The SDK builds the real URL; this placeholder is never opened (no-op openUrl).
       authorizationUrl: "",
       state,
-      // The verifier lives in the provider's in-memory holder (OAUTH-12). This
-      // field documents memory-only ownership at the callback boundary; the
-      // callback never writes or logs it. The SDK sets the real verifier via the
+      // The verifier lives in the provider's in-memory holder. This field
+      // documents memory-only ownership at the callback boundary; the callback
+      // never writes or logs it. The SDK sets the real verifier via the
       // provider during auth(); a placeholder is correct here.
       codeVerifier: "",
       openUrl: () => undefined,
@@ -286,8 +285,8 @@ export async function runOauthLogin(
 
     const authUrl = capturedAuthUrl;
 
-    // Headless host (OAUTH-07): do NOT open a browser that isn't there. Return
-    // the port-forward hint + the URL for the operator. The callback server stays
+    // Headless host: do NOT open a browser that isn't there. Return the
+    // port-forward hint + the URL for the operator. The callback server stays
     // up (the operator forwards the port + completes the redirect) — the caller's
     // CLI awaits, but the daemon RPC returns the hint immediately and the server
     // is closed here since this RPC does not block for the headless flow.
@@ -317,7 +316,7 @@ export async function runOauthLogin(
     const code = await handle.waitForCode();
 
     // Second auth() pass with the authorization code → exchange → AUTHORIZED.
-    // The provider's saveTokens persists the ABSOLUTE-expiresAt tokens (66-P3).
+    // The provider's saveTokens persists the ABSOLUTE-expiresAt tokens.
     const second: AuthResult = await authFn(wrappedProvider, {
       serverUrl,
       authorizationCode: code,
@@ -339,15 +338,15 @@ export async function runOauthLogin(
     );
     return { status: "authorized", authUrl };
   } catch (err) {
-    // T-66-27: no throw escapes — discovery cascade fail / callback timeout /
+    // No throw escapes — discovery cascade fail / callback timeout /
     // CSRF drop / exchange error all return failed. NEVER log token/verifier/code.
     //
-    // WR-03: pass `err` as the OBJECT (Error or fallback wrapper), not its
-    // `.message` string. The Pino serializer reads the canonical `err` field
-    // and emits `type`/`message`/`stack` plus any custom properties together —
-    // logging `err.message` here would discard the stack trace and any
-    // attached error metadata (e.g. an `errorKind` on a discovery-cascade
-    // error). Mirrors refresh-deduper.ts:274 which already logs `{ ..., err }`.
+    // Pass `err` as the OBJECT (Error or fallback wrapper), not its `.message`
+    // string. The Pino serializer reads the canonical `err` field and emits
+    // `type`/`message`/`stack` plus any custom properties together — logging
+    // `err.message` here would discard the stack trace and any attached error
+    // metadata (e.g. an `errorKind` on a discovery-cascade error). Mirrors
+    // refresh-deduper.ts:274 which already logs `{ ..., err }`.
     logger.warn(
       {
         submodule: SUBMODULE,
@@ -362,7 +361,7 @@ export async function runOauthLogin(
       ...(capturedAuthUrl !== undefined ? { authUrl: capturedAuthUrl } : {}),
     };
   } finally {
-    // Always release the loopback port (66-P14) — idempotent close.
+    // Always release the loopback port — idempotent close.
     handle?.close();
   }
 }

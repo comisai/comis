@@ -83,7 +83,7 @@ describe("CLI entry point", () => {
       "auth",
       // Cache stats.
       "cache",
-      // Phase 65 OPUX: MCP server management surface.
+      // MCP server management surface.
       "mcp",
     ] as const;
 

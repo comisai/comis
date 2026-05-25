@@ -1,4 +1,4 @@
-# Phase 69 Plan 07 -- MCP server end-to-end SDK Client roundtrip test config (port 8573).
+# MCP server end-to-end SDK Client roundtrip test config (port 8573).
 #
 # Two tokens:
 #   - test-token (admin): the primary daemon token (rpc/ws/admin) used by the harness
@@ -12,8 +12,7 @@
 #                      resources/list (one allowlisted session)
 #                      resources/read on that session (CONFIRMED-only filter)
 #
-# Port 8573 to avoid conflicts with Plans 03 (8569), 04 rate-limit (8570),
-# 04 tools-call (8571), 05 (8572).
+# Port 8573 to avoid conflicts with other integration test configs.
 
 tenantId: "test"
 logLevel: "info"

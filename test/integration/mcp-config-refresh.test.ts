@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 64 RELY-07/08 integration tests for the in-memory config refresh +
+ * Integration tests for the in-memory config refresh +
  * trailing-edge config:mutated debounce.
  *
  * Exercises the @comis/daemon barrel (via dist/) end-to-end:
- *   - RELY-07: container.config.integrations.mcp.servers reflects connect
- *     params (including the new schema fields keepaliveIntervalMs +
+ *   - In-memory swap: container.config.integrations.mcp.servers reflects
+ *     connect params (including schema fields keepaliveIntervalMs +
  *     circuitBreakerThreshold + circuitBreakerCooldownMs that flow through
  *     the structuredClone swap at mcp-handlers.ts:persistMcpServers)
- *   - RELY-08: 3 rapid mcp.connect calls within the 500ms debounce window
- *     collapse into ONE config:mutated event with the merged
+ *   - Debounce coalesce: 3 rapid mcp.connect calls within the 500ms debounce
+ *     window collapse into ONE config:mutated event with the merged
  *     { added: [a, b, c], removed: [] } diff
  *
  * Mirrors the harness shape from test/integration/mcp-persistence.test.ts:
@@ -131,8 +131,8 @@ function makePersistDeps(container: ReturnType<typeof makeContainer>) {
 }
 
 beforeEach(() => {
-  // Process-wide state seams MUST reset every test (per the Plan 05
-  // coalescer module + the persist-to-config.ts:72/99 precedent).
+  // Process-wide state seams MUST reset every test (mirrors the coalescer
+  // module + the persist-to-config.ts:72/99 precedent).
   _resetSigusr1Timer();
   _resetMutationFence();
   _resetConfigMutatedCoalescer();
@@ -151,10 +151,10 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests — RELY-07 schema-additions wiring
+// Tests — schema-additions wiring
 // ---------------------------------------------------------------------------
 
-describe("Phase 64 RELY-07 — in-memory config swap carries new schema fields", () => {
+describe("in-memory config swap carries new schema fields", () => {
   it("container.config.integrations.mcp.servers[*].keepaliveIntervalMs reflects connect param", async () => {
     const initialConfig = parseYaml("logLevel: info\n");
     const container = makeContainer(initialConfig);
@@ -164,10 +164,10 @@ describe("Phase 64 RELY-07 — in-memory config swap carries new schema fields",
       logger: makeLogger(),
       container: container as never,
       persistDeps: makePersistDeps(container),
-      // Phase 64 RELY-08: top-level eventBus is what persistMcpServers
-      // checks before scheduling through the trailing-edge coalescer.
-      // (container.eventBus is for the audit:event path; deps.eventBus is
-      // the slice that mcp-handlers reads at the swap site.)
+      // Top-level eventBus is what persistMcpServers checks before scheduling
+      // through the trailing-edge coalescer. (container.eventBus is for the
+      // audit:event path; deps.eventBus is the slice that mcp-handlers reads
+      // at the swap site.)
       eventBus: container.eventBus,
     } as never);
 
@@ -188,10 +188,10 @@ describe("Phase 64 RELY-07 — in-memory config swap carries new schema fields",
 });
 
 // ---------------------------------------------------------------------------
-// Tests — RELY-08 trailing-edge 500ms debounce coalesce
+// Tests — trailing-edge 500ms debounce coalesce
 // ---------------------------------------------------------------------------
 
-describe("Phase 64 RELY-08 — config:mutated 500ms debounce coalesce", () => {
+describe("config:mutated 500ms debounce coalesce", () => {
   it("debounces 3 connects within 100ms into one config:mutated event", async () => {
     vi.useFakeTimers();
 
@@ -203,10 +203,10 @@ describe("Phase 64 RELY-08 — config:mutated 500ms debounce coalesce", () => {
       logger: makeLogger(),
       container: container as never,
       persistDeps: makePersistDeps(container),
-      // Phase 64 RELY-08: top-level eventBus is what persistMcpServers
-      // checks before scheduling through the trailing-edge coalescer.
-      // (container.eventBus is for the audit:event path; deps.eventBus is
-      // the slice that mcp-handlers reads at the swap site.)
+      // Top-level eventBus is what persistMcpServers checks before scheduling
+      // through the trailing-edge coalescer. (container.eventBus is for the
+      // audit:event path; deps.eventBus is the slice that mcp-handlers reads
+      // at the swap site.)
       eventBus: container.eventBus,
     } as never);
 

@@ -27,11 +27,11 @@ export const BraveSearchConfigSchema = z.strictObject({
  * requiring an explicit `transport`. Explicit `transport`
  * always wins.
  *
- * WR-01 — REJECTS ambiguous entries that supply BOTH `command` AND `url`
- * without an explicit `transport`. Pre-fix the first matching branch
- * (command -> stdio) won and the unused field passed through, silently
- * ignored at runtime by createTransport. The operator never saw a
- * warning. The fix surfaces a structured error key (via `z.NEVER` —
+ * REJECTS ambiguous entries that supply BOTH `command` AND `url`
+ * without an explicit `transport`. Otherwise the first matching branch
+ * (command -> stdio) would win and the unused field would pass through,
+ * silently ignored at runtime by createTransport, with no operator
+ * warning. Instead this surfaces a structured error key (via `z.NEVER` —
  * which converts the entry into a Zod-detected invalid value, producing
  * a parse error pointing at the ambiguity) so the operator must opt
  * IN explicitly via `transport: "stdio" | "http" | "sse"`.
@@ -50,7 +50,7 @@ const inferTransport = (input: unknown, ctx: z.RefinementCtx): unknown => {
   const hasCommand = typeof entry.command === "string" && entry.command.length > 0;
   const hasUrl = typeof entry.url === "string" && entry.url.length > 0;
   if (hasCommand && hasUrl) {
-    // WR-01: ambiguous — operator supplied BOTH command and url with no
+    // Ambiguous — operator supplied BOTH command and url with no
     // explicit transport. Reject loudly rather than silently picking one.
     ctx.addIssue({
       code: "custom",
@@ -111,78 +111,76 @@ export const McpServerEntrySchema = z.preprocess(
       /** RLIMIT_CPU — wall CPU seconds before SIGXCPU (module default: 300). */
       cpu: z.number().int().positive().optional(),
     }).optional(),
-    /** Phase 64 RELY-02: per-server override of mcp.keepaliveIntervalMs. 0 disables for this server. Undefined ⇒ global default applies. */
+    /** Per-server override of mcp.keepaliveIntervalMs. 0 disables for this server. Undefined ⇒ global default applies. */
     keepaliveIntervalMs: z.number().int().nonnegative().optional(),
-    /** Phase 64 RELY-05: per-server override of mcp.circuitBreakerThreshold. */
+    /** Per-server override of mcp.circuitBreakerThreshold. */
     circuitBreakerThreshold: z.number().int().positive().optional(),
-    /** Phase 64 RELY-05: per-server override of mcp.circuitBreakerCooldownMs. */
+    /** Per-server override of mcp.circuitBreakerCooldownMs. */
     circuitBreakerCooldownMs: z.number().int().positive().optional(),
-    /** Phase 65 OPUX-08: per-server tool allowlist (whitelist). When non-empty,
+    /** Per-server tool allowlist (whitelist). When non-empty,
      *  ONLY listed tool names from this server are surfaced to the agent. The
      *  blocklist is then applied on top — a name on BOTH lists is still
      *  filtered out (the blocklist always wins). Filter applied EXCLUSIVELY at
-     *  mcp-tool-bridge.ts (65-P2). */
+     *  mcp-tool-bridge.ts. */
     toolAllowlist: z.array(z.string().min(1)).optional(),
-    /** Phase 65 OPUX-08: per-server tool blocklist. Listed tool names are
+    /** Per-server tool blocklist. Listed tool names are
      *  filtered out of the agent's registry regardless of whether they also
      *  appear on the allowlist — the blocklist always wins. Applied after the
      *  allowlist filter at mcp-tool-bridge.ts. */
     toolBlocklist: z.array(z.string().min(1)).optional(),
-    /** Phase 65 OPUX-09: per-server idle eviction TTL (ms). Default 0 disables
+    /** Per-server idle eviction TTL (ms). Default 0 disables
      *  (opt-in only). When non-zero AND no successful tool call has hit this
      *  server for idleTtlMs, the transport is closed WITHOUT setting
      *  userDisconnectedFlags so the next callTool reconnects transparently. */
     idleTtlMs: z.number().int().nonnegative().default(0),
-    /** Phase 65 OPUX-10: opt-out for resources utility tools (list_resources/
+    /** Opt-out for resources utility tools (list_resources/
      *  read_resource). Default undefined ⇒ auto-register IF server advertises
      *  capabilities.resources. Set false to suppress (mitigates Cursor's 40-tool
      *  ceiling on resources-noisy servers). */
     enableResources: z.boolean().optional(),
-    /** Phase 65 OPUX-10: opt-out for prompts utility tools (list_prompts/
+    /** Opt-out for prompts utility tools (list_prompts/
      *  get_prompt). Same semantics as enableResources but for capabilities.prompts. */
     enablePrompts: z.boolean().optional(),
-    /** Phase 67 CAP-02: opt-in parallel tool calls. When true AND transport "stdio",
+    /** Opt-in parallel tool calls. When true AND transport "stdio",
      *  the per-server PQueue concurrency bumps from 1 to maxConcurrency ?? 4. Default
      *  undefined => stdio stays serialized (concurrency 1). Ignored for sse/http
      *  (already default concurrency 4). Read at PQueue construction (mcp-client-connect.ts). */
     supportsParallelToolCalls: z.boolean().optional(),
-    /** Phase 66 OAUTH-10: per-server authentication scheme. "oauth" opts the
+    /** Per-server authentication scheme. "oauth" opts the
      *  server into the OAuth 2.1 + PKCE flow (mcp.oauth_login / token store).
      *  "bearer" / "none" are explicit no-OAuth markers. Undefined ⇒ no OAuth
      *  (treated as "none"). Threaded schema→runtime→persist (locked decision #7)
-     *  so a reconnect cannot silently strip a server's OAuth requirement (CR-01). */
+     *  so a reconnect cannot silently strip a server's OAuth requirement. */
     auth: z.enum(["none", "bearer", "oauth"]).optional(),
-    /** Phase 66 OAUTH-10/11: OAuth provider hints for an `auth:"oauth"` server.
-     *  strictObject so unknown keys are rejected (T-66-01 tampering defence). */
+    /** OAuth provider hints for an `auth:"oauth"` server.
+     *  strictObject so unknown keys are rejected (tampering defence). */
     oauth: z
       .strictObject({
-        /** OAUTH-03 cascade fallback: user-provided authorization endpoint used
+        /** Cascade fallback: user-provided authorization endpoint used
          *  when RFC 8414/9728 discovery does not surface one. */
         authorizationEndpoint: z.url().optional(),
         /** OAuth scope string requested at authorization time. */
         scope: z.string().optional(),
-        /** OAUTH-11 / 66-P12: Stripe Connect `Stripe-Account` header value
+        /** Stripe Connect `Stripe-Account` header value
          *  threaded into token + refresh requests for connected-account servers. */
         stripeAccount: z.string().optional(),
       })
       .optional(),
-    // Phase 68 BUNDLE-02: skill-bundle provenance marker. SYSTEM-MANAGED -- operators
+    // Skill-bundle provenance marker. SYSTEM-MANAGED -- operators
     // inspect via `comis mcp list --show-bundle-overrides`. Set by the bundle resolver
     // when a bundle entry lands; absent on user-authored entries. Optional + min(1) so
-    // empty strings cannot accidentally claim a bundle source (T-68-02-05 -- spoofing
-    // defence).
+    // empty strings cannot accidentally claim a bundle source (spoofing defence).
     _bundleSource: z.string().min(1).optional(),
 
-    // Phase 68 BUNDLE-04: archived bundle entry when a user override (or a second
+    // Archived bundle entry when a user override (or a second
     // skill's bundle entry with --force) replaced it. Recursive shape: an
     // _bundleArchive may itself carry _bundleSource (the original skill's marker).
     // z.lazy() defers the self-reference at type-check time; the runtime closure
-    // resolves at parse time (68-P-NEW-5 / Pitfall 10 -- TS circular-type error
-    // without it). The explicit `z.ZodTypeAny` annotation on the lazy callback
-    // matches the Zod 4 "Resolve recursive type inference errors" guidance --
-    // without it tsc fires TS7022 (self-reference in initializer). Not modelled
-    // past one level: archive of an archive is replaced last-write-wins on the
-    // archive slot.
+    // resolves at parse time (TS circular-type error without it). The explicit
+    // `z.ZodTypeAny` annotation on the lazy callback matches the Zod 4
+    // "Resolve recursive type inference errors" guidance -- without it tsc fires
+    // TS7022 (self-reference in initializer). Not modelled past one level: archive
+    // of an archive is replaced last-write-wins on the archive slot.
     _bundleArchive: z.lazy((): z.ZodTypeAny => McpServerEntrySchema).optional(),
   }),
 );
@@ -206,11 +204,11 @@ export const McpConfigSchema = z.strictObject({
     osvCheckEnabled: z.boolean().default(true),
     /** OSV cache TTL in milliseconds (default: 24h = 86_400_000). */
     osvCacheTtlMs: z.number().int().positive().default(86_400_000),
-    /** Phase 64 RELY-02: per-server keepalive ping interval (ms). Default 180000 (3 min). 0 disables for chatty servers (e.g., servers already receiving frequent tool calls). */
+    /** Per-server keepalive ping interval (ms). Default 180000 (3 min). 0 disables for chatty servers (e.g., servers already receiving frequent tool calls). */
     keepaliveIntervalMs: z.number().int().nonnegative().default(180_000),
-    /** Phase 64 RELY-05: consecutive failed tool calls before circuit breaker opens. Default 3. Setting 1 effectively trips the breaker on every failure. */
+    /** Consecutive failed tool calls before circuit breaker opens. Default 3. Setting 1 effectively trips the breaker on every failure. */
     circuitBreakerThreshold: z.number().int().positive().default(3),
-    /** Phase 64 RELY-05: circuit breaker cooldown in ms before transitioning open → half-open. Default 60000 (1 min). */
+    /** Circuit breaker cooldown in ms before transitioning open → half-open. Default 60000 (1 min). */
     circuitBreakerCooldownMs: z.number().int().positive().default(60_000),
   });
 

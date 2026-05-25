@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 68 CR-01 — daemon-private installed-bundles state file.
+ * Daemon-private installed-bundles state file.
  *
  * The trust root for "did WE install this MCP entry as a bundle?". Distinct
  * from the `_bundleSource` field on `McpServerEntry` in `config.yaml` — that
@@ -123,8 +123,7 @@ export function recordBundleEntries(
   skillId: string,
   entries: readonly McpServerEntry[],
 ): Result<void, Error> {
-  // Ensure the data dir exists with mode 0o700 (matches the §1.4 invariant
-  // for daemon-private state).
+  // Ensure the data dir exists with mode 0o700 (daemon-private state invariant).
   const dirResult = ensureContainedDir({ dir: dataDir, mode: 0o700 });
   if (!dirResult.ok) {
     return err(
@@ -217,8 +216,8 @@ export function computeEntryFingerprint(entry: McpServerEntry): string {
  *
  * The resolver uses this as the SOLE source of truth for "is this
  * existing entry actually ours to replace?". The `_bundleSource` field
- * on the entry itself is no longer trusted for this decision (CR-01 —
- * a hand-edited config.yaml could spoof it).
+ * on the entry itself is no longer trusted for this decision — a
+ * hand-edited config.yaml could spoof it.
  */
 export function hasBundleRecord(
   state: InstalledBundleState,

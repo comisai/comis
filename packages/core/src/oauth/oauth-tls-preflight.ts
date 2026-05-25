@@ -16,8 +16,8 @@
  * fingerprinting in OpenAI logs.
  *
  * This module never logs — the caller is responsible for surfacing
- * the result via Pino (daemon) or DoctorFinding (CLI). Per AGENTS.md §2.4
- * no `@comis/infra` import.
+ * the result via Pino (daemon) or DoctorFinding (CLI). No `@comis/infra`
+ * import.
  *
  * @module
  */
@@ -52,9 +52,9 @@ export type TlsPreflightFailureKind = "tls-cert" | "network";
 /**
  * Discriminated union returned by runOAuthTlsPreflight.
  *
- * NOTE on Result<T,E> deviation: this shape predates AGENTS.md §2.1 in
- * the OpenClaw port. Callers pattern-match on `.kind` for actionable
- * routing, which is more ergonomic than `.error.kind`.
+ * NOTE on Result<T,E> deviation: this shape is from the OpenClaw port.
+ * Callers pattern-match on `.kind` for actionable routing, which is
+ * more ergonomic than `.error.kind`.
  */
 export type TlsPreflightResult =
   | { ok: true }
@@ -104,7 +104,7 @@ export async function runOAuthTlsPreflight(
 function classifyTlsPreflightError(error: unknown): TlsPreflightResult {
   // Inline narrowing — OpenClaw's asNullableObjectRecord helper is not
   // exported by Comis; duplicating ~3 lines is preferred over adding a
-  // shared util (AGENTS.md §2.3 rule of three not yet met).
+  // shared util (rule of three not yet met).
   const root = (error && typeof error === "object" ? error : {}) as Record<string, unknown>;
   const cause = (root.cause && typeof root.cause === "object" ? root.cause : {}) as Record<
     string,

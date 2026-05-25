@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the Phase 65 OPUX-10 GLOBAL prompts platform tools
+ * Unit tests for the GLOBAL prompts platform tools
  * (mcp-prompts-tool.ts): list_prompts + get_prompt.
  *
- * Drives RED for:
+ * Covers:
  *  - fixed global names list_prompts / get_prompt
  *  - get_prompt parameters: required server + name, optional arguments record
  *  - execute delegates to listPromptsForServer / getPromptFromServer
@@ -35,8 +35,8 @@ function makeConnection(client: Partial<Client>): McpConnection {
     reconnectAttempt: 0,
     maxReconnectAttempts: 5,
     generation: 0,
-    // CR-01: the adapters now re-enforce the capability gate on the live
-    // connection, so a connected server must advertise the capability.
+    // The adapters re-enforce the capability gate on the live connection,
+    // so a connected server must advertise the capability.
     capabilities: { resources: {}, prompts: {} },
   };
 }

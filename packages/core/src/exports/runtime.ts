@@ -28,9 +28,8 @@ export {
   systemEnvSnapshot,
   systemScheduleTimeout,
 } from "../runtime/system-time.js";
-// Phase 64 RELY-02/RELY-05: opaque timer-handle type aliases re-exported
-// from the @comis/core barrel so downstream plans (02 wiring, 03 keepalive
-// ticker, 05 result coalescer) can `import type { ... } from "@comis/core"`
-// cleanly instead of reaching into the runtime/ subpath. Type-only export —
-// the value re-exports above already cover `systemSetInterval` / `systemSetTimeout`.
+// Opaque timer-handle type aliases re-exported from the @comis/core barrel so
+// consumers can `import type { ... } from "@comis/core"` cleanly instead of
+// reaching into the runtime/ subpath. Type-only export — the value re-exports
+// above already cover `systemSetInterval` / `systemSetTimeout`.
 export type { SystemIntervalHandle, SystemTimeoutHandle } from "../runtime/system-time.js";

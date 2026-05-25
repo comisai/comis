@@ -31,7 +31,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Removed Fields (stale-fallback — deleted)
 
-**None.** Every optional field has a verified production absent-mode code path: `agentDataDir` gates the JSONL session scan, `approvalGate` gates approval-cache clearing on session.delete/reset, `summarizeSession` gates the LLM summarization branch of session.search, `deliveryQueue` gates the Phase 69 SERVE-06 deliveryStatus join. Daemon wires all four unconditionally in `buildRpcDispatchDeps` when their upstream prerequisites exist; tests omit them to exercise the absent-branch paths.
+**None.** Every optional field has a verified production absent-mode code path: `agentDataDir` gates the JSONL session scan, `approvalGate` gates approval-cache clearing on session.delete/reset, `summarizeSession` gates the LLM summarization branch of session.search, `deliveryQueue` gates the deliveryStatus join. Daemon wires all four unconditionally in `buildRpcDispatchDeps` when their upstream prerequisites exist; tests omit them to exercise the absent-branch paths.
 
 ## Summary
 

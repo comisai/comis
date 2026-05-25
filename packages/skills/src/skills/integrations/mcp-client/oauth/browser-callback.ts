@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Loopback OAuth browser-callback server — the security epicenter of Phase 66
- * (OAUTH-06/07/08/09/12 + the file CI-02 guards).
+ * Loopback OAuth browser-callback server (guarded by the no-module-globals AST gate).
  *
  * One ephemeral `node:http` server per interactive login. It binds
  * `listen(0, "127.0.0.1")` (kernel-assigned port, loopback IP only), serves a
@@ -10,7 +9,7 @@
  * and resolves. Then it closes — on success, on a 300s timeout, and on
  * rejection — so no port or file descriptor lingers.
  *
- * ── ZERO module-scope mutables (66-P1 / CI-02) ──────────────────────────────
+ * ── ZERO module-scope mutables ──────────────────────────────────────────────
  * Hermes kept the callback port in a MODULE-GLOBAL (`_oauth_port`); two
  * concurrent logins then clobbered each other's port (a TOCTOU that could
  * mis-route an authorization code). THIS file therefore has NO module-scope
@@ -20,9 +19,9 @@
  * {@link runBrowserCallback} call. The only module-level bindings are `const`
  * (the timeout default, the close-tab HTML, and the const-bound helper arrows),
  * which are immutable and pose no TOCTOU risk. `test/architecture/
- * mcp-no-module-globals.test.ts` (CI-02) AST-asserts this on exactly this file.
+ * mcp-no-module-globals.test.ts` AST-asserts this on exactly this file.
  *
- * ── CSRF state (OAUTH-08 / 66-P6) ───────────────────────────────────────────
+ * ── CSRF state ───────────────────────────────────────────────────────────────
  * The caller generates `state = randomBytes(32).toString("hex")` (upstream, in
  * the adapter's `state()`); it is passed in, held in the closure, NEVER written
  * to disk. The callback compares the returned `state` against it via
@@ -32,13 +31,13 @@
  * code is NOT resolved (the attacker's code is dropped; the server stays up for
  * the legitimate redirect or the timeout).
  *
- * ── Redirect-URI allowlist (OAUTH-09 / 66-P7) ───────────────────────────────
+ * ── Redirect-URI allowlist ───────────────────────────────────────────────────
  * The redirect URI is `http://127.0.0.1:<port>/callback` — the IP literal, NOT
  * `localhost` (DNS-rebindable per RFC 8252). {@link validateRedirectHost}
  * rejects `localhost` and `[::1]`/`::1` (the latter unless an explicit opt-in)
  * BEFORE any browser launch.
  *
- * ── Headless detection (OAUTH-07 / 66-P10) ──────────────────────────────────
+ * ── Headless detection ───────────────────────────────────────────────────────
  * The shared `isRemoteEnvironment` helper checks only `SSH_CLIENT`/`SSH_TTY`/
  * `!DISPLAY` — too narrow for this flow. {@link isHeadless} DELEGATES to it and
  * ORs the four missing signals (`SSH_CONNECTION || !isTTY || CONTAINER ||
@@ -48,13 +47,13 @@
  * the URL themselves). The shared helper is intentionally NOT widened
  * (rule-of-three: one consumer).
  *
- * ── `open` dependency (resolved_scope #1) ───────────────────────────────────
+ * ── `open` dependency ────────────────────────────────────────────────────────
  * `open` is NOT a skills dependency. The browser launch is an INJECTED
  * `openUrl: (url) => void` (a no-op spy in tests; the real `open` is wired
- * CLI-side in 66-08). This module only hosts the callback server + headless
- * decision; it never imports `open`.
+ * CLI-side). This module only hosts the callback server + headless decision;
+ * it never imports `open`.
  *
- * ── code_verifier (OAUTH-12 / 66-P5) ────────────────────────────────────────
+ * ── code_verifier ────────────────────────────────────────────────────────────
  * The PKCE `code_verifier` is held in memory only — never written to any file,
  * never logged. After the caller exchanges the code, it zeroes the verifier
  * buffer via {@link zeroVerifier} (`Buffer.fill(0)`). An architecture-grep
@@ -82,12 +81,13 @@ import {
 
 /**
  * Default callback timeout (RFC-style native-app loopback flow). After this an
- * abandoned login rejects and the server closes (66-P14). Module-level `const`
- * is permitted by CI-02 (it forbids only `let`/`var`).
+ * abandoned login rejects and the server closes (no lingering port/fd).
+ * Module-level `const` is permitted by the no-module-globals gate (it forbids
+ * only `let`/`var`).
  */
 const CALLBACK_TIMEOUT_MS = 300_000;
 
-/** Loopback IP literal — the ONLY accepted redirect host (RFC 8252 / 66-P7). */
+/** Loopback IP literal — the ONLY accepted redirect host (RFC 8252). */
 const LOOPBACK_IPV4 = "127.0.0.1";
 
 /** Path to the WSL interop marker — its presence means "no local browser". */
@@ -169,7 +169,7 @@ export interface RunBrowserCallbackOptions {
 /**
  * A live callback server. Resolved by {@link runBrowserCallback} once the
  * server is listening. All fields are read-only snapshots; the only mutable
- * state lives in the closure that produced this handle (CI-02).
+ * state lives in the closure that produced this handle (no module-scope mutables).
  */
 export interface BrowserCallbackHandle {
   /** The kernel-assigned loopback port. */
@@ -202,7 +202,7 @@ export interface BrowserCallbackHandle {
  * loopback literal `127.0.0.1`. `localhost` is DNS-rebindable (RFC 8252) and is
  * NEVER accepted, even with {@link ValidateRedirectHostOptions.allowIpv6Loopback}.
  *
- * Const-bound arrow → an immutable module binding (CI-02 allows `const`).
+ * Const-bound arrow → an immutable module binding (only `let`/`var` are prohibited).
  */
 export const validateRedirectHost = (
   host: string,
@@ -218,7 +218,7 @@ export const validateRedirectHost = (
 /**
  * True when the current host has no usable local browser. DELEGATES to the
  * shared `isRemoteEnvironment` (SSH_CLIENT/SSH_TTY/!DISPLAY) then ORs the four
- * signals that helper misses (66-P10): an SSH_CONNECTION env var, a non-TTY
+ * signals that helper misses: an SSH_CONNECTION env var, a non-TTY
  * stdout, a CONTAINER marker, or the WSL interop marker on disk.
  *
  * The shared helper is delegated-to, not widened (rule-of-three).
@@ -233,10 +233,9 @@ export const isHeadless = (input: HeadlessInput): boolean => {
 };
 
 /**
- * Zero a PKCE `code_verifier` buffer in place after the code exchange
- * (OAUTH-12 / 66-P5). `Buffer.fill(0)` overwrites the secret so a later heap
- * inspection cannot recover it. Idempotent and safe on an already-zeroed or
- * empty buffer.
+ * Zero a PKCE `code_verifier` buffer in place after the code exchange.
+ * `Buffer.fill(0)` overwrites the secret so a later heap inspection cannot
+ * recover it. Idempotent and safe on an already-zeroed or empty buffer.
  */
 export const zeroVerifier = (verifier: Buffer): void => {
   verifier.fill(0);
@@ -259,7 +258,7 @@ const buildPortForwardHint = (port: number): string =>
  * headless host it left `openUrl` untouched and populated `portForwardHint`.
  *
  * ALL mutable state below is closure-local — there is no module-scope `let`/
- * `var` anywhere in this file (CI-02). The `code_verifier` is referenced only
+ * `var` anywhere in this file (no module-scope mutables). The `code_verifier` is referenced only
  * to document memory-only ownership; it is never written or logged.
  */
 export function runBrowserCallback(
@@ -274,7 +273,7 @@ export function runBrowserCallback(
     timeoutMs = CALLBACK_TIMEOUT_MS,
   } = options;
   // Reference codeVerifier so the memory-only contract is explicit at the call
-  // boundary without ever writing or logging it (OAUTH-12).
+  // boundary without ever writing or logging it.
   void options.codeVerifier;
 
   // Pattern B: env via the sanctioned `systemEnvSnapshot()` from
@@ -285,7 +284,7 @@ export function runBrowserCallback(
   // the headless decision is per-login and should not observe later env
   // mutations within the same process lifetime.
   const env = options.env ?? systemEnvSnapshot();
-  // WR-04: defensive `process.stdout?.isTTY` access. Some platforms (worker
+  // Defensive `process.stdout?.isTTY` access. Some platforms (worker
   // threads, stubbed-process shims, certain test environments) expose
   // `process` without a `stdout` property; a non-optional read would throw a
   // TypeError before the headless decision could even reach the four extended
@@ -297,9 +296,9 @@ export function runBrowserCallback(
   const existsSync = options.existsSync ?? nodeExistsSync;
 
   return new Promise<BrowserCallbackHandle>((resolveHandle, rejectHandle) => {
-    // ── Closure-local mutable state (the ENTIRE reason for CI-02). ──────────
+    // ── Closure-local mutable state (the ENTIRE reason for no module-scope mutables). ─
     // `let`/`const` HERE is fine — these bindings live in the Promise executor
-    // scope, not module scope. The CI-02 walker only inspects top-level
+    // scope, not module scope. The no-module-globals walker only inspects top-level
     // statements, so these are intentionally invisible to it.
     let settled = false;
     let codeResolve: ((code: string) => void) | undefined;
@@ -325,7 +324,7 @@ export function runBrowserCallback(
       const code = url.searchParams.get("code") ?? "";
 
       if (!timingSafeStateEqual(gotState, state)) {
-        // CSRF mismatch (66-P6): 400 + security WARN, do NOT resolve. The
+        // CSRF mismatch: 400 + security WARN, do NOT resolve. The
         // attacker's code is dropped; the server stays up for the legitimate
         // redirect or the timeout. NEVER log the state values themselves.
         res.writeHead(400, { "content-type": "text/plain" });
@@ -337,10 +336,9 @@ export function runBrowserCallback(
           // "security" semantic is preserved in the log message ("possible
           // CSRF") + the submodule ("oauth-browser-callback").
           //
-          // WR-01: the canonical `submodule` field is REQUIRED per AGENTS.md
-          // §2.7 so structured-log dashboards can filter this high-priority
-          // security event by subsystem. Every other WARN/ERROR in this phase
-          // already carries it; this site was the only WARN that omitted it.
+          // The canonical `submodule` field is required so structured-log
+          // dashboards can filter this high-priority security event by
+          // subsystem.
           {
             submodule: "oauth-browser-callback",
             errorKind: "auth" as const,
@@ -365,7 +363,7 @@ export function runBrowserCallback(
     // `closeAllConnections()` (Node 18.2+) forcibly destroys keep-alive sockets
     // so the loopback port is RELEASED promptly — `server.close()` alone only
     // stops accepting NEW connections and waits for existing ones to drain,
-    // which would leave the port held (66-P14: no lingering port/fd).
+    // which would leave the port held (no lingering port/fd).
     const cleanup = (): void => {
       systemClearTimeout(timer);
       server.closeAllConnections?.();
@@ -414,7 +412,7 @@ export function runBrowserCallback(
       if (headless) {
         const portForwardHint = buildPortForwardHint(port);
         // Surface the hint via the handle; do NOT open a browser that isn't
-        // there (66-P10). NEVER log the auth URL (it carries the state param).
+        // there. NEVER log the auth URL (it carries the state param).
         logger.info(
           { serverName, port, headless: true },
           "headless host — suppressing browser open; port-forward hint surfaced",
@@ -447,7 +445,7 @@ export function runBrowserCallback(
 }
 
 /**
- * Constant-time `state` comparison (OAUTH-08). `crypto.timingSafeEqual` THROWS
+ * Constant-time `state` comparison. `crypto.timingSafeEqual` THROWS
  * when the two buffers differ in length, which would (a) leak length via the
  * exception path and (b) turn a forged callback into an HTTP 500. So we
  * length-guard first and treat any length difference as a non-throwing
@@ -456,7 +454,7 @@ export function runBrowserCallback(
  *
  * Const-bound function declaration is a `const`-equivalent immutable binding;
  * declared as a `function` here only for hoisting clarity within the module
- * (still not a `let`/`var`, so CI-02 is satisfied).
+ * (still not a `let`/`var`, so the no-module-globals invariant is satisfied).
  */
 function timingSafeStateEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a, "utf8");

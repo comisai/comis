@@ -4539,8 +4539,8 @@ describe("session and tool-timeout lifecycle events", () => {
     expect(typeof payload.timestamp).toBe("number");
   });
 
-  it("agent_end_does_not_emit_session_ended (Gap F — moved to ComisSessionManager.destroySession per design §6.4)", () => {
-    // Per design §6.4 the mapping table makes session.ended fire on
+  it("agent_end_does_not_emit_session_ended", () => {
+    // session.ended fires on
     // "(session) ended" — a session-destroy semantic, NOT a per-turn
     // agent_end. The bridge case is now a trajectory no-op; per-turn
     // duration metrics live on observability:token_usage (→ model.completed).
@@ -4569,7 +4569,7 @@ describe("session and tool-timeout lifecycle events", () => {
     expect(endCalls).toHaveLength(0);
   });
 
-  it("agent_start_emits_session_started_only_once_per_bridge_when_trajectoryRegistry_present (Gap F)", () => {
+  it("agent_start_emits_session_started_only_once_per_bridge_when_trajectoryRegistry_present", () => {
     // With the registry-backed latch, the bridge suppresses per-turn
     // session:started re-emits. The first agent_start fires; subsequent
     // ones consult the latch and short-circuit.
@@ -4640,7 +4640,7 @@ describe("session and tool-timeout lifecycle events", () => {
     expect(stripped).toMatch(/case\s+"agent_start"\s*:\s*\{[\s\S]*?eventBus\.emit\("session:started"/m);
   });
 
-  it("structural: session:ended emit no longer appears in the agent_end switch case (Gap F — design §6.4)", async () => {
+  it("structural: session:ended emit no longer appears in the agent_end switch case", async () => {
     // Negative structural check: agent_end is now a trajectory no-op.
     // session.ended fires from ComisSessionManager.destroySession (the
     // semantic "session is over" boundary).

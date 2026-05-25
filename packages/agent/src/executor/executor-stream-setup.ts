@@ -149,7 +149,7 @@ export interface StreamSetupDeps {
    * (typically `~/.comis/`). Threaded into
    * `installMicrocompactionGuard` so the disk-offload writer can
    * confine its tool-results dir + file writes inside the operator's
-   * data root — closes the ancestor-symlink escape gap (design §1.4).
+   * data root — closes the ancestor-symlink escape gap (file-mode invariant).
    * Optional: when undefined, the caller falls back to
    * `safePath(homedir(), ".comis")` (the default daemon data dir).
    */
@@ -280,7 +280,7 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
   // Offload oversized tool results to disk before JSONL session write.
   // dataDir is threaded as the fs-safe substrate's confinedBaseDir so
   // the disk-offload writer's mkdir+chmod+open chain rejects any
-  // ancestor-symlink escape (design §1.4). Falls back to ~/.comis/ when
+  // ancestor-symlink escape (file-mode invariant). Falls back to ~/.comis/ when
   // the daemon hasn't explicitly forwarded its dataDir.
   const microcompactionDataDir = deps.dataDir ?? safePath(homedir(), ".comis");
   installMicrocompactionGuard(sm, sm.getSessionDir(), microcompactionDataDir, deps.logger, (_toolName) => {

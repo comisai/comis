@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 69 Plan 05 (SERVE-06) -- registerMcpResourcesForClient unit tests.
+ * registerMcpResourcesForClient unit tests.
  *
  * Pins the resources/list + resources/read behaviour in isolation by mocking
  * `daemonRpcForMcpClient` and capturing the SDK callback handlers via a
@@ -13,8 +13,8 @@
  *   - resources/read rejects sessions NOT in the per-client allowlist with a
  *     `[session_not_allowlisted]` error.
  *   - resources/read on an allowlisted session filters out messages whose
- *     `deliveryStatus === "pending"`; messages WITHOUT a deliveryStatus
- *     default to confirmed (backward-compat with pre-Phase-69 callers).
+ *     `deliveryStatus === "pending"`; messages WITHOUT a deliveryStatus are
+ *     excluded (conservative external-trust-boundary default).
  *   - resources/read content is wrapped via wrapExternalContent (markers +
  *     SECURITY NOTICE).
  *
@@ -110,7 +110,7 @@ function makeMcp(): McpServer {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("registerMcpResourcesForClient -- Phase 69 Plan 05 (SERVE-06)", () => {
+describe("registerMcpResourcesForClient", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -221,32 +221,23 @@ describe("registerMcpResourcesForClient -- Phase 69 Plan 05 (SERVE-06)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 69 WR-04 -- conservative default: unknown deliveryStatus excluded
+  // Conservative default: unknown deliveryStatus excluded
   //
-  // The pre-fix CONFIRMED filter was `(m.deliveryStatus ?? "confirmed") ===
-  // "confirmed"`, treating ABSENT-FIELD as CONFIRMED. That was correct for
-  // the internal session.history RPC consumer (the web dashboard) -- a
-  // pre-Phase-69 transcript without delivery-status tracking should render
-  // for an internal operator.
-  //
-  // For the MCP resources/read external trust boundary, the inverse
-  // posture is required: ABSENT-FIELD = UNKNOWN, EXCLUDE. Otherwise
-  // legacy sessions whose outbound state was never persisted leak as if
-  // confirmed to an external MCP client. The security gate is no longer
-  // sessionAllowlist alone; it is sessionAllowlist + strict deliveryStatus
+  // The CONFIRMED filter is strict `m.deliveryStatus === "confirmed"` (no
+  // nullish coalesce). For the MCP resources/read external trust boundary,
+  // ABSENT-FIELD = UNKNOWN, EXCLUDE. Otherwise legacy sessions whose outbound
+  // state was never persisted would leak as if confirmed to an external MCP
+  // client. The security gate is sessionAllowlist + strict deliveryStatus
   // equality.
   //
-  // Switching to `m.deliveryStatus === "confirmed"` (no nullish coalesce)
-  // achieves the conservative default for the external surface; the
-  // internal session.history consumer is unaffected because it runs its
+  // The internal session.history consumer is unaffected because it runs its
   // own filter pipeline elsewhere.
   // -------------------------------------------------------------------------
 
-  it("registerMcpResourcesForClient resources read excludes messages without a deliveryStatus field WR-04", async () => {
-    // Pre-Phase-69 callers / legacy sessions store messages without a
-    // deliveryStatus field. The conservative external-trust-boundary
-    // default is to EXCLUDE them -- absence is not equivalent to
-    // confirmed.
+  it("registerMcpResourcesForClient resources read excludes messages without a deliveryStatus field", async () => {
+    // Legacy sessions store messages without a deliveryStatus field. The
+    // conservative external-trust-boundary default is to EXCLUDE them --
+    // absence is not equivalent to confirmed.
     const client = makeClient(["sk-allowed"]);
     const rpc = vi.fn(async () => ({
       messages: [

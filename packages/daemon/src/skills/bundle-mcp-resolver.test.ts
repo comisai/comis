@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 68 BUNDLE-02/05/06 (Phase A): bundle-mcp-resolver unit tests.
+ * bundle-mcp-resolver unit tests.
  *
- * Co-located test matrix for the PURE Phase A resolver. The resolver itself
+ * Co-located test matrix for the pure resolver. The resolver itself
  * does NOT touch the filesystem, never spawns a transport, and never logs
  * secret values — these tests assert all three invariants by construction:
  *   - No `vi.mock` of `node:fs` / `child_process` is needed (resolver doesn't
@@ -13,15 +13,15 @@
  *     function from @comis/daemon); we test reject + bypass paths against
  *     real-world credential prefixes.
  *
- * Test matrix (per 68-03-PLAN.md task 1):
+ * Test matrix:
  *   1. Clean install — no collisions, no safety failures.
- *   2. Plaintext-secret reject (BUNDLE-06).
+ *   2. Plaintext-secret reject.
  *   3. Plaintext-secret bypass via disablePlaintextSecretCheck=true.
- *   4. OSV malware reject (BUNDLE-06).
+ *   4. OSV malware reject.
  *   5. OSV disabled via osvCheckEnabled=false.
- *   6. Name-collision with user-owned entry, force=false → reject (BUNDLE-05).
- *   7. Name-collision with user-owned entry, force=true → archive (BUNDLE-04).
- *   8. Idempotent re-merge with matching _bundleSource (BUNDLE-03 idempotence).
+ *   6. Name-collision with user-owned entry, force=false → reject.
+ *   7. Name-collision with user-owned entry, force=true → archive.
+ *   8. Idempotent re-merge with matching _bundleSource.
  *
  * @module
  */
@@ -39,7 +39,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // looksLikePlaintextSecret is the REAL implementation from @comis/daemon —
 // a pure function that the resolver delegates to. We exercise the real
 // heuristic so the test matrix doubles as a contract check for the
-// integration between resolver and the Phase 63 SAFETY-03/04 primitive.
+// integration between resolver and the plaintext-secret check primitive.
 
 const mockOsvMalwareCheck = vi.hoisted(() =>
   vi.fn(async (_pkg: string, _ecosystem: string, _opts: unknown) => ({
@@ -131,7 +131,7 @@ beforeEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () => {
+describe("bundle-mcp-resolver — pure function", () => {
   // -------------------------------------------------------------------------
   // 1. Clean install: no collisions, no safety failures.
   //    Asserts: 2 entries land in nextServers, both with _bundleSource set,
@@ -162,11 +162,11 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
   });
 
   // -------------------------------------------------------------------------
-  // 2. Plaintext-secret reject (BUNDLE-06 / 68-P-NEW-2):
+  // 2. Plaintext-secret reject:
   //    bundled entry's env carries a value that matches the
   //    looksLikePlaintextSecret heuristic → reject with
   //    kind:"plaintext_secret", serverName, envKey set. The OSV check
-  //    MUST NOT be called for that entry (Phase A short-circuits).
+  //    MUST NOT be called for that entry (short-circuits).
   // -------------------------------------------------------------------------
   it("rejects with plaintext_secret when bundle env carries a real-world credential prefix (sk-* OpenAI key)", async () => {
     const input = makeInput({
@@ -185,7 +185,7 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
     if (result.error.kind !== "plaintext_secret") return;
     expect(result.error.envKey).toBe("OPENAI_API_KEY");
     expect(result.error.serverName).toBe("leaky");
-    // Phase A short-circuited BEFORE the OSV gate fired for this entry.
+    // Short-circuited BEFORE the OSV gate fired for this entry.
     expect(mockOsvMalwareCheck).not.toHaveBeenCalled();
   });
 
@@ -212,10 +212,9 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
   });
 
   // -------------------------------------------------------------------------
-  // 4. OSV malware reject (BUNDLE-06 / 68-P-NEW): the second entry in a
-  //    3-entry bundle has a stdio command whose package the mocked OSV
-  //    check declares malicious. Reject with kind:"osv_malware",
-  //    packageName, advisoryIds set.
+  // 4. OSV malware reject: the second entry in a 3-entry bundle has a stdio
+  //    command whose package the mocked OSV check declares malicious. Reject
+  //    with kind:"osv_malware", packageName, advisoryIds set.
   // -------------------------------------------------------------------------
   it("rejects with osv_malware when a stdio bundle entry's package returns verdict==='malicious'", async () => {
     mockOsvMalwareCheck.mockImplementation(async (pkg: string) => {
@@ -245,7 +244,7 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
 
   // -------------------------------------------------------------------------
   // 5. OSV disabled via osvCheckEnabled=false: a bundle with a "malicious"
-  //    package installs cleanly (gate is opt-out per SAFETY-06).
+  //    package installs cleanly (gate is opt-out).
   // -------------------------------------------------------------------------
   it("skips OSV check entirely when osvCheckEnabled=false", async () => {
     mockOsvMalwareCheck.mockImplementation(async () => ({
@@ -267,9 +266,9 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
   });
 
   // -------------------------------------------------------------------------
-  // 6. Name-collision with user-owned entry, force=false → reject
-  //    (BUNDLE-05). The user entry has no _bundleSource, so the resolver
-  //    classifies it as user-owned and refuses to clobber.
+  // 6. Name-collision with user-owned entry, force=false → reject.
+  //    The user entry has no _bundleSource, so the resolver classifies it
+  //    as user-owned and refuses to clobber.
   // -------------------------------------------------------------------------
   it("rejects with name_collision when a user-owned entry shares a name with a bundle entry and force=false", async () => {
     const userEntry: McpServerEntry = {
@@ -298,9 +297,9 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
   });
 
   // -------------------------------------------------------------------------
-  // 7. Name-collision with force=true → bundle wins, user entry archived
-  //    (CONTEXT.md decision #9: --force "archives the user entry to
-  //    _bundleArchive and installs the bundle entry").
+  // 7. Name-collision with force=true → bundle wins, user entry archived.
+  //    --force "archives the user entry to _bundleArchive and installs
+  //    the bundle entry".
   // -------------------------------------------------------------------------
   it("on force=true name collision: bundle entry wins, existing entry archived to _bundleArchive", async () => {
     const userEntry: McpServerEntry = {
@@ -334,7 +333,7 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
   });
 
   // -------------------------------------------------------------------------
-  // 8. Idempotent re-merge with matching _bundleSource (BUNDLE-03):
+  // 8. Idempotent re-merge with matching _bundleSource:
   //    re-running with an existing entry that already carries
   //    _bundleSource===input.skillId REPLACES IN PLACE (no append, no
   //    collision). Critically: running the resolver TWICE with the same
@@ -350,7 +349,7 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
       idleTtlMs: 0,
       _bundleSource: "my-skill",
     } as McpServerEntry;
-    // CR-01: the trust-root state file must ALSO record this (skillId, name)
+    // The trust-root state file must ALSO record this (skillId, name)
     // for the resolver to allow replace-in-place. `_bundleSource` alone is
     // no longer sufficient (it can be spoofed via hand-edited config.yaml).
     const installedBundleState: InstalledBundleState = {
@@ -377,20 +376,19 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
   });
 
   // -------------------------------------------------------------------------
-  // 8b. CR-01 — provenance-spoofing defence: a HAND-EDITED config.yaml
-  //     injecting `_bundleSource: "skill-x"` on a user-authored entry does
-  //     NOT drive a silent in-place replace when the daemon's installed-
-  //     bundles state file has NO record of (skill-x, that-name).
+  // 8b. Provenance-spoofing defence: a HAND-EDITED config.yaml injecting
+  //     `_bundleSource: "skill-x"` on a user-authored entry does NOT drive a
+  //     silent in-place replace when the daemon's installed-bundles state file
+  //     has NO record of (skill-x, that-name).
   //
-  //     This is the security regression test for the bug Phase 68 originally
-  //     shipped with: `_bundleSource` was the SOLE source of truth for
-  //     "did we install this?", which an operator could spoof by editing
-  //     `config.yaml` directly. The fix moves the source of truth to the
-  //     daemon-private state file at `~/.comis/installed-bundles.json`
+  //     Security regression test: `_bundleSource` was the SOLE source of
+  //     truth for "did we install this?", which an operator could spoof by
+  //     editing `config.yaml` directly. The fix moves the source of truth to
+  //     the daemon-private state file at `~/.comis/installed-bundles.json`
   //     (mode 0o600 — operators can read but writing it requires the
   //     daemon's own write path).
   // -------------------------------------------------------------------------
-  it("CR-01: hand-edited _bundleSource in config.yaml WITHOUT state-file record ⇒ collision (NOT silent replace)", async () => {
+  it("hand-edited _bundleSource in config.yaml WITHOUT state-file record ⇒ collision (NOT silent replace)", async () => {
     // Attacker scenario: operator hand-edited config.yaml to add an entry
     // claiming to belong to "skill-x", even though skill-x has never been
     // installed (state file has no record).
@@ -431,9 +429,8 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
   });
 
   // -------------------------------------------------------------------------
-  // 9. Determinism (BUNDLE-03 invariant): two runs with identical input
-  //    produce byte-equal nextServers. Also verifies the sort-by-name
-  //    deterministic-output gate from the plan's "additional sub-assertion".
+  // 9. Determinism: two runs with identical input produce byte-equal
+  //    nextServers. Also verifies the sort-by-name deterministic-output gate.
   // -------------------------------------------------------------------------
   it("idempotent: identical input produces byte-equal nextServers across runs", async () => {
     const input: ResolveBundleInput = {
@@ -470,7 +467,7 @@ describe("bundle-mcp-resolver — Phase A pure function (BUNDLE-02/05/06)", () =
   //     nextServers component.
   // -------------------------------------------------------------------------
   it("idempotent: applying resolver to its own output is a fixed point (boot re-merge invariant)", async () => {
-    // CR-01: at boot, the install-helper already wrote the state file when
+    // At boot, the install-helper already wrote the state file when
     // the bundle was originally installed, so the re-merge MUST be invoked
     // with the recorded state for the prior install. Simulate that here.
     const installedBundleState: InstalledBundleState = {

@@ -57,10 +57,10 @@ export interface GatewayServerDeps {
     instanceId: string;
     startedAt: string;
   };
-  /** Per-client McpServer factory (Phase 69 SERVE-01/04). When provided,
-   *  the gateway mounts `POST /mcp/v1` between the global rate-limit
-   *  middleware and the catch-all 404 handler. Omit to leave the route
-   *  unmounted (deployments that disable the MCP server). */
+  /** Per-client McpServer factory. When provided, the gateway mounts
+   *  `POST /mcp/v1` between the global rate-limit middleware and the
+   *  catch-all 404 handler. Omit to leave the route unmounted
+   *  (deployments that disable the MCP server). */
   readonly buildMcpServerForClient?: (client: TokenClient) => McpServer;
 }
 
@@ -135,10 +135,10 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
     return rateLimiterMw(c, next);
   });
 
-  // Phase 69 SERVE-01/04 — MCP server endpoint. MUST be mounted AFTER the
-  // global rate-limit middleware (so layer-1 IP caps apply) and BEFORE the
-  // catch-all `app.notFound` handler (so /mcp/v1 doesn't fall through to
-  // the 404 branch). Per-client tools/list filter is enforced inside
+  // MCP server endpoint. MUST be mounted AFTER the global rate-limit
+  // middleware (so layer-1 IP caps apply) and BEFORE the catch-all
+  // `app.notFound` handler (so /mcp/v1 doesn't fall through to the 404
+  // branch). Per-client tools/list filter is enforced inside
   // `buildMcpServerForClient` via the side-channel mcpExportPolicy registry.
   if (deps.buildMcpServerForClient) {
     mountMcpServerEndpoint(
@@ -151,10 +151,10 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
         tokenStore: deps.tokenStore,
         buildMcpServerForClient: deps.buildMcpServerForClient,
         logger,
-        // Phase 69 CR-02 -- mirror the body-limit ceiling used by
-        // `/api/chat`. The bodyLimit middleware fires BEFORE the route
-        // handler reads c.req.json(), so an mcp-client cannot exhaust
-        // daemon heap by streaming a multi-GB body.
+        // Mirror the body-limit ceiling used by `/api/chat`. The bodyLimit
+        // middleware fires BEFORE the route handler reads c.req.json(), so
+        // an mcp-client cannot exhaust daemon heap by streaming a
+        // multi-GB body.
         bodyLimitBytes: config.httpBodyLimitBytes,
       },
     );
@@ -209,22 +209,21 @@ export function createGatewayServer(deps: GatewayServerDeps): GatewayServerHandl
         } as WSEvents;
       }
 
-      // Phase 69 WR-05 -- reject mcp-client-scoped tokens at WS upgrade
-      // time. Per WR-03, mcp-client is the SOLE scope of any token that
-      // has it, so `includes("mcp-client")` is sufficient and means
-      // "this is an external MCP credential". Such a token does not have
-      // rpc/ws/admin and would silently fail every RPC method call after
-      // a successful upgrade -- wasting a connection slot, a rate-limit
-      // bucket, a WsConnectionManager entry, and giving the credential
-      // holder a confusing debugging experience. Close with 4003 ("scope
-      // not permitted at this endpoint") and surface the correct route.
+      // Reject mcp-client-scoped tokens at WS upgrade time. mcp-client is
+      // the SOLE scope of any token that has it, so `includes("mcp-client")`
+      // is sufficient and means "this is an external MCP credential". Such a
+      // token does not have rpc/ws/admin and would silently fail every RPC
+      // method call after a successful upgrade -- wasting a connection slot,
+      // a rate-limit bucket, a WsConnectionManager entry, and giving the
+      // credential holder a confusing debugging experience. Close with 4003
+      // ("scope not permitted at this endpoint") and surface the correct route.
       if (client.scopes.includes("mcp-client")) {
         logger.warn(
           {
             clientId: client.id,
             errorKind: "auth" as const,
             hint:
-              "mcp-client tokens must use POST /mcp/v1 -- per WR-03 mcp-client is the sole scope of its token and cannot be co-issued with rpc/ws/admin",
+              "mcp-client tokens must use POST /mcp/v1 -- mcp-client is the sole scope of its token and cannot be co-issued with rpc/ws/admin",
           },
           "WebSocket connection rejected: mcp-client-scoped token cannot open /ws",
         );

@@ -2184,7 +2184,7 @@ describe("getPromptSkillCapabilities", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 68 BUNDLE-03 — getAllMetadata() boot-orchestrator enumeration
+  // getAllMetadata() boot-orchestrator enumeration
   // -------------------------------------------------------------------------
 
   it("getAllMetadata returns one entry per discovered skill", () => {

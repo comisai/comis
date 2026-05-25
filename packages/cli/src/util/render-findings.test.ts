@@ -2,7 +2,7 @@
 /**
  * Tests for the unified renderFindings helper.
  *
- * RED-then-GREEN coverage for the discriminated-union CLI render utility
+ * Coverage for the discriminated-union CLI render utility
  * that consolidates the 5 per-domain render sites (doctor / security / health /
  * status / channel). Per-variant assertions cover all four render configurations:
  *
@@ -11,8 +11,7 @@
  *   - Config C — grouped-by-category compact findings (health shape)
  *   - Config D — sections (status / channel shape)
  *
- * Module ./render-findings.js does not yet exist when this file is committed
- * (RED state); Task 2 implements it (GREEN state).
+ * Module ./render-findings.js must exist for these tests to pass.
  *
  * @module
  */

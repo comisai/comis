@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 69 Plan 03 -- MCP server endpoint /mcp/v1 integration test.
+ * MCP server endpoint /mcp/v1 integration test.
  *
  * Exercises the security-critical surface end-to-end via the MCP SDK 1.29.0
  * `Client` + `StreamableHTTPClientTransport`. Asserts:
@@ -9,16 +9,14 @@
  *   2. POST /mcp/v1 with an rpc-only token returns 403 (scope gate -- missing
  *      "mcp-client").
  *   3. POST /mcp/v1 with a synthesized token co-issuing admin + mcp-client
- *      returns 403 (defense-in-depth -- the schema refine in Plan 01 already
- *      blocks issuance, but the endpoint also rejects at runtime).
+ *      returns 403 (defense-in-depth -- the schema refine blocks issuance,
+ *      but the endpoint also rejects at runtime).
  *   4. POST /mcp/v1 with a valid mcp-client token whose mcpClient.allowlist
- *      is empty exposes ONLY the `safe`-classified tools (Plan 02 set:
- *      web_search, web_fetch, browser). NO permission-gated, NO never-export.
+ *      is empty exposes ONLY the `safe`-classified tools (web_search,
+ *      web_fetch, browser). NO permission-gated, NO never-export.
  *   5. POST /mcp/v1 with a valid mcp-client token whose allowlist includes
  *      "memory_search" exposes safe UNION {memory_search}. never-export
  *      tools NEVER appear.
- *
- * Reference: Phase 69 Plan 03 PLAN.md `<task>` Task 2.
  *
  * Uses port 8569 + dedicated test config to avoid conflicts with other
  * integration suites that run sequentially under vitest pool: "forks".
@@ -47,17 +45,16 @@ const CONFIG_PATH = resolve(
 );
 
 // ---------------------------------------------------------------------------
-// Test secrets -- aligned with the YAML config; neutral fixture values per
-// AGENTS.md §2.2 ("Test fixtures use neutral placeholders").
+// Test secrets -- aligned with the YAML config; neutral fixture placeholder values.
 // ---------------------------------------------------------------------------
 
 const RPC_ONLY_SECRET = "mcp-svr-toolslist-rpc-only-tok-22";
 const MCP_EMPTY_SECRET = "mcp-svr-toolslist-mcp-empty-tok-3";
 const MCP_MEMORY_SECRET = "mcp-svr-toolslist-mcp-memory-tok-4";
 
-// Expected safe-set from Plan 02 SUMMARY: 3 tools annotated mcpExportPolicy="safe".
+// Expected safe-set: 3 tools annotated mcpExportPolicy="safe".
 const EXPECTED_SAFE_TOOLS = ["browser", "web_fetch", "web_search"] as const;
-// Subset of Plan 02's never-export set -- a few high-value canaries to assert
+// Subset of the never-export set -- a few high-value canaries to assert
 // they NEVER appear in tools/list regardless of allowlist.
 const NEVER_EXPORT_CANARIES = [
   "tokens_manage",
@@ -136,7 +133,7 @@ async function rawPostMcp(
 // Test Suite
 // ---------------------------------------------------------------------------
 
-describe("Phase 69 Plan 03 -- /mcp/v1 endpoint auth + default-deny tools/list filter", () => {
+describe("/mcp/v1 endpoint auth + default-deny tools/list filter", () => {
   let handle: TestDaemonHandle;
   let baseUrl: string;
 

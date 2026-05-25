@@ -150,7 +150,7 @@ describe("createGatewayServer", () => {
     });
 
     // -----------------------------------------------------------------------
-    // Phase 69 WR-05 -- mcp-client-scoped tokens MUST NOT open a WebSocket
+    // mcp-client-scoped tokens MUST NOT open a WebSocket.
     //
     // The /ws upgrade only called tokenStore.verify; no scope check
     // rejected mcp-client-only tokens. Such a token would successfully
@@ -161,12 +161,11 @@ describe("createGatewayServer", () => {
     // experience for the credential holder.
     //
     // Fix: reject upgrades whose token has the `mcp-client` scope (which
-    // per WR-03 is the SOLE scope of such tokens) at upgrade time, with
-    // a structured WARN log and a 4003 close code. The upgrade handler
-    // must emit a WARN log identifying the rejection cause.
+    // is the SOLE scope of such tokens) at upgrade time, with a structured
+    // WARN log and a 4003 close code.
     // -----------------------------------------------------------------------
 
-    it("logs warning when WebSocket connection comes from an mcp-client-scoped token WR-05", async () => {
+    it("logs warning when WebSocket connection comes from an mcp-client-scoped token", async () => {
       const logger = createMockLogger();
       const token = "y".repeat(64);
       const handle = createGatewayServer(

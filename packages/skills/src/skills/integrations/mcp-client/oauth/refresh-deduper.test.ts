@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the 401 refresh-deduper (Phase 66 OAUTH-05 + OAUTH-11 rotation).
+ * Unit tests for the 401 refresh-deduper.
  *
- * RED→GREEN coverage (against the in-process mock OAuth server from 66-01 —
- * `test/support/mock-oauth-server.ts` — plus a tmpdir token store from 66-02):
+ * Coverage (against the in-process mock OAuth server in
+ * `test/support/mock-oauth-server.ts` plus a tmpdir token store):
  *
- *   1. dedup stress (OAUTH-05 / 66-P4 — THE HEADLINE): fire 100 concurrent
- *      dedupedRefresh(...) calls for the SAME expired access token through ONE
- *      concurrency-1 critical-section queue. Assert getRefreshCount() === 1
- *      (exactly one refresh_token POST) and all 100 callers resolve to the same
- *      new access token.
+ *   1. dedup stress (THE HEADLINE): fire 100 concurrent dedupedRefresh(...)
+ *      calls for the SAME expired access token through ONE concurrency-1
+ *      critical-section queue. Assert getRefreshCount() === 1 (exactly one
+ *      refresh_token POST) and all 100 callers resolve to the same new access
+ *      token.
  *   2. distinct tokens not deduped: two concurrent refreshes for DIFFERENT
  *      access tokens → getRefreshCount() === 2 (the dedup key is the access
  *      token, not the server).
@@ -17,15 +17,14 @@
  *      with the same (old) access token within 5s reuses the cached result
  *      WITHOUT a new POST; after the injected clock advances past the TTL a new
  *      refresh fires.
- *   4. rotation persist (OAUTH-11 / 66-P11 — Notion): with
- *      setRotateRefreshToken(true) the refresh returns a NEW refresh_token; the
- *      token store's <server>.json must then hold the NEW refresh_token
- *      (saveTokens was called with the SDK result) and a subsequent refresh
- *      using the NEW token must succeed (the mock rejects a rotated-away token
- *      with 400 — assert no lockout).
- *   5. failure eviction (66-P13): a refresh that rejects (mock 400) removes the
- *      entry from inflightRefreshes so a later attempt can retry (no poisoned
- *      shared future).
+ *   4. rotation persist (Notion): with setRotateRefreshToken(true) the refresh
+ *      returns a NEW refresh_token; the token store's <server>.json must then
+ *      hold the NEW refresh_token (saveTokens was called with the SDK result)
+ *      and a subsequent refresh using the NEW token must succeed (the mock
+ *      rejects a rotated-away token with 400 — assert no lockout).
+ *   5. failure eviction: a refresh that rejects (mock 400) removes the entry
+ *      from inflightRefreshes so a later attempt can retry (no poisoned shared
+ *      future).
  *
  * The deduper delegates the actual refresh to the SDK `refreshAuthorization`
  * (the production default). Tests exercise the real SDK against the mock for the
@@ -108,7 +107,7 @@ describe("createRefreshDeduper", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("100 concurrent same-token refreshes → exactly ONE refresh POST (OAUTH-05 / 66-P4)", async () => {
+  it("100 concurrent same-token refreshes → exactly ONE refresh POST (thundering-herd guard)", async () => {
     // Seed an existing token so saveTokens has a server to persist under.
     const calls: number[] = [];
     // Inject a counting refreshFn that drives the mock once and shares the
@@ -210,7 +209,7 @@ describe("createRefreshDeduper", () => {
     expect(mock.getRefreshCount()).toBe(2);
   });
 
-  it("persists a ROTATED refresh_token and reuses the new one — Notion (OAUTH-11 / 66-P11)", async () => {
+  it("persists a ROTATED refresh_token and reuses the new one — Notion", async () => {
     mock.setRotateRefreshToken(true);
     // Seed the store so we have an initial refresh token on disk.
     await store.saveTokens("notion", {
@@ -260,7 +259,7 @@ describe("createRefreshDeduper", () => {
     expect(replay.status).toBe(400);
   });
 
-  it("evicts the inflight entry on failure so a later refresh can retry (66-P13)", async () => {
+  it("evicts the inflight entry on failure so a later refresh can retry (no poisoned future)", async () => {
     // Force the first refresh to fail (mock 400).
     mock.setNextResponse({ status: 400, body: { error: "temporarily_unavailable" } });
     await expect(

@@ -1,4 +1,4 @@
-// @allow-throw: PathEscapeError + resolveContainedPathOrThrow are sanctioned boundary throws — observability artifact writers call the throwing variant at their narrow trust boundary and translate at the catch site. The non-throwing variant `resolveContainedPath` returns Result<string, PathEscapeError> for the standard early-return-chained call sites per AGENTS.md §2.1.
+// @allow-throw: PathEscapeError + resolveContainedPathOrThrow are sanctioned boundary throws — observability artifact writers call the throwing variant at their narrow trust boundary and translate at the catch site. The non-throwing variant `resolveContainedPath` returns Result<string, PathEscapeError> for the standard early-return-chained call sites.
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Path-containment + filename-normalization guards for observability
@@ -9,7 +9,7 @@
  *   1. **`resolveContainedPath` / `resolveContainedPathOrThrow`** —
  *      `path.resolve(base, ...segments)` + a contained-prefix check.
  *      The non-throwing variant returns `Result<string, PathEscapeError>`
- *      (AGENTS.md §2.1 default); the throwing variant exists for the
+ *      (the default early-return pattern); the throwing variant exists for the
  *      thin boundary callers that re-translate the throw to a `Result`
  *      one level up (see the file header `@allow-throw`).
  *
@@ -66,7 +66,7 @@ export class PathEscapeError extends Error {
 /**
  * Resolve `base + segments` and verify the result stays inside `base`.
  * Returns a `Result` — non-throwing variant suitable for the default
- * early-return-chained call sites per AGENTS.md §2.1.
+ * early-return-chained call sites.
  *
  * @param base - absolute base directory
  * @param segments - path segments to append under base

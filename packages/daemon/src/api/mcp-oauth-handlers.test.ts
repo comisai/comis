@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the MCP OAuth RPC handlers (Phase 66 OAUTH-10 / 66f).
+ * Tests for the MCP OAuth RPC handlers.
  *
- * RED→GREEN coverage (mirrors 66-07-PLAN <behavior>):
+ * Coverage:
  *   1. login happy path: oauth_login for a configured auth:"oauth" server →
  *      the (injected) orchestrator returns authorized → tokens persisted in the
  *      tmpdir store → mcpClientManager.reconnect(server) called → response
@@ -16,7 +16,7 @@
  *   4. logout: with tokens present on disk for "notion", oauth_logout removes all
  *      three files → cleared:true; a follow-up tokenStore.tokens("notion") is
  *      undefined.
- *   5. CI-01 parity smoke: createMcpOauthHandlers returns keys EXACTLY
+ *   5. Contract-handler parity smoke: createMcpOauthHandlers returns keys EXACTLY
  *      [McpOauthLoginContract.method, McpOauthLogoutContract.method], and each
  *      handler body references "server_name" literally (the auto-discovered
  *      contract-handler-parity test enforces the mechanism repo-wide).
@@ -111,7 +111,7 @@ function makeDeps(
 // ---------------------------------------------------------------------------
 
 describe("MCP OAuth RPC handlers", () => {
-  describe("createMcpOauthHandlers — factory shape (CI-01 smoke)", () => {
+  describe("createMcpOauthHandlers — factory shape (contract parity smoke)", () => {
     it("returns keys EXACTLY the two contract methods", () => {
       const handlers = createMcpOauthHandlers(makeDeps("notion"));
       expect(Object.keys(handlers).sort()).toEqual(
@@ -119,12 +119,12 @@ describe("MCP OAuth RPC handlers", () => {
       );
     });
 
-    it("handler-file source references server_name literally (CI-01 mechanism)", () => {
+    it("handler-file source references server_name literally (contract-handler parity mechanism)", () => {
       const src = readFileSync(resolve(HERE, "mcp-oauth-handlers.ts"), "utf8");
       expect(src).toContain("server_name");
     });
 
-    it("handler-file NEVER imports open (resolved_scope #1 / T-66-26)", () => {
+    it("handler-file NEVER imports open (browser launch is daemon/CLI-side)", () => {
       const src = readFileSync(resolve(HERE, "mcp-oauth-handlers.ts"), "utf8");
       expect(src).not.toMatch(/from\s+["']open["']/);
       expect(src).not.toMatch(/require\(\s*["']open["']\s*\)/);
@@ -305,16 +305,15 @@ describe("MCP OAuth RPC handlers", () => {
       );
     });
 
-    it("WR-02: throws when the server is unknown — does NOT call deleteAll for arbitrary names", async () => {
-      // The login handler already guards on findServerEntry; logout pre-fix
-      // skipped this check and called deleteAll for ANY string `safePath`
-      // accepted. This lets an admin-scope caller clear token files for a
-      // server they did not configure (typo, or another daemon's files in
-      // the shared mcp-tokens/ dir).
+    it("throws when the server is unknown — does NOT call deleteAll for arbitrary names", async () => {
+      // The login handler already guards on findServerEntry; without this
+      // guard the logout handler would call deleteAll for ANY string
+      // `safePath` accepted — letting an admin-scope caller clear token
+      // files for a server they did not configure (typo, or another
+      // daemon's files in the shared mcp-tokens/ dir).
       //
-      // The fix: mirror the login handler's findServerEntry pre-flight so
-      // an unknown name surfaces a clear error rather than a silent
-      // cleared:true.
+      // Mirror the login handler's findServerEntry pre-flight so an unknown
+      // name surfaces a clear error rather than a silent cleared:true.
       const deleteAll = vi.fn(async () => undefined);
       const closeStore = vi.fn(async () => undefined);
       const deps = makeDeps("notion", {

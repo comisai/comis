@@ -1,21 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 68 BUNDLE Plan 01 — RED tests pinning the extracted persistMcpServers
- * helper's PUBLIC surface.
- *
- * BEFORE the extraction (RED state):
- *   - The file `./persist-mcp-servers.ts` does NOT exist; the static import
- *     below fails at module-resolution time, so all 6 tests in this file
- *     collectively error out with "Cannot find module" / "Failed to resolve".
- *   - `persistMcpServers` is module-private inside `mcp-handlers.ts:122-227`,
- *     so even if the new module did exist, the `@comis/daemon` barrel does
- *     NOT re-export the symbol.
- *   - The current `actionType` parameter union is
- *     `"mcp.connect" | "mcp.disconnect"` — the widened literal
- *     `"skills.bundle.install"` (Test 3) is a TypeScript compile error.
- *
- * AFTER the extraction (Task 2 GREEN):
- *   - All 6 tests pass against the byte-identical extracted body.
+ * Tests pinning the extracted persistMcpServers helper's PUBLIC surface.
  *
  * Mock strategy (mirrors `mcp-handlers.test.ts:25-44`):
  *   - Mock `./persist-to-config.js` at file top so `persistToConfig` is a
@@ -144,13 +129,10 @@ describe("persistMcpServers (extracted)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 1 — Barrel re-export PROOF. The plan calls for a dynamic import of
-  // `@comis/daemon`; daemon's unit-test environment has no self-alias for
-  // `@comis/daemon` (the integration tier owns the dist-aliased import path).
-  // The equivalent and stronger structural proof is to read the daemon
-  // barrel source and assert it re-exports the symbol. Behavior is identical
-  // (the symbol must be exported through index.ts) and this assertion runs
-  // in the daemon vitest project without needing the dist build.
+  // Test 1 — Barrel re-export PROOF. The daemon unit-test environment has no
+  // self-alias for `@comis/daemon` (the integration tier owns the
+  // dist-aliased import path). The equivalent and stronger structural proof
+  // is to read the daemon barrel source and assert it re-exports the symbol.
   // -------------------------------------------------------------------------
   it("Test 1 — @comis/daemon barrel re-exports `persistMcpServers` + `PersistMcpResult`", () => {
     // Resolve the daemon barrel source relative to this test file's
@@ -188,9 +170,6 @@ describe("persistMcpServers (extracted)", () => {
 
   // -------------------------------------------------------------------------
   // Test 3 — widened actionType union accepts the bundle literals.
-  // RED: pre-extraction the union is "mcp.connect"|"mcp.disconnect" only,
-  // so this call site is a TS compile error.
-  // GREEN: union includes "skills.bundle.install"|"skills.bundle.boot".
   // -------------------------------------------------------------------------
   it("Test 3 — accepts `skills.bundle.install` actionType and returns persistence:'persisted' on persistToConfig ok", async () => {
     const { deps } = makeDeps([]);
@@ -211,7 +190,7 @@ describe("persistMcpServers (extracted)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 4 — preserve the existing skipped branch (mcp-handlers.ts:129-131).
+  // Test 4 — preserve the existing skipped branch.
   // -------------------------------------------------------------------------
   it("Test 4 — returns persistence:'skipped' when deps.persistDeps is undefined", async () => {
     const result = await persistMcpServers(
@@ -227,8 +206,7 @@ describe("persistMcpServers (extracted)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 5 — preserve the existing runtime_only branch
-  // (mcp-handlers.ts:209-225).
+  // Test 5 — preserve the existing runtime_only branch.
   // -------------------------------------------------------------------------
   it("Test 5 — on persistToConfig err, returns persistence:'runtime_only' with warning + logs WARN with errorKind:'config'", async () => {
     mockPersistToConfig.mockResolvedValueOnce({ ok: false, error: "disk full" } as never);
@@ -257,8 +235,8 @@ describe("persistMcpServers (extracted)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 6 — preserve the in-memory atomic swap (mcp-handlers.ts:163-206).
-  // The helper structuredClone's container.config.integrations and replaces
+  // Test 6 — preserve the in-memory atomic swap. The helper
+  // structuredClone's container.config.integrations and replaces
   // .mcp.servers with the new array. The outer container reference (shared
   // with persistDeps.container) reflects the new state.
   // -------------------------------------------------------------------------
@@ -277,7 +255,7 @@ describe("persistMcpServers (extracted)", () => {
     );
 
     expect(result.persistence).toBe("persisted");
-    // The in-memory swap replaces the FULL integrations subtree (D-08), so the
+    // The in-memory swap replaces the FULL integrations subtree, so the
     // current `.servers` reference is the new array, and the prior reference
     // is no longer attached to container.config.integrations.
     expect(container.config.integrations.mcp.servers).toBe(next);

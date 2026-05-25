@@ -1,4 +1,4 @@
-# Phase 69 Plan 05 -- MCP server resources CONFIRMED filter test config (port 8572).
+# MCP server resources CONFIRMED filter test config (port 8572).
 #
 # Two mcp-client tokens:
 #   - mcp-resources-empty:  scope ["mcp-client"], sessionAllowlist=[]

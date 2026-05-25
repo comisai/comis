@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * 401 refresh-deduper — the concurrency-control + persist-after-refresh core for
- * MCP OAuth token refresh (Phase 66 OAUTH-05 + the Notion-rotation half of
- * OAUTH-11).
+ * MCP OAuth token refresh. Deduplicates concurrent refresh requests and persists
+ * rotated tokens to prevent thundering-herd token invalidation.
  *
- * ── Why (66-P4 thundering herd) ─────────────────────────────────────────────
+ * ── Why (thundering herd) ────────────────────────────────────────────────────
  * When an access token expires, EVERY in-flight tool call against that server
  * gets a 401 at roughly the same moment. Naively each 401 fires its own
  * `refresh_token` POST: N calls → N refreshes. That hammers the provider's
  * /token endpoint (rate-limit) and — worse — with a provider that ROTATES the
- * refresh_token (Notion, 66-P11) the N concurrent refreshes invalidate each
+ * refresh_token (Notion) the N concurrent refreshes invalidate each
  * other's tokens, collapsing the whole chain into a lockout.
  *
  * The fix is a shared future: a `Map<accessToken, Promise<RefreshResult>>` whose
@@ -17,7 +17,7 @@
  * The first 401 for a given access token creates the promise and stores it; the
  * other N-1 callers find the entry and await the SAME promise. 100 concurrent
  * 401s for one expired token therefore produce exactly ONE refresh POST
- * (OAUTH-05 acceptance). The map check+set MUST NOT `await` between `has()` and
+ * The map check+set MUST NOT `await` between `has()` and
  * `set()` — any suspension there reopens the race the queue closes.
  *
  * ── Straggler cache (5s) ────────────────────────────────────────────────────
@@ -30,7 +30,7 @@
  * injected clock (tests pin `now`). A background `systemSetTimeout` proactively
  * evicts too, so an idle deduper does not retain a stale token map entry.
  *
- * ── Rotation persistence (OAUTH-11 / 66-P11) ────────────────────────────────
+ * ── Rotation persistence ────────────────────────────────────────────────────
  * The deduper does NOT hand-roll the POST — the SDK `refreshAuthorization` does
  * the refresh and "Preserves original refresh token if a new one is not
  * returned". So `result.refresh_token` is the ROTATED token when the provider
@@ -39,7 +39,7 @@
  * next refresh reads the new token off disk and the dead old token is never
  * re-presented (which Notion 400-rejects → lockout).
  *
- * ── Failure eviction (66-P13) ───────────────────────────────────────────────
+ * ── Failure eviction ────────────────────────────────────────────────────────
  * A poisoned shared future (a rejected refresh cached forever) would block every
  * future refresh for that token. So a refresh that REJECTS deletes its inflight
  * entry IMMEDIATELY (before rethrowing) — a subsequent attempt creates a fresh
@@ -125,7 +125,7 @@ export interface RefreshDeduperDeps {
    * dedicated cc-1 queue.
    */
   readonly queue: CriticalSectionQueue;
-  /** Disk-backed token persistence — `saveTokens` captures a rotated refresh_token (66-P11). */
+  /** Disk-backed token persistence — `saveTokens` captures a rotated refresh_token. */
   readonly tokenStore: Pick<TokenStore, "saveTokens">;
   /** The refresh primitive. Defaults to the SDK `refreshAuthorization`. */
   readonly refreshFn?: RefreshFn;
@@ -134,7 +134,7 @@ export interface RefreshDeduperDeps {
   /** Straggler-cache TTL in ms. Defaults to 5000 (5s). */
   readonly cacheTtlMs?: number;
   /**
-   * Redirect-safe fetch threaded into the SDK refresh request (T-66-08).
+   * Redirect-safe fetch threaded into the SDK refresh request.
    * Defaults to `createRedirectPolicyFetch({ maxRedirections: 20 })`, loaded
    * lazily so there is no import-time coupling.
    */
@@ -160,7 +160,7 @@ export interface DedupedRefreshArgs {
   readonly resource?: URL;
   /**
    * Provider-specific client-auth hook (e.g. Stripe-Account header on refresh,
-   * 66-P12). Forwarded verbatim to the SDK refresh — the deduper is agnostic.
+   * e.g. Stripe-Account header on refresh). Forwarded verbatim to the SDK refresh — the deduper is agnostic.
    */
   readonly addClientAuthentication?: (
     headers: Headers,
@@ -229,7 +229,7 @@ export function createRefreshDeduper(deps: RefreshDeduperDeps): RefreshDeduper {
   /**
    * The actual refresh: SDK call → persist (captures rotation) → resolve. On
    * rejection the inflight entry is evicted immediately (no poisoned future,
-   * 66-P13) before the error propagates to all waiters.
+   * Evict immediately so the entry is not poisoned) before the error propagates to all waiters.
    */
   async function doRefresh(args: DedupedRefreshArgs): Promise<RefreshResult> {
     const { serverName, authServerUrl, accessToken } = args;
@@ -246,7 +246,7 @@ export function createRefreshDeduper(deps: RefreshDeduperDeps): RefreshDeduper {
         fetchFn,
       });
 
-      // 66-P11: persist UNCONDITIONALLY so a rotated refresh_token reaches disk.
+      // Persist UNCONDITIONALLY so a rotated refresh_token reaches disk.
       // The SDK preserves the original refresh_token when the provider does not
       // rotate, so this is correct in both cases.
       await tokenStore.saveTokens(serverName, tokens);
@@ -264,7 +264,7 @@ export function createRefreshDeduper(deps: RefreshDeduperDeps): RefreshDeduper {
       );
       return { tokens };
     } catch (err) {
-      // No poisoned shared future (66-P13): drop the entry so a retry can fire.
+      // No poisoned shared future: drop the entry so a retry can fire.
       evict(accessToken);
       logger.warn(
         // A refresh failure is an external-dependency error (the provider's
@@ -285,9 +285,8 @@ export function createRefreshDeduper(deps: RefreshDeduperDeps): RefreshDeduper {
       const { accessToken, serverName } = args;
       // The critical section: the has()/get()/set() below run SYNCHRONOUSLY
       // (no await) inside a concurrency-1 queue, so concurrent callers for the
-      // same access token observe a single shared promise. This is the OAUTH-05
-      // acceptance detail — do not introduce an await between the cache check
-      // and the set().
+      // same access token observe a single shared promise. Do not introduce an
+      // await between the cache check and the set().
       const promise = await queue.add<Promise<RefreshResult>>(() => {
         const existing = inflightRefreshes.get(accessToken);
         if (existing !== undefined) {

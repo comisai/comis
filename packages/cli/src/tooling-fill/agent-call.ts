@@ -20,7 +20,7 @@
  *
  * The token comes from the caller — this module never reads the
  * environment directly. The Commander callback resolves the token via
- * `loadEnvFile` and passes it explicitly (per AGENTS.md §2.2).
+ * `loadEnvFile` and passes it explicitly (credentials are never read from the environment directly by this module).
  *
  * @module
  */
@@ -30,7 +30,7 @@ import { ok, err, type Result } from "@comis/shared";
 
 /**
  * Discriminated error kind, drawn from the closed `LogFields.ErrorKind`
- * union in `@comis/infra` (AGENTS.md §2.1). Note the gateway's chat
+ * union in `@comis/infra`. Note the gateway's chat
  * response handler emits "internal" on agent errors — we surface those
  * to the caller as `dependency` (an upstream/external service failure
  * from the CLI's perspective).
@@ -73,7 +73,7 @@ const GATEWAY_UNREACHABLE_MSG =
 /**
  * POST `/api/chat` to the local daemon and parse the `{response}` field.
  *
- * Always resolves a `Result` — never throws (AGENTS.md §2.1). Network
+ * Always resolves a `Result` — never throws. Network
  * errors and timeouts both produce `status: 0` because no HTTP response
  * was received.
  */

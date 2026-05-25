@@ -98,6 +98,6 @@ These files stay in `packages/channels/` and are NOT exported. Orchestrator MUST
 
 ## Required actions (driven by this inventory)
 
-1. **Add `regex-guard` to `channels/src/index.ts`** before inbound-pipeline moves. Without this, `inbound-pipeline.ts` (moving to orchestrator) would have to fall back to a relative `@comis/channels/src/shared/regex-guard.js` path which is a forbidden cross-package internal import per AGENTS.md §1 ("Use public exports only — no cross-package internal imports").
+1. **Add `regex-guard` to `channels/src/index.ts`** before inbound-pipeline moves. Without this, `inbound-pipeline.ts` (moving to orchestrator) would have to fall back to a relative `@comis/channels/src/shared/regex-guard.js` path which is a forbidden cross-package internal import ("Use public exports only — no cross-package internal imports").
 2. **Add `mediaCompressor` (or whichever specific export `inbound-preprocess.ts` needs) to `channels/src/index.ts`** before inbound-preprocess moves. Same rationale as above.
 3. Verify post-move: every `import` in the moved A-files resolves to either (a) a relative path within orchestrator (other A-files moved together) or (b) `@comis/channels` / `@comis/agent` / `@comis/core` / `@comis/shared` bare-package imports. No `@comis/channels/dist/...` or `../../channels/src/...` allowed.

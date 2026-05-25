@@ -34,8 +34,8 @@ export interface PromptIO {
 
 /**
  * Full options bag built by Commander callback. The callback is the
- * composition root (AGENTS.md §2.4): it instantiates `prompts` + `clock`
- * and passes them in; the orchestrator stays pure of process I/O.
+ * composition root: it instantiates `prompts` + `clock` and passes them in;
+ * the orchestrator stays pure of process I/O.
  */
 export interface OrchestratorOpts {
   /** Single-hint mode: the bare hint key. Undefined when --all. */

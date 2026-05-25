@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the Phase 64 RELY-01/02/03 + Phase 67 CAP-02 keepalive ticker.
+ * Unit tests for the keepalive ticker.
  *
  * Exercises maybeEnqueueKeepalivePing / startKeepaliveTicker / stopKeepaliveTicker
  * against a hand-built McpClientManagerState. handleDisconnection is mocked so a
  * triggered reconnect surfaces as a spy call rather than a live reconnect loop.
  *
- * Load-bearing assertion (WR-01): in the concurrency > 1 (parallel-mode) path
+ * Load-bearing assertion: in the concurrency > 1 (parallel-mode) path
  * the ping body awaits primary.onIdle() before pinging. If a
  * disconnect→reconnect replaces the connection (new generation) during that
  * await, the ping must NOT fire against the stale closed client and must NOT
@@ -117,7 +117,7 @@ function wireConnected(
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("keepalive ticker — maybeEnqueueKeepalivePing (RELY-01/02/03, CAP-02)", () => {
+describe("keepalive ticker — maybeEnqueueKeepalivePing", () => {
   beforeEach(() => {
     handleDisconnectionStub.mockClear();
   });
@@ -169,19 +169,19 @@ describe("keepalive ticker — maybeEnqueueKeepalivePing (RELY-01/02/03, CAP-02)
   });
 
   // -------------------------------------------------------------------------
-  // WR-01 — stale-connection closure race in the parallel-mode keepalive path.
+  // Stale-connection closure race in the parallel-mode keepalive path.
   //
-  // RED on pre-fix code: doPing closed over the `conn` captured at tick time
-  // and pinged `conn.client` unconditionally after `await primary.onIdle()`.
-  // When a disconnect→reconnect replaced the connection during that await, the
-  // ping hit the STALE closed client (throwing) and the catch called
+  // If doPing closed over the `conn` captured at tick time and pinged
+  // `conn.client` unconditionally after `await primary.onIdle()`, then when a
+  // disconnect→reconnect replaced the connection during that await, the
+  // ping would hit the STALE closed client (throwing) and the catch would call
   // handleDisconnection on the freshly-restored connection — a spurious
   // keepalive_failed reconnect that kicked the healthy connection offline.
   //
-  // The fix captures the generation at tick time and bails in doPing when the
+  // The guard captures the generation at tick time and bails in doPing when the
   // current connection is gone / not connected / a different generation.
   // -------------------------------------------------------------------------
-  it("WR-01: does NOT ping the stale client or trigger reconnect when the connection is replaced mid-wait", async () => {
+  it("does NOT ping the stale client or trigger reconnect when the connection is replaced mid-wait", async () => {
     const state = makeState();
     // Generation 0 = the connection live at tick time. Its ping THROWS to model
     // a closed transport (a real stale client would reject).
@@ -224,7 +224,7 @@ describe("keepalive ticker — maybeEnqueueKeepalivePing (RELY-01/02/03, CAP-02)
     expect(handleDisconnectionStub).not.toHaveBeenCalled();
   });
 
-  it("WR-01: still pings normally in parallel mode when the same connection survives the wait", async () => {
+  it("still pings normally in parallel mode when the same connection survives the wait", async () => {
     // Control: when the connection is NOT replaced (same generation), the ping
     // proceeds as before — the bail guard must not over-fire.
     const state = makeState();
@@ -260,7 +260,7 @@ describe("keepalive ticker — maybeEnqueueKeepalivePing (RELY-01/02/03, CAP-02)
     expect(state.keepaliveTickers.has("tick")).toBe(false);
   });
 
-  it("startKeepaliveTicker is a no-op when interval resolves to 0 (RELY-02 disabled)", () => {
+  it("startKeepaliveTicker is a no-op when interval resolves to 0 (disabled)", () => {
     const state = makeState(0);
     const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
     const config: McpServerConfig = { name: "off", transport: "stdio", command: "node", enabled: true, keepaliveIntervalMs: 0 };

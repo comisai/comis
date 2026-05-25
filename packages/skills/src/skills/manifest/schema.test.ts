@@ -109,13 +109,13 @@ describe("ComisNamespaceSchema with capability key", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 68 BUNDLE-01: SkillManifestSchema.mcpServers preprocess
+// SkillManifestSchema.mcpServers preprocess
 // Normalizer accepts BOTH array (Comis-native) and Claude-Desktop nested-object
 // forms. Each entry validates against the canonical McpServerEntrySchema, so
 // bundle entries inherit name-regex, transport-inference, and other guards.
 // ---------------------------------------------------------------------------
 
-describe("SkillManifestSchema.mcpServers (BUNDLE-01 preprocess)", () => {
+describe("SkillManifestSchema.mcpServers preprocess", () => {
   it("parses the Comis-native array form and preserves entry name", () => {
     const result = SkillManifestSchema.safeParse({
       name: "test",
@@ -200,7 +200,7 @@ describe("SkillManifestSchema.mcpServers (BUNDLE-01 preprocess)", () => {
   });
 
   it("rejects an adversarial nested key that violates the per-entry name regex (path-traversal defence)", () => {
-    // T-68-02-01: McpServerEntrySchema.name.regex(/^[a-zA-Z0-9_-]+$/) rejects
+    // McpServerEntrySchema.name.regex(/^[a-zA-Z0-9_-]+$/) rejects
     // path-traversal/control-char keys at parse time. Defence-in-depth on top of
     // the Object.entries own-enumerable iteration (no prototype-pollution leak).
     const result = SkillManifestSchema.safeParse({

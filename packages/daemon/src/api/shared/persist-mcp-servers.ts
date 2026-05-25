@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 68 BUNDLE Plan 01 — extracted persistMcpServers helper.
+ * Extracted persistMcpServers helper.
  *
  * Extracted from `packages/daemon/src/api/mcp-handlers.ts` (lines 85-227 in
  * the pre-extraction file). Two motivations:
  *
- *   1. AGENTS.md §2.3 rule-of-three. Phase 62 was the first consumer
- *      (mcp.connect / mcp.disconnect). Phase 68's bundle-install path
- *      (Plan 04) and boot-orchestrator (Plan 05) are the SECOND and THIRD
- *      consumers. The Phase 62 CONTEXT.md `<deferred>` note explicitly
- *      called this out: "Helper extraction (persistMcpServers → shared
- *      module) — defer until Phase 68 becomes the second consumer."
+ *   1. Rule-of-three: mcp.connect / mcp.disconnect were the first consumers;
+ *      the bundle-install path and boot-orchestrator are the SECOND and THIRD
+ *      consumers, justifying extraction into a shared module.
  *
  *   2. File-size cap. `mcp-handlers.ts` was at 798/800 lines pre-extraction;
  *      adding the bundle-install entry-points would have pushed it past the
@@ -46,7 +43,7 @@ import {
   buildConfigAuditBase,
   appendConfigAuditWithOutcome,
 } from "../../config/audit-hook.js";
-// Phase 64 RELY-07/08: diff + 500ms debounce + singleton all extracted (Phase 63 precedent).
+// Diff + 500ms debounce + singleton all extracted (same pattern as mcp-config-mutated-coalescer).
 import { getCoalescer, computeMcpDiff } from "../mcp-config-mutated-coalescer.js";
 import type { WorkspaceApiDeps } from "../types.js";
 
@@ -55,9 +52,8 @@ import type { WorkspaceApiDeps } from "../types.js";
 // ---------------------------------------------------------------------------
 
 /**
- * D-04 outcome shape — the persistMcpServers result spliced into
- * McpConnect/McpDisconnect responses (and, in Phase 68, the
- * skills.import / skills.create / skills.upload bundle-install path).
+ * Outcome shape for persistMcpServers — spliced into McpConnect/McpDisconnect
+ * responses and the skills.import / skills.create / skills.upload bundle-install path.
  */
 export interface PersistMcpResult {
   persistence: "persisted" | "runtime_only" | "skipped";
@@ -65,7 +61,7 @@ export interface PersistMcpResult {
 }
 
 /**
- * Phase 47: Persist the full integrations.mcp.servers array to config.yaml
+ * Persist the full integrations.mcp.servers array to config.yaml
  * + emit one config-audit JSONL record. Idempotent — re-calling with the
  * same actionType/entityId produces multiple JSONL records but converges
  * the YAML to the desired state.
@@ -74,9 +70,8 @@ export interface PersistMcpResult {
  * with three deviations:
  *   1. Full-array patch (deepMerge replaces arrays; caller computes it).
  *   2. Direct appendConfigAuditWithOutcome call after persistToConfig
- *      because persistToConfig's audit:event has no JSONL subscriber
- *      (RESEARCH.md §"R8 Audit JSONL Field-Name Verification").
- *   3. Returns D-04 outcome for the caller to splice into the response.
+ *      because persistToConfig's audit:event has no JSONL subscriber.
+ *   3. Returns outcome shape for the caller to splice into the response.
  *
  * @param deps - Workspace API deps slice (must contain persistDeps for the
  *   persist path to fire; otherwise short-circuits to "skipped").
@@ -85,9 +80,9 @@ export interface PersistMcpResult {
  *   computation (deepMerge replaces arrays wholesale).
  * @param actionType - Provenance literal threaded to the persistToConfig
  *   audit record AND the JSONL record's callerSource. The four legal values
- *   are the two Phase 62 originals ("mcp.connect" / "mcp.disconnect") plus
- *   the two Phase 68 bundle literals ("skills.bundle.install" /
- *   "skills.bundle.boot"). Helper does NOT branch on this value internally.
+ *   are "mcp.connect" / "mcp.disconnect" plus the bundle literals
+ *   "skills.bundle.install" / "skills.bundle.boot". Helper does NOT branch
+ *   on this value internally.
  * @param entityId - The server_name (or, for bundle calls, the skill-id);
  *   surfaced in audit:event provenance.
  * @param ctx - Internal _context bag with optional userId + traceId.
@@ -109,10 +104,10 @@ export async function persistMcpServers(
     ? deps.persistDeps.configPaths[deps.persistDeps.configPaths.length - 1]!
     : deps.persistDeps.defaultConfigPaths[deps.persistDeps.defaultConfigPaths.length - 1]!;
 
-  // PHASE 1: capture pre-write state (previousHash, stat snapshot).
+  // Step 1: capture pre-write state (previousHash, stat snapshot).
   const auditBase = buildConfigAuditBase(localPath, actionType);
 
-  // PHASE 2: write.
+  // Step 2: write.
   const persistResult = await persistToConfig(deps.persistDeps, {
     patch: { integrations: { mcp: { servers } } },
     skipRestart: true,
@@ -122,13 +117,13 @@ export async function persistMcpServers(
     ...(ctx?.traceId !== undefined && { traceId: ctx.traceId }),
   });
 
-  // PHASE 3: finalize audit JSONL + return outcome.
+  // Step 3: finalize audit JSONL + return outcome.
   if (persistResult.ok) {
     appendConfigAuditWithOutcome(auditBase, { kind: "rename" }, deps.persistDeps.logger);
 
-    // D-07/D-08/PERSIST-08: in-memory atomic swap. Disk write succeeded; refresh
+    // In-memory atomic swap. Disk write succeeded; refresh
     // `container.config.integrations` so concurrent readers (obs_query, mcp.list,
-    // dashboards) see the new entry without a restart. Per D-08, clone the FULL
+    // dashboards) see the new entry without a restart. Clone the FULL
     // integrations subtree (NOT just .mcp.servers) so mid-update readers observe
     // the pre- OR post-state, never a partial array. Optional-chain on
     // `deps.container?.config` (test fixtures omit container). structuredClone is
@@ -145,7 +140,7 @@ export async function persistMcpServers(
       const integrationsIn = deps.container.config.integrations as
         | MutableIntegrations
         | undefined;
-      // WR-05: integrations missing in-memory still needs a swap value, but the
+      // When integrations is missing in-memory a swap value is still needed, but the
       // data-loss case (disk-state braveSearch/media/autoReply dropped from the
       // in-memory view until reload) gets an observable log line. In production
       // IntegrationsConfigSchema defaults guarantee `integrations` is present, so
@@ -164,7 +159,7 @@ export async function persistMcpServers(
           "MCP persist swap: integrations subtree was undefined in-memory",
         );
       }
-      // Phase 64 RELY-08: diff BEFORE swap; trailing-edge 500ms emit AFTER swap.
+      // Diff BEFORE swap; trailing-edge 500ms emit AFTER swap.
       const prev = (integrationsIn?.mcp?.servers as McpServerEntry[] | undefined) ?? [];
       const { added, removed } = computeMcpDiff(prev, servers);
       const cloned = structuredClone((integrationsIn ?? {}) as MutableIntegrations);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 69 Plan 03 -- POST /mcp/v1 endpoint mount.
+ * POST /mcp/v1 endpoint mount.
  *
  * Mounts the Streamable HTTP MCP server route on the gateway's Hono app.
  * Per-request lifecycle:
@@ -10,7 +10,7 @@
  *   3. `checkScope(client.scopes, "mcp-client")` — false ⇒ 403
  *      (errorKind:"auth").
  *   4. `client.scopes.includes("admin")` ⇒ 403 (errorKind:"security"). This
- *      is defense-in-depth: Plan 01's `.refine` on `GatewayTokenSchema`
+ *      is defense-in-depth: the `.refine` on `GatewayTokenSchema`
  *      already blocks co-issuance at config-load. If this branch fires,
  *      something has bypassed schema validation (a config-validation bug).
  *   5. `mcp = deps.buildMcpServerForClient(client)` — per-client McpServer
@@ -20,13 +20,12 @@
  *      → `mcp.connect(transport)` → `transport.handleRequest(req, res,
  *      parsedBody)`.
  *
- * Hono c.env accessor (Phase 69 Plan 03 Task 1 spike result):
+ * Hono c.env accessor:
  *   The `@hono/node-server@1.19.14` `HttpBindings` type declares
  *   `{ incoming: IncomingMessage; outgoing: ServerResponse }`. Verified by
  *   reading `node_modules/@hono/node-server/dist/types.d.ts` directly.
- *   Cited as Open Question #2 / Assumption A1 in 69-RESEARCH.md.
  *
- * Body parsing (pitfall 69-P10): Hono pre-parses POST bodies on demand. The
+ * Body parsing (body pre-parse pitfall): Hono pre-parses POST bodies on demand. The
  * SDK transport's `handleRequest(req, res, parsedBody?)` accepts a
  * pre-parsed body as the 3rd arg; pass `await c.req.json().catch(() =>
  * undefined)` so the SDK does not re-read the consumed stream.
@@ -72,8 +71,7 @@ type NodeHttpBindings = {
 
 /** Dependencies for mounting `POST /mcp/v1` on a Hono app. */
 export interface McpServerEndpointDeps {
-  /** Token verification store (Phase 69 Plan 01 extended TokenClient to
-   *  surface the `mcpClient` block). */
+  /** Token verification store (TokenClient surfaces the `mcpClient` block). */
   readonly tokenStore: TokenStore;
   /** Per-client McpServer factory — see
    *  `packages/daemon/src/api/mcp-server-handlers.ts`. */
@@ -86,7 +84,7 @@ export interface McpServerEndpointDeps {
    * Maximum POST body size in bytes. The Hono `bodyLimit` middleware fires
    * BEFORE the route handler buffers the body via `c.req.json()`, so a
    * holder of a valid mcp-client-scoped token cannot exhaust daemon heap
-   * memory by streaming a multi-gigabyte POST body (Phase 69 CR-02 DoS
+   * memory by streaming a multi-gigabyte POST body (DoS
    * defense). Mirrors `config.httpBodyLimitBytes` -- the same ceiling
    * `rest-api.ts` applies to POST /api/chat at line 329-337.
    */
@@ -112,7 +110,7 @@ export function mountMcpServerEndpoint(
 ): void {
   const { tokenStore, buildMcpServerForClient, logger, bodyLimitBytes } = deps;
 
-  // Phase 69 CR-02 -- body-size limit before c.req.json() buffers the body.
+  // Body-size limit before c.req.json() buffers the body.
   // Without this gate, a holder of any valid mcp-client-scoped token can
   // POST a multi-gigabyte body and the daemon's heap grows proportionally
   // per concurrent request. The IP-level rate limiter caps request COUNT
@@ -198,13 +196,13 @@ export function mountMcpServerEndpoint(
     }
 
     // Gate 4 — defense-in-depth: reject admin-EQUIVALENT + mcp-client
-    // co-issuance. Plan 01's GatewayTokenSchema.refine already blocks at
+    // co-issuance. GatewayTokenSchema.refine already blocks at
     // config-load; if this branch fires, a config-validation bug let an
     // invalid token through.
     //
-    // Phase 69 WR-01: the wildcard scope `"*"` grants ALL scopes (including
-    // `"admin"`) via `checkScope`, so the literal `includes("admin")` check
-    // was an information-hole -- a token with `["*", "mcp-client"]` had
+    // The wildcard scope `"*"` grants ALL scopes (including `"admin"`) via
+    // `checkScope`, so the literal `includes("admin")` check was an
+    // information-hole -- a token with `["*", "mcp-client"]` had
     // admin-equivalent access yet passed Gate 4. Reject `"*"` for the same
     // reason `"admin"` is rejected.
     if (client.scopes.includes("admin") || client.scopes.includes("*")) {
@@ -214,7 +212,7 @@ export function mountMcpServerEndpoint(
           submodule: "endpoint",
           errorKind: "internal" as const,
           hint:
-            "admin-equivalent scope (admin or wildcard '*') co-issued with mcp-client violates the GatewayTokenSchema disjointness refine (Phase 69 SERVE-02 / WR-01) -- this should be impossible; investigate config-load validation",
+            "admin-equivalent scope (admin or wildcard '*') co-issued with mcp-client violates the GatewayTokenSchema disjointness refine -- this should be impossible; investigate config-load validation",
         },
         "Refusing MCP connection from admin-equivalent-scoped token (defense-in-depth)",
       );
@@ -274,9 +272,10 @@ export function mountMcpServerEndpoint(
       );
     }
 
-    // Mitigates 69-P10 (Hono pre-parses body but SDK transport expects raw
-    // stream). SDK accepts a pre-parsed JSON body as the 3rd arg; on parse
-    // failure pass undefined and let the SDK surface the JSON-RPC error.
+    // Mitigates Hono body pre-parse pitfall: Hono pre-parses body but SDK
+    // transport expects raw stream. SDK accepts a pre-parsed JSON body as the
+    // 3rd arg; on parse failure pass undefined and let the SDK surface the
+    // JSON-RPC error.
     const parsedBody = await c.req.json().catch(() => undefined);
 
     const incoming = c.env.incoming;

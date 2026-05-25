@@ -235,8 +235,8 @@ describe("env.set handler", () => {
   //
   // Previously this section tested the legacy `else { writeToEnvFile(...) }`
   // fallback (`storage: "envfile"`). The pinning tests for `.env file backend` were
-  // deleted alongside the production code per PATTERNS.md §"Track 8" rule
-  // (delete dead branch + pinning test in same atomic commit). The new
+  // deleted alongside the production code (delete dead branch + pinning
+  // test in the same atomic commit). The new
   // contract: when `secretStore` is undefined, env.set throws the same
   // actionable error message as secrets-handlers.ts:196.
 

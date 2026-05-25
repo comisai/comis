@@ -14,7 +14,7 @@
 import type { ZodTypeAny } from "zod";
 
 /** Trust-scope enum mirroring `DynamicMethodRouter`'s runtime check.
- *  "mcp-client" added in Phase 69 SERVE-02. Admin and mcp-client are DISJOINT —
+ *  Admin and mcp-client are DISJOINT —
  *  see GatewayTokenSchema refine in `packages/core/src/config/schema-gateway.ts`. */
 export type Scope = "rpc" | "admin" | "mcp-client";
 

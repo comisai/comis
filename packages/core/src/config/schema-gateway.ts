@@ -27,14 +27,13 @@ export const GatewayTlsConfigSchema = z.strictObject({
  * is optional — when omitted, the secret is resolved at runtime via
  * environment variable or auto-generation.
  *
- * Phase 69 SERVE-02 / WR-01 / WR-03: the `mcpClient` block is only meaningful
- * when `scopes` includes `"mcp-client"`. The `.refine` below enforces
- * SOLE-SCOPE-DISJOINTNESS — when `"mcp-client"` is present on a token, it
- * MUST be the ONLY scope. This subsumes the original `admin` rejection
- * (T-69-02), the WR-01 wildcard `*` rejection, AND the WR-03 rpc/ws
- * rejection (an mcp-client token is an EXTERNAL trust boundary; its
- * compromise must be containable to the MCP surface only -- it cannot
- * also speak RPC or open a WebSocket).
+ * The `mcpClient` block is only meaningful when `scopes` includes
+ * `"mcp-client"`. The `.refine` below enforces SOLE-SCOPE-DISJOINTNESS —
+ * when `"mcp-client"` is present on a token, it MUST be the ONLY scope.
+ * This subsumes the `admin` rejection, the wildcard `*` rejection, and the
+ * rpc/ws rejection (an mcp-client token is an EXTERNAL trust boundary; its
+ * compromise must be containable to the MCP surface only -- it cannot also
+ * speak RPC or open a WebSocket).
  *
  * The refine surfaces at config-load with the literal token
  * `[scope_disjointness]` and `errorKind: "config"`.
@@ -47,30 +46,27 @@ export const GatewayTokenSchema = z.strictObject({
     /** Allowed scopes for this token. Each token expresses ONE trust posture:
      *  RPC/WS operator tokens (`["rpc"]`, `["rpc", "ws"]`, `["admin"]`,
      *  `["*"]`) OR an external MCP-server client (`["mcp-client"]` --
-     *  sole-scope per WR-03). The refine below rejects co-issuance of
+     *  must be the sole scope). The refine below rejects co-issuance of
      *  `mcp-client` with any other scope. */
     scopes: z.array(z.string().min(1)).default([]),
     /** Per-MCP-client config block; only meaningful when `scopes` includes
-     *  `"mcp-client"` (Phase 69 SERVE-02). Operators may omit it entirely when
-     *  not provisioning an MCP client. */
+     *  `"mcp-client"`. Operators may omit it entirely when not provisioning
+     *  an MCP client. */
     mcpClient: z.strictObject({
       /** Tool names this MCP client may invoke. Empty = only `"safe"`-classified
-       *  tools are exposed (no `"permission-gated"` access). See SERVE-03/04. */
+       *  tools are exposed (no `"permission-gated"` access). */
       allowlist: z.array(z.string()).default([]),
       /** Session keys this MCP client may read via `resources/*`. Empty = no
-       *  sessions exposed (Phase 69 SERVE-06). */
+       *  sessions exposed. */
       sessionAllowlist: z.array(z.string()).default([]),
       /** Per-tool rate-limit override (calls/min). Falls back to the
-       *  30-calls/min/tool default in SERVE-07. */
+       *  30-calls/min/tool default. */
       toolRateLimit: z.record(z.string(), z.number().int().positive()).default({}),
     }).optional(),
   })
   .refine(
     (t) => {
-      // Phase 69 WR-03: when `mcp-client` is present on a token, it MUST
-      // be the ONLY scope. This subsumes WR-01 (`admin` / `*` rejection)
-      // and the original T-69-02 admin-disjointness rule.
-      //
+      // When `mcp-client` is present on a token, it MUST be the ONLY scope.
       // An mcp-client token is an EXTERNAL trust boundary. Allowing it to
       // be co-issued with `rpc`, `ws`, or future operator scopes turns one
       // compromised MCP credential into a full operator escalation.

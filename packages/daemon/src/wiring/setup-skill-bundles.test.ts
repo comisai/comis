@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 68 BUNDLE-03 (Plan 05) — setupSkillBundles orchestrator RED tests.
+ * setupSkillBundles boot orchestrator tests.
  *
- * Pins the public surface of the boot-path bundle re-merge orchestrator
- * BEFORE the module exists. All tests collectively fail at module-resolution
- * time (`Cannot find module './setup-skill-bundles.js'`) — the canonical
- * RED.
+ * Pins the public surface of the boot-path bundle re-merge orchestrator.
  *
  * Behavioral matrix (6 scenarios):
  *
@@ -261,7 +258,7 @@ Skill with a bundled mcpServers block.
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("setupSkillBundles — Phase 68 BUNDLE-03 boot orchestrator", () => {
+describe("setupSkillBundles — boot orchestrator", () => {
   it("no installed skills → orchestrator returns without firing persistMcpServers", async () => {
     const deps = makeDeps({ registries: new Map() });
     await setupSkillBundles(deps);
@@ -380,16 +377,16 @@ describe("setupSkillBundles — Phase 68 BUNDLE-03 boot orchestrator", () => {
     // WARN was logged with errorKind:"config" mentioning skill A. There are
     // TWO WARNs for this scenario: the resolver's own "name-collision reject"
     // log and the orchestrator's "resolver rejected" log. We test the
-    // orchestrator's WR-05 fields by filtering on the orchestrator's
-    // distinguishing field (bundleErrorKind exists on the orchestrator WARN
-    // only; the resolver's WARN exposes collisionCount instead).
+    // orchestrator's fields by filtering on the orchestrator's distinguishing
+    // field (bundleErrorKind exists on the orchestrator WARN only; the
+    // resolver's WARN exposes collisionCount instead).
     const warnSpy = deps.logger.warn as ReturnType<typeof vi.fn>;
     const orchestratorWarn = warnSpy.mock.calls.find((call) => {
       const obj = call[0] as { skillId?: string; bundleErrorKind?: string };
       return obj.skillId === "skill-a" && obj.bundleErrorKind !== undefined;
     });
     expect(orchestratorWarn).toBeDefined();
-    // WR-05: err MUST be a STRING (passed to Pino's err field — the serializer
+    // err MUST be a STRING (passed to Pino's err field — the serializer
     // only fires for Error instances; a plain BundleError object would be
     // recorded raw and log-aggregation tools that look for err.message would
     // miss it). bundleErrorKind carries the structured discriminator instead.
@@ -398,9 +395,9 @@ describe("setupSkillBundles — Phase 68 BUNDLE-03 boot orchestrator", () => {
     expect(warnObj.bundleErrorKind).toBe("name_collision");
   });
 
-  it("WR-01: initialServers in unsorted order but otherwise equal to merged result ⇒ NO spurious persist (idempotence holds on first boot post-Phase 68)", async () => {
+  it("initialServers in unsorted order but otherwise equal to merged result ⇒ NO spurious persist (idempotence holds on first boot after sort fix)", async () => {
     // Set the disk-state to a TWO-entry bundle pre-sorted INCORRECTLY (z before a).
-    // The resolver produces sorted output (a, then z); without the WR-01 pre-sort,
+    // The resolver produces sorted output (a, then z); without the pre-sort,
     // deepEqualServers compares "[z, a]" vs "[a, z]" and triggers a spurious
     // persist for the noop merge.
     const aEntry: McpServerEntry = {
@@ -431,17 +428,17 @@ describe("setupSkillBundles — Phase 68 BUNDLE-03 boot orchestrator", () => {
       ]),
     );
     const registry = makeRegistry([md]);
-    // Pre-Phase-68 deployment: servers persisted in declaration order, NOT sorted.
-    // `zulu-mcp` comes before `alpha-mcp`. After Phase 68, resolver produces
-    // sorted output [a, z]. WR-01 pre-sort makes initialServers also [a, z].
+    // Legacy deployment: servers persisted in declaration order, NOT sorted.
+    // `zulu-mcp` comes before `alpha-mcp`. After this fix, resolver produces
+    // sorted output [a, z]. The pre-sort makes initialServers also [a, z].
     const deps = makeDeps({
       currentServers: [zEntry, aEntry],
       registries: new Map([["test-agent", registry]]),
     });
     // The resolver only treats entries as "ours to replace" when the state
     // file records them. The test fixture path has dataDir="" so state is
-    // empty — so both entries collide. To exercise the WR-01 idempotence
-    // path AT ALL we provide the state explicitly: in production, the
+    // empty — so both entries collide. To exercise the idempotence path AT
+    // ALL we provide the state explicitly: in production, the
     // install-helper writes this on first install and the orchestrator
     // reads it on every boot.
     //
@@ -460,7 +457,7 @@ describe("setupSkillBundles — Phase 68 BUNDLE-03 boot orchestrator", () => {
     await setupSkillBundles(deps);
 
     // The resolver produces [alpha-mcp, zulu-mcp]; initialServers (after
-    // WR-01 pre-sort) is also [alpha-mcp, zulu-mcp]. deepEqualServers
+    // pre-sort) is also [alpha-mcp, zulu-mcp]. deepEqualServers
     // returns true. persistMcpServers MUST NOT be called.
     expect(mockPersistMcpServers).toHaveBeenCalledTimes(0);
   });

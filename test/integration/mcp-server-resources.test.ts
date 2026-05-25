@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 69 Plan 05 (SERVE-06) -- MCP resources/list + resources/read CONFIRMED filter.
+ * MCP resources/list + resources/read CONFIRMED filter.
  *
  * End-to-end via the MCP SDK 1.29.0 `Client` against a real daemon. Asserts:
  *
@@ -16,7 +16,7 @@
  *   5. The content text returned by resources/read is wrapped via
  *      wrapExternalContent (markers + SECURITY NOTICE present).
  *
- * Port 8572 to avoid conflicts with Plans 03/04 configs.
+ * Port 8572.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -73,7 +73,7 @@ async function connectMcpClient(
     },
   );
   const client = new Client({
-    name: "phase-69-05-resources",
+    name: "mcp-server-resources",
     version: "0.0.1",
   });
   await client.connect(transport);
@@ -89,7 +89,7 @@ async function connectMcpClient(
 // Test Suite
 // ---------------------------------------------------------------------------
 
-describe("Phase 69 Plan 05 -- MCP resources CONFIRMED-only filter (SERVE-06)", () => {
+describe("MCP resources CONFIRMED-only filter", () => {
   let handle: TestDaemonHandle;
   let baseUrl: string;
 
@@ -242,7 +242,7 @@ describe("Phase 69 Plan 05 -- MCP resources CONFIRMED-only filter (SERVE-06)", (
   // -------------------------------------------------------------------------
 
   it(
-    "MCP resources/read content text is wrapped via wrapExternalContent defense-in-depth against 69-P4",
+    "MCP resources/read content text is wrapped via wrapExternalContent defense-in-depth",
     async () => {
       const { client, close } = await connectMcpClient(baseUrl, MCP_S1_SECRET);
       try {

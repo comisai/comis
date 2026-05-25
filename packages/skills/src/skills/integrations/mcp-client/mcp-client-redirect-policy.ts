@@ -13,8 +13,6 @@
  * SDK's `opts.fetch?: FetchLike` extension hook. Max 20 hops; throws
  * [max_redirects_exceeded] on overflow.
  *
- * Per RESEARCH.md §"Pattern 1" + REQUIREMENTS.md SAFETY-07.
- *
  * @module
  */
 
@@ -70,7 +68,7 @@ export function createRedirectPolicyFetch(opts: RedirectPolicyOptions): FetchLik
       const nextUrl = new URL(locationHeader, currentUrl);
 
       // Cross-host = URL.host string mismatch (host includes port).
-      // Phase 63 deviation: same-host http→https upgrade preserves headers.
+      // Deviation: same-host http→https upgrade preserves headers.
       const sameHost = nextUrl.host === currentUrl.host;
       const shouldStripSensitive = !sameHost;
 
@@ -88,7 +86,7 @@ export function createRedirectPolicyFetch(opts: RedirectPolicyOptions): FetchLik
         }
       }
 
-      // WR-04 — RFC 7231 §6.4.3 (302) / §6.4.4 (303): on 302/303 a
+      // RFC 7231 §6.4.3 (302) / §6.4.4 (303): on 302/303 a
       // POST is rewritten to GET and the body is DROPPED. RFC 7538
       // (307/308) PRESERVES both method and body. Pre-fix the policy
       // carried `body` and `method` forward unchanged across all 3xx,

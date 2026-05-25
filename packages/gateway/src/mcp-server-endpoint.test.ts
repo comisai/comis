@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 69 CR-02 -- mountMcpServerEndpoint body-size limit tests.
+ * mountMcpServerEndpoint body-size limit tests.
  *
- * RED → GREEN: enforces that POST /mcp/v1 honors a bodyLimit middleware
- * before the route handler buffers the request body. Without this gate, a
- * holder of any valid `mcp-client`-scoped token can POST a multi-gigabyte
- * body and the daemon's heap allocates proportional memory per concurrent
- * request (`c.req.json()` buffers the entire body before parsing).
+ * Enforces that POST /mcp/v1 honors a bodyLimit middleware before the route
+ * handler buffers the request body. Without this gate, a holder of any valid
+ * `mcp-client`-scoped token can POST a multi-gigabyte body and the daemon's
+ * heap allocates proportional memory per concurrent request
+ * (`c.req.json()` buffers the entire body before parsing).
  *
  * The fix mounts a `bodyLimit({ maxSize: deps.bodyLimitBytes })` middleware
  * on the route — same posture as `rest-api.ts` does for POST /api/chat
@@ -48,7 +48,7 @@ function makeNoopBuildMcpServer(): (client: TokenClient) => McpServer {
  * Mount the endpoint on a fresh Hono app with the supplied bodyLimitBytes.
  * Uses an in-memory token store with a single `mcp-client`-scoped token by
  * default; supply `tokenScopes` to override (e.g., `["*", "mcp-client"]` for
- * WR-01 runtime-gate tests).
+ * wildcard runtime-gate tests).
  */
 function mountForTest(opts: {
   bodyLimitBytes: number;
@@ -80,7 +80,7 @@ function mountForTest(opts: {
   return { app, token };
 }
 
-describe("mountMcpServerEndpoint -- CR-02 body-size limit", () => {
+describe("mountMcpServerEndpoint -- body-size limit", () => {
   it("mountMcpServerEndpoint rejects POST /mcp/v1 with a body larger than the configured bodyLimitBytes with 413", async () => {
     const { app, token } = mountForTest({ bodyLimitBytes: 256 });
 
@@ -104,9 +104,8 @@ describe("mountMcpServerEndpoint -- CR-02 body-size limit", () => {
       body: jsonBody,
     });
 
-    // The CR-02 contract is: bodyLimit fires BEFORE the route handler
-    // buffers the body via c.req.json(). 413 is the canonical Hono
-    // bodyLimit response status.
+    // Contract: bodyLimit fires BEFORE the route handler buffers the
+    // body via c.req.json(). 413 is the canonical Hono bodyLimit status.
     expect(res.status).toBe(413);
   });
 
@@ -152,7 +151,7 @@ describe("mountMcpServerEndpoint -- CR-02 body-size limit", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 69 WR-01 -- runtime Gate 4 must reject wildcard "*" alongside admin
+// Runtime Gate 4 must reject wildcard "*" alongside admin
 //
 // `client.scopes.includes("admin")` was the original Gate 4 check.
 // `checkScope` treats `"*"` as a wildcard that grants ALL scopes including
@@ -161,13 +160,12 @@ describe("mountMcpServerEndpoint -- CR-02 body-size limit", () => {
 // the disjointness invariant prevents.
 //
 // The runtime gate must reject admin-EQUIVALENT scopes (`"admin"` OR `"*"`)
-// in addition to literal `"admin"`. Defense-in-depth complements WR-01's
-// schema-level refine -- a config-load bypass should not silently let a
-// wildcard-scoped token reach the McpServer factory.
+// in addition to literal `"admin"`. Defense-in-depth: a config-load bypass
+// should not silently let a wildcard-scoped token reach the McpServer factory.
 // ---------------------------------------------------------------------------
 
-describe("mountMcpServerEndpoint -- WR-01 wildcard admin-equivalent runtime gate", () => {
-  it("mountMcpServerEndpoint Gate 4 rejects a token with wildcard star and mcp-client co-issued WR-01", async () => {
+describe("mountMcpServerEndpoint -- wildcard admin-equivalent runtime gate", () => {
+  it("mountMcpServerEndpoint Gate 4 rejects a token with wildcard star and mcp-client co-issued", async () => {
     const factorySpy = vi.fn(() =>
       new McpServer(
         { name: "test", version: "0.0.0" },
@@ -175,8 +173,8 @@ describe("mountMcpServerEndpoint -- WR-01 wildcard admin-equivalent runtime gate
       ),
     );
     // The wildcard "*" satisfies checkScope(scopes, "admin") yet was not
-    // rejected by the literal `includes("admin")` check. The runtime gate
-    // must close this hole.
+    // rejected by the literal `includes("admin")` check — the runtime gate
+    // closes this hole.
     const { app, token } = mountForTest({
       bodyLimitBytes: 1_048_576,
       tokenScopes: ["*", "mcp-client"],

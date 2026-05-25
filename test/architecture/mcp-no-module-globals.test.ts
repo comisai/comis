@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * CI-02 — module-global AST gate for the OAuth browser-callback server.
+ * Module-global AST gate for the OAuth browser-callback server.
  *
- * Per Phase 66 CONTEXT.md decision #6 + 66-P1: the loopback OAuth callback
- * server (`oauth/browser-callback.ts`) MUST hold ALL of its state —
- * `node:http` server handle, the kernel-assigned port, the CSRF `state`, the
- * PKCE `code_verifier`, the resolve/reject, the timeout timer — in
- * function-local / closure scope. ZERO module-scope `let`/`var`.
+ * The loopback OAuth callback server (`oauth/browser-callback.ts`) MUST hold
+ * ALL of its state — `node:http` server handle, the kernel-assigned port, the
+ * CSRF `state`, the PKCE `code_verifier`, the resolve/reject, the timeout
+ * timer — in function-local / closure scope. ZERO module-scope `let`/`var`.
  *
  * Why this is a dedicated gate: Hermes's Python OAuth manager kept the callback
  * port in a MODULE-GLOBAL (`_oauth_port`). Two concurrent `oauth_login` flows
@@ -17,8 +16,8 @@
  * one file where the loopback server lives, so a future refactor that "hoists"
  * a port/state var to module scope fails the build with a line number.
  *
- * Mechanics mirror CI-01 (`contract-handler-parity.test.ts`) and the
- * project-wide `globals.test.ts`: the TypeScript compiler API
+ * Mechanics mirror the `contract-handler-parity.test.ts` and the project-wide
+ * `globals.test.ts` AST gates: the TypeScript compiler API
  * (`ts.createSourceFile` → `ts.forEachChild` over TOP-LEVEL statements only),
  * NOT ts-morph. A top-level `VariableStatement` whose `declarationList.flags`
  * lacks `NodeFlags.Const` is a `let` (flags has `NodeFlags.Let`) or a `var`
@@ -27,7 +26,7 @@
  * 300_000` and `const`-bound arrow helpers are immutable bindings and pose no
  * TOCTOU risk.
  *
- * The gate is SELF-VALIDATING (assumption A7): an inline fixture proves the
+ * The gate is SELF-VALIDATING: an inline fixture proves the
  * `NodeFlags.Const` discrimination catches a deliberate `let`/`var` and passes
  * a `const`, so a compiler-API change that silently broke the check would fail
  * the fixture before it could give the real file a false pass.
@@ -47,8 +46,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
 
 /**
- * The ONE file this gate targets — a single named file per CONTEXT.md #6, not a
- * directory glob. Widening this is a deliberate decision, not an accident.
+ * The ONE file this gate targets — a single named file, not a directory glob.
+ * Widening this is a deliberate decision, not an accident.
  */
 const TARGET = resolve(
   REPO_ROOT,
@@ -82,7 +81,7 @@ function findModuleScopeLetVar(fileName: string, src: string): string[] {
   return violations;
 }
 
-describe("CI-02 — no module-scope let/var in oauth/browser-callback.ts", () => {
+describe("no module-scope let/var in oauth/browser-callback.ts", () => {
   it("self-validates: the AST walker flags a top-level let/var and passes a const", () => {
     // A top-level `let` and a top-level `var` are violations; the `const`
     // (including a const-bound arrow function) is not. This proves the

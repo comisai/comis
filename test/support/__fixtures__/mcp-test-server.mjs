@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Minimal stdio MCP server fixture for the Phase 65 E2E CLI test
+ * Minimal stdio MCP server fixture for the E2E CLI test
  * (test/e2e/cli-mcp.test.ts).
  *
  * The CLI E2E test spawns a REAL test daemon (via test/support/daemon-harness)

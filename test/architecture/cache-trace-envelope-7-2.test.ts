@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Architecture invariant — `CacheTraceEventSchema` honors design §7.2.
+ * Architecture invariant — `CacheTraceEventSchema` envelope schema.
  *
  * The cache-trace event envelope is the per-line correlation surface
  * that downstream replay/diff/analysis tools depend on to join across
- * the trajectory, cache-trace, and audit-log JSONL streams. Design §7.2
+ * the trajectory, cache-trace, and audit-log JSONL streams. The schema
  * enumerates the required envelope keys (`traceId` + 7 identity / model
  * fields) plus the 5 optional contextual fields (`tenantId`,
  * `sessionKey`, `runId`, `modelApi`, `workspaceDir`).
@@ -22,7 +22,7 @@
 import { describe, it, expect } from "vitest";
 import { CacheTraceEventSchema } from "@comis/observability";
 
-/** §7.2 required envelope keys. */
+/** Required envelope keys. */
 const DESIGN_72_REQUIRED = [
   "traceSchema",
   "schemaVersion",
@@ -34,7 +34,7 @@ const DESIGN_72_REQUIRED = [
   "sessionId",
 ] as const;
 
-/** §7.2 optional contextual envelope fields. */
+/** Optional contextual envelope fields. */
 const DESIGN_72_OPTIONAL = [
   "tenantId",
   "sessionKey",
@@ -45,13 +45,13 @@ const DESIGN_72_OPTIONAL = [
   "workspaceDir",
 ] as const;
 
-describe("cache-trace event envelope honors design §7.2", () => {
+describe("cache-trace event envelope schema", () => {
   it("required fields are present in the schema shape", () => {
     const shape = CacheTraceEventSchema.shape;
     for (const field of DESIGN_72_REQUIRED) {
       expect(
         shape,
-        `CacheTraceEventSchema is missing required §7.2 field: ${field}`,
+        `CacheTraceEventSchema is missing required envelope field: ${field}`,
       ).toHaveProperty(field);
     }
   });
@@ -77,7 +77,7 @@ describe("cache-trace event envelope honors design §7.2", () => {
     for (const field of DESIGN_72_OPTIONAL) {
       expect(
         shape,
-        `CacheTraceEventSchema lacks accommodation for §7.2 optional field: ${field}`,
+        `CacheTraceEventSchema lacks accommodation for optional envelope field: ${field}`,
       ).toHaveProperty(field);
     }
     // Round-trip through safeParse to confirm the 5 contextual fields
@@ -94,7 +94,7 @@ describe("cache-trace event envelope honors design §7.2", () => {
       tenantId: "tenant-1",
       sessionKey: "session-1",
       runId: "run-1",
-      modelApi: null, // §7.2 explicitly allows null
+      modelApi: null, // null is explicitly allowed for this optional field
       workspaceDir: "/work",
     });
     expect(r.success).toBe(true);

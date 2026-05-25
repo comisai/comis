@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * E2E: `comis mcp` CLI subprocess ↔ real test daemon (Phase 65 OPUX-01..07
- * + ROADMAP success criterion 5).
+ * E2E: `comis mcp` CLI subprocess ↔ real test daemon.
  *
  * Spawns the BUILT CLI (`packages/cli/dist/cli.js`) as a child process and
  * drives it against a real daemon booted via `test/support/daemon-harness`.
- * This is the primary functional proof of the operator MCP CLI surface that
- * Plan 02 could only unit-test (token resolution): a full
+ * This is the primary functional proof of the operator MCP CLI surface: a full
  * connect → list → status → reconnect → disconnect round-trip plus the
  * test-probe (non-persisting) path and the missing-token negative case.
  *
@@ -25,7 +23,7 @@
  * FRESH tmp config (unique gateway port) is used per run — never the tracked
  * `config.test.yaml`. The CLI subprocess connects over a real localhost WS;
  * `withClient` refuses real sockets under VITEST unless `COMIS_CLI_E2E=true`,
- * which every spawn sets (RESEARCH anti-pattern 990).
+ * which every spawn sets.
  *
  * @module
  */
@@ -170,9 +168,9 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
   }
 
   /**
-   * OPUX-07 negative path: spawn the CLI with NO gateway token AND a HOME that
-   * has no ~/.comis/.env, so ensureGatewayToken cannot resolve a token from any
-   * source and must surface the named-env-var error.
+   * Missing-token negative path: spawn the CLI with NO gateway token AND a HOME
+   * that has no ~/.comis/.env, so ensureGatewayToken cannot resolve a token from
+   * any source and must surface the named-env-var error.
    */
   function runCliNoToken(args: string[]): Promise<CliResult> {
     return new Promise((resolveProc, rejectProc) => {
@@ -212,10 +210,10 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
   ];
 
   // -------------------------------------------------------------------------
-  // OPUX-01 — list against an empty config
+  // list against an empty config
   // -------------------------------------------------------------------------
 
-  it("OPUX-01: mcp list --format json on an empty config → code 0, servers:[] total:0", async () => {
+  it("mcp list --format json on an empty config → code 0, servers:[] total:0", async () => {
     const result = await runCli(["mcp", "list", "--format", "json"]);
     expect(result.code).toBe(0);
     const parsed = JSON.parse(result.stdout) as { servers: unknown[]; total: number };
@@ -224,10 +222,10 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
   });
 
   // -------------------------------------------------------------------------
-  // OPUX-07 — missing token surfaces a named error (negative, no token)
+  // missing token surfaces a named error (negative, no token)
   // -------------------------------------------------------------------------
 
-  it("OPUX-07: mcp list with no token → non-zero exit + 'Missing COMIS_GATEWAY_TOKEN' on stderr", async () => {
+  it("mcp list with no token → non-zero exit + 'Missing COMIS_GATEWAY_TOKEN' on stderr", async () => {
     const result = await runCliNoToken(["mcp", "list", "--format", "json"]);
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain("Missing COMIS_GATEWAY_TOKEN");
@@ -236,10 +234,10 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
   });
 
   // -------------------------------------------------------------------------
-  // OPUX-03/04/05/02 — connect → list → status → reconnect → disconnect
+  // connect → list → status → reconnect → disconnect
   // -------------------------------------------------------------------------
 
-  it("OPUX-03: mcp connect persists a server and reports a non-zero tool count", async () => {
+  it("mcp connect persists a server and reports a non-zero tool count", async () => {
     const result = await runCli(connectArgs("test-server"));
     expect(result.code).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
@@ -257,7 +255,7 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
     expect(parsed.persistence).toBe("persisted");
   });
 
-  it("OPUX-01: mcp list after connect shows test-server", async () => {
+  it("mcp list after connect shows test-server", async () => {
     const result = await runCli(["mcp", "list", "--format", "json"]);
     expect(result.code).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
@@ -270,7 +268,7 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
     expect(parsed.total).toBeGreaterThanOrEqual(1);
   });
 
-  it("OPUX-02: mcp status test-server reports a detailed status with the tool list", async () => {
+  it("mcp status test-server reports a detailed status with the tool list", async () => {
     const result = await runCli(["mcp", "status", "test-server", "--format", "json"]);
     expect(result.code).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
@@ -286,7 +284,7 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
     expect(parsed.tools.map((t) => t.name)).toEqual(expect.arrayContaining(["echo", "ping"]));
   });
 
-  it("OPUX-05: mcp reconnect test-server (no override params) → code 0, reconnected", async () => {
+  it("mcp reconnect test-server (no override params) → code 0, reconnected", async () => {
     const result = await runCli(["mcp", "reconnect", "test-server", "--format", "json"]);
     expect(result.code).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
@@ -300,10 +298,10 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
   });
 
   // -------------------------------------------------------------------------
-  // OPUX-06 — test probe does NOT persist (namespaced internally)
+  // test probe does NOT persist (namespaced internally)
   // -------------------------------------------------------------------------
 
-  it("OPUX-06: mcp test probes WITHOUT persisting (scratch absent from list)", async () => {
+  it("mcp test probes WITHOUT persisting (scratch absent from list)", async () => {
     const probe = await runCli([
       "mcp",
       "test",
@@ -374,10 +372,10 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
   }, 60_000);
 
   // -------------------------------------------------------------------------
-  // OPUX-04 — disconnect removes the server (after the restart assertions)
+  // disconnect removes the server (after the restart assertions)
   // -------------------------------------------------------------------------
 
-  it("OPUX-04: mcp disconnect test-server → code 0, removed from list", async () => {
+  it("mcp disconnect test-server → code 0, removed from list", async () => {
     const result = await runCli(["mcp", "disconnect", "test-server", "--format", "json"]);
     expect(result.code).toBe(0);
     const parsed = JSON.parse(result.stdout) as { status: string; persistence?: string };

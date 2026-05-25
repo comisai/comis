@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 69 Plan 04 -- Per-MCP-client per-tool minute-bucket rate-limit unit tests.
+ * Per-MCP-client per-tool minute-bucket rate-limit unit tests.
  *
  * Pins the bucket-rollover, ceiling rejection, per-key isolation, and prune
  * semantics of the rate-limit module that the live tools/call dispatcher
  * consults. The module is a stateful Map<key, {minuteBucket, count}>; tests
  * use a fake clock to drive bucket boundaries deterministically.
  *
- * SERVE-07. Bucket boundary: floor(now / 60_000) -- bucket flips each UTC
- * minute (NOT a sliding window; that's the ws-handler precedent at
- * ws-handler.ts:299-316). Per CONTEXT.md §1.7 "bucket reset on the minute
- * boundary".
+ * Bucket boundary: floor(now / 60_000) -- bucket flips each UTC minute
+ * (NOT a sliding window; that's the ws-handler precedent at
+ * ws-handler.ts:299-316). Bucket reset on the minute boundary.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,7 +41,7 @@ afterEach(() => {
 // Test Suite
 // ---------------------------------------------------------------------------
 
-describe("mcp-server-rate-limit -- Phase 69 Plan 04 minute-bucket semantics", () => {
+describe("mcp-server-rate-limit -- minute-bucket semantics", () => {
   it("checkAndIncrement allows up to ceiling calls within the same minute bucket", () => {
     const state = createRateLimitState();
     const key = "client-a:memory_search";

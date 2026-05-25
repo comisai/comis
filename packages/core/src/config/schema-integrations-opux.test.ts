@@ -1,19 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 65 OPUX-08/09/10 — McpServerEntrySchema additive-field tests.
+ * McpServerEntrySchema additive-field tests.
  *
- * Covers the 5 new per-server fields (toolAllowlist, toolBlocklist,
- * idleTtlMs, enableResources, enablePrompts). Combined RED+GREEN per
- * AGENTS.md §2.10: the schema-default assertions cannot compile against
- * the pre-patch inferred type, so the schema change and these tests land
- * in one commit.
+ * Covers the 5 per-server fields (toolAllowlist, toolBlocklist,
+ * idleTtlMs, enableResources, enablePrompts). The schema-default assertions
+ * require the schema change and these tests to land in one commit.
  */
 import { describe, it, expect } from "vitest";
 import { McpServerEntrySchema } from "./schema-integrations.js";
 
 const base = { name: "s", transport: "stdio", command: "x" } as const;
 
-describe("McpServerEntrySchema — Phase 65 OPUX additive fields", () => {
+describe("McpServerEntrySchema — OPUX additive fields", () => {
   it("idleTtlMs defaults to 0 when omitted (opt-in eviction)", () => {
     const parsed = McpServerEntrySchema.parse({ ...base });
     expect(parsed.idleTtlMs).toBe(0);
@@ -47,7 +45,7 @@ describe("McpServerEntrySchema — Phase 65 OPUX additive fields", () => {
     expect(() => McpServerEntrySchema.parse({ ...base, idleTtlMs: -1 })).toThrow();
   });
 
-  it("parses a Phase-64-shape entry unchanged with new fields undefined", () => {
+  it("parses a legacy-shape entry unchanged with new fields undefined", () => {
     const parsed = McpServerEntrySchema.parse({
       name: "legacy",
       transport: "stdio",
@@ -63,7 +61,7 @@ describe("McpServerEntrySchema — Phase 65 OPUX additive fields", () => {
   });
 });
 
-describe("McpServerEntrySchema — Phase 67 CAP-02 supportsParallelToolCalls", () => {
+describe("McpServerEntrySchema — supportsParallelToolCalls", () => {
   it("accepts supportsParallelToolCalls: true", () => {
     const parsed = McpServerEntrySchema.parse({ ...base, supportsParallelToolCalls: true });
     expect(parsed.supportsParallelToolCalls).toBe(true);

@@ -3,9 +3,8 @@ import { timingSafeEqual } from "node:crypto";
 
 /**
  * Per-MCP-client config block surfaced on a verified TokenClient when the
- * token's GatewayTokenSchema entry includes an `mcpClient` block (Phase 69
- * SERVE-02). Shape mirrors the Zod schema at
- * `packages/core/src/config/schema-gateway.ts:46-56`.
+ * token's GatewayTokenSchema entry includes an `mcpClient` block. Shape
+ * mirrors the Zod schema at `packages/core/src/config/schema-gateway.ts:46-56`.
  *
  * Only meaningful when `scopes` includes `"mcp-client"`. The fields are
  * carried through opaquely by the token store — the gateway endpoint
@@ -15,10 +14,10 @@ export interface McpClientConfig {
   /** Tool names this MCP client may invoke when `mcpExportPolicy` is
    *  `"permission-gated"`. Empty array = only `"safe"` tools exposed. */
   readonly allowlist: readonly string[];
-  /** Session keys this MCP client may read via `resources/*` (SERVE-06). */
+  /** Session keys this MCP client may read via `resources/*`. */
   readonly sessionAllowlist: readonly string[];
   /** Per-tool rate-limit override (calls/min). Falls back to the
-   *  30-calls/min/tool default in SERVE-07. */
+   *  30-calls/min/tool default. */
   readonly toolRateLimit: Readonly<Record<string, number>>;
 }
 
@@ -30,9 +29,9 @@ export interface TokenClient {
   readonly id: string;
   /** Allowed scopes for this client (e.g., ["rpc", "ws", "admin"]) */
   readonly scopes: readonly string[];
-  /** Per-MCP-client config block (Phase 69 SERVE-02). Present iff the
-   *  GatewayTokenSchema entry declared an `mcpClient` block; usually only
-   *  meaningful when `scopes` includes `"mcp-client"`. */
+  /** Per-MCP-client config block. Present iff the GatewayTokenSchema entry
+   *  declared an `mcpClient` block; usually only meaningful when `scopes`
+   *  includes `"mcp-client"`. */
   readonly mcpClient?: McpClientConfig;
 }
 
@@ -51,7 +50,7 @@ export interface TokenEntry {
   readonly id: string;
   readonly secret: string;
   readonly scopes: readonly string[];
-  /** Optional per-MCP-client config block (Phase 69 SERVE-02). */
+  /** Optional per-MCP-client config block. */
   readonly mcpClient?: McpClientConfig;
 }
 

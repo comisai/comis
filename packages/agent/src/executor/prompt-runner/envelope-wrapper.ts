@@ -201,9 +201,9 @@ export function wrapEnvelope(params: RunPromptParams): WrappedEnvelope {
 }
 
 /**
- * Pino debug log for the assembled dynamic preamble. Submodule binding per
- * AGENTS.md §2.7: `deps.logger.child({ submodule })` attaches the label only
- * at this call site, not module-scope. Kept as a private helper so the main
+ * Pino debug log for the assembled dynamic preamble. `deps.logger.child({
+ * submodule })` attaches the submodule label only at this call site, not
+ * module-scope. Kept as a private helper so the main
  * `wrapEnvelope` body stays under the 250L mental complexity ceiling.
  */
 function emitPreambleDebug(

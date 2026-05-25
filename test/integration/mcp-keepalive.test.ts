@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 64 RELY-01/02/03 integration tests for the per-server keepalive ticker.
+ * Integration tests for the per-server keepalive ticker.
  *
  * Exercises the @comis/skills barrel (via dist/) end-to-end:
  *   - createMcpClientManager wires the ticker on connect
  *   - startKeepaliveTicker schedules Client.ping() every keepaliveIntervalMs
- *   - maybeEnqueueKeepalivePing skips when the per-server PQueue is busy (RELY-03)
+ *   - maybeEnqueueKeepalivePing skips when the per-server PQueue is busy
  *   - Ping failure routes through handleDisconnection(..., "keepalive_failed")
  *     and emits "mcp:server:disconnected" with that reason union literal
  *
@@ -167,10 +167,10 @@ function makeEventBus() {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — RELY-01/02/03 keepalive ticker
+// Tests — keepalive ticker
 // ---------------------------------------------------------------------------
 
-describe("Phase 64 RELY-01/02/03 — keepalive ticker", () => {
+describe("keepalive ticker", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     mockPing.mockReset().mockResolvedValue({});
@@ -185,7 +185,7 @@ describe("Phase 64 RELY-01/02/03 — keepalive ticker", () => {
     vi.useRealTimers();
   });
 
-  it("fires client.ping() every keepaliveIntervalMs when queue is idle (RELY-01)", async () => {
+  it("fires client.ping() every keepaliveIntervalMs when queue is idle", async () => {
     const mgr = createMcpClientManager({ logger: makeLogger() });
     const result = await mgr.connect({
       name: "test-server",
@@ -213,7 +213,7 @@ describe("Phase 64 RELY-01/02/03 — keepalive ticker", () => {
     expect(mockPing).toHaveBeenCalledTimes(2);
   });
 
-  it("skips ping when callQueue has pending items (RELY-03)", async () => {
+  it("skips ping when callQueue has pending items", async () => {
     const mgr = createMcpClientManager({ logger: makeLogger() });
     await mgr.connect({
       name: "test-server",
@@ -238,7 +238,7 @@ describe("Phase 64 RELY-01/02/03 — keepalive ticker", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    // Advance to the first tick. Queue.pending > 0 -> ping skipped (RELY-03).
+    // Advance to the first tick. Queue.pending > 0 -> ping skipped.
     await vi.advanceTimersByTimeAsync(60_000);
     await Promise.resolve();
     await Promise.resolve();

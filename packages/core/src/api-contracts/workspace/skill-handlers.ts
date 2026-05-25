@@ -93,11 +93,11 @@ export const SkillsUploadContract = defineContract({
     scope: SkillScopeSchema.optional(),
     files: z.array(SkillUploadFileSchema),
     agentId: z.string().optional(),
-    // Phase 68 BUNDLE-05: when the uploaded SKILL.md declares an mcpServers
-    // block whose entry name collides with an existing user-owned or
-    // cross-bundle MCP entry, `force: true` archives the prior entry to
-    // `_bundleArchive` and installs the bundle entry. Optional — default
-    // false (collision rejects with [bundle_install_rejected:name_collision]).
+    // When the uploaded SKILL.md declares an mcpServers block whose entry name
+    // collides with an existing user-owned or cross-bundle MCP entry,
+    // `force: true` archives the prior entry to `_bundleArchive` and installs
+    // the bundle entry. Optional — default false (collision rejects with
+    // [bundle_install_rejected:name_collision]).
     force: z.boolean().optional(),
   }),
   response: z.object({
@@ -122,7 +122,7 @@ export const SkillsImportContract = defineContract({
     url: z.string().min(1),
     scope: SkillScopeSchema.optional(),
     agentId: z.string().optional(),
-    // Phase 68 BUNDLE-05: see SkillsUploadContract.request.force comment.
+    // See SkillsUploadContract.request.force comment.
     force: z.boolean().optional(),
   }),
   response: z.object({
@@ -181,7 +181,7 @@ export const SkillsCreateContract = defineContract({
     content: z.string().min(1),
     scope: SkillScopeSchema.optional(),
     agentId: z.string().optional(),
-    // Phase 68 BUNDLE-05: see SkillsUploadContract.request.force comment.
+    // See SkillsUploadContract.request.force comment.
     force: z.boolean().optional(),
   }),
   response: z.object({

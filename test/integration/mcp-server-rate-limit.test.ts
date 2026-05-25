@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 69 Plan 04 -- MCP server tools/call rate-limit integration / stress test.
+ * MCP server tools/call rate-limit integration / stress test.
  *
  * Stress-tests the live tools/call dispatcher's per-MCP-client per-tool
- * minute-bucket rate limit (SERVE-07) end-to-end via the SDK 1.29.0 `Client`.
- * Acceptance criterion from CONTEXT.md §1.7 + 69-RESEARCH.md "Per-MCP-Client
- * Rate Limit":
+ * minute-bucket rate limit end-to-end via the SDK 1.29.0 `Client`.
+ * Acceptance criterion:
  *
  *   100 tools/call to memory_search from a single mcp-client within ~1s
  *   -> ~30 succeed, ~70 return rate-limit error (MCP isError:true with text
@@ -16,8 +15,7 @@
  * allowlist = ["memory_search"]. The dispatcher dispatches through the live
  * RPC indirection -- via `memory.search_files`.
  *
- * Port 8570 (vs Plan 03's 8569) to coexist with parallel test runs under
- * vitest pool: "forks".
+ * Port 8570 to coexist with parallel test runs under vitest pool: "forks".
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -64,7 +62,7 @@ async function connectMcpClient(
       },
     },
   );
-  const client = new Client({ name: "phase-69-04-ratelimit", version: "0.0.1" });
+  const client = new Client({ name: "mcp-ratelimit-test", version: "0.0.1" });
   await client.connect(transport);
   return {
     client,
@@ -78,7 +76,7 @@ async function connectMcpClient(
 // Test Suite
 // ---------------------------------------------------------------------------
 
-describe("Phase 69 Plan 04 -- MCP tools/call per-client per-tool rate limit", () => {
+describe("MCP tools/call per-client per-tool rate limit", () => {
   let handle: TestDaemonHandle;
   let baseUrl: string;
 

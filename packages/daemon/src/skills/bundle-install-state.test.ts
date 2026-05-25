@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 68 CR-01 — daemon-private installed-bundles state file tests.
+ * Daemon-private installed-bundles state file tests.
  *
  * The state file is the TRUST ROOT for "did WE install this MCP entry as a
  * bundle?". It MUST live OUTSIDE config.yaml so a hand-edit of config.yaml
@@ -56,7 +56,7 @@ function makeEntry(name: string, overrides: Partial<McpServerEntry> = {}): McpSe
   } as McpServerEntry;
 }
 
-describe("bundle-install-state — CR-01 trust-root state file", () => {
+describe("bundle-install-state — trust-root state file", () => {
   it("readBundleInstallState on a fresh dataDir (no file) returns an empty state object", () => {
     const state = readBundleInstallState(tmpDir);
     expect(state).toEqual({});

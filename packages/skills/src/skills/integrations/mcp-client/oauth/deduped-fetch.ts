@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Deduped-refresh fetch wrapper — the production 401 path for an
- * `auth:"oauth"` MCP server (Phase 66 OAUTH-05 + the rotation-persistence half
- * of OAUTH-11). Composes ON TOP of the redirect-policy fetch (66-SAFETY-07);
+ * `auth:"oauth"` MCP server. Deduplicates concurrent refresh requests and
+ * persists rotated tokens. Composes ON TOP of the redirect-policy fetch;
  * the redirect policy stays unchanged and runs INSIDE this wrapper for the
  * initial request + the retry, so cross-host header scrub still applies.
  *
- * ── Why this exists (CR-01) ─────────────────────────────────────────────────
+ * ── Why this exists ──────────────────────────────────────────────────────────
  * `createOAuthClientProvider` accepts a `RefreshDeduper` in its deps but never
  * calls `dedupedRefresh`. The MCP SDK's own `OAuthClientProvider`-aware
  * transport routes a 401 through its internal `auth()` → `refreshAuthorization`
  * call, which BYPASSES the deduper. With N concurrent in-flight tool calls
- * against an expired access token that is the 66-P4 thundering herd:
+ * against an expired access token, that is the thundering herd:
  *   - N concurrent 401s fire N concurrent refresh POSTs.
- *   - A provider that rotates refresh_token (Notion / 66-P11) invalidates the
+ *   - A provider that rotates refresh_token (e.g. Notion) invalidates the
  *     N-1 losers, collapsing the token chain into a lockout.
  *   - Even on a non-rotating provider, the token endpoint sees N requests
  *     where 1 suffices (rate-limit risk).
@@ -29,9 +29,9 @@
  *      `state.callQueues[serverName]` (the same concurrency-1 PQueue that
  *      serializes tool calls), so N concurrent 401s for the same access token
  *      coalesce into ONE refresh POST and ALL waiters resolve to the same
- *      shared future (OAUTH-05).
+ *      shared future.
  *   4. The deduper's `doRefresh` persists the rotated tokens via
- *     `tokenStore.saveTokens` (66-P11) so the next refresh reads the new
+ *     `tokenStore.saveTokens` so the next refresh reads the new
  *      refresh_token off disk and Notion is not locked out.
  *   5. Re-issue the original request with `Authorization: Bearer <new>` and
  *      return that response to the SDK.
@@ -78,7 +78,7 @@ export interface DedupedRefreshFetchDeps {
   /** Inner fetch (e.g. {@link createRedirectPolicyFetch}). Required. */
   readonly innerFetch: FetchLike;
   /**
-   * Optional `addClientAuthentication` hook (66-P12 Stripe-Account header).
+   * Optional `addClientAuthentication` hook (e.g. Stripe-Account header on refresh).
    * Forwarded to `deduper.dedupedRefresh` verbatim — the deduper threads it
    * onto the refresh POST so connected-account providers (Stripe) still work
    * when the rotation happens via the 401 path.
@@ -188,8 +188,8 @@ export function createDedupedRefreshFetch(deps: DedupedRefreshFetchDeps): FetchL
     // bodies anyway (it inspects status + WWW-Authenticate).
     await response.body?.cancel().catch(() => undefined);
 
-    // Drive the deduped refresh (66-P4 thundering herd → 1 refresh POST). The
-    // deduper persists rotated tokens via tokenStore.saveTokens (66-P11) so a
+    // Drive the deduped refresh (thundering herd → 1 refresh POST). The
+    // deduper persists rotated tokens via tokenStore.saveTokens so a
     // subsequent connect/refresh reads the new refresh_token off disk.
     let refreshed;
     try {

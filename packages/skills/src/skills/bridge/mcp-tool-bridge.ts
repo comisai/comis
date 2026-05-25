@@ -174,21 +174,20 @@ export function sanitizeMcpToolName(qualifiedName: string): string {
  * @param toolSourceProfiles - Optional per-tool overrides for source profiles
  * @param logger - Optional diagnostic logger for tracing tool result content shape
  * @param onSuspiciousContent - Optional callback fired when wrapped MCP content trips the suspicious-content heuristic
- * @param onResultTruncated - Phase 67 CAP-03: optional callback fired ONCE per
- *   tool call whose result exceeded its source-profile `maxChars` and was
- *   truncated. Decoupled from the event bus (mirrors `onSuspiciousContent`): the
- *   daemon closure does the `eventBus.emit("mcp:server:result_truncated", …)`.
- *   Carries only sizes + identifiers (server, tool, originalSize, truncatedSize,
- *   traceId) — never the truncated content.
- * @param serverFiltersFn - OPUX-08 / 65-P2: per-server filter lookup, called
- *   once per input tool with the server name parsed from its qualified name.
- *   Returns `undefined` or an empty filter ⇒ tool passes through. A non-empty
- *   `allowlist` restricts the server to ONLY the listed tool names; a
- *   `blocklist` rejects the listed names. When both are present the blocklist
- *   wins (a name on both lists is filtered out). Filtering runs BEFORE the
- *   `.map()` below, so excluded tools never receive an AgentTool wrapper and
- *   never enter the agent's tool registry — the agent simply does not see
- *   them. Filtering is confined to this file by the 65-P2 architecture-grep.
+ * @param onResultTruncated - Optional callback fired ONCE per tool call whose
+ *   result exceeded its source-profile `maxChars` and was truncated. Decoupled
+ *   from the event bus (mirrors `onSuspiciousContent`): the daemon closure does
+ *   the `eventBus.emit("mcp:server:result_truncated", …)`. Carries only sizes +
+ *   identifiers (server, tool, originalSize, truncatedSize, traceId) — never
+ *   the truncated content.
+ * @param serverFiltersFn - Per-server filter lookup, called once per input tool
+ *   with the server name parsed from its qualified name. Returns `undefined` or
+ *   an empty filter ⇒ tool passes through. A non-empty `allowlist` restricts
+ *   the server to ONLY the listed tool names; a `blocklist` rejects the listed
+ *   names. When both are present the blocklist wins (a name on both lists is
+ *   filtered out). Filtering runs BEFORE the `.map()` below, so excluded tools
+ *   never receive an AgentTool wrapper and never enter the agent's tool registry
+ *   — the agent simply does not see them.
  * @returns AgentTool instances ready for the agent executor
  */
 export function mcpToolsToAgentTools(
@@ -200,7 +199,7 @@ export function mcpToolsToAgentTools(
   serverFiltersFn?: (serverName: string) =>
     | { readonly allowlist?: readonly string[]; readonly blocklist?: readonly string[] }
     | undefined,
-  // Phase 67 CAP-03: fired once per truncating tool call (decoupled emit callback).
+  // Fired once per truncating tool call (decoupled emit callback).
   onResultTruncated?: (e: {
     server: string;
     tool: string;
@@ -233,11 +232,10 @@ export function mcpToolsToAgentTools(
     );
   }
 
-  // OPUX-08 / 65-P2: apply the per-server allowlist/blocklist BEFORE the
-  // .map() so filtered tools never receive an AgentTool wrapper, never
-  // register tool metadata, and never reach the agent. Uses the LOCAL
-  // extractServerName helper (matches /^mcp:([^/]+)\//), not the
-  // @comis/shared re-export above.
+  // Apply the per-server allowlist/blocklist BEFORE the .map() so filtered
+  // tools never receive an AgentTool wrapper, never register tool metadata,
+  // and never reach the agent. Uses the LOCAL extractServerName helper
+  // (matches /^mcp:([^/]+)\//), not the @comis/shared re-export above.
   const filtered = serverFiltersFn
     ? tools.filter((tool) => {
         const serverName = extractServerName(tool.qualifiedName);
@@ -323,7 +321,7 @@ export function mcpToolsToAgentTools(
             const originalSize = textParts.length;
             const { truncated, wasTruncated } = truncateJsonAware(textParts, profile.maxChars);
             textParts = truncated;
-            // CAP-03: emit ONCE here (guarded by wasTruncated), NOT from
+            // Emit ONCE here (guarded by wasTruncated), NOT from
             // truncateJsonAware (pure utility, no bus) nor the wrapExternalContent
             // step (would fire on non-truncated paths). traceId via the non-throwing
             // tryGetContext — "" outside a request scope (keepalive/background/test).
@@ -375,13 +373,13 @@ export function mcpToolsToAgentTools(
 }
 
 /**
- * OPUX-08 / 65-P2: extract the per-server filter lists from a persisted MCP
- * server entry into the shape `serverFiltersFn` expects.
+ * Extract the per-server filter lists from a persisted MCP server entry into
+ * the shape `serverFiltersFn` expects.
  *
- * This helper lives in the bridge ON PURPOSE: it is the single place that
+ * This helper lives in the bridge on purpose: it is the single place that
  * names the literal `toolAllowlist` / `toolBlocklist` fields, so callers
  * (e.g. the daemon's setup-tools serverFiltersFn closure) can read the
- * persisted filters WITHOUT spelling out those identifiers. The 65-P2
+ * persisted filters WITHOUT spelling out those identifiers. An
  * architecture-grep (`mcp-tool-filtering-bridge-only.test.ts`) confines the
  * literals to this file + the schema + the schema snapshot.
  *

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the OAuth metadata discovery cascade (Phase 66 OAUTH-03 / 66b).
+ * Unit tests for the OAuth metadata discovery cascade.
  *
  * RED→GREEN coverage (against an in-process mock OAuth server serving the RFC
  * 8414 + RFC 9728 well-known routes — the same surface as
@@ -16,11 +16,11 @@
  *      8414 IS present), resolution still succeeds via the 9728→8414 chain.
  *   3. user-provided fallback: with BOTH well-known endpoints 404 but a configured
  *      oauth.authorizationEndpoint whose 8414 resolves, resolution uses it.
- *   4. fail-closed actionable error (66-P9): with all THREE absent, resolveDiscovery
+ *   4. fail-closed actionable error: with all THREE absent, resolveDiscovery
  *      rejects with an Error whose message NAMES the three endpoints attempted
  *      (the RFC 8414 well-known URL, the RFC 9728 well-known URL, and the
  *      user-provided oauth.authorizationEndpoint) and carries errorKind:"config".
- *   5. fetch injection (T-66-08): the injected redirect-safe fetchFn is the one the
+ *   5. fetch injection: the injected redirect-safe fetchFn is the one the
  *      SDK discovery actually uses — asserted via a wrapping spy that observes the
  *      well-known requests it makes.
  *
@@ -207,7 +207,7 @@ describe("resolveDiscovery", () => {
     await mock.stop();
   });
 
-  it("happy path: RFC 8414 present → resolves full metadata + persists once; warm load skips re-fetch — OAUTH-03", async () => {
+  it("happy path: RFC 8414 present → resolves full metadata + persists once; warm load skips re-fetch", async () => {
     mock.setRfc8414(true);
     mock.setRfc9728(false);
     const store = makeTokenStore();
@@ -245,7 +245,7 @@ describe("resolveDiscovery", () => {
     expect(store.saved).toHaveLength(1); // no second persist
   });
 
-  it("cascade to RFC 9728: 8414 absent at resource origin, 9728 points at the auth server — OAUTH-03/66-P9", async () => {
+  it("cascade to RFC 9728: 8414 absent at resource origin, 9728 points at the auth server", async () => {
     // Separate auth server that DOES serve 8414; the resource origin does not.
     const authServer = await startMockServer();
     authServer.setRfc8414(true);
@@ -271,7 +271,7 @@ describe("resolveDiscovery", () => {
     }
   });
 
-  it("user-provided fallback: both well-known 404 → uses oauth.authorizationEndpoint — OAUTH-03/66-P9", async () => {
+  it("user-provided fallback: both well-known 404 → uses oauth.authorizationEndpoint", async () => {
     // A separate server hosting ONLY the user-pointed authorization server 8414.
     const userAs = await startMockServer();
     userAs.setRfc8414(true);
@@ -297,7 +297,7 @@ describe("resolveDiscovery", () => {
     }
   });
 
-  it("fail-closed: all three absent → rejects with errorKind:config naming all three endpoints — 66-P9", async () => {
+  it("fail-closed: all three absent → rejects with errorKind:config naming all three endpoints", async () => {
     mock.setRfc8414(false);
     mock.setRfc9728(false);
     const store = makeTokenStore();
@@ -324,7 +324,7 @@ describe("resolveDiscovery", () => {
     expect(store.saved).toHaveLength(0); // nothing persisted on failure
   });
 
-  it("fetch injection: the SDK discovery uses the injected redirect-safe fetchFn — T-66-08", async () => {
+  it("fetch injection: the SDK discovery uses the injected redirect-safe fetchFn", async () => {
     mock.setRfc8414(true);
     mock.setRfc9728(false);
     const store = makeTokenStore();

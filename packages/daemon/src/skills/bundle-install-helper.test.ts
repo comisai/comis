@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 68 BUNDLE-05/06 (Plan 04) — applyBundleInstall RED tests.
+ * Tests for applyBundleInstall.
  *
- * Pins the public surface of the bundle-install-helper module BEFORE the
- * helper exists. All 7 tests collectively fail at module-resolution time
- * (`Cannot find module './bundle-install-helper.js'`) — the canonical RED.
+ * Pins the public surface of the bundle-install-helper module.
  *
- * Atomic two-phase invariant (BUNDLE-06 / 68-P5) is the headline test
- * coverage:
+ * Atomic two-phase invariant is the headline test coverage:
  *   - Phase A reject (plaintext_secret / osv_malware / name_collision)
  *     ⇒ applyBundleInstall THROWS with the bracketed `[bundle_install_rejected:<kind>]`
  *     code AND `persistMcpServers` is invoked ZERO times AND
@@ -180,7 +177,7 @@ afterEach(() => {
 // Test matrix
 // ---------------------------------------------------------------------------
 
-describe("applyBundleInstall — atomic two-phase install hook (BUNDLE-05/06)", () => {
+describe("applyBundleInstall — atomic two-phase install hook", () => {
   // -------------------------------------------------------------------------
   // 1. No mcpServers block in SKILL.md ⇒ silent no-op.
   //    Asserts: persistMcpServers called 0 times, manager.connect called 0 times,
@@ -226,7 +223,7 @@ describe("applyBundleInstall — atomic two-phase install hook (BUNDLE-05/06)", 
   });
 
   // -------------------------------------------------------------------------
-  // 3. Phase A reject (plaintext secret) — atomic invariant (BUNDLE-06).
+  // 3. Phase A reject (plaintext secret) — atomic invariant.
   //    Asserts: applyBundleInstall throws with [bundle_install_rejected:plaintext_secret]
   //    AND persistMcpServers called 0 times AND manager.connect called 0 times.
   // -------------------------------------------------------------------------
@@ -259,16 +256,15 @@ describe("applyBundleInstall — atomic two-phase install hook (BUNDLE-05/06)", 
       }),
     ).rejects.toThrow(/\[bundle_install_rejected:plaintext_secret\]/);
 
-    // Atomic invariant: Phase A reject ⇒ ZERO side effects (BUNDLE-06).
+    // Atomic invariant: Phase A reject ⇒ ZERO side effects.
     expect(mockPersistMcpServers.mock.calls.length).toBe(0);
     expect(connectSpy.mock.calls.length).toBe(0);
   });
 
   // -------------------------------------------------------------------------
-  // 4. Phase A reject (OSV malware) on a 3-entry bundle — the hero scenario
-  //    (BUNDLE-06 / 68-P5 / Plan-Time Risk 3). Entry 2 trips OSV; entries 1
-  //    and 3 are clean. Atomic invariant: ZERO writes, ZERO connects despite
-  //    2/3 entries being safe.
+  // 4. Phase A reject (OSV malware) on a 3-entry bundle — the hero scenario.
+  //    Entry 2 trips OSV; entries 1 and 3 are clean. Atomic invariant: ZERO
+  //    writes, ZERO connects despite 2/3 entries being safe.
   // -------------------------------------------------------------------------
   it("Phase A reject (osv_malware) on 3-entry bundle with entry 2 malicious ⇒ ZERO writes + ZERO connects (atomic invariant)", async () => {
     mockOsvMalwareCheck.mockImplementation(async (pkg: string) => {
@@ -312,15 +308,14 @@ describe("applyBundleInstall — atomic two-phase install hook (BUNDLE-05/06)", 
     ).rejects.toThrow(/\[bundle_install_rejected:osv_malware\]/);
 
     // The canonical atomic-invariant gate: Phase A reject on entry 2 ⇒
-    // NO persist call (despite entries 1 and 3 being safe). NO connect
-    // call.
+    // NO persist call (despite entries 1 and 3 being safe); NO connect call.
     expect(mockPersistMcpServers.mock.calls.length).toBe(0);
     expect(connectSpy.mock.calls.length).toBe(0);
   });
 
   // -------------------------------------------------------------------------
   // 5. Phase A clean ⇒ persistMcpServers fires once + manager.connect fires
-  //    per entry (BUNDLE-06 Phase B commit).
+  //    per entry (Phase B commit).
   //    Asserts: result.persistence === "persisted", persistMcpServers called
   //    EXACTLY once with the merged servers array, manager.connect called
   //    once per bundle entry.
@@ -355,7 +350,7 @@ describe("applyBundleInstall — atomic two-phase install hook (BUNDLE-05/06)", 
     });
 
     expect(result.persistence).toBe("persisted");
-    // BUNDLE-06: single atomic write commits all entries.
+    // Single atomic write commits all entries.
     expect(mockPersistMcpServers.mock.calls.length).toBe(1);
     // Verify the actionType + entityId + skillId thread through to the persist call.
     const persistArgs = mockPersistMcpServers.mock.calls[0]!;
@@ -373,14 +368,14 @@ describe("applyBundleInstall — atomic two-phase install hook (BUNDLE-05/06)", 
   });
 
   // -------------------------------------------------------------------------
-  // 6. Name-collision with user entry, force=false ⇒ reject (BUNDLE-05).
+  // 6. Name-collision with user entry, force=false ⇒ reject.
   //    The user has a pre-existing "yfinance" entry (no _bundleSource — so
   //    classified as user-owned). The bundle ships a "yfinance" too. Without
   //    --force, the resolver returns name_collision; the helper throws with
   //    the bracketed code and persistMcpServers/connect are called 0 times.
   //    The existing user entry is NOT touched.
   // -------------------------------------------------------------------------
-  it("name-collision with user entry, force=false ⇒ throws name_collision + ZERO writes + ZERO connects (BUNDLE-05)", async () => {
+  it("name-collision with user entry, force=false ⇒ throws name_collision + ZERO writes + ZERO connects", async () => {
     const userEntry: McpServerEntry = {
       name: "yfinance",
       transport: "http",
@@ -422,13 +417,13 @@ describe("applyBundleInstall — atomic two-phase install hook (BUNDLE-05/06)", 
 
   // -------------------------------------------------------------------------
   // 7. Name-collision with user entry, force=true ⇒ user entry archived to
-  //    _bundleArchive; persist + connect proceed (BUNDLE-04 / BUNDLE-05).
+  //    _bundleArchive; persist + connect proceed.
   //    Asserts: persistMcpServers called once. The persisted entry for
   //    "yfinance" carries _bundleSource === skillId AND _bundleArchive set
   //    to the prior user entry shape.
   // -------------------------------------------------------------------------
   // -------------------------------------------------------------------------
-  // 8. WR-02 — bundle entry with explicit `cwd` MUST forward to manager.connect.
+  // 8. Bundle entry with explicit `cwd` MUST forward to manager.connect.
   //    Pre-fix `buildRuntimeConfig` omitted `cwd`, so a bundle declaring
   //    `cwd: "/specific/dir"` connected with the default workspace cwd at
   //    install-time, silently mis-rooting the MCP child until the next daemon
@@ -436,7 +431,7 @@ describe("applyBundleInstall — atomic two-phase install hook (BUNDLE-05/06)", 
   //    persisted entry was always correct — the bug was the install-time
   //    connect's runtime config projection.
   // -------------------------------------------------------------------------
-  it("WR-02: bundle entry with explicit cwd forwards to manager.connect at install time", async () => {
+  it("bundle entry with explicit cwd forwards to manager.connect at install time", async () => {
     writeSkillManifest(
       [
         "---",
@@ -465,12 +460,12 @@ describe("applyBundleInstall — atomic two-phase install hook (BUNDLE-05/06)", 
     expect(result.persistence).toBe("persisted");
     expect(connectSpy.mock.calls.length).toBe(1);
     const connectArg = connectSpy.mock.calls[0]![0] as { cwd?: string };
-    // The cwd field reaches manager.connect — the bug pre-WR-02 was
-    // omitting it from buildRuntimeConfig's field projection.
+    // The cwd field reaches manager.connect — the bug was omitting it
+    // from buildRuntimeConfig's field projection.
     expect(connectArg.cwd).toBe("/opt/skill-roots/rooted");
   });
 
-  it("name-collision with user entry, force=true ⇒ user entry archived to _bundleArchive; persist + connect proceed (BUNDLE-05 force override)", async () => {
+  it("name-collision with user entry, force=true ⇒ user entry archived to _bundleArchive; persist + connect proceed (force override)", async () => {
     const userEntry: McpServerEntry = {
       name: "yfinance",
       transport: "http",

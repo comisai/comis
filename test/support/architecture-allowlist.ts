@@ -517,103 +517,103 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/cli/src/client/rpc-client.ts",
     lineRanges: [[295, 295]],
-    reason: "@allow-throw boundary: CLI helper consumed by command entry points; throws caught at Commander.js boundary per AGENTS.md §2.1.",
+    reason: "@allow-throw boundary: CLI helper consumed by command entry points; throws caught at Commander.js boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/commands/daemon.ts",
     lineRanges: [[688, 688]],
-    reason: "@allow-throw boundary: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.",
+    reason: "@allow-throw boundary: CLI command entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/commands/init.ts",
     lineRanges: [[298, 298]],
-    reason: "@allow-throw boundary: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.",
+    reason: "@allow-throw boundary: CLI command entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/commands/reset.ts",
     lineRanges: [[75, 75], [130, 130]],
-    reason: "@allow-throw boundary: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.",
+    reason: "@allow-throw boundary: CLI command entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/commands/secrets.ts",
     lineRanges: [[148, 148], [162, 162]],
-    reason: "@allow-throw boundary: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.",
+    reason: "@allow-throw boundary: CLI command entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/commands/uninstall.ts",
     lineRanges: [[76, 76]],
-    reason: "@allow-throw boundary: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.",
+    reason: "@allow-throw boundary: CLI command entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/output/spinner.ts",
     lineRanges: [[31, 31]],
-    reason: "@allow-throw boundary: CLI helper consumed by command entry points; throws caught at Commander.js boundary per AGENTS.md §2.1.",
+    reason: "@allow-throw boundary: CLI helper consumed by command entry points; throws caught at Commander.js boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/sync-tooling/backup.ts",
     lineRanges: [[64, 64]],
-    reason: "@allow-throw boundary: CLI helper consumed by command entry points; throws caught at Commander.js boundary per AGENTS.md §2.1.",
+    reason: "@allow-throw boundary: CLI helper consumed by command entry points; throws caught at Commander.js boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/test-helpers.ts",
     lineRanges: [[66, 66]],
-    reason: "@allow-throw boundary: CLI helper consumed by command entry points; throws caught at Commander.js boundary per AGENTS.md §2.1.",
+    reason: "@allow-throw boundary: CLI helper consumed by command entry points; throws caught at Commander.js boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/wizard/clack-adapter.ts",
     lineRanges: [[40, 40]],
-    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.",
+    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/wizard/non-interactive.ts",
     lineRanges: [[120, 120], [128, 128], [141, 141], [174, 174], [185, 185], [194, 194], [202, 202], [214, 214], [222, 222], [230, 230], [236, 236], [244, 244], [250, 250], [458, 458], [478, 478], [487, 487]],
-    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.",
+    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/wizard/state.ts",
     lineRanges: [[61, 61], [443, 443], [526, 526]],
-    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.",
+    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/wizard/steps/00-welcome.ts",
     lineRanges: [[49, 49]],
-    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.",
+    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/wizard/steps/01-detect-existing.ts",
     lineRanges: [[302, 302], [401, 401]],
-    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.",
+    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/wizard/steps/04-credentials.ts",
     lineRanges: [[476, 476]],
-    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.",
+    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/wizard/steps/09-review.ts",
     lineRanges: [[170, 170]],
-    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.",
+    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   {
     file: "packages/cli/src/wizard/steps/10-write-config.ts",
     lineRanges: [[309, 309], [317, 317], [404, 404]],
-    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception.",
+    reason: "@allow-throw boundary: CLI wizard step entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception).",
     removedIn: "permanent",
   },
   // ----- core package (8 files) -----
@@ -626,13 +626,13 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/core/src/context/context.ts",
     lineRanges: [[64, 64]],
-    reason: "@allow-throw boundary: getContext() AsyncLocalStorage scope assertion; caller contract per AGENTS.md §2.6 (chose getContext over tryGetContext); request-path scope (RPC/channel boundary).",
+    reason: "@allow-throw boundary: getContext() AsyncLocalStorage scope assertion; caller must use getContext (not tryGetContext) — requires established request-path scope (RPC/channel boundary).",
     removedIn: "permanent",
   },
   {
     file: "packages/core/src/load-env.ts",
     lineRanges: [[34, 34]],
-    reason: "@allow-throw boundary: loadEnv() missing dotenv hard-fail; consumed at daemon bootstrap entry per AGENTS.md §6.2.",
+    reason: "@allow-throw boundary: loadEnv() missing dotenv hard-fail; consumed at daemon bootstrap entry (startup hard-fail contract).",
     removedIn: "permanent",
   },
   {
@@ -644,7 +644,7 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/core/src/oauth/oauth-credential-store-selector.ts",
     lineRanges: [[93, 93]],
-    reason: "@allow-throw boundary: unknown storage-backend guard at composition root; daemon.ts catch boundary per AGENTS.md §6.2.",
+    reason: "@allow-throw boundary: unknown storage-backend guard at composition root; daemon.ts catch boundary (startup hard-fail contract).",
     removedIn: "permanent",
   },
   {
@@ -873,7 +873,7 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/daemon/src/daemon.ts",
     lineRanges: [[326, 326], [335, 335]], // INFORMATIONAL ONLY — see reason text. Post-Plan-59-03 actual throws are at daemon.ts: 432, 446, 888, 1318, 1327, 1914 (re-grep with `^[[:space:]]*throw `). lineRanges retained verbatim to avoid `allowlist-shrink.test.ts` tuple-key change (the shrink-test treats any lineRanges modification as an ADDITION). The raw-throw test (`test/architecture/raw-throw.test.ts`) filters on `{file}` alone, plus the file-level `// @allow-throw:` annotation at daemon.ts:2 — neither consults this `lineRanges` array.
-    reason: "@allow-throw boundary: daemon bootstrap composition-root failures (Bootstrap + SecretRef resolution, secrets bootstrap, secret decryption, capability port resolution, hot-add post-shutdown guard); hard-fail at startup is the correct contract per AGENTS.md §6.2. stages/* was collapsed back into daemon.ts; the file-level `// @allow-throw: daemon bootstrap composition-root failures` annotation at daemon.ts:2 is the primary mechanism per test/architecture/raw-throw.test.ts. lineRanges retained pre-collapse (`[[326, 326], [335, 335]]`) to honor the shrink-only ratchet in allowlist-shrink.test.ts; actual post-collapse throw positions are noted in the inline comment on the lineRanges line above.",
+    reason: "@allow-throw boundary: daemon bootstrap composition-root failures (Bootstrap + SecretRef resolution, secrets bootstrap, secret decryption, capability port resolution, hot-add post-shutdown guard); hard-fail at startup is the correct contract (startup hard-fail contract). stages/* was collapsed back into daemon.ts; the file-level `// @allow-throw: daemon bootstrap composition-root failures` annotation at daemon.ts:2 is the primary mechanism per test/architecture/raw-throw.test.ts. lineRanges retained pre-collapse (`[[326, 326], [335, 335]]`) to honor the shrink-only ratchet in allowlist-shrink.test.ts; actual post-collapse throw positions are noted in the inline comment on the lineRanges line above.",
     removedIn: "permanent",
   },
   {
@@ -946,7 +946,7 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/gateway/src/oauth/oauth-callback-route.ts",
     lineRanges: [[154, 154], [250, 250], [269, 269]],
-    reason: "@allow-throw boundary: OAuth HTTP callback route; throws caught by Hono error-handler boundary per AGENTS.md §2.1 web-user-facing flows exception.",
+    reason: "@allow-throw boundary: OAuth HTTP callback route; throws caught by Hono error-handler boundary (web user-facing flows exception).",
     removedIn: "permanent",
   },
   {
@@ -958,7 +958,7 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/gateway/src/web/media-routes.ts",
     lineRanges: [[109, 109], [169, 169]],
-    reason: "@allow-throw boundary: gateway HTTP media-routes; throws caught by Hono framework error-handler boundary per AGENTS.md §2.1 web exception.",
+    reason: "@allow-throw boundary: gateway HTTP media-routes; throws caught by Hono framework error-handler boundary (web exception).",
     removedIn: "permanent",
   },
   // ----- memory package (6 files) -----
@@ -990,7 +990,7 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/memory/src/secret-store-schema.ts",
     lineRanges: [[81, 81], [114, 114], [120, 120]],
-    reason: "@allow-throw boundary: master-key canary mismatch must hard-fail; encryption-correctness assertion zone per AGENTS.md §2.1 analog (security-critical).",
+    reason: "@allow-throw boundary: master-key canary mismatch must hard-fail; encryption-correctness assertion zone (security-critical; same throw-boundary rationale as web/CLI entry points).",
     removedIn: "permanent",
   },
   {
@@ -1282,7 +1282,7 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   {
     file: "packages/web/src/api/api-client.ts",
     lineRanges: [[171, 171], [175, 175], [212, 212], [231, 231]],
-    reason: "@allow-throw boundary: web API client dev-time validation guards; consumed by Lit element error-handler boundary per AGENTS.md §2.1 web-user-facing flows exception.",
+    reason: "@allow-throw boundary: web API client dev-time validation guards; consumed by Lit element error-handler boundary (web user-facing flows exception).",
     removedIn: "permanent",
   },
   // ----- web package permanent (1 file) -----
@@ -1290,13 +1290,13 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   // GlobalStateNotInitializedError when a Lit element queries GlobalState
   // before firstUpdated() completes. The throw is the correct boundary
   // signal — Lit catches it at the lifecycle boundary and surfaces it to
-  // the element's error handler. AGENTS.md §2.1 web-user-facing flows
-  // exception sanctions this; the file also bears the `@allow-throw:`
+  // the element's error handler. The web user-facing flows exception
+  // sanctions this; the file also bears the `@allow-throw:`
   // annotation so this entry is defense-in-depth.
   {
     file: "packages/web/src/state/global-state.ts",
     lineRanges: [[168, 168]],
-    reason: "GlobalStateNotInitializedError — Lit lifecycle invariant; caught at framework boundary per AGENTS.md §2.1 web-user-facing flows exception.",
+    reason: "GlobalStateNotInitializedError — Lit lifecycle invariant; caught at framework boundary (web user-facing flows exception).",
     removedIn: "permanent",
   },
 ] as const;

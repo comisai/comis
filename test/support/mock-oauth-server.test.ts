@@ -236,10 +236,9 @@ describe("createMockOAuthServer", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Phase 66 OAuth 2.1 surface — RFC 9728/8414 discovery, RFC 7591 DCR,
+  // OAuth 2.1 surface — RFC 9728/8414 discovery, RFC 7591 DCR,
   // /authorize (302 + code+state), /token (auth_code + refresh), refresh-token
-  // rotation toggle, and Stripe-Account header capture. These double as the
-  // route contract for every downstream OAuth plan's RED tests.
+  // rotation toggle, and Stripe-Account header capture.
   // ---------------------------------------------------------------------------
 
   function tokenBody(grantType: string, extra: Record<string, string> = {}): string {
@@ -342,7 +341,7 @@ describe("createMockOAuthServer", () => {
     expect(first.refresh_token).not.toBe(second.refresh_token);
   });
 
-  it("setRotateRefreshToken(true): presenting a previously-rotated refresh_token is rejected 400 (66-P11 Notion)", async () => {
+  it("setRotateRefreshToken(true): presenting a previously-rotated refresh_token is rejected 400", async () => {
     mock.setRotateRefreshToken(true);
     // First refresh issues a new token and invalidates rt_old.
     const first = (await (await postToken(baseUrl, "refresh_token", { refresh_token: "rt_old" })).json()) as {
@@ -356,7 +355,7 @@ describe("createMockOAuthServer", () => {
     expect(ok.status).toBe(200);
   });
 
-  it("captures the Stripe-Account header on /token requests (66-P12)", async () => {
+  it("captures the Stripe-Account header on /token requests", async () => {
     await postToken(baseUrl, "authorization_code", { code: "c1" }, { "stripe-account": "acct_123" });
     await postToken(baseUrl, "refresh_token", { refresh_token: "rt1" }, { "stripe-account": "acct_456" });
     const reqs = mock.getTokenRequests();

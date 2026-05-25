@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OAuth connect seam (Phase 66 OAUTH-11 / 66d).
+ * OAuth connect seam.
  *
  * Extracted from mcp-client-connect.ts to keep that leaf under the 500-line
  * per-subdirectory cap (the same split rationale as mcp-client-prlimit-probe.ts).
  * connectServer calls {@link prepareOAuthProvider} before building the transport,
  * and tags an UnauthorizedError via {@link tagNeedsOAuthLogin} so the connect
- * path surfaces a `needs_oauth_login` signal rather than auto-launching a browser
- * (resolved_scope #3 / T-66-22).
+ * path surfaces a `needs_oauth_login` signal rather than auto-launching a browser.
  *
  * State-first: prepareOAuthProvider takes `state` first (it reads the live
  * per-server callQueue for the deduper critical section + the shared
@@ -34,7 +33,7 @@ const MAX_REDIRECTIONS = 20;
 /**
  * The `needs_oauth_login` tag. An `auth:"oauth"` server that connects WITHOUT a
  * valid token throws the SDK `UnauthorizedError` from `client.connect`; rather
- * than auto-launching a browser daemon-side (resolved_scope #3 / T-66-22), the
+ * than auto-launching a browser daemon-side, the
  * connect path returns a tagged `Result.err`. The daemon RPC layer reads the tag
  * to tell the operator to run `comis mcp login <server>` (the explicit,
  * operator-initiated `oauth_login` RPC owns the loopback server + browser dance).
@@ -64,12 +63,12 @@ export function isNeedsOAuthLoginError(error: unknown): error is NeedsOAuthLogin
 
 /**
  * Build the OAuthClientProvider adapter for an `auth:"oauth"` server and run the
- * 66b discovery pre-flight (cold-load only). Returns a SHALLOW COPY of `config`
+ * discovery pre-flight (cold-load only). Returns a SHALLOW COPY of `config`
  * carrying the provider on the runtime-only `oauthProvider` field so the pure
  * `createTransport` attaches it.
  *
  * NO browser is launched here. Discovery failure throws an actionable
- * `errorKind:"config"` error (66-P9), surfaced by the caller as a normal connect
+ * `errorKind:"config"` error, surfaced by the caller as a normal connect
  * failure.
  */
 export async function prepareOAuthProvider(
@@ -80,8 +79,8 @@ export async function prepareOAuthProvider(
 ): Promise<McpServerConfig> {
   const tokenStore = oauthDeps.createTokenStore();
   // The deduper shares the manager's inflightRefreshes map + the per-server call
-  // queue as the concurrency-1 critical section (66-04 left this wiring to 66d):
-  // a 401 storm for one server coalesces into a single refresh POST (66-P4). The
+  // queue as the concurrency-1 critical section:
+  // a 401 storm for one server coalesces into a single refresh POST. The
   // call queue is created at connect, but the deduper only touches it on a
   // refresh, by which point the connection — and its queue — exist. The critical
   // section binds a LATE lookup of the live per-server callQueue
@@ -110,7 +109,7 @@ export async function prepareOAuthProvider(
     logger,
   });
 
-  // Pre-flight discovery (OAUTH-03): only when nothing is persisted. resolveDiscovery
+  // Pre-flight discovery: only when nothing is persisted. resolveDiscovery
   // is itself a warm-load short-circuit, but checking here avoids constructing the
   // redirect-fetch + a network attempt on the warm path and keeps the "discovery
   // runs once on cold load" contract observable.
@@ -127,16 +126,15 @@ export async function prepareOAuthProvider(
     });
   }
 
-  // CR-01: build the deduped-refresh fetch wrapper for this server. The SDK
+  // Build the deduped-refresh fetch wrapper for this server. The SDK
   // transport routes a 401 through its internal `auth()` → `refreshAuthorization`
   // path which BYPASSES the deduper, so this wrapper composes ON TOP of the
   // redirect-policy fetch and intercepts 401 responses BEFORE the SDK sees them.
   // The shared-future deduper (already constructed above with state.callQueues
   // as its critical section) coalesces N concurrent 401s into ONE refresh POST
-  // (66-P4) and persists the rotated tokens via tokenStore.saveTokens (66-P11).
+  // and persists the rotated tokens via tokenStore.saveTokens.
   // The hook for the Stripe-Account header on refresh is sourced from the same
-  // adapter provider so connected-account auth threads through the 401 path
-  // too (66-P12).
+  // adapter provider so connected-account auth threads through the 401 path too.
   const innerFetch = createRedirectPolicyFetch({ maxRedirections: MAX_REDIRECTIONS });
   const oauthFetch = createDedupedRefreshFetch({
     serverName: config.name,

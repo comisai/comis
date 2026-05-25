@@ -1,27 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the OAuth 3-file token store (Phase 66 OAUTH-01/02/04).
+ * Unit tests for the OAuth 3-file token store.
  *
- * RED→GREEN coverage:
+ * Coverage:
  *   1. saveTokens + tokens round-trip; on-disk <server>.json carries ABSOLUTE
  *      expiresAt (= pinned-now + expires_in*1000) and NO expiresIn/expires_in.
  *   2. Absolute-expiry TYPE guard: the stored schema has no relative field
  *      (`expectTypeOf<TokenFile>().not.toHaveProperty("expiresIn")`). The
  *      load-bearing compile-time guard lives in token-store.ts itself
  *      (`*.test.ts` is excluded from `tsc`); this runtime structural check is
- *      the documentation/regression mirror. (66-P3 — highest-value guard.)
+ *      the documentation/regression mirror.
  *   3. File mode: <server>.json mode & 0o777 === 0o600; the mcp-tokens dir
- *      mode & 0o777 === 0o700 (fstat/stat-verified). (OAUTH-02 / 66-P8.)
+ *      mode & 0o777 === 0o700 (fstat/stat-verified).
  *   4. client info + discovery files round-trip (<server>.client.json /
  *      <server>.meta.json), both 0o600.
  *   5. deleteAll removes all three files; subsequent reads return undefined.
- *   6. External-edit invalidation (OAUTH-04 / 66-P13): an external rewrite of
- *      <server>.json (bypassing the store) is picked up on the next read after
- *      the debounce flush; a truncated/partial write keeps the last-good cache
- *      and never crashes (fail-soft).
+ *   6. External-edit invalidation: an external rewrite of <server>.json
+ *      (bypassing the store) is picked up on the next read after the debounce
+ *      flush; a truncated/partial write keeps the last-good cache and never
+ *      crashes (fail-soft).
  *   7. No raw fs writes: token-store.ts source contains no
  *      fs.openSync/fs.writeFileSync/renameSync (all writes route through the
- *      @comis/observability substrate; no rename → no EXDEV, 66-P2).
+ *      @comis/observability substrate; no rename → no EXDEV).
  *
  * All filesystem state lives in an mkdtemp tmpdir; the chokidar watcher binds
  * that dir. `now` is injected so expiry math is deterministic.
@@ -76,7 +76,7 @@ describe("createTokenStore", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("round-trips tokens and persists ABSOLUTE expiresAt (no relative field) — OAUTH-02/66-P3", async () => {
+  it("round-trips tokens and persists ABSOLUTE expiresAt (no relative field)", async () => {
     await store.saveTokens("notion", {
       access_token: "AT",
       refresh_token: "RT",
@@ -113,7 +113,7 @@ describe("createTokenStore", () => {
     expect(raw["expiresAt"] as number).toBeGreaterThan(PINNED_NOW);
   });
 
-  it("TYPE: the stored TokenFile schema has no expiresIn/expires_in field (66-P3 mirror)", () => {
+  it("TYPE: the stored TokenFile schema has no expiresIn/expires_in field (compile-time guard mirror)", () => {
     // Runtime structural mirror of the compile-time `never` guard in
     // token-store.ts. `*.test.ts` is excluded from `tsc`, so this assertion
     // documents intent at the test layer; the build-time guard is in source.
@@ -122,7 +122,7 @@ describe("createTokenStore", () => {
     expectTypeOf<TokenFile>().toHaveProperty("expiresAt").toEqualTypeOf<number>();
   });
 
-  it("writes <server>.json at 0o600 and the tokens dir at 0o700 (fstat-verified) — OAUTH-02/66-P8", async () => {
+  it("writes <server>.json at 0o600 and the tokens dir at 0o700 (fstat-verified)", async () => {
     await store.saveTokens("notion", {
       access_token: "AT",
       expires_in: 60,
@@ -134,7 +134,7 @@ describe("createTokenStore", () => {
     expect(dirMode).toBe(0o700);
   });
 
-  it("round-trips client information to <server>.client.json at 0o600 — OAUTH-01", async () => {
+  it("round-trips client information to <server>.client.json at 0o600", async () => {
     await store.saveClientInformation("notion", {
       client_id: "cid-123",
       client_secret: "shh",
@@ -147,7 +147,7 @@ describe("createTokenStore", () => {
     expect(mode).toBe(0o600);
   });
 
-  it("round-trips discovery state to <server>.meta.json at 0o600 — OAUTH-01/03", async () => {
+  it("round-trips discovery state to <server>.meta.json at 0o600", async () => {
     await store.saveDiscoveryState("notion", {
       authorizationServerUrl: "https://auth.example.com",
       resourceMetadataUrl: "https://api.example.com/.well-known/oauth-protected-resource",
@@ -161,7 +161,7 @@ describe("createTokenStore", () => {
     expect(mode).toBe(0o600);
   });
 
-  it("deleteAll removes all three files; subsequent reads return undefined (logout) — OAUTH-10", async () => {
+  it("deleteAll removes all three files; subsequent reads return undefined (logout)", async () => {
     await store.saveTokens("notion", { access_token: "AT", expires_in: 60, token_type: "Bearer" });
     await store.saveClientInformation("notion", {
       client_id: "cid",
@@ -185,7 +185,7 @@ describe("createTokenStore", () => {
     expect(await store.discoveryState("ghost")).toBeUndefined();
   });
 
-  it("invalidates its cache on an EXTERNAL rewrite of <server>.json — OAUTH-04/66-P13", async () => {
+  it("invalidates its cache on an EXTERNAL rewrite of <server>.json", async () => {
     // Write the baseline BEFORE the watcher starts so it is part of the initial
     // scan, then await the watcher `ready` so the external write below is
     // cleanly observed as a `change` (not coalesced into the initial scan).
@@ -216,7 +216,7 @@ describe("createTokenStore", () => {
     expect(second?.refresh_token).toBe("RT2");
   });
 
-  it("keeps the last-good cache and logs WARN on a truncated/partial external write (fail-soft) — 66-P13", async () => {
+  it("keeps the last-good cache and logs WARN on a truncated/partial external write (fail-soft)", async () => {
     await store.saveTokens("notion", {
       access_token: "AT-GOOD",
       expires_in: 3600,
@@ -236,7 +236,7 @@ describe("createTokenStore", () => {
     expect(logger.warn).toHaveBeenCalled();
   });
 
-  it("close() tears down the watcher (no leaked timers/handles) — OAUTH-04", async () => {
+  it("close() tears down the watcher (no leaked timers/handles)", async () => {
     await store.startWatch();
     await store.saveTokens("notion", { access_token: "AT", expires_in: 60, token_type: "Bearer" });
     await expect(store.close()).resolves.toBeUndefined();
@@ -244,7 +244,7 @@ describe("createTokenStore", () => {
     await expect(store.close()).resolves.toBeUndefined();
   });
 
-  it("ARCH: token-store.ts contains no raw fs.openSync/fs.writeFileSync/renameSync — OAUTH-02/66-P2", () => {
+  it("ARCH: token-store.ts contains no raw fs.openSync/fs.writeFileSync/renameSync", () => {
     const srcPath = fileURLToPath(new URL("./token-store.ts", import.meta.url));
     const src = readFileSync(srcPath, "utf8");
     // Strip line comments and block comments so the doc-prose that legitimately

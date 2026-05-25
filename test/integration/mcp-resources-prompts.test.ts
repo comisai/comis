@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 65 OPUX-10 integration test — capability-gated resources/prompts
- * utility tools + per-server opt-out.
+ * Integration test — capability-gated resources/prompts utility tools +
+ * per-server opt-out.
  *
  * Drives the @comis/skills platform-tool registry (via dist/) end-to-end.
- * Proves the locked OPUX-10 behaviors (Plan 05) at the integration tier:
+ * Proves the capability-gating behaviors at the integration tier:
  *
  *   1. The 4 resources/prompts descriptors (list_resources, read_resource,
  *      list_prompts, get_prompt) are GLOBAL — exactly 4 entries in the
@@ -21,9 +21,8 @@
  *
  * The registry's `conditional` predicate re-evaluates per build context, so
  * the tools register on the first agent assemble AFTER the relevant server
- * connects (RESEARCH Pitfall 4) — here we simulate "after connect" by feeding
- * a build context whose `mcpClientManager.getAllConnections()` returns the
- * connected server.
+ * connects — here we simulate "after connect" by feeding a build context whose
+ * `mcpClientManager.getAllConnections()` returns the connected server.
  *
  * Per CLAUDE.md: integration tests import from `dist/` — requires `pnpm build`
  * first. The `@comis/skills/platform-tools` alias resolves to
@@ -107,10 +106,10 @@ function activeNames(ctx: PlatformToolBuildContext): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — OPUX-10 capability gating + per-server opt-out
+// Tests — capability gating + per-server opt-out
 // ---------------------------------------------------------------------------
 
-describe("Phase 65 OPUX-10 — capability-gated resources/prompts tools", () => {
+describe("capability-gated resources/prompts tools", () => {
   it("registers EXACTLY 4 GLOBAL resource/prompt descriptors (not N×4)", () => {
     const descriptors = resourcePromptDescriptors();
     expect(descriptors).toHaveLength(4);

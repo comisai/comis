@@ -76,12 +76,12 @@ describe("truncateJsonAware - JSON arrays", () => {
     expect(result.wasTruncated).toBe(false);
   });
 
-  // IN-01: an oversized whitespace-padded array that parses to [] DID lose
+  // An oversized whitespace-padded array that parses to [] DID lose
   // content (the whitespace), so wasTruncated must be true — otherwise the
   // mcp:server:result_truncated telemetry event never fires for this corner
-  // case even though the content was substantially replaced. RED on pre-fix
-  // code: the empty-array branch returned wasTruncated:false unconditionally.
-  it("IN-01: reports wasTruncated:true when an oversized padded array collapses to []", () => {
+  // case even though the content was substantially replaced. The
+  // empty-array branch must not return wasTruncated:false unconditionally.
+  it("reports wasTruncated:true when an oversized padded array collapses to []", () => {
     const text = "[" + " ".repeat(60) + "]"; // 62 chars, parses to []
     const result = truncateJsonAware(text, 10);
     expect(result.truncated).toBe("[]");
@@ -121,9 +121,9 @@ describe("truncateJsonAware - JSON objects", () => {
     expect(result.wasTruncated).toBe(false);
   });
 
-  // IN-01: mirror of the array case for objects. An oversized padded object
+  // Mirror of the array case for objects. An oversized padded object
   // that parses to {} lost content, so wasTruncated must be true.
-  it("IN-01: reports wasTruncated:true when an oversized padded object collapses to {}", () => {
+  it("reports wasTruncated:true when an oversized padded object collapses to {}", () => {
     const text = "{" + " ".repeat(60) + "}"; // 62 chars, parses to {}
     const result = truncateJsonAware(text, 10);
     expect(result.truncated).toBe("{}");

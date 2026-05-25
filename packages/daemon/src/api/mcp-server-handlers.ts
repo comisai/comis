@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 69 Plan 03 + Plan 04 -- buildMcpServerForClient factory.
+ * buildMcpServerForClient factory.
  *
  * Constructs a per-request `McpServer` (SDK 1.29.0 high-level wrapper)
  * scoped to one authenticated MCP client (`TokenClient` with `mcp-client`
@@ -12,7 +12,7 @@
  *                                              the tool name
  *   - mcpExportPolicy === "never-export"     → SKIP
  *   - mcpExportPolicy === undefined          → SKIP (default-deny safety net;
- *                                              Plan 02's CI gate makes
+ *                                              the CI gate makes
  *                                              "undefined" impossible in
  *                                              committed code)
  *
@@ -20,11 +20,10 @@
  * never reach the SDK's tool index, so they cannot leak via `tools/list` or
  * be invoked via `tools/call`.
  *
- * Plan 04 replaces the stub `tools/call` callback with the LIVE dispatcher.
- * The dispatcher runs the five-step pipeline:
+ * The `tools/call` callback runs the five-step pipeline:
  *
  *   1. Live policy re-check (defense-in-depth — rejects `never-export` and
- *      missing-policy entries even if Plan 03's registration-time filter let
+ *      missing-policy entries even if the registration-time filter let
  *      them through).
  *   2. Per-client per-tool minute-bucket rate limit (default 30/min;
  *      `client.mcpClient.toolRateLimit[name]` overrides).
@@ -34,7 +33,7 @@
  *      `_trustLevel` field a hostile MCP client passes in `args`.
  *   5. Wrap the result via `wrapExternalContent` (`source: "mcp_tool"`) so
  *      prompt-injection text in tool output gets the SECURITY NOTICE +
- *      random-hex markers (defense-in-depth against 69-P4).
+ *      random-hex markers (defense-in-depth against prompt injection).
  *
  * @module
  */
@@ -61,13 +60,13 @@ import {
 import { registerMcpResourcesForClient } from "./mcp-server-resources.js";
 
 // ---------------------------------------------------------------------------
-// Singleton rate-limit state (Plan 04)
+// Singleton rate-limit state
 // ---------------------------------------------------------------------------
 
 /**
  * Singleton rate-limit state shared across every `buildMcpServerForClient`
  * invocation. A new McpServer is constructed per HTTP request (stateless
- * StreamableHTTP transport per Plan 03), so the rate-limit counters MUST
+ * StreamableHTTP transport), so the rate-limit counters MUST
  * live at module scope to survive across requests for the same client.
  *
  * Bucket key: `${clientId}:${toolName}`.
@@ -98,7 +97,7 @@ function ensurePrunerStarted(): void {
  * internal use; import directly from this module in unit tests, NOT from a
  * public index.
  *
- * Phase 69 IN-01: also resets the `prunerStarted` flag so the next
+ * Also resets the `prunerStarted` flag so the next
  * `buildMcpServerForClient` invocation re-registers a fresh interval. Without
  * this, the module-level `prunerStarted` boolean stays `true` for the
  * lifetime of the forked vitest worker, masking pruner-cold-start behaviour
@@ -110,7 +109,7 @@ export function _resetRateLimitStateForTest(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Permissive input schema (Plan 04)
+// Permissive input schema
 // ---------------------------------------------------------------------------
 
 /**
@@ -143,12 +142,11 @@ const MCP_PERMISSIVE_INPUT_SCHEMA = z.record(z.string(), z.unknown()) as any;
 /**
  * Dependencies for `buildMcpServerForClient`.
  *
- * Plan 03 needs only `logger` + `daemonVersion`. Plan 04 adds the live
- * dispatcher deps: `daemonRpcForMcpClient` (the trust-flag-isolated
- * indirection), `defaultToolRateLimit` (the per-client/per-tool ceiling
- * applied when the client config has no override), and `toolNameToRpcMethod`
- * (mapping from the MCP tool name to the underlying RPC method on the
- * daemon).
+ * Includes `logger` + `daemonVersion` and the live dispatcher deps:
+ * `daemonRpcForMcpClient` (the trust-flag-isolated indirection),
+ * `defaultToolRateLimit` (the per-client/per-tool ceiling applied when the
+ * client config has no override), and `toolNameToRpcMethod` (mapping from the
+ * MCP tool name to the underlying RPC method on the daemon).
  */
 export interface BuildMcpServerForClientDeps {
   /** Logger bound with `module: "mcp-server"`. */
@@ -157,7 +155,7 @@ export interface BuildMcpServerForClientDeps {
    *  `packages/daemon/package.json`). Advertised as `serverInfo.version`. */
   readonly daemonVersion: string;
   /**
-   * Plan 04 trust-flag-isolated RPC indirection. The composition root wires
+   * Trust-flag-isolated RPC indirection. The composition root wires
    * this to `(method, params) => rpcCall(method, params)` -- the ABSENCE of
    * `_trustLevel:"admin"` is the security feature. The dispatcher inside
    * this factory ALSO strips any `_trustLevel` field a hostile MCP client
@@ -170,8 +168,7 @@ export interface BuildMcpServerForClientDeps {
     params: Record<string, unknown>,
   ) => Promise<unknown>;
   /** Default rate-limit ceiling (calls/min/tool) when the client config has
-   *  no `mcpClient.toolRateLimit[name]` override. Per CONTEXT.md §1.7 default
-   *  = 30. */
+   *  no `mcpClient.toolRateLimit[name]` override. Default = 30. */
   readonly defaultToolRateLimit: number;
   /** Map an MCP tool name to the underlying daemon RPC method name. The
    *  default identity mapping suffices for tools whose MCP name matches the
@@ -180,10 +177,10 @@ export interface BuildMcpServerForClientDeps {
    *  explicit mapping. The mapping table is owned by the composition root
    *  (`packages/daemon/src/wiring/setup-gateway/setup-gateway-routes.ts`). */
   readonly toolNameToRpcMethod: (toolName: string) => string;
-  /** Plan 05 (SERVE-06): page size for the resources/read session.history
-   *  fetch. A single-page snapshot suffices for the resource view; if a
-   *  session exceeds this cap, the last N CONFIRMED messages are returned.
-   *  Wired from the composition root with MCP_RESOURCE_READ_LIMIT. */
+  /** Page size for the resources/read session.history fetch. A single-page
+   *  snapshot suffices for the resource view; if a session exceeds this cap,
+   *  the last N CONFIRMED messages are returned. Wired from the composition
+   *  root with MCP_RESOURCE_READ_LIMIT. */
   readonly resourceReadLimit: number;
 }
 
@@ -218,9 +215,9 @@ export function buildMcpServerForClient(
   for (const [name, meta] of allTools) {
     const policy = meta.mcpExportPolicy;
     if (policy === undefined) {
-      // Default-deny safety net. Plan 02's CI gate makes this impossible in
+      // Default-deny safety net. The CI gate makes this impossible in
       // committed code; if it does fire at runtime, treat as a defense-in-
-      // depth assertion (Plan 02 SUMMARY guidance).
+      // depth assertion.
       skippedUndefined += 1;
       continue;
     }
@@ -265,14 +262,14 @@ export function buildMcpServerForClient(
       skippedUndefined,
       allowlistSize: allowlist.size,
     },
-    "MCP server tool registration complete (Phase 69 Plan 04 -- live tools/call dispatcher)",
+    "MCP server tool registration complete",
   );
 
-  // Phase 69 Plan 05 (SERVE-06): register resources/list + resources/read
-  // surface. The advertised `resources` capability was set above; this
-  // registers the handlers + the per-client sessionAllowlist + CONFIRMED
-  // filter. The McpServer is already wired -- registerResource is
-  // additive to the request-handler index inside the SDK.
+  // Register resources/list + resources/read surface. The advertised
+  // `resources` capability was set above; this registers the handlers +
+  // the per-client sessionAllowlist + CONFIRMED filter. The McpServer is
+  // already wired -- registerResource is additive to the request-handler
+  // index inside the SDK.
   registerMcpResourcesForClient(
     mcp,
     {
@@ -287,7 +284,7 @@ export function buildMcpServerForClient(
 }
 
 // ---------------------------------------------------------------------------
-// Live dispatcher (Plan 04 -- replaces the Plan 03 stubCallback)
+// Live dispatcher
 // ---------------------------------------------------------------------------
 
 /**
@@ -427,12 +424,11 @@ function buildDispatchCallback(args: {
           },
           "MCP tools/call validateInput threw",
         );
-        // Phase 69 WR-02: do NOT surface the raw err.message verbatim to
-        // the external MCP client. The structured `err` is captured on
-        // the WARN log above (server-side only); the on-wire response
-        // carries only the sentinel + correlation handles (clientId +
-        // toolName) so an operator can grep logs without exposing
-        // internal hints, file paths, or session keys.
+        // Do NOT surface the raw err.message verbatim to the external MCP
+        // client. The structured `err` is captured on the WARN log above
+        // (server-side only); the on-wire response carries only the sentinel
+        // + correlation handles (clientId + toolName) so an operator can grep
+        // logs without exposing internal hints, file paths, or session keys.
         return {
           isError: true,
           content: [
@@ -470,15 +466,14 @@ function buildDispatchCallback(args: {
         },
         "MCP tools/call dispatch error",
       );
-      // Phase 69 WR-02: do NOT surface the raw err.message verbatim to
-      // the external MCP client. Daemon RPC handlers throw messages that
-      // can include session keys, user IDs, file paths, and internal
-      // configuration hints (e.g., "Session not found:
-      // tenant-abc:user-123:channel-456. Available session keys: ...").
-      // Mirror the WS RPC posture (ws-handler.ts:384 -> "Internal error")
-      // and emit a generic response. The structured `err` is captured on
-      // the WARN log above; clientId + toolName are correlation handles
-      // for log search.
+      // Do NOT surface the raw err.message verbatim to the external MCP
+      // client. Daemon RPC handlers throw messages that can include session
+      // keys, user IDs, file paths, and internal configuration hints (e.g.,
+      // "Session not found: tenant-abc:user-123:channel-456. Available session
+      // keys: ..."). Mirror the WS RPC posture (ws-handler.ts:384 ->
+      // "Internal error") and emit a generic response. The structured `err` is
+      // captured on the WARN log above; clientId + toolName are correlation
+      // handles for log search.
       return {
         isError: true,
         content: [
@@ -491,7 +486,7 @@ function buildDispatchCallback(args: {
     }
 
     // ----- Step 5 -- Wrap output via wrapExternalContent -------------------
-    // Defense-in-depth against 69-P4 (prompt injection via tool result text).
+    // Defense-in-depth against prompt injection via tool result text.
     // The wrapper prepends a SECURITY NOTICE block + random-hex markers; the
     // MCP client's LLM is responsible for treating wrapped content as data.
     const serialized =
@@ -539,8 +534,8 @@ function stripTrustLevel(
  * `undefined` value. Returns `"[unserializable]"` on failure so the wrapped
  * content is always a string (the `: string` return type is binding).
  *
- * Phase 69 CR-01 (info-leak defense): `JSON.stringify(undefined)` returns the
- * value `undefined`, not the string `"null"`. A naive
+ * Info-leak defense: `JSON.stringify(undefined)` returns the value
+ * `undefined`, not the string `"null"`. A naive
  * `try { return JSON.stringify(v); }` therefore violates the `: string`
  * contract when `v === undefined` (a legal return value for the
  * `Promise<unknown>` indirection backing `daemonRpcForMcpClient`). The

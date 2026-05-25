@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 65 OPUX-09 integration test — idle eviction + lazy reconnect.
+ * Integration test — idle eviction + lazy reconnect.
  *
  * Drives the @comis/skills barrel (via dist/) end-to-end with a mocked MCP SDK
  * Client + transports and vitest fake timers. Proves the three locked
- * idle-eviction behaviors (Plan 04) at the integration tier:
+ * idle-eviction behaviors at the integration tier:
  *
  *   1. A server configured with `idleTtlMs > 0` is disconnected after the TTL
  *      elapses with no tool calls — `getConnection(name)` returns undefined.
@@ -170,10 +170,10 @@ function makeLogger() {
 const IDLE_TTL_MS = 60_000;
 
 // ---------------------------------------------------------------------------
-// Tests — OPUX-09 idle eviction
+// Tests — idle eviction
 // ---------------------------------------------------------------------------
 
-describe("Phase 65 OPUX-09 — idle eviction + lazy reconnect", () => {
+describe("idle eviction + lazy reconnect", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     mockPing.mockReset().mockResolvedValue({});

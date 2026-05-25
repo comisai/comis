@@ -167,10 +167,10 @@ describe("tool metadata -- ToolCapabilityMetadata (v1.1)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// mcpExportPolicy tests (Phase 69 SERVE-03)
+// mcpExportPolicy tests
 // ---------------------------------------------------------------------------
 
-describe("registerToolMetadata mcpExportPolicy merge -- Phase 69 SERVE-03", () => {
+describe("registerToolMetadata mcpExportPolicy merge", () => {
   it("registerToolMetadata preserves mcpExportPolicy across spread-merges from different categories", () => {
     registerToolMetadata("mcp_export_merge_a", { isReadOnly: true });
     registerToolMetadata("mcp_export_merge_a", {

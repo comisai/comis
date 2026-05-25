@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception. ensureGatewayToken throws a named-env-var error that each subcommand's catch converts to error()/process.exit(1).
+// @allow-throw: CLI command entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception). ensureGatewayToken throws a named-env-var error that each subcommand's catch converts to error()/process.exit(1).
 /**
  * Shared gateway-token resolution for the `comis mcp *` subcommands.
  *
  * Extracted from `mcp.ts` to break the `mcp.ts` ↔ `mcp-oauth.ts` intra-package
- * cycle (Phase 66 plan 09 — final-gate Rule 1 fix): `mcp.ts` imports
+ * cycle: `mcp.ts` imports
  * `registerMcpOauth` from `mcp-oauth.ts` (to mount login/logout), and
  * `mcp-oauth.ts` imports `ensureGatewayToken` from `mcp.ts` (every subcommand
  * resolves the token before opening the RPC socket). Hoisting the token helper
@@ -14,11 +14,11 @@
  * shrink-only by convention — adding a new cycle to the baseline is forbidden,
  * so this extraction lands as the final-gate fix.
  *
- * Token resolution (OPUX-07 / 65-P1): each subcommand calls
- * `ensureGatewayToken(opts.token)` BEFORE the socket opens so a missing gateway
- * token surfaces a friendly error naming `COMIS_GATEWAY_TOKEN` rather than a
- * generic 401 from the daemon handshake. The `--token` flag overrides the env
- * var (read from `~/.comis/.env`).
+ * Token resolution: each subcommand calls `ensureGatewayToken(opts.token)`
+ * BEFORE the socket opens so a missing gateway token surfaces a friendly error
+ * naming `COMIS_GATEWAY_TOKEN` rather than a generic 401 from the daemon
+ * handshake. The `--token` flag overrides the env var (read from
+ * `~/.comis/.env`).
  *
  * @module
  */
@@ -30,7 +30,7 @@ import { join } from "node:path";
 /**
  * Resolve the gateway bearer token BEFORE `withClient` opens the socket.
  *
- * OPUX-07 / 65-P1 mitigation. Resolution order:
+ * Resolution order:
  *   1. `--token <t>` flag wins — written through to `process.env` so the
  *      downstream `withClient` resolver (rpc-client.ts) consumes it.
  *   2. else load `~/.comis/.env` (mirrors rpc-client's own lazy load — and
@@ -38,8 +38,7 @@ import { join } from "node:path";
  *      visible to BOTH this check and the socket resolver), then read
  *      `COMIS_GATEWAY_TOKEN` from the environment.
  *   3. miss → throw an explicit error NAMING the env var. The message MUST
- *      NOT interpolate any token value (T-65-05 information-disclosure
- *      mitigation).
+ *      NOT interpolate any token value (information-disclosure mitigation).
  *
  * @param flagToken - The `--token` option value, or undefined.
  * @throws Error naming COMIS_GATEWAY_TOKEN when no token can be resolved.

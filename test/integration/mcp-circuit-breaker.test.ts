@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 64 RELY-04/05/06 integration tests for the per-server circuit breaker.
+ * Integration tests for the per-server circuit breaker.
  *
  * Exercises the @comis/skills barrel (via dist/) end-to-end:
- *   - RELY-04: breaker opens after N consecutive failures, and the next call
+ *   - Breaker opens after N consecutive failures, and the next call
  *     returns ok({ isError: true, content: [{ text: "[server_unavailable] ..." }] })
  *     without occupying a queue slot
- *   - RELY-05: open -> half-open transition exactly at circuitBreakerCooldownMs
+ *   - Open -> half-open transition exactly at circuitBreakerCooldownMs
  *     elapsed (probe attempt allowed)
- *   - RELY-06 (64-P2): breaker resets to closed after reconnect succeeds, so a
+ *   - Breaker resets to closed after reconnect succeeds, so a
  *     fresh tool call lands as ok({ isError: false }), NOT [server_unavailable]
  *
  * SDK mocking strategy mirrors mcp-keepalive.test.ts — vi.mock targets the
@@ -17,7 +17,7 @@
  * docblock for why specifier-based mocks don't bridge module graphs in
  * Vitest 4.
  *
- * Per CLAUDE.md: integration tests import from `dist/`; requires `pnpm build`.
+ * Integration tests import from `dist/`; requires `pnpm build`.
  *
  * @module
  */
@@ -161,11 +161,11 @@ function makeEventBus() {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — RELY-04 (open + [server_unavailable]) / RELY-05 (cooldown half-open) /
-//         RELY-06 (reset on reconnect, the 64-P2 mitigation)
+// Tests — open + [server_unavailable] / cooldown half-open /
+//         reset on reconnect
 // ---------------------------------------------------------------------------
 
-describe("Phase 64 RELY-04/05/06 — circuit breaker", () => {
+describe("circuit breaker", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     mockPing.mockReset().mockResolvedValue({});
@@ -180,7 +180,7 @@ describe("Phase 64 RELY-04/05/06 — circuit breaker", () => {
     vi.useRealTimers();
   });
 
-  it("opens breaker after 3 consecutive callTool failures and returns [server_unavailable] (RELY-04)", async () => {
+  it("opens breaker after 3 consecutive callTool failures and returns [server_unavailable]", async () => {
     const mgr = createMcpClientManager({
       logger: makeLogger(),
       circuitBreakerThreshold: 3,
@@ -223,7 +223,7 @@ describe("Phase 64 RELY-04/05/06 — circuit breaker", () => {
     expect(mockCallTool).toHaveBeenCalledTimes(3);
   });
 
-  it("transitions open -> half-open after circuitBreakerCooldownMs elapsed (RELY-05)", async () => {
+  it("transitions open -> half-open after circuitBreakerCooldownMs elapsed", async () => {
     const mgr = createMcpClientManager({
       logger: makeLogger(),
       circuitBreakerThreshold: 3,
@@ -238,7 +238,7 @@ describe("Phase 64 RELY-04/05/06 — circuit breaker", () => {
     });
 
     // Open the breaker with 3 timeout failures (timeout path preserves
-    // connection status; see RELY-04 test above for the rationale).
+    // connection status; see the previous test for the rationale).
     mockCallTool.mockRejectedValue(new Error("Request timed out"));
     await mgr.callTool("mcp:test-server/foo", {});
     await mgr.callTool("mcp:test-server/foo", {});
@@ -264,7 +264,7 @@ describe("Phase 64 RELY-04/05/06 — circuit breaker", () => {
     expect(mockCallTool).toHaveBeenCalledTimes(1);
   });
 
-  it("breaker resets to closed after reconnect succeeds (RELY-06 / 64-P2)", async () => {
+  it("breaker resets to closed after reconnect succeeds", async () => {
     const eventBus = makeEventBus();
     const mgr = createMcpClientManager({
       logger: makeLogger(),
@@ -282,7 +282,7 @@ describe("Phase 64 RELY-04/05/06 — circuit breaker", () => {
     });
 
     // Open the breaker with 3 timeout failures (timeout path preserves
-    // connection status; see RELY-04 test above for the rationale).
+    // connection status; see the first test for the rationale).
     mockCallTool.mockRejectedValue(new Error("Request timed out"));
     await mgr.callTool("mcp:test-server/foo", {});
     await mgr.callTool("mcp:test-server/foo", {});
@@ -295,7 +295,7 @@ describe("Phase 64 RELY-04/05/06 — circuit breaker", () => {
 
     // Trigger reconnect via onclose -> the reconnect engine fires the
     // success block in mcp-client-reconnect.ts, which resets state.circuitBreakers
-    // to { status: "closed", failureCount: 0 } (the 64-P2 mitigation).
+    // to { status: "closed", failureCount: 0 }.
     const client = clientInstances[0]!;
     expect(client.onclose).toBeDefined();
     mockConnect.mockResolvedValueOnce(undefined); // next reconnect succeeds

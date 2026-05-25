@@ -66,7 +66,7 @@ describe("Agent Identity: REST API and RPC Config", () => {
 
   describe("REST API Agent Config (Non-LLM)", () => {
     it(
-      "ID-REST-01: GET /api/agents returns configured agents with correct structure",
+      "GET /api/agents returns configured agents with correct structure",
       async () => {
         const response = await fetch(`${handle.gatewayUrl}/api/agents`, {
           method: "GET",
@@ -93,7 +93,7 @@ describe("Agent Identity: REST API and RPC Config", () => {
     );
 
     it(
-      "ID-REST-02: GET /api/agents requires authentication (returns 401 without token)",
+      "GET /api/agents requires authentication (returns 401 without token)",
       async () => {
         const response = await fetch(`${handle.gatewayUrl}/api/agents`, {
           method: "GET",
@@ -106,7 +106,7 @@ describe("Agent Identity: REST API and RPC Config", () => {
     );
 
     it(
-      "ID-REST-03: GET /api/agents lists both primary and secondary agents",
+      "GET /api/agents lists both primary and secondary agents",
       async () => {
         const response = await fetch(`${handle.gatewayUrl}/api/agents`, {
           method: "GET",
@@ -128,7 +128,7 @@ describe("Agent Identity: REST API and RPC Config", () => {
     );
 
     it(
-      "ID-REST-04: Each agent has correct identity fields from config",
+      "Each agent has correct identity fields from config",
       async () => {
         const response = await fetch(`${handle.gatewayUrl}/api/agents`, {
           method: "GET",
@@ -172,7 +172,7 @@ describe("Agent Identity: REST API and RPC Config", () => {
 
   describe("RPC Agent Config (Non-LLM)", () => {
     it(
-      "ID-RPC-01: config.get with section 'agents' returns full agent configs",
+      "config.get with section 'agents' returns full agent configs",
       async () => {
         let ws: WebSocket | undefined;
         try {
@@ -206,7 +206,7 @@ describe("Agent Identity: REST API and RPC Config", () => {
     );
 
     it(
-      "ID-MULTI-03: REST API shows distinct agent names for identity isolation",
+      "REST API shows distinct agent names for identity isolation",
       async () => {
         const response = await fetch(`${handle.gatewayUrl}/api/agents`, {
           method: "GET",

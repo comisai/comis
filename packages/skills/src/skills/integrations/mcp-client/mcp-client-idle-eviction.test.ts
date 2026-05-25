@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the Phase 65 OPUX-09 idle-eviction module.
+ * Unit tests for the idle-eviction module.
  *
  * Exercises startIdleTicker / stopIdleTicker / resetIdleActivity against a
- * hand-built McpClientManagerState + fake timers. The full integration triad
- * (real stdio server + lazy reconnect over the wire) lands in Plan 06; these
- * unit tests drive RED for the module + the lazy-reconnect call-site branch
- * without depending on a live transport.
+ * hand-built McpClientManagerState + fake timers. These unit tests cover the
+ * module + the lazy-reconnect call-site branch without depending on a live
+ * transport.
  *
  * Load-bearing assertions:
  *  - eviction fires after idleTtlMs and deletes the connection
@@ -133,7 +132,7 @@ function wireConnected(
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("idle eviction — startIdleTicker / evict (OPUX-09)", () => {
+describe("idle eviction — startIdleTicker / evict", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -226,7 +225,7 @@ describe("idle eviction — startIdleTicker / evict (OPUX-09)", () => {
     expect(state.connections.get("epsilon")).toBeUndefined();
   });
 
-  it("WR-01: eviction always fires at last-activity + full idleTtlMs even after multiple activity bounces", async () => {
+  it("eviction always fires at last-activity + full idleTtlMs even after multiple activity bounces", async () => {
     // Regression for the TTL-drift bug: pre-fix each reschedule passed
     // `ttl - idleFor` as the NEW ttl, so the effective eviction threshold
     // shrank with every bounce, causing premature eviction. With TTL=60s and
@@ -259,7 +258,7 @@ describe("idle eviction — startIdleTicker / evict (OPUX-09)", () => {
     expect(state.connections.get("drift")).toBeUndefined();
   });
 
-  it("WR-05: does not evict while a tool call is in-flight on the server's queue", async () => {
+  it("does not evict while a tool call is in-flight on the server's queue", async () => {
     // Race guard: the idle timer fires exactly while a callTool is still
     // running on the per-server PQueue. An in-flight call IS activity — the
     // connection must survive (eviction would race the in-flight call and
@@ -292,12 +291,11 @@ describe("idle eviction — startIdleTicker / evict (OPUX-09)", () => {
     expect(state.connections.get("inflight")).toBeUndefined();
   });
 
-  it("WR-02: the idle-eviction INFO log carries no errorKind (errorKind is for WARN/ERROR only)", async () => {
-    // Per AGENTS.md §2.1 errorKind is required ONLY on ERROR/WARN logs; its
-    // presence on the INFO eviction notification misleads observability tooling
-    // that filters on errorKind into treating normal scheduled eviction as a
-    // degraded/broken condition. RED on pre-fix code: the info() fields included
-    // `errorKind: "dependency"`.
+  it("the idle-eviction INFO log carries no errorKind (errorKind is for WARN/ERROR only)", async () => {
+    // errorKind is required ONLY on ERROR/WARN logs; its presence on the INFO
+    // eviction notification misleads observability tooling that filters on
+    // errorKind into treating normal scheduled eviction as a degraded/broken
+    // condition. Pre-fix: the info() fields included `errorKind: "dependency"`.
     const info = vi.fn();
     const spyLogger: McpClientManagerDeps["logger"] = {
       info,
@@ -369,7 +367,7 @@ function wireEvicted(state: McpClientManagerState, name: string): McpServerConfi
   return config;
 }
 
-describe("idle eviction — lazy reconnect on missing connection (OPUX-09)", () => {
+describe("idle eviction — lazy reconnect on missing connection", () => {
   beforeEach(() => {
     reconnectStub.mockReset();
   });
@@ -459,7 +457,7 @@ describe("idle eviction — lazy reconnect on missing connection (OPUX-09)", () 
 });
 
 // ---------------------------------------------------------------------------
-// Phase 67 CAP-02 — dedicated keepalive queue teardown (no leak)
+// Dedicated keepalive queue teardown (no leak)
 // ---------------------------------------------------------------------------
 //
 // When the primary call queue concurrency > 1, maybeEnqueueKeepalivePing
@@ -476,7 +474,7 @@ function wireKeepaliveQueue(state: McpClientManagerState, name: string): PQueue 
   return ka;
 }
 
-describe("keepalive queue teardown (CAP-02)", () => {
+describe("keepalive queue teardown", () => {
   it("disconnect clears + deletes the dedicated keepalive queue", async () => {
     const state = makeState();
     wireConnected(state, "alpha", { supportsParallelToolCalls: true });

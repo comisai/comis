@@ -10,8 +10,7 @@
  * callback so tests and the daemon composition root can inject their
  * own clock-equivalent fakes without going through `os.homedir()`
  * + `systemGetEnv` directly. Production callers should pass
- * `os.homedir` and `systemGetEnv` (the sanctioned-root helper) per
- * AGENTS.md §2.2.
+ * `os.homedir` and `systemGetEnv` (the sanctioned-root helper).
  *
  * @module
  */

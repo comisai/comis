@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: Canary encrypt / decrypt assertion: master-key mismatch must surface as a hard failure (not a Result.err that the caller might silently swallow). Encryption-correctness boundary per AGENTS.md §2.1 (security-critical assertion zone analog).
+// @allow-throw: Canary encrypt / decrypt assertion: master-key mismatch must surface as a hard failure (not a Result.err that the caller might silently swallow). Encryption-correctness boundary (security-critical assertion zone).
 /**
  * Secret store SQLite schema DDL and canary-based master key validation.
  *

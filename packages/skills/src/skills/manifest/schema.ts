@@ -129,7 +129,7 @@ export const ComisNamespaceSchema = z.strictObject({
 export type ComisNamespaceParsed = z.infer<typeof ComisNamespaceSchema>;
 
 /**
- * BUNDLE-01: per-entry shape for bundled MCP servers in a skill manifest.
+ * Per-entry shape for bundled MCP servers in a skill manifest.
  * Normalizes the two acceptable shapes:
  *   Array form (Comis-native):
  *     mcpServers: [{ name: "yfinance", transport: "stdio", ... }]
@@ -137,7 +137,7 @@ export type ComisNamespaceParsed = z.infer<typeof ComisNamespaceSchema>;
  *     mcpServers: { yfinance: { transport: "stdio", ... } }
  * Both normalize to the array form so per-entry validation runs against the
  * canonical McpServerEntrySchema. Defensive: `Object.entries` iterates only
- * own-enumerable properties (mitigates 68-P4 prototype-pollution class).
+ * own-enumerable properties (mitigates the prototype-pollution class).
  *
  * The inner schema is the SAME `McpServerEntrySchema` consumed by
  * `integrations.mcp.servers` -- so bundle entries enforce the canonical
@@ -192,7 +192,7 @@ export const SkillManifestSchema = z.strictObject({
     metadata: z.record(z.string(), z.string()).optional(),
     /** Comis-specific namespace block for platform-only fields */
     comis: ComisNamespaceSchema,
-    /** BUNDLE-01: optional bundled MCP servers declaration (array OR Claude-Desktop nested-object form). */
+    /** Optional bundled MCP servers declaration (array OR Claude-Desktop nested-object form). */
     mcpServers: McpServersBundleSchema,
   });
 

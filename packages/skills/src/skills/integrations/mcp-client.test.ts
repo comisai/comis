@@ -411,9 +411,9 @@ describe("McpClientManager", () => {
       const headers = { "Authorization": "Bearer test-token", "X-API-Key": "key123" };
       await mgr.connect(makeHttpConfig({ headers }));
 
-      // Phase 63 SAFETY-07: opts also carries `fetch: createRedirectPolicyFetch(...)`
+      // opts also carries `fetch: createRedirectPolicyFetch(...)`
       // alongside `requestInit`. Use objectContaining so the assertion stays
-      // robust when additional opts keys are wired in future phases.
+      // robust when additional opts keys are wired in future.
       expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
         expect.any(URL),
         expect.objectContaining({ requestInit: { headers } }),
@@ -425,7 +425,7 @@ describe("McpClientManager", () => {
       const headers = { "Authorization": "Bearer sse-token" };
       await mgr.connect(makeSseConfig({ headers }));
 
-      // Phase 63 SAFETY-07: opts also carries `fetch: createRedirectPolicyFetch(...)`.
+      // opts also carries `fetch: createRedirectPolicyFetch(...)`.
       expect(SSEClientTransport).toHaveBeenCalledWith(
         expect.any(URL),
         expect.objectContaining({ requestInit: { headers } }),
@@ -436,7 +436,7 @@ describe("McpClientManager", () => {
       const mgr = createMcpClientManager(makeDeps());
       await mgr.connect(makeHttpConfig());
 
-      // Phase 63 SAFETY-07: opts also carries `fetch: createRedirectPolicyFetch(...)`.
+      // opts also carries `fetch: createRedirectPolicyFetch(...)`.
       expect(StreamableHTTPClientTransport).toHaveBeenCalledWith(
         expect.any(URL),
         expect.objectContaining({ requestInit: undefined }),
@@ -491,9 +491,9 @@ describe("McpClientManager", () => {
   // -----------------------------------------------------------------------
 
   // -----------------------------------------------------------------------
-  // Phase 63 WR-03 — OSV malicious-verdict rejection without error-state entry
+  // OSV malicious-verdict rejection without error-state entry
   // -----------------------------------------------------------------------
-  describe("WR-03 OSV malicious-package rejection (Phase 63 SAFETY-05/06)", () => {
+  describe("OSV malicious-package rejection", () => {
     let originalFetch: typeof globalThis.fetch | undefined;
 
     beforeEach(() => {
@@ -543,9 +543,9 @@ describe("McpClientManager", () => {
       if (result.ok) return;
       expect(result.error.message).toMatch(/\[osv_malware_detected\]/);
 
-      // WR-03 invariant: no error-state McpConnection was written. Pre-fix
-      // the catch path inside connectServer always wrote a `status:"error"`
-      // entry that polluted the operator's view (mcp.list shows the
+      // Invariant: no error-state McpConnection was written. Otherwise
+      // the catch path inside connectServer would write a `status:"error"`
+      // entry that pollutes the operator's view (mcp.list shows the
       // "error"-status server, but there is no spawned process to
       // reconnect). The fix runs OSV outside the try block so the throw
       // bubbles cleanly.
@@ -1152,14 +1152,14 @@ describe("McpClientManager", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Phase 67 CAP-02: supportsParallelToolCalls -> per-server PQueue concurrency
+  // supportsParallelToolCalls -> per-server PQueue concurrency
   //
   // Observed via parallel dispatch: a slow mockCallTool that never resolves
   // lets us count how many calls the per-server PQueue admits simultaneously.
   // mockCallTool invocation count == in-flight count == queue concurrency.
   // -----------------------------------------------------------------------
 
-  describe("CAP-02 parallel tool calls (supportsParallelToolCalls)", () => {
+  describe("parallel tool calls (supportsParallelToolCalls)", () => {
     /**
      * Installs a callTool mock that records every invocation and blocks
      * forever (resolves only manually). Returns the live in-flight counter.
@@ -1589,17 +1589,17 @@ describe("McpClientManager", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 67 CAP-02 — keepalive queue routing (concurrency-aware)
+// Keepalive queue routing (concurrency-aware)
 // ---------------------------------------------------------------------------
 //
 // When the primary call queue concurrency is 1 (default/stdio) the keepalive
 // ping shares the primary queue and is skipped while the queue is busy
-// (Phase 64 behavior — preserved here as a regression guard). When the primary
-// concurrency > 1 (supportsParallelToolCalls from 67-01), the ping must NOT
+// (preserved here as a regression guard). When the primary
+// concurrency > 1 (supportsParallelToolCalls), the ping must NOT
 // interleave with parallel tool calls: it routes through a dedicated
 // concurrency-1 queue whose body first awaits primary.onIdle().
 
-describe("Phase 67 CAP-02 — keepalive queue routing", () => {
+describe("keepalive queue routing (concurrency-aware)", () => {
   /** Deferred promise helper for timing control. */
   function createDeferred<T>(): {
     promise: Promise<T>;
@@ -1641,7 +1641,7 @@ describe("Phase 67 CAP-02 — keepalive queue routing", () => {
 
   it("concurrency>1: keepalive ping waits for primary idle, then pings once (dedicated queue)", async () => {
     const mgr = createMcpClientManager(makeDeps());
-    // 67-01 derivation: stdio + supportsParallelToolCalls → concurrency 4.
+    // stdio + supportsParallelToolCalls → concurrency 4.
     await mgr.connect(makeStdioConfig({ supportsParallelToolCalls: true, keepaliveIntervalMs: 60_000 }));
 
     // Hold the primary queue open with a slow in-flight tool call so the
@@ -1698,11 +1698,11 @@ describe("Phase 67 CAP-02 — keepalive queue routing", () => {
     expect(mockPing).toHaveBeenCalledTimes(1);
   });
 
-  it("concurrency=1 (default stdio): ping skipped while busy, fires when idle (Phase 64 preserved)", async () => {
+  it("concurrency=1 (default stdio): ping skipped while busy, fires when idle", async () => {
     const mgr = createMcpClientManager(makeDeps());
     await mgr.connect(makeStdioConfig({ keepaliveIntervalMs: 60_000 }));
 
-    // Slow call holds the single-pipe queue open → tick must SKIP (Phase 64).
+    // Slow call holds the single-pipe queue open → tick must SKIP.
     const deferred = createDeferred<typeof TOOL_RESULT>();
     mockCallTool.mockReturnValueOnce(deferred.promise);
     const callPromise = mgr.callTool("mcp:test-server/search", { query: "1" });

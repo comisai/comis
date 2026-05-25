@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * 65-P2 architecture-grep — per-server MCP tool filtering is confined to
+ * Architecture-grep — per-server MCP tool filtering is confined to
  * the bridge.
  *
- * OPUX-08 applies the per-server `toolAllowlist` / `toolBlocklist` filter
+ * Applies the per-server `toolAllowlist` / `toolBlocklist` filter
  * EXCLUSIVELY at `mcpToolsToAgentTools`
  * (`packages/skills/src/skills/bridge/mcp-tool-bridge.ts`). To guarantee no
  * future change re-implements the filter at dispatch (which would leave the
- * filtered tool visible in the agent's registry — STRIDE T-65-09), this gate
+ * filtered tool visible in the agent's registry), this gate
  * forbids the literal identifiers `toolAllowlist` / `toolBlocklist` anywhere
  * under `packages/**` except a small set of sanctioned sites:
  *
@@ -16,18 +16,18 @@
  *  - the Zod schema that DECLARES the fields
  *    (`packages/core/src/config/schema-integrations.ts`);
  *  - the runtime config mirror that DECLARES the fields on `McpServerConfig`
- *    (`packages/skills/.../mcp-client/mcp-client-types.ts`, landed in Plan
- *    65-01). This is a passive type-shape mirror, not filter logic.
+ *    (`packages/skills/.../mcp-client/mcp-client-types.ts`).
+ *    This is a passive type-shape mirror, not filter logic.
  *  - the two daemon construction sites that FORWARD the persisted fields into
  *    the runtime `McpServerConfig` (`packages/daemon/src/wiring/setup-mcp.ts`
- *    at startup + `packages/daemon/src/api/mcp-handlers.ts` mcp.connect),
- *    added by CR-02. Without this plumbing the filter never reaches the
+ *    at startup + `packages/daemon/src/api/mcp-handlers.ts` mcp.connect).
+ *    Without this plumbing the filter never reaches the
  *    bridge for config-defined / reconnected servers. These sites only COPY
  *    the values config→runtime; they contain no filter LOGIC (the
  *    allowlist/blocklist comparison stays solely in the bridge).
  *  - the persisted-entry builder
  *    (`packages/daemon/src/api/mcp-persisted-entry.ts`), extracted from
- *    mcp-handlers.ts by Phase 67 CR-01. It PRESERVES the persisted fields
+ *    mcp-handlers.ts. It PRESERVES the persisted fields
  *    (incl. toolAllowlist/toolBlocklist) onto the entry written back to
  *    config.yaml — pure passthrough, same plumbing role as the mcp.connect
  *    site it was carved out of; no filter LOGIC.
@@ -60,24 +60,24 @@ const ALLOWED_SITES: readonly string[] = [
   // The Zod schema that declares the fields.
   "packages/core/src/config/schema-integrations.ts",
   // The runtime config mirror (McpServerConfig) that declares the fields —
-  // landed in Plan 65-01; a passive type-shape mirror, not filter logic.
+  // a passive type-shape mirror, not filter logic.
   "packages/skills/src/skills/integrations/mcp-client/mcp-client-types.ts",
-  // CR-02: daemon construction sites that FORWARD persisted fields into the
+  // Daemon construction sites that FORWARD persisted fields into the
   // runtime McpServerConfig. Pure config→runtime plumbing (no filter logic);
   // required so the bridge receives the filter for config-defined/reconnected
   // servers.
   "packages/daemon/src/wiring/setup-mcp.ts",
   "packages/daemon/src/api/mcp-handlers.ts",
-  // Phase 67 CR-01: persisted-entry builder extracted from mcp-handlers.ts.
+  // Persisted-entry builder extracted from mcp-handlers.ts.
   // Preserves persisted fields (incl. toolAllowlist/toolBlocklist) onto the
   // config.yaml entry — pure passthrough, no filter logic (same role as the
   // mcp.connect site it was carved out of).
   "packages/daemon/src/api/mcp-persisted-entry.ts",
-  // Phase 68 BUNDLE-06 (Plan 04): bundle-install-helper's buildRuntimeConfig
-  // projects a persisted McpServerEntry into McpServerConfig for
-  // manager.connect. Same plumbing role as setup-mcp.ts + mcp-handlers.ts —
-  // a passive config→runtime forward (no filter logic). The bridge still
-  // owns the actual allowlist/blocklist comparison.
+  // bundle-install-helper's buildRuntimeConfig projects a persisted
+  // McpServerEntry into McpServerConfig for manager.connect. Same plumbing
+  // role as setup-mcp.ts + mcp-handlers.ts — a passive config→runtime
+  // forward (no filter logic). The bridge still owns the actual
+  // allowlist/blocklist comparison.
   "packages/daemon/src/skills/bundle-install-helper.ts",
   // Schema snapshot fixture contains the literal strings (Pitfall 8).
   "test/architecture/__snapshots__/McpServerEntrySchema.json",
@@ -104,7 +104,7 @@ function toPosix(p: string): string {
   return p.split("\\").join("/");
 }
 
-describe("65-P2 — toolAllowlist/toolBlocklist references confined to the bridge", () => {
+describe("toolAllowlist/toolBlocklist references confined to the bridge", () => {
   it("does not reference toolAllowlist or toolBlocklist outside the sanctioned sites", () => {
     const allTs: string[] = [];
     walkTsFiles(PACKAGES_DIR, allTs);
@@ -129,7 +129,7 @@ describe("65-P2 — toolAllowlist/toolBlocklist references confined to the bridg
 
     expect(
       violations,
-      `Per-server MCP tool filtering (toolAllowlist/toolBlocklist) must stay confined to the bridge (65-P2). ` +
+      `Per-server MCP tool filtering (toolAllowlist/toolBlocklist) must stay confined to the bridge. ` +
         `Move filter logic into packages/skills/src/skills/bridge/mcp-tool-bridge.ts and read persisted fields ` +
         `via extractServerToolFilters. Violations: ${JSON.stringify(violations, null, 2)}`,
     ).toEqual([]);

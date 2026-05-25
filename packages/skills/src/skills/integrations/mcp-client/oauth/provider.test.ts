@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the OAuthClientProvider adapter (Phase 66 OAUTH-11 / 66d).
+ * Unit tests for the OAuthClientProvider adapter.
  *
  * The adapter is the seam between the MCP SDK's `auth()`/transport layer and
  * Comis's storage. It implements the SDK `OAuthClientProvider` interface by
- * delegating to the token store (66a), holds the PKCE `code_verifier` in memory
- * only, and threads a `Stripe-Account` header via `addClientAuthentication`
- * (66-P12). RED→GREEN coverage (against a tmpdir token store from 66a + the
- * in-process mock OAuth server from 66-01):
+ * delegating to the token store, holds the PKCE `code_verifier` in memory
+ * only, and threads a `Stripe-Account` header via `addClientAuthentication`.
+ * Coverage (against a tmpdir token store + the in-process mock OAuth server):
  *
  *   1. interface conformance: the adapter is assignable to `OAuthClientProvider`
  *      (compile-time `const p: OAuthClientProvider = adapter`).
@@ -15,9 +14,8 @@
  *      clock → the stored <server>.json holds absolute `expiresAt` and NO
  *      `expiresIn`/`expires_in` (delegated to the store); tokens() round-trips.
  *   3. verifier in memory: saveCodeVerifier("V") then codeVerifier() === "V";
- *      NO file under the tokens dir contains "V" (grep) — never persisted
- *      (OAUTH-12 / T-66-20).
- *   4. Stripe-Account header (OAUTH-11 / 66-P12): with stripeAccount="acct_1",
+ *      NO file under the tokens dir contains "V" (grep) — never persisted.
+ *   4. Stripe-Account header: with stripeAccount="acct_1",
  *      addClientAuthentication(headers, ...) sets "Stripe-Account" === "acct_1";
  *      an end-to-end refresh through the deduper asserts the mock captured the
  *      header on the refresh POST (getTokenRequests()). Without stripeAccount the
@@ -129,7 +127,7 @@ describe("createOAuthClientProvider", () => {
     expect(typeof p.saveCodeVerifier).toBe("function");
   });
 
-  it("saveTokens stores ABSOLUTE expiresAt (delegated to the store), no relative field (OAUTH-02)", async () => {
+  it("saveTokens stores ABSOLUTE expiresAt (delegated to the store), no relative field", async () => {
     const adapter = createOAuthClientProvider({
       serverName: "notion",
       oauthConfig: {},
@@ -148,7 +146,7 @@ describe("createOAuthClientProvider", () => {
     const raw = JSON.parse(readFileSync(join(dir, "notion.json"), "utf8")) as Record<string, unknown>;
     // Absolute expiresAt computed from the pinned clock + relative expires_in.
     expect(raw["expiresAt"]).toBe(nowMs + 3600 * 1000);
-    // No relative field leaked into storage (66-P3).
+    // No relative field leaked into storage.
     expect(raw).not.toHaveProperty("expiresIn");
     expect(raw).not.toHaveProperty("expires_in");
 
@@ -158,7 +156,7 @@ describe("createOAuthClientProvider", () => {
     expect(back?.refresh_token).toBe("RT1");
   });
 
-  it("holds the PKCE code_verifier in memory ONLY — never on disk (OAUTH-12 / T-66-20)", async () => {
+  it("holds the PKCE code_verifier in memory ONLY — never on disk", async () => {
     const adapter = createOAuthClientProvider({
       serverName: "notion",
       oauthConfig: {},
@@ -181,7 +179,7 @@ describe("createOAuthClientProvider", () => {
     }
   });
 
-  it("addClientAuthentication sets the Stripe-Account header when configured (66-P12)", async () => {
+  it("addClientAuthentication sets the Stripe-Account header when configured", async () => {
     const adapter = createOAuthClientProvider({
       serverName: "stripe",
       oauthConfig: { stripeAccount: "acct_1" },
@@ -212,7 +210,7 @@ describe("createOAuthClientProvider", () => {
     }
   });
 
-  it("threads the Stripe-Account header onto the refresh POST end-to-end (OAUTH-11 / 66-P12)", async () => {
+  it("threads the Stripe-Account header onto the refresh POST end-to-end", async () => {
     const adapter = createOAuthClientProvider({
       serverName: "stripe",
       oauthConfig: { stripeAccount: "acct_e2e" },
@@ -279,7 +277,7 @@ describe("createOAuthClientProvider", () => {
     expect(back?.client_id).toBe("mock-client-id");
   });
 
-  it("invalidateCredentials('all') deletes the stored files (logout path / OAUTH-10)", async () => {
+  it("invalidateCredentials('all') deletes the stored files (logout path)", async () => {
     const adapter = createOAuthClientProvider({
       serverName: "notion",
       oauthConfig: {},
@@ -293,9 +291,9 @@ describe("createOAuthClientProvider", () => {
     expect(await adapter.tokens()).toBeUndefined();
   });
 
-  it("CR-03: invalidateCredentials('verifier') zeroes the verifier BUFFER in place (not just nulls the ref)", async () => {
-    // OAUTH-12 / 66-P5: the PKCE code_verifier must be cryptographically
-    // zeroed after use, not just released via `= undefined`. JavaScript
+  it("invalidateCredentials('verifier') zeroes the verifier BUFFER in place (not just nulls the ref)", async () => {
+    // The PKCE code_verifier must be cryptographically zeroed after use,
+    // not just released via `= undefined`. JavaScript
     // strings are immutable; assigning a string holder to undefined releases
     // the reference but does NOT overwrite the underlying memory — a heap
     // snapshot taken between the assignment and the next GC pass can recover
@@ -357,7 +355,7 @@ describe("createOAuthClientProvider", () => {
     zeroSpy.mockRestore();
   });
 
-  it("CR-03: invalidateCredentials('all') also zeroes the verifier buffer (every disk-scope path)", async () => {
+  it("invalidateCredentials('all') also zeroes the verifier buffer (every disk-scope path)", async () => {
     const browserCallback = await import("./browser-callback.js");
     const zeroSpy = vi.spyOn(browserCallback, "zeroVerifier");
 
@@ -373,8 +371,8 @@ describe("createOAuthClientProvider", () => {
     await adapter.invalidateCredentials?.("all");
 
     // The "all" scope drops disk creds AND the in-memory verifier — the
-    // verifier zero MUST run on this path too (pre-fix it only set the
-    // string holder to undefined, leaving the bytes in memory).
+    // verifier zero MUST run on this path too (without the fix it only set
+    // the string holder to undefined, leaving the bytes in memory).
     expect(zeroSpy).toHaveBeenCalledTimes(1);
 
     zeroSpy.mockRestore();

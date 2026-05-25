@@ -293,7 +293,7 @@ describe("repairOrphanedMessages", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Content-aware tool-result tail tests (CONTEXT.md §Change 1A)
+  // Content-aware tool-result tail tests
   // -------------------------------------------------------------------------
 
   it("repairs session ending with successful toolResult marked restarting:true", () => {

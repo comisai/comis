@@ -33,7 +33,7 @@ import { verifyFill } from "./orchestrator-verify.js";
 
 /**
  * Top-level entry. Always resolves a `{exitCode, summary}` — never throws
- * (per AGENTS.md §2.1; orchestrator catches Result errors internally).
+ * Always resolves — never throws (orchestrator catches Result errors internally).
  */
 export async function runToolingFill(
   opts: OrchestratorOpts,

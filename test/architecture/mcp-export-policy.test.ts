@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * CI-05 architecture test — Phase 69 SERVE-05.
+ * Architecture test — MCP export policy gate.
  *
  * Every unique tool name registered via registerToolMetadata in
  * tool-metadata-registry.ts MUST appear in at least ONE call that
@@ -11,7 +11,7 @@
  * invariant is "every UNIQUE name", not "every CALL".
  *
  * Failure mode: missing annotation defaults to "never-export" at
- * runtime (default-deny safety net, enforced by Plan 03's tools/list
+ * runtime (default-deny safety net, enforced by the tools/list
  * filter) — but the developer never thought about the classification,
  * which is the risk this gate closes. The CI gate enforces ANNOTATION
  * PRESENCE only; the literal value (safe / permission-gated /
@@ -37,7 +37,7 @@ const REGISTRY_PATH = resolve(
   "packages/skills/src/skills/bridge/tool-metadata-registry.ts",
 );
 
-describe("mcp-export-policy CI gate (SERVE-05 / CI-05)", () => {
+describe("mcp-export-policy CI gate", () => {
   it("every unique tool registered via registerToolMetadata declares an explicit mcpExportPolicy", () => {
     const src = readFileSync(REGISTRY_PATH, "utf-8");
     const sf = ts.createSourceFile(

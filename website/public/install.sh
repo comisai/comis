@@ -1031,7 +1031,7 @@ PROFILE
 
 # install_egress_logging
 # ----------------------
-# Phase 1 of the network egress allowlist (audit-checklist Section 9).
+# Phase 1 of the network egress allowlist.
 #
 # The agent's exec sandbox runs with bwrap --share-net (full host network
 # access) because the daemon's regex command filter cannot inspect the contents
@@ -1051,8 +1051,7 @@ PROFILE
 #
 # Phase 2 (operator, not automated): after the observation window, the
 # operator replaces the catch-all ACCEPT with destination-specific ACCEPTs
-# (api.anthropic.com, api.telegram.org, etc.) followed by a final DROP. See
-# audit-checklist Section 9 for the templated commands.
+# (api.anthropic.com, api.telegram.org, etc.) followed by a final DROP.
 #
 # Idempotent: skipped if the chain already exists. Skipped silently if
 # iptables is unavailable, the comis user does not yet exist, or
@@ -1103,7 +1102,7 @@ install_egress_logging() {
 
     ui_success "Egress logging enabled (LOG mode) for user '$COMIS_USER'"
     ui_info "  Review captured destinations:  journalctl -k | grep 'comis-egress:'"
-    ui_info "  After 24-48h, flip to enforced allowlist (audit-checklist Section 9)"
+    ui_info "  After 24-48h, flip to enforced allowlist — replace ACCEPT with destination-specific rules + final DROP"
     ui_info "  Disable next install with:     COMIS_NO_EGRESS_LOG=1"
     return 0
 }
@@ -4714,8 +4713,8 @@ main() {
         install_system_deps_as_root
         create_comis_user
         # Egress-logging primer for the comis user — Phase 1 of the network
-        # allowlist (audit-checklist Section 9). LOG-only mode, no enforcement
-        # yet, idempotent. Non-fatal — failures don't block the install.
+        # allowlist. LOG-only mode, no enforcement yet, idempotent.
+        # Non-fatal — failures don't block the install.
         install_egress_logging || true
         reexec_as_comis_user
         local user_rc=$?

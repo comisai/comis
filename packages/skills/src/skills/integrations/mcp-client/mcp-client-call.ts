@@ -29,14 +29,14 @@ import { reconnectServer } from "./mcp-client-connect.js";
 import { resetIdleActivity } from "./mcp-client-idle-eviction.js";
 
 // ---------------------------------------------------------------------------
-// Lazy reconnect (OPUX-09)
+// Lazy reconnect
 // ---------------------------------------------------------------------------
 
 /**
  * Resolve a live connection for a server, lazily reconnecting when it is
- * missing. Phase 65 OPUX-09: a server that was idle-evicted has its connection
- * deleted but its serverConfig RETAINED and userDisconnectedFlags UNSET — so a
- * subsequent callTool transparently reconnects via reconnectServer.
+ * missing. A server that was idle-evicted has its connection deleted but its
+ * serverConfig RETAINED and userDisconnectedFlags UNSET — so a subsequent
+ * callTool transparently reconnects via reconnectServer.
  *
  * Synchronous fast path: when the connection is already present this returns
  * `ok(conn)` WITHOUT awaiting (it is not async), so the overwhelmingly common
@@ -109,10 +109,10 @@ export async function callTool(
 
   const { serverName, toolName } = parsed;
 
-  // Phase 65 OPUX-09: resolve the connection, lazily reconnecting an
-  // idle-evicted server (connection gone, config retained, flag unset). The
-  // happy path is synchronous (no extra await before the PQueue drain); only
-  // the missing-connection path returns a Promise.
+  // Resolve the connection, lazily reconnecting an idle-evicted server
+  // (connection gone, config retained, flag unset). The happy path is
+  // synchronous (no extra await before the PQueue drain); only the
+  // missing-connection path returns a Promise.
   const resolved = getOrReconnect(state, deps, serverName);
   const connResult = resolved instanceof Promise ? await resolved : resolved;
   if (!connResult.ok) return err(connResult.error);
@@ -125,8 +125,8 @@ export async function callTool(
   }
 
   // Serialize through per-server concurrency queue.
-  // WR-05: by this point getOrReconnect has returned a connected conn, so the
-  // common "never connected" framing of the old message was misleading on the
+  // By this point getOrReconnect has returned a connected conn, so the common
+  // "never connected" framing of the old message was misleading on the
   // lazy-reconnect path (the caller DID go through connect). A missing queue
   // here means the queue was torn down concurrently (e.g. a racing
   // disconnect/eviction) or PQueue setup failed during (re)connect — say so.
@@ -140,7 +140,7 @@ export async function callTool(
   const breakerThreshold = config?.circuitBreakerThreshold ?? state.options.circuitBreakerThreshold;
   const breakerCooldownMs = config?.circuitBreakerCooldownMs ?? state.options.circuitBreakerCooldownMs;
 
-  // Phase 64 RELY-04: per-server circuit breaker pre-check.
+  // Per-server circuit breaker pre-check.
   //
   // When status === "open" AND cooldown not elapsed, return a synthetic
   // [server_unavailable] tool-call result IMMEDIATELY (no queue slot
@@ -151,8 +151,8 @@ export async function callTool(
   // When status === "open" AND cooldown elapsed, transition to "half-open"
   // and fall through (one probe attempt allowed).
   //
-  // Phase 67 CAP-02: revisit if supportsParallelToolCalls lands -- today
-  // stdio concurrency = 1 makes per-call breaker semantics straightforward.
+  // Revisit if supportsParallelToolCalls lands -- today stdio concurrency = 1
+  // makes per-call breaker semantics straightforward.
   const breaker = state.circuitBreakers.get(serverName) ?? { status: "closed" as const, failureCount: 0 };
   if (breaker.status === "open") {
     const elapsed = systemNowMs() - breaker.openedAtMs;
@@ -213,10 +213,10 @@ export async function callTool(
 
       // Successful tool call resets consecutive error counter
       state.consecutiveErrors.set(serverName, 0);
-      // Phase 64 RELY-04: pair breaker reset with consecutiveErrors reset.
+      // Pair breaker reset with consecutiveErrors reset.
       state.circuitBreakers.set(serverName, { status: "closed", failureCount: 0 });
-      // Phase 65 OPUX-09: a successful call is the idle-eviction activity
-      // signal — refresh lastActivityMs (NO-OP when no idle ticker is armed).
+      // A successful call is the idle-eviction activity signal — refresh
+      // lastActivityMs (NO-OP when no idle ticker is armed).
       resetIdleActivity(state, serverName);
 
       return ok({
@@ -258,10 +258,10 @@ export async function callTool(
         logger.debug?.({ serverName, toolName }, "Tool call timed out, connection status preserved");
       }
 
-      // Phase 64 RELY-04: increment breaker on non-session-expired failures
-      // (includes timeouts + post-call generation mismatches). isSessionExpired
-      // is EXEMPT above -- it routes through handleDisconnection and the
-      // reconnect-success block re-closes the breaker (64-P2 mitigation).
+      // Increment breaker on non-session-expired failures (includes timeouts +
+      // post-call generation mismatches). isSessionExpired is EXEMPT above --
+      // it routes through handleDisconnection and the reconnect-success block
+      // re-closes the breaker.
       const cur = state.circuitBreakers.get(serverName) ?? { status: "closed" as const, failureCount: 0 };
       const newCount = cur.failureCount + 1;
       if (newCount >= breakerThreshold) {

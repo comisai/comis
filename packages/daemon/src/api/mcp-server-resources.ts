@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: MCP SDK resources/read callback boundary — thrown errors are caught by the SDK and surfaced as MCP error responses on the wire (same pattern as RPC handler modules; see packages/daemon/src/api/subagent-handlers.ts:2).
 /**
- * Phase 69 Plan 05 (SERVE-06) -- MCP `resources/list` + `resources/read`.
+ * MCP `resources/list` + `resources/read`.
  *
  * Per-MCP-client `sessionAllowlist` gates which session keys this client
  * may enumerate (resources/list) and read (resources/read). The CONFIRMED-only
@@ -11,11 +11,11 @@
  *
  * Threat model coverage:
  *
- *   - T-69-04 (cross-conversation leak)              — sessionAllowlist gate.
- *   - T-69-04 variant (unconfirmed-message leak)     — deliveryStatus filter.
- *   - 69-P4 (prompt injection via resource content) — wrapExternalContent
- *     applied to the rendered transcript with `source: "mcp_resource"` and
- *     a per-session `sender` tag.
+ *   - Cross-conversation leak              — sessionAllowlist gate.
+ *   - Unconfirmed-message leak             — deliveryStatus filter.
+ *   - Prompt injection via resource content — wrapExternalContent applied to
+ *     the rendered transcript with `source: "mcp_resource"` and a per-session
+ *     `sender` tag.
  *
  * @module
  */
@@ -114,7 +114,7 @@ export function registerMcpResourcesForClient(
     async (uri, variables) => {
       const sessionKey = String(variables.sessionKey ?? "");
 
-      // -------- Allowlist gate (T-69-04 cross-conversation leak) ---------
+      // -------- Allowlist gate (cross-conversation leak) -----------------
       if (!sessionAllowlist.has(sessionKey)) {
         logger.warn(
           {
@@ -145,18 +145,17 @@ export function registerMcpResourcesForClient(
         limit: deps.resourceReadLimit,
       })) as SessionHistoryResponse;
 
-      // -------- CONFIRMED filter (T-69-04 unconfirmed-message leak) ------
+      // -------- CONFIRMED filter (unconfirmed-message leak) --------------
       // Outbound messages whose deliveryStatus is "pending" are excluded.
       // Inbound messages are always confirmed by the handler so they pass.
       //
-      // Phase 69 WR-04: strict equality, NO nullish coalesce. The MCP
-      // resources/read surface is an EXTERNAL trust boundary -- absence
-      // of the field is "unknown status" and the conservative default is
-      // EXCLUDE. The prior `?? "confirmed"` fallback rendered legacy
-      // pre-Phase-69 messages as if confirmed, leaking transcripts whose
-      // outbound delivery state was never tracked. The web-dashboard
-      // session.history RPC consumer is unaffected (it does not run this
-      // filter).
+      // Strict equality, NO nullish coalesce. The MCP resources/read surface
+      // is an EXTERNAL trust boundary -- absence of the field is "unknown
+      // status" and the conservative default is EXCLUDE. The prior
+      // `?? "confirmed"` fallback rendered legacy messages as if confirmed,
+      // leaking transcripts whose outbound delivery state was never tracked.
+      // The web-dashboard session.history RPC consumer is unaffected (it does
+      // not run this filter).
       const confirmedOnly = history.messages.filter(
         (m) => m.deliveryStatus === "confirmed",
       );
@@ -168,7 +167,7 @@ export function registerMcpResourcesForClient(
         )
         .join("\n");
 
-      // -------- Wrap (69-P4 prompt-injection defense-in-depth) -----------
+      // -------- Wrap (prompt-injection defense-in-depth) -----------
       // Message bodies contain user-supplied text; wrapping with
       // SECURITY NOTICE + random-hex markers tells the MCP client's LLM
       // to treat the content as data, not commands.

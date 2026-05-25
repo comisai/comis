@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 63 SAFETY-07 — co-located unit tests for createRedirectPolicyFetch.
+ * Co-located unit tests for createRedirectPolicyFetch.
  *
- * Covers the 12 behavior cases the factory's policy must enforce. Each test
+ * Covers the behavior cases the factory's policy must enforce. Each test
  * uses a vi.fn() as `baseFetch` returning synthetic Response objects so the
  * suite never opens a real network socket. Cross-host/same-host semantics
  * are encoded by the Location header value the synthetic 302 carries.
@@ -36,7 +36,7 @@ function makeOk(): Response {
   } as unknown as Response;
 }
 
-describe("createRedirectPolicyFetch — Phase 63 SAFETY-07 cross-host header scrub", () => {
+describe("createRedirectPolicyFetch — cross-host header scrub", () => {
   it("returns a FetchLike-shaped function that accepts url and init and resolves to a Response", async () => {
     const baseFetch = vi.fn().mockResolvedValue(makeOk());
     const wrapped = createRedirectPolicyFetch({
@@ -119,7 +119,7 @@ describe("createRedirectPolicyFetch — Phase 63 SAFETY-07 cross-host header scr
     expect(secondHeaders.get("authorization")).toBe("Bearer kept-token");
   });
 
-  it("same-host http to https upgrade preserves Authorization (Phase 63 deviation from undici default)", async () => {
+  it("same-host http to https upgrade preserves Authorization (deviation from undici default)", async () => {
     const baseFetch = vi
       .fn()
       .mockResolvedValueOnce(makeRedirect("https://api.example.com/v2"))
@@ -229,22 +229,22 @@ describe("createRedirectPolicyFetch — Phase 63 SAFETY-07 cross-host header scr
   });
 
   // -------------------------------------------------------------------------
-  // WR-04 — RFC 7231 / 7538 method+body rewrite on redirect.
+  // RFC 7231 / 7538 method+body rewrite on redirect.
   //
-  // Pre-fix the policy carried `body`, `method`, and every other init
-  // field forward unchanged via `{ ...currentInit, headers: nextHeaders }`.
-  // On a 302/303 redirect, browsers convert POST -> GET and DROP the
-  // body (RFC 7231 §6.4.3 / §6.4.4). The MCP SDK uses POST for
-  // tools/list and tool calls; if a cross-host attacker controls the
-  // redirect target, they can have the body (which may contain sensitive
-  // request data) re-POSTed to their server. Authorization was already
-  // stripped pre-fix, but the request body was not.
+  // The policy carries `body`, `method`, and every other init field forward
+  // unchanged via `{ ...currentInit, headers: nextHeaders }`. On a 302/303
+  // redirect, browsers convert POST -> GET and DROP the body
+  // (RFC 7231 §6.4.3 / §6.4.4). The MCP SDK uses POST for tools/list and
+  // tool calls; if a cross-host attacker controls the redirect target, they
+  // can have the body (which may contain sensitive request data) re-POSTed
+  // to their server. Authorization was already stripped, but the request
+  // body was not.
   //
   // RFC 7538 (307/308 — "Permanent / Temporary Redirect") explicitly
-  // PRESERVES both method and body. The fix differentiates by status
-  // code.
+  // PRESERVES both method and body. The implementation differentiates by
+  // status code.
   // -------------------------------------------------------------------------
-  it("cross-host 302 rewrites POST to GET and clears body (WR-04)", async () => {
+  it("cross-host 302 rewrites POST to GET and clears body", async () => {
     const baseFetch = vi
       .fn()
       .mockResolvedValueOnce(makeRedirectWithStatus(302, "http://other.example.com/v1"))
@@ -263,7 +263,7 @@ describe("createRedirectPolicyFetch — Phase 63 SAFETY-07 cross-host header scr
     expect(secondInit.body).toBeUndefined();
   });
 
-  it("same-host 302 rewrites POST to GET and clears body (WR-04)", async () => {
+  it("same-host 302 rewrites POST to GET and clears body", async () => {
     // Per RFC, 302 rewrites POST to GET regardless of host. Cross-host
     // is the security-critical case for body protection, but same-host
     // 302s must still match the RFC contract.

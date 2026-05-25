@@ -178,7 +178,7 @@ vi.mock("@comis/core", () => ({
   tryGetContext: mockTryGetContext,
   parseFormattedSessionKey: mockParseFormattedSessionKey,
   sanitizeLogString: mockSanitizeLogString,
-  // CAP-03: getMcpTools stamps the truncation event timestamp via systemNowMs.
+  // getMcpTools stamps the truncation event timestamp via systemNowMs.
   // Deterministic stub so the emit closure has a numeric clock under test.
   systemNowMs: () => 1_700_000_000_000,
   safePath: (...segments: string[]) => segments.join("/"),
@@ -580,7 +580,7 @@ describe("setupTools", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 6b. CAP-03: getMcpTools wires an onResultTruncated closure that emits the
+  // 6b. getMcpTools wires an onResultTruncated closure that emits the
   //     typed mcp:server:result_truncated event with a timestamp.
   // -------------------------------------------------------------------------
 

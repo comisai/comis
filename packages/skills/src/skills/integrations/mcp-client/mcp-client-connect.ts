@@ -45,9 +45,9 @@ import {
   extractMcpPackageName,
   DEFAULT_OSV_CACHE_DIR,
 } from "./mcp-client-osv-check.js";
-// Phase 66 OAUTH-11 (66d): the OAuth connect seam lives in a sibling leaf to
-// keep this file under the 500-line per-subdirectory cap (prlimit-probe split
-// precedent). isNeedsOAuthLoginError is re-exported here so the package barrel
+// The OAuth connect seam lives in a sibling leaf to keep this file under the
+// 500-line per-subdirectory cap (prlimit-probe split precedent).
+// isNeedsOAuthLoginError is re-exported here so the package barrel
 // keeps a stable import path.
 import {
   NEEDS_OAUTH_LOGIN,
@@ -80,18 +80,16 @@ export async function connectServer(
     await disconnectServer(state, deps, config.name);
   }
 
-  // Phase 63 SAFETY-05/06 + WR-03: pre-spawn OSV malware check (stdio
-  // only) runs OUTSIDE the try block. Pre-fix the check sat inside the
-  // try and a malicious-verdict throw fell into the catch — which wrote
-  // an error-state McpConnection to `state.connections` with
-  // `status: "error"` and the [osv_malware_detected] message. That
-  // orphan error entry persisted across the operator's view (mcp.list
-  // shows it as an "error"-status server), confusing operators into
-  // thinking they could `mcp.reconnect` it. WR-03 fix: run the OSV
-  // check before the try block so the throw bubbles up cleanly to the
-  // caller and `state.connections.get(name)` returns undefined for
-  // malicious-package detections. Per RESEARCH.md §"Pattern 4" +
-  // Pitfall 4.
+  // Pre-spawn OSV malware check (stdio only) runs OUTSIDE the try block.
+  // Previously the check sat inside the try and a malicious-verdict throw fell
+  // into the catch — which wrote an error-state McpConnection to
+  // `state.connections` with `status: "error"` and the [osv_malware_detected]
+  // message. That orphan error entry persisted across the operator's view
+  // (mcp.list shows it as an "error"-status server), confusing operators into
+  // thinking they could `mcp.reconnect` it. Fix: run the OSV check before the
+  // try block so the throw bubbles up cleanly to the caller and
+  // `state.connections.get(name)` returns undefined for malicious-package
+  // detections.
   if (
     config.transport === "stdio" &&
     config.command &&
@@ -142,14 +140,14 @@ export async function connectServer(
     }
   }
 
-  // Phase 66 OAUTH-11 (66d): for an auth:"oauth" server with the OAuth seam
-  // wired, construct the OAuthClientProvider adapter + run the discovery
-  // pre-flight BEFORE the transport is built, then thread the provider onto the
-  // runtime config so createTransport attaches it. A discovery cascade failure
-  // (66-P9) throws here and is surfaced as a normal connect failure below. The
-  // provider is NOT constructed for non-oauth servers or when no oauthDeps seam
-  // is injected (the SDK then runs without a provider; a 401 still surfaces
-  // needs_oauth_login via the catch below).
+  // For an auth:"oauth" server with the OAuth seam wired, construct the
+  // OAuthClientProvider adapter + run the discovery pre-flight BEFORE the
+  // transport is built, then thread the provider onto the runtime config so
+  // createTransport attaches it. A discovery cascade failure throws here and is
+  // surfaced as a normal connect failure below. The provider is NOT constructed
+  // for non-oauth servers or when no oauthDeps seam is injected (the SDK then
+  // runs without a provider; a 401 still surfaces needs_oauth_login via the
+  // catch below).
   let effectiveConfig = config;
   try {
     if (config.auth === "oauth" && deps.oauthDeps) {
@@ -176,7 +174,7 @@ export async function connectServer(
   }
 
   try {
-    // Create transport (logger threaded for Phase 63 SAFETY-08 prlimit-skip WARN).
+    // Create transport (logger threaded for prlimit-skip WARN).
     // For an auth:"oauth" server, effectiveConfig now carries the oauthProvider.
     const transport = createTransport(effectiveConfig, logger);
 
@@ -257,18 +255,18 @@ export async function connectServer(
       instructions: metadata.instructions,
       capabilities: metadata.capabilities,
       serverInfo: metadata.serverInfo,
-      // Phase 65 OPUX-10: mirror the per-server resources/prompts opt-out onto
-      // the connection so the platform-tool registry's capability-gate
-      // predicate honors enableResources/enablePrompts:false without a
-      // separate config lookup (the manager surfaces only runtime connections).
+      // Mirror the per-server resources/prompts opt-out onto the connection so
+      // the platform-tool registry's capability-gate predicate honors
+      // enableResources/enablePrompts:false without a separate config lookup
+      // (the manager surfaces only runtime connections).
       ...(config.enableResources !== undefined && { enableResources: config.enableResources }),
       ...(config.enablePrompts !== undefined && { enablePrompts: config.enablePrompts }),
     };
 
     state.connections.set(config.name, connection);
 
-    // Create per-server call concurrency queue. CAP-02: explicit maxConcurrency
-    // always wins; else stdio gets 4 only when supportsParallelToolCalls opts in
+    // Create per-server call concurrency queue. Explicit maxConcurrency always
+    // wins; else stdio gets 4 only when supportsParallelToolCalls opts in
     // (default stdio stays 1); sse/http keep their transport default (already 4).
     const resolvedConcurrency =
       config.maxConcurrency
@@ -277,16 +275,15 @@ export async function connectServer(
             : state.options.httpDefaultConcurrency);
     state.callQueues.set(config.name, new PQueue({ concurrency: resolvedConcurrency }));
 
-    // Phase 64 RELY-01/02/03: per-server keepalive ticker. NO-OP when
-    // keepaliveIntervalMs === 0 (disabled). Routes ping through the same
-    // PQueue as tool calls (RELY-03) so stdio single-pipe serialization
-    // is preserved.
+    // Per-server keepalive ticker. NO-OP when keepaliveIntervalMs === 0
+    // (disabled). Routes ping through the same PQueue as tool calls so stdio
+    // single-pipe serialization is preserved.
     startKeepaliveTicker(state, deps, config);
 
-    // Phase 65 OPUX-09: per-server idle eviction ticker. NO-OP when
-    // idleTtlMs === 0/undefined (opt-in). Disconnects the transport after
-    // idle without setting userDisconnectedFlags, so the next callTool
-    // lazily reconnects (see mcp-client-call.ts getOrReconnect).
+    // Per-server idle eviction ticker. NO-OP when idleTtlMs === 0/undefined
+    // (opt-in). Disconnects the transport after idle without setting
+    // userDisconnectedFlags, so the next callTool lazily reconnects
+    // (see mcp-client-call.ts getOrReconnect).
     startIdleTicker(state, deps, config);
 
     logger.info(`MCP server "${config.name}" connected: ${tools.length} tool(s) discovered`);
@@ -295,12 +292,12 @@ export async function connectServer(
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
 
-    // Phase 66 OAUTH-11 (66d / T-66-22): the SDK throws UnauthorizedError from
-    // client.connect when an auth:"oauth" server has no valid token (or refresh
-    // failed). Do NOT auto-launch a browser daemon-side (resolved_scope #3) —
-    // return a `needs_oauth_login`-tagged Result so the daemon RPC layer tells
-    // the operator to run `comis mcp login <server>`. The error-state connection
-    // entry is still recorded so mcp.list surfaces the server's auth-needed state.
+    // The SDK throws UnauthorizedError from client.connect when an auth:"oauth"
+    // server has no valid token (or refresh failed). Do NOT auto-launch a
+    // browser daemon-side — return a `needs_oauth_login`-tagged Result so the
+    // daemon RPC layer tells the operator to run `comis mcp login <server>`.
+    // The error-state connection entry is still recorded so mcp.list surfaces
+    // the server's auth-needed state.
     const isUnauthorized = error instanceof UnauthorizedError;
 
     // Store error state
@@ -361,12 +358,11 @@ export async function disconnectServer(
     logger.warn({ serverName: name, err: error instanceof Error ? error.message : String(error), hint: "MCP server disconnect failed; connection may be stale", errorKind: "dependency" as const }, "MCP server disconnect failed");
   }
 
-  // Phase 64 RELY-01: stop the keepalive ticker BEFORE tearing down the
-  // queue (so the ticker cannot fire one last queue.add against a queue
-  // we are about to delete).
+  // Stop the keepalive ticker BEFORE tearing down the queue (so the ticker
+  // cannot fire one last queue.add against a queue we are about to delete).
   stopKeepaliveTicker(state, name);
 
-  // Phase 65 OPUX-09: stop the idle-eviction ticker alongside keepalive.
+  // Stop the idle-eviction ticker alongside keepalive.
   stopIdleTicker(state, name);
 
   // Clear and remove call queue -- pending .add() callers get no resolution
@@ -377,10 +373,10 @@ export async function disconnectServer(
     state.callQueues.delete(name);
   }
 
-  // Phase 67 CAP-02: tear down the dedicated keepalive queue (only populated
-  // when primary concurrency > 1). Mirrors the callQueue teardown so the
-  // queue cannot leak across reconnect generations. stopKeepaliveTicker above
-  // already prevents the ticker from enqueuing a new ping mid-teardown.
+  // Tear down the dedicated keepalive queue (only populated when primary
+  // concurrency > 1). Mirrors the callQueue teardown so the queue cannot leak
+  // across reconnect generations. stopKeepaliveTicker above already prevents
+  // the ticker from enqueuing a new ping mid-teardown.
   const keepaliveQueue = state.keepaliveQueues.get(name);
   if (keepaliveQueue) {
     keepaliveQueue.clear();

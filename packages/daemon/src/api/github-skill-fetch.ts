@@ -3,7 +3,7 @@
 // and convert to JSON-RPC error responses via rpc-dispatch.ts. Mirrors the
 // pattern of the rest of the skill-handlers module.
 /**
- * WR-03 — bounded GitHub Contents API walk for `skills.import`.
+ * Bounded GitHub Contents API walk for `skills.import`.
  *
  * Extracted from `skill-handlers.ts` to (a) keep that file under the 800-line
  * cap, and (b) isolate the bounded-recursion + bounded-file-count + per-

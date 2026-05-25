@@ -283,7 +283,7 @@ export function groupCountRows(
 
 /**
  * Error value returned by RowMapper.parse* methods. NOT thrown — this is a
- * Result.err payload per AGENTS.md §2.1.
+ * Result.err payload.
  *
  * The `path` field includes the row index on per-row failures
  * (e.g. "row[3].column_name") so error messages pinpoint the failing column
@@ -334,9 +334,9 @@ function issuesFromZod(
 /**
  * Build a RowMapper<TRow> from a Zod schema.
  *
- * The schema is run via `safeParse` — never throws (AGENTS.md §2.1).
+ * The schema is run via `safeParse` — never throws.
  * Failures are surfaced as `Result.err(MapperError)`; callers chain via
- * early-return per AGENTS.md §2.1.
+ * early-return pattern.
  *
  * @example
  * ```ts

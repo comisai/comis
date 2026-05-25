@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the interactive OAuth login orchestrator (Phase 66 OAUTH-10 /
- * 66f).
+ * Unit tests for the interactive OAuth login orchestrator.
  *
  * Focused on the catch-block logging contract — the full happy-path round-trip
  * is exercised end-to-end against the in-process mock OAuth server in
  * test/integration/mcp-oauth-roundtrip.test.ts (the build-first integration
- * tier). This file pins WR-03: the catch block logs `err` as an Error OBJECT
+ * tier). This file verifies that the catch block logs `err` as an Error OBJECT
  * (so the Pino serializer can emit `type`/`message`/`stack` together), not
  * `err.message` (which discards stack traces and any custom error properties).
  *
- * RED→GREEN coverage:
- *   1. WR-03: when discovery rejects with an Error carrying a stack + a custom
+ * Coverage:
+ *   1. When discovery rejects with an Error carrying a stack + a custom
  *      property, the catch's `logger.warn` payload's `err` field is the Error
  *      OBJECT (not the message string). Asserts `err instanceof Error` so a
  *      future regression to `err.message` (a string) fails loudly.
@@ -29,7 +28,7 @@ function makeLogger() {
   return { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
 }
 
-describe("runOauthLogin — catch-block logging contract (WR-03)", () => {
+describe("runOauthLogin — catch-block logging contract", () => {
   let dir: string;
   let store: TokenStore;
   let logger: ReturnType<typeof makeLogger>;
@@ -75,7 +74,7 @@ describe("runOauthLogin — catch-block logging contract (WR-03)", () => {
       logger,
     });
 
-    // The orchestrator NEVER throws (T-66-27).
+    // The orchestrator NEVER throws.
     expect(result.status).toBe("failed");
 
     // Exactly one WARN — the catch block's "OAuth login failed".
@@ -86,7 +85,7 @@ describe("runOauthLogin — catch-block logging contract (WR-03)", () => {
     expect(failureWarn).toBeDefined();
     const payload = failureWarn?.[0] as Record<string, unknown>;
 
-    // WR-03: `err` MUST be the Error object so Pino's serializer emits
+    // `err` MUST be the Error object so Pino's serializer emits
     // `type` + `message` + `stack` + custom fields. Logging `err.message` (a
     // string) discards the stack trace and the customField evidence above.
     expect(payload.err).toBeInstanceOf(Error);

@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for the `comis mcp login` / `comis mcp logout` CLI subcommands
- * (Phase 66 OAUTH-10 / 66g — the CLI half of the operator-initiated login loop).
+ * (the CLI half of the operator-initiated login loop).
  *
  * The daemon-side `mcp.oauth_login` RPC returns `{ status, authUrl?,
- * portForwardHint? }`; the CLI is where `open` actually runs (resolved_scope
- * #1). These tests pin the four behaviors that carry a defined contract:
+ * portForwardHint? }`; the CLI is where `open` actually runs. These tests
+ * pin the behaviors that carry a defined contract:
  *
  *   1. login authorized (no authUrl) → success message, exit 0, NO open() call.
  *   2. login with authUrl → the injected `open` spy is called ONCE with the URL.
  *   3. login headless_hint → the CLI PRINTS portForwardHint + authUrl, NO open().
  *   4. login failure (status:"failed" OR callTyped rejects) → error() + exit 1
- *      (the Phase 65 anti-pattern guard — commander would otherwise exit 0).
+ *      (commander anti-pattern guard — commander would otherwise exit 0).
  *   5. logout cleared:true → confirmation, exit 0; cleared:false → exit 0 with
  *      an informative message.
  *   6. ensureGatewayToken ordering — a missing token throws BEFORE withClient
- *      opens a socket (T-66-28; mirrors the Phase 65 mcp.test ordering guard).
+ *      opens a socket (mirrors the mcp.test ordering guard).
  *
  * Harness: `withClient` + `callTyped` are mocked (importOriginal) so no socket
  * opens; `open` is mocked to a no-op default export so no browser launches.
@@ -100,7 +100,7 @@ describe("registerMcpOauth — subcommand registration", () => {
     expect(names).toContain("logout");
   });
 
-  it("registerMcpCommand wires login/logout alongside the Phase 65 subcommands", () => {
+  it("registerMcpCommand wires login/logout alongside the existing subcommands", () => {
     const program = new Command();
     registerMcpCommand(program);
     const mcp = program.commands.find((c) => c.name() === "mcp");
@@ -146,8 +146,8 @@ describe("mcp login — open-vs-hint branching + exit codes", () => {
     expect(out).toMatch(/notion/);
   });
 
-  it("Test 2: CR-02: authorized with authUrl → does NOT call open() (URL state is spent)", async () => {
-    // CR-02: When the daemon returns `status: "authorized"`, the token
+  it("Test 2: authorized with authUrl → does NOT call open() (URL state is spent)", async () => {
+    // When the daemon returns `status: "authorized"`, the token
     // exchange already completed server-side and the tokens are persisted —
     // `runOauthLogin` finished the second auth() call and the loopback
     // callback server is closed. The `authUrl` in the response is the
@@ -204,7 +204,7 @@ describe("mcp login — open-vs-hint branching + exit codes", () => {
     expect(exitSpy.spy).not.toHaveBeenCalled();
   });
 
-  it("Test 4a: status:\"failed\" → error() + exit 1 (commander anti-pattern guard)", async () => {
+  it("Test 4a: status:\"failed\" → error() + exit 1 (commander exit-code guard)", async () => {
     wireWithClient();
     vi.mocked(callTyped).mockResolvedValue({
       server_name: "notion",
@@ -291,7 +291,7 @@ describe("mcp logout", () => {
   });
 });
 
-describe("mcp login/logout — ensureGatewayToken ordering (T-66-28)", () => {
+describe("mcp login/logout — ensureGatewayToken ordering", () => {
   let tmpHome: string;
   let savedHome: string | undefined;
   let savedToken: string | undefined;

@@ -10,8 +10,7 @@
  *   3. The mock's getUpdates long-poll delivers inbound updates to the
  *      adapter's MessageHandler (the grammy runner reads from the mock).
  *
- * Uses a stub bot token (`12345:test`) — production fixtures rule per
- * AGENTS.md §2.2 (no real credentials).
+ * Uses a stub bot token (`12345:test`) — no real credentials in tests.
  *
  * @module
  */

@@ -115,7 +115,7 @@ Eight allowlist arrays live in `test/support/architecture-allowlist.ts` and are 
 | `ALLOWLIST` (v2.0 boundary) | `source-rules.test.ts` and friends | Cross-package internal imports and other boundary violations | Empty — closed set. New L-ID requires shrink-test allowance. |
 | `fileSizeAllowlist` | `file-size.test.ts` | Production `.ts` files >800 lines (and tighter caps inside `agent/executor/`: request-body ≤600L, pi-executor ≤400L, prompt-runner ≤500L, cache-detection ≤350L) | `*.generated.ts` rule (excludes `web/src/api/contracts.generated.ts`); allowlist entry tagged with closing phase |
 | `rawThrowAllowlist` | `raw-throw.test.ts` | `throw new Error(...)` / `throw err` outside `security/`, `safety/`, `error-mapper.ts` boundary modules | `// @allow-throw: <reason>` file-level annotation for sanctioned boundary throws |
-| `untypedSqliteAllowlist` | `untyped-sqlite.test.ts` | `db.prepare(...).all() as Foo[]` and similar untyped SQLite casts in `packages/memory/` | None — go through `createRowMapper(schema)` instead (see §6.8) |
+| `untypedSqliteAllowlist` | `untyped-sqlite.test.ts` | `db.prepare(...).all() as Foo[]` and similar untyped SQLite casts in `packages/memory/` | None — go through `createRowMapper(schema)` instead |
 | `optionalFieldAllowlist` | `optional-field-bloat.test.ts` | Interfaces with ≥12 optional fields without justification | Allowlist entry classifying each as (a) genuinely conditional or (b) cluster-split candidate |
 | `globalsAllowlist` | `globals.test.ts` (AST-classified) | `Date.now()`, `new Date()`, `setTimeout`/`setInterval`/`clearTimeout`/`clearInterval`, `process.env[…]` outside sanctioned roots | Sanctioned roots only: `packages/core/src/bootstrap.ts`, `packages/core/src/runtime/`, `packages/infra/src/runtime/`, daemon composition root, `packages/web/src/api/` carve-outs |
 | `noBackwardCompatAllowlist` | `no-backward-compat.test.ts` | `/backward.?compat\|backcompat\|legacy.?(alias\|mode\|fallback)/i` text and `@deprecated` JSDoc in production source | Permanent allowlist entries for annotated migration code and historical-reference comments |
@@ -145,7 +145,7 @@ Every behavior change in production source (`packages/*/src/**`) starts with a f
 - **Refactor (optional third step).** After GREEN, simplify if the patch leaves duplication or awkward seams. Refactor commits keep all tests green; if behavior shifts, that is a new fix or feature and the cycle restarts.
 - **Pure refactor PRs.** A refactor that does not change behavior preserves the existing tests as the green signal. New tests are not required, but no existing test may be deleted or weakened to make a refactor pass.
 
-Architecture and lint rules (see §2.8) are enforced by their own tests — that is the same Red → Green loop applied to the protocol itself.
+Architecture and lint rules are enforced by their own tests — that is the same Red → Green loop applied to the protocol itself.
 
 ## 3) Naming Contract
 
@@ -172,7 +172,7 @@ When uncertain, classify higher.
 
 1. **Read before write** — inspect existing port interfaces, adapter patterns, and adjacent tests before editing.
 2. **Define scope** — one concern per change; no mixed feature+refactor+infra patches.
-3. **Test-first (TDD)** — per §2.10, write the failing test before the production patch (regression test for bugs, contract test for new behavior). Co-located unit test by default; integration test only for daemon-level flows. RED must be reproducible on the pre-patch code; the patch is the GREEN step.
+3. **Test-first (TDD)** — write the failing test before the production patch (regression test for bugs, contract test for new behavior). Co-located unit test by default; integration test only for daemon-level flows. RED must be reproducible on the pre-patch code; the patch is the GREEN step.
 4. **Implement minimal patch** — make the test pass. Apply KISS/YAGNI/rule-of-three explicitly.
 5. **Validate** — `pnpm validate` (= `pnpm build && pnpm test && pnpm lint:security && pnpm cycles`) must all pass.
 6. **Document impact** — update comments/docs for behavior changes, risk, side effects.
@@ -218,7 +218,7 @@ Register metadata via `registerToolMetadata(name, meta)` in `packages/skills/src
 
 ### 6.8 SQLite reads / discord.js narrowing
 
-**SQLite rows go through `createRowMapper(schema)`** (`packages/memory/src/row-mapper.ts`). Define a Zod schema in `row-schemas.ts`, build the mapper once at module top, call `mapper.parseRow` / `mapper.parseOptionalRow` / `mapper.parseRows` on statement results. The mapper returns `Result<TRow, MapperError>` (path-indexed errors) — chain with early-return per §2.1. No `as Foo[]` / `as Foo | undefined` casts in `packages/memory/src/`.
+**SQLite rows go through `createRowMapper(schema)`** (`packages/memory/src/row-mapper.ts`). Define a Zod schema in `row-schemas.ts`, build the mapper once at module top, call `mapper.parseRow` / `mapper.parseOptionalRow` / `mapper.parseRows` on statement results. The mapper returns `Result<TRow, MapperError>` (path-indexed errors) — chain with early-return. No `as Foo[]` / `as Foo | undefined` casts in `packages/memory/src/`.
 
 **discord.js narrowing uses `asTextLike()`** (`packages/channels/src/discord/discord-adapter-types.ts`). `DiscordTextLikeChannel` is a structural subset of the discord.js channel union covering the runtime methods `discord-actions.ts` actually uses. Returns `null` (not a `Result`) when the channel isn't text-like — `null` is the correct "not text-like" signal that callers branch on. No `as any` in discord adapter files.
 
@@ -260,7 +260,7 @@ If full validation is impractical, document what was run and what was skipped.
 - Use string interpolation in structured log calls — Pino object-first only.
 - Include personal identity or sensitive data in tests, examples, docs, or commits.
 - Add entries to architecture allowlists (`test/support/architecture-allowlist.ts`) — they are shrink-only. Closing a violation requires deleting the entry, not adding a new one.
-- Land a fix or feature commit without a test that demonstrably failed on the pre-patch code (see §2.10). "I tested it locally" is not a substitute for an automated RED → GREEN cycle.
+- Land a fix or feature commit without a test that demonstrably failed on the pre-patch code. "I tested it locally" is not a substitute for an automated RED → GREEN cycle.
 
 ## 9) Conventions
 

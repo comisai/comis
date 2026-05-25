@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 69 Plan 03 -- buildMcpServerForClient unit tests.
+ * buildMcpServerForClient unit tests.
  *
  * Pins the default-deny tools/list filter in isolation:
  *   - `safe` policy → registered regardless of allowlist
@@ -21,7 +21,7 @@ import type { TokenClient } from "@comis/gateway";
 
 // ---------------------------------------------------------------------------
 // vi.mock @comis/core — stub getAllToolMetadata + getToolMetadata with a
-// controlled small set. The live-dispatcher tests (Plan 04) need
+// controlled small set. The live-dispatcher tests need
 // getToolMetadata to surface a per-tool validateInput on the
 // permission-gated entry to prove the dispatcher runs the validator before
 // dispatch.
@@ -56,7 +56,7 @@ const stubRegistry = new Map<string, StubMeta>([
   ["future_tool_no_policy", {} /* no policy — default-deny safety net */],
 ]);
 
-// Track systemSetInterval invocations so the IN-01 test can verify
+// Track systemSetInterval invocations so a test can verify
 // _resetRateLimitStateForTest re-enables pruner registration. Hoisted to
 // the same scope as `vi.mock("@comis/core", ...)` so the spy is initialized
 // BEFORE the hoisted mock factory references it (Vitest hoists vi.mock to
@@ -76,7 +76,7 @@ vi.mock("@comis/core", async (importOriginal) => {
     ...actual,
     getAllToolMetadata: () => stubRegistry,
     getToolMetadata: (name: string) => stubRegistry.get(name),
-    // IN-01: track pruner registration so a test can verify re-registration
+    // Track pruner registration so a test can verify re-registration
     // after `_resetRateLimitStateForTest()`.
     systemSetInterval: systemSetIntervalSpy,
   };
@@ -161,7 +161,7 @@ function spyOnRegisterTool(): {
 // Test Suite
 // ---------------------------------------------------------------------------
 
-describe("buildMcpServerForClient -- Phase 69 Plan 03 default-deny tools/list filter", () => {
+describe("buildMcpServerForClient -- default-deny tools/list filter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -323,7 +323,7 @@ describe("buildMcpServerForClient -- Phase 69 Plan 03 default-deny tools/list fi
 });
 
 // ===========================================================================
-// Plan 04 -- live tools/call dispatcher tests
+// Live tools/call dispatcher tests
 // ===========================================================================
 //
 // These tests pin the five-step pipeline:
@@ -333,12 +333,6 @@ describe("buildMcpServerForClient -- Phase 69 Plan 03 default-deny tools/list fi
 //   4. Per-tool validateInput runs before dispatch
 //   5. Dispatch through daemonRpcForMcpClient (NEVER injects _trustLevel:"admin")
 //   6. Output wrapped via wrapExternalContent
-//
-// The RED state of this file (before mcp-server-handlers.ts ships the live
-// dispatcher) will fail on the new BuildMcpServerForClientDeps signature
-// (TS-error -- the factory does not accept daemonRpcForMcpClient yet) and
-// on the stubCallback's `isError:true` return that every assertion below
-// expects to be `isError:false`.
 // ===========================================================================
 
 /** Capture every (method, params) pair daemonRpcForMcpClient was called with. */
@@ -372,7 +366,7 @@ const memorySearchMapping = (name: string) => {
   return name;
 };
 
-describe("buildMcpServerForClient -- Phase 69 Plan 04 live tools/call dispatcher", () => {
+describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -432,7 +426,7 @@ describe("buildMcpServerForClient -- Phase 69 Plan 04 live tools/call dispatcher
     // To reach this test path we have to register a tool that the live
     // policy re-check should reject. We do this by mutating the stubRegistry
     // to flip memory_get's policy to "never-export" AFTER registration.
-    // (The Plan 03 filter sees "permission-gated" at registration; the
+    // (The registration filter sees "permission-gated" at registration; the
     // dispatcher's live re-read sees "never-export" -- a different value at
     // dispatch time. The re-check is the belt-and-suspenders defense.)
     const { logger } = makeCapturingLogger();
@@ -714,13 +708,13 @@ describe("buildMcpServerForClient -- Phase 69 Plan 04 live tools/call dispatcher
   });
 
   // ------------------------------------------------------------------------
-  // Phase 69 CR-01 -- safeStringify(undefined) info leak
+  // safeStringify(undefined) info leak guard
   //
-  // RED test pinning the fix: when the underlying RPC handler resolves to
-  // `undefined` (a legal value for the Promise<unknown> return type of
-  // daemonRpcForMcpClient), the dispatcher MUST NOT propagate the JavaScript
-  // `undefined` value into wrapExternalContent. JSON.stringify(undefined)
-  // returns the value `undefined`, not the string `"null"`, so a naive
+  // When the underlying RPC handler resolves to `undefined` (a legal value
+  // for the Promise<unknown> return type of daemonRpcForMcpClient), the
+  // dispatcher MUST NOT propagate the JavaScript `undefined` value into
+  // wrapExternalContent. JSON.stringify(undefined) returns the value
+  // `undefined`, not the string `"null"`, so a naive
   // `safeStringify(v) -> JSON.stringify(v)` returns `undefined` (the value)
   // -- and the `string` return type is a lie. Passing undefined to
   // wrapExternalContent triggers String.prototype.replace on undefined ->
@@ -736,7 +730,7 @@ describe("buildMcpServerForClient -- Phase 69 Plan 04 live tools/call dispatcher
   // ------------------------------------------------------------------------
 
   // ------------------------------------------------------------------------
-  // Phase 69 WR-02 -- raw daemon RPC error message leaks to MCP client
+  // Raw daemon RPC error message leak guard
   //
   // The pre-fix dispatcher returned `[dispatch_error] ${err.message}` --
   // exposing whatever the daemon RPC handler threw (session keys, user
@@ -753,7 +747,7 @@ describe("buildMcpServerForClient -- Phase 69 Plan 04 live tools/call dispatcher
   //     debugging is intact.
   // ------------------------------------------------------------------------
 
-  it("buildMcpServerForClient dispatch wraps daemon RPC errors in a generic response that hides internal detail WR-02", async () => {
+  it("buildMcpServerForClient dispatch wraps daemon RPC errors in a generic response that hides internal detail", async () => {
     const { logger } = makeCapturingLogger();
     const client = makeMcpClient(["mcp-client"], ["memory_search"]);
 
@@ -808,14 +802,14 @@ describe("buildMcpServerForClient -- Phase 69 Plan 04 live tools/call dispatcher
   });
 
   // ------------------------------------------------------------------------
-  // Phase 69 WR-02 -- validator-threw path also leaks
+  // Validator-threw path also leaks raw error detail
   //
   // The `[invalid_args] validator threw: ${msg}` branch surfaced the raw
   // thrown message verbatim. Same posture as the dispatch_error branch:
   // sanitize the on-wire payload, keep the structured WARN log.
   // ------------------------------------------------------------------------
 
-  it("buildMcpServerForClient dispatch sanitizes validator-throw error responses WR-02", async () => {
+  it("buildMcpServerForClient dispatch sanitizes validator-throw error responses", async () => {
     const { logger } = makeCapturingLogger();
     const client = makeMcpClient(["mcp-client"], ["memory_search"]);
     const rpc = makeRpcRecorder();
@@ -867,7 +861,7 @@ describe("buildMcpServerForClient -- Phase 69 Plan 04 live tools/call dispatcher
     }
   });
 
-  it("buildMcpServerForClient dispatch does not throw when daemon RPC returns undefined CR-01 info leak guard", async () => {
+  it("buildMcpServerForClient dispatch does not throw when daemon RPC returns undefined (info leak guard)", async () => {
     const { logger } = makeCapturingLogger();
     const client = makeMcpClient(["mcp-client"], ["memory_search"]);
 
@@ -931,7 +925,7 @@ describe("buildMcpServerForClient -- Phase 69 Plan 04 live tools/call dispatcher
 });
 
 // ===========================================================================
-// Phase 69 IN-01 -- _resetRateLimitStateForTest must reset prunerStarted
+// _resetRateLimitStateForTest must reset prunerStarted
 //
 // `prunerStarted` is a module-level boolean that gates `systemSetInterval`
 // registration. After the first `buildMcpServerForClient` call in any test
@@ -940,7 +934,7 @@ describe("buildMcpServerForClient -- Phase 69 Plan 04 live tools/call dispatcher
 // interval is already running, and the registration call (`systemSetInterval`)
 // has been made exactly once for the module's lifetime.
 //
-// RED criterion: after one `buildMcpServerForClient` call, then
+// Criterion: after one `buildMcpServerForClient` call, then
 // `_resetRateLimitStateForTest()`, then a second build, the
 // `systemSetInterval` mock must have been called TWICE. On the pre-fix code
 // it is called only once (the second build hits the `if (prunerStarted)
@@ -953,8 +947,8 @@ describe("buildMcpServerForClient -- Phase 69 Plan 04 live tools/call dispatcher
 // level then reach into it from this suite.
 // ===========================================================================
 
-describe("buildMcpServerForClient -- Phase 69 IN-01 _resetRateLimitStateForTest also resets prunerStarted", () => {
-  it("_resetRateLimitStateForTest re-enables re-registration of the pruner interval IN-01", async () => {
+describe("buildMcpServerForClient -- _resetRateLimitStateForTest also resets prunerStarted", () => {
+  it("_resetRateLimitStateForTest re-enables re-registration of the pruner interval", async () => {
     const { _resetRateLimitStateForTest } = await import(
       "./mcp-server-handlers.js"
     );

@@ -99,7 +99,7 @@ export function repairOrphanedMessages(sessionManager: SessionManager): RepairRe
 
   // Case 2: Tool-result tail -- session ends with tool/toolResult after
   // an assistant toolUse, but execution was interrupted by a restart.
-  // Content-aware (CONTEXT.md §Change 1A): the synthetic assistant text
+  // Content-aware: the synthetic assistant text
   // reflects the actual trailing toolResult body so the model is not given
   // a prompt that contradicts the real successful result already on disk.
   /* eslint-disable @typescript-eslint/no-explicit-any -- role "tool"/"toolResult" not in SDK AgentMessage union */
@@ -212,9 +212,9 @@ function appendSyntheticAssistant(sessionManager: SessionManager, text: string):
  * Best-effort parse of a trailing toolResult message into its tool-body
  * shape. The SDK wire format stores the body as one or more text content
  * blocks containing JSON. Returns null when the content isn't parseable
- * JSON (e.g., raw string output from a non-structured tool). Per CONTEXT.md
- * §Change 1A, parsing is best-effort, not a domain operation, so Result<T,E>
- * is intentionally not used here.
+ * JSON (e.g., raw string output from a non-structured tool). Parsing is
+ * best-effort, not a domain operation, so Result<T,E> is intentionally not
+ * used here.
  */
 function parseToolResultBody(
   msg: unknown,

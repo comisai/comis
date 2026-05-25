@@ -6,7 +6,7 @@
  * scrub tmp path (`<auditLog>.scrub.tmp`) CANNOT redirect the scrub
  * write to an arbitrary file the daemon has write access to.
  *
- * Per AGENTS.md §2.5: imports from dist/ — requires `pnpm build` first.
+ * Imports from dist/ — requires `pnpm build` first.
  *
  * @module
  */
@@ -31,7 +31,7 @@ afterEach(() => {
   if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe("scrubConfigAuditLog — BL-02 symlink resistance (integration)", () => {
+describe("scrubConfigAuditLog — symlink resistance (integration)", () => {
   it("pre-staged symlink at .scrub.tmp does NOT redirect the scrub write to the symlink target", async () => {
     const filePath = path.join(tmpDir, "config-audit.jsonl");
     const tmpPath = filePath + ".scrub.tmp";

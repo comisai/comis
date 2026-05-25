@@ -383,7 +383,7 @@ describe("mcpToolsToAgentTools source-gate truncation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CAP-03: onResultTruncated callback (truncation telemetry)
+// onResultTruncated callback (truncation telemetry)
 // ---------------------------------------------------------------------------
 
 describe("mcpToolsToAgentTools onResultTruncated callback", () => {

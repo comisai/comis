@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * OAuth 2.1 metadata discovery — the cold-load pre-flight that resolves an MCP
- * server's authorization-server endpoints (Phase 66 OAUTH-03 / 66b).
+ * server's authorization-server endpoints.
  *
  * ── Delegation, not hand-rolling (locked decision #2) ───────────────────────
  * Comis NEVER fetches the well-known endpoints itself. The MCP SDK ships the
@@ -20,11 +20,11 @@
  * This module adds only the three things the SDK deliberately leaves to the app:
  *   1. the explicit pre-flight ordering (so connect fails fast with a useful
  *      message rather than deep inside the `auth()` orchestrator),
- *   2. the fail-closed actionable error naming every endpoint attempted (66-P9),
+ *   2. the fail-closed actionable error naming every endpoint attempted,
  *   3. disk persistence of the resolved metadata to `<server>.meta.json` via the
  *      token store, so subsequent connects skip re-discovery (warm load).
  *
- * ── Cascade (OAUTH-03 / 66-P9) ──────────────────────────────────────────────
+ * ── Cascade ──────────────────────────────────────────────────────────────────
  *   warm-load: tokenStore.discoveryState(server) present → return it (no fetch).
  *   stage 1+2: discoverOAuthServerInfo (RFC 8414 direct, else RFC 9728→8414).
  *   stage 3:   user-provided oauth.authorizationEndpoint → discoverAuthorizationServerMetadata.
@@ -34,9 +34,9 @@
  * `token_endpoint` — without it no token exchange/refresh is possible, so a
  * partial doc is treated as a miss and the cascade continues.
  *
- * ── Redirect-safe fetch (T-66-08 / SAFETY-07) ───────────────────────────────
+ * ── Redirect-safe fetch ───────────────────────────────────────────────────────
  * The caller injects `fetchFn` (default `createRedirectPolicyFetch`). All SDK
- * discovery requests inherit the Phase-63 cross-origin Authorization stripping:
+ * discovery requests inherit cross-origin Authorization stripping:
  * a malicious well-known redirect to another host cannot leak credentials.
  *
  * SECURITY: discovery handles metadata only — no tokens or secrets pass through
@@ -77,7 +77,7 @@ export interface ResolveDiscoveryArgs {
   /** Disk-backed discovery-state persistence (`<server>.meta.json`). */
   readonly tokenStore: Pick<TokenStore, "discoveryState" | "saveDiscoveryState">;
   /**
-   * Redirect-safe fetch threaded into every SDK discovery request (T-66-08).
+   * Redirect-safe fetch threaded into every SDK discovery request.
    * Defaults to `createRedirectPolicyFetch({ maxRedirections: 20 })`.
    */
   readonly fetchFn?: FetchLike;
@@ -98,7 +98,7 @@ const RFC_9728_PATH = "/.well-known/oauth-protected-resource";
  * `<server>.meta.json`. Returns the persisted {@link OAuthDiscoveryState}.
  *
  * @throws An `Error` with `errorKind: "config"` naming all three attempted
- *   endpoints when every discovery path fails (66-P9).
+ *   endpoints when every discovery path fails.
  */
 export async function resolveDiscovery(
   args: ResolveDiscoveryArgs,
@@ -163,7 +163,7 @@ export async function resolveDiscovery(
     }
   }
 
-  // ── Fail-closed (66-P9 / T-66-09) ──────────────────────────────────────────
+  // ── Fail-closed ─────────────────────────────────────────────────────────────
   // No silent fall-through to a wrong endpoint. Name every endpoint attempted so
   // the operator can see exactly which discovery paths were tried.
   throw makeDiscoveryFailedError(serverName, serverUrl, userAuthorizationEndpoint);
@@ -181,7 +181,7 @@ function hasUsableMetadata(
 }
 
 /**
- * Build the fail-closed `Error` naming all three attempted endpoints (66-P9).
+ * Build the fail-closed `Error` naming all three attempted endpoints.
  * Carries `errorKind: "config"` (the failure is a misconfigured / non-conformant
  * provider, not an internal fault).
  */

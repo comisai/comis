@@ -88,14 +88,13 @@ describe("setupMcp", () => {
     expect(result.mcpClientManager.getAllConnections()).toEqual([]);
   });
 
-  // WR-03 (Phase 64 gap surfaced in Phase 67): the global reliability config
-  // (integrations.mcp.keepaliveIntervalMs / circuitBreakerThreshold /
-  // circuitBreakerCooldownMs) MUST be forwarded into createMcpClientManager.
-  // Pre-fix setupMcp never passed them, so a daemon-wide override (e.g.
-  // keepaliveIntervalMs: 0 to disable keepalives) was silently ignored for all
+  // The global reliability config (integrations.mcp.keepaliveIntervalMs /
+  // circuitBreakerThreshold / circuitBreakerCooldownMs) MUST be forwarded into
+  // createMcpClientManager. Without this, a daemon-wide override (e.g.
+  // keepaliveIntervalMs: 0 to disable keepalives) is silently ignored for all
   // startup-connected servers — only per-server overrides via mcp.connect RPC
-  // took effect. RED on pre-fix code: the factory call carried none of the three.
-  it("WR-03: forwards global keepaliveIntervalMs/circuitBreakerThreshold/circuitBreakerCooldownMs into createMcpClientManager", async () => {
+  // would take effect.
+  it("forwards global keepaliveIntervalMs/circuitBreakerThreshold/circuitBreakerCooldownMs into createMcpClientManager", async () => {
     mockGetAllConnections.mockReturnValue([]);
     await callSetupMcp({
       servers: [],
@@ -114,7 +113,7 @@ describe("setupMcp", () => {
     );
   });
 
-  it("WR-03: omits the global reliability fields from the factory call when not provided", async () => {
+  it("omits the global reliability fields from the factory call when not provided", async () => {
     mockGetAllConnections.mockReturnValue([]);
     await callSetupMcp({ servers: [], logger });
 
@@ -563,14 +562,13 @@ describe("setupMcp", () => {
     expect(callArg).not.toHaveProperty("cwd");
   });
 
-  // CR-02 regression: the five Phase 65 fields (idleTtlMs, toolAllowlist,
-  // toolBlocklist, enableResources, enablePrompts) parsed by
-  // McpServerEntrySchema MUST reach the runtime McpServerConfig that
-  // setupMcp hands to manager.connect(). Pre-fix they were dropped, so
-  // config-defined idle eviction / tool filtering / resources-prompts
-  // opt-outs were silently ignored for servers loaded from config.yaml.
-  // These tests would have failed RED on the pre-patch construction site.
-  it("forwards Phase 65 idleTtlMs/toolAllowlist/toolBlocklist/enable* fields to McpServerConfig", async () => {
+  // The five per-server fields (idleTtlMs, toolAllowlist, toolBlocklist,
+  // enableResources, enablePrompts) parsed by McpServerEntrySchema MUST reach
+  // the runtime McpServerConfig that setupMcp hands to manager.connect().
+  // Without this, config-defined idle eviction / tool filtering /
+  // resources-prompts opt-outs are silently ignored for servers loaded from
+  // config.yaml.
+  it("forwards idleTtlMs/toolAllowlist/toolBlocklist/enable* fields to McpServerConfig", async () => {
     mockConnect.mockResolvedValueOnce(ok({
       name: "filtered",
       status: "connected",
@@ -628,10 +626,9 @@ describe("setupMcp", () => {
     expect(callArg).not.toHaveProperty("idleTtlMs");
   });
 
-  // CAP-02 (Phase 67) — supportsParallelToolCalls parsed by McpServerEntrySchema
-  // MUST reach the runtime McpServerConfig handed to manager.connect(), else the
-  // PQueue concurrency derivation never sees the opt-in (silent no-op, the
-  // Phase 65 CR-02 trap). Would have failed RED on the pre-patch construction site.
+  // supportsParallelToolCalls parsed by McpServerEntrySchema MUST reach the
+  // runtime McpServerConfig handed to manager.connect(), else the PQueue
+  // concurrency derivation never sees the opt-in (silent no-op).
   it("forwards supportsParallelToolCalls: true to McpServerConfig", async () => {
     mockConnect.mockResolvedValueOnce(ok({
       name: "parallel",
@@ -680,10 +677,9 @@ describe("setupMcp", () => {
     expect(callArg).not.toHaveProperty("supportsParallelToolCalls");
   });
 
-  // OAUTH-10/11 (Phase 66) — auth/oauth parsed by McpServerEntrySchema MUST reach
-  // the runtime McpServerConfig handed to manager.connect(), else createTransport
-  // never wires the OAuthClientProvider (silent downgrade to no-auth — the Phase
-  // 65 CR-02 / Phase 67 CR-01 trap). Fails RED on the pre-patch boot-path build.
+  // auth/oauth parsed by McpServerEntrySchema MUST reach the runtime
+  // McpServerConfig handed to manager.connect(), else createTransport never
+  // wires the OAuthClientProvider (silent downgrade to no-auth).
   it("forwards auth/oauth to McpServerConfig", async () => {
     mockConnect.mockResolvedValueOnce(ok({
       name: "notion",

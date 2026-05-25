@@ -29,7 +29,7 @@
  * Logging surface follows CLAUDE.md canonical Pino fields:
  * - object-first signature: `error({...fields}, "msg")`
  * - `submodule: "bridge.hash-invariant"` (parent logger binds `module: "agent"`)
- * - `errorKind: "internal"` (classification per AGENTS.md §2.1)
+ * - `errorKind: "internal"` (use the "internal" closed-union classification)
  * - `hint`: actionable next step for the on-call diagnoser
  * - `responseId`, `blockIndex`, `oldHash`, `newHash`,
  *   `oldText.firstChars`, `newText.firstChars`, `oldSigLen`, `newSigLen`

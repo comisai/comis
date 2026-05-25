@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-server keepalive ticker (Phase 64 RELY-01/02/03).
+ * Per-server keepalive ticker.
  *
  * Schedules a periodic Client.ping() through the per-server PQueue. On
  * failure, triggers handleDisconnection so the existing reconnect engine
@@ -8,8 +8,8 @@
  * activity is a stronger liveness signal than the keepalive itself).
  *
  * Extracted into its own ~80L file to keep mcp-client-connect.ts under
- * the 800-line file-size cap. Phase 67 CAP-02 may revisit keepalive
- * queue routing for parallel-tool-call mode; see RESEARCH.md Q1.
+ * the 800-line file-size cap. Future work may revisit keepalive queue
+ * routing for parallel-tool-call mode.
  *
  * @module
  */
@@ -28,11 +28,11 @@ import { handleDisconnection } from "./mcp-client-reconnect.js";
  * `state.options.keepaliveIntervalMs` via nullish coalescing (`??`, NOT
  * `||`, so the operator can set `0` to disable per-server).
  *
- * @returns void — `0` interval is a NO-OP (RELY-02 explicit semantics).
+ * @returns void — `0` interval is a NO-OP (explicit semantics: zero disables keepalive).
  */
 export function startKeepaliveTicker(state: McpClientManagerState, deps: McpClientManagerDeps, config: McpServerConfig): void {
   const intervalMs = config.keepaliveIntervalMs ?? state.options.keepaliveIntervalMs;
-  if (intervalMs === 0) return; // Disabled (RELY-02)
+  if (intervalMs === 0) return; // Disabled (interval=0 means no keepalive)
   const handle: SystemIntervalHandle = systemSetInterval(() => maybeEnqueueKeepalivePing(state, deps, config.name), intervalMs);
   handle.unref();
   state.keepaliveTickers.set(config.name, handle);
@@ -54,12 +54,12 @@ export function stopKeepaliveTicker(state: McpClientManagerState, serverName: st
 
 /**
  * Tick callback. Routes a Client.ping() based on the primary call queue's
- * concurrency (Phase 67 CAP-02):
+ * concurrency:
  *
  *  - concurrency === 1 (default/stdio): the ping shares the primary PQueue
- *    (RELY-03 — stdio single-pipe serialization) and is SKIPPED when the
- *    queue is busy. Recent tool-call activity is a stronger liveness signal
- *    than a synthetic probe. (Phase 64 behavior — unchanged.)
+ *    (stdio single-pipe serialization) and is SKIPPED when the queue is
+ *    busy. Recent tool-call activity is a stronger liveness signal than a
+ *    synthetic probe.
  *
  *  - concurrency > 1 (supportsParallelToolCalls): a synthetic ping must not
  *    interleave with real parallel tool calls. The ping is enqueued on a
@@ -77,8 +77,8 @@ export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: Mc
   const conn = state.connections.get(serverName);
   if (!conn || conn.status !== "connected") return;
 
-  // WR-01: capture the generation at tick time. In the concurrency > 1 path
-  // the ping body awaits primary.onIdle() before executing, during which a
+  // Capture the generation at tick time. In the concurrency > 1 path the ping
+  // body awaits primary.onIdle() before executing, during which a
   // disconnect→reconnect can replace `conn` with a fresh connection (new
   // generation). Re-read state inside doPing and bail if the connection is
   // gone, no longer connected, or its generation changed — otherwise we would
@@ -105,8 +105,8 @@ export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: Mc
   };
 
   if (primary.concurrency > 1) {
-    // CAP-02: route through a dedicated cc-1 queue and wait for the primary
-    // queue to drain so the ping never interleaves with parallel tool calls.
+    // Route through a dedicated cc-1 queue and wait for the primary queue
+    // to drain so the ping never interleaves with parallel tool calls.
     let keepalive = state.keepaliveQueues.get(serverName);
     if (!keepalive) {
       keepalive = new PQueue({ concurrency: 1 });

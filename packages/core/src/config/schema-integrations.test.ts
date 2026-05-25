@@ -194,14 +194,13 @@ describe("McpServerEntrySchema transport inference", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-01 regression — schema must reject inconsistent command + url
-  // combinations BEFORE the runtime gets a chance to silently ignore one
-  // of them. Pre-fix the first matching inference branch (command -> stdio)
-  // won and the unused url field passed through, silently ignored at
-  // runtime by createTransport. Operator misconfiguration produced no
-  // warning.
+  // Regression — schema must reject inconsistent command + url combinations
+  // BEFORE the runtime gets a chance to silently ignore one of them. The
+  // first matching inference branch (command -> stdio) won and the unused
+  // url field passed through, silently ignored at runtime by createTransport.
+  // Operator misconfiguration produced no warning.
   // -------------------------------------------------------------------------
-  it("rejects entries that supply BOTH command and url without an explicit transport (WR-01)", () => {
+  it("rejects entries that supply BOTH command and url without an explicit transport", () => {
     expect(() =>
       McpServerEntrySchema.parse({
         name: "both",
@@ -239,14 +238,14 @@ describe("McpServerEntrySchema transport inference", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 63-01 — additive safety-hardening fields (SAFETY-02/04/06/08).
+// Additive safety-hardening fields.
 //
 // Five additive Zod fields land on McpConfigSchema (3) and McpServerEntrySchema
 // (2). The tests pin both default values and validator rejection of bad inputs
-// so the rest of phase 63 can rely on a stable schema contract.
+// so downstream code can rely on a stable schema contract.
 // ---------------------------------------------------------------------------
 
-describe("McpConfigSchema — Phase 63 safety hardening additive fields", () => {
+describe("McpConfigSchema — safety hardening additive fields", () => {
   it("produces safety-hardening defaults from an empty input object", () => {
     const result = McpConfigSchema.parse({});
     expect(result.safetyAllowedEnvKeys).toEqual([]);
@@ -280,7 +279,7 @@ describe("McpConfigSchema — Phase 63 safety hardening additive fields", () => 
   });
 });
 
-describe("McpServerEntrySchema — Phase 63 safety hardening additive fields", () => {
+describe("McpServerEntrySchema — safety hardening additive fields", () => {
   it("parses without disablePlaintextSecretCheck or rlimits when both are omitted", () => {
     const result = McpServerEntrySchema.parse({
       name: "yfinance",
@@ -335,19 +334,13 @@ describe("McpServerEntrySchema — Phase 63 safety hardening additive fields", (
 });
 
 // ---------------------------------------------------------------------------
-// Phase 64-01 — additive reliability fields (RELY-02 keepalive, RELY-05
-// circuit breaker). Combined RED+GREEN per AGENTS.md §2.10 exception: the
-// tests cannot COMPILE against the pre-patch schema because the new fields
-// are not on the inferred type (`result.keepaliveIntervalMs` would be a TS
-// error). Schema additions and tests therefore land in the same commit.
-//
-// The 3 new global defaults on McpConfigSchema plus the 3 new optional
-// per-server overrides on McpServerEntrySchema unblock Wave 1 plans
-// (02 wiring, 03 keepalive ticker, 04 breaker) — every downstream plan
-// reads `state.options.keepaliveIntervalMs` etc. without TS errors.
+// Additive reliability fields (keepalive, circuit breaker). Combined
+// schema + tests because the new fields are not on the inferred type
+// pre-patch — `result.keepaliveIntervalMs` would be a TS error if tests
+// preceded the schema change.
 // ---------------------------------------------------------------------------
 
-describe("McpConfigSchema — Phase 64 reliability additive fields", () => {
+describe("McpConfigSchema — reliability additive fields", () => {
   it("produces reliability defaults from an empty input object", () => {
     const result = McpConfigSchema.parse({});
     expect(result.keepaliveIntervalMs).toBe(180_000);
@@ -368,7 +361,7 @@ describe("McpConfigSchema — Phase 64 reliability additive fields", () => {
   });
 });
 
-describe("McpServerEntrySchema — Phase 64 per-server reliability overrides", () => {
+describe("McpServerEntrySchema — per-server reliability overrides", () => {
   it("accepts an explicit keepaliveIntervalMs override", () => {
     const result = McpServerEntrySchema.parse({
       name: "test",
@@ -400,17 +393,15 @@ describe("McpServerEntrySchema — Phase 64 per-server reliability overrides", (
 });
 
 // ---------------------------------------------------------------------------
-// Phase 66-01 — per-server OAuth opt-in fields (OAUTH-10/11). Two additive
-// optional fields land on McpServerEntrySchema: `auth` (enum none/bearer/oauth)
-// and an `oauth` strictObject (authorizationEndpoint URL fallback for OAUTH-03,
-// scope, Stripe-Account for OAUTH-11 / 66-P12). Combined RED+GREEN per the
-// AGENTS.md §2.10 exception used by the Phase 63/64 blocks above: the accept
-// tests reference `result.auth` / `result.oauth`, which would be TS errors on
-// the pre-patch inferred type, so schema additions and tests land in the same
-// commit. The reject tests (T-66-01) pin strictObject + enum tampering defence.
+// Per-server OAuth opt-in fields. Two additive optional fields land on
+// McpServerEntrySchema: `auth` (enum none/bearer/oauth) and an `oauth`
+// strictObject (authorizationEndpoint URL fallback, scope, Stripe-Account).
+// Combined schema + tests because the accept tests reference `result.auth` /
+// `result.oauth`, which would be TS errors on the pre-patch inferred type.
+// The reject tests pin strictObject + enum tampering defence.
 // ---------------------------------------------------------------------------
 
-describe("McpServerEntrySchema — Phase 66 OAuth opt-in fields", () => {
+describe("McpServerEntrySchema — OAuth opt-in fields", () => {
   it("accepts auth='oauth' with an oauth block (scope only)", () => {
     const result = McpServerEntrySchema.parse({
       name: "notion",
@@ -460,7 +451,7 @@ describe("McpServerEntrySchema — Phase 66 OAuth opt-in fields", () => {
     expect(result.oauth).toBeUndefined();
   });
 
-  // T-66-01 (Tampering): enum rejects a bogus auth value.
+  // Tampering: enum rejects a bogus auth value.
   it("rejects auth values outside {none,bearer,oauth}", () => {
     expect(() =>
       McpServerEntrySchema.parse({
@@ -471,7 +462,7 @@ describe("McpServerEntrySchema — Phase 66 OAuth opt-in fields", () => {
     ).toThrow();
   });
 
-  // T-66-01 (Tampering): strictObject rejects unknown keys inside oauth.
+  // Tampering: strictObject rejects unknown keys inside oauth.
   it("rejects unknown keys inside the oauth block (strictObject)", () => {
     expect(() =>
       McpServerEntrySchema.parse({
@@ -495,7 +486,7 @@ describe("McpServerEntrySchema — Phase 66 OAuth opt-in fields", () => {
   });
 });
 
-describe("McpServerEntrySchema — Phase 68 BUNDLE-04 bundle provenance + archive", () => {
+describe("McpServerEntrySchema — bundle provenance + archive", () => {
   it("persists _bundleSource when supplied (provenance marker survives parse)", () => {
     const result = McpServerEntrySchema.parse({
       name: "x",
@@ -535,7 +526,7 @@ describe("McpServerEntrySchema — Phase 68 BUNDLE-04 bundle provenance + archiv
     expect(result._bundleArchive?.transport).toBe("stdio");
   });
 
-  it("rejects an empty-string _bundleSource (T-68-02-05 spoofing defence — min(1))", () => {
+  it("rejects an empty-string _bundleSource (spoofing defence — min(1))", () => {
     expect(() =>
       McpServerEntrySchema.parse({
         name: "x",

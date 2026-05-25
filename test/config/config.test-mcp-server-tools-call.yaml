@@ -1,11 +1,11 @@
-# Phase 69 Plan 04 -- MCP server tools/call dispatcher round-trip test config (port 8571).
+# MCP server tools/call dispatcher round-trip test config (port 8571).
 #
 # Single mcp-client token with allowlist = ["memory_search"]. The dispatcher
 # uses the default 30/min ceiling -- this test only fires a small number of
 # calls so rate-limit does not interfere.
 #
-# Port 8571 to avoid conflicts with Plan 03's 8569 and Plan 04 rate-limit's 8570
-# when running under vitest pool: "forks".
+# Port 8571 to avoid conflicts with other integration test configs
+# (8569/8570/8572) when running under vitest pool: "forks".
 
 tenantId: "test"
 logLevel: "info"

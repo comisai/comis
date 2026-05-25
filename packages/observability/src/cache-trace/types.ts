@@ -36,7 +36,7 @@ import { z } from "zod";
  *
  * Order: lifecycle-relevant (session.* → prompt → model → context → tool
  * → session.after → control-plane sentinel).
- * v1 shape established 2026-05-19; design §7.2 rewritten 2026-05-21 to match shipped code; append-only rule applies from 2026-05-21 forward.
+ * v1 shape established 2026-05-19; rewritten 2026-05-21 to match shipped code; append-only rule applies from 2026-05-21 forward.
  *
  * The trailing `cache_trace.write_failures` is a control-plane sentinel
  * (not an application stage) emitted by the runtime on first queued
@@ -75,13 +75,13 @@ export type CacheTraceStage = (typeof CACHE_TRACE_STAGES)[number];
  *
  * Required envelope fields: `traceSchema`, `schemaVersion`, `stage`,
  * `ts`, `seq`, `agentId`, `sessionId`, `traceId`. `traceId` is the
- * canonical correlation key (mirrors design §1.4 "canonical correlation
- * triple") — every cache-trace event ships with one so downstream
+ * canonical correlation key (the canonical correlation triple) — every
+ * cache-trace event ships with one so downstream
  * replay/diff/analysis tools can join across multiple JSONL streams
  * (trajectory, cache-trace, audit log) by traceId.
  *
  * The 5 optional envelope fields (`runId`, `sessionKey`, `tenantId`,
- * `workspaceDir`, `modelApi`) complete design §7.2 envelope conformance
+ * `workspaceDir`, `modelApi`) complete the envelope conformance contract
  * — present when the executor passes them through, omitted otherwise.
  * Each is `string | undefined` except `modelApi` which is
  * `string | null | undefined` (the design explicitly allows null for

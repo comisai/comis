@@ -47,13 +47,13 @@ export interface InfraEvents {
   };
 
   /**
-   * Phase 64 RELY-08: in-memory config subtree replaced atomically after a
-   * successful skipRestart-true persist. Coalesced with 500ms trailing-edge
-   * debounce so bulk operations (Phase 68 skill-install adding N MCPs)
-   * produce ONE event with combined diffs.
+   * In-memory config subtree replaced atomically after a successful
+   * skipRestart-true persist. Coalesced with 500ms trailing-edge debounce
+   * so bulk operations (e.g. skill-install adding N MCPs) produce ONE event
+   * with combined diffs.
    *
    * - `path`: the subtree key that was swapped. Closed literal union;
-   *   future phases may extend with additional swap paths.
+   *   additional swap paths may be added in future.
    * - `added`: McpServerEntry[] inserted into integrations.mcp.servers since
    *   last emit.
    * - `removed`: McpServerEntry[] removed from integrations.mcp.servers since
@@ -381,11 +381,11 @@ export interface InfraEvents {
     timestamp: number;
   };
 
-  /** Phase 67 CAP-03: an MCP tool result exceeded its source-profile maxChars and
-   *  was truncated by the bridge. Lets operators see which servers/tools return
-   *  verbose blobs. originalSize/truncatedSize are character counts (post-sanitize,
-   *  pre-wrap). The payload carries only sizes + identifiers — never the (untrusted)
-   *  truncated content (matches Pino redaction posture: never log bodies). */
+  /** An MCP tool result exceeded its source-profile maxChars and was truncated
+   *  by the bridge. Lets operators see which servers/tools return verbose blobs.
+   *  originalSize/truncatedSize are character counts (post-sanitize, pre-wrap).
+   *  The payload carries only sizes + identifiers — never the (untrusted)
+   *  truncated content (never log bodies). */
   "mcp:server:result_truncated": {
     server: string;
     tool: string;

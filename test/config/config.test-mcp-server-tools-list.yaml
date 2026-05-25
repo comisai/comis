@@ -1,4 +1,4 @@
-# Phase 69 Plan 03 -- MCP server endpoint integration test config (port 8569)
+# MCP server endpoint integration test config (port 8569)
 #
 # Three test tokens:
 #   - rpc-only:  scope ["rpc"] -- proves /mcp/v1 rejects with 403 (missing mcp-client scope).
@@ -54,7 +54,7 @@ gateway:
       secret: mcp-svr-toolslist-rpc-only-tok-22
       scopes: ["rpc"]
     # Token 2 -- mcp-client with empty allowlist. tools/list must return
-    # ONLY tools with mcpExportPolicy === "safe" (3 tools per Plan 02).
+    # ONLY tools with mcpExportPolicy === "safe" (3 safe tools).
     - id: mcp-empty
       secret: mcp-svr-toolslist-mcp-empty-tok-3
       scopes: ["mcp-client"]

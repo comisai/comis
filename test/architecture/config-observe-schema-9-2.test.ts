@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Architecture invariant — `ConfigObserveAuditRecordSchema` honors
- * design §9.2 verbatim.
+ * Architecture invariant — `ConfigObserveAuditRecordSchema` matches
+ * the config.observe schema shape verbatim.
  *
  * The on-disk schema for `event: "config.observe"` audit records is the
  * forensics contract for boot-time misconfiguration triage (operators
  * use `comis config audit show` against `~/.comis/logs/config-audit.jsonl`).
- * Design §9.2 enumerates the canonical field set; this test pins the
+ * The canonical field set is enumerated below; this test pins the
  * Zod-schema shape to that enumeration so a casual schema-shrink can't
  * silently regress the contract.
  *
  * The literal field list below is the source of truth this test enforces.
- * Adding a new §9.2 field means BOTH the schema entry AND the entry here.
+ * Adding a new field means BOTH the schema entry AND the entry here.
  *
  * Scope: this test does NOT validate on-disk records. It checks the
  * Zod-schema shape at the import site. Semantic correctness is gated by
@@ -23,8 +23,8 @@ import { describe, it, expect } from "vitest";
 import { ConfigObserveAuditRecordSchema } from "@comis/observability";
 
 /**
- * Design-§9.2 required field set. Each name MUST appear as a key on
- * `ConfigObserveAuditRecordSchema.shape`. Sorted by field group so a
+ * Required field set for the config.observe schema. Each name MUST appear as a
+ * key on `ConfigObserveAuditRecordSchema.shape`. Sorted by field group so a
  * diff reviewer can spot a missing block at a glance.
  */
 const DESIGN_92_FIELDS = [
@@ -75,13 +75,13 @@ const DESIGN_92_FIELDS = [
   "suspicious",
 ] as const;
 
-describe("config.observe schema honors design §9.2", () => {
-  it("schema shape contains every field listed in design §9.2", () => {
+describe("config.observe schema shape", () => {
+  it("schema shape contains every required field", () => {
     const shapeKeys = Object.keys(ConfigObserveAuditRecordSchema.shape);
     for (const field of DESIGN_92_FIELDS) {
       expect(
         shapeKeys,
-        `ConfigObserveAuditRecordSchema is missing design-§9.2 field: ${field}`,
+        `ConfigObserveAuditRecordSchema is missing required field: ${field}`,
       ).toContain(field);
     }
   });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * GLOBAL resources utility platform tools (Phase 65 OPUX-10).
+ * GLOBAL resources utility platform tools.
  *
  * Two tools — `list_resources` and `read_resource` — each take a required
  * `server: string` parameter naming the connected MCP server to query. The

@@ -13,12 +13,11 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Phase 68 BUNDLE-06 (Plan 04): mock the install-path bundle hook so the
-// existing 6 install-handler tests stay independent of the bundle resolver
-// chain (no mcpServers block = the real hook would no-op anyway, but mocking
-// is robust if the helper's signature changes). The new "Phase 68 install hook
-// wiring" describe block below asserts on this spy's call args + propagated
-// throw to verify the per-handler wiring.
+// Mock the install-path bundle hook so the existing 6 install-handler tests
+// stay independent of the bundle resolver chain (no mcpServers block = the
+// real hook would no-op anyway, but mocking is robust if the helper's
+// signature changes). The "install hook wiring" describe block below asserts
+// on this spy's call args + propagated throw to verify the per-handler wiring.
 const mockRunBundleInstallHook = vi.hoisted(() =>
   vi.fn(async () => ({ persistence: "skipped" as const })),
 );
@@ -346,7 +345,7 @@ describe("skills.upload handler", () => {
 
   it("skills_upload_writes_skill_file_at_0o600_and_dir_at_0o700_via_fs_safe_substrate", async () => {
     // Route through @comis/observability/shared/fs-safe.ts
-    // so the §1.4 confidentiality invariant (dir 0o700, file 0o600) is enforced on
+    // so the confidentiality invariant (dir 0o700, file 0o600) is enforced on
     // every skill artifact written by skills.upload — including nested-parent dirs.
     const wsDir = join(tmpRoot, "ws");
     fs.mkdirSync(wsDir, { recursive: true });
@@ -566,7 +565,7 @@ describe("skills.import handler", () => {
   });
 
   it("skills_import_writes_skill_file_at_0o600_and_dir_at_0o700_via_fs_safe_substrate", async () => {
-    // Imported skill artifacts honor §1.4 modes
+    // Imported skill artifacts honor the confidentiality modes
     // (dir 0o700, file 0o600) — including nested-parent dirs created
     // by the in-loop ensureContainedDir for sub-folders.
     const wsDir = join(tmpRoot, "ws");
@@ -613,13 +612,13 @@ describe("skills.import handler", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-03 — fetchGitHubDir bounded recursion + bounded file count + per-fetch
+  // fetchGitHubDir bounded recursion + bounded file count + per-fetch
   // timeout. The pre-fix function had NO depth limit, NO file-count cap, and
   // NO per-request timeout — a malicious or pathological repo (hundreds of
   // nested directories, thousands of files, or a slow GitHub response) could
   // exhaust the event loop, stack, or memory.
   // -------------------------------------------------------------------------
-  it("WR-03: rejects import when repository depth exceeds bounded recursion limit", async () => {
+  it("rejects import when repository depth exceeds bounded recursion limit", async () => {
     const wsDir = join(tmpRoot, "ws");
     fs.mkdirSync(wsDir, { recursive: true });
     // Mock a GitHub tree that nests directories deeper than the depth limit.
@@ -658,7 +657,7 @@ describe("skills.import handler", () => {
     ).rejects.toThrow(/depth|recursion/i);
   });
 
-  it("WR-03: rejects import when fetched file count exceeds the cap", async () => {
+  it("rejects import when fetched file count exceeds the cap", async () => {
     const wsDir = join(tmpRoot, "ws");
     fs.mkdirSync(wsDir, { recursive: true });
     // Mock GitHub returning a directory with MANY files — far beyond the cap.
@@ -922,7 +921,7 @@ describe("skills.create handler", () => {
   it("skills_create_writes_skill_file_at_0o600_and_dir_at_0o700_via_fs_safe_substrate", async () => {
     // skills.create routes its mkdir + SKILL.md
     // writeFile through the fs-safe substrate so the new skill artifact
-    // honors the §1.4 confidentiality invariant (dir 0o700, file 0o600).
+    // honors the confidentiality invariant (dir 0o700, file 0o600).
     const wsDir = join(tmpRoot, "ws");
     fs.mkdirSync(wsDir, { recursive: true });
     const reg = makeRegistry([]);
@@ -1068,11 +1067,10 @@ describe("skills.update handler", () => {
   });
 
   it("skills_update_writes_skill_file_at_0o600_via_fs_safe_substrate", async () => {
-    // skills.update routes its SKILL.md
-    // overwrite through writeRegularFile so the resulting file mode is
-    // `0o600` — and writeRegularFile's unlink-before-open + defensive
-    // fchmod path defensively corrects legacy artifacts written at a
-    // wider mode by older code.
+    // skills.update routes its SKILL.md overwrite through writeRegularFile
+    // so the resulting file mode is `0o600` — and writeRegularFile's
+    // unlink-before-open + defensive fchmod path defensively corrects
+    // legacy artifacts written at a wider mode by older code.
     const wsDir = join(tmpRoot, "ws");
     const skillDir = join(wsDir, "skills", "mode-update");
     fs.mkdirSync(skillDir, { recursive: true });
@@ -1098,10 +1096,10 @@ describe("skills.update handler", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 68 BUNDLE-06: install-hook wiring (skills.upload / .import / .create)
+// Install-hook wiring (skills.upload / .import / .create)
 // ---------------------------------------------------------------------------
 
-describe("Phase 68 install-hook wiring (BUNDLE-05/06)", () => {
+describe("install-hook wiring", () => {
   // -------------------------------------------------------------------------
   // 1. skills.upload fires the bundle hook with skillId=params.name +
   //    resolved skillDir + rawParams (so the hook sees the optional force flag).
@@ -1191,10 +1189,10 @@ describe("Phase 68 install-hook wiring (BUNDLE-05/06)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 4. force: true on rawParams flows through to the hook (BUNDLE-05).
+  // 4. force: true on rawParams flows through to the hook.
   //    The hook unpacks (force?: boolean) from rawParams.
   // -------------------------------------------------------------------------
-  it("force=true in rawParams flows through to the bundle install hook (BUNDLE-05)", async () => {
+  it("force=true in rawParams flows through to the bundle install hook", async () => {
     const wsDir = join(tmpRoot, "ws");
     fs.mkdirSync(wsDir, { recursive: true });
     const reg = makeRegistry([]);
@@ -1217,7 +1215,7 @@ describe("Phase 68 install-hook wiring (BUNDLE-05/06)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 4b. WR-04 — skills.update ALSO invokes runBundleInstallHook.
+  // 4b. skills.update ALSO invokes runBundleInstallHook.
   //
   //     Pre-fix, only skills.upload / skills.import / skills.create called the
   //     hook. An operator who used skills.update to change a skill's mcpServers
@@ -1225,10 +1223,10 @@ describe("Phase 68 install-hook wiring (BUNDLE-05/06)", () => {
   //     config until the next daemon restart — particularly confusing because
   //     the other three install handlers DID re-process the bundle. Fix:
   //     skills.update hooks the bundle install path, matching the other three
-  //     handlers. The hook's idempotent replace-in-place semantics (CR-01-aware
-  //     trust root) handle the "edit existing bundle entries" path correctly.
+  //     handlers. The hook's idempotent replace-in-place semantics handle the
+  //     "edit existing bundle entries" path correctly.
   // -------------------------------------------------------------------------
-  it("WR-04: skills.update invokes runBundleInstallHook with params.name + skill.location + rawParams", async () => {
+  it("skills.update invokes runBundleInstallHook with params.name + skill.location + rawParams", async () => {
     const wsDir = join(tmpRoot, "ws");
     const skillDir = join(wsDir, "skills", "updated-skill");
     fs.mkdirSync(skillDir, { recursive: true });
@@ -1255,12 +1253,12 @@ describe("Phase 68 install-hook wiring (BUNDLE-05/06)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 5. Phase A reject (the hook throws [bundle_install_rejected:plaintext_secret])
+  // 5. Hook reject (the hook throws [bundle_install_rejected:plaintext_secret])
   //    surfaces as RPC error — i.e. the handler does NOT swallow it.
-  //    BUNDLE-06 atomic invariant: caller sees the bracketed code; the rpc-dispatch
+  //    Atomic invariant: caller sees the bracketed code; the rpc-dispatch
   //    layer surfaces it to the RPC client.
   // -------------------------------------------------------------------------
-  it("Phase A reject from the bundle hook surfaces as the RPC handler's thrown error (BUNDLE-06)", async () => {
+  it("Hook reject from the bundle hook surfaces as the RPC handler's thrown error", async () => {
     mockRunBundleInstallHook.mockRejectedValueOnce(
       new Error("[bundle_install_rejected:plaintext_secret] bundle entry 'leaky' has a plaintext-secret-shaped value at env.OPENAI_API_KEY"),
     );
@@ -1288,7 +1286,7 @@ describe("Phase 68 install-hook wiring (BUNDLE-05/06)", () => {
   //    all 3 install handlers (the bundle hook short-circuits to "skipped"
   //    persistence; the response shape is unchanged).
   // -------------------------------------------------------------------------
-  it("manifest-without-mcpServers preserves pre-Phase-68 install behavior across all 3 handlers (hook short-circuits silently)", async () => {
+  it("manifest-without-mcpServers preserves original install behavior across all 3 handlers (hook short-circuits silently)", async () => {
     // The default mockRunBundleInstallHook returns { persistence: "skipped" }.
     const wsDir = join(tmpRoot, "ws");
     fs.mkdirSync(wsDir, { recursive: true });

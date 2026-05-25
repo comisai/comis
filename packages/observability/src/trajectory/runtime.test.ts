@@ -380,7 +380,7 @@ describe("createTrajectoryRecorder -- trace.write_failures sentinel", () => {
   });
 });
 
-describe("createTrajectoryRecorder -- pointer file (design §6.1)", () => {
+describe("createTrajectoryRecorder -- pointer file", () => {
   it("creates_pointer_file_when_sessionFile_provided", async () => {
     const sessionFile = join(tmpDir, "session.jsonl");
     const recorder = createTrajectoryRecorder({
@@ -432,7 +432,7 @@ describe("createTrajectoryRecorder -- pointer file (design §6.1)", () => {
   });
 });
 
-describe("createTrajectoryRecorder -- envelope shape (design §6.2)", () => {
+describe("createTrajectoryRecorder -- envelope shape", () => {
   it("emits_source_runtime_on_envelope by default", async () => {
     const recorder = createTrajectoryRecorder({
       agentId: "agent-1",

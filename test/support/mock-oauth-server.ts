@@ -42,23 +42,23 @@ export interface MockOAuthServer {
   /** Configure how many 403 responses the device-code poll emits before success. Default: 2. */
   setDeviceCodePollsUntilSuccess(count: number): void;
   /**
-   * Phase 66 (66-P11 Notion): when true, every `POST /token`
-   * grant_type=refresh_token issues a DIFFERENT refresh_token AND invalidates
-   * the presented one — re-presenting a rotated token is rejected 400. Default:
-   * false (refresh_token is stable, mirroring providers that do not rotate).
+   * When true, every `POST /token` grant_type=refresh_token issues a DIFFERENT
+   * refresh_token AND invalidates the presented one — re-presenting a rotated
+   * token is rejected 400. Default: false (refresh_token is stable, mirroring
+   * providers that do not rotate).
    */
   setRotateRefreshToken(rotate: boolean): void;
   /**
-   * Phase 66 (OAUTH-05): count of `POST /token` grant_type=refresh_token
-   * requests since the last reset(). Separate from the legacy
-   * getRequestCount() so the OAUTH-05 dedup stress test (100 concurrent → 1
-   * refresh) is unambiguous. NOT incremented by the legacy /oauth/token route.
+   * Count of `POST /token` grant_type=refresh_token requests since the last
+   * reset(). Separate from the legacy getRequestCount() so the dedup stress
+   * test (100 concurrent → 1 refresh) is unambiguous. NOT incremented by the
+   * legacy /oauth/token route.
    */
   getRefreshCount(): number;
   /**
-   * Phase 66 (66-P12 Stripe): per-request capture of `POST /token` traffic in
-   * arrival order — grant_type + the inbound `Stripe-Account` header (empty
-   * string when absent). Cleared by reset().
+   * Per-request capture of `POST /token` traffic in arrival order —
+   * grant_type + the inbound `Stripe-Account` header (empty string when
+   * absent). Cleared by reset().
    */
   getTokenRequests(): ReadonlyArray<{ grantType: string; stripeAccount: string }>;
   /** Reset counters and any queued response. Call between tests. */
@@ -106,7 +106,7 @@ export function createMockOAuthServer(): MockOAuthServer {
   let deviceCodePollCount = 0;
   let deviceCodePollsUntilSuccess = 2;
 
-  // Phase 66 OAuth 2.1 surface state (POST /token + discovery/DCR/authorize).
+  // OAuth 2.1 surface state (POST /token + discovery/DCR/authorize).
   // Kept SEPARATE from the legacy /oauth/token requestCounts so the two routes
   // never cross-contaminate each other's counters (the legacy Codex tests count
   // /oauth/token via getRequestCount; the new flow counts /token via
@@ -211,10 +211,10 @@ export function createMockOAuthServer(): MockOAuthServer {
       }
 
       // -----------------------------------------------------------------------
-      // Phase 66 OAuth 2.1 surface. Matched BEFORE the legacy /oauth/token
-      // fallthrough so the new /token route (and discovery/DCR/authorize) never
-      // touches the legacy grant counters. `selfBaseUrl` reconstructs this
-      // server's own origin from the bound port so discovery points at self.
+      // OAuth 2.1 surface. Matched BEFORE the legacy /oauth/token fallthrough
+      // so the new /token route (and discovery/DCR/authorize) never touches the
+      // legacy grant counters. `selfBaseUrl` reconstructs this server's own
+      // origin from the bound port so discovery points at self.
       // -----------------------------------------------------------------------
       const selfBaseUrl =
         server !== undefined ? `http://127.0.0.1:${(server.address() as AddressInfo).port}` : "";
@@ -466,9 +466,9 @@ export function createMockOAuthServer(): MockOAuthServer {
       // poll 3 is 200" behavior.
       deviceCodePollCount = 0;
       deviceCodePollsUntilSuccess = 2;
-      // Phase 66: reset the OAuth 2.1 /token state — refresh count, rotation
-      // toggle (back to the non-rotating default), the rotated-out token set,
-      // and the per-request capture log.
+      // Reset the OAuth 2.1 /token state — refresh count, rotation toggle
+      // (back to the non-rotating default), the rotated-out token set, and
+      // the per-request capture log.
       refreshCount = 0;
       rotateRefreshToken = false;
       rotatedOutRefreshTokens.clear();

@@ -187,7 +187,7 @@ describe("createTokenHandlers - token management", () => {
       expect(result.tokens).toHaveLength(0);
     });
 
-    it("rejects without _trustLevel (H-1)", async () => {
+    it("rejects without _trustLevel", async () => {
       const deps = makeDeps();
       const handlers = createTokenHandlers(deps);
 
@@ -196,7 +196,7 @@ describe("createTokenHandlers - token management", () => {
       );
     });
 
-    it("rejects with non-admin _trustLevel (H-1)", async () => {
+    it("rejects with non-admin _trustLevel", async () => {
       const deps = makeDeps();
       const handlers = createTokenHandlers(deps);
 

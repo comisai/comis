@@ -86,7 +86,7 @@ describe("readFileSnapshot -- determinism", () => {
 });
 
 describe("readFileSnapshot -- field types", () => {
-  it("dev_and_ino_are_stringified_other_stat_fields_are_numbers (design §9.2 contract)", () => {
+  it("dev_and_ino_are_stringified_other_stat_fields_are_numbers", () => {
     const filePath = join(tmpDir, "f.yaml");
     writeFileSync(filePath, "x", { mode: 0o600 });
 

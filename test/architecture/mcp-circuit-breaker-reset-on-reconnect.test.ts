@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 64 RELY-06 (64-P2 mitigation): pin that the circuit breaker is
- * reset to "closed" in reconnectionLoop's success block. Without this,
- * an "open" breaker from generation N would survive into generation N+1
- * and tool calls would keep returning [server_unavailable] against a
- * healthy reconnected server.
+ * Pin that the circuit breaker is reset to "closed" in reconnectionLoop's
+ * success block. Without this, an "open" breaker from generation N would
+ * survive into generation N+1 and tool calls would keep returning
+ * [server_unavailable] against a healthy reconnected server.
  *
  * Negative invariant: wireClientLifecycleCallbacks (onclose/onerror) must
  * NOT reset the breaker -- it should stay open during the reconnect window
@@ -18,7 +17,7 @@ const RECONNECT_PATH = resolve(
   "packages/skills/src/skills/integrations/mcp-client/mcp-client-reconnect.ts",
 );
 
-describe("64-P2 mitigation -- circuit breaker resets on reconnect success (RELY-06)", () => {
+describe("circuit breaker resets on reconnect success", () => {
   it("reconnectionLoop success block resets state.circuitBreakers", () => {
     const src = readFileSync(RECONNECT_PATH, "utf8");
     const successBlockMatch = src.match(/state\.connections\.set\(serverName, newConnection\);[\s\S]*?return;/);
@@ -26,7 +25,7 @@ describe("64-P2 mitigation -- circuit breaker resets on reconnect success (RELY-
     const successBlock = successBlockMatch![0];
     expect(
       successBlock,
-      "Breaker reset (state.circuitBreakers.set with status: 'closed') MUST appear in the reconnect success block -- 64-P2 mitigation per RELY-06.",
+      "Breaker reset (state.circuitBreakers.set with status: 'closed') MUST appear in the reconnect success block.",
     ).toMatch(/state\.circuitBreakers\.set\([\s\S]*?status:\s*["']closed["']/);
   });
 

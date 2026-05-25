@@ -3,8 +3,8 @@
  * File-backed adapter tests for `OAuthCredentialStorePort`.
  *
  * Uses `createFileLock` from `../runtime/file-lock.js` (core's canonical
- * FileLockPort adapter). Core cannot depend on @comis/scheduler per
- * AGENTS.md §1 inward-only invariant.
+ * FileLockPort adapter). Core cannot depend on @comis/scheduler (hexagonal
+ * architecture inward-only invariant).
  *
  * Coverage groups:
  *   1. File creation + permissions (SPEC R2)

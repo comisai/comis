@@ -24,11 +24,11 @@ NAME_MAX = 64
 DESC_MAX = 1024
 BODY_MAX = 20_000
 
-# Phase 68 BUNDLE-01: `mcpServers` is the optional bundled MCP servers
-# declaration. This validator does NOT type-check the inner shape (the Zod
-# SkillManifestSchema chain owns that); it only acknowledges the key as a
-# recognized top-level entry so a manifest carrying an mcpServers block does
-# not surface as an unknown top-level key here.
+# `mcpServers` is the optional bundled MCP servers declaration. This validator
+# does NOT type-check the inner shape (the Zod SkillManifestSchema chain owns
+# that); it only acknowledges the key as a recognized top-level entry so a
+# manifest carrying an mcpServers block does not surface as an unknown
+# top-level key here.
 VALID_TOP_FIELDS = {
     "name", "description", "type", "version", "license",
     "userInvocable", "disableModelInvocation", "allowedTools",

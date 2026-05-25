@@ -2,7 +2,7 @@
 /**
  * Tests for the `comis mcp` CLI command surface.
  *
- * Covers the OPUX-07 / 65-P1 token-resolution helper `ensureGatewayToken`:
+ * Covers the token-resolution helper `ensureGatewayToken`:
  *   - missing token (no env, no ~/.comis/.env) surfaces an explicit error
  *     naming COMIS_GATEWAY_TOKEN (NOT a generic 401),
  *   - the --token flag overrides the env var,
@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensureGatewayToken } from "./mcp.js";
 
-describe("ensureGatewayToken (OPUX-07 / 65-P1)", () => {
+describe("ensureGatewayToken", () => {
   let tmpHome: string;
   let savedHome: string | undefined;
   let savedToken: string | undefined;

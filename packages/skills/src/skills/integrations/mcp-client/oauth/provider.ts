@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OAuthClientProvider adapter — the seam between the MCP SDK and Comis storage
- * (Phase 66 OAUTH-11 / 66d).
+ * OAuthClientProvider adapter — the seam between the MCP SDK and Comis storage.
  *
  * ── Adapter, not protocol (locked decision #2) ──────────────────────────────
  * The MCP SDK ships the entire OAuth 2.1 + PKCE protocol layer (`auth()`,
@@ -9,42 +8,42 @@
  * does NOT re-implement any of it. It implements the SDK's `OAuthClientProvider`
  * interface (`@modelcontextprotocol/sdk/client/auth.js`) by delegating its
  * 18-method surface to the three landed glue modules:
- *   - tokens()/saveTokens()                         → token store (66a; <server>.json)
- *   - clientInformation()/saveClientInformation()   → token store (66a; <server>.client.json)
- *   - discoveryState()/saveDiscoveryState()         → token store (66a; <server>.meta.json)
- *   - invalidateCredentials()                       → token store deleteAll (66a; logout / OAUTH-10)
+ *   - tokens()/saveTokens()                         → token store (<server>.json)
+ *   - clientInformation()/saveClientInformation()   → token store (<server>.client.json)
+ *   - discoveryState()/saveDiscoveryState()         → token store (<server>.meta.json)
+ *   - invalidateCredentials()                       → token store deleteAll (logout)
  *   - saveCodeVerifier()/codeVerifier()             → IN-MEMORY closure field (never disk)
- *   - addClientAuthentication()                     → Stripe-Account header (66-P12)
+ *   - addClientAuthentication()                     → Stripe-Account header
  * The 401 refresh path is owned by `connectServer` (mcp-client-connect.ts), which
- * routes through the 66c refresh-deduper with `state.callQueues` as the
+ * routes through the refresh-deduper with `state.callQueues` as the
  * concurrency-1 critical section. The deduper itself persists rotated tokens via
- * the same store (66-P11), so saveTokens here is the single absolute-expiresAt
+ * the same store, so saveTokens here is the single absolute-expiresAt
  * write path for both the auth-code exchange AND refresh.
  *
- * ── ABSOLUTE expiry (OAUTH-02 / 66-P3 / T-66-20) ────────────────────────────
+ * ── ABSOLUTE expiry ──────────────────────────────────────────────────────────
  * saveTokens delegates to the store, which computes
  * `expiresAt = now() + expires_in*1000` and persists ONLY the absolute epoch-ms
  * value — the adapter NEVER stores the SDK's relative `expires_in`. The store's
  * compile-time `_NoRelativeExpiry` guard makes a relative-field regression a
  * build error.
  *
- * ── code_verifier in memory only (OAUTH-12 / 66-P5 / T-66-20) ───────────────
+ * ── code_verifier in memory only ─────────────────────────────────────────────
  * The PKCE `code_verifier` lives in a closure field for the lifetime of a single
  * in-flight login and is NEVER written to disk. The 3-file token-store scheme has
  * no verifier file. A unit test greps the tmpdir to assert the verifier appears
  * in none of the persisted files; an architecture-grep asserts no `writeRegularFile`
  * / `fs.write*` call here ever takes the verifier.
  *
- * ── Stripe-Account header (OAUTH-11 / 66-P12 / T-66-21) ─────────────────────
+ * ── Stripe-Account header ────────────────────────────────────────────────────
  * When `oauthConfig.stripeAccount` is set, `addClientAuthentication` sets the
  * `Stripe-Account` header on the token request. The SDK invokes this hook for
  * BOTH the authorization-code exchange AND the refresh, so a Stripe Connect
  * connected-account context threads through every token POST (Stripe rejects a
  * refresh without it).
  *
- * ── State source-of-truth (OAUTH-08) ────────────────────────────────────────
+ * ── State source-of-truth ────────────────────────────────────────────────────
  * The CSRF `state` parameter is generated and validated by the daemon-side
- * browser-callback (66-05) which owns the loopback server. The adapter defers to
+ * browser-callback which owns the loopback server. The adapter defers to
  * the injected `getState` when present (one source of truth) and otherwise omits
  * the optional `state()` method so the SDK generates its own — there is no
  * adapter-local state generation to drift.
@@ -87,11 +86,11 @@ interface ProviderLogger {
  * does not depend on the manager types (avoids a cycle through mcp-client-types).
  */
 export interface OAuthProviderConfig {
-  /** OAUTH-03 discovery fallback authorization-server URL. */
+  /** Discovery fallback authorization-server URL. */
   readonly authorizationEndpoint?: string;
   /** Requested OAuth scope (threaded into clientMetadata + DCR). */
   readonly scope?: string;
-  /** OAUTH-11 / 66-P12 Stripe Connect connected-account id. */
+  /** Stripe Connect connected-account id. */
   readonly stripeAccount?: string;
 }
 
@@ -101,25 +100,24 @@ export interface OAuthClientProviderDeps {
   readonly serverName: string;
   /** Per-server OAuth hints (scope / Stripe-Account / authorization endpoint). */
   readonly oauthConfig: OAuthProviderConfig;
-  /** Disk-backed token store (66a) — the absolute-expiresAt persistence core. */
+  /** Disk-backed token store — the absolute-expiresAt persistence core. */
   readonly tokenStore: TokenStore;
   /**
-   * 401 refresh-deduper (66c). Held for parity / future provider-driven refresh
+   * 401 refresh-deduper. Held for parity / future provider-driven refresh
    * paths; the active 401 path is wired in connectServer with state.callQueues.
    */
   readonly deduper: RefreshDeduper;
   /**
    * Returns the active loopback `http://127.0.0.1:<port>/callback` URL during an
-   * interactive login, or `undefined` outside one. The browser-callback (66-05)
-   * owns the loopback server, so the redirect URL is closure-held there and
-   * surfaced through this getter — keeping ONE source of truth.
+   * interactive login, or `undefined` outside one. The browser-callback owns the
+   * loopback server, so the redirect URL is closure-held there and surfaced
+   * through this getter — keeping ONE source of truth.
    */
   readonly getRedirectUrl?: () => string | URL | undefined;
   /**
    * Returns the CSRF `state` parameter (generated + validated by the
-   * browser-callback, 66-05 / OAUTH-08). When omitted, the optional `state()`
-   * method is not exposed and the SDK generates its own — no adapter-local
-   * state to drift.
+   * browser-callback). When omitted, the optional `state()` method is not
+   * exposed and the SDK generates its own — no adapter-local state to drift.
    */
   readonly getState?: () => string | Promise<string>;
   readonly logger: ProviderLogger;
@@ -127,9 +125,8 @@ export interface OAuthClientProviderDeps {
 
 /**
  * Construct an {@link OAuthClientProvider} adapter for a single MCP server,
- * backed by the disk token store (66a) + refresh-deduper (66c). The
- * `code_verifier` is held in this closure (in memory) and never persisted
- * (OAUTH-12).
+ * backed by the disk token store and refresh-deduper. The `code_verifier` is
+ * held in this closure (in memory) and never persisted.
  *
  * ~150 LOC of delegation — the protocol is the SDK's (locked decision #2).
  */
@@ -139,21 +136,21 @@ export function createOAuthClientProvider(
   const { serverName, oauthConfig, tokenStore, logger } = deps;
 
   // The PKCE code_verifier for the in-flight login. CLOSURE-held; NEVER written
-  // to disk (OAUTH-12 / 66-P5).
+  // to disk.
   //
-  // CR-03: held as a BUFFER (not a string) so the bytes can be overwritten in
-  // place via zeroVerifier(Buffer.fill(0)) before the reference is dropped.
+  // Held as a BUFFER (not a string) so the bytes can be overwritten in place
+  // via zeroVerifier(Buffer.fill(0)) before the reference is dropped.
   // JavaScript strings are immutable — assigning a string holder to undefined
   // releases the reference but does NOT overwrite the backing memory, leaving
   // the verifier bytes recoverable from a heap snapshot until the next GC pass.
-  // Storing as a Buffer makes the OAUTH-12 zeroing contract end-to-end (the
-  // store also has no verifier file; the byte overwrite closes the in-memory
-  // leg). A new login overwrites the holder.
+  // Storing as a Buffer makes the zeroing contract end-to-end (the store also
+  // has no verifier file; the byte overwrite closes the in-memory leg). A new
+  // login overwrites the holder.
   let codeVerifierHolder: Buffer | undefined;
 
   /**
-   * Stripe-Account threading (66-P12). Defined only when a connected-account id
-   * is configured so the SDK's default client-auth applies for non-Stripe
+   * Stripe-Account threading. Defined only when a connected-account id is
+   * configured so the SDK's default client-auth applies for non-Stripe
    * providers (the SDK calls this hook INSTEAD of its default when present).
    */
   const addClientAuthentication: AddClientAuthentication | undefined =
@@ -188,9 +185,9 @@ export function createOAuthClientProvider(
     },
 
     async saveTokens(tokens: OAuthTokens): Promise<void> {
-      // Delegate to the store, which computes the ABSOLUTE expiresAt (OAUTH-02 /
-      // 66-P3) and captures a rotated refresh_token (66-P11). The adapter NEVER
-      // stores the relative expires_in itself.
+      // Delegate to the store, which computes the ABSOLUTE expiresAt and captures
+      // a rotated refresh_token. The adapter NEVER stores the relative
+      // expires_in itself.
       await tokenStore.saveTokens(serverName, tokens);
     },
 
@@ -207,10 +204,10 @@ export function createOAuthClientProvider(
       );
     },
 
-    // The interactive browser launch is daemon/CLI-side (resolved_scope #1/#3):
-    // the loopback server is already listening when auth() reaches this hook, so
-    // the adapter records the URL rather than calling open(). connectServer does
-    // NOT auto-launch on connect — it surfaces needs_oauth_login (T-66-22).
+    // The interactive browser launch is daemon/CLI-side: the loopback server is
+    // already listening when auth() reaches this hook, so the adapter records
+    // the URL rather than calling open(). connectServer does NOT auto-launch
+    // on connect — it surfaces needs_oauth_login.
     redirectToAuthorization(authorizationUrl: URL): void {
       logger.debug?.(
         { submodule: SUBMODULE, serverName, authorizationHost: authorizationUrl.host },
@@ -219,10 +216,10 @@ export function createOAuthClientProvider(
     },
 
     saveCodeVerifier(verifier: string): void {
-      // IN-MEMORY only (OAUTH-12 / 66-P5). No disk write path exists for this.
-      // CR-03: store as a Buffer so the bytes can be zeroed in place on
-      // invalidate. If a prior verifier survived (e.g. a retry overwriting an
-      // in-flight login), zero its bytes before dropping the reference.
+      // IN-MEMORY only. No disk write path exists for this.
+      // Store as a Buffer so the bytes can be zeroed in place on invalidate.
+      // If a prior verifier survived (e.g. a retry overwriting an in-flight
+      // login), zero its bytes before dropping the reference.
       if (codeVerifierHolder !== undefined) {
         zeroVerifier(codeVerifierHolder);
       }
@@ -256,7 +253,7 @@ export function createOAuthClientProvider(
       // The in-memory verifier is always dropped (it is per-login and the SDK
       // requests invalidation when the server rejects credentials).
       //
-      // CR-03: zero the verifier BUFFER before dropping the reference. The
+      // Zero the verifier BUFFER before dropping the reference. The
       // closure-held buffer is overwritten with `Buffer.fill(0)` so a heap
       // snapshot taken after invalidation cannot recover the PKCE secret.
       // Assigning the holder to undefined alone would only release the
@@ -268,19 +265,19 @@ export function createOAuthClientProvider(
         }
       }
       // The 3-file store does not separate tokens/client/discovery deletes today
-      // (logout clears all three — OAUTH-10). For any disk-backed scope, delete
-      // the server's files; the verifier-only scope touches no disk.
+      // (logout clears all three). For any disk-backed scope, delete the
+      // server's files; the verifier-only scope touches no disk.
       if (scope !== "verifier") {
         await tokenStore.deleteAll(serverName);
       }
     },
 
-    // Stripe-Account threading (66-P12) — present only when configured so the
-    // SDK's default client-auth applies for non-Stripe providers.
+    // Stripe-Account threading — present only when configured so the SDK's
+    // default client-auth applies for non-Stripe providers.
     ...(addClientAuthentication !== undefined ? { addClientAuthentication } : {}),
 
-    // CSRF state: defer to the browser-callback's generator (OAUTH-08) when
-    // injected — ONE source of truth. Omitted otherwise so the SDK self-generates.
+    // CSRF state: defer to the browser-callback's generator when injected —
+    // ONE source of truth. Omitted otherwise so the SDK self-generates.
     ...(deps.getState !== undefined ? { state: deps.getState } : {}),
   };
 

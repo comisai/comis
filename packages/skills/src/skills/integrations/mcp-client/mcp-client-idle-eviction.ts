@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-server idle eviction (Phase 65 OPUX-09).
+ * Per-server idle eviction.
  *
  * Schedules a per-server `systemSetTimeout` that fires `evictIdleServer`
  * when no successful tool call has reset the timer for `config.idleTtlMs`
@@ -80,7 +80,7 @@ export function resetIdleActivity(state: McpClientManagerState, name: string): v
  * otherwise reschedule for the remaining window (so activity since the last
  * schedule transparently defers eviction).
  *
- * WR-01: `originalTtl` is the configured idleTtlMs and is threaded UNCHANGED
+ * `originalTtl` is the configured idleTtlMs and is threaded UNCHANGED
  * through every reschedule — the eviction always fires at last-activity +
  * idleTtlMs. `remainingMs` is only the timer delay for the NEXT fire
  * (defaults to `originalTtl` on the first call). Pre-fix the reschedule passed
@@ -110,7 +110,7 @@ function scheduleNextEviction(
     }
     const idleFor = systemNowMs() - lastActivity;
     if (idleFor >= originalTtl) {
-      // WR-05: never tear down a connection with an outstanding tool call.
+      // Never tear down a connection with an outstanding tool call.
       // The success path resets lastActivityMs, but a call that is in-flight
       // (or queued) when the timer fires has not reached that reset yet — an
       // in-flight callTool IS activity. Treat a non-empty call queue as a
@@ -145,8 +145,8 @@ async function evictIdleServer(
   name: string,
 ): Promise<void> {
   const { logger } = deps;
-  // WR-02: idle eviction is normal scheduled behavior, not an error condition.
-  // Per AGENTS.md §2.1 errorKind (and hint) belong on WARN/ERROR logs only —
+  // Idle eviction is normal scheduled behavior, not an error condition.
+  // errorKind (and hint) belong on WARN/ERROR logs only —
   // attaching them to this INFO line misleads observability tooling that
   // filters on errorKind. The serverName alone is sufficient for correlation.
   logger.info({ serverName: name }, "MCP server idle eviction");
@@ -187,7 +187,7 @@ async function evictIdleServer(
     state.callQueues.delete(name);
   }
 
-  // Phase 67 CAP-02: tear down the dedicated keepalive queue alongside the
+  // Tear down the dedicated keepalive queue alongside the
   // call queue (only populated when primary concurrency > 1). Mirrors
   // disconnectServer so the queue cannot leak across reconnect generations.
   const keepaliveQueue = state.keepaliveQueues.get(name);

@@ -64,24 +64,21 @@ import type { RpcHandler } from "./types.js";
 import type { WorkspaceApiDeps as McpHandlerDeps } from "./types.js";
 export type { McpHandlerDeps };
 
-// Phase 63 SAFETY-03/04/09: plaintext-secret heuristic. Extracted to
+// Plaintext-secret heuristic. Extracted to
 // `./mcp-plaintext-secret.ts` (keeps this leaf under the 800-line cap).
 // Re-exported so the architecture-tier negative-control test
 // (`mcp-plaintext-secret-false-positives.test.ts`) reaches it via the
 // `@comis/daemon` barrel.
 export { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
 import { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
-// Phase 67 CR-01: persisted-entry construction extracted (single source of
+// Persisted-entry construction extracted (single source of
 // truth for the config-only field set; see mcp-persisted-entry.ts docblock).
 import { buildPersistedMcpEntry } from "./mcp-persisted-entry.js";
 
-// Phase 68 BUNDLE-01: persistMcpServers helper extracted to a sibling module
-// so Phase 68 Plan 04 (bundle-install) and Plan 05 (boot-orchestrator) can
-// import it WITHOUT pushing mcp-handlers.ts past the 800-line cap. The
-// helper is the single sanctioned writer to integrations.mcp.servers; see
-// shared/persist-mcp-servers.ts for the full docblock. Behavior unchanged
-// — the only structural delta is a widened actionType union (the two new
-// "skills.bundle.*" literals reserved for Plans 04/05).
+// persistMcpServers helper extracted to a sibling module to keep
+// mcp-handlers.ts under the 800-line cap. The helper is the single
+// sanctioned writer to integrations.mcp.servers; see
+// shared/persist-mcp-servers.ts for the full docblock.
 import { persistMcpServers } from "./shared/persist-mcp-servers.js";
 
 // ---------------------------------------------------------------------------
@@ -176,10 +173,10 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // Strip dispatcher-injected _X internals before contract parse.
       const userParams = stripInternalFields(rawParams);
 
-      // Phase 63 SAFETY-03/04/09: plaintext-secret reject (pre-Zod). Reads
-      // userParams.env raw; per-server opt-out via disablePlaintextSecretCheck
-      // logs WARN and allows. Bracketed [plaintext_secret_in_env] is
-      // LLM-readable; the hint routes the operator to secrets_manage.
+      // Plaintext-secret reject (pre-Zod). Reads userParams.env raw;
+      // per-server opt-out via disablePlaintextSecretCheck logs WARN and
+      // allows. Bracketed [plaintext_secret_in_env] is LLM-readable; the
+      // hint routes the operator to secrets_manage.
       const envBlock = userParams.env as Record<string, string> | undefined;
       const plaintextOptOut = userParams.disablePlaintextSecretCheck === true;
       if (envBlock && !plaintextOptOut) {
@@ -209,11 +206,11 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       const manager = deps.mcpClientManager;
 
-      // Phase 63 SAFETY-02 / SAFETY-06: copy operator-extension allowlist +
-      // OSV check toggles from the config root so spawn-time helpers
-      // (scrubStdioEnv + osvMalwareCheck) see them. Optional-chain matches
-      // the persist site below — test fixtures may construct deps without a
-      // container; built-in allowlist + Plan 01 OSV defaults apply then.
+      // Copy operator-extension allowlist + OSV check toggles from the config
+      // root so spawn-time helpers (scrubStdioEnv + osvMalwareCheck) see them.
+      // Optional-chain matches the persist site below — test fixtures may
+      // construct deps without a container; built-in allowlist + OSV defaults
+      // apply then.
       const mcpConfigRoot = deps.container?.config?.integrations?.mcp as
         | {
             safetyAllowedEnvKeys?: readonly string[];
@@ -222,18 +219,17 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           }
         | undefined;
 
-      // Phase 63 SAFETY-08 + CR-03: per-server rlimits resolution.
+      // Per-server rlimits resolution.
       // Resolution order: caller-supplied params.rlimits > persisted-entry
-      // rlimits > undefined (env-only wrap, no prlimit). Pre-CR-03 the only
-      // path was the persisted entry, deadlocking SAFETY-08 for new servers.
-      // CR-02: typed as McpServerEntry[] (Zod-inferred schema type) so every
-      // persisted field — rlimits, Phase 64 reliability, Phase 65 — is readable.
+      // rlimits > undefined (env-only wrap, no prlimit).
+      // Typed as McpServerEntry[] (Zod-inferred schema type) so every
+      // persisted field — rlimits, reliability config, etc. — is readable.
       const persistedServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
       const persistedEntry = persistedServers.find((s) => s.name === params.server_name);
       const resolvedRlimits = params.rlimits ?? persistedEntry?.rlimits;
 
-      // Phase 64 RELY-07: per-server reliability overrides. Same resolution
-      // order as resolvedRlimits — current intent > persisted > undefined.
+      // Per-server reliability overrides. Same resolution order as
+      // resolvedRlimits — current intent > persisted > undefined.
       const resolvedKeepaliveIntervalMs = params.keepaliveIntervalMs ?? persistedEntry?.keepaliveIntervalMs;
       const resolvedCircuitBreakerThreshold = params.circuitBreakerThreshold ?? persistedEntry?.circuitBreakerThreshold;
       const resolvedCircuitBreakerCooldownMs = params.circuitBreakerCooldownMs ?? persistedEntry?.circuitBreakerCooldownMs;
@@ -254,19 +250,19 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         keepaliveIntervalMs: resolvedKeepaliveIntervalMs,
         circuitBreakerThreshold: resolvedCircuitBreakerThreshold,
         circuitBreakerCooldownMs: resolvedCircuitBreakerCooldownMs,
-        // CR-02 (Phase 65) + CAP-02 (Phase 67): forward config-only fields from the
-        // persisted entry (mcp.connect has no CLI params for them) — else a reconnect
-        // drops idle eviction / tool filtering / resources-prompts / parallel-calls
-        // opt-ins. idleTtlMs only when >0 (0 ⇒ disabled, per startIdleTicker opt-in).
+        // Forward config-only fields from the persisted entry (mcp.connect has
+        // no CLI params for them) — else a reconnect drops idle eviction /
+        // tool filtering / resources-prompts / parallel-calls opt-ins.
+        // idleTtlMs only when >0 (0 ⇒ disabled, per startIdleTicker opt-in).
         ...(persistedEntry?.idleTtlMs !== undefined && persistedEntry.idleTtlMs > 0 && { idleTtlMs: persistedEntry.idleTtlMs }),
         ...(persistedEntry?.toolAllowlist !== undefined && { toolAllowlist: persistedEntry.toolAllowlist }),
         ...(persistedEntry?.toolBlocklist !== undefined && { toolBlocklist: persistedEntry.toolBlocklist }),
         ...(persistedEntry?.enableResources !== undefined && { enableResources: persistedEntry.enableResources }),
         ...(persistedEntry?.enablePrompts !== undefined && { enablePrompts: persistedEntry.enablePrompts }),
         ...(persistedEntry?.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: persistedEntry.supportsParallelToolCalls }),
-        // OAUTH-10/11 (Phase 66): forward auth/oauth from the persisted entry
-        // (no RPC param) so createTransport wires the OAuthClientProvider on
-        // reconnect — else the server downgrades to no-auth (CR-01 / T-66-02).
+        // Forward auth/oauth from the persisted entry (no RPC param) so
+        // createTransport wires the OAuthClientProvider on reconnect — else
+        // the server downgrades to no-auth.
         ...(persistedEntry?.auth !== undefined && { auth: persistedEntry.auth }),
         ...(persistedEntry?.oauth !== undefined && { oauth: persistedEntry.oauth }),
       };
@@ -290,7 +286,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         throw new Error(`Failed to connect MCP server "${params.server_name}": ${result.error.message}`);
       }
 
-      // Phase 47 (R1, R6): compute the full new servers array.
+      // Compute the full new servers array.
       // Read-current + filter-by-name + append. deepMerge replaces arrays
       // wholesale, so we MUST pass the full array, not a partial. The
       // optional chain on `deps.container` keeps existing test fixtures
@@ -299,9 +295,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // persistMcpServers call short-circuits to "skipped" anyway when
       // persistDeps is also absent).
       const currentServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
-      // Phase 67 CR-01: shared helper preserves config-only fields from the
-      // prior persisted entry (else the tool filter is dropped on reconnect —
-      // a security regression). See mcp-persisted-entry.ts.
+      // Shared helper preserves config-only fields from the prior persisted
+      // entry (else the tool filter is dropped on reconnect — a security
+      // regression). See mcp-persisted-entry.ts.
       const newEntry: McpServerEntry = buildPersistedMcpEntry({
         serverName: params.server_name,
         transport: params.transport,
@@ -315,9 +311,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         resolvedKeepaliveIntervalMs,
         resolvedCircuitBreakerThreshold,
         resolvedCircuitBreakerCooldownMs,
-        // OAUTH-10/11 (Phase 66): auth/oauth have no RPC param — buildPersistedMcpEntry
-        // resolves them from persistedEntry (CR-01 fallback) so the persist keeps
-        // them (T-66-02). No explicit pass-through needed.
+        // auth/oauth have no RPC param — buildPersistedMcpEntry resolves them
+        // from persistedEntry so the persist keeps them. No explicit
+        // pass-through needed.
         persistedEntry,
       });
       const newServers: McpServerEntry[] = [
@@ -325,7 +321,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         newEntry,
       ];
 
-      // Phase 47 (R1, R8, D-04): persist + audit JSONL + response-augment.
+      // Persist + audit JSONL + response-augment.
       const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
       const persistOutcome = await persistMcpServers(
         deps,
@@ -371,16 +367,16 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       await manager.disconnect(name);
 
-      // Phase 47 (R2, R6): compute the filtered servers array.
-      // Removed entry is named; remaining entries preserved in pre-call
-      // order. Empty result array is intentional — the array slot remains
-      // so subsequent persists repopulate it without recreating the path.
-      // Optional-chain on `deps.container` parallels the McpConnect site
-      // and preserves existing test fixtures that omit container.
+      // Compute the filtered servers array. Removed entry is named; remaining
+      // entries preserved in pre-call order. Empty result array is intentional
+      // — the array slot remains so subsequent persists repopulate it without
+      // recreating the path. Optional-chain on `deps.container` parallels the
+      // McpConnect site and preserves existing test fixtures that omit
+      // container.
       const currentServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
       const newServers: McpServerEntry[] = currentServers.filter((s) => s.name !== params.server_name);
 
-      // Phase 47 (R2, R8, D-04): persist + audit JSONL + response-augment.
+      // Persist + audit JSONL + response-augment.
       const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
       const persistOutcome = await persistMcpServers(
         deps,
@@ -418,16 +414,14 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // never let internals flow into Zod parsing.
       const userParams = stripInternalFields(rawParams);
 
-      // Phase 63 CR-02: apply the same pre-spawn safety controls as
-      // mcp.connect. mcp.test IS a pre-spawn surface (it actually spawns
-      // the child to probe it) — Phase 63's hardening of only mcp.connect
-      // left this method as a bypass: an admin (or any code path that
-      // landed at this RPC) could pass a raw `ghp_...` PAT in env or
-      // spawn `npx <malicious-pkg>` and Phase 63's guards would not fire.
-      // Mirror the mcp.connect plaintext-secret guard here. Read from
+      // Apply the same pre-spawn safety controls as mcp.connect. mcp.test IS
+      // a pre-spawn surface (it actually spawns the child to probe it) — an
+      // admin (or any code path that landed at this RPC) could pass a raw
+      // `ghp_...` PAT in env or spawn `npx <malicious-pkg>` without these
+      // guards. Mirror the mcp.connect plaintext-secret guard here. Read from
       // userParams (raw, pre-parse). Per-server opt-out via
-      // userParams.disablePlaintextSecretCheck = true logs WARN and
-      // allows. Bracketed error code is LLM-readable for self-correction.
+      // userParams.disablePlaintextSecretCheck = true logs WARN and allows.
+      // Bracketed error code is LLM-readable for self-correction.
       const envBlock = userParams.env as Record<string, string> | undefined;
       const plaintextOptOut = userParams.disablePlaintextSecretCheck === true;
       if (envBlock && !plaintextOptOut) {
@@ -455,11 +449,11 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       const params = McpTestContract.request.parse(userParams);
 
-      // Phase 63 CR-02: plumb operator-extension allowlist + OSV toggles +
-      // persisted rlimits from the config root, same as mcp.connect. The
-      // optional chain mirrors mcp.connect — test fixtures construct deps
-      // without a `container`, in which case the built-in allowlist is
-      // the only protection and OSV/rlimits fall back to defaults.
+      // Plumb operator-extension allowlist + OSV toggles + persisted rlimits
+      // from the config root, same as mcp.connect. The optional chain mirrors
+      // mcp.connect — test fixtures construct deps without a `container`, in
+      // which case the built-in allowlist is the only protection and
+      // OSV/rlimits fall back to defaults.
       const mcpConfigRoot = deps.container?.config?.integrations?.mcp as
         | {
             safetyAllowedEnvKeys?: readonly string[];
@@ -468,11 +462,11 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           }
         | undefined;
 
-      // Phase 63 CR-02: rlimits resolution — caller-supplied wins,
-      // otherwise read the persisted entry by the user-supplied `name`
-      // (NOT the internally-namespaced `__test__<name>` — the persisted
-      // entry uses the operator-visible identifier). The handler reads
-      // params.rlimits OR persistedEntry.rlimits OR undefined (no wrap).
+      // Rlimits resolution — caller-supplied wins, otherwise read the
+      // persisted entry by the user-supplied `name` (NOT the
+      // internally-namespaced `__test__<name>` — the persisted entry uses
+      // the operator-visible identifier). The handler reads params.rlimits
+      // OR persistedEntry.rlimits OR undefined (no wrap).
       // Typed as McpServerEntry[] (Zod-inferred schema type) — see mcp.connect.
       const persistedServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
       const persistedEntry = persistedServers.find((s) => s.name === params.name);
@@ -487,21 +481,20 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         env: params.env,
         headers: params.headers,
         enabled: true,
-        // Phase 63 CR-02 — plumb the same protections as mcp.connect.
+        // Plumb the same protections as mcp.connect.
         safetyAllowedEnvKeys: mcpConfigRoot?.safetyAllowedEnvKeys,
         osvCheckEnabled: mcpConfigRoot?.osvCheckEnabled,
         osvCacheTtlMs: mcpConfigRoot?.osvCacheTtlMs,
         rlimits: resolvedRlimits,
-        // OAUTH-10/11 (Phase 66): source auth/oauth from the persisted entry so
-        // a test connection of an oauth server wires the provider too.
+        // Source auth/oauth from the persisted entry so a test connection of
+        // an oauth server wires the provider too.
         ...(persistedEntry?.auth !== undefined && { auth: persistedEntry.auth }),
         ...(persistedEntry?.oauth !== undefined && { oauth: persistedEntry.oauth }),
       };
 
-      // Phase 63 CR-02: pre-spawn env-ref validation. Mirrors the
-      // mcp.connect site — reject when any env value references a key
-      // not present in the secrets store. Skipped only when secretManager
-      // is unwired (test setups).
+      // Pre-spawn env-ref validation. Mirrors the mcp.connect site — reject
+      // when any env value references a key not present in the secrets store.
+      // Skipped only when secretManager is unwired (test setups).
       if (config.env && deps.secretManager) {
         const sm = deps.secretManager;
         const unresolved = findUnresolvedEnvRefs(config.env, (key) => sm.get(key));
@@ -567,7 +560,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       const manager = deps.mcpClientManager;
 
-      // Phase 47 (D-02 / R7): override-rejection guard. reconnect MUST NOT accept
+      // Override-rejection guard. reconnect MUST NOT accept
       // transport/command/args/url/headers/env when stored runtime config exists
       // (contract: reconnect re-uses stored config; to change params, disconnect
       // then connect). Throw a raw Error with a bracketed error-code prefix (NOT
@@ -603,9 +596,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           if (!params.transport) {
             throw new Error(`MCP server "${name}" not found and no transport specified.`);
           }
-          // OAUTH-10/11 (Phase 66): fallback builds from RPC params (no
-          // auth/oauth) — source them from the persisted entry so a
-          // reconnect-with-params still wires the provider (T-66-02).
+          // Fallback builds from RPC params (no auth/oauth) — source them
+          // from the persisted entry so a reconnect-with-params still wires
+          // the provider.
           const reconnectPersisted = (
             (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[]
           ).find((s) => s.name === name);

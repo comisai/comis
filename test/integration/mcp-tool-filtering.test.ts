@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 65 OPUX-08 integration test — bridge-layer per-server tool filtering.
+ * Integration test — bridge-layer per-server tool filtering.
  *
  * Proves `mcpToolsToAgentTools`'s optional 6th `serverFiltersFn` parameter
- * (Plan 03) end-to-end against the @comis/skills barrel (via dist/): the
- * per-server allowlist/blocklist runs BEFORE the `.map()`, so a filtered tool
- * never receives an AgentTool wrapper and never enters the agent's tool
- * registry. This is the integration-tier re-verification of ROADMAP Phase 65
- * success criterion 2 ("a 20-tool server shrinks to 1 with toolAllowlist") and
- * the four allowlist/blocklist precedence cases from RESEARCH Example 3.
+ * end-to-end against the @comis/skills barrel (via dist/): the per-server
+ * allowlist/blocklist runs BEFORE the `.map()`, so a filtered tool never
+ * receives an AgentTool wrapper and never enters the agent's tool registry.
+ * Verifies success criterion "a 20-tool server shrinks to 1 with
+ * toolAllowlist" and the four allowlist/blocklist precedence cases.
  *
  * In-process (no daemon): `mcpToolsToAgentTools` is a pure transformer. The
  * `callTool` delegate is never invoked (filtering happens at construction).
  *
- * Per CLAUDE.md: integration tests import from `dist/` — requires `pnpm build`
- * first. The vitest workspace alias `@comis/skills` resolves to
+ * Integration tests import from `dist/` — requires `pnpm build` first. The
+ * vitest workspace alias `@comis/skills` resolves to
  * `packages/skills/dist/skills/index.js`.
  *
  * @module
@@ -28,7 +27,7 @@ import type { McpToolDefinition } from "@comis/skills";
 // Fixtures
 // ---------------------------------------------------------------------------
 
-/** Three tools on a "stocks" server (RESEARCH Example 3 canonical set). */
+/** Three tools on a "stocks" server (allowlist/blocklist canonical set). */
 const stocksTools: McpToolDefinition[] = [
   {
     name: "get_price",
@@ -70,7 +69,7 @@ const callTool = vi.fn();
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("OPUX-08 — bridge-layer tool filtering (mcpToolsToAgentTools serverFiltersFn)", () => {
+describe("bridge-layer tool filtering (mcpToolsToAgentTools serverFiltersFn)", () => {
   it("allowlist surfaces only the listed tool name", () => {
     const filters = vi.fn(() => ({ allowlist: ["get_price"] }));
     const agentTools = mcpToolsToAgentTools(
@@ -155,7 +154,7 @@ describe("OPUX-08 — bridge-layer tool filtering (mcpToolsToAgentTools serverFi
     expect(agentTools).toHaveLength(3);
   });
 
-  it("ROADMAP criterion 2: a 20-tool server shrinks to exactly 1 with toolAllowlist:[get_price]", () => {
+  it("a 20-tool server shrinks to exactly 1 with toolAllowlist:[get_price]", () => {
     const twenty = makeTwentyToolServer();
     expect(twenty).toHaveLength(20);
     const filters = vi.fn(() => ({ allowlist: ["get_price"] }));

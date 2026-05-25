@@ -8,7 +8,7 @@ import { SkillsConfigSchema } from "./schema-skills.js";
  * discover_tools normalizes BM25 scores to [0, 1] before the floor applies.
  * A stale raw-score override like `2.5` would produce zero matches under the
  * new normalized semantics — hard-fail at config load is safer than silently
- * broken discovery (AGENTS.md §3.4 fail-fast).
+ * broken discovery (fail-fast at config load is the correct behaviour).
  */
 describe("SkillsConfigSchema -- toolDiscovery.minBm25Score [.max(1) tightening]", () => {
   it("minBm25Score > 1.0 fails validation", () => {

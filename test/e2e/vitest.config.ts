@@ -25,8 +25,7 @@ const packages = resolve(__dirname, "../../packages");
  * No coverage thresholds at the project level — e2e tests stress the
  * daemon's BOOT path and channel adapters, not unit-level invariants;
  * the unit (packages/*) and integration (test/integration/) projects
- * own the coverage gates per their own coverage scope contracts (see
- * AGENTS.md §2.5).
+ * own the coverage gates per their own coverage scope contracts.
  *
  * @module
  */

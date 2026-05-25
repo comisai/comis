@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: CLI command entry point; throws caught by Commander.js error handler boundary per AGENTS.md §2.1 CLI user-facing flows exception. ensureGatewayToken throws a named-env-var error that each subcommand's catch converts to error()/process.exit(1).
+// @allow-throw: CLI command entry point; throws caught by Commander.js error handler boundary (CLI user-facing flows exception). ensureGatewayToken throws a named-env-var error that each subcommand's catch converts to error()/process.exit(1).
 /**
  * MCP server management commands: list, status, connect, disconnect, reconnect, test.
  *
@@ -10,11 +10,11 @@
  * params)` (enforced by test/architecture/cli-uses-typed-rpc.test.ts) inside
  * a `withClient` socket lifetime.
  *
- * Token resolution (OPUX-07 / 65-P1): each subcommand calls
- * `ensureGatewayToken(opts.token)` BEFORE the socket opens so a missing
- * gateway token surfaces a friendly error naming `COMIS_GATEWAY_TOKEN`
- * rather than a generic 401 from the daemon handshake. The `--token` flag
- * overrides the env var (read from `~/.comis/.env`).
+ * Token resolution: each subcommand calls `ensureGatewayToken(opts.token)`
+ * BEFORE the socket opens so a missing gateway token surfaces a friendly
+ * error naming `COMIS_GATEWAY_TOKEN` rather than a generic 401 from the
+ * daemon handshake. The `--token` flag overrides the env var (read from
+ * `~/.comis/.env`).
  *
  * @module
  */
@@ -39,7 +39,7 @@ import { registerMcpOauth } from "./mcp-oauth.js";
 // Re-export ensureGatewayToken so existing external consumers that import it
 // from "./mcp.js" (or "@comis/cli/commands/mcp") see no API surface change.
 // The actual implementation lives in mcp-token.ts to break the intra-package
-// `mcp.ts` ↔ `mcp-oauth.ts` cycle (66-09 final-gate Rule 1 fix).
+// `mcp.ts` ↔ `mcp-oauth.ts` cycle.
 export { ensureGatewayToken } from "./mcp-token.js";
 
 /**
@@ -82,7 +82,7 @@ export function registerMcpCommand(program: Command): void {
     .command("list")
     .description("List all MCP server connections (name, transport, status, tool count)")
     .option("--format <format>", "Output format (table|json)", "table")
-    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history (WR-02).")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history.")
     .action(async (options: { format: string; token?: string }) => {
       try {
         ensureGatewayToken(options.token);
@@ -132,7 +132,7 @@ export function registerMcpCommand(program: Command): void {
     .command("status <name>")
     .description("Show detailed status for one MCP server (tools, capabilities, serverInfo)")
     .option("--format <format>", "Output format (table|json)", "table")
-    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history (WR-02).")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history.")
     .action(async (name: string, options: { format: string; token?: string }) => {
       try {
         ensureGatewayToken(options.token);
@@ -184,7 +184,7 @@ export function registerMcpCommand(program: Command): void {
     .option("--args <args...>", "Command-line arguments (stdio only; variadic)")
     .option("--url <url>", "Server URL (sse/http only)")
     .option("--format <format>", "Output format (table|json)", "table")
-    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history (WR-02).")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history.")
     .action(
       async (
         name: string,
@@ -256,7 +256,7 @@ export function registerMcpCommand(program: Command): void {
     .option("--args <args...>", "Command-line arguments (stdio only; variadic)")
     .option("--url <url>", "Server URL (sse/http only)")
     .option("--format <format>", "Output format (table|json)", "table")
-    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history (WR-02).")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history.")
     .action(
       async (
         name: string,
@@ -323,7 +323,7 @@ export function registerMcpCommand(program: Command): void {
     .command("disconnect <name>")
     .description("Disconnect a named MCP server")
     .option("--format <format>", "Output format (table|json)", "table")
-    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history (WR-02).")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history.")
     .action(async (name: string, options: { format: string; token?: string }) => {
       try {
         ensureGatewayToken(options.token);
@@ -355,12 +355,12 @@ export function registerMcpCommand(program: Command): void {
     .command("reconnect <name>")
     .description("Reconnect a named MCP server using its stored config")
     .option("--format <format>", "Output format (table|json)", "table")
-    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history (WR-02).")
+    .option("--token <token>", "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history.")
     .action(async (name: string, options: { format: string; token?: string }) => {
       try {
         ensureGatewayToken(options.token);
-        // Send ONLY server_name — the D-02 guard rejects override params when
-        // a stored config exists (OPUX-05: the CLI never re-specifies transport).
+        // Send ONLY server_name — the guard rejects override params when
+        // a stored config exists (the CLI never re-specifies transport).
         const result = await withSpinner(`Reconnecting MCP server "${name}"...`, () =>
           withClient(async (client) => {
             return await callTyped(client, McpReconnectContract, { server_name: name });
@@ -384,9 +384,9 @@ export function registerMcpCommand(program: Command): void {
       }
     });
 
-  // mcp login <name> / mcp logout <name> — Phase 66 OAUTH-10. Registered in a
-  // separate module so the daemon-never-imports-`open` boundary + the OAuth
-  // open-vs-hint branching live away from this file (which stays focused on the
-  // Phase 65 connection-management subcommands).
+  // mcp login <name> / mcp logout <name> — registered in a separate module
+  // so the daemon-never-imports-`open` boundary + the OAuth open-vs-hint
+  // branching live away from this file (which stays focused on the
+  // connection-management subcommands).
   registerMcpOauth(mcp);
 }

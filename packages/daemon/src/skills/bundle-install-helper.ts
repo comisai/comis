@@ -2,20 +2,19 @@
 // @allow-throw: applyBundleInstall is invoked from RPC handler bodies whose
 // @allow-throw header already covers throw → JSON-RPC error conversion.
 /**
- * Phase 68 BUNDLE-05/06 (Plan 04) — applyBundleInstall: install-path hook.
+ * applyBundleInstall: install-path hook.
  *
  * Invoked from the three skill install RPC handlers (skills.import,
  * skills.create, skills.upload) AFTER the existing file-write + registry.init()
- * steps. Reads the freshly-written SKILL.md, runs Phase A via resolveBundle
- * (Plan 03), and on success commits via persistMcpServers (Plan 01) + a
- * sequential per-entry manager.connect.
+ * steps. Reads the freshly-written SKILL.md, runs Phase A via resolveBundle,
+ * and on success commits via persistMcpServers + a sequential per-entry
+ * manager.connect.
  *
- * Atomic two-phase invariant (BUNDLE-06 / 68-P5): Phase A reject ⇒ THROW
- * before any persist call. The throw fires before persistMcpServers and
- * before any deps.mcpClientManager.connect — so a partial OSV reject in a
- * 3-entry bundle commits ZERO writes and ZERO connects. The caller's outer
- * try block (rpc-dispatch.ts) surfaces the bracketed-code error to the RPC
- * client.
+ * Atomic two-phase invariant: Phase A reject ⇒ THROW before any persist call.
+ * The throw fires before persistMcpServers and before any
+ * deps.mcpClientManager.connect — so a partial OSV reject in a 3-entry bundle
+ * commits ZERO writes and ZERO connects. The caller's outer try block
+ * (rpc-dispatch.ts) surfaces the bracketed-code error to the RPC client.
  *
  * Phase B per-entry connect failures are isolated: a single entry's connect
  * failure logs a WARN with errorKind:"dependency" and continues. The persist
@@ -108,7 +107,7 @@ export function formatBundleError(error: BundleError): string {
 /**
  * Project a persisted McpServerEntry into an McpServerConfig for
  * manager.connect. Mirrors setup-mcp.ts's per-entry projection (the boot
- * path's connect site). Forwards the Phase 65/66/67 fields so the manager
+ * path's connect site). Forwards the per-server fields so the manager
  * sees the canonical runtime shape.
  *
  * Returns `unknown` to avoid a static import of the @comis/skills runtime
@@ -131,8 +130,8 @@ function buildRuntimeConfig(
     ...(entry.command !== undefined && { command: entry.command }),
     ...(entry.args !== undefined && { args: entry.args }),
     ...(entry.url !== undefined && { url: entry.url }),
-    // WR-02: bundle entries with an explicit `cwd` must use it at install-
-    // time connect — omitting cwd here made the install-connect run with
+    // Bundle entries with an explicit `cwd` must use it at install-
+    // time connect — omitting cwd here would make the install-connect run with
     // the default workspace CWD until the next daemon restart picked up
     // the field via setupMcp's full-entry projection. setup-mcp.ts:198
     // already reads `server.cwd` (with a workspace-root fallback); the
@@ -142,7 +141,7 @@ function buildRuntimeConfig(
     ...(entry.headers !== undefined && { headers: entry.headers }),
     ...(entry.maxConcurrency !== undefined && { maxConcurrency: entry.maxConcurrency }),
     enabled: true,
-    // Phase 63 SAFETY-02/06/08: forward operator-level safety toggles.
+    // Forward operator-level safety toggles.
     ...(mcpConfigRoot?.safetyAllowedEnvKeys !== undefined && {
       safetyAllowedEnvKeys: mcpConfigRoot.safetyAllowedEnvKeys,
     }),
@@ -151,7 +150,7 @@ function buildRuntimeConfig(
     }),
     ...(mcpConfigRoot?.osvCacheTtlMs !== undefined && { osvCacheTtlMs: mcpConfigRoot.osvCacheTtlMs }),
     ...(entry.rlimits !== undefined && { rlimits: entry.rlimits }),
-    // Phase 64 RELY-02/05: forward per-server reliability overrides.
+    // Forward per-server reliability overrides.
     ...(entry.keepaliveIntervalMs !== undefined && {
       keepaliveIntervalMs: entry.keepaliveIntervalMs,
     }),
@@ -161,18 +160,18 @@ function buildRuntimeConfig(
     ...(entry.circuitBreakerCooldownMs !== undefined && {
       circuitBreakerCooldownMs: entry.circuitBreakerCooldownMs,
     }),
-    // Phase 65 OPUX-08/09/10: forward per-server tool filtering + idle + utility opt-outs.
+    // Forward per-server tool filtering + idle + utility opt-outs.
     ...(entry.idleTtlMs !== undefined && entry.idleTtlMs > 0 && { idleTtlMs: entry.idleTtlMs }),
     ...(entry.toolAllowlist !== undefined && { toolAllowlist: entry.toolAllowlist }),
     ...(entry.toolBlocklist !== undefined && { toolBlocklist: entry.toolBlocklist }),
     ...(entry.enableResources !== undefined && { enableResources: entry.enableResources }),
     ...(entry.enablePrompts !== undefined && { enablePrompts: entry.enablePrompts }),
-    // Phase 67 CAP-02: forward parallel-tool-calls opt-in.
+    // Forward parallel-tool-calls opt-in.
     ...(entry.supportsParallelToolCalls !== undefined && {
       supportsParallelToolCalls: entry.supportsParallelToolCalls,
     }),
-    // Phase 66 OAUTH-10/11: forward auth/oauth so createTransport wires
-    // the OAuthClientProvider for stdio→sse→http transports.
+    // Forward auth/oauth so createTransport wires the OAuthClientProvider
+    // for stdio→sse→http transports.
     ...(entry.auth !== undefined && { auth: entry.auth }),
     ...(entry.oauth !== undefined && { oauth: entry.oauth }),
   };
@@ -237,7 +236,7 @@ export async function applyBundleInstall(
 
   const bundleServers = manifestResult.value.mcpServers;
   if (bundleServers === undefined || bundleServers.length === 0) {
-    // No bundle block ⇒ pre-Phase-68 install behavior (silent no-op).
+    // No bundle block ⇒ legacy install behavior (silent no-op).
     return { persistence: "skipped" };
   }
 
@@ -256,9 +255,9 @@ export async function applyBundleInstall(
   )?.mcp;
   const currentServers = (mcpConfigRoot?.servers ?? []) as McpServerEntry[];
 
-  // CR-01: read the daemon-private installed-bundles state file so the
-  // resolver can distinguish "an entry we previously installed for this
-  // skill" (replace-in-place) from "a user-authored entry with a spoofed
+  // Read the daemon-private installed-bundles state file so the resolver can
+  // distinguish "an entry we previously installed for this skill"
+  // (replace-in-place) from "a user-authored entry with a spoofed
   // _bundleSource field" (collision). The `dataDir` resolution mirrors the
   // OAuth credential store and other daemon-private state.
   const dataDir =
@@ -283,9 +282,9 @@ export async function applyBundleInstall(
   });
 
   if (!resolveResult.ok) {
-    // BUNDLE-06 atomic invariant: Phase A reject ⇒ THROW before any
-    // persistMcpServers or manager.connect call. The caller's outer
-    // try/catch surfaces this as the bracketed-code RPC error.
+    // Atomic invariant: Phase A reject ⇒ THROW before any persistMcpServers
+    // or manager.connect call. The caller's outer try/catch surfaces this as
+    // the bracketed-code RPC error.
     throw new Error(
       `[bundle_install_rejected:${resolveResult.error.kind}] ${formatBundleError(resolveResult.error)}`,
     );
@@ -310,8 +309,7 @@ export async function applyBundleInstall(
   }
 
   // STEP 4: PHASE B — commit. persistMcpServers is the single sanctioned
-  // writer (Phase 62 / Plan 01 SSOT). One atomic write covers all N
-  // bundled entries.
+  // writer (SSOT). One atomic write covers all N bundled entries.
   const persistOutcome = await persistMcpServers(
     deps,
     [...nextServers] as McpServerEntry[],
@@ -320,9 +318,9 @@ export async function applyBundleInstall(
     ctx,
   );
 
-  // CR-01: record this install in the daemon-private state file so the
-  // next install (or boot re-merge) of THIS skill can distinguish "our
-  // own entries" from "user-authored entries with a spoofed _bundleSource".
+  // Record this install in the daemon-private state file so the next install
+  // (or boot re-merge) of THIS skill can distinguish "our own entries" from
+  // "user-authored entries with a spoofed _bundleSource".
   // Best-effort — recordBundleEntries returns a Result; failures are
   // logged but do NOT abort the install (the persist already succeeded;
   // the worst case is the next install requires --force because the

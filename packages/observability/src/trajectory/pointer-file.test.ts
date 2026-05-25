@@ -2,7 +2,7 @@
 /**
  * Tests for `writeTrajectoryPointerFileBestEffort`.
  *
- * Covers design §6.1 + §2.3:
+ * Covers:
  *   - writes_pointer_with_correct_shape
  *   - pointer_file_has_mode_0600
  *   - symlink_parent_dir_is_silent_noop

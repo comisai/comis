@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 69 Plan 05 (SERVE-06) -- session.history deliveryStatus join unit tests.
+ * Unit tests for session.history deliveryStatus join semantics.
  *
  * Pins the join semantics in isolation:
  *
@@ -108,9 +108,8 @@ function makeQueuePort(entries: DeliveryQueueEntry[]): DeliveryQueuePort {
 
 /**
  * Loose deps shape -- the test passes the new optional `deliveryQueue` field
- * to assert the Plan-05 join behavior. Typed as a partial record so the test
- * file compiles against both pre- and post-Phase-69 SessionHandlerDeps
- * shapes (the type widening lands in GREEN).
+ * to assert the join behavior. Typed as a partial record so the test
+ * file compiles against both narrow and wide SessionHandlerDeps shapes.
  */
 type TestDepsOverrides = Partial<SessionHandlerDeps> & {
   deliveryQueue?: DeliveryQueuePort;
@@ -152,7 +151,7 @@ function makeDeps(
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("Phase 69 Plan 05 -- session.history deliveryStatus join (SERVE-06)", () => {
+describe("session.history deliveryStatus join", () => {
   it("session.history handler marks inbound user-role messages as deliveryStatus confirmed regardless of delivery queue state", async () => {
     // Even when the inbound message text COINCIDENTALLY matches a queue entry,
     // user-role messages are inbound (received, not sent) and always confirmed.

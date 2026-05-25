@@ -1,41 +1,41 @@
 // SPDX-License-Identifier: Apache-2.0
 // @allow-throw: CLI command entry point; throws are caught by each subcommand's
 // try/catch which converts them to error()/process.exit(1) at the Commander.js
-// boundary per AGENTS.md §2.1 CLI user-facing flows exception. ensureGatewayToken
+// boundary (CLI user-facing flows exception). ensureGatewayToken
 // throws a named-env-var error that the catch converts to exit(1).
 /**
- * MCP OAuth login/logout CLI subcommands (Phase 66 OAUTH-10 / 66g).
+ * MCP OAuth login/logout CLI subcommands.
  *
  * Provides `comis mcp login <server>` and `comis mcp logout <server>`,
- * registered onto Phase 65's `mcp` command group via {@link registerMcpOauth}.
+ * registered onto the `mcp` command group via {@link registerMcpOauth}.
  *
- * ── Browser launch is CLI-side (resolved_scope #1 / T-66-26) ────────────────
+ * ── Browser launch is CLI-side ───────────────────────────────────────────────
  * `mcp.oauth_login` runs the server-side half (loopback callback server,
  * discovery, PKCE, code exchange) and RETURNS the authorization URL — the
  * daemon never imports `open` because it may run on a remote/headless host.
  * The interactive host (local CLI) is where the browser actually opens — but
- * NOT from this CLI handler. CR-02: the orchestrator's non-headless path
+ * NOT from this CLI handler. The orchestrator's non-headless path
  * already opens the browser via its injected `openUrl` (login.ts:315) BEFORE
  * it awaits the callback, so by the time `mcp.oauth_login` returns
  * `status: "authorized"` the exchange has already completed and the
  * authorization URL's `state` parameter is spent. Re-opening the URL here
  * navigates the operator to a provider error page. The CLI surfaces:
  *   - `status:"headless_hint"` → PRINT `portForwardHint` + `authUrl`; do NOT
- *     open a browser (the daemon host has no display — T-66-30 / OAUTH-07).
+ *     open a browser (the daemon host has no display).
  *     The operator forwards the port + opens the URL themselves.
  *   - `status:"authorized"` → print success only. NEVER call `open()`: the
- *     URL is spent (CR-02). The daemon-side `openUrl` injected into
+ *     URL is spent. The daemon-side `openUrl` injected into
  *     `runOauthLogin` is what opens the browser at the right moment.
  *
- * ── Token resolution (OPUX-07 / 65-P1, T-66-28) ─────────────────────────────
+ * ── Token resolution ─────────────────────────────────────────────────────────
  * Each action calls `ensureGatewayToken(opts.token)` BEFORE `withClient` opens
  * the socket, so a missing gateway token surfaces a friendly error naming
  * `COMIS_GATEWAY_TOKEN` rather than opening an unauthenticated socket.
  *
- * ── Non-zero exit on failure (T-66-29) ──────────────────────────────────────
+ * ── Non-zero exit on failure ─────────────────────────────────────────────────
  * Commander does NOT set a non-zero exit code on a rejected action promise.
  * Each subcommand wraps its body in try/catch → `error(...)` + `process.exit(1)`
- * (the Phase 65 pattern) so a failed login does not silently exit 0. A
+ * so a failed login does not silently exit 0. A
  * `status:"failed"` response is routed through the same catch.
  *
  * No token material is ever logged: the RPC responses carry only
@@ -46,7 +46,7 @@
 
 import { McpOauthLoginContract, McpOauthLogoutContract } from "@comis/core";
 import type { Command } from "commander";
-// CR-02: the `open` import is intentionally absent. The CLI must NOT open
+// The `open` import is intentionally absent. The CLI must NOT open
 // the authUrl returned on `status: "authorized"` — its `state` parameter is
 // spent by the time the daemon-side orchestrator returns. The orchestrator
 // itself opens the browser via the daemon's injected `openUrl` at the right
@@ -59,11 +59,11 @@ import { withSpinner } from "../output/spinner.js";
 import { ensureGatewayToken } from "./mcp-token.js";
 
 const TOKEN_FLAG_DESCRIPTION =
-  "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history (WR-02).";
+  "Gateway token (overrides COMIS_GATEWAY_TOKEN env var). Prefer COMIS_GATEWAY_TOKEN or ~/.comis/.env — a token on the command line is visible via ps/proc and shell history.";
 
 /**
  * Register the `login` / `logout` OAuth subcommands onto an existing `mcp`
- * command group (Phase 65's `registerMcpCommand` calls this after the other
+ * command group (`registerMcpCommand` calls this after the other
  * subcommands). Kept in its own module so `mcp.ts` stays focused.
  *
  * @param mcp - The `mcp` Commander command created by `registerMcpCommand`.
@@ -88,7 +88,7 @@ export function registerMcpOauth(mcp: Command): void {
         );
 
         if (result.status === "failed") {
-          // Route through the catch so the exit code is non-zero (T-66-29).
+          // Route through the catch so the exit code is non-zero.
           throw new Error(
             `OAuth login failed for MCP server "${name}". Check the daemon logs for the cause (discovery, callback timeout, or token exchange).`,
           );
@@ -96,8 +96,7 @@ export function registerMcpOauth(mcp: Command): void {
 
         if (result.status === "headless_hint") {
           // Headless host: never open a browser — print the port-forward hint
-          // + the URL for the operator to forward and open themselves
-          // (T-66-30 / OAUTH-07).
+          // + the URL for the operator to forward and open themselves.
           info(
             `Headless host detected — no local browser. Forward the callback port, then open the URL below:`,
           );
@@ -112,7 +111,7 @@ export function registerMcpOauth(mcp: Command): void {
 
         // status === "authorized".
         //
-        // CR-02: The orchestrator (runOauthLogin) finished the second auth()
+        // The orchestrator (runOauthLogin) finished the second auth()
         // call and persisted the tokens BEFORE returning. The authUrl in the
         // response is the URL the SDK built during the first auth() pass —
         // it carries a `state` parameter that has been consumed by the now-

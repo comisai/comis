@@ -335,18 +335,17 @@ describe("SessionHistoryContract", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 69 Plan 05 (SERVE-06) -- additive optional `deliveryStatus` field on
-  // every messages[] entry. The handler computes it via a DeliveryQueuePort
-  // join (inbound msgs always confirmed; outbound confirmed iff the queue has
-  // no matching pending/in_flight/failed entry for that text+channel pair).
+  // Additive optional `deliveryStatus` field on every messages[] entry.
+  // The handler computes it via a DeliveryQueuePort join (inbound msgs always
+  // confirmed; outbound confirmed iff the queue has no matching
+  // pending/in_flight/failed entry for that text+channel pair).
   // The MCP resources/read filter exposes ONLY `confirmed` messages.
   // -------------------------------------------------------------------------
 
   it("SessionHistoryContract.response accepts messages with optional deliveryStatus confirmed or pending", () => {
     // The schema MUST preserve `deliveryStatus` through parse (not strip it).
-    // Pre-Phase-69 schema strips the unknown key by default -- that's the
-    // RED state. GREEN: the schema declares `deliveryStatus` so the parsed
-    // value carries the field through.
+    // The schema declares `deliveryStatus` so the parsed value carries the
+    // field through.
     const parsed = SessionHistoryContract.response.parse({
       session: {
         key: "k", agentId: "default", channelType: "dm",
@@ -364,7 +363,7 @@ describe("SessionHistoryContract", () => {
     expect(parsed.messages[1]).toHaveProperty("deliveryStatus", "pending");
   });
 
-  it("SessionHistoryContract.response accepts messages without deliveryStatus additive backward-compatible with pre-Phase-69 callers", () => {
+  it("SessionHistoryContract.response accepts messages without deliveryStatus (backward-compatible with callers that omit the field)", () => {
     expect(SessionHistoryContract.response.parse({
       session: {
         key: "k", agentId: "default", channelType: "dm",
@@ -381,9 +380,7 @@ describe("SessionHistoryContract", () => {
   });
 
   it("SessionHistoryContract.response rejects messages with an invalid deliveryStatus value", () => {
-    // The schema must enum-validate deliveryStatus. RED: pre-Phase-69 the
-    // schema strips the field silently, so an invalid literal passes; that
-    // is the wrong shape post-Phase-69. GREEN: z.enum(["confirmed","pending"])
+    // The schema must enum-validate deliveryStatus. z.enum(["confirmed","pending"])
     // rejects unknown literals.
     expect(() => SessionHistoryContract.response.parse({
       session: {

@@ -1,32 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 66 OAUTH-11 (mock coverage) + X-P7 — the FULL-CYCLE OAuth 2.1 + PKCE
- * integration test. This is the phase gate: it drives the entire flow against
- * the in-process mock authorization server (66-01) through the PUBLIC
- * @comis/skills package barrel (dist), exercising every prior plan end-to-end:
+ * FULL-CYCLE OAuth 2.1 + PKCE integration test. Drives the entire flow against
+ * the in-process mock authorization server through the PUBLIC @comis/skills
+ * package barrel (dist), exercising end-to-end:
  *
- *   discovery (RFC 9728/8414)            ← 66-03
- *     → DCR (POST /register)             ← MCP SDK auth()
- *     → PKCE authorize + loopback callback ← 66-05 browser-callback
- *     → token exchange → 3-file store    ← 66-02 token-store
- *     → bearer-attached path             ← 66-06 provider/adapter
- *     → force-expiry → deduped refresh   ← 66-04 refresh-deduper
- *     → rotation persist (Notion)        ← 66-04 / OAUTH-11
- *     → Stripe-Account header on refresh ← 66-06 / OAUTH-11
- *     → 100-concurrent → 1 refresh POST  ← 66-04 / OAUTH-05
+ *   discovery (RFC 9728/8414)
+ *     → DCR (POST /register)
+ *     → PKCE authorize + loopback callback
+ *     → token exchange → 3-file store
+ *     → bearer-attached path
+ *     → force-expiry → deduped refresh
+ *     → rotation persist (Notion)
+ *     → Stripe-Account header on refresh
+ *     → 100-concurrent → 1 refresh POST
  *
- * ── No real provider (X-P7 / T-66-31) ───────────────────────────────────────
  * Every assertion hits the in-process mock (createMockOAuthServer, bound
  * listen(0,"127.0.0.1")). The browser launch is an INJECTED openUrl spy —
  * NEVER a real browser, NEVER a real provider. The spy doubles as the "browser
  * driver": when the SDK hands it the authorization URL, the test follows the
  * mock's /authorize 302 to the loopback /callback, completing the redirect
- * leg the way a real browser would. The literal real-provider round-trip
- * (Notion + Linear + GitHub Enterprise) is the DEFERRED human-UAT gate recorded
- * in 66-09-HUMAN-UAT.md — it cannot be automated (real creds + interactive
- * login) and does NOT block pnpm test.
+ * leg the way a real browser would. The real-provider round-trip
+ * (Notion + Linear + GitHub Enterprise) requires real creds + interactive
+ * login and does NOT block pnpm test.
  *
- * ── Build-first (CLAUDE.md "Build & Test") ──────────────────────────────────
  * Integration tests import from dist/ via the vitest @comis/* aliases. Run
  * pnpm build before pnpm test:integration — stale dist silently masks src.
  * This file uses BARE @comis/skills imports only (never ../packages/src).
@@ -48,9 +44,9 @@ import type {
 // PUBLIC barrel imports (dist via the @comis/skills alias) — the architecture
 // boundary this gate proves: the full OAuth surface is reachable through the
 // package barrel, not src internals. createRefreshDeduper / RefreshDeduper /
-// RefreshResult are surfaced on the barrel specifically for this gate (per the
-// 66-09 plan, the integration test may not reach src internals — missing
-// re-exports are added to the barrel and the dist rebuilt).
+// RefreshResult are surfaced on the barrel specifically for this gate
+// (integration tests may not reach src internals — missing re-exports are
+// added to the barrel and the dist rebuilt).
 import {
   runOauthLogin,
   createTokenStore,
@@ -60,7 +56,7 @@ import {
   type RefreshResult,
 } from "@comis/skills";
 
-// The in-process mock authorization server (66-01). Imported from the shared
+// The in-process mock authorization server. Imported from the shared
 // fixture dir relative to this integration test — matches the support-fixture
 // convention for the integration project.
 import {
@@ -117,7 +113,7 @@ async function driveBrowser(authUrl: string): Promise<void> {
   await cbRes.text();
 }
 
-describe("MCP OAuth full-cycle roundtrip (mock server) — OAUTH-11 mock coverage / X-P7", () => {
+describe("MCP OAuth full-cycle roundtrip (mock server)", () => {
   let mock: MockOAuthServer;
   let baseUrl: string;
   let dir: string;
@@ -154,11 +150,11 @@ describe("MCP OAuth full-cycle roundtrip (mock server) — OAUTH-11 mock coverag
   it("drives discovery → DCR → authorize → callback → token store → refresh → new bearer", async () => {
     const serverName = "linear";
 
-    // The injected openUrl IS the browser driver (X-P7): when the SDK produces
-    // the authorization URL, follow the mock's /authorize 302 to the loopback
-    // /callback so the orchestrator's waitForCode() resolves. We capture the URL
-    // too so we can assert it targets the mock's /authorize (PKCE challenge +
-    // loopback redirect_uri).
+    // The injected openUrl IS the browser driver: when the SDK produces the
+    // authorization URL, follow the mock's /authorize 302 to the loopback
+    // /callback so the orchestrator's waitForCode() resolves. We capture the
+    // URL too so we can assert it targets the mock's /authorize (PKCE
+    // challenge + loopback redirect_uri).
     let openedUrl: string | undefined;
     const openUrl = vi.fn((url: string): void => {
       openedUrl = url;
@@ -222,13 +218,13 @@ describe("MCP OAuth full-cycle roundtrip (mock server) — OAUTH-11 mock coverag
     ) as Record<string, unknown>;
     expect(typeof tokenFile["accessToken"]).toBe("string");
     expect((tokenFile["accessToken"] as string).length).toBeGreaterThan(0);
-    // ABSOLUTE epoch-ms expiry (66-P3) — a future absolute timestamp, NEVER a
+    // ABSOLUTE epoch-ms expiry — a future absolute timestamp, NEVER a
     // relative expiresIn/expires_in field.
     expect(typeof tokenFile["expiresAt"]).toBe("number");
     expect(tokenFile["expiresAt"] as number).toBeGreaterThan(Date.now());
     expect(tokenFile["expiresIn"]).toBeUndefined();
     expect(tokenFile["expires_in"]).toBeUndefined();
-    // The PKCE code_verifier is NEVER persisted (OAUTH-12).
+    // The PKCE code_verifier is NEVER persisted.
     expect(JSON.stringify(tokenFile)).not.toContain("code_verifier");
     expect(tokenFile["codeVerifier"]).toBeUndefined();
 
@@ -240,7 +236,7 @@ describe("MCP OAuth full-cycle roundtrip (mock server) — OAUTH-11 mock coverag
     expect(firstRefreshToken).toBeTruthy();
 
     // ── Stage: force expiry → 401-deduped refresh → a NEW bearer is stored. ──
-    // The refresh path is the 66-04 deduper (the same one connectServer wires to
+    // The refresh path is the deduper (the same one connectServer wires to
     // state.callQueues for the live 401 path). Drive it directly here against
     // the just-persisted refresh_token; assert the access token rotates.
     const queue = new PQueue({ concurrency: 1 });
@@ -273,10 +269,10 @@ describe("MCP OAuth full-cycle roundtrip (mock server) — OAUTH-11 mock coverag
   });
 
   // --------------------------------------------------------------------------
-  // (b) Notion rotation (OAUTH-11 / 66-P11): a refresh persists the NEW
-  //     refresh_token; the old one is not reused (re-presenting it 400s).
+  // (b) Notion rotation: a refresh persists the NEW refresh_token; the old
+  //     one is not reused (re-presenting it 400s).
   // --------------------------------------------------------------------------
-  it("persists a ROTATED refresh_token and never reuses the old one — Notion (OAUTH-11 / 66-P11)", async () => {
+  it("persists a ROTATED refresh_token and never reuses the old one — Notion", async () => {
     const serverName = "notion";
     mock.setRotateRefreshToken(true);
 
@@ -329,10 +325,10 @@ describe("MCP OAuth full-cycle roundtrip (mock server) — OAUTH-11 mock coverag
   });
 
   // --------------------------------------------------------------------------
-  // (c) Stripe-Account header (OAUTH-11 / 66-P12): configured → the header
-  //     threads onto the refresh POST; unconfigured → it is absent.
+  // (c) Stripe-Account header: configured → the header threads onto the
+  //     refresh POST; unconfigured → it is absent.
   // --------------------------------------------------------------------------
-  it("threads the Stripe-Account header onto the refresh POST when configured (OAUTH-11 / 66-P12)", async () => {
+  it("threads the Stripe-Account header onto the refresh POST when configured", async () => {
     const serverName = "stripe";
     await store.saveTokens(serverName, {
       access_token: "AT_SEED",
@@ -350,7 +346,7 @@ describe("MCP OAuth full-cycle roundtrip (mock server) — OAUTH-11 mock coverag
     });
 
     // The Stripe-Account header is threaded via addClientAuthentication, the
-    // same hook the 66-06 provider sets when oauth.stripeAccount is configured.
+    // same hook the provider sets when oauth.stripeAccount is configured.
     const STRIPE_ACCOUNT = "acct_roundtrip";
     await deduper.dedupedRefresh({
       serverName,
@@ -402,10 +398,10 @@ describe("MCP OAuth full-cycle roundtrip (mock server) — OAUTH-11 mock coverag
   });
 
   // --------------------------------------------------------------------------
-  // (d) Dedup stress (OAUTH-05 / 66-P4): 100 concurrent calls sharing ONE
-  //     expired access token → exactly 1 refresh POST.
+  // (d) Dedup stress: 100 concurrent calls sharing ONE expired access token
+  //     → exactly 1 refresh POST.
   // --------------------------------------------------------------------------
-  it("100 concurrent same-token refreshes collapse to exactly ONE refresh POST (OAUTH-05 / 66-P4)", async () => {
+  it("100 concurrent same-token refreshes collapse to exactly ONE refresh POST", async () => {
     const serverName = "dedup-svc";
     await store.saveTokens(serverName, {
       access_token: "AT_EXPIRED",

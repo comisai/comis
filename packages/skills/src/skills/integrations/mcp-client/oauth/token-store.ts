@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * OAuth 2.1 token store — the persistence + correctness core for MCP OAuth
- * (Phase 66 OAUTH-01/02/04).
+ * OAuth 2.1 token store — the persistence + correctness core for MCP OAuth.
  *
  * Three files per server under `~/.comis/mcp-tokens/`, each mapping 1:1 to a
  * pair of SDK `OAuthClientProvider` methods:
@@ -9,11 +8,11 @@
  *   - `<server>.client.json` ← saveClientInformation / ...  (RFC 7591 DCR result)
  *   - `<server>.meta.json`   ← saveDiscoveryState / ...      (RFC 8414/9728 metadata)
  * There is NO `code_verifier` file — the PKCE verifier is closure-only,
- * never written to disk (OAUTH-12, owned by the browser-callback module).
+ * never written to disk (owned by the browser-callback module).
  *
- * ── ABSOLUTE expiry (OAUTH-02 / 66-P3) ──────────────────────────────────────
+ * ── ABSOLUTE expiry ──────────────────────────────────────────────────────────
  * The SDK `OAuthTokens` wire shape carries a RELATIVE `expires_in` (seconds).
- * Storing that verbatim is the 66-P3 bug: after a daemon restart the "remaining"
+ * Storing that verbatim causes a bug: after a daemon restart the "remaining"
  * seconds are re-interpreted from a fresh `now`, so the token looks valid
  * forever (or instantly expired). `saveTokens()` therefore computes
  * `expiresAt = now() + expires_in*1000` and persists ONLY the absolute epoch-ms
@@ -22,29 +21,26 @@
  * build error (the `*.test.ts` is excluded from `tsc`, so the load-bearing type
  * guard lives here in source — the test carries a runtime mirror).
  *
- * ── fs-safe substrate (OAUTH-02 / 66-P2 / 66-P8) ────────────────────────────
+ * ── fs-safe substrate ────────────────────────────────────────────────────────
  * Every write routes through `@comis/observability` `writeRegularFile`
  * (unlink → O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW → fchmod 0o600 → write → fstat →
  * close) and the dir through `ensureContainedDir({ mode: 0o700 })`. This file
  * issues no raw low-level fs writes — an architecture-grep test enforces the
- * substrate is the sole write path. DEVIATION NOTE (resolved_scope #2): OAUTH-02
- * phrases the requirement as "O_EXCL + fsync + rename". The substrate is a
- * STRONGER symlink-safe primitive (O_EXCL + O_NOFOLLOW + fchmod + parent lstat +
- * `confinedBaseDir` ancestor check) but writes IN-PLACE in the target dir — no
- * temp-file + move, hence no cross-device `EXDEV` (66-P2 cannot arise). A crash
- * mid-write is acceptable: tokens are re-fetchable on next login, so
- * durability-on-crash is not required and the literal fsync+move is not used.
+ * substrate is the sole write path. The substrate is a symlink-safe primitive
+ * (O_EXCL + O_NOFOLLOW + fchmod + parent lstat + `confinedBaseDir` ancestor
+ * check) but writes IN-PLACE in the target dir — no temp-file + move, hence no
+ * cross-device `EXDEV`. A crash mid-write is acceptable: tokens are
+ * re-fetchable on next login, so durability-on-crash is not required.
  *
- * ── Single-writer invariant (66-P15, cross-process lock DEFERRED to v2.5) ────
+ * ── Single-writer invariant (cross-process lock deferred) ────────────────────
  * `~/.comis/mcp-tokens/` assumes a SINGLE daemon writer. Two daemons sharing
  * the dir without a cross-process lock can both refresh with the same
  * refresh_token and trip a provider's refresh-token-reuse detection, nuking the
  * chain. The chokidar disk-watch below keeps a single daemon current with an
  * EXTERNAL cron/sibling rotation (picked up on the next read). The cross-process
- * `FileLockPort.withLock` hardening is explicitly OUT OF SCOPE for this phase
- * (resolved_scope #4) — do not add it here.
+ * `FileLockPort.withLock` hardening is explicitly deferred — do not add it here.
  *
- * ── Disk-watch (OAUTH-04 / 66-P13) ──────────────────────────────────────────
+ * ── Disk-watch ───────────────────────────────────────────────────────────────
  * A chokidar watcher on the tokens dir (`atomic:100`, 100ms debounce) clears
  * the in-memory cache on external `change`/`unlink`/`add`; the next read
  * re-reads from disk. Self-triggering on our own writes is a non-issue:
@@ -83,7 +79,7 @@ import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.
 
 /**
  * The on-disk `<server>.json` shape. ABSOLUTE `expiresAt` (epoch ms) ONLY —
- * there is intentionally NO `expiresIn`/`expires_in` field (66-P3).
+ * there is intentionally NO `expiresIn`/`expires_in` field.
  */
 const TokenFileSchema = z.object({
   accessToken: z.string(),
@@ -95,15 +91,14 @@ const TokenFileSchema = z.object({
 export type TokenFile = z.infer<typeof TokenFileSchema>;
 
 /**
- * Compile-time guard (66-P3, the highest-value regression guard in the phase):
- * the stored {@link TokenFile} must NOT carry a relative-expiry field. If a
- * future edit adds `expiresIn`/`expires_in` to {@link TokenFileSchema}, the
- * corresponding key type resolves to a non-`never` type and this line becomes a
- * type error. `keyof TokenFile & ("expiresIn" | "expires_in")` is `never` while
- * the schema is clean, so `_NoRelativeExpiry` is satisfiable; it stops
- * compiling the instant a relative key is introduced. `*.test.ts` is excluded
- * from `packages/skills/tsconfig.json`, so this source-side assertion (NOT the
- * test's `expectTypeOf`) is the build-time gate.
+ * Compile-time guard: the stored {@link TokenFile} must NOT carry a
+ * relative-expiry field. If a future edit adds `expiresIn`/`expires_in` to
+ * {@link TokenFileSchema}, the corresponding key type resolves to a non-`never`
+ * type and this line becomes a type error. `keyof TokenFile & ("expiresIn" |
+ * "expires_in")` is `never` while the schema is clean, so `_NoRelativeExpiry`
+ * is satisfiable; it stops compiling the instant a relative key is introduced.
+ * `*.test.ts` is excluded from `packages/skills/tsconfig.json`, so this
+ * source-side assertion (NOT the test's `expectTypeOf`) is the build-time gate.
  */
 type _NoRelativeExpiry = (keyof TokenFile & ("expiresIn" | "expires_in")) extends never
   ? true
@@ -178,7 +173,7 @@ export interface TokenStoreDeps {
 export interface TokenStore {
   /** Read `<server>.json`; reconstruct the SDK-shaped tokens (relative `expires_in` rebuilt from absolute `expiresAt`). */
   tokens(server: string): Promise<OAuthTokens | undefined>;
-  /** Persist tokens to `<server>.json`, computing ABSOLUTE `expiresAt` (66-P3). */
+  /** Persist tokens to `<server>.json`, computing ABSOLUTE `expiresAt`. */
   saveTokens(server: string, sdkTokens: OAuthTokens): Promise<void>;
   /** Read `<server>.client.json` (DCR result). */
   clientInformation(server: string): Promise<OAuthClientInformationFull | undefined>;
@@ -188,7 +183,7 @@ export interface TokenStore {
   discoveryState(server: string): Promise<OAuthDiscoveryState | undefined>;
   /** Persist discovery state to `<server>.meta.json`. */
   saveDiscoveryState(server: string, state: OAuthDiscoveryState): Promise<void>;
-  /** Remove all three files for a server (logout / OAUTH-10). */
+  /** Remove all three files for a server (logout). */
   deleteAll(server: string): Promise<void>;
   /**
    * Start the chokidar disk-watch (idempotent). Resolves once the watcher has
@@ -210,10 +205,10 @@ const WATCH_DEBOUNCE_MS = 100;
  * Sentinel TTL (seconds) when the SDK omits `expires_in`. Per RFC 6749 §5.1
  * `expires_in` is RECOMMENDED, not required; a provider that omits it grants a
  * token with no server-stated lifetime. We still persist an ABSOLUTE value (no
- * relative drift, 66-P3) but pick a long horizon (~10 years) so the pre-flight
- * treats it as long-lived rather than instantly-expired (which would force a
- * pointless refresh the provider may not support). The disk-watch still picks
- * up an external rotation, and a real 401 still drives re-auth.
+ * relative drift) but pick a long horizon (~10 years) so the pre-flight treats
+ * it as long-lived rather than instantly-expired (which would force a pointless
+ * refresh the provider may not support). The disk-watch still picks up an
+ * external rotation, and a real 401 still drives re-auth.
  */
 const SENTINEL_TTL_SEC = 10 * 365 * 24 * 60 * 60;
 
@@ -237,7 +232,7 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
 
   // Last-good values keyed by ABSOLUTE file path. Unlike `cache`, this map is
   // NOT wiped by the watcher — it holds the most recent SUCCESSFULLY-parsed
-  // value so a fail-soft re-read (66-P13: truncated/partial external write)
+  // value so a fail-soft re-read (truncated/partial external write)
   // can fall back to it instead of returning undefined. Cleared only on an
   // explicit deleteAll (the file is genuinely gone).
   const lastGood = new Map<string, unknown>();
@@ -286,7 +281,7 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
     }
     const parsed = schema.safeParse(safeJsonParse(raw));
     if (!parsed.success) {
-      // Fail-soft (66-P13): a truncated/partial external write must NOT crash.
+      // Fail-soft: a truncated/partial external write must NOT crash.
       // Fall back to the last SUCCESSFULLY-parsed value (which survives the
       // watcher's cache.clear()) and log WARN. NEVER log the raw content (it
       // may contain tokens). We deliberately do NOT cache the bad value, so a
@@ -349,7 +344,7 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
   }
 
   // -------------------------------------------------------------------------
-  // chokidar watcher (OAUTH-04). Pattern mirrors
+  // chokidar watcher. Pattern mirrors
   // packages/agent/src/model/oauth-token-manager.ts: atomic:100 coalesces the
   // substrate's unlink+create mtime churn; 100ms debounce; invalidate-and-
   // lazily-reload (no self-suppression needed — see module header).
@@ -387,7 +382,7 @@ export function createTokenStore(deps: TokenStoreDeps): TokenStore {
     },
 
     async saveTokens(server: string, sdkTokens: OAuthTokens): Promise<void> {
-      // 66-P3: compute ABSOLUTE expiry from the SDK's relative expires_in.
+      // Compute ABSOLUTE expiry from the SDK's relative expires_in.
       // When expires_in is absent, fall back to a long sentinel TTL (see
       // SENTINEL_TTL_SEC) — the field is always populated with an absolute
       // value so there is never any relative-drift, while a token of unknown

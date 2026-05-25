@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * config:mutated event coalescer with 500ms trailing-edge debounce for
- * Phase 64 RELY-08. Extracted from mcp-handlers.ts to keep that leaf under
- * the 800-line per-file cap (Phase 63 precedent: looksLikePlaintextSecret).
- * Bulk operations (Phase 68 skill-install adding N MCPs) produce ONE event
- * per 500ms window with merged { added, removed } diff arrays. The factory
- * returns closure-captured state; mcp-handlers.ts goes through getCoalescer
- * for the process-wide singleton. _resetConfigMutatedCoalescer mirrors the
- * _resetSigusr1Timer / _resetMutationFence test seam at
+ * config:mutated event coalescer with 500ms trailing-edge debounce.
+ * Extracted from mcp-handlers.ts to keep that leaf under the 800-line
+ * per-file cap. Bulk operations (skill-install adding N MCPs) produce ONE
+ * event per 500ms window with merged { added, removed } diff arrays. The
+ * factory returns closure-captured state; mcp-handlers.ts goes through
+ * getCoalescer for the process-wide singleton. _resetConfigMutatedCoalescer
+ * mirrors the _resetSigusr1Timer / _resetMutationFence test seam at
  * persist-to-config.ts:72/99 for beforeEach state isolation.
  *
  * @module
@@ -23,7 +22,7 @@ import {
   type McpServerEntry,
 } from "@comis/core";
 
-/** Phase 64 RELY-08 trailing-edge debounce window. */
+/** Trailing-edge debounce window. */
 const CONFIG_MUTATED_DEBOUNCE_MS = 500;
 
 interface CoalescerState {
@@ -125,7 +124,7 @@ export function _resetConfigMutatedCoalescer(): void {
  * Compute the {added, removed} diff between previous and current
  * `integrations.mcp.servers` arrays. Dedup by entry `name`. Lives in the
  * coalescer module (NOT inlined at the call site) so mcp-handlers.ts stays
- * under the 800-line cap by construction (extraction-first; Phase 63 precedent).
+ * under the 800-line cap by construction (extraction-first).
  */
 export function computeMcpDiff(
   previous: readonly McpServerEntry[],

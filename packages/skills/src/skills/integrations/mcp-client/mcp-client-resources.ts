@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Capability-gated resources/prompts utility tools (Phase 65 OPUX-10).
+ * Capability-gated resources/prompts utility tools.
  *
  * Provides 4 RPC adapters around the MCP SDK's resources/prompts methods.
  * Each adapter looks up the per-server SDK Client via the manager's
@@ -19,9 +19,9 @@
  * when the capability is present (mitigates Cursor's 40-tool ceiling on
  * resources-noisy servers).
  *
- * CR-01: the registry's conditional predicate gates at tool-REGISTRATION
- * time, but a capability can disappear on a reconnect (generation bump) while
- * the descriptor stays registered until the next agent assembly. Each adapter
+ * The registry's conditional predicate gates at tool-REGISTRATION time, but a
+ * capability can disappear on a reconnect (generation bump) while the
+ * descriptor stays registered until the next agent assembly. Each adapter
  * therefore RE-ENFORCES the same gate (serverAdvertisesResources/Prompts) on
  * the LIVE connection before delegating to the SDK, and readResourceFromServer
  * additionally rejects SSRF-prone URI schemes (http/https/file) since the uri
@@ -77,7 +77,7 @@ export interface PromptGetResult {
 }
 
 // ---------------------------------------------------------------------------
-// CR-01: SSRF-prone resource URI schemes
+// SSRF-prone resource URI schemes
 // ---------------------------------------------------------------------------
 //
 // The `uri` passed to readResourceFromServer is caller-controlled (the LLM
@@ -108,10 +108,10 @@ function uriScheme(uri: string): string | undefined {
  * List the resources advertised by a connected MCP server.
  *
  * Returns `err` when the server is unknown, not in the `connected` state, or
- * (CR-01) does not advertise the resources capability on the LIVE connection
- * / has opted out via enableResources:false. The registry's conditional
- * predicate filters at tool-registration time, but a capability can disappear
- * on reconnect while the descriptor is still registered — so the gate is
+ * does not advertise the resources capability on the LIVE connection / has
+ * opted out via enableResources:false. The registry's conditional predicate
+ * filters at tool-registration time, but a capability can disappear on
+ * reconnect while the descriptor is still registered — so the gate is
  * re-enforced here at the RPC adapter layer. Any SDK throw is caught and
  * translated to `err` (never bubbles).
  */
@@ -144,10 +144,10 @@ export async function listResourcesForServer(
 /**
  * Read the contents of a single resource (by URI) from a connected server.
  *
- * CR-01: enforces the resources capability gate on the live connection AND
- * rejects SSRF-prone URI schemes (http/https/file) before delegating — the
- * `uri` is caller-controlled and a remote server could otherwise be driven to
- * fetch internal targets.
+ * Enforces the resources capability gate on the live connection AND rejects
+ * SSRF-prone URI schemes (http/https/file) before delegating — the `uri` is
+ * caller-controlled and a remote server could otherwise be driven to fetch
+ * internal targets.
  */
 export async function readResourceFromServer(
   manager: McpClientManager,
@@ -187,7 +187,7 @@ export async function readResourceFromServer(
 /**
  * List the prompts advertised by a connected MCP server.
  *
- * CR-01: re-enforces the prompts capability gate on the live connection
+ * Re-enforces the prompts capability gate on the live connection
  * (see listResourcesForServer for the rationale).
  */
 export async function listPromptsForServer(
@@ -233,7 +233,7 @@ export async function getPromptFromServer(
     return err(new Error(`MCP server "${server}" does not advertise prompts capability`));
   }
   try {
-    // WR-03: the MCP SDK's getPrompt expects `arguments: Record<string,string>`,
+    // The MCP SDK's getPrompt expects `arguments: Record<string,string>`,
     // but `args` arrives as Record<string, unknown> (the get_prompt platform
     // tool types its arguments as Type.Record(Type.String(), Type.Unknown())).
     // A blind `as Record<string, string>` cast would ship non-string values

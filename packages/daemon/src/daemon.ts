@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: daemon bootstrap composition-root failures (secrets bootstrap, decryption, etc.); hard-fail at startup is the correct contract per AGENTS.md §6.2 (bootstrap() returns Result but daemon.ts is the entry point that catches it and exits).
+// @allow-throw: daemon bootstrap composition-root failures (secrets bootstrap, decryption, etc.); hard-fail at startup is the correct contract (bootstrap() returns Result but daemon.ts is the entry point that catches it and exits).
 /**
  * Daemon Entry Point: composition root for the entire daemon process.
  *
@@ -834,9 +834,9 @@ type PostChannelsBootContext = BootContext & Required<Pick<BootContext,
  * Resolve gateway tokens from config (config -> env -> auto-generated).
  */
 /**
- * Phase 69 SERVE-02: per-token MCP-client config block. Surface to the
- * gateway TokenStore via `TokenEntry.mcpClient` so the verified TokenClient
- * carries the allowlist + sessionAllowlist + per-tool rate-limit overrides.
+ * Per-token MCP-client config block. Surface to the gateway TokenStore via
+ * `TokenEntry.mcpClient` so the verified TokenClient carries the allowlist +
+ * sessionAllowlist + per-tool rate-limit overrides.
  */
 interface ResolvedGatewayToken {
   id: string;
@@ -858,9 +858,9 @@ function resolveGatewayTokens(deps: {
   for (const t of container.config.gateway?.tokens ?? []) {
     const tokenId = t.id ?? "unknown";
     const tokenScopes = [...(t.scopes ?? [])];
-    // Phase 69 SERVE-02: preserve the per-MCP-client config block so the
-    // TokenStore can surface it on verified TokenClient instances. Schema
-    // defaults guarantee the fields are populated when the block is present.
+    // Preserve the per-MCP-client config block so the TokenStore can surface
+    // it on verified TokenClient instances. Schema defaults guarantee the
+    // fields are populated when the block is present.
     const mcpClient = t.mcpClient
       ? {
           allowlist: [...t.mcpClient.allowlist],
@@ -1647,8 +1647,8 @@ async function bootAgents(
     ({} as PerAgentConfig);
   const defaultWorkspaceDir = resolveWorkspaceDir(defaultAgentConfig, defaultAgentId);
 
-  // Phase 68 BUNDLE-03: boot-path skill-bundle re-merge MUST run BEFORE
-  // setupMcp (Pitfall 68-P-NEW-4 sequencing gate). The orchestrator
+  // Boot-path skill-bundle re-merge MUST run BEFORE setupMcp (sequencing
+  // gate). The orchestrator
   // re-runs the bundle resolver across every installed skill's mcpServers
   // block and persists the merged array via persistMcpServers — which
   // mutates container.config.integrations.mcp.servers via its in-memory
@@ -1687,9 +1687,9 @@ async function bootAgents(
     eventBus: container.eventBus,
     stdioDefaultConcurrency: container.config.integrations.mcp.stdioDefaultConcurrency,
     httpDefaultConcurrency: container.config.integrations.mcp.httpDefaultConcurrency,
-    // WR-03: forward the global reliability config so daemon-wide
+    // Forward the global reliability config so daemon-wide
     // keepalive/circuit-breaker overrides apply to startup-connected servers
-    // (previously only per-server mcp.connect overrides took effect).
+    // (otherwise only per-server mcp.connect overrides take effect).
     keepaliveIntervalMs: container.config.integrations.mcp.keepaliveIntervalMs,
     circuitBreakerThreshold: container.config.integrations.mcp.circuitBreakerThreshold,
     circuitBreakerCooldownMs: container.config.integrations.mcp.circuitBreakerCooldownMs,
@@ -2003,7 +2003,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     approvalGate: container.config.approvals?.enabled ? approvalGate : undefined,
     subprocessEnv: handle.execToolEnv, onSuspiciousContent: handle.onSuspiciousContent,
     mcpClientManager,
-    // OPUX-08: fresh accessor for per-server tool filtering — read live so
+    // Fresh accessor for per-server tool filtering — read live so
     // config:mutated server edits surface on the next tool assembly.
     getMcpServerEntries: () => container.config.integrations?.mcp?.servers ?? [],
     sandboxProvider, imageGenProvider, backgroundTaskManager,

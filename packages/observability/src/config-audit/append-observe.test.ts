@@ -5,8 +5,7 @@
  * The observe-side writer mirrors the write-side `appendConfigAuditRecord`
  * shape: produce a record matching `ConfigObserveAuditRecordSchema`,
  * persist it via the same `appendRegularFile`-backed JSONL chassis
- * the write-side uses. The four observability invariants per
- * design §9.2:
+ * the write-side uses. The four observability invariants:
  *
  *   1. `event: "config.observe"`, `source: "config-io"`, no `phase` /
  *      no flat-stat / no `result` fields (those belong to the write
@@ -61,7 +60,7 @@ describe("createConfigObserveAuditRecord — record shape", () => {
     });
 
     // Round-trip through the schema parser — failure here means the
-    // shape doesn't match design §9.2.
+    // shape doesn't match the config-observe schema.
     const parsed = ConfigObserveAuditRecordSchema.parse(record);
     expect(parsed.event).toBe("config.observe");
     expect(parsed.source).toBe("config-io");
@@ -120,7 +119,7 @@ describe("createConfigObserveAuditRecord — entryScript threading", () => {
   });
 });
 
-describe("createConfigObserveAuditRecord — §9.2 observation + valid + recovery", () => {
+describe("createConfigObserveAuditRecord — observation + valid + recovery", () => {
   it("projects the observation cluster onto the file-state / LKG / backup blocks", () => {
     const cfgPath = path.join(tmpDir, "config.yaml");
     fs.writeFileSync(cfgPath, "k: v\n", { mode: 0o600 });

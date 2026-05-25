@@ -1,34 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the loopback OAuth browser-callback server (Phase 66
- * OAUTH-06/07/08/09/12 + the security half of CI-02).
+ * Unit tests for the loopback OAuth browser-callback server.
  *
  * The callback server is driven DIRECTLY over the loopback port — `openUrl` is
  * an injected no-op spy, so no real browser ever launches. Each test issues its
  * own GET to `http://127.0.0.1:<port>/callback?code=&state=` (the "browser
  * redirect") and asserts the resulting code / HTTP status / log shape.
  *
- * RED→GREEN coverage:
- *   1. loopback bind (OAUTH-06/09): runBrowserCallback resolves a redirectUri
+ * Coverage:
+ *   1. loopback bind: runBrowserCallback resolves a redirectUri
  *      matching /^http:\/\/127\.0\.0\.1:\d+\/callback$/ — the literal IP, never
  *      "localhost" — and the server is reachable on that port.
  *   2. happy path: GET with the correct state + code → waitForCode() resolves to
  *      that code; the server is closed afterward (a follow-up connect fails).
- *   3. CSRF mismatch (OAUTH-08 / 66-P6): GET with a WRONG state → HTTP 400, an
+ *   3. CSRF mismatch: GET with a WRONG state → HTTP 400, an
  *      `errorKind:"security"` WARN, and waitForCode() does NOT resolve to the
  *      attacker's code. A different-LENGTH state proves timingSafeEqual is used
  *      (no throw; treated as a mismatch).
- *   4. redirect-URI allowlist pre-flight (OAUTH-09 / 66-P7): validateRedirectHost
+ *   4. redirect-URI allowlist pre-flight: validateRedirectHost
  *      rejects "localhost" and "[::1]" (unless opt-in) and accepts "127.0.0.1",
  *      BEFORE any browser launch.
- *   5. headless (OAUTH-07 / 66-P10): with each of SSH_CONNECTION / !isTTY /
+ *   5. headless: with each of SSH_CONNECTION / !isTTY /
  *      CONTAINER / WSLInterop the flow does NOT call openUrl and surfaces a
  *      `ssh -L <port>:localhost:<port>` port-forward hint; a non-headless env
  *      (TTY, no SSH, no container) DOES call openUrl with the authorization URL.
- *   6. timeout (OAUTH-06/66-P14): with the timeout shortened, an abandoned flow
+ *   6. timeout: with the timeout shortened, an abandoned flow
  *      → waitForCode() rejects with a timeout error AND server.close() ran (the
  *      port is released).
- *   7. verifier zeroing (OAUTH-12 / 66-P5): zeroVerifier(buf) zeroes the
+ *   7. verifier zeroing: zeroVerifier(buf) zeroes the
  *      closure-held code_verifier buffer after exchange. Plus an architecture
  *      grep: `code_verifier`/`codeVerifier` never appears as an argument to a
  *      write call site across oauth/*.ts.
@@ -197,9 +196,9 @@ describe("runBrowserCallback — loopback callback server", () => {
 
     // A WARN was logged tagged auth (CSRF mismatch is authentication-domain;
     // the closed errorKind union maps "security" semantics onto "auth"; the
-    // "possible CSRF" wording is preserved in the message). WR-01: the WARN
+    // "possible CSRF" wording is preserved in the message). The WARN
     // MUST carry the canonical `submodule` field so structured-log dashboards
-    // can filter this high-priority security event by subsystem (AGENTS.md §2.7).
+    // can filter this high-priority security event by subsystem.
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         submodule: "oauth-browser-callback",
@@ -313,7 +312,7 @@ describe("runBrowserCallback — loopback callback server", () => {
     expect(() => zeroVerifier(buf)).not.toThrow();
   });
 
-  it("8. WR-04: defensive isTTY default — does NOT throw when process.stdout is undefined", async () => {
+  it("8. defensive isTTY default — does NOT throw when process.stdout is undefined", async () => {
     // Some platforms (worker threads, some test environments, stubbed-process
     // shims) expose `process` without a `stdout` property. Pre-fix the code
     // read `Boolean(process.stdout.isTTY)` which throws a TypeError when
@@ -400,7 +399,7 @@ describe("isHeadless predicate", () => {
   });
 });
 
-describe("OAUTH-12 architecture grep — code_verifier never reaches a write call site", () => {
+describe("architecture grep — code_verifier never reaches a write call site", () => {
   it("no writeRegularFile/writeFileSync/fs.write* call in oauth/*.ts takes code_verifier/codeVerifier", () => {
     const oauthDir = HERE; // this test lives in oauth/
     const files = readdirSync(oauthDir).filter(

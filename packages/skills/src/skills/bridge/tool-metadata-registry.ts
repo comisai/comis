@@ -557,7 +557,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("agents_manage", { coDiscoverWith: ["models_manage"] });
 
   // =========================================================================
-  // MCP Export Policy (Phase 69 SERVE-03/04 — CI-05 enforced)
+  // MCP Export Policy
   //
   // Per-tool policy controlling exposure via the Comis-as-MCP-Server
   // endpoint at /mcp/v1. The CI gate at
@@ -592,9 +592,8 @@ export function registerAllToolMetadata(): void {
   //                        tasks, token/skill/MCP/provider/model/channel admin,
   //                        cross-account effects, cost-bearing synthesis.
   //
-  // Step 5 (plan): media tools (image_analyze, describe_video,
-  // extract_document, transcribe_audio) default to `permission-gated` per
-  // the plan's safer-default directive — the registry comments do NOT
+  // Media tools (image_analyze, describe_video, extract_document, transcribe_audio)
+  // default to `permission-gated` (safer default) — the registry comments do NOT
   // assert caller-supplied-only semantics. The security reviewer should
   // re-confirm in HUMAN-UAT whether to upgrade any of these to `safe`.
   // =========================================================================

@@ -1,24 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Phase 68 BUNDLE-06/03 — skill-bundle install + boot re-merge integration test.
+// Skill-bundle install + boot re-merge integration test.
 //
-// This is the CAPSTONE acceptance test for Phase 68. It exercises the REAL
-// persistToConfig + appendConfigAuditWithOutcome + bundle-resolver chain
-// against a tmpdir-backed config.yaml. The unit tests in
+// Exercises the REAL persistToConfig + appendConfigAuditWithOutcome +
+// bundle-resolver chain against a tmpdir-backed config.yaml. The unit tests in
 // packages/daemon/src/skills/bundle-install-helper.test.ts +
 // packages/daemon/src/wiring/setup-skill-bundles.test.ts mock persistMcpServers
 // and assert call args; this integration test catches what mocks cannot:
 //
-//   - BUNDLE-06 (atomic invariant): a 3-entry bundle where entry 2 trips OSV
+//   - Atomic invariant: a 3-entry bundle where entry 2 trips OSV
 //     produces ZERO bytes written to config.yaml AND ZERO manager.connect
 //     calls. The throw fires before any side effect.
 //
-//   - BUNDLE-06 (Phase A clean): a 2-entry clean bundle's full round-trip —
+//   - Clean install: a 2-entry clean bundle's full round-trip —
 //     manifest → resolver → install-helper → persisted YAML on disk — yields
 //     both entries with their _bundleSource provenance markers and the
 //     correct per-entry shape.
 //
-//   - BUNDLE-03 (boot idempotence): setupSkillBundles called twice over the
+//   - Boot idempotence: setupSkillBundles called twice over the
 //     same on-disk state produces byte-identical YAML output (skip-when-equal
 //     short-circuit fires, no spurious YAML rewrite).
 //
@@ -26,10 +25,9 @@
 // malicious vs safe verdicts); persistToConfig is REAL; manager.connect is
 // mocked to track call count (we are not testing transport spawn).
 //
-// Per CLAUDE.md "Integration (requires pnpm build first)": vitest aliases
-// `@comis/*` to `packages/*/dist/index.js`, so a stale dist silently masks
-// src changes. The orchestrate harness ensures pnpm build runs before this
-// suite; running standalone requires `pnpm build` first.
+// Integration tests import from `dist/` — requires `pnpm build` first. Vitest
+// aliases `@comis/*` to `packages/*/dist/index.js`, so a stale dist silently
+// masks src changes.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync, existsSync } from "node:fs";
@@ -244,11 +242,11 @@ afterEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("Phase 68 BUNDLE-06 / BUNDLE-03 — atomic install + boot idempotence (integration)", () => {
-  it("BUNDLE-06 atomic invariant: 3-entry bundle, entry 2 trips OSV → ZERO YAML writes, ZERO manager.connect calls", async () => {
+describe("atomic install + boot idempotence (integration)", () => {
+  it("atomic invariant: 3-entry bundle, entry 2 trips OSV → ZERO YAML writes, ZERO manager.connect calls", async () => {
     // Setup: 3-entry bundle where entry 2's package is the controllable
     // mock's MAL verdict trigger. The resolver iterates manifest entries
-    // sequentially during STEP 3 (OSV check); the first malicious verdict
+    // sequentially during the OSV check; the first malicious verdict
     // short-circuits the WHOLE resolver and returns err. The install-helper
     // throws on err BEFORE any persistMcpServers or manager.connect call.
     const skillDir = writeSkillManifest("malicious-skill", [
@@ -270,7 +268,7 @@ describe("Phase 68 BUNDLE-06 / BUNDLE-03 — atomic install + boot idempotence (
       eventBus: container.eventBus,
     } as unknown as ApplyBundleInstallArgs["deps"];
 
-    // BUNDLE-06 atomic invariant — applyBundleInstall MUST throw with the
+    // Atomic invariant — applyBundleInstall MUST throw with the
     // bracketed [bundle_install_rejected:osv_malware] code.
     await expect(
       applyBundleInstall({
@@ -286,7 +284,7 @@ describe("Phase 68 BUNDLE-06 / BUNDLE-03 — atomic install + boot idempotence (
     const yamlAfter = readFileSync(configPath, "utf-8");
     expect(yamlAfter).toBe(yamlBaseline);
 
-    // ZERO manager.connect calls — the throw fired before Phase B.
+    // ZERO manager.connect calls — the throw fired before any connect call.
     expect(mcpClientManager.connect).not.toHaveBeenCalled();
 
     // ZERO audit JSONL records — persistMcpServers never fired so the
@@ -294,7 +292,7 @@ describe("Phase 68 BUNDLE-06 / BUNDLE-03 — atomic install + boot idempotence (
     expect(existsSync(auditLogPath)).toBe(false);
   });
 
-  it("BUNDLE-06 Phase A clean: 2-entry bundle round-trip → both entries persisted with _bundleSource markers, both manager.connect calls fired", async () => {
+  it("clean install: 2-entry bundle round-trip → both entries persisted with _bundleSource markers, both manager.connect calls fired", async () => {
     // Setup: clean 2-entry bundle (both packages safe per the mock default).
     const skillDir = writeSkillManifest("clean-skill", [
       { name: "entry-a", transport: "stdio", command: "npx", args: ["safe-pkg-a"] },
@@ -332,7 +330,7 @@ describe("Phase 68 BUNDLE-06 / BUNDLE-03 — atomic install + boot idempotence (
     expect(byName.get("entry-a")?._bundleSource).toBe("clean-skill");
     expect(byName.get("entry-b")?._bundleSource).toBe("clean-skill");
 
-    // Phase B connected each bundle entry exactly once.
+    // The install connected each bundle entry exactly once.
     expect(mcpClientManager.connect).toHaveBeenCalledTimes(2);
     const connectArgs = mcpClientManager.connect.mock.calls.map(
       (c) => (c[0] as { name: string }).name,
@@ -340,7 +338,7 @@ describe("Phase 68 BUNDLE-06 / BUNDLE-03 — atomic install + boot idempotence (
     expect(connectArgs.sort()).toEqual(["entry-a", "entry-b"]);
 
     // Audit JSONL: exactly one config.write record with callerSource:
-    // "skills.bundle.install" (BUNDLE-06's atomic single-write invariant).
+    // "skills.bundle.install" (the atomic single-write invariant).
     expect(existsSync(auditLogPath)).toBe(true);
     const records = readFileSync(auditLogPath, "utf-8")
       .split("\n")
@@ -356,7 +354,7 @@ describe("Phase 68 BUNDLE-06 / BUNDLE-03 — atomic install + boot idempotence (
     });
   });
 
-  it("BUNDLE-03 boot idempotence: setupSkillBundles called twice on the same on-disk state → byte-equal YAML output", async () => {
+  it("boot idempotence: setupSkillBundles called twice on the same on-disk state → byte-equal YAML output", async () => {
     // Pre-install a skill via the install helper to seed the YAML with a
     // bundle entry. This produces the realistic boot baseline (config.yaml
     // contains a server tagged _bundleSource).
@@ -451,7 +449,7 @@ describe("Phase 68 BUNDLE-06 / BUNDLE-03 — atomic install + boot idempotence (
     expect(installRecords).toHaveLength(1);
   });
 
-  it("BUNDLE-03 boot persist: setupSkillBundles produces NEW entries on cold-start (servers:[] baseline) → writes YAML once with skills.bundle.boot callerSource", async () => {
+  it("boot persist: setupSkillBundles produces NEW entries on cold-start (servers:[] baseline) → writes YAML once with skills.bundle.boot callerSource", async () => {
     // Cold-start scenario: a skill exists on disk with mcpServers but its
     // bundle entries are NOT yet in config.yaml (e.g. operator manually
     // copied the skill folder into ~/.comis/skills without running install).

@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for connectServer's OAuth path (Phase 66 OAUTH-11 / 66d).
+ * Unit tests for connectServer's OAuth path.
  *
- * RED→GREEN coverage for the connect-time OAuth wiring:
+ * Coverage for the connect-time OAuth wiring:
  *
- *   8. needs_oauth_login (resolved_scope #3 / T-66-22): a connect against an
+ *   8. needs_oauth_login: a connect against an
  *      auth:"oauth" server whose client.connect throws the SDK UnauthorizedError
  *      resolves a Result.err TAGGED `needs_oauth_login` (NOT a thrown error, NOT
  *      a browser launch). Asserts no openUrl/browser side effect occurred.
- *   9. pre-flight discovery (OAUTH-03): connecting an auth:"oauth" server with no
+ *   9. pre-flight discovery: connecting an auth:"oauth" server with no
  *      persisted discoveryState triggers resolveDiscovery exactly once BEFORE the
  *      connect, and the resolved provider is threaded onto the runtime config so
  *      createTransport attaches it.
  *
  * The MCP SDK Client is mocked so we control whether connect throws
  * UnauthorizedError without standing up a real OAuth-protected transport. The
- * token store + deduper are real (tmpdir + the 66-01 mock server is not needed
- * here — discovery is stubbed via an injected resolveDiscovery spy).
+ * token store + deduper are real (tmpdir + discovery is stubbed via an injected
+ * resolveDiscovery spy).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -113,7 +113,7 @@ function makeState(): McpClientManagerState {
   };
 }
 
-describe("connectServer — OAuth path (OAUTH-11 / 66d)", () => {
+describe("connectServer — OAuth path", () => {
   let dir: string;
   let store: TokenStore;
   let logger: ReturnType<typeof makeLogger>;
@@ -161,7 +161,7 @@ describe("connectServer — OAuth path (OAUTH-11 / 66d)", () => {
     oauth: { scope: "read" },
   };
 
-  it("returns a needs_oauth_login-tagged Result.err on UnauthorizedError (no browser launch) — T-66-22", async () => {
+  it("returns a needs_oauth_login-tagged Result.err on UnauthorizedError (no browser launch)", async () => {
     connectImpl = () => Promise.reject(new UnauthorizedError("auth required"));
 
     const state = makeState();
@@ -172,11 +172,11 @@ describe("connectServer — OAuth path (OAUTH-11 / 66d)", () => {
     if (result.ok) throw new Error("expected err");
     // The error is TAGGED so the daemon RPC layer can surface needs_oauth_login.
     expect(isNeedsOAuthLoginError(result.error)).toBe(true);
-    // No browser was launched daemon-side (resolved_scope #3).
+    // No browser was launched daemon-side.
     expect(openUrl).not.toHaveBeenCalled();
   });
 
-  it("runs pre-flight discovery exactly once before connect for an auth:'oauth' server with no meta (OAUTH-03)", async () => {
+  it("runs pre-flight discovery exactly once before connect for an auth:'oauth' server with no meta", async () => {
     // A successful connect (no 401) — discovery must still have run first.
     connectImpl = () => Promise.resolve();
 

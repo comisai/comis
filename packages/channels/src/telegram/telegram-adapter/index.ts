@@ -61,9 +61,8 @@ export type {
 export function createTelegramAdapter(deps: TelegramAdapterDeps): TelegramAdapterHandle {
   // E2E seam: if deps.apiRoot is set, point grammy at that URL instead of
   // api.telegram.org. Production callers leave it unset and grammy uses its
-  // default (https://api.telegram.org). Per AGENTS.md §2.3, the `client`
-  // option is included ONLY when redirected: keeps the production code path
-  // byte-identical to before.
+  // default (https://api.telegram.org). The `client` option is included ONLY
+  // when redirected: keeps the production code path byte-identical to before.
   const bot = deps.apiRoot
     ? new Bot(deps.botToken, { client: { apiRoot: deps.apiRoot } })
     : new Bot(deps.botToken);

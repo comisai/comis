@@ -191,11 +191,10 @@ describe("GatewayTokenSchema", () => {
 });
 
 // ---------------------------------------------------------------------------
-// GatewayTokenSchema -- Phase 69 mcp-client disjointness + mcpClient block
-// (RED: these assertions fail on pre-Phase-69 schema; GREEN once refine + block land)
+// GatewayTokenSchema -- mcp-client scope disjointness + mcpClient block
 // ---------------------------------------------------------------------------
 
-describe("GatewayTokenSchema -- Phase 69 mcp-client disjointness", () => {
+describe("GatewayTokenSchema -- mcp-client disjointness", () => {
   it("GatewayTokenSchema accepts a token with only the rpc scope", () => {
     const result = GatewayTokenSchema.safeParse({ id: "t1", scopes: ["rpc"] });
     expect(result.success).toBe(true);
@@ -243,18 +242,18 @@ describe("GatewayTokenSchema -- Phase 69 mcp-client disjointness", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 69 WR-01 -- wildcard scope co-issuance defense
+  // Wildcard scope co-issuance defense
   //
   // The wildcard scope "*" grants ALL scopes via checkScope(), including
   // "admin". A token with `scopes: ["*", "mcp-client"]` has admin-equivalent
   // access AND mcp-client access -- the same privilege-escalation pathway
-  // T-69-02 was designed to prevent for literal "admin + mcp-client".
+  // blocked for literal "admin + mcp-client".
   //
   // The refine must reject `*` alongside `mcp-client` for the same reason
   // it rejects `admin` alongside `mcp-client`.
   // -------------------------------------------------------------------------
 
-  it("GatewayTokenSchema rejects a token co-issuing the wildcard star and mcp-client WR-01", () => {
+  it("GatewayTokenSchema rejects a token co-issuing the wildcard star and mcp-client", () => {
     const result = GatewayTokenSchema.safeParse({
       id: "t5",
       scopes: ["*", "mcp-client"],
@@ -267,7 +266,7 @@ describe("GatewayTokenSchema -- Phase 69 mcp-client disjointness", () => {
     }
   });
 
-  it("GatewayTokenSchema rejects a token co-issuing mcp-client and wildcard star in either order WR-01", () => {
+  it("GatewayTokenSchema rejects a token co-issuing mcp-client and wildcard star in either order", () => {
     const result = GatewayTokenSchema.safeParse({
       id: "t6",
       scopes: ["mcp-client", "*"],
@@ -276,10 +275,11 @@ describe("GatewayTokenSchema -- Phase 69 mcp-client disjointness", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Phase 69 WR-03 -- mcp-client must be the SOLE scope
+  // mcp-client must be the SOLE scope
   //
-  // The original refine only blocked `admin + mcp-client` (and WR-01 added
-  // `* + mcp-client`). A token with `["rpc", "mcp-client"]` still passed:
+  // The original refine only blocked `admin + mcp-client` (and the wildcard
+  // rule added `* + mcp-client`). A token with `["rpc", "mcp-client"]` still
+  // passed:
   //   1. It satisfies the `/mcp/v1` gates (has mcp-client; no admin/*).
   //   2. It also authenticates to /ws and satisfies checkScope(scopes, "rpc")
   //      on every rpc-scoped RPC method.
@@ -290,11 +290,10 @@ describe("GatewayTokenSchema -- Phase 69 mcp-client disjointness", () => {
   // into a full RPC + WS escalation.
   //
   // The refine must therefore enforce: when `mcp-client` is in scopes, it
-  // is the ONLY scope. (Wildcard `*` and `admin` are already blocked by
-  // WR-01; this rule subsumes both.)
+  // is the ONLY scope.
   // -------------------------------------------------------------------------
 
-  it("GatewayTokenSchema rejects a token co-issuing rpc and mcp-client WR-03 mcp-client must be sole scope", () => {
+  it("GatewayTokenSchema rejects a token co-issuing rpc and mcp-client -- mcp-client must be sole scope", () => {
     const result = GatewayTokenSchema.safeParse({
       id: "t7",
       scopes: ["rpc", "mcp-client"],
@@ -307,7 +306,7 @@ describe("GatewayTokenSchema -- Phase 69 mcp-client disjointness", () => {
     }
   });
 
-  it("GatewayTokenSchema rejects a token co-issuing ws and mcp-client WR-03", () => {
+  it("GatewayTokenSchema rejects a token co-issuing ws and mcp-client", () => {
     const result = GatewayTokenSchema.safeParse({
       id: "t8",
       scopes: ["ws", "mcp-client"],
@@ -315,7 +314,7 @@ describe("GatewayTokenSchema -- Phase 69 mcp-client disjointness", () => {
     expect(result.success).toBe(false);
   });
 
-  it("GatewayTokenSchema rejects a token co-issuing rpc ws and mcp-client WR-03", () => {
+  it("GatewayTokenSchema rejects a token co-issuing rpc ws and mcp-client", () => {
     const result = GatewayTokenSchema.safeParse({
       id: "t9",
       scopes: ["rpc", "ws", "mcp-client"],
@@ -323,7 +322,7 @@ describe("GatewayTokenSchema -- Phase 69 mcp-client disjointness", () => {
     expect(result.success).toBe(false);
   });
 
-  it("GatewayTokenSchema accepts a token with only mcp-client scope WR-03 happy path", () => {
+  it("GatewayTokenSchema accepts a token with only mcp-client scope -- happy path", () => {
     const result = GatewayTokenSchema.safeParse({
       id: "t10",
       scopes: ["mcp-client"],

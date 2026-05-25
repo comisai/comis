@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 68 BUNDLE-02/05/06 (Phase A): bundle resolver discriminated-union
- * error variants + ResolvedBundle interface. Extracted from the resolver
- * source so downstream callers (Plan 04 install hook, Plan 05 boot
- * orchestrator) can `import type { BundleError, ResolvedBundle }` without
- * pulling the async resolver function into their type-import graph.
+ * Bundle resolver discriminated-union error variants + ResolvedBundle
+ * interface. Extracted from the resolver source so downstream callers
+ * (install hook, boot orchestrator) can `import type { BundleError,
+ * ResolvedBundle }` without pulling the async resolver function into
+ * their type-import graph.
  *
  * @module
  */
@@ -12,17 +12,16 @@
 import type { McpServerEntry } from "@comis/core";
 
 /**
- * Phase A error variants. Discriminated by `kind`. The caller maps each
+ * Bundle error variants. Discriminated by `kind`. The caller maps each
  * variant to a bracketed-code RPC error string:
  *   - "name_collision"   ⇒ "[bundle_install_rejected:name_collision]"
  *   - "plaintext_secret" ⇒ "[bundle_install_rejected:plaintext_secret]"
  *   - "osv_malware"      ⇒ "[bundle_install_rejected:osv_malware]"
  *   - "schema_invalid"   ⇒ "[bundle_install_rejected:schema_invalid]"
  *
- * Phase A is zero-side-effect: ANY of these variants means the caller
- * (Plan 04's install hook OR Plan 05's boot orchestrator) MUST NOT invoke
- * `persistMcpServers`, MUST NOT spawn transports, MUST NOT log secret
- * values.
+ * Resolution is zero-side-effect: ANY of these variants means the caller
+ * (install hook OR boot orchestrator) MUST NOT invoke `persistMcpServers`,
+ * MUST NOT spawn transports, MUST NOT log secret values.
  */
 export type BundleError =
   | {
@@ -61,7 +60,7 @@ export type BundleError =
     };
 
 /**
- * Phase A successful output. Caller (install hook OR boot orchestrator)
+ * Successful resolver output. Caller (install hook OR boot orchestrator)
  * commits this verbatim via `persistMcpServers(nextServers, ...)` followed
  * by `manager.connect(...)` for each entry in `connectQueue`.
  */
@@ -91,8 +90,8 @@ export interface ResolvedBundle {
     /** The entry that was displaced into the _bundleArchive slot. */
     archive: McpServerEntry;
     /** Why the archive fired. force_collision: --force overrode a name
-     *  clash. user_override: BUNDLE-04 user-override semantic (reserved
-     *  for the boot path's user-wins-whole case in Plan 05). */
+     *  clash. user_override: user-override semantic (the boot path's
+     *  user-wins-whole case). */
     cause: "user_override" | "force_collision";
   }>;
 }

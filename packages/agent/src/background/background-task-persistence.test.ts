@@ -221,7 +221,7 @@ describe("background-task-persistence", () => {
     });
   });
 
-  describe("background-task-persistence honors design §1.4 file/dir mode invariants", () => {
+  describe("background-task-persistence file/dir mode invariants", () => {
     it("creates the per-agent parent directory with mode 0o700 on persistTaskSync", () => {
       const task: PersistedTaskState = {
         id: "mode-task-1",

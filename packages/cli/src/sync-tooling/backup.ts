@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// @allow-throw: CLI helper consumed by command entry points; throws caught at Commander.js boundary per AGENTS.md §2.1.
+// @allow-throw: CLI helper consumed by command entry points; throws caught at Commander.js boundary (CLI user-facing flows exception).
 /**
  * Pre-mutation backup helper for sync-tooling `--write` operations.
  *
@@ -48,10 +48,10 @@ export type BackupError =
  * Restricting `prefix` to `[a-z0-9-]+` accomplishes two things:
  *  - Prevents filesystem-unsafe characters (slash, colon, null byte,
  *    backslash, etc.) from being embedded into the backup filename
- *    (WR-02 — the cross-platform filename hazard).
+ *    (the cross-platform filename hazard).
  *  - Makes the prefix safe to interpolate into a RegExp literal in
  *    `pruneOldBackups` without escape — none of the allowed characters
- *    have regex semantics (WR-01 — the ReDoS / unintended-match hazard).
+ *    have regex semantics (the ReDoS / unintended-match hazard).
  *
  * Production callers pass the literals "sync-tooling" or "tooling-fill",
  * both of which satisfy this allowlist. The check is defensive: it
