@@ -6331,3 +6331,59 @@ describe("creates_and_closes_trajectory_recorder_for_session", () => {
     expect(initLiteral).toMatch(/sessionFile:\s*sessionAdapter\.getSessionPath\(sessionKey\)/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// WR-01: populated runtimeSnapshot.skills (Plan 05-04)
+// ---------------------------------------------------------------------------
+
+describe("WR-01: populated runtimeSnapshot.skills", () => {
+  it("skillRegistry_with_getSnapshot_populates_trace_metadata_skills", async () => {
+    // Arrange: skillRegistry mock that exposes getSnapshot() with two skills.
+    const mockSkillRegistry = {
+      getEligibleSkillNames: vi.fn().mockReturnValue(new Set<string>(["fileops", "search"])),
+      initFromSdkSkills: vi.fn(),
+      getSnapshot: vi.fn().mockReturnValue({
+        skills: [
+          { name: "fileops", version: "1.0" },
+          { name: "search" },
+        ],
+      }),
+    };
+
+    const deps = createMockDeps({ skillRegistry: mockSkillRegistry });
+    const executor = createPiExecutor(testConfig, deps);
+    await executor.execute(testMessage, testSessionKey);
+
+    // The runtimeSnapshot is passed to createPiEventBridge as a field.
+    // Capture it from the mock call to verify the skills mapping.
+    const bridgeCall = (createPiEventBridge as Mock).mock.calls[0]![0]!;
+    const snapshot = bridgeCall.runtimeSnapshot;
+
+    expect(snapshot).toBeDefined();
+    // WR-01: name->id mapping + version passthrough
+    expect(snapshot.skills).toEqual([
+      { id: "fileops", version: "1.0" },
+      { id: "search" },
+    ]);
+  });
+
+  it("skillRegistry_without_getSnapshot_keeps_skills_empty", async () => {
+    // Arrange: legacy two-method mock (no getSnapshot) — back-compat preserved.
+    const legacySkillRegistry = {
+      getEligibleSkillNames: vi.fn().mockReturnValue(new Set<string>(["fileops"])),
+      initFromSdkSkills: vi.fn(),
+      // intentionally no getSnapshot
+    };
+
+    const deps = createMockDeps({ skillRegistry: legacySkillRegistry });
+    const executor = createPiExecutor(testConfig, deps);
+    await executor.execute(testMessage, testSessionKey);
+
+    const bridgeCall = (createPiEventBridge as Mock).mock.calls[0]![0]!;
+    const snapshot = bridgeCall.runtimeSnapshot;
+
+    expect(snapshot).toBeDefined();
+    // Back-compat: legacy mock without getSnapshot keeps skills []
+    expect(snapshot.skills).toEqual([]);
+  });
+});
