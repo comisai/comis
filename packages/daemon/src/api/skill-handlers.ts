@@ -87,47 +87,9 @@ function parseGitHubDirUrl(url: string): { owner: string; repo: string; branch: 
   return { owner: m[1], repo: m[2], branch: m[3], path: m[4].replace(/\/$/, "") };
 }
 
-/** Recursively fetch all files in a GitHub directory via the Contents API. */
-async function fetchGitHubDir(
-  owner: string,
-  repo: string,
-  path: string,
-  branch: string,
-  rootPath?: string,
-): Promise<Array<{ path: string; content: string }>> {
-  const effectiveRoot = rootPath ?? path;
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
-  const resp = await fetch(apiUrl, {
-    headers: { Accept: "application/vnd.github.v3+json", "User-Agent": "Comis-Skill-Import" },
-  });
-  if (!resp.ok) {
-    throw new Error(`GitHub API error: ${resp.status} ${resp.statusText}`);
-  }
-  const entries = (await resp.json()) as Array<{
-    name: string;
-    type: "file" | "dir";
-    download_url: string | null;
-    path: string;
-  }>;
-
-  const files: Array<{ path: string; content: string }> = [];
-  for (const entry of entries) {
-    if (entry.type === "file" && entry.download_url) {
-      const fileResp = await fetch(entry.download_url);
-      if (!fileResp.ok) continue;
-      const content = await fileResp.text();
-      // Relative path within the skill folder: strip the ROOT directory prefix
-      const relativePath = entry.path.startsWith(effectiveRoot + "/")
-        ? entry.path.slice(effectiveRoot.length + 1)
-        : entry.name;
-      files.push({ path: relativePath, content });
-    } else if (entry.type === "dir") {
-      const subFiles = await fetchGitHubDir(owner, repo, entry.path, branch, effectiveRoot);
-      files.push(...subFiles);
-    }
-  }
-  return files;
-}
+// WR-03 — bounded GitHub Contents API walk (depth, file count, timeout) lives
+// in `./github-skill-fetch.ts` so this file stays under the 800-line cap.
+import { fetchGitHubDir } from "./github-skill-fetch.js";
 
 // Single source of truth: WorkspaceApiDeps (shared with workspace, browser,
 // approval, mcp, notification handlers).

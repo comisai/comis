@@ -611,6 +611,84 @@ describe("skills.import handler", () => {
     expect(fs.statSync(skillFile).mode & 0o777).toBe(0o600);
     expect(fs.statSync(nestedFile).mode & 0o777).toBe(0o600);
   });
+
+  // -------------------------------------------------------------------------
+  // WR-03 — fetchGitHubDir bounded recursion + bounded file count + per-fetch
+  // timeout. The pre-fix function had NO depth limit, NO file-count cap, and
+  // NO per-request timeout — a malicious or pathological repo (hundreds of
+  // nested directories, thousands of files, or a slow GitHub response) could
+  // exhaust the event loop, stack, or memory.
+  // -------------------------------------------------------------------------
+  it("WR-03: rejects import when repository depth exceeds bounded recursion limit", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    // Mock a GitHub tree that nests directories deeper than the depth limit.
+    // Each fetch returns a single sub-directory entry; the cap (10 levels)
+    // trips before the 100-level chain completes. We cap the mock at 100
+    // levels so a regression that DROPS the depth cap can still terminate
+    // (the file-count cap would catch infinite recursion at 200 fetches).
+    let depth = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = typeof url === "string" ? url : url.toString();
+      if (u.startsWith("https://api.github.com/")) {
+        if (depth >= 100) {
+          return new Response("[]", {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        depth++;
+        return new Response(
+          JSON.stringify([
+            { name: `sub${depth}`, type: "dir", download_url: null, path: `skills/my-skill/${"sub/".repeat(depth)}` },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("body", { status: 200 });
+    });
+    const handlers = createSkillHandlers(
+      makeDeps({ workspaceDirs: new Map([["agent-a", wsDir]]) }),
+    );
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/depth|recursion/i);
+  });
+
+  it("WR-03: rejects import when fetched file count exceeds the cap", async () => {
+    const wsDir = join(tmpRoot, "ws");
+    fs.mkdirSync(wsDir, { recursive: true });
+    // Mock GitHub returning a directory with MANY files — far beyond the cap.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const u = typeof url === "string" ? url : url.toString();
+      if (u.startsWith("https://api.github.com/")) {
+        // Return 500 files in one shot — well above any reasonable cap.
+        const fileEntries = Array.from({ length: 500 }, (_, i) => ({
+          name: `file${i}.md`,
+          type: "file" as const,
+          download_url: `https://download/file${i}.md`,
+          path: `skills/my-skill/file${i}.md`,
+        }));
+        return new Response(JSON.stringify(fileEntries), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("file body", { status: 200 });
+    });
+    const handlers = createSkillHandlers(
+      makeDeps({ workspaceDirs: new Map([["agent-a", wsDir]]) }),
+    );
+    await expect(
+      handlers["skills.import"]!({
+        url: "https://github.com/owner/repo/tree/main/skills/my-skill",
+        _agentId: "agent-a",
+      }),
+    ).rejects.toThrow(/file count|too many files/i);
+  });
 });
 
 // ---------------------------------------------------------------------------
