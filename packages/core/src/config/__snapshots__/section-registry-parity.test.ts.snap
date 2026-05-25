@@ -18410,6 +18410,43 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("gat
             "minLength": 1,
             "type": "string"
           },
+          "mcpClient": {
+            "additionalProperties": false,
+            "properties": {
+              "allowlist": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "sessionAllowlist": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "toolRateLimit": {
+                "additionalProperties": {
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "default": {},
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "allowlist",
+              "sessionAllowlist",
+              "toolRateLimit"
+            ],
+            "type": "object"
+          },
           "scopes": {
             "default": [],
             "items": {
@@ -27811,6 +27848,43 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "id": {
                 "minLength": 1,
                 "type": "string"
+              },
+              "mcpClient": {
+                "additionalProperties": false,
+                "properties": {
+                  "allowlist": {
+                    "default": [],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "sessionAllowlist": {
+                    "default": [],
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "toolRateLimit": {
+                    "additionalProperties": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "default": {},
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "allowlist",
+                  "sessionAllowlist",
+                  "toolRateLimit"
+                ],
+                "type": "object"
               },
               "scopes": {
                 "default": [],
