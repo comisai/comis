@@ -117,4 +117,50 @@ describe("ObservabilityConfigSchema", () => {
       expect(result.data.trajectory?.dirOverride).toBeUndefined();
     }
   });
+
+  // ROTATE-01 RED tests — these MUST fail on pre-patch code because
+  // ObservabilityConfigSchema currently has no `logRotation` key.
+
+  it("returns logRotation defaults with maxSizeBytes=52428800 (ROTATE-01)", () => {
+    const result = ObservabilityConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.logRotation).toBeDefined();
+      expect(result.data.logRotation.maxSizeBytes).toBe(52428800);
+      expect(result.data.logRotation.maxFiles).toBe(5);
+      expect(result.data.logRotation.maxAgeDays).toBe(30);
+      expect(result.data.logRotation.compressAged).toBe(true);
+    }
+  });
+
+  it("accepts logRotation.maxSizeBytes override (ROTATE-01)", () => {
+    const result = ObservabilityConfigSchema.safeParse({
+      logRotation: { maxSizeBytes: 100 * 1024 * 1024 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.logRotation.maxSizeBytes).toBe(100 * 1024 * 1024);
+    }
+  });
+
+  it("rejects logRotation.maxFiles=0 (positive int required) (ROTATE-01)", () => {
+    const result = ObservabilityConfigSchema.safeParse({
+      logRotation: { maxFiles: 0 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects logRotation.maxSizeBytes=-1 (positive int required) (ROTATE-01)", () => {
+    const result = ObservabilityConfigSchema.safeParse({
+      logRotation: { maxSizeBytes: -1 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects logRotation.extraField (strictObject enforcement) (ROTATE-01)", () => {
+    const result = ObservabilityConfigSchema.safeParse({
+      logRotation: { extraField: "x" },
+    });
+    expect(result.success).toBe(false);
+  });
 });
