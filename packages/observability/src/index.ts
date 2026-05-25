@@ -393,3 +393,24 @@ export {
   ROTATION_STREAM_PATTERNS,
   type SweepDeps,
 } from "./rotation/sweep.js";
+
+// ---------------------------------------------------------------------------
+// Health aggregator surface (ALERT-01).
+// ---------------------------------------------------------------------------
+//
+// Sliding-window in-process rate aggregator. Subscribes to health/safety
+// events on the typed EventBus, classifies each by errorKind, and emits
+// `health:budget_exceeded` ONCE per window cross. No external dependencies;
+// imports only @comis/core (no @comis/infra to avoid cycles — Option B).
+
+export { createHealthAggregator } from "./health-aggregator/aggregator.js";
+export type {
+  AlertBudgetPolicy,
+  AlertBudgetThreshold,
+  BudgetExceededPayload,
+} from "./health-aggregator/types.js";
+export {
+  SYNTHETIC_ERROR_KIND_MAP,
+  TYPED_ERROR_KIND_EVENTS,
+  resolveErrorKind,
+} from "./health-aggregator/error-kind-map.js";

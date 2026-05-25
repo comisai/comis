@@ -141,6 +141,54 @@ const LogRotationConfigSchema = z.strictObject({
 });
 
 /**
+ * Alert budget threshold schema — per-errorKind sliding-window counter (ALERT-01).
+ *
+ * `count`: maximum number of events of a given errorKind within `windowMs`
+ * before `health:budget_exceeded` is emitted once.
+ * `windowMs`: sliding window length in milliseconds.
+ *
+ * Both fields require a positive integer; zero or negative values are rejected
+ * at schema validation time (T-07-03-02: prevents deadlock/infinite latch).
+ */
+const AlertBudgetThresholdSchema = z.strictObject({
+  count: z.number().int().positive(),
+  windowMs: z.number().int().positive(),
+});
+
+/**
+ * Alert budget configuration schema (ALERT-01 / G10).
+ *
+ * Defaults cover all 10 errorKind closed-union members. Operators may
+ * override individual thresholds; unrecognised errorKind keys are
+ * silently accepted (future-proofing) but won't fire unless the aggregator
+ * also knows about them.
+ *
+ * Visible via `comis config get observability.alertBudget`.
+ */
+export const AlertBudgetConfigSchema = z.strictObject({
+  /** Whether the health budget aggregator is enabled. Default true. */
+  enabled: z.boolean().default(true),
+  /**
+   * Per-errorKind threshold table. All 10 errorKind closed-union members
+   * are pre-seeded with sane defaults. Individual entries can be overridden;
+   * extra keys (unknown errorKinds) are accepted by the schema but ignored
+   * by the aggregator's lookup (Pitfall 5 / T-07-03-05).
+   */
+  thresholds: z.record(z.string(), AlertBudgetThresholdSchema).default({
+    network:      { count: 100, windowMs: 60_000 },
+    config:       { count: 10,  windowMs: 60_000 },
+    auth:         { count: 20,  windowMs: 60_000 },
+    validation:   { count: 100, windowMs: 60_000 },
+    precondition: { count: 50,  windowMs: 60_000 },
+    timeout:      { count: 50,  windowMs: 60_000 },
+    resource:     { count: 10,  windowMs: 60_000 },
+    dependency:   { count: 20,  windowMs: 60_000 },
+    internal:     { count: 5,   windowMs: 60_000 },
+    platform:     { count: 50,  windowMs: 60_000 },
+  }),
+});
+
+/**
  * Root observability configuration schema.
  *
  * Has sensible defaults so an empty object produces a valid ObservabilityConfig.
@@ -152,10 +200,14 @@ export const ObservabilityConfigSchema = z.strictObject({
   trajectory: TrajectoryObservabilityConfigSchema.default(() => TrajectoryObservabilityConfigSchema.parse({})),
   /** Cross-stream log rotation policy (ROTATE-01). */
   logRotation: LogRotationConfigSchema.default(() => LogRotationConfigSchema.parse({})),
+  /** Alert budget rate-aggregator policy (ALERT-01). */
+  alertBudget: AlertBudgetConfigSchema.default(() => AlertBudgetConfigSchema.parse({})),
 });
 
 export type ObservabilityConfig = z.infer<typeof ObservabilityConfigSchema>;
 export type ObservabilityPersistenceConfig = z.infer<typeof ObservabilityPersistenceSchema>;
 export type TrajectoryObservabilityConfig = z.infer<typeof TrajectoryObservabilityConfigSchema>;
 export type LogRotationConfig = z.infer<typeof LogRotationConfigSchema>;
+export type AlertBudgetConfig = z.infer<typeof AlertBudgetConfigSchema>;
+export type AlertBudgetThreshold = z.infer<typeof AlertBudgetThresholdSchema>;
 export { LogRotationConfigSchema };
