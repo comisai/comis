@@ -122,6 +122,7 @@ import { runSafetyGates } from "./safety-gate.js";
 import { applyPromptRunOutcome, handleEnvelopeException } from "./message-envelope.js";
 import { finalizeLockResult } from "./executor-error-mapping.js";
 import { createBeforeToolCallGuard } from "./before-tool-call-guard.js";
+import { buildPromptingSnapshot } from "./pi-executor-prompting.js";
 import type { PiExecutorDeps } from "./pi-executor-types.js";
 export type { PiExecutorDeps } from "./pi-executor-types.js";
 
@@ -1214,7 +1215,11 @@ async function runSessionLocked(
         id: s.name,
         ...(s.version !== undefined ? { version: String(s.version) } : {}),
       })) ?? [],
-      prompting: {},  // WR-02 placeholder; replaced by buildPromptingSnapshot in Task 2
+      // WR-02 (Plan 05-04): scaffold in place so future writers cannot bypass
+      // the redactor. When userPromptPrefixText is wired from a config path,
+      // pass it here; the helper routes it through redactString +
+      // substitutePathsInString before assignment. See pi-executor-prompting.ts.
+      prompting: buildPromptingSnapshot({}),
       redaction: { policy: "platform-aware" },
     },
     perExecutionBudgetCap: config.budgets?.perExecution,
