@@ -288,6 +288,7 @@ function createMockDeliveryQueue(): DeliveryQueuePort & {
   nack: ReturnType<typeof vi.fn>;
   fail: ReturnType<typeof vi.fn>;
   pendingEntries: ReturnType<typeof vi.fn>;
+  unconfirmedEntries: ReturnType<typeof vi.fn>;
   pruneExpired: ReturnType<typeof vi.fn>;
   statusCounts: ReturnType<typeof vi.fn>;
   recoverInFlight: ReturnType<typeof vi.fn>;
@@ -299,6 +300,7 @@ function createMockDeliveryQueue(): DeliveryQueuePort & {
     nack: vi.fn().mockResolvedValue(ok(undefined)),
     fail: vi.fn().mockResolvedValue(ok(undefined)),
     pendingEntries: vi.fn().mockResolvedValue(ok([])),
+    unconfirmedEntries: vi.fn().mockResolvedValue(ok([])),
     pruneExpired: vi.fn().mockResolvedValue(ok(0)),
     statusCounts: vi.fn().mockResolvedValue(
       ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 }),

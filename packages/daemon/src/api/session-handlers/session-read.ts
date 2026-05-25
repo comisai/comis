@@ -345,12 +345,20 @@ function makePendingKey(channelId: string, text: string): string {
 }
 
 /**
- * Snapshot the DeliveryQueuePort's pending entries (pending / in_flight /
- * failed) once per request and return a Set keyed by `(channelId, text)`.
+ * Snapshot the DeliveryQueuePort's NOT-yet-delivered entries (pending /
+ * in_flight / failed / expired) once per request and return a Set keyed by
+ * `(channelId, text)`.
+ *
+ * Uses `unconfirmedEntries()`, NOT `pendingEntries()`: the latter is
+ * drainer-scoped (status='pending' AND scheduled_at<=now) and hides in_flight
+ * rows for race safety, so an outbound message the drainer has already claimed
+ * (pending -> in_flight) would fall out of the set and be mis-reported as
+ * confirmed -- leaking an undelivered message via MCP resources/read. The
+ * confirmed-only filter needs the full unconfirmed set.
  *
  * Returns an empty Set when:
  *   - The dep is absent (deployments with no channel adapters / no queue).
- *   - The port's `pendingEntries()` returns an `err()` Result (we degrade
+ *   - The port's `unconfirmedEntries()` returns an `err()` Result (we degrade
  *     to "every outbound confirmed" rather than failing the whole
  *     session.history call -- the join is a defense-in-depth signal, not
  *     a correctness requirement of session.history itself).
@@ -363,7 +371,7 @@ async function loadPendingKeySet(
   queue: DeliveryQueuePort | undefined,
 ): Promise<ReadonlySet<string>> {
   if (!queue) return new Set();
-  const r = await queue.pendingEntries();
+  const r = await queue.unconfirmedEntries();
   if (!r.ok) return new Set();
   const set = new Set<string>();
   for (const entry of r.value as readonly DeliveryQueueEntry[]) {

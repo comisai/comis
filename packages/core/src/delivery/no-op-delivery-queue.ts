@@ -19,6 +19,7 @@ export function createNoOpDeliveryQueue(): DeliveryQueuePort {
     nack: () => Promise.resolve(ok(undefined)),
     fail: () => Promise.resolve(ok(undefined)),
     pendingEntries: () => Promise.resolve(ok([] as DeliveryQueueEntry[])),
+    unconfirmedEntries: () => Promise.resolve(ok([] as DeliveryQueueEntry[])),
     pruneExpired: () => Promise.resolve(ok(0)),
     depth: () => Promise.resolve(ok(0)),
     statusCounts: () => Promise.resolve(ok({ pending: 0, inFlight: 0, failed: 0, delivered: 0, expired: 0 })),
