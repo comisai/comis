@@ -42,6 +42,10 @@ import { persistMcpServers, type PersistMcpResult } from "../api/shared/persist-
 import { resolveBundle } from "./bundle-mcp-resolver.js";
 import type { BundleError } from "./bundle-types.js";
 import type { WorkspaceApiDeps } from "../api/types.js";
+import {
+  readBundleInstallState,
+  recordBundleEntries,
+} from "./bundle-install-state.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -252,6 +256,17 @@ export async function applyBundleInstall(
   )?.mcp;
   const currentServers = (mcpConfigRoot?.servers ?? []) as McpServerEntry[];
 
+  // CR-01: read the daemon-private installed-bundles state file so the
+  // resolver can distinguish "an entry we previously installed for this
+  // skill" (replace-in-place) from "a user-authored entry with a spoofed
+  // _bundleSource field" (collision). The `dataDir` resolution mirrors the
+  // OAuth credential store and other daemon-private state.
+  const dataDir =
+    (deps.container?.config?.dataDir as string | undefined) ?? "";
+  const installedBundleState = dataDir.length > 0
+    ? readBundleInstallState(dataDir)
+    : {};
+
   const resolveResult = await resolveBundle({
     skillId,
     manifestMcpServers: bundleServers,
@@ -264,6 +279,7 @@ export async function applyBundleInstall(
       osvCacheTtlMs: mcpConfigRoot.osvCacheTtlMs,
     }),
     logger: deps.logger,
+    installedBundleState,
   });
 
   if (!resolveResult.ok) {
@@ -303,6 +319,33 @@ export async function applyBundleInstall(
     skillId,
     ctx,
   );
+
+  // CR-01: record this install in the daemon-private state file so the
+  // next install (or boot re-merge) of THIS skill can distinguish "our
+  // own entries" from "user-authored entries with a spoofed _bundleSource".
+  // Best-effort — recordBundleEntries returns a Result; failures are
+  // logged but do NOT abort the install (the persist already succeeded;
+  // the worst case is the next install requires --force because the
+  // state file fell behind).
+  if (persistOutcome.persistence === "persisted" && dataDir.length > 0) {
+    const recordResult = recordBundleEntries(
+      dataDir,
+      skillId,
+      bundleServers,
+    );
+    if (!recordResult.ok) {
+      deps.logger.warn(
+        {
+          method: "skills.bundle.install",
+          entityId: skillId,
+          err: recordResult.error.message,
+          hint: "Bundle install state file write failed; next install of this skill may require --force because the daemon cannot prove provenance. Re-run install to retry.",
+          errorKind: "config" as const,
+        },
+        "Bundle install: state file write failed",
+      );
+    }
+  }
 
   // STEP 5: per-entry connect. Failures isolated (WARN + continue); do
   // NOT unwind the persist because the entry IS correctly persisted.
