@@ -1424,6 +1424,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // consumer-scan does not flag. Documented public-contract surface;
       // not a baseline orphan.
       "MCP_OAUTH_CONTRACTS",
+      // SUBA-02/03: Sub-agent tool governance symbols added in Phase 5.
+      // SUB_AGENT_TOOL_PROFILES is a static data copy (drift-guard tested in
+      // tool-policy.test.ts — excluded from consumer scan). Its primary
+      // production consumer lands in Plan 05-03 (spawn-time required_tools
+      // gate in sub-agent-runner.ts). RequiredToolsUnreachableError +
+      // UnreachableToolEntry are the error class + entry type thrown by that
+      // gate — same Plan 05-03 consumer. SUB_AGENT_TOOL_DENYLIST /
+      // toolReachableGroups have live in-repo consumers (daemon + agent
+      // pi-event-bridge) and are NOT policy-listed.
+      "SUB_AGENT_TOOL_PROFILES",
+      "RequiredToolsUnreachableError",
+      "UnreachableToolEntry",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
