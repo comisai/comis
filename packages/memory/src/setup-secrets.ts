@@ -52,7 +52,10 @@ export interface SetupSecretsOptions {
 export function setupSecrets(
   opts: SetupSecretsOptions,
 ): Result<SecretsBootResult | null, Error> {
-  const raw = opts.env.SECRETS_MASTER_KEY ?? opts.seedKeyHex;
+  // W1: treat empty/whitespace SECRETS_MASTER_KEY as absent so seedKeyHex is not
+  // silently discarded when the operator exports an empty SECRETS_MASTER_KEY.
+  const envKey = opts.env.SECRETS_MASTER_KEY;
+  const raw = (envKey !== undefined && envKey.trim() !== "") ? envKey : opts.seedKeyHex;
 
   // Branch 1: absent or empty → envfile mode
   if (raw === undefined || raw.trim() === "") {
