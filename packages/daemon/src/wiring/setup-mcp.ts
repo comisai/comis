@@ -38,6 +38,11 @@ export interface McpDeps {
   readonly circuitBreakerThreshold?: number;
   /** Global circuit-breaker cooldown (ms) from integrations.mcp. */
   readonly circuitBreakerCooldownMs?: number;
+  /** Global keepalive ping interval override (ms) from integrations.mcp.keepaliveIntervalMs.
+   * Middle tier in the resolution chain: per-server server.keepaliveIntervalMs takes precedence;
+   * this applies when no per-server value is set; transport-aware default applies when this too
+   * is undefined (resolveDefaultKeepaliveIntervalMs in mcp-client-keepalive.ts). */
+  readonly globalKeepaliveIntervalMs?: number;
 }
 
 /** Result of MCP server setup. */
@@ -219,6 +224,13 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
           // Forward the parallel-tool-calls opt-in so the manager's
           // PQueue concurrency derivation (mcp-client-connect.ts) sees it.
           ...(server.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: server.supportsParallelToolCalls }),
+          // Forward keepalive interval: per-server entry wins over global default
+          // (WR-01 fix — middle tier in the resolution chain:
+          //   server.keepaliveIntervalMs ?? globalKeepaliveIntervalMs ?? transport-aware default).
+          // Only set the field when a value is resolved so 0 ("disable") is preserved via ??.
+          ...((server.keepaliveIntervalMs ?? deps.globalKeepaliveIntervalMs) !== undefined && {
+            keepaliveIntervalMs: server.keepaliveIntervalMs ?? deps.globalKeepaliveIntervalMs,
+          }),
           // Forward auth/oauth so createTransport wires the OAuthClientProvider
           // for config-defined servers — else the boot path silently downgrades
           // an oauth server to no-auth.

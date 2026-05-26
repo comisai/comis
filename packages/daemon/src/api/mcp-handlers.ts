@@ -235,6 +235,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
             safetyAllowedEnvKeys?: readonly string[];
             osvCheckEnabled?: boolean;
             osvCacheTtlMs?: number;
+            keepaliveIntervalMs?: number;
           }
         | undefined;
 
@@ -247,9 +248,11 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const persistedEntry = persistedServers.find((s) => s.name === params.server_name);
       const resolvedRlimits = params.rlimits ?? persistedEntry?.rlimits;
 
-      // Per-server reliability overrides. Same resolution order as
-      // resolvedRlimits — current intent > persisted > undefined.
-      const resolvedKeepaliveIntervalMs = params.keepaliveIntervalMs ?? persistedEntry?.keepaliveIntervalMs;
+      // Per-server reliability overrides. Resolution chain (WR-01 fix):
+      //   caller param > persisted per-server entry > global config override > transport-aware default (in ticker)
+      // Uses ?? so 0 is preserved (explicit "disable keepalive for this server").
+      const resolvedKeepaliveIntervalMs =
+        params.keepaliveIntervalMs ?? persistedEntry?.keepaliveIntervalMs ?? mcpConfigRoot?.keepaliveIntervalMs;
       const resolvedCircuitBreakerThreshold = params.circuitBreakerThreshold ?? persistedEntry?.circuitBreakerThreshold;
       const resolvedCircuitBreakerCooldownMs = params.circuitBreakerCooldownMs ?? persistedEntry?.circuitBreakerCooldownMs;
 
