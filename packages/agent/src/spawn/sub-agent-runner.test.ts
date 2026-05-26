@@ -3601,6 +3601,151 @@ describe("spawn required_tools gate (SUBA-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// WR-01: gate validates against daemon-provided reachableToolNames (default groups)
+// WR-02: gate validates against daemon-provided reachableToolNames (TOOL_GROUPS expansion)
+// WR-04: queued spawn path also runs the gate before runId
+// WR-05: supervisor hint wording
+// ---------------------------------------------------------------------------
+
+describe("spawn required_tools gate parity fixes (WR-01/02/04/05)", () => {
+  let deps: ReturnType<typeof createMockDeps>;
+
+  beforeEach(() => {
+    deps = createMockDeps();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // WR-01: spawn with required_tools containing a non-coding tool, no explicit tool_groups,
+  // and reachableToolNames provided (coding set) must throw RequiredToolsUnreachableError.
+  it("WR-01: spawn with requiredTools=['mcp_manage'] and no toolGroups but reachableToolNames=coding-set throws RequiredToolsUnreachableError", () => {
+    const runner = createSubAgentRunner(deps);
+    // reachableToolNames mimics daemon computing effective coding ceiling
+    const codingSet = new Set(["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"]);
+
+    let caughtErr: unknown;
+    try {
+      runner.spawn({
+        task: "test",
+        agentId: "default",
+        // no toolGroups — LLM omitted it (the common case per WR-01)
+        requiredTools: ["mcp_manage"],
+        reachableToolNames: codingSet,
+      });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    expect(caughtErr).toBeInstanceOf(RequiredToolsUnreachableError);
+    const err = caughtErr as RequiredToolsUnreachableError;
+    expect(err.unreachableTools[0]?.toolName).toBe("mcp_manage");
+    // No run created — gate fires before runId
+    expect(runner.listRuns(60)).toHaveLength(0);
+  });
+
+  // WR-02: spawn with tool_groups=["web"], required_tools=["web_fetch"], and
+  // reachableToolNames containing "web_fetch" (TOOL_GROUPS expansion) must PASS.
+  it("WR-02: spawn with toolGroups=['web'] and requiredTools=['web_fetch'] with reachableToolNames containing web_fetch succeeds", () => {
+    const runner = createSubAgentRunner(deps);
+    // reachableToolNames mimics daemon expanding TOOL_GROUPS["group:web"]
+    const webSet = new Set(["web_fetch", "web_search", "browser"]);
+
+    const runId = runner.spawn({
+      task: "test",
+      agentId: "default",
+      toolGroups: ["web"],
+      requiredTools: ["web_fetch"],
+      reachableToolNames: webSet,
+    });
+
+    expect(runId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(runner.listRuns(60)).toHaveLength(1);
+  });
+
+  // WR-02 false-deny regression: without reachableToolNames, gate currently
+  // false-denies web_fetch because SUB_AGENT_TOOL_PROFILES["web"] is undefined.
+  // With reachableToolNames, this works.
+  it("WR-02: spawn without reachableToolNames but toolGroups=['web'] and requiredTools=['web_fetch'] — gate fails open (no crash) when reachableToolNames absent", () => {
+    const runner = createSubAgentRunner(deps);
+    // No reachableToolNames provided — gate must fail-open (not crash, not false-deny)
+    let threw = false;
+    try {
+      runner.spawn({
+        task: "test",
+        agentId: "default",
+        toolGroups: ["web"],
+        requiredTools: ["web_fetch"],
+        // no reachableToolNames
+      });
+    } catch (e) {
+      threw = true;
+    }
+    // Without the daemon-computed set, gate fails-open: no throw
+    // (runtime boundary still enforces; gate just can't validate without the set)
+    expect(threw).toBe(false);
+  });
+
+  // WR-04: queued spawn with unreachable required_tools must throw BEFORE the queued runId is created.
+  it("WR-04: queued spawn with unreachable requiredTools throws RequiredToolsUnreachableError before runId (no run created)", () => {
+    const runner = createSubAgentRunner(deps);
+    // Fill children to force queue path
+    const maxChildren = 5;
+    for (let i = 0; i < maxChildren; i++) {
+      runner.spawn({ task: `task-${i}`, agentId: "default", callerSessionKey: "caller:1" });
+    }
+    // Now at capacity — next spawn would be queued
+    const codingSet = new Set(["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"]);
+    let caughtErr: unknown;
+    try {
+      runner.spawn({
+        task: "bad-queued",
+        agentId: "default",
+        callerSessionKey: "caller:1",
+        requiredTools: ["mcp_manage"],
+        reachableToolNames: codingSet,
+      });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    expect(caughtErr).toBeInstanceOf(RequiredToolsUnreachableError);
+    // The "bad-queued" run must NOT have been created
+    const badRun = runner.listRuns(60).find((r) => r.task === "bad-queued");
+    expect(badRun).toBeUndefined();
+  });
+
+  // WR-05: the "no-match" fallback hint must suggest only 'full', not "supervisor' or 'full"
+  it("WR-05: classifyRequiredTool fallback hint for a tool in no profile suggests only 'full' (not supervisor)", () => {
+    const runner = createSubAgentRunner(deps);
+    const noProfileSet = new Set(["read", "write"]); // "web_fetch" is not in this set
+
+    let caughtErr: unknown;
+    try {
+      runner.spawn({
+        task: "test",
+        agentId: "default",
+        toolGroups: ["minimal"],
+        requiredTools: ["web_fetch"], // web_fetch is NOT in any SUB_AGENT_TOOL_PROFILES entry
+        reachableToolNames: noProfileSet,
+      });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    expect(caughtErr).toBeInstanceOf(RequiredToolsUnreachableError);
+    const err = caughtErr as RequiredToolsUnreachableError;
+    const hint = err.unreachableTools[0]?.hint ?? "";
+    // Must NOT suggest supervisor (web_fetch is not in supervisor profile)
+    expect(hint).not.toContain("supervisor' or 'full");
+    // Must suggest 'full'
+    expect(hint).toContain("full");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Cross-check: sub-agent-runner uses BackgroundSessionResolver for
 // parent-session lookup.
 // ---------------------------------------------------------------------------

@@ -628,4 +628,48 @@ describe("SUB_AGENT_TOOL_PROFILES drift-guard", () => {
       }
     }
   });
+
+  // WR-03: bidirectional drift guard — catches when canonical adds a tool but core copy doesn't.
+  // Also asserts TOOL_GROUPS consistency for the groups that @comis/core mirrors via
+  // SUB_AGENT_TOOL_GROUPS (added in WR-02 fix).
+  it("WR-03: bidirectional — every canonical TOOL_PROFILES tool also exists in core copy (guards against over-rejection)", () => {
+    // For every profile the core copy mirrors, require EXACT equality
+    // so divergence in EITHER direction is caught.
+    for (const profileName of Object.keys(SUB_AGENT_TOOL_PROFILES)) {
+      const core = [...(SUB_AGENT_TOOL_PROFILES[profileName] ?? [])].sort();
+      const canon = [...(TOOL_PROFILES[profileName] ?? [])].sort();
+      expect(
+        core,
+        `core/canonical bidirectional drift for profile '${profileName}': sets must be equal`,
+      ).toEqual(canon);
+    }
+  });
+
+  it("WR-03: SUB_AGENT_TOOL_GROUPS in @comis/core mirrors TOOL_GROUPS from @comis/skills (no drift)", () => {
+    // SUB_AGENT_TOOL_GROUPS is added in core to support gate TOOL_GROUPS expansion (WR-02).
+    // Import it dynamically to verify the export exists (RED: not yet exported).
+    const { SUB_AGENT_TOOL_GROUPS } = require("@comis/core") as { SUB_AGENT_TOOL_GROUPS?: Record<string, ReadonlyArray<string>> };
+    expect(SUB_AGENT_TOOL_GROUPS, "SUB_AGENT_TOOL_GROUPS must be exported from @comis/core").toBeDefined();
+
+    // Every key/value in SUB_AGENT_TOOL_GROUPS must match TOOL_GROUPS exactly
+    for (const [groupKey, coreTools] of Object.entries(SUB_AGENT_TOOL_GROUPS!)) {
+      const canonicalTools = TOOL_GROUPS[groupKey];
+      expect(
+        canonicalTools,
+        `SUB_AGENT_TOOL_GROUPS['${groupKey}'] exists in core but not in TOOL_GROUPS — update both`,
+      ).toBeDefined();
+      expect(
+        [...coreTools].sort(),
+        `SUB_AGENT_TOOL_GROUPS['${groupKey}'] core/canonical drift — sets must be equal`,
+      ).toEqual([...(canonicalTools ?? [])].sort());
+    }
+
+    // Every TOOL_GROUPS key must exist in SUB_AGENT_TOOL_GROUPS
+    for (const groupKey of Object.keys(TOOL_GROUPS)) {
+      expect(
+        Object.keys(SUB_AGENT_TOOL_GROUPS!),
+        `TOOL_GROUPS['${groupKey}'] exists in skills but not in SUB_AGENT_TOOL_GROUPS — update core`,
+      ).toContain(groupKey);
+    }
+  });
 });

@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { classifyRpcError } from "./rpc-dispatch.js";
 import { PreconditionError, ValidationError } from "./errors.js";
+import { RequiredToolsUnreachableError } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Mock all 16 handler factory imports so createRpcDispatch can be tested
@@ -208,6 +209,17 @@ describe("classifyRpcError", () => {
 
   it("classifies ValidationError as validation error (warn level)", () => {
     const result = classifyRpcError(new ValidationError("Unknown ID prefix. Expected 'sum_' or 'file_', got: abc-123"));
+    expect(result.errorKind).toBe("validation");
+    expect(result.level).toBe("warn");
+    expect(result.hint).toBeTruthy();
+  });
+
+  // WR-06: RequiredToolsUnreachableError must classify as validation/warn (not internal/error)
+  it("WR-06: classifies RequiredToolsUnreachableError as validation error at warn level", () => {
+    const err = new RequiredToolsUnreachableError([
+      { toolName: "mcp_manage", reason: "outside_profile", hint: "Re-spawn with tool_groups:['supervisor']." },
+    ]);
+    const result = classifyRpcError(err);
     expect(result.errorKind).toBe("validation");
     expect(result.level).toBe("warn");
     expect(result.hint).toBeTruthy();

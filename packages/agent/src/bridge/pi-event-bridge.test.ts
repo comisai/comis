@@ -4976,5 +4976,48 @@ describe("session-index emit sites", () => {
       // No enrichment: raw SDK error text preserved
       expect(toolFailWarn![0].errorText).toBe("Tool mcp_manage not found");
     });
+
+    // WR-07: MCP-namespaced tool names (mcp__<server>--<tool>) must NOT be enriched
+    // with profile-widening hint — MCP reachability is governed by subAgentMcpTools policy,
+    // not by tool profiles. The classified errorKind must also be preserved (not overwritten
+    // with "validation").
+    it("WR-07: 'Tool mcp__context7--search not found' with activeToolGroups does NOT get profile-widening hint", () => {
+      const enrichedDeps = createMockDeps({
+        activeToolGroups: ["coding"],
+      } as unknown as Partial<PiEventBridgeDeps>);
+      const { listener } = createPiEventBridge(enrichedDeps);
+
+      // MCP tool — name matches mcp__<server>--<tool> pattern
+      const result = { message: "Tool mcp__context7--search not found" };
+      listener(makeToolExecutionEndEvent("mcp__context7--search", "tc-wr07-a", true, result) as any);
+
+      const warnCalls = (enrichedDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const toolFailWarn = warnCalls.find(
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "mcp__context7--search",
+      );
+      expect(toolFailWarn).toBeDefined();
+      // Must NOT contain profile-widening hint for MCP tools
+      expect(toolFailWarn![0].errorText).not.toContain("outside this sub-agent's profile");
+      expect(toolFailWarn![0].errorText).not.toContain("Re-spawn with tool_groups");
+    });
+
+    it("WR-07: 'Tool mcp__db--query not found' errorKind is NOT overwritten to 'validation' (MCP kind preserved)", () => {
+      const enrichedDeps = createMockDeps({
+        activeToolGroups: ["coding"],
+      } as unknown as Partial<PiEventBridgeDeps>);
+      const { listener } = createPiEventBridge(enrichedDeps);
+
+      const result = { message: "Tool mcp__db--query not found" };
+      listener(makeToolExecutionEndEvent("mcp__db--query", "tc-wr07-b", true, result) as any);
+
+      const warnCalls = (enrichedDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const toolFailWarn = warnCalls.find(
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "mcp__db--query",
+      );
+      expect(toolFailWarn).toBeDefined();
+      // MCP not-found should NOT be classified as "validation" (profile-widening is wrong remedy)
+      // It should preserve the MCP-classified kind (dependency or similar)
+      expect(toolFailWarn![0].errorKind).not.toBe("validation");
+    });
   });
 });
