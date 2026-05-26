@@ -90,6 +90,9 @@ export function createDeleteAndRepostRenderer(
           pendingDelete = timer.setTimeout(() => {
             void deleteLast();
           }, deliveredAtMs - now);
+          // unref so the deliveredAt-gated delete never holds the event loop
+          // open at shutdown (WR-02).
+          pendingDelete.unref();
           return ok(undefined);
         }
 

@@ -17,6 +17,8 @@ import type {
   FinalDeliveryReceipt,
   ActivityRenderError,
 } from "@comis/core";
+import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
+import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createDeleteAndRepostRenderer } from "./delete-and-repost.js";
 import type { ActivityRenderActions } from "./actions.js";
 
@@ -111,6 +113,26 @@ describe("createDeleteAndRepostRenderer", () => {
 
     // The last activity message (msg-0) is deleted; nothing is kept.
     expect(calls.filter((c) => c.op === "delete").map((c) => c.id)).toEqual(["msg-0"]);
+  });
+
+  it("unref's the deliveredAt-gated success-delete timer so it never holds the event loop open (WR-02)", async () => {
+    const { actions } = makeRecordingActions();
+    const timer = createFakeTimers();
+    const clock = createFakeClock(0);
+    const r = createDeleteAndRepostRenderer({ actions, timer, clock });
+
+    await r.apply(makeFrame(0, "step 1"));
+    // A future-dated success receipt schedules the gated delete behind the timer.
+    const deliveredAtMs = clock.now() + 1000;
+    const success: TurnOutcome = {
+      kind: "success",
+      trivial: false,
+      delivery: { ok: true, deliveredChunks: 1, lastChunkMessageId: "final", deliveredAtMs },
+    };
+    await r.finalize(success);
+
+    const deleteTimer = timer.unrefRecord().find((e) => e.delay === 1000);
+    expect(deleteTimer?.unrefCalled).toBe(true);
   });
 
   it("on failure deletes the running activity and posts a final ❌ message that is KEPT", async () => {

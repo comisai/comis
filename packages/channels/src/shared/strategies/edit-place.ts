@@ -110,6 +110,10 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
       pendingEdit = timer.setTimeout(() => {
         void flushEdit();
       }, EDIT_DEBOUNCE_MS);
+      // unref so a pending debounce edit never keeps the event loop alive at
+      // shutdown (the TimerHandle cancel-safety contract also exposes unref) —
+      // WR-02.
+      pendingEdit.unref();
       return ok(undefined);
     },
 
@@ -142,6 +146,9 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
           pendingDelete = timer.setTimeout(() => {
             void deletePlaceholder();
           }, deliveredAtMs - now);
+          // unref so the deliveredAt-gated delete never holds the event loop
+          // open at shutdown (WR-02).
+          pendingDelete.unref();
           return ok(undefined);
         }
 

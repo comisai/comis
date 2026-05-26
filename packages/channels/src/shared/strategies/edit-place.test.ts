@@ -190,6 +190,29 @@ describe("createEditPlaceRenderer", () => {
     expect(edits[edits.length - 1].text).toContain("❌");
   });
 
+  it("unref's the debounce-edit and deliveredAt-gated delete timers so they never hold the event loop open (WR-02)", async () => {
+    const timer = createFakeTimers();
+    const clock = createFakeClock(0);
+    const { actions } = makeRecordingActions();
+    const r = createEditPlaceRenderer({ actions, timer, clock });
+
+    // First apply posts the placeholder; second apply schedules a debounce edit.
+    await r.apply(makeFrame(0, "step 1"));
+    await r.apply(makeFrame(1, "step 2"));
+    const editTimer = timer.unrefRecord().find((e) => e.delay === DEBOUNCE_MS);
+    expect(editTimer?.unrefCalled).toBe(true);
+
+    timer.advance(DEBOUNCE_MS);
+    await Promise.resolve();
+
+    // A future-dated success receipt schedules the gated delete — also unref'd.
+    const deliveredAtMs = clock.now() + 1000;
+    await r.finalize({ kind: "success", trivial: false, delivery: receiptAt(deliveredAtMs) });
+    await Promise.resolve();
+    const deleteTimer = timer.unrefRecord().find((e) => e.delay === 1000);
+    expect(deleteTimer?.unrefCalled).toBe(true);
+  });
+
   it("on a trivial turn deletes the placeholder with no edit history", async () => {
     const timer = createFakeTimers();
     const clock = createFakeClock(0);

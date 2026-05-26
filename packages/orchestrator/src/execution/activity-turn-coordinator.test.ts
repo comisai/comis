@@ -460,4 +460,38 @@ describe("createActivityTurnCoordinator — error mapping + counters", () => {
     expect(coord.counters().turnDurationMs).toBeGreaterThanOrEqual(0);
     coord.dispose();
   });
+
+  it("unref's the SEC-04 delivery-gate timer so it never holds the event loop open (WR-01)", async () => {
+    const clock = createFakeClock(1_000);
+    const { deps, timer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    const p = coord.finalize({ kind: "success", trivial: false, delivery: makeReceipt(1_400) });
+    // The gate timer is scheduled and must have been unref'd at schedule time.
+    const gate = timer.unrefRecord().find((e) => e.delay === 400 && e.kind === "timeout");
+    expect(gate?.unrefCalled).toBe(true);
+
+    clock.advance(400);
+    timer.advance(400);
+    await p;
+    coord.dispose();
+  });
+
+  it("cancels the in-flight delivery-gate timer when the turn is disposed mid-gate (WR-01)", () => {
+    const clock = createFakeClock(1_000);
+    const { deps, timer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    // Fire-and-do-not-await the finalize so the gate is still pending.
+    void coord.finalize({ kind: "success", trivial: false, delivery: makeReceipt(1_400) });
+    expect(coord.counters().deleteGated).toBe(1);
+
+    // Dispose mid-gate: the pending gate timer must be cancelled (not left to
+    // hold the loop open on an aborted turn).
+    coord.dispose();
+    const gate = timer.unrefRecord().find((e) => e.delay === 400 && e.kind === "timeout");
+    expect(gate?.cancelled).toBe(true);
+  });
 });

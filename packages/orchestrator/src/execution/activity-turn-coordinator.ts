@@ -161,6 +161,10 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   let subscription: ActivitySubscription | undefined;
   let prevFrame: ActivityRenderFrame | undefined;
   let debounceHandle: TimerHandle | undefined;
+  // SEC-04 success-path delivery gate timer; captured so it can be unref'd (so
+  // it never keeps the event loop alive during shutdown) and cancelled on an
+  // aborted turn (WR-01).
+  let pendingGate: TimerHandle | undefined;
   // SEC-04 reclassification trigger: set once any observed event is "failed".
   let sawFailedEvent = false;
   let startedAtMs = 0;
@@ -225,11 +229,14 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     scheduleApply();
   }
 
-  /** Release the subscription + cancel any pending paint. Idempotent. */
+  /** Release the subscription + cancel any pending paint / delivery gate. Idempotent. */
   function releaseSubscription(): void {
     if (disposed) return;
     disposed = true;
     debounceHandle?.cancel();
+    // Cancel the in-flight delivery gate so an aborted turn does not leave a
+    // timer holding the event loop open (WR-01). cancel() is idempotent.
+    pendingGate?.cancel();
     subscription?.unsubscribe();
   }
 
@@ -260,7 +267,11 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
       if (waitMs > 0) {
         counters.deleteGated++;
         await new Promise<void>((resolve) => {
-          deps.timer.setTimeout(() => resolve(), waitMs);
+          // Capture + unref the gate handle: unref so a pending gate never keeps
+          // the Node event loop alive during graceful shutdown, captured so
+          // releaseSubscription() can cancel it on an aborted turn (WR-01).
+          pendingGate = deps.timer.setTimeout(() => resolve(), waitMs);
+          pendingGate.unref();
         });
       }
       await dispatchFinalize(effective);
