@@ -54,4 +54,13 @@ describe("renderPlan", () => {
     expect(lines[0]).toBe("[ ] Last-ish");
     expect(lines[1]).toBe("[x] First-ish");
   });
+
+  it("falls back to an empty checkbox for an out-of-union status (exhaustive default)", () => {
+    // The typed union forbids this; the `never` default is the AGENTS.md §2.8
+    // safety arm. Cast through `unknown` (the 70-05 house pattern) to exercise it.
+    const snapshot = {
+      entries: [{ id: "1", label: "Bogus", status: "__bogus__" }],
+    } as unknown as PlanSnapshot;
+    expect(renderPlan(snapshot)).toBe("[ ] Bogus");
+  });
 });
