@@ -17,6 +17,16 @@ const ChannelFeaturesSchema = z.strictObject({
     deleteMessages: z.boolean().default(false),
     fetchHistory: z.boolean().default(false),
     attachments: z.boolean().default(false),
+    /** Whether the channel supports a typing indicator (activity strategy hint). */
+    typing: z.boolean().default(false),
+    /** Whether the channel supports threads/topics (activity strategy hint). */
+    threads: z.boolean().default(false),
+    /** Interactive-button capability flavour for this channel. "none" when the
+     *  platform has no button surface. Defaults exist only as a safety net for
+     *  *new* plugins (§19.5); the 10 in-tree plugins declare this explicitly. */
+    buttons: z
+      .enum(["inline", "components", "blockkit", "quickreply", "none"])
+      .default("none"),
   });
 
 export const ChannelCapabilitySchema = z.strictObject({
