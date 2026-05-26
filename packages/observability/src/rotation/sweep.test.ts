@@ -68,7 +68,9 @@ describe("ROTATION_STREAM_PATTERNS", () => {
 
 describe("sweepRotatedFiles", () => {
   it("sweeps daemon.log rotated files", async () => {
-    // Create a rotated daemon file.
+    // Create the active base file (daemon.log is present = pino-roll has not yet
+    // advanced to an indexed filename, so daemon.1.log is a genuine rotated file).
+    touch(tmpDir, "daemon.log");
     touch(tmpDir, "daemon.1.log");
 
     await sweepRotatedFiles(tmpDir, policy, {});
@@ -85,6 +87,8 @@ describe("sweepRotatedFiles", () => {
   });
 
   it("sweeps cache-trace.jsonl rotated files", async () => {
+    // Base file present means cache-trace.1.jsonl is a genuine rotated file.
+    touch(tmpDir, "cache-trace.jsonl");
     touch(tmpDir, "cache-trace.1.jsonl");
 
     await sweepRotatedFiles(tmpDir, policy, {});
@@ -96,6 +100,8 @@ describe("sweepRotatedFiles", () => {
   });
 
   it("sweeps config-audit.jsonl rotated files", async () => {
+    // Base file present means config-audit.jsonl.1 is a genuine rotated file.
+    touch(tmpDir, "config-audit.jsonl");
     touch(tmpDir, "config-audit.jsonl.1");
 
     await sweepRotatedFiles(tmpDir, policy, {});
@@ -134,6 +140,11 @@ describe("sweepRotatedFiles", () => {
   });
 
   it("iterates all five stream patterns in one sweep call", async () => {
+    // Create base files so the indexed siblings are treated as genuinely rotated
+    // (not protected by the no-base-file guard added to fix pino-roll collision).
+    touch(tmpDir, "daemon.log");
+    touch(tmpDir, "cache-trace.jsonl");
+    touch(tmpDir, "config-audit.jsonl");
     // Create one rotated artifact per stream.
     touch(tmpDir, "daemon.1.log");
     touch(tmpDir, "cache-trace.1.jsonl");
@@ -147,7 +158,7 @@ describe("sweepRotatedFiles", () => {
 
     await sweepRotatedFiles(tmpDir, policy, {});
 
-    // All 4 non-session-index files should have been gzipped.
+    // All 4 non-session-index rotated files should have been gzipped.
     expect(fs.existsSync(path.join(tmpDir, "daemon.1.log.gz"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "cache-trace.1.jsonl.gz"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "config-audit.jsonl.1.gz"))).toBe(true);
@@ -204,4 +215,44 @@ describe("sweepRotatedFiles", () => {
     expect(fs.readFileSync(basePath, "utf8")).toBe("active log content");
     expect(fs.existsSync(basePath + ".gz"), "daemon.log must NOT be gzipped").toBe(false);
   });
+
+  it("does not gzip or unlink pino-roll's live indexed file when no base file exists", async () => {
+    // Scenario A (collision): pino-roll has advanced to an indexed active file.
+    // No daemon.log base file exists. daemon.2.log is an older sibling (rotated),
+    // daemon.1.log is the live file (highest mtime = most recently modified).
+
+    // Write daemon.2.log first, then set its mtime to 10 seconds ago.
+    const older = touch(tmpDir, "daemon.2.log");
+    const nowSec = Date.now() / 1000;
+    fs.utimesSync(older, nowSec - 10, nowSec - 10);
+
+    // Write daemon.1.log last, set its mtime to now (clearly the newest / live file).
+    const live = touch(tmpDir, "daemon.1.log");
+    fs.utimesSync(live, nowSec, nowSec);
+
+    await sweepRotatedFiles(tmpDir, policy, {});
+
+    // The live indexed file must NOT be touched.
+    expect(
+      fs.existsSync(path.join(tmpDir, "daemon.1.log")),
+      "daemon.1.log (live) must still exist",
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(tmpDir, "daemon.1.log.gz")),
+      "daemon.1.log must NOT be gzipped",
+    ).toBe(false);
+
+    // The older sibling IS a genuinely rotated file and must be swept.
+    expect(
+      fs.existsSync(path.join(tmpDir, "daemon.2.log.gz")),
+      "daemon.2.log must be gzipped (aged file swept correctly)",
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(tmpDir, "daemon.2.log")),
+      "daemon.2.log original must be replaced by .gz",
+    ).toBe(false);
+  });
+
+  // NOTE: The "sweeps all indexed siblings when base file is present" scenario is
+  // already covered by "does not touch the active base file (daemon.log)" above.
 });
