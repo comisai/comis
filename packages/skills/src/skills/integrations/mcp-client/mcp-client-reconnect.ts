@@ -41,6 +41,7 @@ import {
 } from "./mcp-client-discover.js";
 import { qualifyToolName } from "./mcp-client-types.js";
 import { stopKeepaliveTicker } from "./mcp-client-ticker.js";
+import { startKeepaliveTicker } from "./mcp-client-keepalive.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -299,6 +300,14 @@ async function reconnectionLoop(
 
       // Wire lifecycle callbacks for reconnection
       wireClientLifecycleCallbacks(state, deps, client, serverName);
+
+      // MCPX-02/03: restart the keepalive ticker for the new connection so the
+      // transport-aware interval beats the idle window after auto-reconnect.
+      // The static import of startKeepaliveTicker is safe because mcp-client-keepalive.ts
+      // no longer imports from mcp-client-reconnect.ts — handleDisconnection is
+      // threaded in as the `onFailure` callback instead, breaking the former
+      // keepalive ↔ reconnect source cycle.
+      startKeepaliveTicker(state, deps, config, (srvName) => handleDisconnection(state, deps, srvName, "keepalive_failed"));
 
       // Fetch server metadata
       const metadata = extractServerMetadata(client);

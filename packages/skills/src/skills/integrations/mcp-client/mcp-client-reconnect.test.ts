@@ -507,7 +507,10 @@ describe("reconnectionLoop — RED-08 keepalive ticker after auto-reconnect", ()
 
     handleDisconnection(state, { logger: NOOP_LOGGER }, "srv", "client_error");
 
-    await vi.runAllTimersAsync();
+    // Advance 100 ms — enough to fire the 1 ms backoff timer so reconnectionLoop
+    // runs to completion and calls startKeepaliveTicker, but NOT enough to fire
+    // the 30 000 ms keepalive interval (which would loop forever in runAllTimersAsync).
+    await vi.advanceTimersByTimeAsync(100);
 
     // RED assertion: currently false because reconnectionLoop never calls startKeepaliveTicker
     expect(state.keepaliveTickers.has("srv")).toBe(true);

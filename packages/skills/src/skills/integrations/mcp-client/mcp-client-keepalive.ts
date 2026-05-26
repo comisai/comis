@@ -18,7 +18,6 @@ import { systemSetInterval, type SystemIntervalHandle } from "@comis/core";
 export { stopKeepaliveTicker } from "./mcp-client-ticker.js";
 import PQueue from "p-queue";
 import type { McpClientManagerDeps, McpClientManagerState, McpServerConfig } from "./mcp-client-types.js";
-import { handleDisconnection } from "./mcp-client-reconnect.js";
 
 // ---------------------------------------------------------------------------
 // Transport-aware keepalive defaults (MCPX-02 single source of truth)
@@ -55,13 +54,19 @@ export function resolveDefaultKeepaliveIntervalMs(transport: McpServerConfig["tr
  * via resolveDefaultKeepaliveIntervalMs (MCPX-02 single source of truth).
  * Uses `??` (NOT `||`) so an operator can set `0` to disable per-server.
  *
+ * @param onFailure - Optional callback invoked when a keepalive ping fails. Callers
+ *   supply `(name) => handleDisconnection(state, deps, name, "keepalive_failed")` so
+ *   this module does not import mcp-client-reconnect.ts (which would create a
+ *   keepalive ↔ reconnect source cycle detected by no-cycles.test.ts). When omitted
+ *   (tests that exercise registration without testing failure paths) the failure
+ *   callback is a silent no-op.
  * @returns void — `0` interval is a NO-OP (explicit semantics: zero disables keepalive).
  */
-export function startKeepaliveTicker(state: McpClientManagerState, deps: McpClientManagerDeps, config: McpServerConfig): void {
+export function startKeepaliveTicker(state: McpClientManagerState, deps: McpClientManagerDeps, config: McpServerConfig, onFailure?: (serverName: string) => void): void {
   // Per-server override wins; fall back to transport-aware default (MCPX-02 single source).
   const intervalMs = config.keepaliveIntervalMs ?? resolveDefaultKeepaliveIntervalMs(config.transport);
   if (intervalMs === 0) return; // Disabled (interval=0 means no keepalive)
-  const handle: SystemIntervalHandle = systemSetInterval(() => maybeEnqueueKeepalivePing(state, deps, config.name), intervalMs);
+  const handle: SystemIntervalHandle = systemSetInterval(() => maybeEnqueueKeepalivePing(state, deps, config.name, onFailure), intervalMs);
   handle.unref();
   state.keepaliveTickers.set(config.name, handle);
 }
@@ -82,10 +87,12 @@ export function startKeepaliveTicker(state: McpClientManagerState, deps: McpClie
  *    still run). The dedicated queue is lazily created here and torn down on
  *    disconnect / idle-eviction (mirrors callQueues), so it cannot leak.
  *
- * On ping failure, triggers handleDisconnection(..., "keepalive_failed") in
- * BOTH routes — the existing reconnect engine handles recovery from there.
+ * On ping failure, invokes `onFailure(serverName)` in BOTH routes — the
+ * reconnect engine handles recovery from there. When `onFailure` is
+ * undefined (test-only call sites that don't test the failure path) the
+ * failure is a silent no-op.
  */
-export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: McpClientManagerDeps, serverName: string): void {
+export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: McpClientManagerDeps, serverName: string, onFailure?: (serverName: string) => void): void {
   const primary = state.callQueues.get(serverName);
   if (!primary) return; // disconnected race
   const conn = state.connections.get(serverName);
@@ -114,7 +121,7 @@ export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: Mc
         { serverName, err: message, hint: "Keepalive ping failed; triggering reconnect", errorKind: "dependency" as const },
         "MCP keepalive ping failed",
       );
-      handleDisconnection(state, deps, serverName, "keepalive_failed");
+      onFailure?.(serverName);
     }
   };
 
