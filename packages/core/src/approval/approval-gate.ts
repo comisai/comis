@@ -5,6 +5,7 @@ import type { TTLCache } from "@comis/shared";
 import type { TypedEventBus } from "../event-bus/bus.js";
 import type { ApprovalRequest, ApprovalResolution, SerializedApprovalRequest, SerializedApprovalCacheEntry } from "../domain/approval-request.js";
 import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
+import { mintApprovalShortId } from "./approval-short-id.js";
 
 /**
  * Dependencies for the approval gate factory.
@@ -38,7 +39,7 @@ export interface ApprovalGateDeps {
 export interface ApprovalGate {
   /** Submit a request for approval. Returns a promise that resolves when approved/denied/timed-out. */
   requestApproval(
-    req: Omit<ApprovalRequest, "requestId" | "createdAt" | "timeoutMs"> & { channelType?: string },
+    req: Omit<ApprovalRequest, "requestId" | "shortId" | "createdAt" | "timeoutMs"> & { channelType?: string },
   ): Promise<ApprovalResolution>;
 
   /** Resolve (approve or deny) a pending request. */
@@ -196,7 +197,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
   }
 
   function requestApproval(
-    req: Omit<ApprovalRequest, "requestId" | "createdAt" | "timeoutMs"> & { channelType?: string },
+    req: Omit<ApprovalRequest, "requestId" | "shortId" | "createdAt" | "timeoutMs"> & { channelType?: string },
   ): Promise<ApprovalResolution> {
     const cacheKey = `${req.sessionKey}::${req.action}`;
 
@@ -252,11 +253,15 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     }
 
     const requestId = randomUUID();
+    // Mint the callback-safe short id (§6.4.1). The gate is the sole minter;
+    // callers never supply it (it is Omit-ted from the requestApproval input).
+    const shortId = mintApprovalShortId();
     const timeoutMs = deps.getTimeoutMs();
     const createdAt = deps.clock.now();
 
     const request: ApprovalRequest = {
       requestId,
+      shortId,
       toolName: req.toolName,
       action: req.action,
       params: { ...req.params },
@@ -282,6 +287,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     // Emit request event with shallow-cloned params to prevent mutation.
     deps.eventBus.emit("approval:requested", {
       requestId,
+      shortId: request.shortId,
       toolName: request.toolName,
       action: request.action,
       params: { ...request.params },
@@ -350,6 +356,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
   function serializePending(): SerializedApprovalRequest[] {
     return Array.from(pendingMap.values()).map((e) => ({
       requestId: e.request.requestId,
+      shortId: e.request.shortId,
       toolName: e.request.toolName,
       action: e.request.action,
       params: { ...e.request.params },
@@ -397,6 +404,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       const remainingMs = record.timeoutMs - elapsed;
       const request: ApprovalRequest = {
         requestId: record.requestId,
+        shortId: record.shortId,
         toolName: record.toolName,
         action: record.action,
         params: { ...record.params },
@@ -421,9 +429,11 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       // is gone after restart. resolveApproval() will still emit events.
       pendingMap.set(record.requestId, { request, resolve: () => {}, timer });
 
-      // Emit approval:requested so channel adapters can re-render the approval prompt
+      // Emit approval:requested so channel adapters can re-render the approval prompt.
+      // The persisted shortId is re-used so callback identity survives the restart.
       deps.eventBus.emit("approval:requested", {
         requestId: request.requestId,
+        shortId: request.shortId,
         toolName: request.toolName,
         action: request.action,
         params: { ...request.params },
