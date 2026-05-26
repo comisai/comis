@@ -29,7 +29,7 @@ Archive: `.planning/milestones/v1.0-ROADMAP.md` · `v1.0-REQUIREMENTS.md` · `v1
 
 - [x] **Phase 1: SEC — Secret-detection keystone** - Consolidate two fragmented detection copies into one authoritative module; delete both legacy files; repoint all call sites (completed 2026-05-26)
 - [x] **Phase 2: STORE — Zero-config secrets store** - Auto-generate master key on first boot; fail-early `env_set` UX; opt-out flag and docs (completed 2026-05-26)
-- [ ] **Phase 3: CRED — MCP credential firewall & lifecycle** - Block plaintext secrets from headers/config/git/LKG; extract static secrets; steer OAuth to `auth:"oauth"`
+- [x] **Phase 3: CRED — MCP credential firewall & lifecycle** - Block plaintext secrets from headers/config/git/LKG; extract static secrets; steer OAuth to `auth:"oauth"` (completed 2026-05-26)
 - [ ] **Phase 4: MCPX — MCP transport resilience** - Transport-aware keepalive; classify SSE self-heal errors; close old transport + generation guard
 - [ ] **Phase 5: SUBA — Sub-agent tool governance** - Spawn-time `required_tools` validation; enriched "Tool not found"; lock gateway denylist invariant
 
@@ -86,7 +86,7 @@ Plans:
 - [x] 03-01-PLAN.md — Wire `secretStore` into `WorkspaceApiDeps` + extract `mcp-header-credential.ts` helper (CRED-05 foundation)
 - [x] 03-02-PLAN.md — TDD: mcp.connect/mcp.test headers credential firewall + extraction + OAuth refusal (CRED-01, CRED-05, CRED-06)
 - [x] 03-03-PLAN.md — TDD: persistToConfig secret gate + saveLastKnownGood snapshot guard (CRED-02, CRED-03)
-- [ ] 03-04-PLAN.md — TDD: config.read header masking regression guard (CRED-04)
+- [x] 03-04-PLAN.md — TDD: config.read header masking regression guard (CRED-04)
 
 ---
 
@@ -120,7 +120,7 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 1. SEC — Secret-detection keystone | v1.1 | 2/2 | Complete   | 2026-05-26 |
 | 2. STORE — Zero-config secrets store | v1.1 | 5/5 | Complete   | 2026-05-26 |
-| 3. CRED — MCP credential firewall & lifecycle | v1.1 | 3/4 | In Progress|  |
+| 3. CRED — MCP credential firewall & lifecycle | v1.1 | 4/4 | Complete   | 2026-05-26 |
 | 4. MCPX — MCP transport resilience | v1.1 | 0/TBD | Not started | - |
 | 5. SUBA — Sub-agent tool governance | v1.1 | 0/TBD | Not started | - |
 

@@ -64,15 +64,13 @@ export function saveLastKnownGood(
   // Parse the source file first; any scan finding means the LKG would
   // capture a credential that could be re-introduced via
   // `cp config.last-good.yaml config.yaml`.
-  let sourceObj: unknown = {};
   try {
-    sourceObj = parseYaml(readFileSync(configPath, "utf-8")) ?? {};
+    const sourceObj = parseYaml(readFileSync(configPath, "utf-8")) ?? {};
+    if (scanForSecrets(sourceObj).length > 0) {
+      return { saved: false, path: lkgPath };
+    }
   } catch {
     // Unreadable / malformed YAML — fail-safe: skip the snapshot (Pitfall 5).
-    return { saved: false, path: lkgPath };
-  }
-  const lkgFindings = scanForSecrets(sourceObj);
-  if (lkgFindings.length > 0) {
     return { saved: false, path: lkgPath };
   }
 
