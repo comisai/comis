@@ -214,8 +214,9 @@ describe("createEmailActivityRenderer (DigestOnly wiring)", () => {
 // generates no email beyond the assistant reply, so S1-S3/S6/S7/S9 are n/a; the
 // approval S8 is Phase 73). Each scenario drives the renderer and asserts the
 // serialised FakeEmailAdapter call-log against the committed fixture (readFixture
-// + toEqual — never toMatchSnapshot). 4 of the 5 are empty call-logs (silent on
-// success/recovered/silent); only S4 has content (the single [FAILED] digest).
+// + toEqual — never an auto-writing inline/file snapshot, which self-heals a wrong
+// fixture, Pitfall 3). 4 of the 5 are empty call-logs (silent on
+// success/recovered/silent); only S4 has content (the single failure digest).
 
 /** Serialise the fake's ordered call-log — the exact shape the fixtures pin. */
 function serialiseCallLog(fake: ReturnType<typeof createFakeEmailAdapter>): unknown {
