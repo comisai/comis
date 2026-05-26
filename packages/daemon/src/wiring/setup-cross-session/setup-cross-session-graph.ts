@@ -474,6 +474,9 @@ export function buildExecuteSubAgent(deps: ExecuteSubAgentDeps): ExecuteSubAgent
       skipRag: !!graphSharedDir,
       graphId: graphOverrides?.graphId,
       nodeId: graphOverrides?.nodeId,
+      // SUBA-02: thread effective tool groups so pi-event-bridge can enrich
+      // "Tool X not found" errors with delegation routing hints.
+      activeToolGroups: effectiveToolGroups,
     };
     const result = ctx
       ? await runWithContext(ctx, () =>

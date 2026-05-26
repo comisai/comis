@@ -1226,6 +1226,8 @@ async function runSessionLocked(
     ttlSplit,
     graphId: executionOverrides?.graphId,
     nodeId: executionOverrides?.nodeId,
+    // SUBA-02: pass sub-agent's active tool groups for "Tool X not found" enrichment
+    activeToolGroups: executionOverrides?.activeToolGroups,
     onCacheBreakDetected: capturedBridgeRetention
       ? (event) => {
           if (event.reason === "lookback_window_exceeded") {

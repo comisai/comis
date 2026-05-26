@@ -25,6 +25,11 @@ import {
   type MemoryEntry,
   type ModelOperationType,
   type ErrorKind,
+  // SUBA-02: classification data for "Tool X not found" enrichment.
+  // @comis/agent has no @comis/skills edge in the architecture graph
+  // (agent = [shared, core, observability, scheduler]). Import ONLY from @comis/core.
+  SUB_AGENT_TOOL_DENYLIST,
+  toolReachableGroups,
 } from "@comis/core";
 import type { SessionTrajectoryHandleRegistry } from "@comis/observability";
 import { buildTraceMetadata } from "@comis/observability";
@@ -105,6 +110,33 @@ export function __resetSdkBreakdownNoticeForTest(): void {
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// SUBA-02: Tool-not-found enrichment helpers
+// ---------------------------------------------------------------------------
+
+/** Matches the SDK's exact "Tool not found" error format (agent-loop.js:356):
+ *  `Tool ${toolCall.name} not found` */
+const NOT_FOUND_RE = /^Tool (\S+) not found$/;
+
+/**
+ * Classify a tool that was not found during sub-agent execution.
+ * Uses SUB_AGENT_TOOL_DENYLIST and toolReachableGroups from @comis/core.
+ * Returns enriched hint text that replaces the opaque SDK error.
+ *
+ * @comis/agent has no @comis/skills edge — do NOT import TOOL_PROFILES from @comis/skills.
+ */
+function classifyUnreachableTool(toolName: string, activeGroups: string[]): string {
+  if (SUB_AGENT_TOOL_DENYLIST.has(toolName)) {
+    return `Tool '${toolName}' is denied to ALL sub-agents — the parent must perform this step.`;
+  }
+  const broader = toolReachableGroups(toolName).filter((p) => !activeGroups.includes(p));
+  const suggestion = broader.length > 0 ? broader.join("' | '") : "supervisor' or 'full";
+  return (
+    `Tool '${toolName}' is outside this sub-agent's profile. ` +
+    `Re-spawn with tool_groups:['${suggestion}'].`
+  );
+}
 
 /** Per-call TTL split estimate, populated by requestBodyInjector's onPayload.
  *  Shared mutable object — written by the stream wrapper, read by the bridge. */
@@ -252,6 +284,11 @@ export interface PiEventBridgeDeps {
    * ancestor (`~/.comis`) here.
    */
   dataDir?: string;
+  /** Active tool group names for the sub-agent's profile ceiling.
+   *  When provided, "Tool X not found" errors in tool_execution_end are
+   *  enriched with delegation routing hints (SUBA-02). Omit for top-level
+   *  agents where all tools are reachable. */
+  activeToolGroups?: string[];
 }
 
 /** Estimated cost payload for a timed-out API request. */
@@ -552,6 +589,18 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 toolErrorKind = classifyToolError(endEvent.toolName, errorText);
               }
             }
+            // SUBA-02: Enrich "Tool X not found" errors with delegation routing hints.
+            // Only applied when activeToolGroups is provided (sub-agent context).
+            // NOT_FOUND_RE is anchored (^…$) — only the exact SDK format triggers.
+            if (errorText && deps.activeToolGroups && deps.activeToolGroups.length > 0) {
+              const notFoundMatch = NOT_FOUND_RE.exec(errorText);
+              if (notFoundMatch) {
+                const missingTool = notFoundMatch[1]!;
+                errorText = classifyUnreachableTool(missingTool, deps.activeToolGroups);
+                toolErrorKind = "validation";
+              }
+            }
+
             m.failedToolCount++;
             if (!m.failedToolNames.includes(endEvent.toolName)) {
               m.failedToolNames.push(endEvent.toolName);
