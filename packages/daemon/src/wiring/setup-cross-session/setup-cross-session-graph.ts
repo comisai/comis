@@ -3,10 +3,10 @@
  * Graph-execution wiring for cross-session sub-agent spawns.
  *
  * Hosts the `executeSubAgent` closure builder + graph-tree primitives:
- * `resolveGraphCacheRetention` (depth-aware leaf-node retention), the
- * `SUB_AGENT_TOOL_DENYLIST` ten-tool set (management tools that would
- * trigger SIGUSR2 daemon restart), and `MIN_SUB_AGENT_STEPS` (the step
- * budget floor that protects boot-sequence consumption).
+ * `resolveGraphCacheRetention` (depth-aware leaf-node retention), and
+ * `MIN_SUB_AGENT_STEPS` (the step budget floor that protects boot-sequence
+ * consumption). `SUB_AGENT_TOOL_DENYLIST` is imported from `@comis/core`
+ * (moved in SUBA-03 so @comis/agent can import it without a cycle).
  *
  * The runtime leaf wires the resulting executeSubAgent into createSubAgentRunner.
  *
@@ -14,7 +14,7 @@
  */
 
 import type { NormalizedMessage, SessionKey, SpawnPacket, AppContainer, AgentConfig, FileLockPort } from "@comis/core";
-import { tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir } from "@comis/core";
+import { tryGetContext, runWithContext, formatSessionKey, safePath, systemNowMs, resolveWorkspaceDir, SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import {
   createStepCounter,
@@ -59,25 +59,11 @@ export function resolveGraphCacheRetention(
 }
 
 // ---------------------------------------------------------------------------
-// Sub-agent tool denylist
+// Sub-agent step floor
 // ---------------------------------------------------------------------------
 
 /** Minimum step budget for sub-agent spawns — prevents boot sequence from consuming all steps. */
 export const MIN_SUB_AGENT_STEPS = 30;
-
-/** Tools denied to sub-agents -- management tools that trigger SIGUSR2 daemon restart. */
-export const SUB_AGENT_TOOL_DENYLIST = new Set([
-  "gateway",          // config.patch, gateway.restart, config.rollback, env.set -> SIGUSR2
-  "channels_manage",  // channels.restart, config.patch -> SIGUSR2
-  "agents_manage",    // agent create/delete -> config persistence -> SIGUSR2
-  "models_manage",    // model config changes -> config persistence -> SIGUSR2
-  "providers_manage", // provider CRUD -> config persistence -> SIGUSR2
-  "tokens_manage",    // token CRUD -> config persistence -> SIGUSR2
-  "skills_manage",    // skill config changes -> config persistence -> potential SIGUSR2
-  "sessions_manage",  // session purge is destructive
-  "memory_manage",    // memory purge is destructive
-  "heartbeat_manage", // heartbeat config -> config persistence -> potential SIGUSR2
-]);
 
 // ---------------------------------------------------------------------------
 // executeSubAgent builder

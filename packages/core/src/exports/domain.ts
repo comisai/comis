@@ -70,6 +70,11 @@ export {
   ProviderFamilySchema,
   TranscriptToolCallIdModeSchema,
   ProviderCapabilitiesSchema,
+  // Sub-agent tool governance
+  SUB_AGENT_TOOL_DENYLIST,
+  SUB_AGENT_TOOL_PROFILES,
+  RequiredToolsUnreachableError,
+  toolReachableGroups,
 } from "../domain/index.js";
 
 export { BackgroundTaskOriginSchema } from "../domain/background-task-origin.js";
@@ -130,4 +135,6 @@ export type {
   ProviderFamily,
   TranscriptToolCallIdMode,
   ProviderCapabilities,
+  // Sub-agent tool governance
+  UnreachableToolEntry,
 } from "../domain/index.js";
