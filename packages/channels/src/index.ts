@@ -185,10 +185,6 @@ export type {
   WhatsAppPollData,
 } from "./shared/poll-normalizer.js";
 
-// Approval notifier
-export { createApprovalNotifier } from "./shared/approval-notifier.js";
-export type { ApprovalNotifier, ApprovalNotifierDeps } from "./shared/approval-notifier.js";
-
 // Shared infrastructure
 export { createTypingController } from "./shared/typing-controller.js";
 export type {

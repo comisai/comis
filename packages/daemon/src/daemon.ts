@@ -2087,7 +2087,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // pass accessor closures for sessionTracker / inboundMessageIdResolver
   // (const `{current?:T}` container pattern; populated after setupChannels
   // returns by mutating the .current field).
-  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, commandQueue, deliveryService, approvalNotifier } = await setupChannels(
+  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, commandQueue, deliveryService } = await setupChannels(
     buildChannelManagerDeps({
       agents: handle,
       assembleToolsForAgent,
@@ -2214,7 +2214,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     nodeTypeRegistry, graphCoordinator, namedGraphStore,
     suspendedAgents, modelCatalog, channelConfig, promptTimeoutTimestamps,
     // Teardown handles surfaced for ShutdownDeps wiring.
-    shutdownBackgroundProcesses, proxyTypingCleanup, approvalNotifier,
+    shutdownBackgroundProcesses, proxyTypingCleanup,
     outputRetentionHandle,
   });
 }
@@ -2450,7 +2450,7 @@ async function bootShutdown(
     | "activeExecutions" | "getActiveConnectionCount" | "wsConnections"
     | "heartbeatRunner" | "duplicateDetector" | "perAgentRunner"
     | "stopChannelHealthMonitor" | "shutdownBackgroundProcesses" | "proxyTypingCleanup"
-    | "approvalNotifier" | "outputRetentionHandle"
+    | "outputRetentionHandle"
     | "bgCompletionRunnerContext" | "trajectoryRegistry"
     | "auditAggregator" | "onSuspiciousContent"
     | "sessionManager"
@@ -2485,7 +2485,7 @@ async function bootShutdown(
     activeExecutions, getActiveConnectionCount,
     trajectoryRegistry,
     // 9 new teardown handles surfaced through BootContext.
-    shutdownBackgroundProcesses, proxyTypingCleanup, approvalNotifier,
+    shutdownBackgroundProcesses, proxyTypingCleanup,
     outputRetentionHandle, shutdownDeliveryQueue, shutdownMirror,
     bgCompletionRunnerContext, stopChannelHealthMonitor, mcpClientManager,
   } = gateway;
@@ -2529,7 +2529,6 @@ async function bootShutdown(
     mcpClientManagerDisconnectAll: () => mcpClientManager.disconnectAll(),
     bgCompletionRunnerShutdown: () => bgCompletionRunnerContext.runner.shutdown(),
     proxyTypingCleanup,
-    approvalNotifierStop: approvalNotifier ? () => approvalNotifier.stop() : undefined,
     shutdownDeliveryQueue,
     shutdownDeliveryMirror: shutdownMirror,
     outputRetentionShutdown: outputRetentionHandle ? () => outputRetentionHandle.shutdown() : undefined,

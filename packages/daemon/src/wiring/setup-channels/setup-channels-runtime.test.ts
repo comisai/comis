@@ -2,12 +2,11 @@
 /**
  * The runtime leaf hosts `buildAndStartChannelManager` (voice pipeline +
  * command queue + slash-command handler + retry engine + lifecycle
- * reactors + approval notifier). The integration matrix (ChannelManager
- * startAll, lifecycle reactor creation, approval notifier shutdown) is
- * exercised by setup-channels-registry.test.ts which invokes setupChannels
- * end-to-end with mocks; this neighbor test pins the symbol-export shape
- * and the deps + result interface key sets for compile-time regression
- * coverage.
+ * reactors). The integration matrix (ChannelManager startAll, lifecycle
+ * reactor creation) is exercised by setup-channels-registry.test.ts which
+ * invokes setupChannels end-to-end with mocks; this neighbor test pins the
+ * symbol-export shape and the deps + result interface key sets for
+ * compile-time regression coverage.
  *
  * @module
  */
@@ -69,9 +68,8 @@ describe("setup-channels-runtime", () => {
     const witness: Record<keyof ChannelManagerBuildResult, true> = {
       channelManager: true,
       lifecycleReactors: true,
-      approvalNotifier: true,
       commandQueue: true,
     };
-    expect(Object.keys(witness).length).toBe(4);
+    expect(Object.keys(witness).length).toBe(3);
   });
 });

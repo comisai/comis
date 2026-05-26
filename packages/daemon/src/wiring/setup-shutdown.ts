@@ -148,8 +148,6 @@ export interface ShutdownDeps {
   bgCompletionRunnerShutdown?: () => Promise<void>;
   /** Cleanup proxy typing controllers + sweep timer (from registerProxyTypingListeners). */
   proxyTypingCleanup?: () => void;
-  /** Stop the approval notifier (from setup-channels-runtime). */
-  approvalNotifierStop?: () => void;
   /** Stop the delivery queue (from setupDeliveryQueue). */
   shutdownDeliveryQueue?: () => void;
   /** Stop the delivery mirror (from setupDeliveryMirror). */
@@ -252,7 +250,6 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     mcpClientManagerDisconnectAll,
     bgCompletionRunnerShutdown,
     proxyTypingCleanup,
-    approvalNotifierStop,
     shutdownDeliveryQueue,
     shutdownDeliveryMirror,
     outputRetentionShutdown,
@@ -512,16 +509,6 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           proxyTypingCleanup();
           daemonLogger.info({ component: "proxy-typing", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "proxy-typing", daemonLogger);
-      }
-      // Stop the approval notifier — replaces the
-      // system:shutdown subscriber that previously called
-      // approvalNotifier?.stop() in setup-channels-runtime.ts.
-      if (approvalNotifierStop) {
-        const stopMs = systemNowMs();
-        await withStepTimeout(() => {
-          approvalNotifierStop();
-          daemonLogger.info({ component: "approval-notifier", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
-        }, "approval-notifier", daemonLogger);
       }
       // Stop the channel health monitor — replaces the
       // system:shutdown subscriber in daemon.ts.

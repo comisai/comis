@@ -2,12 +2,12 @@
 /**
  * Channel adapter lifecycle wiring. Hosts the ChannelManager construction
  * (with voice response pipeline, command queue, slash-command handler,
- * lifecycle reactors, approval notifier).
+ * lifecycle reactors).
  *
  * The registry orchestrator invokes `buildAndStartChannelManager` after the
  * adapters and media pipeline have been bootstrapped; this helper returns
- * the manager handle + lifecycle reactors + approval notifier + command
- * queue so the registry can assemble the final ChannelsResult.
+ * the manager handle + lifecycle reactors + command queue so the registry
+ * can assemble the final ChannelsResult.
  *
  * @module
  */
@@ -20,9 +20,7 @@ import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import { createCommandHandler, parseSlashCommand, createMessageRouter, createCommandQueue, type CommandHandlerDeps, type CommandQueue } from "@comis/orchestrator";
 import {
-  createApprovalNotifier,
   type VoiceResponsePipelineDeps,
-  type ApprovalNotifier,
   createLifecycleReactor,
   reactWithFallback,
   type LifecycleReactor,
@@ -104,7 +102,6 @@ export interface ChannelManagerBuildDeps {
 export interface ChannelManagerBuildResult {
   channelManager?: ChannelManager;
   lifecycleReactors: LifecycleReactor[];
-  approvalNotifier?: ApprovalNotifier;
   commandQueue?: CommandQueue;
   activityRenderers: Map<string, ActivityRendererFactory>; // WIRE-02; per-channelId factory, see buildActivityRenderers
 }
@@ -112,9 +109,9 @@ export interface ChannelManagerBuildResult {
 /**
  * Construct and start the ChannelManager (voice response pipeline +
  * command queue + slash-command handler + retry engine), then wire the
- * lifecycle reactors and approval notifier for each registered adapter.
+ * lifecycle reactors for each registered adapter.
  *
- * Returns the four handles the registry needs to assemble ChannelsResult.
+ * Returns the handles the registry needs to assemble ChannelsResult.
  * No-op when `adaptersByType.size === 0`.
  */
 export async function buildAndStartChannelManager(
@@ -575,24 +572,8 @@ export async function buildAndStartChannelManager(
     }
   }
 
-  // -----------------------------------------------------------------------
-  // Approval notifier: forward approval:requested to chat channel
-  // -----------------------------------------------------------------------
-  let approvalNotifier: ApprovalNotifier | undefined;
-  if (adaptersByType.size > 0) {
-    approvalNotifier = createApprovalNotifier({
-      eventBus: container.eventBus,
-      getAdapter: (channelType) => adaptersByType.get(channelType),
-      logger: channelsLogger,
-      deliveryService,
-    });
-    approvalNotifier.start();
-    channelsLogger.debug("Approval notifier started");
-
-    // No system:shutdown subscriber: composition root calls .stop() via ShutdownDeps.approvalNotifierStop.
-  }
   const activityRenderers = buildActivityRenderers(adaptersByType, channelPlugins, channelsLogger, { timer: deps.timers, clock: deps.clock, signCallbackData: deps.signCallbackData, mintApprovalLink: deps.mintApprovalLink }); // WIRE-02 + 73-10 signer/link
-  return { channelManager, lifecycleReactors, approvalNotifier, commandQueue, activityRenderers };
+  return { channelManager, lifecycleReactors, commandQueue, activityRenderers };
 }
 // Re-export Attachment + ChannelPluginPort (silences lint; public-surface boundary).
 export type { Attachment, ChannelPluginPort };

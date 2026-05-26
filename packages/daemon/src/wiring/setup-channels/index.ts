@@ -8,7 +8,7 @@
  * Decomposition:
  *   - setup-channels-registry.ts     setupChannels orchestrator + ChannelsDeps/Result
  *   - setup-channels-credentials.ts  cron event listeners (registerCronEventListeners): API-key + model resolution per cron tick
- *   - setup-channels-runtime.ts      buildAndStartChannelManager: voice pipeline + command queue + slash handlers + lifecycle reactors + approval notifier
+ *   - setup-channels-runtime.ts      buildAndStartChannelManager: voice pipeline + command queue + slash handlers + lifecycle reactors
  *
  * @module
  */

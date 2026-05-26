@@ -33,10 +33,8 @@ const mockChannelManager = {
   activeCount: 0,
 };
 const mockRetryEngine = { sendWithRetry: vi.fn() };
-const mockApprovalNotifier = { start: vi.fn(), stop: vi.fn() };
 vi.mock("@comis/channels", () => ({
   createLifecycleReactor: vi.fn(() => ({ destroy: vi.fn() })),
-  createApprovalNotifier: vi.fn(() => mockApprovalNotifier),
   reactWithFallback: vi.fn(),
   // Activity-renderer factories consumed by buildActivityRenderers (WIRE-02).
   // The *_RENDERER_FACTORIES consts in setup-channels-activity-renderers.ts

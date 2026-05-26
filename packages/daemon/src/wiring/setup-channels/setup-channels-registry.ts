@@ -4,7 +4,7 @@
  * setup-channels-adapters.ts), assembles the media pipeline (delegated to
  * setup-channels-media.ts), registers cron-delivery event listeners
  * (delegated to setup-channels-credentials.ts), and constructs the
- * ChannelManager + lifecycle reactors + approval notifier (delegated to
+ * ChannelManager + lifecycle reactors (delegated to
  * setup-channels-runtime.ts).
  *
  * Holds the `ChannelsDeps` / `ChannelsResult` interfaces and the
@@ -19,7 +19,7 @@ import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { createSessionStore } from "@comis/memory";
 import type { CommandQueue } from "@comis/orchestrator";
-import type { VoiceResponsePipelineDeps, ApprovalNotifier, LifecycleReactor } from "@comis/channels";
+import type { VoiceResponsePipelineDeps, LifecycleReactor } from "@comis/channels";
 import type { ChannelManager } from "@comis/orchestrator";
 import { initTelegramFileGuardConfig } from "@comis/core";
 import type { MediaResolverPort } from "@comis/core";
@@ -52,8 +52,6 @@ export interface ChannelsResult {
   resolveAttachment: (url: string) => Promise<Buffer | null>;
   /** Lifecycle reactors created per eligible adapter (for shutdown cleanup). */
   lifecycleReactors: LifecycleReactor[];
-  /** Approval notifier for forwarding approval events to chat channels (optional -- undefined when no adapters enabled). */
-  approvalNotifier?: ApprovalNotifier;
   /** Full plugin objects keyed by channel type. Consumers read
    *  `plugin.capabilities` for features.reactions (lifecycle reactor gate)
    *  and replyToMetaKey (the platform-native message id used by the inbound
@@ -223,8 +221,8 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   // closure captures hookRunner + deliveryQueue + eventBus, so all production
   // callers below use the method form `deliveryService.deliverToChannel(...)`
   // instead of threading an optional 5th-arg deps record. The reference is
-  // also threaded through ChannelManagerDeps, ApprovalNotifierDeps,
-  // MessageHandlerDeps, and the cross-session-sender deps so every callsite
+  // also threaded through ChannelManagerDeps, MessageHandlerDeps, and the
+  // cross-session-sender deps so every callsite
   // sees the same closure-captured deps record. `deps.deliveryQueue` is
   // always defined in production (real SQLite queue when enabled,
   // createNoOpDeliveryQueue when disabled — see setup-delivery.ts); the
@@ -287,8 +285,8 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   });
 
   // Build the ChannelManager (voice pipeline + command queue + slash handlers +
-  // lifecycle reactors + approval notifier).
-  const { channelManager, lifecycleReactors, approvalNotifier, commandQueue } =
+  // lifecycle reactors).
+  const { channelManager, lifecycleReactors, commandQueue } =
     await buildAndStartChannelManager({
       container,
       executors,
@@ -336,7 +334,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     compositeResolver,
     resolveAttachment: resolveAttachmentByUrl,
     lifecycleReactors,
-    approvalNotifier,
     channelPlugins,
     commandQueue,
     deliveryService,

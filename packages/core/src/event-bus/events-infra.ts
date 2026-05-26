@@ -40,7 +40,7 @@ export interface InfraEvents {
      *  context. Optional — `restorePending()` preserves `shortId` but may
      *  omit `traceId` after a graceful restart (§4.2). */
     traceId?: string;
-    /** Channel type of the originating request (e.g., "telegram", "discord"). Used by approval notifier. */
+    /** Channel type of the originating request (e.g., "telegram", "discord"). Used by the activity-renderer approval path. */
     channelType?: string;
   };
 
