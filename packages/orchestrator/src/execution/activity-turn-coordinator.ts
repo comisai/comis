@@ -49,6 +49,7 @@ import type {
 } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { suppressError } from "@comis/shared";
+import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -169,6 +170,14 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   let sawFailedEvent = false;
   let startedAtMs = 0;
   let disposed = false;
+  // APV-01: the turn's root activity id, minted once at start(). The spawning
+  // turn's root is the parent of every sub-agent ActivityEvent (the spawn event
+  // carries parentSessionKey, not a parent activityId — §17.3 / Assumption A2).
+  let turnRootActivityId: string | undefined;
+  // APV-01: active sub-agent stack (runId-less here — the coordinator keys on the
+  // event's own activityId) for nested-spawn parent resolution. The top of the
+  // stack is the parent of the next nested sub-agent; entries pop on phase:"end".
+  const subAgentStack: string[] = [];
 
   const counters: ActivityTurnCounters = {
     renderApply: 0,
@@ -224,15 +233,49 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   }
 
   function onEvent(e: ActivityEvent): void {
-    events.push(e);
+    events.push(annotateSubAgentParent(e));
     if (e.status === "failed") sawFailedEvent = true;
     scheduleApply();
+  }
+
+  /**
+   * APV-01: supply `parentActivityId` for a sub-agent event from the active
+   * stack. The stream emits sub-agent events WITHOUT a parent link (it has no
+   * turn state); the coordinator (the §4.5 single owner) resolves it here:
+   *   • phase:"start" lacking a parent → parent is the enclosing sub-agent (top
+   *     of the stack) for a nested spawn, else the turn's root activity; the
+   *     event's own activityId is then pushed so a deeper spawn links to it,
+   *   • phase:"end" → pop the matching stack entry.
+   * A pre-set `parentActivityId` is left intact; non-subagent events pass through
+   * untouched. Returns the (possibly annotated) event without mutating the input.
+   */
+  function annotateSubAgentParent(e: ActivityEvent): ActivityEvent {
+    if (e.kind !== "subagent") return e;
+
+    if (e.phase === "end") {
+      const idx = subAgentStack.lastIndexOf(e.activityId);
+      if (idx !== -1) subAgentStack.splice(idx, 1);
+      return e;
+    }
+
+    if (e.phase === "start") {
+      const resolved =
+        e.parentActivityId ??
+        subAgentStack[subAgentStack.length - 1] ??
+        turnRootActivityId;
+      subAgentStack.push(e.activityId);
+      if (e.parentActivityId !== undefined || resolved === undefined) return e;
+      return { ...e, parentActivityId: resolved };
+    }
+
+    return e;
   }
 
   /** Release the subscription + cancel any pending paint / delivery gate. Idempotent. */
   function releaseSubscription(): void {
     if (disposed) return;
     disposed = true;
+    subAgentStack.length = 0;
     debounceHandle?.cancel();
     // Cancel the in-flight delivery gate so an aborted turn does not leave a
     // timer holding the event loop open (WR-01). cancel() is idempotent.
@@ -292,6 +335,9 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   return {
     start(ctx: TurnActivityContext): void {
       startedAtMs = deps.clock.now();
+      // Mint the turn's root activity id once — the parent of every sub-agent
+      // event observed during this turn (APV-01).
+      turnRootActivityId = randomUUID();
       subscription = deps.activityStreamPort.subscribeForTurn(ctx, onEvent);
     },
 

@@ -22,8 +22,15 @@
  * audit event is untouched). The same `toolCallId → activityId` mapping keeps a
  * stable `activityId` across `tool:started` → `tool:executed`.
  *
- * Subagent events are IGNORED at this layer — they are rendered in Workstream C
- * (Phase 73).
+ * Subagent lifecycle events (`session:sub_agent_spawned`/`completed`) map to
+ * `kind:"subagent"` ActivityEvents (APV-01, §17.3). The spawn payload carries
+ * `{runId, parentSessionKey, agentId, task}` — NO `traceId` and NO parent
+ * `activityId` — so subagent events are delivered to every turn subscriber whose
+ * `{agentId, sessionKey}` match `{agentId, parentSessionKey}`, stamping that
+ * subscriber's `traceId` onto the delivered copy. `parentActivityId` is left
+ * unset here: the per-turn coordinator (the §4.5 single owner) annotates the
+ * parent link from its active-subagent stack. The free-text `task` is never
+ * reflected into the rendered label (only `agentId` + the `🤖` marker, T-73-07).
  *
  * Logging (OBS-02): the logger is injected via Deps; object-first; no
  * in-module logger construction, and the module-identity payload field is never
@@ -142,7 +149,7 @@ interface CorrelationEntry {
   readonly channelType?: string;
 }
 
-/** EventBus events this layer maps (subagent events are deliberately absent). */
+/** EventBus events this layer maps (subagent events map to kind:"subagent", APV-01). */
 const SUBSCRIBED_EVENTS = [
   "tool:started",
   "tool:executed",
@@ -152,6 +159,8 @@ const SUBSCRIBED_EVENTS = [
   "model:lkw_fallback_attempt",
   "approval:requested",
   "approval:resolved",
+  "session:sub_agent_spawned",
+  "session:sub_agent_completed",
 ] as const satisfies ReadonlyArray<keyof EventMap>;
 
 /**
@@ -165,6 +174,9 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
   const activityIds = new Map<string, string>();
   // requestId → correlation context (spec §4.2 approval index).
   const approvalIndex = new Map<string, CorrelationEntry>();
+  // runId → parentSessionKey: the spawn payload carries the session, the
+  // completed payload does NOT, so remember it to scope the close event (APV-01).
+  const subagentSessions = new Map<string, string>();
 
   let emitted = 0;
   let dropped = 0;
@@ -309,6 +321,68 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       }
     }
     return true;
+  }
+
+  /**
+   * Deliver a subagent event (APV-01). The spawn/completed payloads carry no
+   * `traceId` (and no parent `activityId`), so the event is delivered to every
+   * turn subscriber whose `{agentId, sessionKey}` match, STAMPING that
+   * subscriber's `traceId` onto a freshly-parsed copy. `parentActivityId` is left
+   * to the coordinator. Mirrors the bounded-queue delivery in {@link dispatch}.
+   */
+  function dispatchSubagent(base: Record<string, unknown>): void {
+    for (const sub of subscribers) {
+      if (sub.ctx.agentId !== base.agentId || sub.ctx.sessionKey !== base.sessionKey) {
+        continue;
+      }
+      const parsed = parseActivityEvent({ ...base, traceId: sub.ctx.traceId });
+      if (!parsed.ok) {
+        childLogger?.error?.(
+          {
+            issues: parsed.error.issues,
+            errorKind: "internal" as const,
+            hint: "a producer emitted a malformed subagent activity event; fix the emit site mapping",
+            step: "parse-activity-event",
+          },
+          "parseActivityEvent rejected a mapped subagent event",
+        );
+        continue;
+      }
+      const event = parsed.value;
+      emitted += 1;
+      childLogger?.debug?.(
+        {
+          activityId: event.activityId,
+          traceId: event.traceId,
+          agentId: event.agentId,
+          sessionKey: event.sessionKey,
+          kind: event.kind,
+          phase: event.phase,
+          status: event.status,
+          step: "emit",
+        },
+        "activity event emitted",
+      );
+      const droppedByPush = sub.queue.push(event);
+      if (droppedByPush > 0) {
+        dropped += droppedByPush;
+        childLogger?.warn?.(
+          {
+            agentId: event.agentId,
+            sessionKey: event.sessionKey,
+            consumer: sub.ctx.rendererKey,
+            reason: "queue_full",
+            errorKind: "resource" as const,
+            hint: "activity consumer is slow; the bounded queue dropped the oldest non-failure event",
+            step: "queue-drop",
+          },
+          "activity bounded-queue dropped an event",
+        );
+      }
+      for (const queued of sub.queue.drain()) {
+        sub.onEvent(queued);
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -467,6 +541,44 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
     });
   }
 
+  function onSubAgentSpawned(p: EventMap["session:sub_agent_spawned"]): void {
+    // T-73-07: the label uses only agentId + the 🤖 marker — never the free-text
+    // `task` (which could echo user content). parentActivityId is set by the
+    // coordinator (§4.5), not here.
+    subagentSessions.set(p.runId, p.parentSessionKey);
+    dispatchSubagent({
+      schemaVersion: 1,
+      activityId: activityIdFor(`subagent:${p.runId}`),
+      sessionKey: p.parentSessionKey,
+      agentId: p.agentId,
+      ts: ts(),
+      phase: "start",
+      status: "running",
+      kind: "subagent",
+      semanticPhase: "thinking",
+      defaultLabel: `🤖 ${p.agentId} subagent`,
+    });
+  }
+
+  function onSubAgentCompleted(p: EventMap["session:sub_agent_completed"]): void {
+    const sessionKey = subagentSessions.get(p.runId);
+    if (sessionKey === undefined) return; // no matching spawn → not live activity
+    subagentSessions.delete(p.runId);
+    dispatchSubagent({
+      schemaVersion: 1,
+      activityId: activityIdFor(`subagent:${p.runId}`),
+      sessionKey,
+      agentId: p.agentId,
+      ts: ts(),
+      phase: "end",
+      status: p.success ? "completed" : "failed",
+      kind: "subagent",
+      semanticPhase: p.success ? "done" : "error",
+      durationMs: p.runtimeMs,
+      defaultLabel: `🤖 ${p.agentId} subagent`,
+    });
+  }
+
   function isSuppressed(toolName: string): boolean {
     return deps.getToolMetadata?.(toolName)?.suppressActivity === true;
   }
@@ -497,6 +609,8 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
   bind("model:lkw_fallback_attempt", onModelEvent);
   bind("approval:requested", onApprovalRequested);
   bind("approval:resolved", onApprovalResolved);
+  bind("session:sub_agent_spawned", onSubAgentSpawned);
+  bind("session:sub_agent_completed", onSubAgentCompleted);
   void SUBSCRIBED_EVENTS;
 
   return {
@@ -521,6 +635,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       subscribers.clear();
       activityIds.clear();
       approvalIndex.clear();
+      subagentSessions.clear();
     },
     counters(): ActivityCounters {
       return { emitted, dropped, redactionReplacements };
