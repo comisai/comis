@@ -225,6 +225,15 @@ export { wrapInEnvelope, formatElapsed } from "./envelope/index.js";
 export { createPiExecutor } from "./executor/pi-executor/index.js";
 export type { PiExecutorDeps } from "./executor/pi-executor/index.js";
 
+// ExecutionPlanPort holder (ACP-03) — the composition root builds the holder,
+// threads it into bootstrapSession's ctx so SEP publishes the live per-turn
+// plan ref, and hands the SAME holder to the gateway as
+// AcpServerDeps.executionPlanPort (it IS a @comis/core ExecutionPlanPort).
+// The gateway never imports @comis/agent — it receives the bound port typed
+// from @comis/core (mirrors the activityStreamPort injection seam).
+export { createExecutionPlanHolder } from "./executor/pi-executor/execution-plan-holder.js";
+export type { ExecutionPlanHolder } from "./executor/pi-executor/execution-plan-holder.js";
+
 // Wire session:expired to clearSession functions
 export { clearSessionState, wireSessionStateCleanup } from "./executor/session-snapshot-cleanup.js";
 

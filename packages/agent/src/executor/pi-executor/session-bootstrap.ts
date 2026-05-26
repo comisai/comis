@@ -22,6 +22,7 @@ import type {
 
 import type { ExecutionResult, ExecutionOverrides } from "../types.js";
 import type { ExecutionPlan } from "../../planner/types.js";
+import type { ExecutionPlanHolder } from "./execution-plan-holder.js";
 import type { PiExecutorDeps } from "./pi-executor-types.js";
 import type { AdaptiveCacheRetention } from "../adaptive-cache-retention.js";
 import { resolveProviderApiKey } from "../../model/resolve-provider-api-key.js";
@@ -98,6 +99,13 @@ export async function bootstrapSession(
     readonly config: PerAgentConfig;
     readonly sessionKey: SessionKey;
     readonly overrides: ExecutionOverrides | undefined;
+    /**
+     * Optional ExecutionPlanPort holder (ACP-03). When provided and SEP is
+     * enabled for this turn, the per-turn `executionPlanRef` is published into
+     * it so the gateway/ACP plan bridge reads the active plan via the port.
+     * Absent in non-ACP runtimes — existing callers are unaffected.
+     */
+    readonly executionPlanHolder?: ExecutionPlanHolder;
   },
 ): Promise<SessionBootstrapResult> {
   void state;
@@ -126,6 +134,13 @@ export async function bootstrapSession(
   // SEP: Initialize execution plan ref (shared with bridge via mutable ref)
   const sepEnabled = ctx.config.sep?.enabled !== false && !ctx.overrides?.skipSep;
   const executionPlanRef: { current: ExecutionPlan | undefined } = { current: undefined };
+
+  // ACP-03: publish the live per-turn ref into the ExecutionPlanPort holder so
+  // the gateway/ACP plan bridge reads the active plan. SEP-guarded so a
+  // disabled turn does not point the port at a never-populated ref (T-74-07).
+  if (sepEnabled && ctx.executionPlanHolder) {
+    ctx.executionPlanHolder.publish(executionPlanRef);
+  }
 
   return { executionStartMs, result, sepEnabled, executionPlanRef };
 }
