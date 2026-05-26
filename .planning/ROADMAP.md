@@ -66,7 +66,7 @@ Plans:
 - [x] 02-02-PLAN.md — TDD: Add `seedKeyHex` fallback to `setupSecrets` in `@comis/memory` (STORE-01 same-boot)
 - [x] 02-03-PLAN.md — TDD: Wire opt-out flag + `writeMasterKeyIfAbsent` + `seedKeyHex` threading in daemon boot (STORE-01c + STORE-02)
 - [x] 02-04-PLAN.md — TDD: Add `gateway.status` pre-flight in `env_set` for fail-early store check (STORE-03)
-- [ ] 02-05-PLAN.md — Docs sweep: 5 install docs + CHANGELOG encrypted-by-default posture change (STORE-04)
+- [x] 02-05-PLAN.md — Docs sweep: 5 install docs + CHANGELOG encrypted-by-default posture change (STORE-04)
 
 ---
 
