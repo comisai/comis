@@ -7,7 +7,7 @@
  * Mirrors `createFakeTelegramAdapter` (the Phase-71 template) but for the
  * DeleteAndRepost shape:
  *   - mints `sig-msg-N` ids (Signal's determinism source for byte-stable
- *     fixtures — Pitfall 2; no `systemNowMs()`/`Date.now()` that would flap),
+ *     fixtures — Pitfall 2; clock-free, no wall-time call that would flap),
  *   - records NO `silent` flag on `send` (Signal does not send the silent
  *     effect — the renderer posts a plain message per transition), and
  *   - OMITS `editMessage` entirely. Signal has no in-place edit; the live
