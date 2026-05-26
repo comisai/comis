@@ -78,7 +78,22 @@ export { createResponsesRoute } from "./responses/index.js";
 
 // ACP server for IDE integration
 export { createAcpAgent } from "./acp/index.js";
-export type { AcpServerDeps } from "./acp/index.js";
+export type { AcpServerDeps, AcpAgentHandle } from "./acp/index.js";
+
+// ACP activity/plan/approval bridges + local queue — the daemon composition
+// root constructs these per ACP session (createAcpAgent's AcpAgentHandle
+// provides getConnection; the holder from @comis/agent is the ExecutionPlanPort).
+export {
+  createAcpActivityBridge,
+  createAcpPlanBridge,
+  createAcpApprovalBridge,
+  createAcpBoundedQueue,
+} from "./acp/index.js";
+export type {
+  CreateAcpActivityBridgeDeps,
+  CreateAcpPlanBridgeDeps,
+  CreateAcpApprovalBridgeDeps,
+} from "./acp/index.js";
 
 // mDNS/Bonjour service discovery
 export { createMdnsAdvertiser } from "./discovery/index.js";
