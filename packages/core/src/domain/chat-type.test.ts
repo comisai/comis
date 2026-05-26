@@ -33,5 +33,11 @@ describe("ChatType (TURN-02)", () => {
     it("passes channel through unchanged as channel", () => {
       expect(narrowChatType("channel")).toBe("channel");
     });
+    it("defensively folds an out-of-union value to group at the never default", () => {
+      // Exercises the exhaustive-never default arm (AGENTS.md §2.8) via an
+      // out-of-type cast, mirroring how the observability bridge tests cover
+      // their closed-union defaults. A non-typesafe caller must not crash.
+      expect(narrowChatType("space" as unknown as Parameters<typeof narrowChatType>[0])).toBe("group");
+    });
   });
 });
