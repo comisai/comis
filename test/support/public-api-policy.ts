@@ -210,6 +210,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "wrapInEnvelope",
       "formatElapsed",
       "PiExecutorDeps",
+      // ExecutionPlanHolder + createExecutionPlanHolder (Phase 74, workstream D,
+      // ACP-03). The first (and only) ExecutionPlanPort impl — a holder-backed
+      // port reading the live per-turn SEP ExecutionPlan. Surfaced on the
+      // @comis/agent barrel so the daemon composition root can build the holder,
+      // thread it into the agent runtime, and hand the SAME object to the
+      // gateway as a @comis/core ExecutionPlanPort (AcpServerDeps.executionPlanPort).
+      // That composition-root wiring is deferred to a later composition phase,
+      // so neither symbol has an in-repo consumer yet — baseline-orphan posture
+      // mirroring SessionLifecycleOptions above. Shrink when the wiring lands.
+      "createExecutionPlanHolder",
+      "ExecutionPlanHolder",
       "clearSessionState",
       "CacheSafeParams",
       "cleanupServerFromAllTrackers",
@@ -1612,6 +1623,28 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "ApprovalTokenDeps",
       "createAcpAgent",
       "AcpServerDeps",
+      // ACP activity/plan/approval bridges + the local bounded queue (Phase 74,
+      // workstream D). The three bridge factories + AcpAgentHandle (carries the
+      // getConnection accessor) + the four deps types are the documented public
+      // surface the daemon composition root consumes to construct the bridges
+      // per ACP session — but live composition-root wiring (instantiate +
+      // subscribe the bridges inside startAcpServer; inject the @comis/agent
+      // ExecutionPlanHolder as AcpServerDeps.executionPlanPort) is deferred to a
+      // later composition phase, so these have no in-repo consumer yet. Same
+      // baseline-orphan posture as createAcpAgent/AcpServerDeps directly above
+      // (the ACP server itself is not yet wired into the daemon either). Shrink
+      // each entry as its composition-root consumer lands. createAcpBoundedQueue
+      // is also consumed internally by acp-activity-bridge.ts via a relative
+      // import, but the public-export-consumers walker only counts cross-package
+      // `@comis/gateway` imports — so the barrel re-export is a tracked orphan.
+      "AcpAgentHandle",
+      "createAcpActivityBridge",
+      "createAcpPlanBridge",
+      "createAcpApprovalBridge",
+      "createAcpBoundedQueue",
+      "CreateAcpActivityBridgeDeps",
+      "CreateAcpPlanBridgeDeps",
+      "CreateAcpApprovalBridgeDeps",
       "createMdnsAdvertiser",
       "validateCertificates",
       "extractClientCN",
