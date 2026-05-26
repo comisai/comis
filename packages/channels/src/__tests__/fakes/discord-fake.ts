@@ -192,7 +192,8 @@ export function createFakeDiscordAdapter(channelId = "chat-1"): FakeDiscordAdapt
         connected: true,
         channelId,
         channelType: "discord",
-        connectionMode: "gateway",
+        // Matches the live discord-adapter getStatus (discord-adapter.ts:665).
+        connectionMode: "socket",
       };
     },
   };
