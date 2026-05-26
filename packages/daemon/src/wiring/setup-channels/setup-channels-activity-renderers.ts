@@ -51,6 +51,7 @@ import type {
   ChannelActivityRenderer,
   ClockPort,
   TimerPort,
+  ActivityStatusMarkers,
 } from "@comis/core";
 import { selectStrategy } from "@comis/core";
 import {
@@ -88,6 +89,10 @@ export interface ActivityRendererDeps {
   clock: ClockPort;
   signCallbackData?: SignCallbackData;
   mintApprovalLink?: MintApprovalLink;
+  /** Resolved theme status markers (UX-01) forwarded to closing-line strategies.
+   *  Resolved ONCE at the composition root from the default agent's
+   *  `activity.theme`; omitted → default glyphs. */
+  markers?: ActivityStatusMarkers;
 }
 
 /** The uniform per-channelId factory every strategy map stores. A factory that

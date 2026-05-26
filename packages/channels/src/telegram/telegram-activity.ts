@@ -44,6 +44,7 @@ import type {
   TimerHandle,
   ClockPort,
   RichButton,
+  ActivityStatusMarkers,
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createEditPlaceRenderer } from "../shared/strategies/edit-place.js";
@@ -243,13 +244,14 @@ function omitOverBudgetButtons(rows: RichButton[][]): RichButton[][] {
 export function createTelegramActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
-  deps: { timer: TimerPort; clock: ClockPort; signCallbackData?: SignCallbackData },
+  deps: { timer: TimerPort; clock: ClockPort; signCallbackData?: SignCallbackData; markers?: ActivityStatusMarkers },
 ): ChannelActivityRenderer {
   const { signCallbackData } = deps;
   return createEditPlaceRenderer({
     actions: makeTelegramRenderActions(adapter, channelId, { timer: deps.timer }),
     timer: deps.timer,
     clock: deps.clock,
+    markers: deps.markers,
     // Approval frame → signed inline-keyboard rows (rendered to a grammY
     // InlineKeyboard by renderTelegramButtons in the adapter). Over-budget
     // buttons are omitted here too (never truncated — T-73-24).

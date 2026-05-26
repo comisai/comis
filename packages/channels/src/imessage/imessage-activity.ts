@@ -45,7 +45,7 @@
  * so no diagnostics primitive is reachable here.
  */
 import { ok, err, type Result } from "@comis/shared";
-import type { ChannelActivityRenderer, ActivityRenderError, ChannelPort } from "@comis/core";
+import type { ChannelActivityRenderer, ActivityRenderError, ChannelPort, ActivityStatusMarkers } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createAppendOnlyRenderer } from "../shared/strategies/append-only.js";
 import { buildApprovalPrompt } from "../shared/strategies/approval-render.js";
@@ -102,16 +102,20 @@ export function makeIMessageRenderActions(
 /**
  * Create the iMessage AppendOnly activity renderer — wires the Phase-70
  * {@link createAppendOnlyRenderer} with the per-channel render-actions adapter.
- * AppendOnly has no delete to sequence, so its deps are `{ actions }` ONLY: there
- * is NO TimerPort / ClockPort (Pitfall 5). The daemon composition root constructs
- * this with the chat id (WIRE-02). This is the signature the 72-05 wiring builds.
+ * AppendOnly has no delete to sequence, so there is NO TimerPort / ClockPort
+ * (Pitfall 5); the optional `deps.markers` (UX-01) is the only field this
+ * renderer reads from the uniform daemon deps and forwards to the strategy's
+ * themed closing line. The daemon composition root constructs this with the chat
+ * id (WIRE-02). This is the signature the 72-05 wiring builds.
  */
 export function createIMessageActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
+  deps: { markers?: ActivityStatusMarkers } = {},
 ): ChannelActivityRenderer {
   return createAppendOnlyRenderer({
     actions: makeIMessageRenderActions(adapter, channelId),
+    markers: deps.markers,
     // iMessage has no button surface, so an approval frame appends the plain-text
     // prompt ("Reply approve or deny …", with shortIds when >1 pending) to the
     // opening status (APV-10, §6.4.6). A non-approval frame yields "" (no append).

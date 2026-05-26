@@ -56,6 +56,7 @@ import type {
   ChannelPort,
   TimerPort,
   ClockPort,
+  ActivityStatusMarkers,
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createAppendOnlyRenderer } from "../shared/strategies/append-only.js";
@@ -142,11 +143,12 @@ export function makeLineRenderActions(
 export function createLineActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
-  deps: { timer?: TimerPort; clock?: ClockPort; signCallbackData?: SignCallbackData } = {},
+  deps: { timer?: TimerPort; clock?: ClockPort; signCallbackData?: SignCallbackData; markers?: ActivityStatusMarkers } = {},
 ): ChannelActivityRenderer {
   const { signCallbackData } = deps;
   return createAppendOnlyRenderer({
     actions: makeLineRenderActions(adapter, channelId),
+    markers: deps.markers,
     // Approval frame → signed Quick-Reply chips. The signer is the only path to
     // `callback_data`; without it, no chips are painted.
     buildButtons:

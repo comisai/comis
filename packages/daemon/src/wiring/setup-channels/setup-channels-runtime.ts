@@ -14,7 +14,7 @@
 
 import { readdir, readFile, stat } from "node:fs/promises";
 import type { Attachment, ChannelPort, ChannelPluginPort, DeliveryService, NormalizedMessage, SessionKey, ClockPort, TimerPort } from "@comis/core";
-import { formatSessionKey, safePath, systemNowDate } from "@comis/core";
+import { formatSessionKey, safePath, systemNowDate, themeForName } from "@comis/core";
 import type { AppContainer } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -580,7 +580,11 @@ export async function buildAndStartChannelManager(
     }
   }
 
-  const activityRenderers = buildActivityRenderers(adaptersByType, channelPlugins, channelsLogger, { timer: deps.timers, clock: deps.clock, signCallbackData: deps.signCallbackData, mintApprovalLink: deps.mintApprovalLink }); // WIRE-02 + 73-10 signer/link
+  // UX-01: resolve the DEFAULT agent's activity.theme → markers ONCE (process-wide,
+  // mirroring daemon.ts's stream theme). The schema fully-defaults activity.theme,
+  // so `?? "default"` is belt-and-suspenders. ascii config → emoji-free closing lines.
+  const activityMarkers = themeForName(agents[defaultAgentId]?.activity?.theme ?? "default").markers;
+  const activityRenderers = buildActivityRenderers(adaptersByType, channelPlugins, channelsLogger, { timer: deps.timers, clock: deps.clock, signCallbackData: deps.signCallbackData, mintApprovalLink: deps.mintApprovalLink, markers: activityMarkers }); // WIRE-02 + 73-10 signer/link + 75-06 markers
   return { channelManager, lifecycleReactors, commandQueue, activityRenderers };
 }
 // Re-export Attachment + ChannelPluginPort (silences lint; public-surface boundary).

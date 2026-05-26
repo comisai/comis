@@ -48,6 +48,7 @@ import type {
   ChannelPort,
   TimerPort,
   ClockPort,
+  ActivityStatusMarkers,
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createDeleteAndRepostRenderer } from "../shared/strategies/delete-and-repost.js";
@@ -113,12 +114,13 @@ export function makeSignalRenderActions(
 export function createSignalActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
-  deps: { timer: TimerPort; clock: ClockPort },
+  deps: { timer: TimerPort; clock: ClockPort; markers?: ActivityStatusMarkers },
 ): ChannelActivityRenderer {
   return createDeleteAndRepostRenderer({
     actions: makeSignalRenderActions(adapter, channelId),
     timer: deps.timer,
     clock: deps.clock,
+    markers: deps.markers,
     // Signal has no button surface, so an approval frame appends the plain-text
     // prompt ("Reply approve or deny …", with shortIds when >1 pending) to the
     // reposted message (APV-10, §6.4.6). A non-approval frame yields "" (no append).

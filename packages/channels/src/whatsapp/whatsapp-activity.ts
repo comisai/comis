@@ -44,6 +44,7 @@ import type {
   ChannelPort,
   TimerPort,
   ClockPort,
+  ActivityStatusMarkers,
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createEditPlaceRenderer } from "../shared/strategies/edit-place.js";
@@ -183,12 +184,13 @@ async function runAdapter<T>(
 export function createWhatsAppActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
-  deps: { timer: TimerPort; clock: ClockPort },
+  deps: { timer: TimerPort; clock: ClockPort; markers?: ActivityStatusMarkers },
 ): ChannelActivityRenderer {
   return createEditPlaceRenderer({
     actions: makeWhatsAppRenderActions(adapter, channelId),
     timer: deps.timer,
     clock: deps.clock,
+    markers: deps.markers,
     // WhatsApp has no button surface (`buttons:"none"`), so an approval frame
     // appends the plain-text prompt ("Reply approve or deny …", with shortIds when
     // >1 pending) to the placeholder (APV-10, §6.4.6). A non-approval frame yields

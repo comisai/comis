@@ -46,6 +46,7 @@ import type {
   TimerPort,
   TimerHandle,
   ClockPort,
+  ActivityStatusMarkers,
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createEditPlaceRenderer } from "../shared/strategies/edit-place.js";
@@ -237,13 +238,14 @@ export function makeDiscordRenderActions(
 export function createDiscordActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
-  deps: { timer: TimerPort; clock: ClockPort; signCallbackData?: SignCallbackData },
+  deps: { timer: TimerPort; clock: ClockPort; signCallbackData?: SignCallbackData; markers?: ActivityStatusMarkers },
 ): ChannelActivityRenderer {
   const { signCallbackData } = deps;
   return createEditPlaceRenderer({
     actions: makeDiscordRenderActions(adapter, channelId, { timer: deps.timer }),
     timer: deps.timer,
     clock: deps.clock,
+    markers: deps.markers,
     // Approval frame → signed native component rows. The signer is the only
     // path to `callback_data`; without it, no buttons are painted.
     buildButtons:

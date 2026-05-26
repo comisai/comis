@@ -50,6 +50,7 @@ import type {
   TimerPort,
   TimerHandle,
   ClockPort,
+  ActivityStatusMarkers,
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createEditPlaceRenderer } from "../shared/strategies/edit-place.js";
@@ -235,13 +236,14 @@ export function makeSlackRenderActions(
 export function createSlackActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
-  deps: { timer: TimerPort; clock: ClockPort; signCallbackData?: SignCallbackData },
+  deps: { timer: TimerPort; clock: ClockPort; signCallbackData?: SignCallbackData; markers?: ActivityStatusMarkers },
 ): ChannelActivityRenderer {
   const { signCallbackData } = deps;
   return createEditPlaceRenderer({
     actions: makeSlackRenderActions(adapter, channelId, { timer: deps.timer }),
     timer: deps.timer,
     clock: deps.clock,
+    markers: deps.markers,
     // Approval frame → signed Block Kit action rows. The signer is the only path
     // to the callback value; without it, no actions are painted.
     buildButtons:
