@@ -818,10 +818,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // core/security/secret-detection.ts. isSecretFieldName + scanForSecrets
       // are used within core itself (relative imports) rather than via
       // @comis/core, so no in-package-external consumer exists yet.
+      // isEnvRefString is the single-source-of-truth env-ref predicate (WR-02 fix);
+      // exported so credential-classify.ts and future Phase 3 consumers share
+      // the authoritative scheme/quote-stripping implementation instead of a
+      // weaker trim-only copy.
       // classifyHeaderCredential + CredentialKind + HeaderCredentialClassification
       // are Phase 3 (CRED) primitives — consumers land in Phase 3.
       // SecretFinding is used only in core's own test files (excluded from scan).
       "isSecretFieldName",
+      "isEnvRefString",
       "scanForSecrets",
       "SecretFinding",
       "classifyHeaderCredential",
