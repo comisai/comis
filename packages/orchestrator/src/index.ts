@@ -120,3 +120,9 @@ export type { DmScopeMode, ScopedSessionKeyParams } from "./session-key/session-
 export * from "./cross-session/cross-session-sender.js";
 export * from "./cross-session/announcement-batcher.js";
 export * from "./cross-session/announcement-dead-letter.js";
+
+// Interactive approval router (Workstream C). The single server-side authority
+// that parses signed button callbacks (lookup-FIRST-then-verify), rejects
+// cross-session + post-resolution replays, and dispatches to ApprovalGate.
+// Channels never import this — they reach signing via the @comis/core primitive.
+export * from "./approval/index.js";

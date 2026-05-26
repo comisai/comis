@@ -133,20 +133,30 @@ function makeRouter(seed: ApprovalRequest[], clock?: ClockPort) {
 }
 
 describe("InteractiveCallbackRouter — signed branch (SEC-06)", () => {
-  it("malformed: rawData not matching the strict v1 regex → {kind:'malformed'}", async () => {
+  it("malformed: a v1-prefixed payload that fails the strict regex → {kind:'malformed'} (a corrupted signed attempt must NOT fall through to the unauthenticated plain-text branch)", async () => {
     const { router, resolveCalls } = makeRouter([makeRequest()]);
-    const res = await router.route(inbound("not-a-callback-payload"));
+    // The signed-format marker `v1.` is present but the body is garbage.
+    const res = await router.route(inbound("v1.not-a-valid-callback-payload"));
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toEqual({ kind: "malformed" });
     expect(resolveCalls).toHaveLength(0);
   });
 
-  it("malformed: a v1-prefixed but structurally invalid payload → {kind:'malformed'}", async () => {
+  it("malformed: a v1-prefixed but structurally invalid payload (bad shortId, missing hmac) → {kind:'malformed'}", async () => {
     const { router } = makeRouter([makeRequest()]);
     // bad shortId length + missing hmac segment
     const res = await router.route(inbound("v1.approve.short"));
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.value).toEqual({ kind: "malformed" });
+  });
+
+  it("malformed: a wrong-version prefix (v2.) is NOT treated as signed → plain-text branch → {kind:'unknown'}", async () => {
+    const { router, resolveCalls } = makeRouter([makeRequest()]);
+    // Only `v1.` is the signed marker; a different version is not a signed attempt.
+    const res = await router.route(inbound("v2.approve.abc123XYZ789.deadbeefdeadbeef"));
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value).toEqual({ kind: "unknown" });
+    expect(resolveCalls).toHaveLength(0);
   });
 
   it("unknown: well-formed v1 whose shortId is NOT in the pending table → {kind:'unknown'}", async () => {
