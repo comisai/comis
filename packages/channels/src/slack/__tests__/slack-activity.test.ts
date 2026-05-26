@@ -258,14 +258,23 @@ describe("createSlackActivityRenderer (EditPlace wiring + chat.delete on success
   });
 });
 
-// --- Task 2: S8 Block Kit approval affordance SHELL (no callback wiring) -----
+// --- Task 2: S8 Block Kit approval UI (Phase 73 — signed callback wiring) -----
 
-describe("Slack Block Kit approval affordance SHELL (NO callback resolution)", () => {
-  it("does NOT register an interaction handler and signs NO callback_data (Phase 73 owns resolution)", () => {
+describe("Slack Block Kit approval UI (signed callback wiring — Phase 73)", () => {
+  it("FLIPPED (§17.3): the renderer NOW wires the signed Block Kit approval UI (Phase 73 owns resolution)", () => {
+    // Phase 71 forbade callback_data/signing in this file (the Block Kit actions
+    // were a deferral shell). Phase 73 (73-08) makes Slack paint signed Block Kit
+    // action elements: the renderer references `buildApprovalButtons` and threads
+    // the injected `signCallbackData` through to each action's callback value —
+    // see slack-activity.approval.test.ts for the behavioural proof.
     const here = dirname(fileURLToPath(import.meta.url));
     const src = fs.readFileSync(`${here}/../slack-activity.ts`, "utf8");
-    expect(src).not.toMatch(/callback_data|InteractiveCallbackRouter|truncateCallbackData|hmac|signCallback/);
+    expect(src).toMatch(/buildApprovalButtons/);
+    expect(src).toMatch(/signCallbackData/);
 
+    // The renderer surface stays the EditPlace ChannelActivityRenderer
+    // (strategy/canEdit/canDelete/apply/finalize) — the approval UI rides on the
+    // existing send path's `buttons`, not a new method on the renderer object.
     const timer = createFakeTimers();
     const clock = createFakeClock(0);
     const fake = createFakeSlackAdapter();

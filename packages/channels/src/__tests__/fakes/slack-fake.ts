@@ -35,6 +35,7 @@ import type {
   SendMessageOptions,
   FetchMessagesOptions,
   FetchedMessage,
+  RichButton,
 } from "@comis/core";
 
 /**
@@ -51,7 +52,8 @@ export interface SlackErrorShape {
 
 /** One recorded adapter call — discriminated by `op`, ids deterministic, no timestamps. */
 export type FakeSlackCall =
-  | { op: "send"; id: string; text: string; silent: boolean }
+  | { op: "send"; id: string; text: string; silent: boolean; buttons?: RichButton[][] }
+  | { op: "thread"; parentId: string }
   | { op: "edit"; id: string; text: string }
   | { op: "delete"; id: string }
   | { op: "react"; id: string; emoji: string }
@@ -113,13 +115,22 @@ export function createFakeSlackAdapter(channelId = "chat-1"): FakeSlackAdapter {
       if (injected) return err(injected);
       const id = `sl-msg-${messageCounter++}`;
       // Slack has no silent-notification effect; record silent:false to reflect
-      // the real platform behaviour.
+      // the real platform behaviour. The Block Kit approval `actions` (Phase 73
+      // native UI) ride on `buttons` — recorded ONLY when present so the
+      // button-less golden fixtures stay byte-stable.
       recorded.calls.push({
         op: "send",
         id,
         text,
         silent: options?.effects?.includes("silent") ?? false,
+        ...(options?.buttons !== undefined ? { buttons: options.buttons } : {}),
       });
+      // A subagent placeholder requests a thread (`thread_ts`) for its expand
+      // affordance; record the thread egress (no callback handler — Phase 73's
+      // router owns resolution).
+      if (options?.threadReply) {
+        recorded.calls.push({ op: "thread", parentId: id });
+      }
       return ok(id);
     },
 
