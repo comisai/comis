@@ -131,4 +131,24 @@ describe("chatProjection applies the verbosity policy", () => {
     const next = chatProjection([completed], { verbosity: "verbose" }, prev);
     expect(next.changeSet.edited).toContain("44444444-4444-4444-4444-444444444444");
   });
+
+  it("marks an event dropped since the previous frame as removed", () => {
+    const a = ev({ durationMs: 5000, toolName: "web_search" });
+    const b = ev({ durationMs: 5000, toolName: "memory_store", semanticPhase: "memory" });
+    const prev = chatProjection([a, b], { verbosity: "verbose" });
+    // `a` is gone from the new event stream.
+    const next = chatProjection([b], { verbosity: "verbose" }, prev);
+    expect(next.changeSet.removed).toContain(a.activityId);
+    expect(next.visibleEvents.map((e) => e.activityId)).toEqual([b.activityId]);
+  });
+
+  it("defends the closed verbosity union with an empty frame on an out-of-union value", () => {
+    // The exhaustive-never default arm (AGENTS.md §2.8) is unreachable by design;
+    // an out-of-union cast exercises the defensive branch (house pattern, 70-01).
+    const frame = chatProjection([ev(), ev({ status: "failed", errorKind: "network" })], {
+      verbosity: "loud" as unknown as "normal",
+    });
+    expect(frame.visibleEvents).toHaveLength(0);
+    expect(frame.groupedActivityIds).toEqual({});
+  });
 });

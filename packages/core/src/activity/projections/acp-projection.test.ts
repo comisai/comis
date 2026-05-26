@@ -67,4 +67,26 @@ describe("acpProjection passes every event through with no policy", () => {
     expect(next.changeSet.added).toEqual([b.activityId]);
     expect(next.visibleEvents).toHaveLength(2);
   });
+
+  it("marks an event whose status changed as edited and a dropped one as removed", () => {
+    const running = ev({
+      activityId: "dddddddd-dddd-dddd-dddd-dddddddddddd",
+      status: "running",
+      phase: "start",
+      durationMs: undefined,
+    });
+    const stale = ev({ activityId: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee" });
+    const prev = acpProjection([running, stale]);
+
+    const completed = ev({
+      activityId: "dddddddd-dddd-dddd-dddd-dddddddddddd",
+      status: "completed",
+      phase: "end",
+      durationMs: 4000,
+    });
+    // `stale` is gone from the new stream → it must show up as removed.
+    const next = acpProjection([completed], prev);
+    expect(next.changeSet.edited).toContain("dddddddd-dddd-dddd-dddd-dddddddddddd");
+    expect(next.changeSet.removed).toContain("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
+  });
 });
