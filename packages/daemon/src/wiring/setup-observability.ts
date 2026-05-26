@@ -67,7 +67,17 @@ export interface ObservabilityResult {
 export function setupObservability(deps: {
   eventBus: AppContainer["eventBus"];
   _createTokenTracker: typeof createTokenTracker;
-  logger?: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
+  /**
+   * Object-first logger for the cache-break INFO line and the diff-writer's
+   * `warn`. Typed as the structural `ComisLogger` (WR-02) — the daemon already
+   * passes `logLevelManager.getLogger("observability")`, whose object-first
+   * `LogMethod`s are assignable to `createCacheBreakDiffWriter`'s
+   * `{ warn: (obj, msg) => void }` requirement WITHOUT a cast. The prior
+   * `{ info/warn: (...args: unknown[]) => void }` shape forced an unsafe `as`
+   * assertion that the declared type did not guarantee. Mirrors the
+   * `activityLogger` field's correct `ComisLogger` typing.
+   */
+  logger?: import("@comis/core").ComisLogger;
   /** Data directory for persistent observability files (e.g., cache-break diffs) */
   dataDir?: string;
   /**
@@ -153,7 +163,9 @@ export function setupObservability(deps: {
       // path of every diff artifact must stay inside the operator's data
       // root (closes the ancestor-symlink escape).
       dataDir: deps.dataDir,
-      logger: deps.logger as { warn: (obj: Record<string, unknown>, msg: string) => void },
+      // ComisLogger's object-first `warn` (LogMethod) is structurally assignable
+      // to the diff writer's `{ warn: (obj, msg) => void }` — no cast (WR-02).
+      logger: deps.logger,
     });
     eventBus.on("observability:cache_break", diffWriter);
   }
