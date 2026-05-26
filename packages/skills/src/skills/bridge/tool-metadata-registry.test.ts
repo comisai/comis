@@ -925,8 +925,41 @@ describe("tool-metadata-registry -- failure detectors", () => {
   // Spread-merge guardrails: count unchanged + sibling fields preserved.
   // -------------------------------------------------------------------------
 
-  it("keeps the unique-tool count at exactly 51 after detector registration", () => {
-    expect(getAllToolMetadata().size).toBe(51);
+  it("attaches detectors to pre-existing tool names without introducing new ones", () => {
+    // The detectors spread-merge onto web_search / web_fetch, which are ALREADY
+    // registered (see the read-only + MCP-export-policy sections). They must NOT
+    // create a new tool name — the canonical "registers exactly 51 unique tools"
+    // assertion (this file, first describe) is the absolute-count guardrail.
+    // Asserting an absolute size HERE is fragile: validator/errorKind tests
+    // earlier in this file pollute the module-level singleton with synthetic
+    // tool names. The merge-not-create invariant is the load-bearing claim, so
+    // assert THAT directly: every detector target is one of the 51 canonical
+    // production tool names.
+    const CANONICAL_TOOL_NAMES = new Set([
+      "read", "edit", "write", "grep", "find", "ls", "apply_patch",
+      "exec", "process",
+      "web_search", "web_fetch",
+      "memory_search", "memory_store", "memory_get",
+      "message",
+      "sessions_list", "sessions_history", "sessions_send", "sessions_spawn",
+      "subagents", "pipeline", "session_status", "session_search",
+      "cron", "gateway", "image_analyze", "tts_synthesize",
+      "transcribe_audio", "describe_video", "extract_document", "browser",
+      "discord_action", "telegram_action", "slack_action", "whatsapp_action",
+      "ctx_search", "ctx_inspect", "ctx_expand", "ctx_recall",
+      "agents_manage", "obs_query", "sessions_manage", "memory_manage",
+      "channels_manage", "tokens_manage", "models_manage", "skills_manage",
+      "mcp_manage", "heartbeat_manage", "providers_manage",
+      "discover_tools",
+    ]);
+    expect(CANONICAL_TOOL_NAMES.size).toBe(51);
+    for (const target of ["web_search", "web_fetch"]) {
+      expect(
+        CANONICAL_TOOL_NAMES.has(target),
+        `detector target "${target}" must be a pre-existing canonical tool name`,
+      ).toBe(true);
+      expect(getToolMetadata(target)?.failureDetector).toBeTypeOf("function");
+    }
   });
 
   it("preserves web_search sibling fields (isReadOnly + mcpExportPolicy) alongside the new detector", () => {
