@@ -29,6 +29,7 @@ import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { TypedEventBus, ClockPort, TimerPort } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
+import { tryGetContext } from "@comis/core";
 import type { AuthRotationAdapter } from "../model/auth-rotation-adapter.js";
 import type { ProviderHealthMonitor } from "../safety/provider-health-monitor.js";
 import type { LastKnownModelTracker } from "../model/last-known-model.js";
@@ -199,6 +200,17 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
   const { session, messageText, promptImages, config, deps, timeoutConfig } = params;
   const { eventBus, logger, authRotation, modelRegistry, clock, timers } = deps;
   const fallbackModels = deps.fallbackModels ?? [];
+
+  // EVT-04 (§16.9): turn-scoping ids stamped onto every model:* emit so
+  // kind:"model" activity groups to the right turn. agentId/sessionKey come
+  // from deps; traceId rides on the RequestContext (AsyncLocalStorage) — the
+  // same source tool:* uses. Omit a field when absent so the optional schema
+  // shape is honored. Resolved once per call (context is stable for the turn).
+  const turnIds: { agentId?: string; sessionKey?: string; traceId?: string } = {
+    ...(deps.agentId !== undefined && { agentId: deps.agentId }),
+    ...(deps.sessionKey !== undefined && { sessionKey: deps.sessionKey }),
+    ...(tryGetContext()?.traceId !== undefined && { traceId: tryGetContext()!.traceId }),
+  };
   // Use session-resolved model for diagnostic logs, falling back to agent config default
   const displayModel = params.resolvedModel ?? `${config.provider}:${config.model}`;
   // Track total elapsed time across all retry attempts
@@ -369,6 +381,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           error: promptError instanceof Error ? promptError.message : "unknown",
           attemptNumber: i + 1,
           timestamp: clock.now(),
+          ...turnIds,
         });
         logger.info(
           { fallbackModel: fallbackModelStr },
@@ -445,6 +458,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
         model: config.model,
         totalAttempts: fallbackModels.length + 1,
         timestamp: clock.now(),
+        ...turnIds,
       });
     }
 
@@ -463,6 +477,7 @@ export async function runWithModelRetry(params: ModelRetryParams): Promise<Model
           toProvider: lkw.provider,
           toModel: lkw.model,
           timestamp: clock.now(),
+          ...turnIds,
         });
         logger.info(
           { lkwProvider: lkw.provider, lkwModel: lkw.model },
