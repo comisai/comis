@@ -17,9 +17,18 @@ import type {
   FinalDeliveryReceipt,
   ActivityRenderError,
 } from "@comis/core";
+import type { ActivityStatusMarkers } from "@comis/core";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createLinePerEventRenderer } from "./line-per-event.js";
 import type { ActivityRenderActions } from "./actions.js";
+
+/** The locked `ascii` theme markers (75-01): every glyph is bracketed ASCII. */
+const ASCII_MARKERS: ActivityStatusMarkers = {
+  success: "[OK]",
+  failure: "[ERR]",
+  subagent: "[SUB]",
+  running: "[..]",
+};
 
 function makeRecordingActions(): { actions: ActivityRenderActions; sent: string[] } {
   const sent: string[] = [];
@@ -143,5 +152,52 @@ describe("createLinePerEventRenderer", () => {
     const trivial: TurnOutcome = { kind: "success", trivial: true, delivery: RECEIPT };
     await r.finalize(trivial);
     expect(sent).toHaveLength(0);
+  });
+
+  it("emits a pure-ASCII success closing line under the ascii theme markers", async () => {
+    const { actions, sent } = makeRecordingActions();
+    const clock = createFakeClock(0);
+    const r = createLinePerEventRenderer({ actions, clock, markers: ASCII_MARKERS });
+
+    await r.apply(makeFrame(0, [makeEvent("a", "step 1")], ["a"]));
+    clock.advance(800);
+    const success: TurnOutcome = { kind: "success", trivial: false, delivery: RECEIPT };
+    await r.finalize(success);
+
+    const closing = sent[sent.length - 1];
+    // Stricter than Extended_Pictographic: NO non-ASCII codepoint at all — in
+    // particular the default-theme check glyph "✓" (U+2713) must be gone.
+    expect(closing).not.toMatch(/[^\x00-\x7F]/);
+    expect(closing).not.toContain("✓");
+    expect(closing).toContain("[OK] done");
+  });
+
+  it("emits a pure-ASCII failure closing line under the ascii theme markers", async () => {
+    const { actions, sent } = makeRecordingActions();
+    const r = createLinePerEventRenderer({ actions, markers: ASCII_MARKERS });
+
+    await r.apply(makeFrame(0, [makeEvent("a", "step 1")], ["a"]));
+    const failure: TurnOutcome = { kind: "failure", errorKind: "network", failedEvents: [] };
+    await r.finalize(failure);
+
+    const closing = sent[sent.length - 1];
+    expect(closing).not.toMatch(/[^\x00-\x7F]/);
+    expect(closing).toContain("[ERR]");
+    expect(closing).toContain("network");
+  });
+
+  it("preserves the default check glyph on the success closing line when markers are absent", async () => {
+    const { actions, sent } = makeRecordingActions();
+    const clock = createFakeClock(0);
+    const r = createLinePerEventRenderer({ actions, clock });
+
+    await r.apply(makeFrame(0, [makeEvent("a", "step 1")], ["a"]));
+    clock.advance(800);
+    const success: TurnOutcome = { kind: "success", trivial: false, delivery: RECEIPT };
+    await r.finalize(success);
+
+    const closing = sent[sent.length - 1];
+    // Byte-for-byte parity with the pre-75 output: the literal check glyph stays.
+    expect(closing).toContain("✓ done");
   });
 });

@@ -16,8 +16,17 @@ import type {
   FinalDeliveryReceipt,
   ActivityRenderError,
 } from "@comis/core";
+import type { ActivityStatusMarkers } from "@comis/core";
 import { createDigestOnlyRenderer } from "./digest-only.js";
 import type { ActivityRenderActions } from "./actions.js";
+
+/** The locked `ascii` theme markers (75-01): every glyph is bracketed ASCII. */
+const ASCII_MARKERS: ActivityStatusMarkers = {
+  success: "[OK]",
+  failure: "[ERR]",
+  subagent: "[SUB]",
+  running: "[..]",
+};
 
 function makeRecordingActions(): { actions: ActivityRenderActions; sent: string[] } {
   const sent: string[] = [];
@@ -120,5 +129,41 @@ describe("createDigestOnlyRenderer", () => {
     const trivial: TurnOutcome = { kind: "success", trivial: true, delivery: RECEIPT };
     await r.finalize(trivial);
     expect(sent).toHaveLength(0);
+  });
+
+  it("uses the themed failure marker on the digest header under the ascii theme", async () => {
+    const { actions, sent } = makeRecordingActions();
+    const r = createDigestOnlyRenderer({ actions, markers: ASCII_MARKERS });
+
+    await r.apply(makeFrame(0, [makeEvent("fetch quote")]));
+    const failure: TurnOutcome = {
+      kind: "failure",
+      errorKind: "dependency",
+      failedEvents: [makeEvent("fetch quote")],
+    };
+    await r.finalize(failure);
+
+    const digest = sent[0];
+    // Stricter than Extended_Pictographic: NO non-ASCII codepoint at all.
+    expect(digest).not.toMatch(/[^\x00-\x7F]/);
+    // The header follows the resolved theme marker, not the hardcoded "[FAILED]".
+    expect(digest).toContain("[ERR] dependency");
+    expect(digest).not.toContain("[FAILED]");
+  });
+
+  it("preserves the default [FAILED] digest header when markers are absent", async () => {
+    const { actions, sent } = makeRecordingActions();
+    const r = createDigestOnlyRenderer({ actions });
+
+    await r.apply(makeFrame(0, [makeEvent("fetch quote")]));
+    const failure: TurnOutcome = {
+      kind: "failure",
+      errorKind: "dependency",
+      failedEvents: [makeEvent("fetch quote")],
+    };
+    await r.finalize(failure);
+
+    // Byte-for-byte parity with the pre-75 Phase-72 body: the header stays "[FAILED]".
+    expect(sent[0]).toContain("[FAILED] dependency");
   });
 });
