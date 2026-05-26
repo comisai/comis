@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { applyToolPolicy, TOOL_PROFILES, TOOL_GROUPS, expandGroups } from "./tool-policy.js";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ToolFilterReason, ToolPolicyResult } from "./tool-policy.js";
+import { SUB_AGENT_TOOL_DENYLIST, SUB_AGENT_TOOL_PROFILES } from "@comis/core";
 
 /** Create a minimal mock tool with the given name. */
 function mockTool(name: string): AgentTool<any> {
@@ -584,5 +585,47 @@ describe("applyToolPolicy - operational opt-in behavior", () => {
 
     const names = result.tools.map((t) => t.name);
     expect(names.sort()).toEqual(["discover_tools", "memory_search", "memory_store", "message"]);
+  });
+});
+
+describe("gateway denylist invariant", () => {
+  it("no profile or group exposes 'gateway' AND SUB_AGENT_TOOL_DENYLIST contains it", () => {
+    // Denylist membership — RED until Task 2 ships sub-agent-tool-denylist.ts in @comis/core
+    expect(SUB_AGENT_TOOL_DENYLIST.has("gateway")).toBe(true);
+
+    // No named profile (except 'full' which means all-tools-allowed and is
+    // constrained by the denylist filter in buildExecuteSubAgent) exposes gateway
+    for (const [profileName, tools] of Object.entries(TOOL_PROFILES)) {
+      if (profileName === "full") continue;
+      expect(tools, `profile '${profileName}' must not contain 'gateway'`).not.toContain("gateway");
+    }
+
+    // No tool group exposes gateway
+    for (const [groupName, tools] of Object.entries(TOOL_GROUPS)) {
+      expect(tools, `group '${groupName}' must not contain 'gateway'`).not.toContain("gateway");
+    }
+  });
+});
+
+describe("SUB_AGENT_TOOL_PROFILES drift-guard", () => {
+  it("core classification data is consistent with skills canonical TOOL_PROFILES (no drift)", () => {
+    // Every profile name in @comis/core must exist in the skills canonical TOOL_PROFILES
+    for (const profileName of Object.keys(SUB_AGENT_TOOL_PROFILES)) {
+      expect(
+        Object.keys(TOOL_PROFILES),
+        `SUB_AGENT_TOOL_PROFILES has profile '${profileName}' not present in TOOL_PROFILES — rename in both`,
+      ).toContain(profileName);
+    }
+    // Every tool in a core profile entry must also be present in the skills canonical entry
+    // (core copy may be a subset for minimal classification; it must not reference phantom tools)
+    for (const [profileName, coreTools] of Object.entries(SUB_AGENT_TOOL_PROFILES)) {
+      const canonicalTools = TOOL_PROFILES[profileName] ?? [];
+      for (const tool of coreTools) {
+        expect(
+          canonicalTools,
+          `SUB_AGENT_TOOL_PROFILES['${profileName}'] contains '${tool}' but TOOL_PROFILES['${profileName}'] does not — update both`,
+        ).toContain(tool);
+      }
+    }
   });
 });
