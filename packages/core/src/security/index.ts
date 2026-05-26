@@ -38,6 +38,16 @@ export type { AuditEvent, CreateAuditEventParams } from "./audit.js";
 // Log sanitizer
 export { sanitizeLogString } from "./log-sanitizer.js";
 
+// Bounded redaction primitive (activity transparency — SEC-01/02/03)
+export { redactValue, REDACT_LIMITS } from "./redact-value.js";
+export type {
+  RedactedValue,
+  RedactionReason,
+  RedactionRecord,
+  RedactOptions,
+  RedactLimits,
+} from "./redact-value.js";
+
 // External content security wrapping
 export { wrapExternalContent, wrapWebContent, detectSuspiciousPatterns, EXTERNAL_CONTENT_WARNING } from "./external-content.js";
 export type { ExternalContentSource, WrapExternalContentOptions } from "./external-content.js";
