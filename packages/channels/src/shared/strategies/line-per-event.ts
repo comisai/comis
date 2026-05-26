@@ -38,6 +38,16 @@ export interface LinePerEventDeps {
   actions: ActivityRenderActions;
   /** Optional — supplies the elapsed-time suffix on the success closing line. */
   clock?: ClockPort;
+  /**
+   * Per-event line builder (APV-02 / APV-10, §6.4.6 / §18.3). Default: `eventLabel`
+   * (the redacted `defaultLabel`). A depth-aware plain-text channel (IRC) overrides
+   * it to render a `kind:"approval"` event as the plain-text prompt
+   * ("Reply approve or deny …", with shortIds when more than one is pending) and a
+   * `kind:"subagent"` event with a `↳ ` depth prefix. Receives the frame's full
+   * visible set so the override can derive the >1-pending disambiguation. Returns
+   * the line BEFORE the 512-char cap (the strategy still truncates).
+   */
+  lineFor?: (event: ActivityEvent, visibleEvents: readonly ActivityEvent[]) => string;
 }
 
 /** Truncate a single line to the 512-char cap, marking the cut with an ellipsis. */
@@ -48,6 +58,7 @@ function capLine(line: string): string {
 
 export function createLinePerEventRenderer(deps: LinePerEventDeps): ChannelActivityRenderer {
   const { actions, clock } = deps;
+  const lineFor = deps.lineFor ?? ((event) => eventLabel(event));
 
   let stepCount = 0;
   let startMs: number | undefined;
@@ -66,7 +77,7 @@ export function createLinePerEventRenderer(deps: LinePerEventDeps): ChannelActiv
       for (const addedId of frame.changeSet.added) {
         const ev = byId.get(addedId);
         if (ev === undefined) continue;
-        const sent = await actions.send(capLine(eventLabel(ev)));
+        const sent = await actions.send(capLine(lineFor(ev, frame.visibleEvents)));
         if (!sent.ok) return sent;
         stepCount += 1;
       }

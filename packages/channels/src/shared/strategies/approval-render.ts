@@ -105,3 +105,30 @@ export function buildApprovalText(event: ActivityEvent, opts?: ApprovalTextOptio
   }
   return "Reply approve or deny within the approval timeout";
 }
+
+/** Count the `kind:"approval"` events pending in a frame's visible set. */
+export function countPendingApprovals(events: readonly ActivityEvent[]): number {
+  let n = 0;
+  for (const e of events) if (e.approval !== undefined) n += 1;
+  return n;
+}
+
+/**
+ * Build the plain-text approval prompt(s) for a whole frame — the single helper
+ * the four button-less channels (WhatsApp / Signal / iMessage / IRC) consume
+ * (§6.4.6). For each `kind:"approval"` event it emits `buildApprovalText`, joined
+ * by newlines. `includeShortId` is derived HERE from the pending count: a shortId
+ * is surfaced ONLY when MORE THAN ONE approval is pending in this same frame, so a
+ * single-pending prompt stays terse and cross-session shortIds never appear
+ * (T-73-27). A frame with no approval event yields `""` — the caller appends
+ * nothing.
+ */
+export function buildApprovalPrompt(events: readonly ActivityEvent[]): string {
+  const includeShortId = countPendingApprovals(events) > 1;
+  const lines: string[] = [];
+  for (const event of events) {
+    const text = buildApprovalText(event, { includeShortId });
+    if (text.length > 0) lines.push(text);
+  }
+  return lines.join("\n");
+}

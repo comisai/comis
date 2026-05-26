@@ -47,6 +47,7 @@ import type {
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createEditPlaceRenderer } from "../shared/strategies/edit-place.js";
+import { buildApprovalPrompt } from "../shared/strategies/approval-render.js";
 
 /**
  * Structural subset of a baileys/`@hapi/boom` error the classifier reads (also
@@ -188,5 +189,10 @@ export function createWhatsAppActivityRenderer(
     actions: makeWhatsAppRenderActions(adapter, channelId),
     timer: deps.timer,
     clock: deps.clock,
+    // WhatsApp has no button surface (`buttons:"none"`), so an approval frame
+    // appends the plain-text prompt ("Reply approve or deny …", with shortIds when
+    // >1 pending) to the placeholder (APV-10, §6.4.6). A non-approval frame yields
+    // "" (the placeholder text stays byte-identical).
+    buildPrompt: buildApprovalPrompt,
   });
 }

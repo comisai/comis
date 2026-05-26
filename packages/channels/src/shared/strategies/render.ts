@@ -40,6 +40,21 @@ export function subagentLine(event: ActivityEvent, opts?: { depthPrefix?: string
   return `${opts?.depthPrefix ?? ""}${eventLabel(event)}`;
 }
 
+/**
+ * Append a plain-text approval prompt under the frame text (APV-10, §6.4.6).
+ *
+ * The button-less channels (WhatsApp / Signal / iMessage) paint the redacted frame
+ * label and, when the frame carries a `kind:"approval"` event, the prompt on the
+ * next line ("Reply approve or deny …"). An empty/absent prompt leaves the text
+ * byte-identical, so a non-approval frame is untouched. Pure string join — the
+ * prompt copy is owned by `buildApprovalPrompt`.
+ */
+export function appendPrompt(text: string, prompt?: string): string {
+  if (prompt === undefined || prompt.length === 0) return text;
+  if (text.length === 0) return prompt;
+  return `${text}\n${prompt}`;
+}
+
 /** Closing failure marker carrying the (closed-union) errorKind. */
 export function failureLabel(outcome: Extract<TurnOutcome, { kind: "failure" }>): string {
   return `❌ ${outcome.errorKind}`;

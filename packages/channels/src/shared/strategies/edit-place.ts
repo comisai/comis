@@ -38,7 +38,7 @@ import type {
   RichButton,
 } from "@comis/core";
 import type { ActivityRenderActions } from "./actions.js";
-import { renderFrameText, failureLabel } from "./render.js";
+import { renderFrameText, failureLabel, appendPrompt } from "./render.js";
 
 /** Debounce window: at most one edit per 800ms (§5.3). */
 const EDIT_DEBOUNCE_MS = 800;
@@ -61,10 +61,18 @@ export interface EditPlaceDeps {
    * text-only prompt and pass no buttons. Returns `[]` for a non-approval frame.
    */
   buildButtons?: (events: readonly ActivityEvent[]) => RichButton[][];
+  /**
+   * Build the plain-text approval prompt for a frame's visible events (APV-10,
+   * §6.4.6). Wired by a button-less edit-capable channel (WhatsApp) as a closure
+   * over `buildApprovalPrompt`; the PLACEHOLDER carries the prompt appended after
+   * the frame text. Omitted by button channels (Telegram/Discord/Slack), which
+   * paint native buttons instead. Returns `""` for a non-approval frame.
+   */
+  buildPrompt?: (events: readonly ActivityEvent[]) => string;
 }
 
 export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRenderer {
-  const { actions, timer, clock, buildButtons } = deps;
+  const { actions, timer, clock, buildButtons, buildPrompt } = deps;
 
   let messageId: string | undefined;
   /** Pending debounce edit; cancelled + rescheduled on each apply. */
@@ -118,7 +126,11 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
         // Build the signed approval rows from the frame (APV-02). A button-less
         // renderer (no `buildButtons`) or a non-approval frame yields `[]`.
         const buttons = buildButtons?.(frame.visibleEvents) ?? [];
-        const placed = await ensurePlaceholder(latestText, buttons);
+        // A button-less channel (WhatsApp) appends the plain-text approval prompt
+        // to the placeholder instead (APV-10, §6.4.6); a non-approval frame yields
+        // `""`, leaving the placeholder text byte-identical.
+        const placeholderText = appendPrompt(latestText, buildPrompt?.(frame.visibleEvents));
+        const placed = await ensurePlaceholder(placeholderText, buttons);
         if (!placed.ok) return placed;
         return ok(undefined);
       }

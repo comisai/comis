@@ -21,17 +21,26 @@ import type {
   ChannelActivityRenderer,
   ActivityRenderFrame,
   ActivityRenderError,
+  ActivityEvent,
   TurnOutcome,
 } from "@comis/core";
 import type { ActivityRenderActions } from "./actions.js";
-import { renderFrameText, failureLabel } from "./render.js";
+import { renderFrameText, failureLabel, appendPrompt } from "./render.js";
 
 export interface AppendOnlyDeps {
   actions: ActivityRenderActions;
+  /**
+   * Build the plain-text approval prompt for a frame's visible events (APV-10,
+   * §6.4.6). Wired by a button-less channel (iMessage) as a closure over
+   * `buildApprovalPrompt`; the opening status carries the prompt appended after
+   * the frame text. Omitted by channels with a button surface. Returns `""` for a
+   * non-approval frame (nothing appended).
+   */
+  buildPrompt?: (events: readonly ActivityEvent[]) => string;
 }
 
 export function createAppendOnlyRenderer(deps: AppendOnlyDeps): ChannelActivityRenderer {
-  const { actions } = deps;
+  const { actions, buildPrompt } = deps;
 
   let opened = false;
 
@@ -42,7 +51,7 @@ export function createAppendOnlyRenderer(deps: AppendOnlyDeps): ChannelActivityR
 
     async apply(frame: ActivityRenderFrame): Promise<Result<void, ActivityRenderError>> {
       if (opened) return ok(undefined);
-      const text = renderFrameText(frame.visibleEvents);
+      const text = appendPrompt(renderFrameText(frame.visibleEvents), buildPrompt?.(frame.visibleEvents));
       if (text.length === 0) return ok(undefined);
       const sent = await actions.send(text);
       if (!sent.ok) return sent;

@@ -46,9 +46,15 @@ import type {
   ActivityRenderError,
   ChannelPort,
   ClockPort,
+  ActivityEvent,
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createLinePerEventRenderer } from "../shared/strategies/line-per-event.js";
+import { eventLabel, subagentLine } from "../shared/strategies/render.js";
+import {
+  buildApprovalText,
+  countPendingApprovals,
+} from "../shared/strategies/approval-render.js";
 
 /**
  * Classify a raw IRC platform error into the closed {@link ActivityRenderError}
@@ -99,12 +105,48 @@ export function makeIrcRenderActions(
 }
 
 /**
+ * The IRC subagent depth prefix (§18.3). IRC has no thread primitive, so a
+ * `kind:"subagent"` event renders INLINE with this prefix; the `🤖`/agentId portion
+ * rides on the projection's `defaultLabel` and is painted verbatim after it.
+ */
+const SUBAGENT_DEPTH_PREFIX = "↳ ";
+
+/**
+ * Build one IRC line for an event, the {@link createLinePerEventRenderer} `lineFor`
+ * override (APV-02 / APV-10, §6.4.6 / §18.3). IRC has no button surface, so a
+ * `kind:"approval"` event renders the plain-text prompt
+ * `buildApprovalText(event, { includeShortId })` — the shortId form only when MORE
+ * THAN ONE approval is pending in the same frame (so the user's reply, parsed by
+ * the router's plain-text branch in 73-04, is unambiguous; T-73-27). A
+ * `kind:"subagent"` event renders with a `↳ ` depth prefix via `subagentLine`.
+ * Everything else keeps the redacted `eventLabel`. No signing — HMAC is skipped for
+ * plaintext (§6.4.6); the router scopes replies to `pendingForSession`.
+ */
+export function ircLineFor(
+  event: ActivityEvent,
+  visibleEvents: readonly ActivityEvent[],
+): string {
+  if (event.kind === "approval") {
+    return buildApprovalText(event, {
+      includeShortId: countPendingApprovals(visibleEvents) > 1,
+    });
+  }
+  if (event.kind === "subagent") {
+    return subagentLine(event, { depthPrefix: SUBAGENT_DEPTH_PREFIX });
+  }
+  return eventLabel(event);
+}
+
+/**
  * Create the IRC LinePerEvent activity renderer — wires the Phase-70
  * {@link createLinePerEventRenderer} with the per-channel render-actions adapter.
  * The daemon composition root constructs this with its runtime `ClockPort` and the
  * channel id (WIRE-02); the `{clock}` feeds ONLY the elapsed-time suffix on the
  * success closing line — LinePerEvent schedules nothing, so there is NO timer.
  * This is the signature the 72-05 wiring constructs.
+ *
+ * The `lineFor` override paints the plain-text approval prompt (APV-10) and the
+ * `↳ ` subagent inline (APV-03) — IRC's button-less, thread-less form.
  */
 export function createIrcActivityRenderer(
   adapter: ChannelPort,
@@ -114,5 +156,6 @@ export function createIrcActivityRenderer(
   return createLinePerEventRenderer({
     actions: makeIrcRenderActions(adapter, channelId),
     clock: deps.clock,
+    lineFor: ircLineFor,
   });
 }

@@ -51,6 +51,7 @@ import type {
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createDeleteAndRepostRenderer } from "../shared/strategies/delete-and-repost.js";
+import { buildApprovalPrompt } from "../shared/strategies/approval-render.js";
 
 /**
  * Classify a raw Signal platform error into the closed {@link ActivityRenderError}
@@ -118,5 +119,9 @@ export function createSignalActivityRenderer(
     actions: makeSignalRenderActions(adapter, channelId),
     timer: deps.timer,
     clock: deps.clock,
+    // Signal has no button surface, so an approval frame appends the plain-text
+    // prompt ("Reply approve or deny …", with shortIds when >1 pending) to the
+    // reposted message (APV-10, §6.4.6). A non-approval frame yields "" (no append).
+    buildPrompt: buildApprovalPrompt,
   });
 }

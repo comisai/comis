@@ -26,13 +26,14 @@ import type {
   ChannelActivityRenderer,
   ActivityRenderFrame,
   ActivityRenderError,
+  ActivityEvent,
   TurnOutcome,
   TimerPort,
   TimerHandle,
   ClockPort,
 } from "@comis/core";
 import type { ActivityRenderActions } from "./actions.js";
-import { renderFrameText, failureLabel } from "./render.js";
+import { renderFrameText, failureLabel, appendPrompt } from "./render.js";
 
 export interface DeleteAndRepostDeps {
   actions: ActivityRenderActions;
@@ -40,12 +41,20 @@ export interface DeleteAndRepostDeps {
   timer?: TimerPort;
   /** Optional — gates the success delete on `deliveredAtMs`. */
   clock?: ClockPort;
+  /**
+   * Build the plain-text approval prompt for a frame's visible events (APV-10,
+   * §6.4.6). Wired by a button-less channel (Signal) as a closure over
+   * `buildApprovalPrompt`; the reposted message carries the prompt appended after
+   * the frame text. Omitted by channels with a button surface. Returns `""` for a
+   * non-approval frame (nothing appended).
+   */
+  buildPrompt?: (events: readonly ActivityEvent[]) => string;
 }
 
 export function createDeleteAndRepostRenderer(
   deps: DeleteAndRepostDeps,
 ): ChannelActivityRenderer {
-  const { actions, timer, clock } = deps;
+  const { actions, timer, clock, buildPrompt } = deps;
 
   let lastActivityId: string | undefined;
   let pendingDelete: TimerHandle | undefined;
@@ -66,7 +75,8 @@ export function createDeleteAndRepostRenderer(
       // Delete the previous activity message before reposting the transition.
       const deleted = await deleteLast();
       if (!deleted.ok) return deleted;
-      const sent = await actions.send(renderFrameText(frame.visibleEvents));
+      const text = appendPrompt(renderFrameText(frame.visibleEvents), buildPrompt?.(frame.visibleEvents));
+      const sent = await actions.send(text);
       if (!sent.ok) return sent;
       lastActivityId = sent.value;
       return ok(undefined);

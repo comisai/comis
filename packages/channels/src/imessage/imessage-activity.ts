@@ -48,6 +48,7 @@ import { ok, err, type Result } from "@comis/shared";
 import type { ChannelActivityRenderer, ActivityRenderError, ChannelPort } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createAppendOnlyRenderer } from "../shared/strategies/append-only.js";
+import { buildApprovalPrompt } from "../shared/strategies/approval-render.js";
 
 /**
  * Classify a raw iMessage platform error into the closed {@link ActivityRenderError}
@@ -111,5 +112,9 @@ export function createIMessageActivityRenderer(
 ): ChannelActivityRenderer {
   return createAppendOnlyRenderer({
     actions: makeIMessageRenderActions(adapter, channelId),
+    // iMessage has no button surface, so an approval frame appends the plain-text
+    // prompt ("Reply approve or deny …", with shortIds when >1 pending) to the
+    // opening status (APV-10, §6.4.6). A non-approval frame yields "" (no append).
+    buildPrompt: buildApprovalPrompt,
   });
 }
