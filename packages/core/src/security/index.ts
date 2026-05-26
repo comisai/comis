@@ -78,8 +78,11 @@ export type { ScopedSecretManagerOptions } from "./secret-manager.js";
 // Strong token generation
 export { generateStrongToken, generateRotationId } from "./token-generator.js";
 
-// Config secret redaction
-export { redactConfigSecrets } from "./config-redaction.js";
+// Secret detection keystone (Phase 1)
+export { looksLikeSecretValue, isSecretFieldName, scanForSecrets, redactForDisplay } from "./secret-detection.js";
+export type { SecretFinding } from "./secret-detection.js";
+export { classifyHeaderCredential } from "./credential-classify.js";
+export type { CredentialKind, HeaderCredentialClassification } from "./credential-classify.js";
 
 // Injection pattern constants
 export {
@@ -174,8 +177,6 @@ export type { InjectionRateLimiter, InjectionRateLimiterConfig, RateLimitResult 
 export { resolveSecretRef, resolveConfigSecretRefs } from "./secret-ref-resolver.js";
 export type { ResolveSecretRefDeps, ResolveSecretRefOptions } from "./secret-ref-resolver.js";
 
-// Config secret redaction pattern (reused by audit scanner)
-export { SECRET_FIELD_PATTERN } from "./config-redaction.js";
 
 // Secrets audit scanner
 export { scanConfigForSecrets, scanEnvForSecrets, auditSecrets } from "./secrets-audit.js";
