@@ -1184,4 +1184,47 @@ describe("setupChannels", () => {
       expect(result.channelManager).toBeUndefined();
     });
   });
+
+  // -- CR-01 / WR-01: interactive-callback router threaded to the inbound pipeline --
+  //
+  // The InteractiveCallbackRouter is constructed in the daemon wiring bundle
+  // (createInteractiveCallbackWiring → .router) but must reach the orchestrator's
+  // inbound pipeline (inbound-gate reads `deps.interactiveCallbackRouter`). The
+  // ONLY way it gets there is through the production composition path:
+  //   ChannelsDeps.interactiveCallbackRouter
+  //     → buildAndStartChannelManager (ChannelManagerBuildDeps.interactiveCallbackRouter)
+  //       → createChannelManager({ interactiveCallbackRouter })
+  //         → pipelineDeps = deps → inbound-gate.
+  //
+  // Because every layer types the slot OPTIONAL, a missing thread compiles and
+  // silently no-ops: at runtime `deps.interactiveCallbackRouter === undefined`,
+  // the button-callback intercept is dead, and a signed `v1.<choice>.<shortId>.<hmac>`
+  // payload falls through to the LLM. This is the exact blind spot that let CR-01
+  // ship — there was no assertion that the daemon POPULATES the slot. These tests
+  // pin the seam end-to-end at the real daemon composition layer.
+  describe("interactive-callback router wiring (CR-01)", () => {
+    it("threads the wiring router into createChannelManager so the inbound button-intercept is reachable", async () => {
+      mockAdaptersByType.set("telegram", mockAdapter);
+      const router = { route: vi.fn(), render: vi.fn() } as any;
+      const { container } = makeContainer();
+      const deps = makeDeps({ container, interactiveCallbackRouter: router });
+      await setupChannels(deps);
+
+      expect(createChannelManager).toHaveBeenCalledTimes(1);
+      const cmDeps = vi.mocked(createChannelManager).mock.calls[0]![0]!;
+      // The SAME router instance the daemon constructed must reach the pipeline
+      // deps — not undefined (the pre-fix state that severed the chain).
+      expect(cmDeps.interactiveCallbackRouter).toBe(router);
+    });
+
+    it("leaves the router slot undefined when the daemon supplies no wiring (button callbacks degrade, not crash)", async () => {
+      mockAdaptersByType.set("telegram", mockAdapter);
+      const { container } = makeContainer();
+      const deps = makeDeps({ container }); // no interactiveCallbackRouter
+      await setupChannels(deps);
+
+      const cmDeps = vi.mocked(createChannelManager).mock.calls[0]![0]!;
+      expect(cmDeps.interactiveCallbackRouter).toBeUndefined();
+    });
+  });
 });
