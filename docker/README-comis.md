@@ -82,8 +82,8 @@ services:
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
       - COMIS_GATEWAY_HOST=0.0.0.0
       - COMIS_GATEWAY_PORT=4766
-      # Optional — set to enable the encrypted secrets.db (opt-in).
-      # Without it the daemon runs in legacy .env mode (default).
+      # Auto-generated on first boot. Back up ~/.comis/.env (contains SECRETS_MASTER_KEY).
+      # To opt out: set COMIS_DISABLE_ENCRYPTED_SECRETS=1
       - SECRETS_MASTER_KEY=${SECRETS_MASTER_KEY:-}
 
 volumes:
@@ -122,7 +122,8 @@ A full `docker-compose.yml` (with the optional `comis-web` dashboard and `comis-
 | `COMIS_GATEWAY_HOST` | Bind address **inside the container** (separate from the host-side `-p` mapping). Defaults to `0.0.0.0` since 1.0.25. On older images, set this explicitly so Docker port-forwarding can reach the daemon. |
 | `COMIS_GATEWAY_PORT` | Gateway port (default `4766`) |
 | `COMIS_GATEWAY_TOKEN` | Optional bearer token for gateway auth |
-| `SECRETS_MASTER_KEY` | **Optional.** 32-byte hex key (generate with `openssl rand -hex 32`). When set, the daemon stores credentials in an encrypted `secrets.db`. Without it, the daemon runs in legacy `.env` mode (default). Recommended for production multi-tenant deployments — see [Secrets management](https://docs.comis.ai/operations/docker#secrets-management). |
+| `SECRETS_MASTER_KEY` | Auto-generated on first boot and written to `~/.comis/.env` (mode 0600). Back up this file — losing the key makes `secrets.db` permanently unreadable. Providing this variable explicitly overrides the auto-generated value. See [Secrets management](https://docs.comis.ai/operations/docker#secrets-management). |
+| `COMIS_DISABLE_ENCRYPTED_SECRETS` | **Optional.** Set to `1` to skip auto-init and run in envfile-only mode. Emits a startup WARN. Use only if you need to manage secrets manually in `.env`. |
 
 Secrets are auto-redacted in Comis logs (3 levels deep) — but never log them yourself.
 
