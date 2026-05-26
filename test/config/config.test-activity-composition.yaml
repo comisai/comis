@@ -1,0 +1,83 @@
+# Comis Test Configuration — WIRE-06 activity composition acceptance test.
+#
+# Dedicated config for packages/daemon/src/__tests__/setup-activity.composition.test.ts
+# (Part B — daemon-level WIRE-01/05 boot proof). A UNIQUE gateway port (47668)
+# + a dedicated memory db keep this boot isolated from the 4766 default-config
+# port and other parallel test suites. The activity pipe assertions are proven
+# in-memory (Part A); this boot only confirms the daemon constructs + drains the
+# ActivityStream (WIRE-01/05) without a long-running timer leak.
+
+tenantId: "test"
+logLevel: "debug"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  default:
+    name: "TestAgent"
+    model: default
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: "UTC"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 47668
+  tokens:
+    - id: "test-token"
+      secret: "test-secret-key-for-activity-composition"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: "UTC"
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-activity-composition.db"
+
+security:
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic
