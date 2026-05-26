@@ -80,4 +80,20 @@ describe("writeMasterKeyIfAbsent", () => {
     const finalContent = readFileSync(second.path, "utf-8");
     expect(finalContent).toBe(initialContent);
   });
+
+  it("returns keyHex as 64-char hex string when key is written for the first time", () => {
+    const dataDir = resolve(tmpDir, "fresh-keyhex");
+    const result = writeMasterKeyIfAbsent(dataDir);
+    expect(result.written).toBe(true);
+    // This assertion FAILS on pre-patch code (keyHex is undefined):
+    expect(result.keyHex).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("returns keyHex undefined when key already present (idempotent path)", () => {
+    const dataDir = resolve(tmpDir, "noop-keyhex");
+    writeMasterKeyIfAbsent(dataDir); // first write
+    const result = writeMasterKeyIfAbsent(dataDir); // idempotent second call
+    expect(result.written).toBe(false);
+    expect(result.keyHex).toBeUndefined();
+  });
 });
