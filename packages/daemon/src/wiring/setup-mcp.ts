@@ -34,13 +34,6 @@ export interface McpDeps {
   readonly stdioDefaultConcurrency?: number;
   /** Default concurrent calls for HTTP/SSE MCP servers (default: 4). */
   readonly httpDefaultConcurrency?: number;
-  /**
-   * Global keepalive interval (ms) from integrations.mcp. Forwarded into
-   * createMcpClientManager so a daemon-wide override (e.g. 0 to disable
-   * keepalives for all startup-connected servers) takes effect. Undefined ⇒ the
-   * factory's own default applies. Per-server overrides still win via `??`.
-   */
-  readonly keepaliveIntervalMs?: number;
   /** Global circuit-breaker failure threshold from integrations.mcp. */
   readonly circuitBreakerThreshold?: number;
   /** Global circuit-breaker cooldown (ms) from integrations.mcp. */
@@ -138,9 +131,8 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
     stdioDefaultConcurrency: deps.stdioDefaultConcurrency,
     httpDefaultConcurrency: deps.httpDefaultConcurrency,
     // Forward the global reliability config so daemon-wide overrides
-    // reach startup-connected servers (the factory applies ?? defaults when
-    // these are undefined; per-server McpServerConfig overrides still win).
-    keepaliveIntervalMs: deps.keepaliveIntervalMs,
+    // reach startup-connected servers (per-server McpServerConfig overrides still win).
+    // keepaliveIntervalMs removed — transport-aware default via resolveDefaultKeepaliveIntervalMs.
     circuitBreakerThreshold: deps.circuitBreakerThreshold,
     circuitBreakerCooldownMs: deps.circuitBreakerCooldownMs,
   });

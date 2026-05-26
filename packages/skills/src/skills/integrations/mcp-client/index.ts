@@ -167,7 +167,6 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
       maxDelayMs: deps.reconnectOptions?.maxDelayMs ?? 30_000,
       growFactor: deps.reconnectOptions?.growFactor ?? 2,
     },
-    keepaliveIntervalMs: deps.keepaliveIntervalMs ?? 180_000,
     circuitBreakerThreshold: deps.circuitBreakerThreshold ?? 3,
     circuitBreakerCooldownMs: deps.circuitBreakerCooldownMs ?? 60_000,
   };

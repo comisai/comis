@@ -340,7 +340,9 @@ describe("McpServerEntrySchema — safety hardening additive fields", () => {
 describe("McpConfigSchema — reliability additive fields", () => {
   it("produces reliability defaults from an empty input object", () => {
     const result = McpConfigSchema.parse({});
-    expect(result.keepaliveIntervalMs).toBe(180_000);
+    // keepaliveIntervalMs is now optional (no Zod default); transport-aware default
+    // is resolved at runtime by resolveDefaultKeepaliveIntervalMs (MCPX-02).
+    expect(result.keepaliveIntervalMs).toBeUndefined();
     expect(result.circuitBreakerThreshold).toBe(3);
     expect(result.circuitBreakerCooldownMs).toBe(60_000);
   });

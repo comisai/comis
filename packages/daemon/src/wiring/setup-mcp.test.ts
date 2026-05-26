@@ -88,25 +88,22 @@ describe("setupMcp", () => {
     expect(result.mcpClientManager.getAllConnections()).toEqual([]);
   });
 
-  // The global reliability config (integrations.mcp.keepaliveIntervalMs /
-  // circuitBreakerThreshold / circuitBreakerCooldownMs) MUST be forwarded into
-  // createMcpClientManager. Without this, a daemon-wide override (e.g.
-  // keepaliveIntervalMs: 0 to disable keepalives) is silently ignored for all
-  // startup-connected servers — only per-server overrides via mcp.connect RPC
-  // would take effect.
-  it("forwards global keepaliveIntervalMs/circuitBreakerThreshold/circuitBreakerCooldownMs into createMcpClientManager", async () => {
+  // The global reliability config (circuitBreakerThreshold / circuitBreakerCooldownMs)
+  // MUST be forwarded into createMcpClientManager. Without this, a daemon-wide override
+  // is silently ignored for all startup-connected servers.
+  // Note: keepaliveIntervalMs is no longer forwarded — transport-aware default
+  // is resolved at call time via resolveDefaultKeepaliveIntervalMs (MCPX-02).
+  it("forwards global circuitBreakerThreshold/circuitBreakerCooldownMs into createMcpClientManager", async () => {
     mockGetAllConnections.mockReturnValue([]);
     await callSetupMcp({
       servers: [],
       logger,
-      keepaliveIntervalMs: 0,
       circuitBreakerThreshold: 7,
       circuitBreakerCooldownMs: 12_345,
     });
 
     expect(mockCreateMcpClientManager).toHaveBeenCalledWith(
       expect.objectContaining({
-        keepaliveIntervalMs: 0,
         circuitBreakerThreshold: 7,
         circuitBreakerCooldownMs: 12_345,
       }),
@@ -121,7 +118,6 @@ describe("setupMcp", () => {
     // Undefined-valued forwards are acceptable (createMcpClientManager applies
     // its own ?? defaults), but the keys must not carry a stale non-undefined
     // value when the operator did not set them.
-    expect(factoryArg.keepaliveIntervalMs).toBeUndefined();
     expect(factoryArg.circuitBreakerThreshold).toBeUndefined();
     expect(factoryArg.circuitBreakerCooldownMs).toBeUndefined();
   });

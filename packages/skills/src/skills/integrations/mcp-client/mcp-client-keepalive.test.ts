@@ -51,20 +51,19 @@ const NOOP_LOGGER: McpClientManagerDeps["logger"] = {
   debug: () => {},
 };
 
-function makeOptions(keepaliveIntervalMs = 0): McpClientManagerOptions {
+function makeOptions(): McpClientManagerOptions {
   return {
     connectTimeoutMs: 30_000,
     callToolTimeoutMs: 60_000,
     stdioDefaultConcurrency: 1,
     httpDefaultConcurrency: 4,
     reconnectOpts: { maxAttempts: 5, initialDelayMs: 1000, maxDelayMs: 30_000, growFactor: 2 },
-    keepaliveIntervalMs,
     circuitBreakerThreshold: 3,
     circuitBreakerCooldownMs: 60_000,
   };
 }
 
-function makeState(keepaliveIntervalMs = 0): McpClientManagerState {
+function makeState(): McpClientManagerState {
   return {
     connections: new Map<string, McpConnection>(),
     reconnectionAbortControllers: new Map<string, AbortController>(),
@@ -78,7 +77,7 @@ function makeState(keepaliveIntervalMs = 0): McpClientManagerState {
     circuitBreakers: new Map(),
     idleEvictionTimers: new Map(),
     lastActivityMs: new Map<string, number>(),
-    options: makeOptions(keepaliveIntervalMs),
+    options: makeOptions(),
   };
 }
 
@@ -248,7 +247,7 @@ describe("keepalive ticker — maybeEnqueueKeepalivePing", () => {
   });
 
   it("startKeepaliveTicker registers an unref'd ticker; stopKeepaliveTicker clears it", () => {
-    const state = makeState(180_000);
+    const state = makeState();
     wireConnected(state, "tick", { concurrency: 1 });
     const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
     const config: McpServerConfig = { name: "tick", transport: "stdio", command: "node", enabled: true };
@@ -261,7 +260,7 @@ describe("keepalive ticker — maybeEnqueueKeepalivePing", () => {
   });
 
   it("startKeepaliveTicker is a no-op when interval resolves to 0 (disabled)", () => {
-    const state = makeState(0);
+    const state = makeState();
     const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
     const config: McpServerConfig = { name: "off", transport: "stdio", command: "node", enabled: true, keepaliveIntervalMs: 0 };
 
@@ -327,12 +326,9 @@ describe("mcp-client-keepalive — MCPX-02 transport-aware interval resolution",
   });
 
   it("startKeepaliveTicker starts a ticker for http transport when no per-server override (RED-KA-04)", () => {
-    // RED: currently startKeepaliveTicker resolves interval via:
-    //   config.keepaliveIntervalMs ?? state.options.keepaliveIntervalMs
-    // With makeState(0), state.options.keepaliveIntervalMs=0, so intervalMs=0 → no-op.
     // GREEN (Plan 04-03): resolves via resolveDefaultKeepaliveIntervalMs("http") = 30_000
     // → ticker starts and state.keepaliveTickers.has("http-srv") is true.
-    const state = makeState(0); // keepaliveIntervalMs=0 in options (field removed in Plan 03)
+    const state = makeState();
     const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
     const config: McpServerConfig = {
       name: "http-srv",
@@ -342,15 +338,13 @@ describe("mcp-client-keepalive — MCPX-02 transport-aware interval resolution",
       // no keepaliveIntervalMs override
     };
     startKeepaliveTicker(state, deps, config);
-    // RED: currently no ticker (resolves to 0 from state.options → no-op)
-    // GREEN (after Plan 04-03): resolves to 30000 → ticker registered
     expect(state.keepaliveTickers.has("http-srv")).toBe(true);
   });
 
   it("per-server keepaliveIntervalMs override wins over transport-aware default (invariant guard)", () => {
     // Invariant guard — already passes (per-server override always wins via ??).
     // Must remain passing after GREEN so the priority chain is preserved.
-    const state = makeState(0);
+    const state = makeState();
     const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
     const config: McpServerConfig = {
       name: "override-srv",

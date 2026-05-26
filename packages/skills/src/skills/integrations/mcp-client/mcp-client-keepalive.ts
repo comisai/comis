@@ -20,19 +20,46 @@ import PQueue from "p-queue";
 import type { McpClientManagerDeps, McpClientManagerState, McpServerConfig } from "./mcp-client-types.js";
 import { handleDisconnection } from "./mcp-client-reconnect.js";
 
+// ---------------------------------------------------------------------------
+// Transport-aware keepalive defaults (MCPX-02 single source of truth)
+// ---------------------------------------------------------------------------
+
+/** Default keepalive interval for http/sse/streamable-http transports (beats ~60s idle window). */
+export const KEEPALIVE_INTERVAL_HTTP_SSE_MS = 30_000;
+
+/** Default keepalive interval for stdio transports (unchanged; stdio has no idle-close). */
+export const KEEPALIVE_INTERVAL_STDIO_MS = 180_000;
+
+/**
+ * Resolve the default keepalive interval for a given transport type.
+ *
+ * This is the single source of truth for keepalive defaults (MCPX-02):
+ *   - stdio: 180 000 ms (no idle window; unchanged from previous global default)
+ *   - http / sse / streamable-http: 30 000 ms (beats the ~60s server-side idle close)
+ *
+ * Per-server `config.keepaliveIntervalMs` always takes precedence over this default
+ * (via the nullish coalescing in startKeepaliveTicker).
+ *
+ * @param transport - The McpServerConfig transport type string.
+ */
+export function resolveDefaultKeepaliveIntervalMs(transport: McpServerConfig["transport"]): number {
+  return transport === "stdio" ? KEEPALIVE_INTERVAL_STDIO_MS : KEEPALIVE_INTERVAL_HTTP_SSE_MS;
+}
+
 /**
  * Start the keepalive ticker for a freshly-connected server. Called from
  * connectServer immediately after state.callQueues.set(...). The ticker
  * is .unref()'d so SIGTERM teardown is not blocked.
  *
- * Resolution: per-server `config.keepaliveIntervalMs` overrides global
- * `state.options.keepaliveIntervalMs` via nullish coalescing (`??`, NOT
- * `||`, so the operator can set `0` to disable per-server).
+ * Resolution: per-server `config.keepaliveIntervalMs` ?? transport-aware default
+ * via resolveDefaultKeepaliveIntervalMs (MCPX-02 single source of truth).
+ * Uses `??` (NOT `||`) so an operator can set `0` to disable per-server.
  *
  * @returns void — `0` interval is a NO-OP (explicit semantics: zero disables keepalive).
  */
 export function startKeepaliveTicker(state: McpClientManagerState, deps: McpClientManagerDeps, config: McpServerConfig): void {
-  const intervalMs = config.keepaliveIntervalMs ?? state.options.keepaliveIntervalMs;
+  // Per-server override wins; fall back to transport-aware default (MCPX-02 single source).
+  const intervalMs = config.keepaliveIntervalMs ?? resolveDefaultKeepaliveIntervalMs(config.transport);
   if (intervalMs === 0) return; // Disabled (interval=0 means no keepalive)
   const handle: SystemIntervalHandle = systemSetInterval(() => maybeEnqueueKeepalivePing(state, deps, config.name), intervalMs);
   handle.unref();

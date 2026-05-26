@@ -4537,7 +4537,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
       "circuitBreakerCooldownMs": 60000,
       "circuitBreakerThreshold": 3,
       "httpDefaultConcurrency": 4,
-      "keepaliveIntervalMs": 180000,
       "osvCacheTtlMs": 86400000,
       "osvCheckEnabled": true,
       "safetyAllowedEnvKeys": [],
@@ -4573,7 +4572,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("integ
     "type": "integer"
   },
   {
-    "default": 180000,
     "immutable": true,
     "path": "integrations.mcp.keepaliveIntervalMs",
     "type": "integer"
@@ -9788,7 +9786,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "circuitBreakerCooldownMs": 60000,
         "circuitBreakerThreshold": 3,
         "httpDefaultConcurrency": 4,
-        "keepaliveIntervalMs": 180000,
         "osvCacheTtlMs": 86400000,
         "osvCheckEnabled": true,
         "safetyAllowedEnvKeys": [],
@@ -9969,7 +9966,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "circuitBreakerCooldownMs": 60000,
       "circuitBreakerThreshold": 3,
       "httpDefaultConcurrency": 4,
-      "keepaliveIntervalMs": 180000,
       "osvCacheTtlMs": 86400000,
       "osvCheckEnabled": true,
       "safetyAllowedEnvKeys": [],
@@ -10005,7 +10001,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "integer"
   },
   {
-    "default": 180000,
     "immutable": true,
     "path": "integrations.mcp.keepaliveIntervalMs",
     "type": "integer"
@@ -19103,7 +19098,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
         "circuitBreakerCooldownMs": 60000,
         "circuitBreakerThreshold": 3,
         "httpDefaultConcurrency": 4,
-        "keepaliveIntervalMs": 180000,
         "osvCacheTtlMs": 86400000,
         "osvCheckEnabled": true,
         "safetyAllowedEnvKeys": [],
@@ -19136,7 +19130,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
           "type": "integer"
         },
         "keepaliveIntervalMs": {
-          "default": 180000,
           "maximum": 9007199254740991,
           "minimum": 0,
           "type": "integer"
@@ -19181,7 +19174,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
         "safetyAllowedEnvKeys",
         "osvCheckEnabled",
         "osvCacheTtlMs",
-        "keepaliveIntervalMs",
         "circuitBreakerThreshold",
         "circuitBreakerCooldownMs"
       ],
@@ -28247,7 +28239,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "circuitBreakerCooldownMs": 60000,
           "circuitBreakerThreshold": 3,
           "httpDefaultConcurrency": 4,
-          "keepaliveIntervalMs": 180000,
           "osvCacheTtlMs": 86400000,
           "osvCheckEnabled": true,
           "safetyAllowedEnvKeys": [],
@@ -28484,7 +28475,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "circuitBreakerCooldownMs": 60000,
             "circuitBreakerThreshold": 3,
             "httpDefaultConcurrency": 4,
-            "keepaliveIntervalMs": 180000,
             "osvCacheTtlMs": 86400000,
             "osvCheckEnabled": true,
             "safetyAllowedEnvKeys": [],
@@ -28517,7 +28507,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "type": "integer"
             },
             "keepaliveIntervalMs": {
-              "default": 180000,
               "maximum": 9007199254740991,
               "minimum": 0,
               "type": "integer"
@@ -28562,7 +28551,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "safetyAllowedEnvKeys",
             "osvCheckEnabled",
             "osvCacheTtlMs",
-            "keepaliveIntervalMs",
             "circuitBreakerThreshold",
             "circuitBreakerCooldownMs"
           ],

@@ -322,8 +322,6 @@ export interface McpClientManagerDeps {
   readonly stdioDefaultConcurrency?: number;
   /** Default max concurrent tool calls for HTTP/SSE servers (default: 4). */
   readonly httpDefaultConcurrency?: number;
-  /** Default keepalive interval (ms). 0 disables. Resolved at factory construction. */
-  readonly keepaliveIntervalMs?: number;
   /** Default circuit breaker failure threshold. Resolved at factory construction. */
   readonly circuitBreakerThreshold?: number;
   /** Default circuit breaker cooldown (ms). Resolved at factory construction. */
@@ -410,8 +408,6 @@ export interface McpClientManagerOptions {
   readonly stdioDefaultConcurrency: number;
   readonly httpDefaultConcurrency: number;
   readonly reconnectOpts: McpReconnectOptions;
-  /** Global default keepalive interval (ms). 0 = disabled. Per-server override on McpServerConfig. */
-  readonly keepaliveIntervalMs: number;
   /** Global default consecutive failure threshold before breaker opens. Per-server override on McpServerConfig. */
   readonly circuitBreakerThreshold: number;
   /** Global default cooldown (ms) between open → half-open transitions. Per-server override on McpServerConfig. */
