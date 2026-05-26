@@ -117,17 +117,8 @@ export interface ShutdownDeps {
   continuationTracker?: RestartContinuationTracker;
   /** Lifecycle reactors for cleanup on shutdown */
   lifecycleReactors?: Array<{ destroy: () => void }>;
-  /** Observability persistence write buffers for shutdown drain */
-  obsPersistence?: { drainAll(): void; snapshotTimer: ReturnType<typeof setInterval> };
-  /**
-   * Drain + unsubscribe the ActivityStream from the EventBus (WIRE-05/§17.7,
-   * from setup-observability). Detaches every `tool:*`/`model:*`/`approval:*`
-   * handler and clears the correlation index so per-turn bounded queues drain
-   * and no pending placeholder is orphaned across a restart (T-70-10-03). Runs
-   * in the observability-dispose block alongside the other EventBus-subscriber
-   * teardowns. Optional — absent in early-startup-failure paths.
-   */
-  disposeActivityStream?: () => void;
+  /** Observability persistence write buffers for shutdown drain */ obsPersistence?: { drainAll(): void; snapshotTimer: ReturnType<typeof setInterval> };
+  disposeActivityStream?: () => void; // WIRE-05/§17.7: drain + unsubscribe ActivityStream
   /** Context pipeline collector for shutdown cleanup */
   contextPipelineCollector?: { dispose(): void };
   /** Gemini CachedContent lifecycle manager for shutdown disposal. */
@@ -163,8 +154,7 @@ export interface ShutdownDeps {
   shutdownDeliveryQueue?: () => void;
   /** Stop the delivery mirror (from setupDeliveryMirror). */
   shutdownDeliveryMirror?: () => void;
-  /** Stop the output retention housekeeper (from setupOutputRetention). */
-  outputRetentionShutdown?: () => void;
+  /** Stop the output retention housekeeper (from setupOutputRetention). */ outputRetentionShutdown?: () => void;
   /** Stop the channel health monitor (from setupChannelHealthMonitor). */
   stopChannelHealthMonitor?: () => void;
   /** Unsubscribe health budget aggregator. */ unsubscribeHealthAggregator?: () => void;
@@ -254,8 +244,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     dataDir,
     continuationTracker,
     lifecycleReactors,
-    obsPersistence,
-    disposeActivityStream,
+    obsPersistence, disposeActivityStream,
     geminiCacheManager,
     trajectoryRegistry,
     // 9 new teardown handles lifted from system:shutdown subscribers.
@@ -635,23 +624,11 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "obs-persistence", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "obs-persistence", daemonLogger);
       }
-      // Drain + unsubscribe the ActivityStream from the EventBus (WIRE-05).
-      // Runs FIRST in the observability-dispose group so the activity substrate
-      // stops accepting tool:*/model:*/approval:* events (its per-turn bounded
-      // queues drain) and the correlation index is cleared before the other
-      // EventBus-subscriber teardowns — preventing orphaned pending placeholders
-      // across a restart (T-70-10-03).
-      if (disposeActivityStream) {
-        const stopMs = systemNowMs();
-        await withStepTimeout(() => {
-          disposeActivityStream();
-          daemonLogger.info({ component: "activity-stream", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
-        }, "activity-stream", daemonLogger);
-      }
-      // Dispose observability modules (remove EventBus subscriptions)
+      // Dispose observability modules (remove EventBus subscriptions).
       {
         const stopMs = systemNowMs();
         await withStepTimeout(() => {
+          disposeActivityStream?.(); // WIRE-05: drain ActivityStream FIRST (T-70-10-03)
           deps.contextPipelineCollector?.dispose();
           diagnosticCollector.dispose();
           channelActivityTracker.dispose();

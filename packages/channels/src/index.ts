@@ -318,4 +318,3 @@ export { TELEGRAM_THREAD_META_KEYS } from "./telegram/thread-context.js";
 // DeleteAndRepost/AppendOnly/LinePerEvent/DigestOnly factories wire their
 // per-channel send/edit/delete adapters in Phases 71-72 and are exported then.
 export { createTestSink } from "./shared/strategies/test-sink.js";
-export type { TestSinkRecorder } from "./shared/strategies/test-sink.js";
