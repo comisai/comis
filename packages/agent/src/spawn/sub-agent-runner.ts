@@ -21,6 +21,11 @@ import {
   type DeliveryOrigin,
   type ClockPort,
   type TimerPort,
+  SUB_AGENT_TOOL_DENYLIST,
+  SUB_AGENT_TOOL_PROFILES,
+  toolReachableGroups,
+  RequiredToolsUnreachableError,
+  type UnreachableToolEntry,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
@@ -316,6 +321,11 @@ export interface SpawnParams {
   domainKnowledge?: string[];
   /** Tool group names for sub-agent tool filtering. */
   toolGroups?: string[];
+  /** Optional list of tool names that must be reachable by the sub-agent.
+   *  Validated at spawn time against the profile/group ceiling (SUBA-01).
+   *  If any tool is unreachable, spawn() throws RequiredToolsUnreachableError
+   *  before creating the runId or session. */
+  requiredTools?: string[];
   /** Parent context inclusion mode. */
   includeParentHistory?: "none" | "summary";
   /** Shared directory path for graph pipeline inter-node data sharing */
@@ -339,6 +349,60 @@ export interface SpawnParams {
    *  Leaf nodes use "short" (5m) cache retention instead of the 1h default
    *  because their cache prefix has no downstream consumers. */
   isLeafNode?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// SUBA-01: Spawn-time required_tools gate helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the static post-ceiling reachable tool set for a given set of toolGroups.
+ * Uses SUB_AGENT_TOOL_PROFILES from @comis/core (mirrors TOOL_PROFILES in @comis/skills;
+ * drift enforced by tool-policy.test.ts drift-guard test). Replicates
+ * setup-tools.ts:588-607 logic without async.
+ *
+ * Returns null when toolGroups is empty/undefined or contains "full" AND
+ * the tool is not denylisted — "full" means unrestricted (no ceiling to check).
+ */
+function computePostCeilingSet(toolGroups: string[]): Set<string> | null {
+  if (toolGroups.length === 0) return null;
+  if (toolGroups.includes("full")) return null; // full = unconstrained (denylist applied separately)
+  const allowed = new Set<string>();
+  for (const group of toolGroups) {
+    const profileTools = SUB_AGENT_TOOL_PROFILES[group];
+    if (profileTools) {
+      for (const t of profileTools) allowed.add(t);
+    }
+  }
+  // Remove denylisted tools (even if a group/profile mistakenly listed them)
+  for (const denied of SUB_AGENT_TOOL_DENYLIST) {
+    allowed.delete(denied);
+  }
+  return allowed;
+}
+
+/**
+ * Classify a single required tool as "outside_profile" or "denylist".
+ * Uses toolReachableGroups from @comis/core — no @comis/skills import needed.
+ */
+function classifyRequiredTool(
+  toolName: string,
+  activeGroups: string[],
+): UnreachableToolEntry {
+  if (SUB_AGENT_TOOL_DENYLIST.has(toolName)) {
+    return {
+      toolName,
+      reason: "denylist",
+      hint: `Tool '${toolName}' is denied to ALL sub-agents — the parent must perform this step.`,
+    };
+  }
+  const broader = toolReachableGroups(toolName).filter((p) => !activeGroups.includes(p));
+  const suggestion = broader.length > 0 ? broader.join("' | '") : "supervisor' or 'full";
+  return {
+    toolName,
+    reason: "outside_profile",
+    hint: `Tool '${toolName}' is outside this sub-agent's profile. Re-spawn with tool_groups:['${suggestion}'].`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -879,6 +943,38 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       throw new Error(
         `Agent "${callerLabel}" is not allowed to spawn "${params.agentId}". Allowed: ${deps.config.allowAgents.join(", ")}`,
       );
+    }
+
+    // SUBA-01: Spawn-time required_tools gate.
+    // Validates that each declared required tool is reachable by the sub-agent's
+    // profile/group ceiling BEFORE creating a runId or session. Uses static
+    // expansion of SUB_AGENT_TOOL_PROFILES + SUB_AGENT_TOOL_DENYLIST from @comis/core —
+    // the same logic as setup-tools.ts:588-607 but without async.
+    if (params.requiredTools && params.requiredTools.length > 0) {
+      const effectiveGroups = params.toolGroups ?? [];
+      const ceilingSet = computePostCeilingSet(effectiveGroups);
+      const unreachable: UnreachableToolEntry[] = [];
+      for (const tool of params.requiredTools) {
+        // Denylisted tools are unreachable regardless of profile (check first)
+        if (SUB_AGENT_TOOL_DENYLIST.has(tool)) {
+          unreachable.push(classifyRequiredTool(tool, effectiveGroups));
+        } else if (ceilingSet !== null && !ceilingSet.has(tool)) {
+          // ceilingSet is null for "full" or empty groups (unconstrained) — skip ceiling check
+          unreachable.push(classifyRequiredTool(tool, effectiveGroups));
+        }
+      }
+      if (unreachable.length > 0) {
+        deps.logger?.warn({
+          agentId: params.agentId,
+          requiredTools: params.requiredTools,
+          toolGroups: params.toolGroups,
+          unreachableTools: unreachable.map((e) => ({ toolName: e.toolName, reason: e.reason })),
+          hint: "Spawn rejected: required_tools unreachable in sub-agent profile; see unreachableTools for re-spawn guidance",
+          errorKind: "validation" as const,
+        }, "Sub-agent spawn rejected: required tools unreachable");
+        // @allow-throw: spawn() consumed exclusively by daemon RPC handlers.
+        throw new RequiredToolsUnreachableError(unreachable);
+      }
     }
 
     // Normal (non-queued) path: create run and start execution

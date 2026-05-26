@@ -118,6 +118,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       const objective = params.objective;
       const domainKnowledge = params.domain_knowledge;
       const toolGroups = params.tool_groups;
+      const requiredTools = params.required_tools;
       const includeParentHistory = (params.include_parent_history === "summary" ? "summary" : "none") as "none" | "summary";
 
       // Async (only path): non-blocking spawn.
@@ -138,6 +139,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         objective,
         domainKnowledge,
         toolGroups,
+        requiredTools,
         includeParentHistory,
       });
       // Capture dedup signal from this spawn so the response carries

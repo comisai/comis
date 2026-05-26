@@ -63,6 +63,9 @@ const SessionsSpawnParams = Type.Object({
   tool_groups: Type.Optional(
     Type.Array(Type.String(), { description: "Tool group names for sub-agent tool filtering (e.g., 'coding', 'web')" }),
   ),
+  required_tools: Type.Optional(
+    Type.Array(Type.String(), { description: "Tool names that must be reachable by the sub-agent; spawn fails immediately if any are outside the profile ceiling" }),
+  ),
   include_parent_history: Type.Optional(
     Type.String({ description: "Parent context inclusion: 'none' (default) or 'summary'" }),
   ),
@@ -118,6 +121,7 @@ export function createSessionsSpawnTool(rpcCall: RpcCall): AgentTool<typeof Sess
           artifact_refs: Array.isArray(p.artifact_refs) ? p.artifact_refs : undefined,
           objective: readStringParam(p, "objective", false),
           tool_groups: Array.isArray(p.tool_groups) ? p.tool_groups : undefined,
+          required_tools: Array.isArray(p.required_tools) ? p.required_tools : undefined,
           include_parent_history: readStringParam(p, "include_parent_history", false),
           domain_knowledge: Array.isArray(p.domain_knowledge) ? p.domain_knowledge : undefined,
         };
