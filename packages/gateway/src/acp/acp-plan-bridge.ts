@@ -163,11 +163,30 @@ export function createAcpPlanBridge(
     );
     // SINGLE-ARG sessionUpdate({ sessionId, update }) (acp.d.ts:45). The FULL
     // entries list is sent every update — the SDK client replaces the entire
-    // plan (Plan.entries, §16.8). void: the bridge is a non-throwing emitter.
-    void connection.sessionUpdate({
-      sessionId: acpSessionId,
-      update: { sessionUpdate: "plan", entries },
-    });
+    // plan (Plan.entries, §16.8). The discarded promise carries a `.catch` so a
+    // rejected frame (e.g. the IDE disconnects mid-turn and the plan panel
+    // closes) is logged instead of surfacing as an unhandled rejection (WR-01).
+    // Each emit is independent (no serialization chain), so the catch only logs
+    // the redacted SDK error — never the entries/params. The bridge stays a
+    // non-throwing void-emitter (no allow-throw annotation).
+    connection
+      .sessionUpdate({
+        sessionId: acpSessionId,
+        update: { sessionUpdate: "plan", entries },
+      })
+      .catch((err: unknown) => {
+        deps.logger?.debug?.(
+          {
+            err,
+            acpSessionId,
+            submodule: "acp-plan-bridge",
+            step: "plan-update",
+            hint: "IDE connection may have closed; plan frame dropped",
+            errorKind: "dependency" as const,
+          },
+          "acp plan sessionUpdate failed — dropping frame",
+        );
+      });
   };
 
   // sep:plan_extracted → derive the initial plan-update.
