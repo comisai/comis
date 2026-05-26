@@ -981,6 +981,30 @@ function resetSyncToolingMocks(opts: {
   mockDiscoverSkills.mockReturnValue(opts.skills ?? []);
 }
 
+// ---------------------------------------------------------------------------
+// Audit-log isolation: redirect COMIS_CONFIG_AUDIT_LOG to a per-test tmpdir
+// so appendCliSyncToolingAudit() never writes to ~/.comis/logs/config-audit.jsonl
+// during test runs. Mirrors the pattern in last-known-good.test.ts.
+// ---------------------------------------------------------------------------
+let _auditTmpDir: string;
+let _prevAuditEnv: string | undefined;
+
+beforeEach(() => {
+  _auditTmpDir = fsRaw.mkdtempSync(path.join(os.tmpdir(), "cli-audit-test-"));
+  // eslint-disable-next-line no-restricted-syntax -- test fixture env override
+  _prevAuditEnv = process.env["COMIS_CONFIG_AUDIT_LOG"];
+  // eslint-disable-next-line no-restricted-syntax -- test fixture env override
+  process.env["COMIS_CONFIG_AUDIT_LOG"] = path.join(_auditTmpDir, "config-audit.jsonl");
+});
+
+afterEach(() => {
+  fsRaw.rmSync(_auditTmpDir, { recursive: true, force: true });
+  // eslint-disable-next-line no-restricted-syntax -- test fixture env restore
+  if (_prevAuditEnv === undefined) delete process.env["COMIS_CONFIG_AUDIT_LOG"];
+  // eslint-disable-next-line no-restricted-syntax -- test fixture env restore
+  else process.env["COMIS_CONFIG_AUDIT_LOG"] = _prevAuditEnv;
+});
+
 // -- registration ------------------------------------------------------------
 
 describe("config sync-tooling is registered with the right options", () => {
