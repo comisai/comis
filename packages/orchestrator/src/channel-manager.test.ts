@@ -554,11 +554,13 @@ describe("createChannelManager", () => {
         "message:received",
         expect.objectContaining({ message: msg }),
       );
+      // TURN-06: message:sent now carries the receipt's real lastChunkMessageId
+      // (the fake adapter.sendMessage returns "msg-99"), not the prior synthetic id.
       expect(deps.eventBus.emit).toHaveBeenCalledWith(
         "message:sent",
         expect.objectContaining({
           channelId: "12345",
-          messageId: "block-delivery",
+          messageId: "msg-99",
           content: "Agent response text",
         }),
       );

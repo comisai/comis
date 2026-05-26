@@ -393,19 +393,27 @@ export async function executeAndDeliver(
       return;
     }
 
-    // Stage 4: Chunking, coalescing, block pacing, delivery
-    await deliverExecutionResponse(
+    // Stage 4: Chunking, coalescing, block pacing, delivery.
+    // TURN-05/06: deliverExecutionResponse now returns a delivery receipt.
+    const deliveryReceipt = await deliverExecutionResponse(
       deps, adapter, effectiveMsg, filterResult.text,
       blockStreamCfg, activePacers, replyTo,
       execResult.deliverySignal, typingLifecycle,
     );
 
-    // Emit message:sent event with the cleaned response content
-    deps.eventBus.emit("message:sent", {
-      channelId: effectiveMsg.channelId,
-      messageId: "block-delivery",
-      content: filterResult.text,
-    });
+    // Emit message:sent with the REAL last-chunk message id from the receipt
+    // (TURN-06 — replaces the prior synthetic placeholder id). On a delivery
+    // failure, or when nothing was delivered (visibleReplies suppression =>
+    // deliveredChunks 0, empty id), there is no real message to announce, so
+    // the message:sent emit is skipped — downstream subscribers only ever see
+    // a real platform message id.
+    if (deliveryReceipt.ok && deliveryReceipt.value.lastChunkMessageId) {
+      deps.eventBus.emit("message:sent", {
+        channelId: effectiveMsg.channelId,
+        messageId: deliveryReceipt.value.lastChunkMessageId,
+        content: filterResult.text,
+      });
+    }
 
     // Emit diagnostic:message_processed for full lifecycle tracking
     emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason);

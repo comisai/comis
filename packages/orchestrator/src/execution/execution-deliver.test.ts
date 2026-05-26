@@ -196,6 +196,52 @@ describe("deliverExecutionResponse — TURN-05 delivery receipt", () => {
     expect(result.error.errorKind).toBe("platform");
     expect(result.error.lastError.length).toBeLessThanOrEqual(200);
   });
+
+  it("classifies a chunk failure surfaced via DeliveryResult.chunks[].error (deliverToChannel ok, inner chunk failed)", async () => {
+    // Here deliverToChannel returns ok:true (Result) but with an inner failed
+    // chunk carrying the error — exercises the failChunk.error extraction path.
+    const deps = makeDeps({
+      deliveryService: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test fake
+        deliverToChannel: vi.fn(async (_a: any, _c: string, text: string) => ok({
+          ok: false,
+          totalChunks: 1,
+          deliveredChunks: 0,
+          failedChunks: 1,
+          chunks: [{ ok: false, error: new Error("inner-chunk-boom"), charCount: text.length, retried: false }],
+          totalChars: text.length,
+        })),
+        drainInFlight: vi.fn(async () => ({ drained: 0, remaining: 0, durationMs: 0 })),
+      } as DeliverDeps["deliveryService"],
+    });
+
+    const result = await deliverExecutionResponse(
+      deps, makeAdapter(), makeMessage(), "abcdefghij", makeBlockStreamCfg(),
+      new Set<BlockPacer>(), undefined, new AbortController().signal, NO_TYPING,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.errorKind).toBe("platform");
+    expect(result.error.lastError).toContain("inner-chunk-boom");
+    // failedAtMs comes from systemNowMs() when no clock injected.
+    expect(result.error.failedAtMs).toBeGreaterThan(0);
+  });
+
+  it("uses systemNowMs for deliveredAtMs on success when no clock is injected", async () => {
+    const adapter = makeAdapter(vi.fn(async () => ok("msg-real")) as unknown as ChannelPort["sendMessage"]);
+    const deps = makeDeps(); // no clock
+
+    const result = await deliverExecutionResponse(
+      deps, adapter, makeMessage(), "abcdefghij", makeBlockStreamCfg(),
+      new Set<BlockPacer>(), undefined, new AbortController().signal, NO_TYPING,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.lastChunkMessageId).toBe("msg-real");
+    expect(result.value.deliveredAtMs).toBeGreaterThan(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -243,8 +289,11 @@ describe("deliverExecutionResponse — TURN-09/10 visibleReplies enforcement", (
     const adapter = makeAdapter(send as unknown as ChannelPort["sendMessage"]);
     const deps = makeDeps();
 
+    // NormalizedMessage.chatType is the 5-value enum (dm/group/thread/...); a DM
+    // ("dm") resolves to the `direct` visibleReplies policy. With direct=automatic
+    // the final text delivers regardless of whether the message tool acted.
     const result = await deliverExecutionResponse(
-      deps, adapter, makeMessage({ chatType: "direct" }), "final text",
+      deps, adapter, makeMessage({ chatType: "dm" }), "final text",
       makeBlockStreamCfg(), new Set<BlockPacer>(), undefined,
       new AbortController().signal, NO_TYPING,
       { visibleReplies: { direct: "automatic", group: "message_tool" }, messageToolActed: false },

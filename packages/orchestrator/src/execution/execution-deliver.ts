@@ -8,8 +8,17 @@
  * @module
  */
 
-import type { ChannelPort, NormalizedMessage, PerChannelStreamingConfig } from "@comis/core";
-import { tryGetContext, chunkForDelivery, createBlockRetryGuard, systemNowMs } from "@comis/core";
+import type {
+  ChannelPort,
+  NormalizedMessage,
+  PerChannelStreamingConfig,
+  ClockPort,
+  DeliveryStageResult,
+  FinalDeliveryReceipt,
+  DeliveryFailureReceipt,
+} from "@comis/core";
+import { tryGetContext, chunkForDelivery, createBlockRetryGuard, systemNowMs, sanitizeLogString } from "@comis/core";
+import { ok, err } from "@comis/shared";
 
 import type { ExecutionPipelineDeps } from "./execution-pipeline.js";
 import { buildThreadSendOpts } from "./execution-pipeline.js";
@@ -24,7 +33,40 @@ import type { BlockPacer, TypingLifecycleController } from "@comis/channels";
 export type DeliverDeps = Pick<
   ExecutionPipelineDeps,
   "eventBus" | "logger" | "streamingConfig" | "channelRegistry" | "retryEngine" | "deliveryQueue" | "deliveryService"
->;
+> & {
+  /**
+   * Optional injected clock. When present, `deliveredAtMs` is read from it
+   * (deterministic in tests). When absent, the sanctioned-root `systemNowMs()`
+   * is used — this stage is one of the sanctioned roots for `systemNowMs`
+   * (it already uses it for delivery metrics). §16.6.
+   */
+  clock?: ClockPort;
+};
+
+/**
+ * `delivery.visibleReplies` policy threaded into the delivery stage (TURN-09/10,
+ * §16.3). The resolved per-chat-type mode + whether the `message` tool acted
+ * (`send`/`reply`/`attach`) this turn. When the policy for the inbound chat type
+ * is `"message_tool"` and the tool did NOT act, the final assistant text is
+ * suppressed (the activity/approval surfaces and lifecycle reactions are
+ * unaffected — they are produced elsewhere).
+ */
+export interface VisibleRepliesEnforcement {
+  visibleReplies: { direct: "automatic" | "message_tool"; group: "automatic" | "message_tool" };
+  /** True if the model called the `message` tool with send/reply/attach this turn. */
+  messageToolActed: boolean;
+}
+
+/** Truncation cap for the failure receipt's `lastError` (§ DeliveryFailureReceipt). */
+const MAX_LAST_ERROR_CHARS = 200;
+
+/** A success receipt for a turn where delivery was intentionally suppressed (visibleReplies). */
+const SUPPRESSED_RECEIPT: FinalDeliveryReceipt = {
+  ok: true,
+  deliveredChunks: 0,
+  lastChunkMessageId: "",
+  deliveredAtMs: 0,
+};
 
 // ---------------------------------------------------------------------------
 // Stage function
@@ -46,7 +88,32 @@ export async function deliverExecutionResponse(
   replyTo: string | undefined,
   deliverySignal: AbortSignal,
   typingLifecycle: TypingLifecycleController | undefined,
-): Promise<void> {
+  enforcement?: VisibleRepliesEnforcement,
+): Promise<DeliveryStageResult> {
+  // === VISIBLE-REPLIES ENFORCEMENT (TURN-09/10, §16.3) ===
+  // Runs AFTER the response filter (the caller passes the post-filter
+  // finalDeliveryText) and BEFORE any assistant-text delivery. When the chat
+  // type's policy is "message_tool" and the model did not call the `message`
+  // tool with send/reply/attach, the final assistant text is suppressed: the
+  // tool already produced the user-visible output, so re-sending the model's
+  // narration would double-post. Activity/approval surfaces + lifecycle
+  // reactions are produced elsewhere and are NOT affected by this gate.
+  if (enforcement) {
+    const chatType = effectiveMsg.chatType ?? "dm";
+    const policy = chatType === "dm" ? enforcement.visibleReplies.direct : enforcement.visibleReplies.group;
+    if (policy === "message_tool" && !enforcement.messageToolActed) {
+      const suppressCtx = tryGetContext();
+      deps.logger.debug({
+        traceId: suppressCtx?.traceId,
+        step: "visible-replies",
+        chatType,
+        policy,
+        messageToolActed: false,
+      }, "Final assistant text suppressed by visibleReplies=message_tool");
+      return ok(SUPPRESSED_RECEIPT);
+    }
+  }
+
   // Capability-driven config lookup
   const caps = deps.channelRegistry?.getCapabilities(adapter.channelType);
 
@@ -110,6 +177,11 @@ export async function deliverExecutionResponse(
   const deliveryStartMs = performance.now();
   let deliveredChunks = 0;
   let failedChunks = 0;
+  // TURN-05: the REAL message id of the last successfully-delivered chunk
+  // (replaces the synthetic "block-delivery" id at the pipeline call site) and
+  // the first failure's classified error (for the DeliveryFailureReceipt).
+  let lastChunkMessageId = "";
+  let firstFailure: { errorKind: DeliveryFailureReceipt["errorKind"]; message: string } | undefined;
 
   // Create block pacer for human-like delivery timing
   const pacer = createBlockPacer({
@@ -144,6 +216,18 @@ export async function deliverExecutionResponse(
       if (!deliveryResult.ok || !deliveryResult.value.ok) {
         failedChunks++;
         const chunkErr = !deliveryResult.ok ? deliveryResult.error : undefined;
+        // Record the FIRST failure for the DeliveryFailureReceipt (TURN-05).
+        // Chat-platform send failures classify as "platform" (AGENTS.md §2.1).
+        if (!firstFailure) {
+          const failChunk = deliveryResult.ok
+            ? deliveryResult.value.chunks.find((c) => !c.ok)
+            : undefined;
+          const rawMessage =
+            chunkErr instanceof Error ? chunkErr.message
+              : failChunk?.error instanceof Error ? failChunk.error.message
+                : "delivery failed";
+          firstFailure = { errorKind: "platform", message: rawMessage };
+        }
         const dlvCtx = tryGetContext();
         deps.logger.warn({
           traceId: dlvCtx?.traceId,
@@ -164,6 +248,11 @@ export async function deliverExecutionResponse(
       } else {
         deliveredChunks++;
         blockGuard?.recordSuccess();
+        // Capture the real last-chunk message id from the delivery result.
+        // The last successful chunk in this group wins; the final group's last
+        // chunk is the receipt's lastChunkMessageId.
+        const lastOk = [...deliveryResult.value.chunks].reverse().find((c) => c.ok && c.messageId);
+        if (lastOk?.messageId) lastChunkMessageId = lastOk.messageId;
       }
 
       // Pipeline-specific UX event: block index tracking for streaming progress.
@@ -182,6 +271,13 @@ export async function deliverExecutionResponse(
   } finally {
     activePacers.delete(pacer);
   }
+
+  // §16.6: capture the settle timestamp the moment the last chunk's send-promise
+  // resolved — i.e. right after pacer.deliver settles, before any post-delivery
+  // bookkeeping. Injected ClockPort when present (deterministic tests); otherwise
+  // the sanctioned-root systemNowMs (this stage is a sanctioned root). Used as
+  // deliveredAtMs on the success receipt and failedAtMs on the failure receipt.
+  const settledAtMs = deps.clock ? deps.clock.now() : systemNowMs();
 
   const deliveryCtx = tryGetContext();
   deps.logger.debug({
@@ -211,4 +307,28 @@ export async function deliverExecutionResponse(
   if (typingLifecycle && blockStreamCfg.typingMode === "message") {
     typingLifecycle.markRunComplete();
   }
+
+  // === DELIVERY RECEIPT (TURN-05, §16.6) ===
+  // Any failed chunk => err(DeliveryFailureReceipt) so the coordinator can
+  // classify the turn as kind:"failure" and keep the activity trail (SEC-04).
+  if (failedChunks > 0 || firstFailure) {
+    const rawError = firstFailure?.message ?? "delivery failed";
+    // Redact credentials, then bound to the receipt's ≤200-char contract.
+    const lastError = sanitizeLogString(rawError).slice(0, MAX_LAST_ERROR_CHARS);
+    return err({
+      ok: false,
+      deliveredChunks,
+      failedChunks,
+      errorKind: firstFailure?.errorKind ?? "platform",
+      lastError,
+      failedAtMs: settledAtMs,
+    });
+  }
+
+  return ok({
+    ok: true,
+    deliveredChunks,
+    lastChunkMessageId,
+    deliveredAtMs: settledAtMs,
+  });
 }
