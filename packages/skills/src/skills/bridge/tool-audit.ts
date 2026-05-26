@@ -12,8 +12,29 @@
  */
 
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
-import type { TypedEventBus } from "@comis/core";
-import { systemNowMs, tryGetContext } from "@comis/core";
+import type { TypedEventBus, ErrorKind } from "@comis/core";
+import { systemNowMs, tryGetContext, redactValue } from "@comis/core";
+
+/** The closed ErrorKind union (log-fields.ts) as a runtime Set for narrowing
+ *  the loosely-typed errorKind propagated off thrown error objects. */
+const ERROR_KINDS: ReadonlySet<ErrorKind> = new Set<ErrorKind>([
+  "config",
+  "network",
+  "auth",
+  "validation",
+  "precondition",
+  "timeout",
+  "resource",
+  "dependency",
+  "internal",
+  "platform",
+]);
+
+function asErrorKind(value: unknown): ErrorKind | undefined {
+  return typeof value === "string" && ERROR_KINDS.has(value as ErrorKind)
+    ? (value as ErrorKind)
+    : undefined;
+}
 
 /**
  * Wrap an AgentTool with audit event emission.
@@ -41,7 +62,7 @@ export function wrapWithAudit(tool: AgentTool<any>, eventBus: TypedEventBus, age
       const startMs = performance.now();
       let success = true;
       let errorMessage: string | undefined;
-      let errorKind: string | undefined;
+      let errorKind: ErrorKind | undefined;
 
       try {
         const result = await tool.execute(toolCallId, params, signal, onUpdate);
@@ -55,18 +76,22 @@ export function wrapWithAudit(tool: AgentTool<any>, eventBus: TypedEventBus, age
           details.exitCode !== 0
         ) {
           success = false;
-          errorKind = "nonzero-exit";
+          // A non-zero exit code is NOT a member of the closed ErrorKind union
+          // (T-70-06-03). Map it to "dependency" so downstream closed-union
+          // switches + activity classification stay exhaustive. Matches the
+          // pi-event-bridge.ts exitCode branch.
+          errorKind = "dependency";
         }
 
         return result;
       } catch (error: unknown) {
         success = false;
         errorMessage = (error instanceof Error ? error.message : String(error)).slice(0, 1500);
-        // Read errorKind from error property if present (e.g., validation errors from enforcement wrapper)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- errorKind propagation from enforcement wrapper
-        if (error instanceof Error && typeof (error as any).errorKind === "string") {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- errorKind propagation
-          errorKind = (error as any).errorKind;
+        // Read errorKind from error property if present (e.g., validation errors
+        // from enforcement wrapper), narrowed to the closed ErrorKind union so
+        // the tool:executed payload only ever carries a valid member.
+        if (error instanceof Error) {
+          errorKind = asErrorKind((error as { errorKind?: unknown }).errorKind);
         }
         errorKind ??= signal?.aborted ? "timeout" : "internal";
         throw error;
@@ -74,8 +99,19 @@ export function wrapWithAudit(tool: AgentTool<any>, eventBus: TypedEventBus, age
         const durationMs = performance.now() - startMs;
         const ctx = tryGetContext();
 
+        // EVT-06 / Pitfall 2 / T-70-06-01: redact params BEFORE the emit
+        // crosses the bus. This closes the documented leak where raw tool
+        // params (secrets, message bodies, absolute paths) were forwarded
+        // verbatim. `redactValue` is the only sanctioned path; no homeDir is
+        // in scope at this skill-bridge site, so $HOME path compaction is
+        // skipped, but secret/PII/absolute-path masking still applies.
+        const redactedParams = redactValue(params).value as
+          | Record<string, unknown>
+          | undefined;
+
         eventBus.emit("tool:executed", {
           toolName: tool.name,
+          toolCallId,
           durationMs,
           success,
           timestamp: systemNowMs(),
@@ -83,7 +119,7 @@ export function wrapWithAudit(tool: AgentTool<any>, eventBus: TypedEventBus, age
           traceId: ctx?.traceId,
           agentId,
           sessionKey: ctx?.sessionKey,
-          params: params as Record<string, unknown> | undefined,
+          params: redactedParams,
           ...(errorMessage !== undefined && { errorMessage }),
           ...(errorKind !== undefined && { errorKind }),
         });

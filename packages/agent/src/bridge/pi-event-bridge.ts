@@ -19,6 +19,8 @@ import {
   systemNowMs,
   systemDateFrom,
   tryGetContext,
+  redactValue,
+  getToolMetadata,
   type SessionKey,
   type TypedEventBus,
   type MemoryPort,
@@ -470,6 +472,22 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               // Never fail execution due to arg snapshot error
             }
           }
+          // Stash the RAW args so the paired tool:executed emit can forward
+          // redacted params (EVT-01). Redaction happens at the emit, not here.
+          if (toolEvent.args !== undefined) {
+            m.toolRawArgs.set(toolEvent.toolCallId, toolEvent.args);
+          }
+
+          // EVT-02: thread redacted params + an `action` field onto tool:started.
+          // redactValue is the only sanctioned path — secrets/PII/absolute paths
+          // are masked BEFORE the emit crosses the bus.
+          const startedRedactedParams = redactValue(toolEvent.args).value as
+            | Record<string, unknown>
+            | undefined;
+          const startedAction =
+            startedRedactedParams && typeof startedRedactedParams.action === "string"
+              ? startedRedactedParams.action
+              : undefined;
 
           deps.eventBus.emit("tool:started", {
             toolName: toolEvent.toolName,
@@ -478,6 +496,8 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             agentId: deps.agentId,
             sessionKey: formatSessionKey(deps.sessionKey),
             traceId: deps.executionId,
+            ...(startedRedactedParams !== undefined && { params: startedRedactedParams }),
+            ...(startedAction !== undefined && { action: startedAction }),
           });
 
           deps.logger.debug(
@@ -523,9 +543,50 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             }
           }
 
+          // EVT-10 (§16.10): run the tool's failureDetector hook BEFORE the
+          // tool:executed emit, so observability never sees the raw result.
+          // The detector is pure + synchronous; it lets a tool flag a
+          // logically-failed result the SDK reported as success. A THROWING
+          // detector is caught — the original success is preserved and a WARN
+          // is logged with errorKind:"internal" (the result is never leaked).
+          // NOTE: this plan wires the hook SEAM; per-tool detector bodies are
+          // authored in Phase 75 / UX-03.
+          {
+            const detector = getToolMetadata(endEvent.toolName)?.failureDetector;
+            if (detector !== undefined) {
+              try {
+                const detected = detector(endEvent.result, endEvent.isError);
+                if (detected === true || (typeof detected === "object" && detected !== null)) {
+                  toolSuccess = false;
+                  toolErrorKind =
+                    (typeof detected === "object" && detected !== null
+                      ? detected.errorKind
+                      : undefined) ?? toolErrorKind ?? "internal";
+                }
+              } catch (detectorError: unknown) {
+                deps.logger.warn(
+                  {
+                    submodule: "bridge.failure-detector",
+                    toolName: endEvent.toolName,
+                    toolCallId: endEvent.toolCallId,
+                    err: detectorError,
+                    errorKind: "internal" as const,
+                    hint: "failureDetector threw; preserving the SDK-reported tool outcome. Fix the detector — it must be pure and never throw.",
+                  },
+                  "Tool failureDetector threw",
+                );
+                // Original success preserved (no mutation of toolSuccess).
+              }
+            }
+          }
+
           // Retrieve stored args and extract error text for failure diagnostics
           const sanitizedArgs = m.toolArgSnapshots.get(endEvent.toolCallId);
           m.toolArgSnapshots.delete(endEvent.toolCallId); // Cleanup regardless of success/failure
+          // Retrieve + clear the raw args stashed at tool_execution_start; redact
+          // them into the tool:executed `params` field below (EVT-01).
+          const rawArgsForParams = m.toolRawArgs.get(endEvent.toolCallId);
+          m.toolRawArgs.delete(endEvent.toolCallId);
 
           let errorText: string | undefined;
           // Extract MCP server name for attribution
@@ -657,13 +718,23 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           // Look up truncation metadata from stream wrapper registry
           const truncMeta = deps.getTruncationMeta?.(endEvent.toolCallId);
 
+          // EVT-01: forward redacted params (from the raw args stashed at
+          // tool_execution_start). redactValue masks secrets/PII/absolute paths
+          // before the emit crosses the bus.
+          const executedRedactedParams = redactValue(rawArgsForParams).value as
+            | Record<string, unknown>
+            | undefined;
+
           deps.eventBus.emit("tool:executed", {
             toolName: endEvent.toolName,
+            toolCallId: endEvent.toolCallId,
             durationMs,
             success: toolSuccess,
             timestamp: systemNowMs(),
             agentId: deps.agentId,
             sessionKey: formatSessionKey(deps.sessionKey),
+            traceId: deps.executionId,
+            ...(executedRedactedParams !== undefined && { params: executedRedactedParams }),
             ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
             ...(errorText && { errorMessage: sanitizeLogString(errorText).slice(0, 1500) }),
             ...(!toolSuccess && mcpServer !== undefined && { mcpServer, mcpErrorType: classifyMcpErrorType(errorText) }),
