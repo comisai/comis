@@ -179,22 +179,43 @@ export function createAcpApprovalBridge(
         //    routed back into the §6.4 gate (deferred follow-up). Log only the
         //    outcome discriminant + optionId — never the shortId, choice label
         //    content, or any params (OBS-02 — no message bodies / secrets).
+        //    The await + outcome log are isolated in a try/catch INSIDE the
+        //    .then callback so a rejected requestPermission (e.g. the IDE
+        //    disconnects mid-turn) is logged and dropped WITHOUT rejecting the
+        //    `chain` — a rejected chain would poison every later approval's
+        //    `.then`, silently dropping all remaining approvals for the turn
+        //    (WR-01). The bridge stays a non-throwing void-emitter (no
+        //    allow-throw); only the redacted SDK error is logged, never params.
         chain = chain.then(async () => {
-          const res = await connection.requestPermission(req);
-          deps.logger?.info?.(
-            {
-              agentId: e.agentId,
-              acpSessionId,
-              outcome: res.outcome.outcome,
-              optionId:
-                res.outcome.outcome === "selected"
-                  ? res.outcome.optionId
-                  : undefined,
-              submodule: "acp-approval-bridge",
-              step: "permission-outcome",
-            },
-            "ACP approval outcome received",
-          );
+          try {
+            const res = await connection.requestPermission(req);
+            deps.logger?.info?.(
+              {
+                agentId: e.agentId,
+                acpSessionId,
+                outcome: res.outcome.outcome,
+                optionId:
+                  res.outcome.outcome === "selected"
+                    ? res.outcome.optionId
+                    : undefined,
+                submodule: "acp-approval-bridge",
+                step: "permission-outcome",
+              },
+              "ACP approval outcome received",
+            );
+          } catch (err) {
+            deps.logger?.debug?.(
+              {
+                err,
+                acpSessionId,
+                submodule: "acp-approval-bridge",
+                step: "permission-outcome",
+                hint: "IDE connection may have closed; approval dropped, chain preserved",
+                errorKind: "dependency" as const,
+              },
+              "acp requestPermission failed — dropping approval, chain preserved",
+            );
+          }
         });
       };
 
