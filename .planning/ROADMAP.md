@@ -116,7 +116,12 @@ Plans:
   1. A spawn call with `required_tools: ["mcp_manage"]` under a `coding` profile fails immediately with a `RequiredToolsUnreachableError` — no `runId` returned, the sub-agent never starts, and the error message says "re-spawn with `tool_groups:['supervisor']`"
   2. A spawn call with `required_tools: ["gateway"]` fails immediately and the error message states the tool is "denied to ALL sub-agents — the parent must perform this step"
   3. `tool-policy.test.ts` contains a green-on-current invariant guard asserting no profile/group contains `gateway` AND `SUB_AGENT_TOOL_DENYLIST.has("gateway")` is true; `SUB_AGENT_TOOL_DENYLIST` is defined in `@comis/core` with no alias at the old daemon location; `pnpm cycles` passes
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — TDD: Move SUB_AGENT_TOOL_DENYLIST to @comis/core + RequiredToolsUnreachableError + gateway invariant guard (SUBA-03)
+- [ ] 05-02-PLAN.md — TDD: pi-event-bridge enrichment for "Tool not found" with two-shape classifier (SUBA-02)
+- [ ] 05-03-PLAN.md — TDD: spawn() required_tools gate + SpawnParams field + RPC chain wiring (SUBA-01)
 
 ---
 
@@ -128,8 +133,8 @@ Plans:
 | 2. STORE — Zero-config secrets store | v1.1 | 5/5 | Complete   | 2026-05-26 |
 | 3. CRED — MCP credential firewall & lifecycle | v1.1 | 4/4 | Complete   | 2026-05-26 |
 | 4. MCPX — MCP transport resilience | v1.1 | 4/4 | Complete   | 2026-05-26 |
-| 5. SUBA — Sub-agent tool governance | v1.1 | 0/TBD | Not started | - |
+| 5. SUBA — Sub-agent tool governance | v1.1 | 0/3 | Not started | - |
 
 ---
 
-*Last updated: 2026-05-26 — Phase 4 planned (4 plans, 3 waves)*
+*Last updated: 2026-05-26 — Phase 5 planned (3 plans, 2 waves)*
