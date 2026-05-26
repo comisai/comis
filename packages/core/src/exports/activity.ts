@@ -28,6 +28,10 @@ export {
   acpProjection,
   coalesce,
   CHAT_COALESCE_RULES,
+  // 75-01 themes (UX-01) — the name→bundle registry. Plan 75-05 resolves
+  // `themeForName(<default-agent theme>)` at the daemon composition root and
+  // bakes the resolved marker set into `ActivityEvent.defaultLabel`.
+  themeForName,
 } from "../activity/index.js";
 
 // ChatType narrowing (§4.6, TURN-02; created in 70-01). Surfaced here so the
@@ -58,6 +62,9 @@ export type {
   RegisteredLabelSpec,
   ActivityTheme,
   ResolveLabelOptions,
+  // 75-01 themes (UX-01)
+  ThemeName,
+  ActivityStatusMarkers,
   // 70-05
   TurnActivityContext,
   ActivityStrategy,
