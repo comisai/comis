@@ -78,7 +78,8 @@ describe("validateCallbackDataWithinBudget", () => {
   });
 
   it("passes every signed callback the real renderCallbackData emits within budget", () => {
-    for (const choice of ["approve", "deny", "details", "escalate"] as const) {
+    // The CallbackChoice union (core/security/callback-signing.ts) is exactly these three.
+    for (const choice of ["approve", "deny", "details"] as const) {
       const signed = renderCallbackData(SECRET, choice, SHORT_ID);
       expect(signed.ok).toBe(true);
       if (!signed.ok) continue;

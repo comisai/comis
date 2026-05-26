@@ -11,22 +11,36 @@
  */
 
 import type { RichButton, RichCard } from "@comis/core";
+import { err, ok, type Result } from "@comis/shared";
 import { InlineKeyboard } from "grammy";
 
 /** Telegram callback_data byte limit. */
 const MAX_CALLBACK_DATA_BYTES = 64;
 
-/**
- * Truncate callback data to fit within Telegram's 64-byte limit.
- */
-function truncateCallbackData(data: string): string {
-  const encoder = new TextEncoder();
-  const bytes = encoder.encode(data);
-  if (bytes.length <= MAX_CALLBACK_DATA_BYTES) return data;
+/** Over-budget callback_data: refuse loud rather than truncate (the signature would corrupt). */
+export type CallbackDataBudgetError = {
+  kind: "callback_data_overflow";
+  bytes: number;
+  maxBytes: typeof MAX_CALLBACK_DATA_BYTES;
+};
 
-  // Truncate bytes and decode back -- TextDecoder handles partial chars
-  const truncated = bytes.slice(0, MAX_CALLBACK_DATA_BYTES);
-  return new TextDecoder("utf-8", { fatal: false }).decode(truncated);
+/**
+ * Validate that callback_data fits Telegram's 64-byte budget without mutating it.
+ *
+ * Signed callback payloads carry an HMAC; truncating one corrupts the signature
+ * and silently breaks verification. The worst-case signed payload is ~40 bytes
+ * (well under the budget), so this is defense-in-depth: it refuses loud (`err`)
+ * on the never-expected overflow instead of cutting bytes. Byte length is the
+ * UTF-8 encoded length, not the character count.
+ */
+export function validateCallbackDataWithinBudget(
+  data: string,
+): Result<string, CallbackDataBudgetError> {
+  const bytes = new TextEncoder().encode(data).length;
+  if (bytes > MAX_CALLBACK_DATA_BYTES) {
+    return err({ kind: "callback_data_overflow", bytes, maxBytes: MAX_CALLBACK_DATA_BYTES });
+  }
+  return ok(data);
 }
 
 /**
@@ -43,8 +57,10 @@ function escapeHtml(text: string): string {
  * Convert domain RichButton rows to a Grammy InlineKeyboard.
  *
  * Each inner array becomes one keyboard row. URL buttons use .url(),
- * callback buttons use .text(). Callback data is truncated to 64 bytes
- * per Telegram's limit.
+ * callback buttons use .text(). Callback data is validated against Telegram's
+ * 64-byte limit and an over-budget callback button is omitted rather than
+ * truncated -- truncating would corrupt a signed payload's HMAC. The worst-case
+ * signed payload is ~40 bytes, so this guard never fires in practice.
  *
  * @param buttons - Two-dimensional array of RichButton (rows x buttons)
  * @returns InlineKeyboard instance ready for Telegram reply_markup
@@ -58,8 +74,11 @@ export function renderTelegramButtons(buttons: RichButton[][]): InlineKeyboard {
       if (btn.url) {
         keyboard.url(btn.text, btn.url);
       } else {
-        const data = truncateCallbackData(btn.callback_data ?? btn.text);
-        keyboard.text(btn.text, data);
+        const budget = validateCallbackDataWithinBudget(btn.callback_data ?? btn.text);
+        // Defensive: skip an over-budget callback button rather than truncate
+        // (truncation corrupts a signed callback's HMAC). Real payloads always fit.
+        if (!budget.ok) continue;
+        keyboard.text(btn.text, budget.value);
       }
     }
     // Add row break after each row (except the last)
