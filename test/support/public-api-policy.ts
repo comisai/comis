@@ -210,17 +210,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "wrapInEnvelope",
       "formatElapsed",
       "PiExecutorDeps",
-      // ExecutionPlanHolder + createExecutionPlanHolder (Phase 74, workstream D,
-      // ACP-03). The first (and only) ExecutionPlanPort impl — a holder-backed
-      // port reading the live per-turn SEP ExecutionPlan. Surfaced on the
-      // @comis/agent barrel so the daemon composition root can build the holder,
-      // thread it into the agent runtime, and hand the SAME object to the
-      // gateway as a @comis/core ExecutionPlanPort (AcpServerDeps.executionPlanPort).
-      // That composition-root wiring is deferred to a later composition phase,
-      // so neither symbol has an in-repo consumer yet — baseline-orphan posture
-      // mirroring SessionLifecycleOptions above. Shrink when the wiring lands.
-      "createExecutionPlanHolder",
-      "ExecutionPlanHolder",
+      // createExecutionPlanHolder + ExecutionPlanHolder (Phase 74, workstream D,
+      // ACP-03) are NO LONGER orphans: 74-07 wired the composition root. The
+      // daemon's setup-acp-wiring.ts now imports createExecutionPlanHolder from
+      // @comis/agent (and the ExecutionPlanHolder type) to build the one shared
+      // holder threaded into both PiExecutorDeps.executionPlanHolder and the
+      // gateway's AcpServerDeps.executionPlanPort. Both entries removed here
+      // (the public-export-consumers gate now finds the real in-repo consumer).
       "clearSessionState",
       "CacheSafeParams",
       "cleanupServerFromAllTrackers",
@@ -1621,22 +1617,26 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // route's deps shape (the daemon constructs it inline) — both tracked here.
       "APPROVAL_TOKEN_TIMEOUT_MS",
       "ApprovalTokenDeps",
+      // AcpServerDeps is NO LONGER an orphan: 74-07's daemon setup-acp-wiring.ts
+      // imports the AcpServerDeps type from @comis/gateway to assemble the ACP
+      // server deps (executionPlanPort + eventBus + activityStreamPort) — removed.
+      // createAcpAgent + startAcpServer remain baseline orphans: 74-07 wired the
+      // bridges + the executionPlanPort seam INSIDE startAcpServer and re-exported
+      // startAcpServer from the package index (IN-02), but no daemon/CLI site yet
+      // INVOKES startAcpServer (spawning the ACP subprocess entry point is a
+      // separate concern, out of ACP-01..05). They light up when that caller lands.
       "createAcpAgent",
-      "AcpServerDeps",
+      "startAcpServer",
       // ACP activity/plan/approval bridges + the local bounded queue (Phase 74,
-      // workstream D). The three bridge factories + AcpAgentHandle (carries the
-      // getConnection accessor) + the four deps types are the documented public
-      // surface the daemon composition root consumes to construct the bridges
-      // per ACP session — but live composition-root wiring (instantiate +
-      // subscribe the bridges inside startAcpServer; inject the @comis/agent
-      // ExecutionPlanHolder as AcpServerDeps.executionPlanPort) is deferred to a
-      // later composition phase, so these have no in-repo consumer yet. Same
-      // baseline-orphan posture as createAcpAgent/AcpServerDeps directly above
-      // (the ACP server itself is not yet wired into the daemon either). Shrink
-      // each entry as its composition-root consumer lands. createAcpBoundedQueue
-      // is also consumed internally by acp-activity-bridge.ts via a relative
-      // import, but the public-export-consumers walker only counts cross-package
-      // `@comis/gateway` imports — so the barrel re-export is a tracked orphan.
+      // workstream D). After 74-07 these are CONSTRUCTED in-repo —
+      // createAcpPlanBridge + createAcpActivityBridge + createAcpApprovalBridge in
+      // acp-server.ts (startAcpServer / createAcpAgent), createAcpBoundedQueue in
+      // acp-activity-bridge.ts — but ALL via RELATIVE (intra-gateway) imports. The
+      // public-export-consumers walker only counts cross-package `@comis/gateway`
+      // imports, so the barrel re-exports stay tracked orphans until a consumer
+      // outside the gateway package imports them by bare-package name. AcpAgentHandle
+      // + the three deps types are likewise referenced only intra-gateway. Shrink
+      // each entry when a cross-package `@comis/gateway` consumer lands.
       "AcpAgentHandle",
       "createAcpActivityBridge",
       "createAcpPlanBridge",

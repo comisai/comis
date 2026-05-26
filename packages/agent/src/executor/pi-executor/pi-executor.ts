@@ -194,7 +194,7 @@ export function createPiExecutor(
       const { executionStartMs, result, sepEnabled, executionPlanRef } = await bootstrapSession(
         {},
         deps,
-        { config, sessionKey, overrides },
+        { config, sessionKey, overrides, executionPlanHolder: deps.executionPlanHolder },
       );
 
       // 2. Pre-lock safety gates: input validation, provider health, circuit
