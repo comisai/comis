@@ -101,6 +101,27 @@ describe("resolveLabelSpec", () => {
     expect(resolved.label).toBe("searching the web"); // from theme
   });
 
+  it("spread-merges incremental registrations so two sources can extend one tool", () => {
+    // First source registers the tool-level phase + the `set` action.
+    registerActivityLabelSpec("mcp_manage", {
+      semanticPhase: "tool",
+      actions: { set: { label: "configuring MCP server `{name}`", detailKeys: ["name"] } },
+    });
+    // Second source registers a different action for the SAME tool — the
+    // registry merges (key-by-key on `actions`), it does not replace.
+    registerActivityLabelSpec("mcp_manage", {
+      actions: { list: { label: "listing MCP servers" } },
+    });
+
+    // Both actions survive the merge.
+    expect(resolveLabelSpec("mcp_manage", { action: "set" }).label).toBe(
+      "configuring MCP server `{name}`",
+    );
+    expect(resolveLabelSpec("mcp_manage", { action: "list" }).label).toBe("listing MCP servers");
+    // The tool-level semanticPhase from the first registration is preserved.
+    expect(resolveLabelSpec("mcp_manage").semanticPhase).toBe("tool");
+  });
+
   it("honors a theme-supplied semanticPhase override over the registered phase", () => {
     registerActivityLabelSpec("custom_tool", {
       semanticPhase: "tool",
