@@ -79,24 +79,39 @@ export interface ActivityRendererDeps {
   clock: ClockPort;
 }
 
+/** The uniform per-channelId factory every strategy map stores. A factory that
+ *  needs only a subset of `deps` (AppendOnly/DigestOnly need none, LinePerEvent
+ *  needs only `clock`) is structurally assignable and reads only the fields it
+ *  uses. */
+type RendererFactory = (adapter: ChannelPort, channelId: string, deps: ActivityRendererDeps) => ChannelActivityRenderer;
+
 /**
- * A closed per-channelType → factory dispatch record. Each factory takes the
- * uniform `(adapter, channelId, deps)` shape; a factory that needs only a subset
- * of `deps` (AppendOnly/DigestOnly need none, LinePerEvent needs only `clock`)
- * is structurally assignable and reads only the fields it uses. Always a finite
- * channelType-keyed record, never an open string-keyed shim (AGENTS.md §2.8).
+ * A CLOSED per-channelType → factory dispatch record, keyed by the precise
+ * channelType subset a single strategy serves (`K`). Closing the key type to a
+ * finite literal union — never an open `Record<string, …>` (AGENTS.md §2.8) —
+ * makes a key typo (`signnal`) or a cross-map duplicate a compile error at the
+ * map literal, not a silent runtime miss. Each strategy declares its own `K`
+ * (e.g. EditPlace = the four edit-capable channels), so the keys are validated
+ * per strategy and stay disjoint across the five maps.
  */
-type RendererFactoryMap = Readonly<
-  Record<string, (adapter: ChannelPort, channelId: string, deps: ActivityRendererDeps) => ChannelActivityRenderer>
->;
+type RendererFactoryMap<K extends string> = Readonly<Record<K, RendererFactory>>;
+
+/** Channel-type key unions, one per strategy — the closed sets `selectStrategy`
+ *  can route to each strategy. Adding a channelType to a strategy is a one-line
+ *  edit here that `tsc` then forces into the matching map literal. */
+type EditPlaceChannel = "telegram" | "discord" | "slack" | "whatsapp";
+type DeleteAndRepostChannel = "signal";
+type AppendOnlyChannel = "imessage" | "line";
+type LinePerEventChannel = "irc";
+type DigestOnlyChannel = "email";
 
 /**
  * Closed dispatch: each edit-capable channelType → its create<Ch>ActivityRenderer.
- * A `selectStrategy(...) === "EditPlace"` for a channelType NOT in this map is a
- * routing/coverage gap (the renderer is silently skipped) — keep this in lockstep
- * with the EditPlace-routed channels.
+ * A `selectStrategy(...) === "EditPlace"` for a channelType NOT in `EditPlaceChannel`
+ * is a routing/coverage gap (the renderer is silently skipped) — keep this and the
+ * `EditPlaceChannel` union in lockstep with the EditPlace-routed channels.
  */
-const EDIT_PLACE_RENDERER_FACTORIES: RendererFactoryMap = {
+const EDIT_PLACE_RENDERER_FACTORIES: RendererFactoryMap<EditPlaceChannel> = {
   telegram: createTelegramActivityRenderer,
   discord: createDiscordActivityRenderer,
   slack: createSlackActivityRenderer,
@@ -104,7 +119,7 @@ const EDIT_PLACE_RENDERER_FACTORIES: RendererFactoryMap = {
 };
 
 /** DeleteAndRepost → Signal (deleteMessages, no edit). Uses {timer, clock}. */
-const DELETE_AND_REPOST_RENDERER_FACTORIES: RendererFactoryMap = {
+const DELETE_AND_REPOST_RENDERER_FACTORIES: RendererFactoryMap<DeleteAndRepostChannel> = {
   signal: createSignalActivityRenderer,
 };
 
@@ -112,18 +127,18 @@ const DELETE_AND_REPOST_RENDERER_FACTORIES: RendererFactoryMap = {
  * AppendOnly → iMessage AND LINE (no edit/delete, attachments, mid-range cap) —
  * a single strategy serving TWO channelTypes (Pitfall 6). Neither uses `deps`.
  */
-const APPEND_ONLY_RENDERER_FACTORIES: RendererFactoryMap = {
+const APPEND_ONLY_RENDERER_FACTORIES: RendererFactoryMap<AppendOnlyChannel> = {
   imessage: createIMessageActivityRenderer,
   line: createLineActivityRenderer,
 };
 
 /** LinePerEvent → IRC (no edit/delete, maxMessageChars <= 512). Uses {clock}. */
-const LINE_PER_EVENT_RENDERER_FACTORIES: RendererFactoryMap = {
+const LINE_PER_EVENT_RENDERER_FACTORIES: RendererFactoryMap<LinePerEventChannel> = {
   irc: createIrcActivityRenderer,
 };
 
 /** DigestOnly → Email (no edit/delete, largest cap). Uses no `deps`. */
-const DIGEST_ONLY_RENDERER_FACTORIES: RendererFactoryMap = {
+const DIGEST_ONLY_RENDERER_FACTORIES: RendererFactoryMap<DigestOnlyChannel> = {
   email: createEmailActivityRenderer,
 };
 
@@ -134,14 +149,17 @@ const DIGEST_ONLY_RENDERER_FACTORIES: RendererFactoryMap = {
  * that is absent from its map is a coverage gap — silently skipped, surfaced by
  * the composition test, never an open string-keyed shim (AGENTS.md §2.8).
  */
-function setFromFactoryMap(
+function setFromFactoryMap<K extends string>(
   out: Map<string, ActivityRendererFactory>,
-  factories: RendererFactoryMap,
+  factories: RendererFactoryMap<K>,
   channelType: string,
   adapter: ChannelPort,
   deps: ActivityRendererDeps,
 ): boolean {
-  const make = factories[channelType];
+  // The runtime channelType is an arbitrary string, so view the closed map as a
+  // partial string-keyed lookup: the closed `Record<K, …>` is assignable here,
+  // the index yields `RendererFactory | undefined`, and the guard below is real.
+  const make = (factories as Readonly<Partial<Record<string, RendererFactory>>>)[channelType];
   if (!make) return false;
   out.set(channelType, (channelId: string) => make(adapter, channelId, deps));
   return true;
@@ -164,20 +182,41 @@ export function buildActivityRenderers(
     if (!caps) continue;
     const strategy = selectStrategy(caps, channelType);
     let live = false;
-    if (strategy === "TestSink") {
-      // Zero-adapter recorder; ignores channelId.
-      activityRenderers.set(channelType, () => createTestSink());
-      live = true;
-    } else if (strategy === "EditPlace") {
-      live = setFromFactoryMap(activityRenderers, EDIT_PLACE_RENDERER_FACTORIES, channelType, adapter, deps);
-    } else if (strategy === "DeleteAndRepost") {
-      live = setFromFactoryMap(activityRenderers, DELETE_AND_REPOST_RENDERER_FACTORIES, channelType, adapter, deps);
-    } else if (strategy === "AppendOnly") {
-      live = setFromFactoryMap(activityRenderers, APPEND_ONLY_RENDERER_FACTORIES, channelType, adapter, deps);
-    } else if (strategy === "LinePerEvent") {
-      live = setFromFactoryMap(activityRenderers, LINE_PER_EVENT_RENDERER_FACTORIES, channelType, adapter, deps);
-    } else if (strategy === "DigestOnly") {
-      live = setFromFactoryMap(activityRenderers, DIGEST_ONLY_RENDERER_FACTORIES, channelType, adapter, deps);
+    // Exhaustive dispatch over the closed `ActivityStrategy` union (AGENTS.md §2.8):
+    // the `never` default makes "added a strategy, forgot to wire it" a compile
+    // error rather than a silent `live: false` coverage gap.
+    switch (strategy) {
+      case "TestSink":
+        // Zero-adapter recorder; ignores channelId.
+        activityRenderers.set(channelType, () => createTestSink());
+        live = true;
+        break;
+      case "EditPlace":
+        live = setFromFactoryMap(activityRenderers, EDIT_PLACE_RENDERER_FACTORIES, channelType, adapter, deps);
+        break;
+      case "DeleteAndRepost":
+        live = setFromFactoryMap(activityRenderers, DELETE_AND_REPOST_RENDERER_FACTORIES, channelType, adapter, deps);
+        break;
+      case "AppendOnly":
+        live = setFromFactoryMap(activityRenderers, APPEND_ONLY_RENDERER_FACTORIES, channelType, adapter, deps);
+        break;
+      case "LinePerEvent":
+        live = setFromFactoryMap(activityRenderers, LINE_PER_EVENT_RENDERER_FACTORIES, channelType, adapter, deps);
+        break;
+      case "DigestOnly":
+        live = setFromFactoryMap(activityRenderers, DIGEST_ONLY_RENDERER_FACTORIES, channelType, adapter, deps);
+        break;
+      case "Structured":
+        // ACP renders its own structured `SessionUpdate` stream, not a
+        // `ChannelActivityRenderer`, and carries no ChannelPlugin/capability so it
+        // never reaches this loop today (the `caps` guard above `continue`s first).
+        // Wired in Phase 74 — explicit, reviewed no-renderer branch, NOT a silent
+        // fall-through (live stays false).
+        break;
+      default: {
+        const _exhaustive: never = strategy;
+        void _exhaustive;
+      }
     }
     logger.debug({ channelType, strategy, live }, "Activity renderer selected");
   }
