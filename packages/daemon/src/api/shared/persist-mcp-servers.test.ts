@@ -31,6 +31,7 @@ import { resolve } from "node:path";
 import { mkdtempSync, rmSync, writeFileSync as realWriteFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { stringify as yamlStringify } from "yaml";
 
 // ---------------------------------------------------------------------------
 // Module mocks — applied to the absolute modules the extracted helper imports.
@@ -421,5 +422,116 @@ describe("CRED-02 persistToConfig secret gate", () => {
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.error).toMatch(/\[plaintext_secret_blocked\]/);
     expect(existsSync(tmpFilePath)).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-04: persist gate must scan the WRITTEN content (updatedLocal), not only
+  // the in-memory fullMerged. A secret present in the existing local file
+  // (existingLocal) but NOT in container.config is in updatedLocal (it gets
+  // re-written verbatim) yet would be absent from fullMerged (which merges
+  // container.config + patch, not the raw on-disk file).
+  //
+  // RED proof: pre-patch code only scans fullMerged, so this test returns ok()
+  // and the .tmp file IS created. After the GREEN patch (also scan updatedLocal),
+  // the gate fires and the test passes.
+  // -------------------------------------------------------------------------
+  it("WR-04-A: rejects a plaintext secret that exists ONLY in the on-disk local file (not in container.config) — err([plaintext_secret_blocked]), no .tmp written", async () => {
+    // The on-disk local file already has a plaintext secret — simulates a
+    // pre-existing credential that the in-memory config loader may have
+    // normalized away (key-layer divergence).
+    realWriteFileSync(
+      configPath,
+      yamlStringify({
+        integrations: {
+          mcp: {
+            servers: [
+              {
+                name: "legacy-server",
+                transport: "stdio",
+                command: "npx",
+                args: [],
+                enabled: true,
+                headers: {
+                  Authorization: "Bearer ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                },
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    const tmpFilePath = configPath + ".tmp";
+
+    // container.config does NOT contain the secret — simulating a loader
+    // that normalizes/drops the header during parsing (the divergence case).
+    const deps = makePersistDeps({});
+    const result = await realPersistToConfig(deps, {
+      // Empty patch: the plaintext secret lives ONLY in the on-disk local file
+      // (existingLocal). deepMerge(existingLocal, {}) preserves the secret in
+      // updatedLocal (the written file), but fullMerged = deepMerge({}, {}) = {}
+      // has no secret. Pre-patch code only scans fullMerged — so the gate
+      // misses the secret and writes it to disk (RED). Post-patch (GREEN),
+      // updatedLocal is also scanned and the write is blocked.
+      patch: {},
+      actionType: "config.update",
+      entityId: "legacy-server",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toMatch(/\[plaintext_secret_blocked\]/);
+    // No .tmp file should have been created — the write must be aborted
+    expect(existsSync(tmpFilePath)).toBe(false);
+  });
+
+  it("WR-04-B: allows persist when the local file contains only ${VAR} refs (no false-positive from WR-04 scan)", async () => {
+    realWriteFileSync(
+      configPath,
+      yamlStringify({
+        integrations: {
+          mcp: {
+            servers: [
+              {
+                name: "safe-server",
+                transport: "stdio",
+                command: "npx",
+                args: [],
+                enabled: true,
+                headers: {
+                  Authorization: "Bearer ${MY_TOKEN}",
+                },
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    const deps = makePersistDeps({});
+    const result = await realPersistToConfig(deps, {
+      // Benign patch: update the same server without any plaintext secret
+      patch: {
+        integrations: {
+          mcp: {
+            servers: [
+              {
+                name: "safe-server",
+                transport: "stdio",
+                command: "npx",
+                args: [],
+                enabled: true,
+                headers: {
+                  Authorization: "Bearer ${MY_TOKEN}",
+                },
+              },
+            ],
+          },
+        },
+      },
+      actionType: "mcp.connect",
+      entityId: "safe-server",
+    });
+
+    expect(result.ok).toBe(true);
   });
 });

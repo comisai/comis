@@ -234,10 +234,15 @@ export async function persistToConfig(
       return err(`Config validation failed: ${issues}`);
     }
 
-    // CRED-02: refuse to persist any config containing a plaintext secret.
-    // Scan the fully-merged object (same object validated above) — catches
-    // secrets in any config layer, not just the local-file delta.
-    const secretFindings = scanForSecrets(fullMerged);
+    // CRED-02 + WR-04: refuse to persist any config containing a plaintext secret.
+    // Scan BOTH fullMerged (catches secrets in any in-memory config layer or the
+    // patch) AND updatedLocal (the exact object serialized to disk). A secret
+    // that exists only in the on-disk local file — present in existingLocal but
+    // absent from container.config (loader-dropped / layer-divergence) — would
+    // survive in updatedLocal via deepMerge(existingLocal, patch) yet be absent
+    // from fullMerged = deepMerge(container.config, patch). Scanning both ensures
+    // the write target is always covered regardless of loader normalization (WR-04).
+    const secretFindings = [...scanForSecrets(fullMerged), ...scanForSecrets(updatedLocal)];
     if (secretFindings.length > 0) {
       const firstPath = secretFindings[0]!.path;
       return err(
