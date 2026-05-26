@@ -23,6 +23,7 @@ import type {
   ActivityRenderError,
   ActivityEvent,
   TurnOutcome,
+  RichButton,
 } from "@comis/core";
 import type { ActivityRenderActions } from "./actions.js";
 import { renderFrameText, failureLabel, appendPrompt } from "./render.js";
@@ -37,10 +38,19 @@ export interface AppendOnlyDeps {
    * non-approval frame (nothing appended).
    */
   buildPrompt?: (events: readonly ActivityEvent[]) => string;
+  /**
+   * Build the signed native-approval button rows for a frame's visible events
+   * (APV-02, §7.7). Wired by a button-capable send-only channel (LINE) as a
+   * closure over `buildApprovalButtons` + the injected `SignCallbackData`; the
+   * opening status `send` carries the returned rows as LINE Quick-Reply chips.
+   * Omitted by text-only channels (iMessage). Returns `[]` for a non-approval
+   * frame, so a button-less send stays byte-identical.
+   */
+  buildButtons?: (events: readonly ActivityEvent[]) => RichButton[][];
 }
 
 export function createAppendOnlyRenderer(deps: AppendOnlyDeps): ChannelActivityRenderer {
-  const { actions, buildPrompt } = deps;
+  const { actions, buildPrompt, buildButtons } = deps;
 
   let opened = false;
 
@@ -53,7 +63,11 @@ export function createAppendOnlyRenderer(deps: AppendOnlyDeps): ChannelActivityR
       if (opened) return ok(undefined);
       const text = appendPrompt(renderFrameText(frame.visibleEvents), buildPrompt?.(frame.visibleEvents));
       if (text.length === 0) return ok(undefined);
-      const sent = await actions.send(text);
+      // A button-capable channel (LINE) carries the signed Quick-Reply chips; a
+      // non-approval frame yields `[]` → omit `buttons` so the send stays
+      // byte-identical to the pre-73 opening status.
+      const buttons = buildButtons?.(frame.visibleEvents) ?? [];
+      const sent = await actions.send(text, buttons.length > 0 ? { buttons } : undefined);
       if (!sent.ok) return sent;
       opened = true;
       return ok(undefined);

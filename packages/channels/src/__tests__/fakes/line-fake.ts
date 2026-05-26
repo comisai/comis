@@ -15,9 +15,11 @@
  *     absent — that is exactly what `makeLineRenderActions`'s
  *     `not_supported:edit` / `not_supported:delete` guards branch on.
  *
- * The LINE Quick Reply approval-chip affordance rides with Phase 73 (the port is
- * `send(text)`-only; there is no button param and no `kind:"approval"` event yet),
- * so the fake records only the plain opening status text.
+ * Phase 73 lands the LINE Quick-Reply approval-chip affordance: when a
+ * `kind:"approval"` frame's opening send carries the signed `buttons` rows (the
+ * Quick-Reply chips), the fake records them on the `send` row — ONLY when present,
+ * so the button-less golden fixtures stay byte-stable. A non-approval send records
+ * just the plain opening status text.
  *
  * The `nextError` injection seam returns a raw `Error` through the `Result` err
  * branch (one-shot, then clears) so the classifier tests drive `classifyLineError`
@@ -34,14 +36,17 @@ import type {
   SendMessageOptions,
   FetchMessagesOptions,
   FetchedMessage,
+  RichButton,
 } from "@comis/core";
 
 /**
  * One recorded adapter call — discriminated by `op`, ids deterministic, no
- * timestamps and NO `silent` field (LINE does not send the silent effect).
+ * timestamps and NO `silent` field (LINE does not send the silent effect). The
+ * optional `buttons` carries the signed Quick-Reply approval chips, recorded ONLY
+ * when present so the button-less golden fixtures stay byte-stable (Phase 73).
  */
 export type FakeLineCall =
-  | { op: "send"; id: string; text: string }
+  | { op: "send"; id: string; text: string; buttons?: RichButton[][] }
   | { op: "react"; id: string; emoji: string }
   | { op: "removeReaction"; id: string; emoji: string };
 
@@ -95,12 +100,19 @@ export function createFakeLineAdapter(channelId = "chat-1"): FakeLineAdapter {
     async sendMessage(
       _channelId: string,
       text: string,
-      _options?: SendMessageOptions,
+      options?: SendMessageOptions,
     ): Promise<Result<string, Error>> {
       const injected = takeInjectedError(adapter);
       if (injected) return err(injected);
       const id = `line-msg-${messageCounter++}`;
-      recorded.calls.push({ op: "send", id, text });
+      // The Quick-Reply approval chips (Phase 73) are recorded ONLY when present so
+      // the button-less golden fixtures stay byte-stable.
+      recorded.calls.push({
+        op: "send",
+        id,
+        text,
+        ...(options?.buttons !== undefined ? { buttons: options.buttons } : {}),
+      });
       return ok(id);
     },
 

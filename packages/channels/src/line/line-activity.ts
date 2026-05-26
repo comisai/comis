@@ -32,26 +32,37 @@
  *
  *   3. `createLineActivityRenderer` — wires the Phase-70
  *      {@link createAppendOnlyRenderer}. AppendOnly has no delete to sequence, so
- *      its deps are `{ actions }` ONLY — there is NO TimerPort / ClockPort (the
- *      strategy schedules nothing; Pitfall 5). It does NOT re-implement any
- *      sequencing — the strategy owns the finalize table. This is the signature the
- *      72-05 WIRE-02 daemon wiring constructs.
+ *      it takes NO TimerPort / ClockPort (the strategy schedules nothing;
+ *      Pitfall 5). It does NOT re-implement any sequencing — the strategy owns the
+ *      finalize table. This is the signature the 72-05 WIRE-02 daemon wiring
+ *      constructs (plus the optional `signCallbackData` injected in 73-10).
  *
- * SCOPE — LINE Quick Reply approval chips are DEFERRED to Phase 73. This renderer
- * delivers the AppendOnly RENDERING half of CHAN-08 only. The `ActivityRenderActions`
- * port is `send(text)`-only (there is no button param), there is no
- * `kind:"approval"` ActivityEvent until Phase 73 (APV-03), and there are ZERO S8
- * fixtures — so no approval / Quick Reply surface is introduced here (no premature
- * trust boundary). When Phase 73's approval router lands, the chip affordance rides
- * with it; this file stays send-only.
+ * Quick-Reply approval chips (APV-02, §7.7): a `kind:"approval"` frame's opening
+ * `send` carries the signed Quick-Reply chips (the `buttons` rows from
+ * `buildApprovalButtons` over the renderer-injected `SignCallbackData`); each
+ * chip's callback data is the §6.4.2 wire string `v1.<choice>.<shortId>.<hmac>`
+ * (LINE Quick-Reply postback carries it back). The renderer reaches the core HMAC
+ * primitive through the injected signer and never imports `@comis/orchestrator`
+ * (Pitfall 5 / T-73-16). When the signer is absent (pre-73-10 wiring), an approval
+ * frame degrades to a send-only status; a non-approval frame is always send-only.
  *
  * The channels package depends on core + shared only (no observability substrate),
  * so no diagnostics primitive is reachable here.
  */
 import { ok, err, type Result } from "@comis/shared";
-import type { ChannelActivityRenderer, ActivityRenderError, ChannelPort } from "@comis/core";
+import type {
+  ChannelActivityRenderer,
+  ActivityRenderError,
+  ChannelPort,
+  TimerPort,
+  ClockPort,
+} from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createAppendOnlyRenderer } from "../shared/strategies/append-only.js";
+import {
+  buildApprovalButtons,
+  type SignCallbackData,
+} from "../shared/strategies/approval-render.js";
 
 /**
  * Classify a raw LINE platform error into the closed {@link ActivityRenderError}
@@ -69,20 +80,27 @@ export function classifyLineError(e: unknown): ActivityRenderError {
 
 /**
  * Build the {@link ActivityRenderActions} for a LINE chat. `send` posts a plain
- * opening status (no silent effect, no buttons — the Quick Reply approval chip is
- * Phase 73); `edit` and `delete` are unsupported (LINE is send-only) and return
- * `not_supported` without touching the port. All paths return `Result`; nothing
- * throws across the boundary.
+ * opening status (no silent effect) and forwards the signed Quick-Reply approval
+ * chips when `opts.buttons` is present (APV-02); `edit` and `delete` are
+ * unsupported (LINE is send-only) and return `not_supported` without touching the
+ * port. All paths return `Result`; nothing throws across the boundary.
  */
 export function makeLineRenderActions(
   adapter: ChannelPort,
   channelId: string,
 ): ActivityRenderActions {
   return {
-    async send(text): Promise<Result<string, ActivityRenderError>> {
-      // Plain opening status: LINE ignores the silent effect; the Quick Reply
-      // approval chip surface is Phase 73, so send carries no options here.
-      const r = await adapter.sendMessage(channelId, text);
+    async send(text, opts): Promise<Result<string, ActivityRenderError>> {
+      // Opening status: LINE ignores the silent effect. An approval frame carries
+      // the signed Quick-Reply chips (callback_data = v1.<choice>.<shortId>.<hmac>)
+      // as the `buttons` rows; the resolution is owned by the Phase-73
+      // InteractiveCallbackRouter, not this renderer. Omit options when there are
+      // no chips so a button-less send stays byte-stable.
+      const r = await adapter.sendMessage(
+        channelId,
+        text,
+        opts?.buttons !== undefined ? { buttons: opts.buttons } : undefined,
+      );
       return r.ok ? ok(r.value) : err(classifyLineError(r.error));
     },
 
@@ -105,15 +123,35 @@ export function makeLineRenderActions(
 /**
  * Create the LINE AppendOnly activity renderer — wires the Phase-70
  * {@link createAppendOnlyRenderer} with the per-channel render-actions adapter.
- * AppendOnly has no delete to sequence, so its deps are `{ actions }` ONLY: there
- * is NO TimerPort / ClockPort (Pitfall 5). The daemon composition root constructs
- * this with the chat id (WIRE-02). This is the signature the 72-05 wiring builds.
+ * AppendOnly has no delete to sequence, so there is NO TimerPort / ClockPort
+ * (Pitfall 5). The daemon composition root constructs this with the chat id
+ * (WIRE-02) and the optional `signCallbackData` injected in 73-10.
+ *
+ * `signCallbackData` is the secret-bound signer (73-06 seam): the renderer
+ * CONSUMES it to build the signed Quick-Reply approval chips and never imports the
+ * orchestrator package (Pitfall 5 / T-73-16). When omitted, an approval frame
+ * degrades to a send-only status (the signer is wired in a later plan; the rest of
+ * the renderer is unaffected).
+ *
+ * `timer`/`clock` are accepted (optional) only to stay structurally assignable to
+ * the daemon's uniform `RendererFactory` deps (it passes `{ timer, clock }` to
+ * every factory) — AppendOnly schedules nothing, so this renderer reads only
+ * `signCallbackData` and ignores them (the daemon-doc "reads only the fields it
+ * needs" contract; Pitfall 5).
  */
 export function createLineActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
+  deps: { timer?: TimerPort; clock?: ClockPort; signCallbackData?: SignCallbackData } = {},
 ): ChannelActivityRenderer {
+  const { signCallbackData } = deps;
   return createAppendOnlyRenderer({
     actions: makeLineRenderActions(adapter, channelId),
+    // Approval frame → signed Quick-Reply chips. The signer is the only path to
+    // `callback_data`; without it, no chips are painted.
+    buildButtons:
+      signCallbackData === undefined
+        ? undefined
+        : (events) => events.flatMap((event) => buildApprovalButtons(event, signCallbackData)),
   });
 }
