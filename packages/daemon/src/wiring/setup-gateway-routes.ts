@@ -25,6 +25,7 @@ import {
   createOpenaiEmbeddingsRoute,
   createResponsesRoute,
   createMediaRoutes,
+  createApprovalTokenRoute,
   createTokenStore,
   type GatewayServerHandle,
 } from "@comis/gateway";
@@ -67,6 +68,9 @@ export interface GatewayRouteDeps {
   workspaceDirs: Map<string, string>;
   /** Default workspace directory (resolved from workspaceDirs). */
   defaultWorkspaceDir?: string;
+  /** Interactive-callback wiring (73-10): the single-use email approval-token map
+   *  + resolver. When present, the `ALL /approve/:token` route is mounted. */
+  interactiveCallbackWiring?: import("./setup-interactive-callback.js").InteractiveCallbackWiring;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +97,31 @@ export function mountGatewayRoutes(deps: GatewayRouteDeps): void {
     preprocessMessageText,
     cachedPort,
     defaultWorkspaceDir,
+    interactiveCallbackWiring,
   } = deps;
+
+  // -------------------------------------------------------------------------
+  // Email approval-token route (73-10, APV-10 / SEC-06)
+  // -------------------------------------------------------------------------
+  // Single-use, 5-min, revoke-on-first-touch GET handler for the signed email
+  // approval link. Mounted at `ALL /approve/:token` so a mail-client preview
+  // prefetch also consumes the token. The token map + resolver come from the
+  // composition-root wiring (the same gate/router the chat buttons resolve
+  // through). Skipped when no wiring is present (no channels / approvals path).
+  if (interactiveCallbackWiring !== undefined) {
+    gatewayHandle.app.route(
+      "/approve",
+      createApprovalTokenRoute({
+        tokens: interactiveCallbackWiring.tokens,
+        resolveApproval: interactiveCallbackWiring.resolveApproval,
+        logger: gatewayLogger,
+      }),
+    );
+    gatewayLogger.debug(
+      { submodule: "approval-token" },
+      "Email approval-token route mounted at /approve/*",
+    );
+  }
 
   // -------------------------------------------------------------------------
   // Webhook mapping sub-app

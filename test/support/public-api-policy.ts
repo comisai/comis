@@ -610,6 +610,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // @comis/core: baseline orphans tracked here. See inline comments
     // throughout this set for per-entry rationale.
     ["@comis/core", new Set<string>([
+      // ── v2.5 Agent Transparency (Phase 73 — interactive approvals) ──
+      // ParsedCallback is the documented return shape of the public
+      // parseCallbackData (73-01). The orchestrator router consumes the
+      // function, not the type name (it destructures the value), so the type
+      // has no production import. It is part of the signing API surface external
+      // consumers of parseCallbackData rely on; tracked here.
+      "ParsedCallback",
       // ── v2.5 Agent Transparency (Phase 70 foundation) ──────────────
       // Activity + redaction public surface shipped in the @comis/core
       // barrel per ACT-12 (foundation phase). Consumers land in Phases
@@ -1595,6 +1602,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PENDING_FLOW_TIMEOUT_MS",
       "OAuthCallbackDeps",
       "PendingFlow",
+      // Email approval-token route (73-10). createApprovalTokenRoute +
+      // insertPendingApprovalToken + PendingApprovalToken + ApprovalLinkChoice are
+      // consumed by the daemon composition root (setup-interactive-callback.ts +
+      // setup-gateway-routes.ts). APPROVAL_TOKEN_TIMEOUT_MS is exported for test
+      // parity (mirrors PENDING_FLOW_TIMEOUT_MS) and ApprovalTokenDeps is the
+      // route's deps shape (the daemon constructs it inline) — both tracked here.
+      "APPROVAL_TOKEN_TIMEOUT_MS",
+      "ApprovalTokenDeps",
       "createAcpAgent",
       "AcpServerDeps",
       "createMdnsAdvertiser",

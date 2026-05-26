@@ -170,6 +170,10 @@ export interface GatewayDeps {
   daemonVersion: string;
   /** Set of suspended agent IDs for REST API status reporting. */
   suspendedAgents?: ReadonlySet<string>;
+  /** Interactive-callback wiring (73-10): the single-use email approval-token map
+   *  + resolver mounted at `ALL /approve/:token`. Built in the agents phase;
+   *  optional (absent when no channels / approvals path). */
+  interactiveCallbackWiring?: import("../setup-interactive-callback.js").InteractiveCallbackWiring;
 }
 
 /** All services produced by the gateway setup. */
@@ -373,6 +377,7 @@ export async function setupGateway(deps: GatewayDeps): Promise<GatewayResult> {
     cachedPort,
     workspaceDirs,
     defaultWorkspaceDir: workspaceDirs.get(defaultAgentId),
+    interactiveCallbackWiring: deps.interactiveCallbackWiring,
   });
 
   await gatewayHandle.start();

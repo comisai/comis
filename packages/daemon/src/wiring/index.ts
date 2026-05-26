@@ -18,6 +18,12 @@ export { setupCrossSession, type CrossSessionResult } from "./setup-cross-sessio
 export { setupAgents, type AgentsResult } from "./setup-agents/index.js";
 export { setupSchedulers, type SchedulersResult } from "./setup-schedulers.js";
 export { setupChannels, type ChannelsResult } from "./setup-channels/index.js";
+export {
+  resolveInteractiveCallbackSigningSecret,
+  bindSignCallbackData,
+  createInteractiveCallbackWiring,
+  type InteractiveCallbackWiring,
+} from "./setup-interactive-callback.js";
 export { setupMcp, type McpResult } from "./setup-mcp.js";
 // Boot-path skill-bundle re-merge orchestrator + the thin discovery-only
 // registry pre-pass it consumes. Wired in daemon.ts BEFORE setupMcp so the

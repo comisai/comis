@@ -414,6 +414,11 @@ export interface BootContext {
   wireDispatch?: ReturnType<typeof setupRpcBridge>["wireDispatch"];
   // Approval gate
   approvalGate?: ReturnType<typeof createApprovalGate>;
+  // Interactive-callback wiring (73-10): signer for renderers + single-use email
+  // link minter + gateway approval-token map/resolver + the InteractiveCallbackRouter.
+  // Built once in the agents phase; consumed by bootChannels (signer + minter) and
+  // bootGateway (token map + resolveApproval route mount).
+  interactiveCallbackWiring?: import("./wiring/setup-interactive-callback.js").InteractiveCallbackWiring;
   // Delivery queue (channelAdaptersRef is a forward ref — declared below)
   deliveryQueue?: Awaited<ReturnType<typeof setupDeliveryQueue>>["deliveryQueue"];
   drainAndStartDeliveryPrune?: Awaited<ReturnType<typeof setupDeliveryQueue>>["drainAndStart"];

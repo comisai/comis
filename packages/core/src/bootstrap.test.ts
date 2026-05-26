@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it, expect, afterEach } from "vitest";
 import type { AppContainer } from "./bootstrap.js";
-import { bootstrap } from "./bootstrap.js";
+import { bootstrap, INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME } from "./bootstrap.js";
 
 describe("bootstrap", () => {
   const tmpDirs: string[] = [];
@@ -171,6 +171,26 @@ describe("bootstrap", () => {
       containers.push(result.value);
       expect(result.value.config.tenantId).toBe("local");
       expect(result.value.config.agents.default.name).toBe("BaseBot");
+    }
+  });
+
+  it("includes the interactive-callback signing secret name on the platformSecretNames deny surface (APV-07 / T-73-31)", () => {
+    const dir = makeTmpDir();
+    const configPath = writeYaml(dir, "config.yaml", "tenantId: test\n");
+
+    const result = bootstrap({ configPaths: [configPath], env: {} });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      containers.push(result.value);
+      // The signing secret backs every signed channel; it must never resolve
+      // through user-facing secret-ref tools, so its name is on the deny surface
+      // unconditionally (even when no config `${VAR}` references it).
+      expect(
+        result.value.platformSecretNames.has(INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME),
+      ).toBe(true);
+      expect(INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME).toBe(
+        "activity.interactiveCallbackSigningSecret",
+      );
     }
   });
 });

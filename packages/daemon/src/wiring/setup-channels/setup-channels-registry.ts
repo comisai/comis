@@ -94,6 +94,14 @@ export interface ChannelsDeps {
   /** System timers (composition root). Threaded to buildActivityRenderers so the
    *  EditPlace renderer debounces edits via TimerPort (no raw setTimeout). */
   timers: TimerPort;
+  /** Secret-bound callback signer (73-10). Threaded to buildActivityRenderers so
+   *  button-capable renderers (Telegram/Discord/Slack/LINE) paint signed
+   *  approval callback_data. Optional: absent → button-less approval prompts. */
+  signCallbackData?: import("@comis/channels").SignCallbackData;
+  /** Single-use approval-link minter (73-10). Threaded to the Email DigestOnly
+   *  renderer (it has no buttons). Optional: absent → no approval link in the
+   *  [FAILED] digest. */
+  mintApprovalLink?: import("@comis/channels").MintApprovalLink;
   /** Link understanding runner for message text enrichment. */
   linkRunner: LinkRunner;
   /** SSRF-guarded fetcher for media downloads. */
@@ -294,6 +302,8 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       channelPlugins,
       clock: deps.clock,
       timers: deps.timers,
+      signCallbackData: deps.signCallbackData,
+      mintApprovalLink: deps.mintApprovalLink,
       preprocessMessageCallback,
       preflightFn,
       assembleToolsForAgent: deps.assembleToolsForAgent,

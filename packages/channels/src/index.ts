@@ -341,3 +341,13 @@ export { createIMessageActivityRenderer } from "./imessage/imessage-activity.js"
 export { createLineActivityRenderer } from "./line/line-activity.js";
 export { createIrcActivityRenderer } from "./irc/irc-activity.js";
 export { createEmailActivityRenderer } from "./email/email-activity.js";
+// MintApprovalLink is consumed by the daemon composition root (73-10) to type the
+// single-use email approval-link minter. EmailActivityRendererDeps stays internal
+// (the factory's deps param is inferred at the call site).
+export type { MintApprovalLink } from "./email/email-activity.js";
+
+// The signing seam (73-06): the secret-bound signer the daemon composition root
+// (73-10) binds over `activity.interactiveCallbackSigningSecret` and injects into
+// the activity-renderer deps. The renderers reach `@comis/core`'s signCallbackData
+// through this closure and never import `@comis/orchestrator` (Pitfall 5).
+export type { SignCallbackData } from "./shared/strategies/approval-render.js";

@@ -369,7 +369,7 @@ describe("InteractiveCallbackRouter — plain-text branch (APV-10, §6.4.6)", ()
     expect(resolveCalls).toHaveLength(0);
   });
 
-  it("an unrecognized plain-text verb → {kind:'unknown'} (not a command)", async () => {
+  it("rejects an unrecognized plain-text verb → {kind:'unknown'} (not a command)", async () => {
     const { router, resolveCalls } = makeRouter([makeRequest()]);
     const res = await router.route(inbound("hello there"));
     expect(res.ok).toBe(true);

@@ -118,6 +118,7 @@ import {
   setupAgents,
   setupSchedulers,
   setupChannels,
+  createInteractiveCallbackWiring,
   setupMedia,
   setupCrossSession,
   setupTools,
@@ -632,7 +633,7 @@ function buildChannelManagerDeps(deps: {
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
     workspaceDirs, defaultWorkspaceDir, memoryAdapter, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
-    continuationTracker, approvalGate,
+    continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
     onSuspiciousContent, dataDir, clock, timers,
   } = agents;
@@ -657,6 +658,11 @@ function buildChannelManagerDeps(deps: {
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, clock, timers,
+    // 73-10: signed approval buttons (Telegram/Discord/Slack/LINE) + the Email
+    // single-use approval link. The wiring is built once in the agents phase
+    // (always present at runtime; optional-typed on BootContext).
+    signCallbackData: interactiveCallbackWiring?.signCallbackData,
+    mintApprovalLink: interactiveCallbackWiring?.mintApprovalLink,
     linkRunner, ssrfFetcher, transcriber,
     maxMediaBytes: container.config.integrations.media.infrastructure.maxRemoteFetchBytes,
     assembleToolsForAgent,
@@ -1680,6 +1686,7 @@ async function bootAgents(
     deliveryMirror, geminiCacheManager,
     channelPluginsRef, backgroundTaskManager,
     secretsCrypto, secretsDb, obsStore, // thread into setupAgents
+    secretStore, // 73-10: interactive-callback signing-secret resolution
   } = foundation;
   const _setupMedia = overrides.setupMedia ?? setupMedia;
 
@@ -1904,6 +1911,20 @@ async function bootAgents(
     daemonLogger,
   });
 
+  // 6.6.8.6.3. Interactive-callback wiring (73-10, APV-07/APV-10/SEC-06): resolve
+  // the signing secret (store or in-memory fallback), bind the renderer signer,
+  // construct the InteractiveCallbackRouter over the SAME gate + secret, and build
+  // the Email single-use link minter + the gateway approval-token map/resolver.
+  // Built here (gate + secretStore + clock all available) and consumed by both
+  // bootChannels (signer + minter) and bootGateway (token map + resolveApproval).
+  const interactiveCallbackWiring = createInteractiveCallbackWiring({
+    secretStore,
+    approvalGate,
+    clock,
+    config: container.config,
+    logger: daemonLogger,
+  });
+
   // 6.6.7.8. Delivery queue: create adapter BEFORE setupChannels.
   // channelAdapters map is passed by reference -- populated after setupChannels.
   // drainAndStart() is called AFTER setupChannels (two-phase lifecycle).
@@ -1923,7 +1944,7 @@ async function bootAgents(
     sessionTrackerRegistry, auditAggregator, onSuspiciousContent,
     ttsAdapter, visionRegistry, linkRunner, mediaTempManager, mediaSemaphore, audioConverter,
     transcriber, ssrfFetcher, fileExtractor,
-    rpcCall, wireDispatch, approvalGate,
+    rpcCall, wireDispatch, approvalGate, interactiveCallbackWiring,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
     cronWakeCallbackRef, trajectoryRegistry,
   });
@@ -2240,6 +2261,7 @@ async function bootGateway(
     getExecutor, rpcCall, wireDispatch,
     assembleToolsForAgent, preprocessMessageText,
     suspendedAgents, gatewaySendRef,
+    interactiveCallbackWiring,
   } = channels;
   const _createGatewayServer = overrides.createGatewayServer ?? createGatewayServer;
 
@@ -2301,6 +2323,7 @@ async function bootGateway(
     daemonVersion: boot.daemonVersion,
     suspendedAgents,
     instanceId, startupStartMs,
+    interactiveCallbackWiring,
   });
 
   // 7.0.1. Wire deferred gateway attachment deps (wsConnections / mediaDir /

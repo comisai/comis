@@ -66,6 +66,10 @@ export interface ChannelManagerBuildDeps {
   // System clock + timer (composition root) → buildActivityRenderers EditPlace branch (debounce + deliveredAtMs delete gate).
   clock: ClockPort;
   timers: TimerPort;
+  /** Secret-bound callback signer (73-10) → buildActivityRenderers (button channels). */
+  signCallbackData?: import("@comis/channels").SignCallbackData;
+  /** Single-use approval-link minter (73-10) → buildActivityRenderers (Email). */
+  mintApprovalLink?: import("@comis/channels").MintApprovalLink;
   preprocessMessageCallback: (msg: NormalizedMessage) => Promise<NormalizedMessage>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PreflightResult type from channels package is not re-exported; pass-through matches setup-channels-media.ts
   preflightFn?: (msg: NormalizedMessage) => Promise<any>;
@@ -592,7 +596,19 @@ export async function buildAndStartChannelManager(
     // No system:shutdown subscriber: composition root calls .stop() via ShutdownDeps.approvalNotifierStop.
   }
 
-  const activityRenderers = buildActivityRenderers(adaptersByType, channelPlugins, channelsLogger, { timer: deps.timers, clock: deps.clock }); // WIRE-02
+  const activityRenderers = buildActivityRenderers(
+    adaptersByType,
+    channelPlugins,
+    channelsLogger,
+    {
+      timer: deps.timers,
+      clock: deps.clock,
+      // 73-10: signed approval buttons (Telegram/Discord/Slack/LINE) + the Email
+      // single-use approval link, wired at the daemon composition root.
+      signCallbackData: deps.signCallbackData,
+      mintApprovalLink: deps.mintApprovalLink,
+    },
+  ); // WIRE-02
   return { channelManager, lifecycleReactors, approvalNotifier, commandQueue, activityRenderers };
 }
 // Re-export Attachment + ChannelPluginPort (silences lint; public-surface boundary).

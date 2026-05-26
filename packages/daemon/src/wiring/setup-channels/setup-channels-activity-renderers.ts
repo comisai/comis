@@ -65,6 +65,7 @@ import {
   createIrcActivityRenderer,
   createEmailActivityRenderer,
 } from "@comis/channels";
+import type { SignCallbackData, MintApprovalLink } from "@comis/channels";
 import type { ComisLogger } from "@comis/infra";
 
 /** A per-channelId renderer factory. The render-actions adapter binds the
@@ -73,10 +74,20 @@ export type ActivityRendererFactory = (channelId: string) => ChannelActivityRend
 
 /** System clock + timer injected from the daemon composition root. The
  *  EditPlace machine debounces edits (TimerPort) and gates the delete on
- *  `outcome.delivery.deliveredAtMs` (ClockPort). */
+ *  `outcome.delivery.deliveredAtMs` (ClockPort).
+ *
+ *  `signCallbackData` (73-10) is the secret-bound signer the button-capable
+ *  renderers (Telegram/Discord/Slack/LINE) consume to paint signed approval
+ *  `callback_data`; `mintApprovalLink` (73-10) is the single-use approval-link
+ *  minter the Email DigestOnly renderer consumes (it has no buttons). Both are
+ *  OPTIONAL: when absent (the signing secret / gateway token map not yet wired),
+ *  the renderers degrade to button-/link-less prompts. A renderer reads only the
+ *  fields it needs (the uniform-factory contract). */
 export interface ActivityRendererDeps {
   timer: TimerPort;
   clock: ClockPort;
+  signCallbackData?: SignCallbackData;
+  mintApprovalLink?: MintApprovalLink;
 }
 
 /** The uniform per-channelId factory every strategy map stores. A factory that
