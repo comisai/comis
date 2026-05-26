@@ -20,11 +20,17 @@
  * (up-two-then-into-config). Vitest's module registry is keyed by absolute
  * path, so a relative-path mismatch between mocker and importer does NOT
  * defeat the mock.
+ *
+ * CRED-02 tests (at the bottom) use `vi.importActual` to bypass the file-top
+ * mock and exercise the REAL persistToConfig with a live filesystem spy.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync as realWriteFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // ---------------------------------------------------------------------------
 // Module mocks — applied to the absolute modules the extracted helper imports.
@@ -263,5 +269,157 @@ describe("persistMcpServers (extracted)", () => {
     expect(container.config.integrations.mcp.servers).toEqual([
       expect.objectContaining({ name: "new", command: "new-cmd" }),
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CRED-02: persistToConfig secret gate (uses REAL persistToConfig)
+//
+// These tests bypass the file-top vi.mock("./persist-to-config.js") by using
+// vi.importActual to obtain the real implementation. A spy on fs.writeFileSync
+// asserts the write is never reached when a secret is detected.
+//
+// RED expectation: pre-patch, persistToConfig does NOT scan for secrets, so
+// a plaintext-secret patch returns ok() and writeFileSync IS called. These
+// tests fail RED on the pre-patch codebase. After the production patch
+// (GREEN), scanForSecrets runs BEFORE writeFileSync and the tests pass.
+// ---------------------------------------------------------------------------
+describe("CRED-02 persistToConfig secret gate", () => {
+  // We need the real persistToConfig — not the file-top mock.
+  // vi.importActual bypasses the hoisted vi.mock above for this describe block.
+  let realPersistToConfig: typeof import("./persist-to-config.js")["persistToConfig"];
+
+  let tmpDir: string;
+  let configPath: string;
+
+  beforeEach(async () => {
+    const real = await vi.importActual<typeof import("./persist-to-config.js")>("./persist-to-config.js");
+    realPersistToConfig = real.persistToConfig;
+
+    tmpDir = mkdtempSync(join(tmpdir(), "cred02-test-"));
+    configPath = join(tmpDir, "config.yaml");
+    // Write a minimal valid config so the merge has a base.
+    realWriteFileSync(configPath, "version: 1\n");
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makePersistDeps(cfg: Record<string, unknown> = {}) {
+    return {
+      container: {
+        config: cfg,
+        eventBus: { emit: vi.fn() },
+        tenantId: "default",
+      } as never,
+      configPaths: [configPath],
+      defaultConfigPaths: [configPath],
+      configGitManager: undefined,
+      logger: {
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        debug: vi.fn(),
+        fatal: vi.fn(),
+        trace: vi.fn(),
+        child: vi.fn(),
+        level: "debug",
+        isLevelEnabled: vi.fn(() => true),
+      } as never,
+    };
+  }
+
+  it("CRED-02-A: rejects plaintext secret in MCP server Authorization header — err([plaintext_secret_blocked]), no .tmp file written", async () => {
+    const tmpFilePath = configPath + ".tmp";
+
+    const deps = makePersistDeps({});
+    const result = await realPersistToConfig(deps, {
+      patch: {
+        integrations: {
+          mcp: {
+            servers: [
+              {
+                name: "test-server",
+                transport: "stdio",
+                command: "npx",
+                args: [],
+                enabled: true,
+                headers: {
+                  Authorization: "Bearer ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                },
+              },
+            ],
+          },
+        },
+      },
+      actionType: "mcp.connect",
+      entityId: "test-server",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toMatch(/\[plaintext_secret_blocked\]/);
+    // The write must never reach disk — no .tmp file should exist.
+    expect(existsSync(tmpFilePath)).toBe(false);
+  });
+
+  it("CRED-02-B: allows ${VAR} ref in MCP header — no false-positive block (returns ok)", async () => {
+    const deps = makePersistDeps({});
+    const result = await realPersistToConfig(deps, {
+      patch: {
+        integrations: {
+          mcp: {
+            servers: [
+              {
+                name: "test-server",
+                transport: "stdio",
+                command: "npx",
+                args: [],
+                enabled: true,
+                headers: {
+                  Authorization: "Bearer ${MY_TOKEN}",
+                },
+              },
+            ],
+          },
+        },
+      },
+      actionType: "mcp.connect",
+      entityId: "test-server",
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("CRED-02-C: rejects plaintext secret in mcp.env — err([plaintext_secret_blocked]), no .tmp file written", async () => {
+    const tmpFilePath = configPath + ".tmp";
+
+    const deps = makePersistDeps({});
+    const result = await realPersistToConfig(deps, {
+      patch: {
+        integrations: {
+          mcp: {
+            servers: [
+              {
+                name: "test-server",
+                transport: "stdio",
+                command: "npx",
+                args: [],
+                enabled: true,
+                env: {
+                  API_KEY: "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-AAAAAAA",
+                },
+              },
+            ],
+          },
+        },
+      },
+      actionType: "mcp.connect",
+      entityId: "test-server",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toMatch(/\[plaintext_secret_blocked\]/);
+    expect(existsSync(tmpFilePath)).toBe(false);
   });
 });

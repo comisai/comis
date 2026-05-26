@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { stringify as yamlStringify } from "yaml";
 import {
   lastKnownGoodPath,
   saveLastKnownGood,
@@ -273,6 +274,86 @@ describe("last-known-good config", () => {
       expect(existsSync(auditLogPath)).toBe(true);
       const log = readFileSync(auditLogPath, "utf-8").trim().split("\n");
       expect(log.length).toBe(1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // CRED-03: LKG snapshot guard — never capture a plaintext secret.
+  //
+  // RED expectation: pre-patch, saveLastKnownGood does NOT scan the source
+  // config before copying, so these tests fail RED on pre-patch code:
+  //   - Test A returns { saved: true } (should be { saved: false })
+  //   - Test C returns { saved: true } (should be { saved: false } for malformed YAML)
+  //
+  // After the production patch (GREEN):
+  //   - A plaintext secret in the source file causes { saved: false } (no copy)
+  //   - A ${VAR} env-ref in the source file passes through (no false-positive)
+  //   - Malformed YAML → { saved: false } (fail-safe, Pitfall 5)
+  // ---------------------------------------------------------------------------
+  describe("CRED-03 LKG secret guard", () => {
+    it("CRED-03-A: returns { saved: false } when source config contains plaintext Authorization header secret", () => {
+      const configWithSecret = yamlStringify({
+        integrations: {
+          mcp: {
+            servers: [
+              {
+                name: "test-server",
+                transport: "stdio",
+                command: "npx",
+                args: [],
+                enabled: true,
+                headers: {
+                  Authorization: "Bearer ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                },
+              },
+            ],
+          },
+        },
+      });
+      writeFileSync(configPath, configWithSecret);
+
+      const result = saveLastKnownGood(configPath);
+
+      expect(result.saved).toBe(false);
+      // The LKG file must NOT have been created.
+      expect(existsSync(result.path)).toBe(false);
+    });
+
+    it("CRED-03-B: returns { saved: true } when source config contains only ${VAR} env refs (no false-positive)", () => {
+      const configWithEnvRef = yamlStringify({
+        integrations: {
+          mcp: {
+            servers: [
+              {
+                name: "test-server",
+                transport: "stdio",
+                command: "npx",
+                args: [],
+                enabled: true,
+                headers: {
+                  Authorization: "Bearer ${MY_TOKEN}",
+                },
+              },
+            ],
+          },
+        },
+      });
+      writeFileSync(configPath, configWithEnvRef);
+
+      const result = saveLastKnownGood(configPath);
+
+      expect(result.saved).toBe(true);
+      expect(existsSync(result.path)).toBe(true);
+    });
+
+    it("CRED-03-C: returns { saved: false } when source config has malformed YAML (fail-safe, Pitfall 5)", () => {
+      writeFileSync(configPath, "{unclosed: yaml: [broken");
+
+      const result = saveLastKnownGood(configPath);
+
+      expect(result.saved).toBe(false);
+      // No LKG file should have been created for unverifiable content.
+      expect(existsSync(result.path)).toBe(false);
     });
   });
 });
