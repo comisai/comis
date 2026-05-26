@@ -204,7 +204,7 @@ const EnvListEntrySchema = z.object({
 /**
  * `config.read` — read the full config OR a single named section.
  * Admin-only. Secrets are redacted before return via
- * `redactConfigSecrets(...)` (handler:464+467).
+ * `redactForDisplay(...)` (handler:53+64).
  *
  * Request: `{ section?: string }`. When `section` is absent, the
  * handler returns `{ config, sections }`. When present, it returns
