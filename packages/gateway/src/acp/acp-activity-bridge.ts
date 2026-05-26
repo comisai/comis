@@ -155,11 +155,33 @@ export function createAcpActivityBridge(
               continue;
             }
             // SINGLE-ARG sessionUpdate({ sessionId, update }) (acp.d.ts:45).
-            // await so the SDK write-queue preserves enqueue order.
-            await connection.sessionUpdate({
-              sessionId: acpSessionId,
-              update: toSessionUpdate(event),
-            });
+            // await so the SDK write-queue preserves enqueue order. The await
+            // is isolated in a try/catch INSIDE the .then callback so a single
+            // rejected frame (e.g. the IDE disconnects mid-turn and the writer
+            // closes) is logged and dropped WITHOUT rejecting the `draining`
+            // chain — a rejected chain would poison every later pump's
+            // `.then`, silently dropping all remaining frames for the turn
+            // (WR-01). The bridge stays a non-throwing void-emitter (no
+            // allow-throw); only the redacted SDK error is logged, never the
+            // params.
+            try {
+              await connection.sessionUpdate({
+                sessionId: acpSessionId,
+                update: toSessionUpdate(event),
+              });
+            } catch (err) {
+              deps.logger?.debug?.(
+                {
+                  err,
+                  acpSessionId,
+                  submodule: "acp-activity-bridge",
+                  step: "session-update",
+                  hint: "IDE connection may have closed; frame dropped, chain preserved",
+                  errorKind: "dependency" as const,
+                },
+                "acp sessionUpdate failed — dropping frame, chain preserved",
+              );
+            }
           }
         });
       };
