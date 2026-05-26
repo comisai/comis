@@ -46,9 +46,7 @@ import type { RpcCall } from "@comis/skills/platform-tools";
 import type { TTSPort, QueueConfig } from "@comis/core";
 import type { ExecutionLogEntry } from "@comis/scheduler";
 
-/**
- * Closure-captured deps for building and starting the ChannelManager.
- */
+/** Closure-captured deps for building and starting the ChannelManager. */
 // @optional-field-count: Inherits the optional-field surface of ChannelsDeps (allowlisted at optionalFieldAllowlist for setup-channels-registry.ts/ChannelsDeps, optionalCount: 26). The runtime leaf passes through the ChannelsDeps optionals (ttsAdapter, audioConverter, queueConfig, etc.) unchanged; tightening these to required would force the registry caller (and every downstream consumer of ChannelsDeps) to fabricate stub values at every call site. The split mirrors the ChannelsDeps optional surface so the rebuild matches the pre-split call shape byte-for-byte.
 export interface ChannelManagerBuildDeps {
   container: AppContainer;
@@ -63,12 +61,10 @@ export interface ChannelManagerBuildDeps {
   /** Per-channel plugin map; consumers read `plugin.capabilities` for
    *  features.reactions, replyToMetaKey, etc. */
   channelPlugins: Map<string, ChannelPluginPort>;
-  // System clock + timer (composition root) → buildActivityRenderers EditPlace branch (debounce + deliveredAtMs delete gate).
+  // Composition root → buildActivityRenderers: clock/timer (EditPlace debounce + deliveredAtMs gate); 73-10 signCallbackData (button channels) + mintApprovalLink (Email single-use link).
   clock: ClockPort;
   timers: TimerPort;
-  /** Secret-bound callback signer (73-10) → buildActivityRenderers (button channels). */
   signCallbackData?: import("@comis/channels").SignCallbackData;
-  /** Single-use approval-link minter (73-10) → buildActivityRenderers (Email). */
   mintApprovalLink?: import("@comis/channels").MintApprovalLink;
   preprocessMessageCallback: (msg: NormalizedMessage) => Promise<NormalizedMessage>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PreflightResult type from channels package is not re-exported; pass-through matches setup-channels-media.ts
@@ -595,20 +591,7 @@ export async function buildAndStartChannelManager(
 
     // No system:shutdown subscriber: composition root calls .stop() via ShutdownDeps.approvalNotifierStop.
   }
-
-  const activityRenderers = buildActivityRenderers(
-    adaptersByType,
-    channelPlugins,
-    channelsLogger,
-    {
-      timer: deps.timers,
-      clock: deps.clock,
-      // 73-10: signed approval buttons (Telegram/Discord/Slack/LINE) + the Email
-      // single-use approval link, wired at the daemon composition root.
-      signCallbackData: deps.signCallbackData,
-      mintApprovalLink: deps.mintApprovalLink,
-    },
-  ); // WIRE-02
+  const activityRenderers = buildActivityRenderers(adaptersByType, channelPlugins, channelsLogger, { timer: deps.timers, clock: deps.clock, signCallbackData: deps.signCallbackData, mintApprovalLink: deps.mintApprovalLink }); // WIRE-02 + 73-10 signer/link
   return { channelManager, lifecycleReactors, approvalNotifier, commandQueue, activityRenderers };
 }
 // Re-export Attachment + ChannelPluginPort (silences lint; public-surface boundary).
