@@ -1,6 +1,6 @@
 {
-  "totalMinified": 109320,
-  "totalGzipped": 10070,
+  "totalMinified": 109372,
+  "totalGzipped": 10078,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -174,7 +174,7 @@
     "session.run_status": 816,
     "session.search": 361,
     "session.send": 458,
-    "session.spawn": 801,
+    "session.spawn": 861,
     "session.status": 605,
     "skills.create": 573,
     "skills.delete": 430,

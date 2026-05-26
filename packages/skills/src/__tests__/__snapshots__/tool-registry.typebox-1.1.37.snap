@@ -3350,6 +3350,13 @@
           "description": "Objective statement that survives context compaction",
           "type": "string"
         },
+        "required_tools": {
+          "description": "Tool names that must be reachable by the sub-agent; spawn fails immediately if any are outside the profile ceiling",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "task": {
           "description": "Task description for the sub-agent",
           "type": "string"

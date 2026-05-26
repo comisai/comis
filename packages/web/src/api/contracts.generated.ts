@@ -8646,6 +8646,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
             "type": "string"
           }
         },
+        "required_tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "include_parent_history": {
           "type": "string"
         },
