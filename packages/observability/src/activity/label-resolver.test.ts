@@ -13,18 +13,16 @@
  *   - `resolveLabelDetailed` surfaces `redactionsApplied` upward so the
  *     ActivityStream owns the OBS-03 WARN (the resolver stays pure, no logger).
  */
-import { describe, it, expect, beforeEach } from "vitest";
-import {
-  registerActivityLabelSpec,
-  _clearActivityLabelSpecsForTest,
-} from "@comis/core";
+import { describe, it, expect } from "vitest";
+import { registerActivityLabelSpec } from "@comis/core";
 import { resolveLabel, resolveLabelDetailed } from "./label-resolver.js";
 
-describe("resolveLabel (STRAT-10 / spec §6.1 — typed-first)", () => {
-  beforeEach(() => {
-    _clearActivityLabelSpecsForTest();
-  });
+// The label-spec registry is a module-level singleton with no barrel-exported
+// reset (70-05: `_clearActivityLabelSpecsForTest` is intentionally NOT public).
+// Each test registers a UNIQUE tool name so there is zero cross-test
+// interference without needing a registry clear.
 
+describe("resolveLabel (STRAT-10 / spec §6.1 — typed-first)", () => {
   it("resolves mcp_manage(action=set, name=X) to the typed template label", () => {
     registerActivityLabelSpec("mcp_manage", {
       semanticPhase: "tool",
@@ -52,27 +50,27 @@ describe("resolveLabel (STRAT-10 / spec §6.1 — typed-first)", () => {
   });
 
   it("renders a label even when params carry an undeclared key (allowlist drops it)", () => {
-    registerActivityLabelSpec("mcp_manage", {
+    registerActivityLabelSpec("channels_manage", {
       actions: {
-        set: { label: "configuring MCP server `{name}`", detailKeys: ["name"] },
+        set: { label: "configuring channel `{name}`", detailKeys: ["name"] },
       },
     });
     const label = resolveLabel(
-      "mcp_manage",
+      "channels_manage",
       { action: "set", name: "X", command: "should-be-dropped" },
       {},
     );
-    expect(label).toBe("configuring MCP server `X`");
+    expect(label).toBe("configuring channel `X`");
   });
 
   it("surfaces redactionsApplied upward via resolveLabelDetailed for the OBS-03 WARN", () => {
-    registerActivityLabelSpec("mcp_manage", {
+    registerActivityLabelSpec("secrets_manage", {
       actions: {
         set: { label: "configuring `{token}`", detailKeys: ["token"] },
       },
     });
     const detailed = resolveLabelDetailed(
-      "mcp_manage",
+      "secrets_manage",
       { action: "set", token: "sk-ant-secretsecretsecret" },
       {},
     );

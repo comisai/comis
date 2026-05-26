@@ -121,16 +121,23 @@ describe("createPlanStream (STRAT-11 / spec §16.7 — SEP-sourced, no new tool)
       completedCount: 0,
       steps: [{ index: 1, description: "s", status: "pending" }],
     });
+    const updates: PlanUpdate[] = [];
     const stream = createPlanStream({ eventBus: bus, executionPlanPort: port });
-    const unsubscribe = stream.subscribe(() => {});
+    const unsubscribe = stream.subscribe((u) => updates.push(u));
     unsubscribe();
     // Both sep:plan_extracted and tool:executed handlers detached.
     expect(offSpy).toHaveBeenCalledTimes(2);
-    const updates: PlanUpdate[] = [];
-    stream.subscribe((u) => updates.push(u));
-    unsubscribe(); // idempotent — original handlers already gone
+    // After unsubscribe, neither event reaches the listener.
     bus.emit("sep:plan_extracted", { agentId: "a1", sessionKey: "s1", stepCount: 1, timestamp: 1 });
-    // The first (unsubscribed) listener received nothing.
+    bus.emit("tool:executed", {
+      toolName: "edit",
+      durationMs: 1,
+      success: true,
+      timestamp: 2,
+      toolCallId: "c",
+      agentId: "a1",
+      sessionKey: "s1",
+    });
     expect(updates).toHaveLength(0);
   });
 });
