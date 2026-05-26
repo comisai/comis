@@ -1489,3 +1489,151 @@ describe("shortId minting and emission (EVT-05)", () => {
     expect(mintApprovalShortId()).toMatch(SHORT_ID_RE);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 17. shortId secondary index + read helpers (APV-04 delta — 73-02)
+//     getRequestByShortId / pendingForSession + atomic dual-map removal.
+// ---------------------------------------------------------------------------
+
+describe("shortId secondary index + read helpers (APV-04)", () => {
+  it("getRequestByShortId(shortId) returns the pending request for a live minted shortId", () => {
+    gate.requestApproval(makeRequest());
+    const [pending] = gate.pending();
+    const shortId = pending!.shortId;
+
+    const found = gate.getRequestByShortId(shortId);
+    expect(found).toBe(pending);
+    // The resolved request must carry the same requestId — the router maps shortId → requestId server-side.
+    expect(found!.requestId).toBe(pending!.requestId);
+  });
+
+  it("getRequestByShortId(unknownShortId) returns undefined", () => {
+    gate.requestApproval(makeRequest());
+    // A 12-char base62 value that was never minted.
+    expect(gate.getRequestByShortId("ZZZZZZZZZZZZ")).toBeUndefined();
+  });
+
+  it("getRequestByShortId returns undefined after the request is resolved (atomic dual-map removal — Pitfall 4)", async () => {
+    const promise = gate.requestApproval(makeRequest());
+    const [pending] = gate.pending();
+    const shortId = pending!.shortId;
+    expect(gate.getRequestByShortId(shortId)).toBe(pending);
+
+    gate.resolveApproval(pending!.requestId, true, "chat:u");
+    await promise;
+
+    // The index entry MUST be gone with the pending entry — a stale entry would defeat replay rejection (T-73-05).
+    expect(gate.getRequestByShortId(shortId)).toBeUndefined();
+  });
+
+  it("getRequestByShortId returns undefined after a denial (atomic removal on deny path)", async () => {
+    const promise = gate.requestApproval(makeRequest());
+    const [pending] = gate.pending();
+    const shortId = pending!.shortId;
+
+    gate.resolveApproval(pending!.requestId, false, "chat:u", "nope");
+    await promise;
+
+    expect(gate.getRequestByShortId(shortId)).toBeUndefined();
+  });
+
+  it("getRequestByShortId returns undefined after a timeout (timeout routes through resolveApproval)", async () => {
+    const promise = gate.requestApproval(makeRequest());
+    const shortId = gate.pending()[0]!.shortId;
+
+    vi.advanceTimersByTime(DEFAULT_TIMEOUT_MS + 1);
+    await promise;
+
+    expect(gate.getRequestByShortId(shortId)).toBeUndefined();
+  });
+
+  it("getRequestByShortId returns undefined after dispose (shortIdIndex.clear mirrors pendingMap.clear)", () => {
+    gate.requestApproval(makeRequest());
+    const shortId = gate.pending()[0]!.shortId;
+    expect(gate.getRequestByShortId(shortId)).toBeDefined();
+
+    gate.dispose();
+
+    expect(gate.getRequestByShortId(shortId)).toBeUndefined();
+  });
+
+  it("pendingForSession(sessionKey) returns only requests whose request.sessionKey matches", () => {
+    gate.requestApproval(makeRequest({ sessionKey: "default:alice:discord", action: "a", toolName: "a" }));
+    gate.requestApproval(makeRequest({ sessionKey: "default:alice:discord", action: "b", toolName: "b" }));
+    gate.requestApproval(makeRequest({ sessionKey: "default:bob:telegram", action: "c", toolName: "c" }));
+
+    const alice = gate.pendingForSession("default:alice:discord");
+    expect(alice).toHaveLength(2);
+    expect(alice.every((r) => r.sessionKey === "default:alice:discord")).toBe(true);
+    expect(alice.map((r) => r.action).sort()).toEqual(["a", "b"]);
+
+    const bob = gate.pendingForSession("default:bob:telegram");
+    expect(bob).toHaveLength(1);
+    expect(bob[0]!.action).toBe("c");
+  });
+
+  it("pendingForSession returns an empty array for a session with no pending requests", () => {
+    gate.requestApproval(makeRequest({ sessionKey: "default:alice:discord" }));
+    expect(gate.pendingForSession("default:nobody:slack")).toEqual([]);
+  });
+
+  it("pendingForSession no longer lists a request after it is resolved (index-leak guard)", async () => {
+    const promise = gate.requestApproval(makeRequest({ sessionKey: "default:alice:discord" }));
+    expect(gate.pendingForSession("default:alice:discord")).toHaveLength(1);
+
+    gate.resolveApproval(gate.pending()[0]!.requestId, true, "chat:u");
+    await promise;
+
+    expect(gate.pendingForSession("default:alice:discord")).toEqual([]);
+  });
+
+  it("a restored approval is reachable via getRequestByShortId (callback identity survives restart — 70-12 invariant)", () => {
+    // 1) original gate mints + serializes a pending request.
+    gate.requestApproval(makeRequest({ action: "agents.delete", toolName: "agents_manage" }));
+    const original = gate.pending()[0]!;
+    const [record] = gate.serializePending();
+
+    // 2) fresh gate restores the serialized record on a clean bus.
+    const restoreBus = new TypedEventBus();
+    const freshGate = createApprovalGate({
+      eventBus: restoreBus,
+      clock: testClock,
+      timers: testTimers,
+      getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
+    });
+
+    const restored = freshGate.restorePending([record!]);
+    expect(restored).toBe(1);
+
+    // The restored approval is reachable by its persisted shortId — restorePending MUST populate the index.
+    const found = freshGate.getRequestByShortId(original.shortId);
+    expect(found).toBeDefined();
+    expect(found!.requestId).toBe(original.requestId);
+    expect(found!.shortId).toBe(original.shortId);
+    // And it is listed for its session.
+    expect(freshGate.pendingForSession(original.sessionKey).map((r) => r.shortId)).toContain(original.shortId);
+
+    freshGate.dispose();
+  });
+
+  it("a restored approval is unreachable via getRequestByShortId after it is resolved (restored entry removes its index too)", () => {
+    gate.requestApproval(makeRequest());
+    const original = gate.pending()[0]!;
+    const [record] = gate.serializePending();
+
+    const restoreBus = new TypedEventBus();
+    const freshGate = createApprovalGate({
+      eventBus: restoreBus,
+      clock: testClock,
+      timers: testTimers,
+      getTimeoutMs: () => DEFAULT_TIMEOUT_MS,
+    });
+    freshGate.restorePending([record!]);
+    expect(freshGate.getRequestByShortId(original.shortId)).toBeDefined();
+
+    freshGate.resolveApproval(original.requestId, true, "chat:u");
+
+    expect(freshGate.getRequestByShortId(original.shortId)).toBeUndefined();
+    freshGate.dispose();
+  });
+});
