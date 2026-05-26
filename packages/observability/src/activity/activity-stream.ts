@@ -68,6 +68,7 @@ import {
 import { randomUUID } from "node:crypto";
 
 import { createBoundedQueue, type BoundedQueue } from "./bounded-queue.js";
+import { compressLabel } from "./label-compressor.js";
 
 /**
  * The tool-metadata subset the stream reads to honor `suppressActivity`. Looked
@@ -226,6 +227,17 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
   /**
    * Build the label for a tool/approval event, re-applying redaction
    * (defense-in-depth) and emitting the OBS-03 WARN when redactions fired.
+   *
+   * UX-02 wiring boundary: `compressLabel` runs ONCE here, on the FINAL
+   * post-`applyTemplate` (post-redaction) `defaultLabel`, on BOTH return paths —
+   * the single label-egress point. The redact→compress order is load-bearing:
+   * the compressor runs AFTER `redactValue` (which `applyTemplate` already
+   * applied), so it never lets a raw URL/path escape redaction and never
+   * re-compacts an already-compacted (`~`-rooted / ≤2-segment) path (it is a
+   * fixed point per 75-02 / Pitfall 2). It is NOT called inside `applyTemplate`
+   * (a `core` redaction-only primitive) and NOT on the subagent/model marker
+   * labels (those bypass `buildLabel` — short static `markers.subagent`/
+   * "switching model provider" strings; compressing them is a needless no-op).
    */
   function buildLabel(
     toolName: string,
@@ -242,9 +254,10 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {},
     );
     if (!result.ok) {
-      // unknown_key — fall back to the placeholder-stripped semantic label.
+      // unknown_key — fall back to the placeholder-stripped semantic label,
+      // compressed at the egress (UX-02) like the success path.
       return {
-        defaultLabel: spec.label.replace(/\{[A-Za-z0-9_]+\}/g, "").trim(),
+        defaultLabel: compressLabel(spec.label.replace(/\{[A-Za-z0-9_]+\}/g, "").trim()),
         semanticPhase: spec.semanticPhase,
       };
     }
@@ -264,7 +277,10 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
         "redactions applied during activity label rendering",
       );
     }
-    return { defaultLabel: result.value.defaultLabel, semanticPhase: spec.semanticPhase };
+    return {
+      defaultLabel: compressLabel(result.value.defaultLabel),
+      semanticPhase: spec.semanticPhase,
+    };
   }
 
   /**
