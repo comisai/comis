@@ -166,3 +166,68 @@ describe("redactForDisplay", () => {
     expect(out).toEqual({ list: [{ apiKey: "[REDACTED]" }, { name: "fine" }] });
   });
 });
+
+// ── WR-01 / IN-01 regression tests (Phase 1 code-review) ────────────────────
+
+describe("scanForSecrets — secret-named array elements (WR-01)", () => {
+  // A value that does NOT trigger the value heuristic on its own (short, no
+  // known prefix, no high entropy) but lives under a secret-named key.
+  const PLAIN = "plainsecret_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcd";
+
+  it("flags each element of a secret-named array (pre-patch returns [])", () => {
+    const findings = scanForSecrets({ authorization: [PLAIN] });
+    // Must find a finding whose path is authorization[0]
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings.some((f) => f.path === "authorization[0]")).toBe(true);
+  });
+
+  it("flags every element of a multi-element secret-named array", () => {
+    const findings = scanForSecrets({
+      headers: { Authorization: ["Bearer plainA", "Bearer plainB"] },
+    });
+    expect(findings.some((f) => f.path === "headers.Authorization[0]")).toBe(true);
+    expect(findings.some((f) => f.path === "headers.Authorization[1]")).toBe(true);
+  });
+
+  it("still exempts ${VAR} / SecretRef elements inside a secret-named array", () => {
+    expect(
+      scanForSecrets({ authorization: ["${TOKEN}", "$TOKEN", "$${TOKEN}"] }),
+    ).toEqual([]);
+    expect(
+      scanForSecrets({
+        authorization: [{ source: "env", provider: "vault", id: "TOKEN" }],
+      }),
+    ).toEqual([]);
+  });
+
+  it("still flags a plaintext secret value in a non-secret-named array", () => {
+    // value-heuristic path must still work for array elements
+    const findings = scanForSecrets({
+      note: ["ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"],
+    });
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings[0]!.path).toBe("note[0]");
+  });
+});
+
+describe("redactForDisplay — secret-named array values (IN-01)", () => {
+  it("redacts each string element under a secret-named key (pre-patch leaves them plain)", () => {
+    const out = redactForDisplay({
+      authorization: ["Bearer hf_secret", "x"],
+    });
+    expect(out).toEqual({ authorization: ["[REDACTED]", "[REDACTED]"] });
+  });
+
+  it("does NOT mutate the input when the secret-named value is an array", () => {
+    const input = { authorization: ["Bearer hf_secret", "x"] };
+    redactForDisplay(input);
+    expect(input.authorization[0]).toBe("Bearer hf_secret");
+  });
+
+  it("redacts nested arrays under a secret-named key", () => {
+    const out = redactForDisplay({
+      headers: { authorization: ["Bearer x", "Bearer y"] },
+    });
+    expect(out).toEqual({ headers: { authorization: ["[REDACTED]", "[REDACTED]"] } });
+  });
+});

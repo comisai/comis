@@ -47,3 +47,19 @@ describe("classifyHeaderCredential", () => {
     ).toEqual({ kind: "static-secret" });
   });
 });
+
+// ── WR-02 regression tests (Phase 1 code-review) ────────────────────────────
+
+describe("classifyHeaderCredential — scheme/quote-wrapped env-refs (WR-02)", () => {
+  it("classifies Bearer ${VAR} as ref (pre-patch returns static-secret)", () => {
+    expect(classifyHeaderCredential("Authorization", "Bearer ${VAR}")).toEqual({ kind: "ref" });
+  });
+
+  it('classifies "${VAR}" (double-quoted env-ref) as ref (pre-patch returns static-secret)', () => {
+    expect(classifyHeaderCredential("Authorization", '"${VAR}"')).toEqual({ kind: "ref" });
+  });
+
+  it("classifies whitespace-padded ${VAR} as ref", () => {
+    expect(classifyHeaderCredential("Authorization", "  ${VAR}  ")).toEqual({ kind: "ref" });
+  });
+});
