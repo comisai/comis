@@ -464,7 +464,11 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
         return ok(undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return err(new Error(`Failed to edit message: ${message}`));
+        // Preserve the typed DiscordAPIError as `cause` for structural
+        // classification (CHAN-03: code 10008 → not_supported, 50013 →
+        // permission, status 429/retryAfter → rate_limited). classifyDiscordError
+        // reads the structural fields off `cause`, never this generic string.
+        return err(new Error(`Failed to edit message: ${message}`, { cause: error }));
       }
     },
 
@@ -530,7 +534,10 @@ export function createDiscordAdapter(deps: DiscordAdapterDeps): ChannelPort {
         return ok(undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return err(new Error(`Failed to delete message: ${message}`));
+        // Preserve the typed DiscordAPIError as `cause` for structural
+        // classification (CHAN-03). classifyDiscordError reads code/status/
+        // retryAfter off `cause`, never this generic string.
+        return err(new Error(`Failed to delete message: ${message}`, { cause: error }));
       }
     },
 
