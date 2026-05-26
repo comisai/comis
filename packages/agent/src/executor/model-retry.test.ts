@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { randomUUID } from "node:crypto";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { parseModelString, runWithModelRetry, isAuthError, type ModelRetryParams } from "./model-retry.js";
 import { PromptTimeoutError } from "./prompt-timeout.js";
 import { createLastKnownModelTracker } from "../model/last-known-model.js";
+import { runWithContext } from "@comis/core";
 import type { ClockPort, TimerPort, TimerHandle } from "@comis/core";
 
 // ---------------------------------------------------------------------------
@@ -1034,6 +1036,126 @@ describe("runWithModelRetry", () => {
         provider: "openai",
         model: "gpt-4",
       });
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // EVT-04: model:* turn-scoping ids on the emit sites (§16.9)
+  // -------------------------------------------------------------------
+  describe("model:* turn-scoping ids (EVT-04)", () => {
+    function emitOf(eventBus: ReturnType<typeof makeEventBus>, name: string) {
+      return vi.mocked(eventBus.emit).mock.calls.find((c: unknown[]) => c[0] === name)?.[1] as
+        | Record<string, unknown>
+        | undefined;
+    }
+
+    it("model:fallback_attempt carries agentId, sessionKey, and traceId (from turn context)", async () => {
+      const session = makeSession();
+      session.prompt
+        .mockRejectedValueOnce(new Error("primary fail"))
+        .mockResolvedValueOnce(undefined);
+
+      const eventBus = makeEventBus();
+      const traceId = randomUUID();
+      const params = makeParams({
+        session,
+        deps: {
+          eventBus,
+          logger: createMockLogger(),
+          modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
+          fallbackModels: ["openai:gpt-4"],
+          agentId: "agent-x",
+          sessionKey: "t1:u1:c1",
+        },
+      });
+
+      await runWithContext(
+        { tenantId: "t1", userId: "u1", sessionKey: "t1:u1:c1", traceId, startedAt: Date.now() },
+        () => runWithModelRetry(params),
+      );
+
+      const payload = emitOf(eventBus, "model:fallback_attempt");
+      expect(payload).toBeDefined();
+      expect(payload!.agentId).toBe("agent-x");
+      expect(payload!.sessionKey).toBe("t1:u1:c1");
+      expect(payload!.traceId).toBe(traceId);
+      // Existing fields preserved.
+      expect(payload!.toProvider).toBe("openai");
+      expect(payload!.toModel).toBe("gpt-4");
+    });
+
+    it("model:fallback_exhausted carries agentId, sessionKey, and traceId", async () => {
+      const session = makeSession();
+      session.prompt.mockRejectedValue(new Error("all fail"));
+
+      const eventBus = makeEventBus();
+      const traceId = randomUUID();
+      const params = makeParams({
+        session,
+        deps: {
+          eventBus,
+          logger: createMockLogger(),
+          modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
+          fallbackModels: ["openai:gpt-4"],
+          agentId: "agent-y",
+          sessionKey: "t2:u2:c2",
+        },
+      });
+
+      await runWithContext(
+        { tenantId: "t2", userId: "u2", sessionKey: "t2:u2:c2", traceId, startedAt: Date.now() },
+        () => runWithModelRetry(params),
+      );
+
+      const payload = emitOf(eventBus, "model:fallback_exhausted");
+      expect(payload).toBeDefined();
+      expect(payload!.agentId).toBe("agent-y");
+      expect(payload!.sessionKey).toBe("t2:u2:c2");
+      expect(payload!.traceId).toBe(traceId);
+    });
+
+    it("model:lkw_fallback_attempt carries agentId, sessionKey, and traceId", async () => {
+      const session = makeSession();
+      const authErr = Object.assign(new Error("Unauthorized"), { status: 401 });
+      session.prompt
+        .mockRejectedValueOnce(authErr) // primary
+        .mockRejectedValueOnce(authErr) // fallback
+        .mockResolvedValueOnce(undefined); // LKW succeeds
+
+      const lkwTracker = createLastKnownModelTracker();
+      lkwTracker.recordSuccess("other-agent", "google", "gemini-pro");
+
+      const eventBus = makeEventBus();
+      const traceId = randomUUID();
+      const params = makeParams({
+        session,
+        deps: {
+          eventBus,
+          logger: createMockLogger(),
+          modelRegistry: makeModelRegistry(),
+          clock: testClock,
+          timers: testTimers,
+          fallbackModels: ["openai:gpt-4"],
+          lastKnownModel: lkwTracker,
+          agentId: "agent-z",
+          sessionKey: "t3:u3:c3",
+        },
+      });
+
+      await runWithContext(
+        { tenantId: "t3", userId: "u3", sessionKey: "t3:u3:c3", traceId, startedAt: Date.now() },
+        () => runWithModelRetry(params),
+      );
+
+      const payload = emitOf(eventBus, "model:lkw_fallback_attempt");
+      expect(payload).toBeDefined();
+      expect(payload!.agentId).toBe("agent-z");
+      expect(payload!.sessionKey).toBe("t3:u3:c3");
+      expect(payload!.traceId).toBe(traceId);
     });
   });
 });
