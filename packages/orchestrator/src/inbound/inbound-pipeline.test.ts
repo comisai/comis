@@ -223,12 +223,15 @@ function makeAdapterForTest(): ChannelPort {
 // ---------------------------------------------------------------------------
 
 function makeMockApprovalGate(
-  pendingRequests: Array<{ requestId: string; sessionKey: string; action: string; toolName: string }> = [],
+  pendingRequests: Array<{ requestId: string; shortId: string; sessionKey: string; action: string; toolName: string }> = [],
 ) {
   return {
     resolveApproval: vi.fn(),
     pending: vi.fn(() => pendingRequests),
     getRequest: vi.fn((id: string) => pendingRequests.find((r) => r.requestId === id)),
+    // APV-04 read helpers (73-02) — the inbound shortId slash path + button router source.
+    getRequestByShortId: vi.fn((sid: string) => pendingRequests.find((r) => r.shortId === sid)),
+    pendingForSession: vi.fn((sk: string) => pendingRequests.filter((r) => r.sessionKey === sk)),
   };
 }
 
@@ -239,6 +242,7 @@ describe("/approve and /deny command interception", () => {
   const TEST_SESSION_KEY = "default:user-1:chat-1:peer:user-1";
   const PENDING_REQUEST = {
     requestId: "aaaa1234-bbbb-cccc-dddd-eeeeeeeeeeee",
+    shortId: "AAAA1234bbbb",
     sessionKey: TEST_SESSION_KEY,
     action: "agents.delete",
     toolName: "agents_manage",
@@ -254,7 +258,7 @@ describe("/approve and /deny command interception", () => {
     });
 
     await processInboundMessage(
-      deps, adapter, makeMsg({ text: "/approve aaaa1234" }), new Set(), new Map() as any,
+      deps, adapter, makeMsg({ text: "/approve AAAA1234bbbb" }), new Set(), new Map() as any,
     );
 
     expect(gate.resolveApproval).toHaveBeenCalledWith(
@@ -277,7 +281,7 @@ describe("/approve and /deny command interception", () => {
     });
 
     await processInboundMessage(
-      deps, adapter, makeMsg({ text: "/deny aaaa1234" }), new Set(), new Map() as any,
+      deps, adapter, makeMsg({ text: "/deny AAAA1234bbbb" }), new Set(), new Map() as any,
     );
 
     expect(gate.resolveApproval).toHaveBeenCalledWith(
@@ -354,15 +358,17 @@ describe("/approve and /deny command interception", () => {
   // prefix" warning and bail without resolving so the operator cannot
   // silently approve the wrong request when prefixes collide.
   // -----------------------------------------------------------------------
-  it("/approve <prefix> matching multiple pending requests warns and does NOT resolve any", async () => {
+  it("/approve <requestId-prefix> matches NO shortId and resolves nothing (APV-09: chat speaks shortId only)", async () => {
     const reqA = {
       requestId: "ambig0001-aaaa-bbbb-cccc-111111111111",
+      shortId: "AMBIG001aaaa",
       sessionKey: TEST_SESSION_KEY,
       action: "agents.delete",
       toolName: "agents_manage",
     };
     const reqB = {
       requestId: "ambig0002-aaaa-bbbb-cccc-222222222222",
+      shortId: "AMBIG002bbbb",
       sessionKey: TEST_SESSION_KEY,
       action: "files.write",
       toolName: "file_ops",
@@ -375,37 +381,40 @@ describe("/approve and /deny command interception", () => {
       createExecutor: vi.fn(() => ({ execute: executorFn })),
     });
 
-    // Both reqA.requestId and reqB.requestId start with "ambig000".
+    // "ambig000" is a requestId prefix; the chat path now matches by EXACT
+    // 12-char shortId only, so this matches nothing (no leak, no resolve).
     await processInboundMessage(
       deps, adapter, makeMsg({ text: "/approve ambig000" }), new Set(), new Map() as any,
     );
 
-    // No approval is resolved.
+    // No approval is resolved — a requestId prefix is no longer accepted.
     expect(gate.resolveApproval).not.toHaveBeenCalled();
-    // The user receives an Ambiguous prefix warning that names the count.
+    // The user is told no approval matched that ID.
     expect(adapter.sendMessage).toHaveBeenCalledWith(
       "chat-1",
-      expect.stringContaining("Ambiguous prefix"),
+      expect.stringContaining("No pending approval found"),
     );
-    expect(adapter.sendMessage).toHaveBeenCalledWith(
-      "chat-1",
-      expect.stringContaining("matches 2 pending approvals"),
-    );
-    // The agent executor MUST NOT be invoked — the slash-command was
-    // recognized; just its argument was ambiguous.
+    // No full requestId nor its 8-char prefix is ever echoed back to the channel.
+    const sentText = vi.mocked(adapter.sendMessage).mock.calls
+      .map((c) => String(c[1]))
+      .join("\n");
+    expect(sentText).not.toContain("ambig0001");
+    expect(sentText).not.toContain("ambig0002");
+    // The agent executor MUST NOT be invoked — the slash-command was recognized.
     expect(executorFn).not.toHaveBeenCalled();
   });
 
-  it("/deny <prefix> matching multiple pending requests warns and does NOT resolve any", async () => {
-    // Use a unique prefix family ("denyamb") so the count matches exactly 2.
+  it("/deny <requestId-prefix> matches NO shortId and resolves nothing (APV-09)", async () => {
     const reqA = {
       requestId: "denyamb01-aaaa-bbbb-cccc-333333333333",
+      shortId: "DENYAMB1cccc",
       sessionKey: TEST_SESSION_KEY,
       action: "agents.delete",
       toolName: "agents_manage",
     };
     const reqB = {
       requestId: "denyamb02-aaaa-bbbb-cccc-444444444444",
+      shortId: "DENYAMB2dddd",
       sessionKey: TEST_SESSION_KEY,
       action: "files.write",
       toolName: "file_ops",
@@ -421,12 +430,13 @@ describe("/approve and /deny command interception", () => {
     expect(gate.resolveApproval).not.toHaveBeenCalled();
     expect(adapter.sendMessage).toHaveBeenCalledWith(
       "chat-1",
-      expect.stringContaining("Ambiguous prefix"),
+      expect.stringContaining("No pending approval found"),
     );
-    expect(adapter.sendMessage).toHaveBeenCalledWith(
-      "chat-1",
-      expect.stringContaining("matches 2 pending approvals"),
-    );
+    const sentText = vi.mocked(adapter.sendMessage).mock.calls
+      .map((c) => String(c[1]))
+      .join("\n");
+    expect(sentText).not.toContain("denyamb01");
+    expect(sentText).not.toContain("denyamb02");
   });
 
   it("/approve without approvalGate dep passes through to agent", async () => {
@@ -452,17 +462,35 @@ describe("/approve and /deny command interception", () => {
     expect(executorFn).toHaveBeenCalled();
   });
 
-  it("/approve is case-insensitive", async () => {
+  it("/approve verb is case-insensitive (the shortId arg stays case-sensitive)", async () => {
     const gate = makeMockApprovalGate([PENDING_REQUEST]);
     const adapter = makeAdapterForTest();
     const deps = makeMinimalDeps({ approvalGate: gate });
 
+    // The VERB may be any case; the 12-char base62 shortId must be matched exactly.
     await processInboundMessage(
-      deps, adapter, makeMsg({ text: "/APPROVE aaaa1234" }), new Set(), new Map() as any,
+      deps, adapter, makeMsg({ text: "/APPROVE AAAA1234bbbb" }), new Set(), new Map() as any,
     );
 
     expect(gate.resolveApproval).toHaveBeenCalledWith(
       PENDING_REQUEST.requestId, true, "chat:user-1",
+    );
+  });
+
+  it("/approve <shortId> is matched case-sensitively (a wrong-case shortId resolves nothing)", async () => {
+    const gate = makeMockApprovalGate([PENDING_REQUEST]);
+    const adapter = makeAdapterForTest();
+    const deps = makeMinimalDeps({ approvalGate: gate });
+
+    // shortId is base62 (case distinguishes), so a lower-cased copy must NOT match.
+    await processInboundMessage(
+      deps, adapter, makeMsg({ text: "/approve aaaa1234bbbb" }), new Set(), new Map() as any,
+    );
+
+    expect(gate.resolveApproval).not.toHaveBeenCalled();
+    expect(adapter.sendMessage).toHaveBeenCalledWith(
+      "chat-1",
+      expect.stringContaining("No pending approval found"),
     );
   });
 
@@ -548,9 +576,9 @@ describe("/approve and /deny command interception", () => {
     );
   });
 
-  it("bare /approve with >1 pending shows help with IDs", async () => {
-    const req1 = { ...PENDING_REQUEST, requestId: "11111111-1111-1111-1111-111111111111" };
-    const req2 = { ...PENDING_REQUEST, requestId: "22222222-2222-2222-2222-222222222222" };
+  it("bare /approve with >1 pending lists shortIds (never requestId prefixes)", async () => {
+    const req1 = { ...PENDING_REQUEST, requestId: "11111111-1111-1111-1111-111111111111", shortId: "SHORTone1111" };
+    const req2 = { ...PENDING_REQUEST, requestId: "22222222-2222-2222-2222-222222222222", shortId: "SHORTtwo2222" };
     const gate = makeMockApprovalGate([req1, req2]);
     const adapter = makeAdapterForTest();
     const deps = makeMinimalDeps({ approvalGate: gate });
@@ -564,19 +592,26 @@ describe("/approve and /deny command interception", () => {
       "chat-1",
       expect.stringContaining("Multiple pending approvals"),
     );
+    // The listing shows the 12-char shortIds...
     expect(adapter.sendMessage).toHaveBeenCalledWith(
       "chat-1",
-      expect.stringContaining("11111111"),
+      expect.stringContaining("SHORTone1111"),
     );
     expect(adapter.sendMessage).toHaveBeenCalledWith(
       "chat-1",
-      expect.stringContaining("22222222"),
+      expect.stringContaining("SHORTtwo2222"),
     );
+    // ...and never the full requestId nor its 8-char prefix (APV-09).
+    const sentText = vi.mocked(adapter.sendMessage).mock.calls
+      .map((c) => String(c[1]))
+      .join("\n");
+    expect(sentText).not.toContain("11111111");
+    expect(sentText).not.toContain("22222222");
   });
 
   it("bare /deny with >1 pending shows help with IDs", async () => {
-    const req1 = { ...PENDING_REQUEST, requestId: "11111111-1111-1111-1111-111111111111" };
-    const req2 = { ...PENDING_REQUEST, requestId: "22222222-2222-2222-2222-222222222222" };
+    const req1 = { ...PENDING_REQUEST, requestId: "11111111-1111-1111-1111-111111111111", shortId: "SHORTone1111" };
+    const req2 = { ...PENDING_REQUEST, requestId: "22222222-2222-2222-2222-222222222222", shortId: "SHORTtwo2222" };
     const gate = makeMockApprovalGate([req1, req2]);
     const adapter = makeAdapterForTest();
     const deps = makeMinimalDeps({ approvalGate: gate });

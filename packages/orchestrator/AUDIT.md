@@ -52,7 +52,8 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | responsePrefixConfig | optional | no prefix/suffix applied to agent responses | packages/orchestrator/src/channel-manager.ts:174 |
 | buildTemplateContext | optional | response-prefix template variables are not substituted (skipped silently if responsePrefixConfig is also absent) | packages/orchestrator/src/channel-manager.ts:176 |
 | approvalGate | optional | approval commands pass through as plain text | packages/orchestrator/src/channel-manager.ts:178 |
-| handleSlashCommand | optional | unknown slash commands pass through as plain text to the agent | packages/orchestrator/src/channel-manager.ts:184 |
+| interactiveCallbackRouter | optional | button callbacks (metadata.isButtonCallback) fall through to the normal pipeline (no server-side route()/verify) | packages/orchestrator/src/channel-manager.ts:195 |
+| handleSlashCommand | optional | unknown slash commands pass through as plain text to the agent | packages/orchestrator/src/channel-manager.ts:201 |
 | getEnforceFinalTag | optional | enforceFinalTag executor option is undefined (executor default applies) | packages/orchestrator/src/channel-manager.ts:198 |
 | processInboundMessage | required | — | packages/orchestrator/src/channel-manager.ts:205 |
 | getAllowFrom | optional | no allowFrom sender filter (all senders allowed) | packages/orchestrator/src/channel-manager.ts:217 |
@@ -64,7 +65,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Summary
 
-- **Total fields:** 38 (7 required + 31 optional)
+- **Total fields:** 39 (7 required + 32 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value)
 

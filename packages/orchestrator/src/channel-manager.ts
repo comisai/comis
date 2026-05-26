@@ -24,6 +24,7 @@ import type { SessionLifecycle } from "@comis/agent";
 // orchestrator package cannot import its own published name.
 import type { CommandQueue } from "./queue/command-queue.js";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
+import type { InteractiveCallbackRouter } from "./approval/index.js";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
 import type { StreamingConfig } from "@comis/core";
 import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig } from "@comis/core";
@@ -151,9 +152,20 @@ export interface ChannelManagerDeps {
   /** Optional approval gate for /approve and /deny chat commands. When absent, approval commands pass through as plain text. */
   approvalGate?: {
     resolveApproval(requestId: string, approved: boolean, approvedBy: string, reason?: string): void;
-    pending(): Array<{ requestId: string; sessionKey: string; action: string; toolName: string }>;
+    pending(): Array<{ requestId: string; shortId: string; sessionKey: string; action: string; toolName: string }>;
     getRequest(requestId: string): { requestId: string; sessionKey: string } | undefined;
+    /** Resolve a minted 12-char shortId to its pending request (APV-04). Gate-internal; channels never call this. */
+    getRequestByShortId(shortId: string): { requestId: string; shortId: string; sessionKey: string; action: string; toolName: string } | undefined;
+    /** Pending requests scoped to a session (the plain-text/button resolution source). */
+    pendingForSession(sessionKey: string): Array<{ requestId: string; shortId: string; sessionKey: string; action: string; toolName: string }>;
   };
+  /**
+   * Optional server-side interactive-callback router (73-04). When present, an inbound
+   * button-callback (`metadata.isButtonCallback`) is forwarded to `router.route()` (the
+   * verifier) BEFORE slash-command handling. Injected by daemon wiring; when absent,
+   * button callbacks fall through to the normal pipeline.
+   */
+  interactiveCallbackRouter?: InteractiveCallbackRouter;
   /** Handle general slash commands via command handler. */
   handleSlashCommand?: (
     text: string,
