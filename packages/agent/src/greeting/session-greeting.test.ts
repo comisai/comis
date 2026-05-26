@@ -33,7 +33,7 @@ describe("createGreetingGenerator", () => {
     });
 
     const gen = createGreetingGenerator(baseDeps);
-    const result = await gen.generate("TestBot");
+    const result = await gen.generate("TestBot", "standard");
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -47,7 +47,7 @@ describe("createGreetingGenerator", () => {
     });
 
     const gen = createGreetingGenerator(baseDeps);
-    const result = await gen.generate("TestBot");
+    const result = await gen.generate("TestBot", "standard");
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -59,7 +59,7 @@ describe("createGreetingGenerator", () => {
     mockCompleteSimple.mockRejectedValue(new Error("LLM provider unavailable"));
 
     const gen = createGreetingGenerator(baseDeps);
-    const result = await gen.generate("TestBot");
+    const result = await gen.generate("TestBot", "standard");
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -74,7 +74,7 @@ describe("createGreetingGenerator", () => {
     });
 
     const gen = createGreetingGenerator(baseDeps);
-    const result = await gen.generate("TestBot");
+    const result = await gen.generate("TestBot", "standard");
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -87,7 +87,7 @@ describe("createGreetingGenerator", () => {
     mockGetModel.mockReturnValue(undefined);
 
     const gen = createGreetingGenerator(baseDeps);
-    const result = await gen.generate("TestBot");
+    const result = await gen.generate("TestBot", "standard");
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -101,7 +101,7 @@ describe("createGreetingGenerator", () => {
     });
 
     const gen = createGreetingGenerator(baseDeps);
-    await gen.generate("SuperAgent");
+    await gen.generate("SuperAgent", "standard");
 
     expect(mockCompleteSimple).toHaveBeenCalledTimes(1);
     const callArgs = mockCompleteSimple.mock.calls[0];
@@ -115,7 +115,7 @@ describe("createGreetingGenerator", () => {
     });
 
     const gen = createGreetingGenerator(baseDeps);
-    const result = await gen.generate("TestBot");
+    const result = await gen.generate("TestBot", "standard");
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -130,7 +130,7 @@ describe("createGreetingGenerator", () => {
     });
 
     const gen = createGreetingGenerator({ ...baseDeps, logger: mockLogger });
-    await gen.generate("LogBot");
+    await gen.generate("LogBot", "standard");
 
     expect(mockLogger.debug).toHaveBeenCalledWith(
       expect.objectContaining({ agentName: "LogBot" }),
