@@ -1451,11 +1451,36 @@ async function bootFoundation(
   const {
     tokenTracker, sharedCostTracker,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
-  } = setupObservability({ eventBus: container.eventBus, _createTokenTracker, logger: logLevelManager.getLogger("observability"), dataDir });
+    // WIRE-01: the canonical redacted ActivityStream (the orchestrator-facing
+    // ActivityStreamPort) + its drain hook. `activityStream` is injected into
+    // ExecutionPipelineDeps + the ACP renderer hook; `disposeActivityStream` is
+    // threaded into setupShutdown (WIRE-05). The activity-stream logger + homeDir
+    // are read here at the sanctioned composition root (no env reads in the
+    // substrate; OBS-02 injected logger).
+    activityStream, disposeActivityStream,
+  } = setupObservability({
+    eventBus: container.eventBus,
+    _createTokenTracker,
+    logger: logLevelManager.getLogger("observability"),
+    activityLogger: logLevelManager.getLogger("activity-stream"),
+    homeDir: mergedEnv["HOME"],
+    dataDir,
+  });
   const contextPipelineCollector = createContextPipelineCollector({
     eventBus: container.eventBus,
     logger: logLevelManager.getLogger("context-pipeline"),
   });
+
+  // WIRE-01 ack: the ActivityStream substrate is live and subscribed to the
+  // EventBus. The orchestrator-facing ActivityStreamPort + the per-channel
+  // coordinator-factory threading into the inbound execution pipeline
+  // (ExecutionPipelineDeps.activityStreamPort / coordinatorFactory) land when the
+  // pipeline consumes the injected port; until then the substrate runs (counters
+  // observable) and is drained on shutdown via disposeActivityStream (WIRE-05).
+  daemonLogger.debug(
+    { component: "activity-stream", counters: activityStream.counters() },
+    "ActivityStream substrate constructed and subscribed to EventBus",
+  );
 
   // 5. Health / process
   const { processMonitor } = setupHealth({
@@ -1597,6 +1622,7 @@ async function bootFoundation(
     schedulerLogger, skillsLogger, memoryLogger, daemonVersion,
     tokenTracker, sharedCostTracker,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
+    activityStream, disposeActivityStream,
     contextPipelineCollector,
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
@@ -2419,6 +2445,7 @@ async function bootShutdown(
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
     contextPipelineCollector, backgroundIndexingPromise, db,
     disposeEmbedding, cachedPort, maintenanceTick, obsPersistence,
+    disposeActivityStream,
     injectionRateLimiter, geminiCacheManager, backgroundTaskManager,
     secretStore,
     executors: _execs, cronSchedulers, resetSchedulers, browserServices,
@@ -2469,6 +2496,7 @@ async function bootShutdown(
     continuationTracker,
     lifecycleReactors,  // destroy lifecycle reactors on shutdown
     obsPersistence,  // drain write buffers before db.close
+    disposeActivityStream,  // WIRE-05: drain + unsubscribe ActivityStream from EventBus
     geminiCacheManager,  // Dispose all Gemini caches on shutdown
     trajectoryRegistry,  // Drain session-scoped trajectory recorders
     // 9 new teardown fields (8 production subscribers + setup-tools

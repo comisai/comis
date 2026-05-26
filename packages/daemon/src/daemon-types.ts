@@ -313,13 +313,17 @@ export interface BootContext {
   skillsLogger: ReturnType<typeof setupLogging>["skillsLogger"];
   memoryLogger: ReturnType<typeof setupLogging>["memoryLogger"];
   daemonVersion: string;
-  // Observability (7 fields)
+  // Observability (9 fields)
   tokenTracker: ReturnType<typeof setupObservability>["tokenTracker"];
   sharedCostTracker: ReturnType<typeof setupObservability>["sharedCostTracker"];
   diagnosticCollector: ReturnType<typeof setupObservability>["diagnosticCollector"];
   billingEstimator: ReturnType<typeof setupObservability>["billingEstimator"];
   channelActivityTracker: ReturnType<typeof setupObservability>["channelActivityTracker"];
   deliveryTracer: ReturnType<typeof setupObservability>["deliveryTracer"];
+  // WIRE-01: the canonical ActivityStream (orchestrator-facing ActivityStreamPort)
+  // + its WIRE-05 drain hook, threaded from bootFoundation to bootShutdown.
+  activityStream: ReturnType<typeof setupObservability>["activityStream"];
+  disposeActivityStream: ReturnType<typeof setupObservability>["disposeActivityStream"];
   contextPipelineCollector: ReturnType<typeof createContextPipelineCollector>;
   // Process (1 field)
   processMonitor: ReturnType<typeof setupHealth>["processMonitor"];

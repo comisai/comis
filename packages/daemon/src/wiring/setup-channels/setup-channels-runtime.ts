@@ -13,8 +13,8 @@
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";
-import type { Attachment, ChannelPort, ChannelPluginPort, DeliveryService, NormalizedMessage, SessionKey } from "@comis/core";
-import { formatSessionKey, safePath, systemNowDate } from "@comis/core";
+import type { Attachment, ChannelPort, ChannelPluginPort, DeliveryService, NormalizedMessage, SessionKey, ChannelActivityRenderer } from "@comis/core";
+import { formatSessionKey, safePath, systemNowDate, selectStrategy } from "@comis/core";
 import type { AppContainer } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -27,6 +27,7 @@ import {
   reactWithFallback,
   type LifecycleReactor,
   type ChannelRegistry,
+  createTestSink,
 } from "@comis/channels";
 import { buildReadOnlyChannelRegistry } from "./setup-channels-registry-builder.js";
 import { createChannelManager, processInboundMessage, type ChannelManager } from "@comis/orchestrator";
@@ -102,6 +103,21 @@ export interface ChannelManagerBuildResult {
   lifecycleReactors: LifecycleReactor[];
   approvalNotifier?: ApprovalNotifier;
   commandQueue?: CommandQueue;
+  /**
+   * Per-channel activity renderers (WIRE-02, §17.7), keyed by channelType. Each
+   * is selected from the channel's declared `ChannelCapability` via
+   * `selectStrategy(caps, channelType)` (from @comis/core) and constructed from
+   * the matching @comis/channels strategy. The orchestrator's per-turn
+   * `coordinatorFactory` (ExecutionPipelineDeps, WIRE-03) looks the renderer up
+   * by channelType when building a turn coordinator.
+   *
+   * Phase 70 wires the registration plumbing generically but only Echo→TestSink
+   * is live end-to-end (TestSink needs no platform `ActivityRenderActions`). The
+   * EditPlace/DeleteAndRepost/AppendOnly/LinePerEvent/DigestOnly strategies need
+   * their per-channel send/edit/delete adapters (Phases 71-72), so they are not
+   * constructed here yet — adding one later is a one-line strategy-case change.
+   */
+  activityRenderers: Map<string, ChannelActivityRenderer>;
 }
 
 
@@ -591,7 +607,37 @@ export async function buildAndStartChannelManager(
     // ShutdownDeps.approvalNotifierStop.
   }
 
-  return { channelManager, lifecycleReactors, approvalNotifier, commandQueue };
+  // -----------------------------------------------------------------------
+  // WIRE-02: per-channel activity renderers via capability-driven strategy
+  // selection. For each registered adapter, read its declared
+  // ChannelCapability and route to a rendering strategy with
+  // `selectStrategy(caps, channelType)`. Phase 70 only constructs the live
+  // TestSink (Echo) — it needs no platform send/edit/delete actions; the other
+  // strategies wire their per-channel ActivityRenderActions adapters in Phases
+  // 71-72. The map is returned for the orchestrator's per-turn coordinator
+  // factory (ExecutionPipelineDeps, WIRE-03) to look up by channelType.
+  // -----------------------------------------------------------------------
+  const activityRenderers = new Map<string, ChannelActivityRenderer>();
+  for (const [channelType] of adaptersByType) {
+    const caps = channelPlugins.get(channelType)?.capabilities;
+    if (!caps) {
+      channelsLogger.debug({ channelType }, "Activity renderer skipped: no declared capabilities");
+      continue;
+    }
+    const strategy = selectStrategy(caps, channelType);
+    if (strategy === "TestSink") {
+      // Echo's recorder terminus — the only strategy live end-to-end in Phase 70.
+      activityRenderers.set(channelType, createTestSink());
+      channelsLogger.debug({ channelType, strategy }, "Activity renderer wired");
+    } else {
+      // EditPlace/DeleteAndRepost/AppendOnly/LinePerEvent/DigestOnly need a
+      // per-channel ActivityRenderActions adapter (send/edit/delete) — wired in
+      // Phases 71-72. Selection is proven here; construction is deferred.
+      channelsLogger.debug({ channelType, strategy }, "Activity renderer deferred (per-channel adapter lands in Phase 71-72)");
+    }
+  }
+
+  return { channelManager, lifecycleReactors, approvalNotifier, commandQueue, activityRenderers };
 }
 // Re-export the unused Attachment + ChannelPluginPort types to silence lint
 // and document the public-surface boundary: the registry consumes the same

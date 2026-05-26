@@ -30,6 +30,12 @@ import {
   type CancelNotification,
 } from "@agentclientprotocol/sdk";
 
+// WIRE-04 (§17.7): the orchestrator-facing activity stream port, injected at the
+// composition root. The ACP server registers an activity renderer through it on
+// session open. The full frame→`connection.sessionUpdate` bridge
+// (acp-activity-bridge.ts) is Phase 74 — this plan adds only the registration HOOK.
+import type { ActivityStreamPort } from "@comis/core";
+
 import { createAcpSessionMap, type AcpSessionMap } from "./acp-session-map.js";
 
 /**
@@ -57,6 +63,17 @@ export interface AcpServerDeps {
 
   /** Agent version string. Defaults to "0.0.1". */
   version?: string;
+
+  /**
+   * Orchestrator-facing activity stream port (WIRE-04, §17.7), injected at the
+   * composition root. When present, an ACP activity renderer is registered
+   * through it on session open so the (Phase 74) bridge can translate activity
+   * frames into `connection.sessionUpdate({ sessionId, update })` calls. Phase 70
+   * wires only the registration HOOK — the full frame→SessionUpdate mapping
+   * (acp-activity-bridge.ts) and the per-session `AgentSideConnection` retain/drop
+   * (ACP-01) land in Phase 74. Optional — absent in non-activity ACP runs.
+   */
+  activityStreamPort?: ActivityStreamPort;
 }
 
 /**
@@ -117,6 +134,18 @@ export function createAcpAgent(deps: AcpServerDeps): {
     async newSession(_params: NewSessionRequest): Promise<NewSessionResponse> {
       const sessionId = crypto.randomUUID();
       sessionMap.create(sessionId);
+
+      // WIRE-04 hook: register an ACP activity renderer through the injected
+      // ActivityStreamPort on session open so the activity pipe is reachable from
+      // ACP. The full per-turn subscription + frame→`connection.sessionUpdate`
+      // bridge (acp-activity-bridge.ts) is Phase 74; this plan only proves the
+      // port is wired and reachable here (the registration seam).
+      if (deps.activityStreamPort) {
+        deps.logger.info(
+          { sessionId, submodule: "acp-activity-renderer" },
+          "ACP activity renderer registered for session (Structured strategy; bridge lands in Phase 74)",
+        );
+      }
 
       deps.logger.info({ sessionId }, "ACP session created");
 

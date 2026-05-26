@@ -23,8 +23,13 @@ import type { PerChannelStreamingConfig, StreamingConfig } from "@comis/core";
 import { PerChannelStreamingConfigSchema } from "@comis/core";
 import type { SendPolicyConfig, ElevatedReplyConfig } from "@comis/core";
 import type { SendMessageOptions } from "@comis/core";
-import { formatSessionKey, runWithContext, tryGetContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
+import { formatSessionKey, runWithContext, tryGetContext, createDeliveryOrigin, systemNowMs, narrowChatType } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
+// WIRE-03: the orchestrator imports ONLY the core activity port + types (never
+// the @comis/observability implementation — TURN-03/§4.7). The ActivityStreamPort
+// impl + the per-channel renderer are injected at the daemon composition root.
+import type { ActivityStreamPort, TurnActivityContext, TurnOutcome } from "@comis/core";
+import type { ActivityTurnCoordinator } from "./activity-turn-coordinator.js";
 import type { Result } from "@comis/shared";
 import type { AgentExecutor } from "@comis/agent";
 import type { CommandDirectives } from "../commands/index.js";
@@ -118,6 +123,24 @@ export interface ExecutionPipelineDeps {
   deliveryService: DeliveryService;
   /** When true, only content inside <final> blocks reaches users. */
   enforceFinalTag?: boolean;
+  /**
+   * The orchestrator-facing activity stream port (WIRE-03, §17.7). Injected at
+   * the daemon composition root (the observability `createActivityStream` impl).
+   * Optional — when absent (or `coordinatorFactory` is absent) the turn runs
+   * exactly as before with no activity coordinator. The orchestrator depends ONLY
+   * on this core port shape; it never imports `@comis/observability` (TURN-03).
+   */
+  activityStreamPort?: ActivityStreamPort;
+  /**
+   * Per-turn coordinator factory (WIRE-03). `executeAndDeliver` calls this once
+   * per turn with the turn's {@link TurnActivityContext}, returning an unstarted
+   * {@link ActivityTurnCoordinator}; the pipeline `start()`s it on turn begin and
+   * `finalize(outcome)`s it after delivery (gated on the §16.6 receipt). The
+   * factory captures the per-channel renderer + TimerPort/ClockPort/logger at the
+   * composition root and resolves the renderer by `ctx.channelType` (WIRE-02).
+   * Optional — present only when activity rendering is wired for the turn.
+   */
+  coordinatorFactory?: (ctx: TurnActivityContext) => ActivityTurnCoordinator;
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +380,46 @@ export async function executeAndDeliver(
     }
   }
 
+  // ===================================================================
+  // WIRE-03: per-turn activity coordinator. Construct ONE coordinator for
+  // this turn (after the send-policy gate — denied turns deliver nothing, so
+  // they get no coordinator) and subscribe it to the activity stream BEFORE
+  // execution so it observes every tool:*/model:* event emitted during the
+  // run. The coordinator is finalized after delivery (gated on the §16.6
+  // receipt) and disposed in the finally (aborted/error turns still
+  // unsubscribe). Active only when BOTH the stream port and the factory are
+  // injected (the daemon composition root supplies them); otherwise the turn
+  // runs exactly as before.
+  // ===================================================================
+  let coordinator: ActivityTurnCoordinator | undefined;
+  if (deps.activityStreamPort && deps.coordinatorFactory) {
+    const traceId = tryGetContext()?.traceId ?? formatSessionKey(sessionKey);
+    const turnCtx: TurnActivityContext = {
+      agentId,
+      sessionKey: formatSessionKey(sessionKey),
+      traceId,
+      channelType: adapter.channelType,
+      channelKey: effectiveMsg.channelId,
+      chatType: narrowChatType(effectiveMsg.chatType ?? "dm"),
+      inboundMessageId: effectiveMsg.id,
+      threadId: effectiveMsg.metadata?.threadId as string | undefined,
+      replyTo,
+      rendererKey: `${agentId}:${adapter.channelType}:${effectiveMsg.channelId}`,
+    };
+    coordinator = deps.coordinatorFactory(turnCtx);
+    coordinator.start(turnCtx);
+  }
+
+  // Finalize the coordinator exactly once with the turn's outcome (SEC-04 delete
+  // gate lives inside finalize). Idempotent: subsequent calls no-op so each
+  // early-return path can finalize and the finally can dispose safely.
+  let coordinatorFinalized = false;
+  async function finalizeCoordinator(outcome: TurnOutcome): Promise<void> {
+    if (!coordinator || coordinatorFinalized) return;
+    coordinatorFinalized = true;
+    await coordinator.finalize(outcome);
+  }
+
   // Stage 2: LLM execution with timeout, thinking filter, abort signal
   const execResult = await executeLlm(
     deps, adapter, effectiveMsg, sessionKey, agentId, executor,
@@ -367,6 +430,8 @@ export async function executeAndDeliver(
   try {
     if (execResult.timedOut) {
       emitDiagnostic(0, 0, "timeout");
+      // Aborted turn (timeout): the renderer keeps the diagnostic trail (§7.3).
+      await finalizeCoordinator({ kind: "aborted", reason: "timeout" });
       return;
     }
 
@@ -383,6 +448,12 @@ export async function executeAndDeliver(
     );
 
     if (!filterResult.deliver) {
+      // Nothing reaches the user this turn → a silent outcome (§4.3). "filtered"
+      // = the model produced no user-visible reply (NO_REPLY); a voice-only
+      // delivery or any other non-deliver reason reads as SILENT. The renderer
+      // deletes the transient scaffolding on silent (§7.3).
+      const silentReason: "NO_REPLY" | "SILENT" =
+        filterResult.reason === "filtered" ? "NO_REPLY" : "SILENT";
       if (filterResult.reason === "filtered") {
         emitDiagnostic(execResult.tokensUsed, execResult.cost, "filtered");
       } else if (filterResult.reason === "voice_delivered") {
@@ -390,6 +461,7 @@ export async function executeAndDeliver(
       } else {
         emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason);
       }
+      await finalizeCoordinator({ kind: "silent", reason: silentReason });
       return;
     }
 
@@ -415,9 +487,34 @@ export async function executeAndDeliver(
       });
     }
 
+    // Finalize the activity coordinator from the §16.6 delivery receipt
+    // (WIRE-03). Success → the SEC-04 gate inside finalize defers the renderer's
+    // delete until deliveredAtMs; any observed status:"failed" event reclassifies
+    // to failure (no delete). A delivery failure receipt → kind:"failure" so the
+    // diagnostic trail is kept.
+    if (deliveryReceipt.ok) {
+      await finalizeCoordinator({
+        kind: "success",
+        trivial: false,
+        delivery: deliveryReceipt.value,
+      });
+    } else {
+      await finalizeCoordinator({
+        kind: "failure",
+        errorKind: deliveryReceipt.error.errorKind,
+        failedEvents: [],
+        deliveryReceipt: deliveryReceipt.error,
+      });
+    }
+
     // Emit diagnostic:message_processed for full lifecycle tracking
     emitDiagnostic(execResult.tokensUsed, execResult.cost, execResult.finishReason);
   } finally {
+    // Release the activity coordinator's subscription (idempotent; safe after
+    // finalize). Guarantees unsubscribe even on an unexpected throw before
+    // finalize ran (aborted-turn cleanup, TURN-04).
+    coordinator?.dispose();
+
     // Cleanup event listeners from execution phase
     execResult.cleanup();
 

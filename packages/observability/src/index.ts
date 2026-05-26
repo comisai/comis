@@ -414,3 +414,22 @@ export {
   TYPED_ERROR_KIND_EVENTS,
   resolveErrorKind,
 } from "./health-aggregator/error-kind-map.js";
+
+// ---------------------------------------------------------------------------
+// Activity substrate surface (70-08; STRAT-07..11, OBS-01/02/03).
+// ---------------------------------------------------------------------------
+//
+// The canonical, redacted `ActivityEvent` source behind the core
+// `ActivityStreamPort`. The daemon composition root (70-10, WIRE-01)
+// constructs `createActivityStream(...)` in setup-observability.ts and injects
+// the returned `ActivityStream` as the orchestrator-facing port. Imports only
+// @comis/core (the boundary the 70-10 guard test locks — observability never
+// imports @comis/channels).
+
+export { createActivityStream } from "./activity/activity-stream.js";
+export type {
+  ActivityStream,
+  CreateActivityStreamDeps,
+  ActivityToolMetadata,
+  ActivityCounters,
+} from "./activity/activity-stream.js";

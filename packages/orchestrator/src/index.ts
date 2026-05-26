@@ -28,6 +28,21 @@ export * from "./execution/execution-execute.js";
 export * from "./execution/execution-filter.js";
 export * from "./execution/execution-deliver.js";
 
+// Per-turn activity coordinator (70-09; TURN-04/07, SEC-04). The daemon
+// composition root (70-10, WIRE-03) builds `ExecutionPipelineDeps.coordinatorFactory`
+// from `createActivityTurnCoordinator` — capturing the per-channel renderer +
+// injected TimerPort/ClockPort/logger, adapting acpProjection to the unified
+// ActivityProjection signature. Imports ONLY @comis/core (the port + types); the
+// orchestrator gains no @comis/observability dependency (TURN-03).
+export {
+  createActivityTurnCoordinator,
+  type ActivityTurnCoordinator,
+  type ActivityTurnCoordinatorDeps,
+  type ActivityTurnCounters,
+  type ActivityProjection,
+  type CoordinatorFactory,
+} from "./execution/activity-turn-coordinator.js";
+
 // Channel manager lifecycle.
 // Exports: createChannelManager (factory), ChannelManager (interface),
 // ChannelManagerDeps (deps shape), ProcessInboundMessageFn (callback type alias).

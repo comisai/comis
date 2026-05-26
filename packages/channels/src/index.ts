@@ -309,3 +309,13 @@ export type { GroupHistoryBuffer } from "./shared/group-history-buffer.js";
 // Telegram thread propagation metadata keys (consumed by orchestrator
 // execution-pipeline.test.ts for cross-set equivalence assertion)
 export { TELEGRAM_THREAD_META_KEYS } from "./telegram/thread-context.js";
+
+// Activity rendering strategies (§7.2; 70-07). The daemon composition root
+// (setup-channels-runtime.ts) selects a per-channel ChannelActivityRenderer via
+// `selectStrategy(caps, channelType)` from @comis/core, then constructs the
+// matching strategy here. In Phase 70 only Echo→TestSink is live end-to-end
+// (TestSink needs no platform ActivityRenderActions); the EditPlace/
+// DeleteAndRepost/AppendOnly/LinePerEvent/DigestOnly factories wire their
+// per-channel send/edit/delete adapters in Phases 71-72 and are exported then.
+export { createTestSink } from "./shared/strategies/test-sink.js";
+export type { TestSinkRecorder } from "./shared/strategies/test-sink.js";

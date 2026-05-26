@@ -30,6 +30,14 @@ export {
   CHAT_COALESCE_RULES,
 } from "../activity/index.js";
 
+// ChatType narrowing (§4.6, TURN-02; created in 70-01). The activity milestone's
+// 3-value chat classification + the 5→3 narrowing helper. Surfaced here so the
+// orchestrator composition (70-10, WIRE-03) can build `TurnActivityContext.chatType`
+// from a `NormalizedMessage.chatType` via the canonical `narrowChatType` instead
+// of re-hand-rolling the fold. Rides on the activity surface (§4.6 lives with the
+// activity domain).
+export { narrowChatType, ChatTypeSchema } from "../domain/chat-type.js";
+
 export type {
   // 70-01
   ActivityEvent,
@@ -62,6 +70,11 @@ export type {
   CoalesceResult,
   ActivityVerbosity,
 } from "../activity/index.js";
+
+export type {
+  ChatType,
+  NormalizedChatType,
+} from "../domain/chat-type.js";
 
 // ExecutionPlanPort — read-only SEP accessor (rides on the activity surface).
 export type {
