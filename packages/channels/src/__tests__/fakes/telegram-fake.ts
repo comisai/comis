@@ -25,6 +25,7 @@ import type {
   SendMessageOptions,
   FetchMessagesOptions,
   FetchedMessage,
+  RichButton,
 } from "@comis/core";
 
 /** A GrammyError-shaped platform error (the structural fields the classifier reads). */
@@ -36,7 +37,7 @@ export interface GrammyErrorShape {
 
 /** One recorded adapter call — discriminated by `op`, ids deterministic, no timestamps. */
 export type FakeTelegramCall =
-  | { op: "send"; id: string; text: string; silent: boolean }
+  | { op: "send"; id: string; text: string; silent: boolean; buttons?: RichButton[][] }
   | { op: "edit"; id: string; text: string }
   | { op: "delete"; id: string }
   | { op: "react"; id: string; emoji: string }
@@ -95,7 +96,16 @@ export function createFakeTelegramAdapter(channelId = "chat-1"): FakeTelegramAda
       const injected = takeInjectedError(adapter);
       if (injected) return err(injected);
       const id = `tg-msg-${messageCounter++}`;
-      recorded.calls.push({ op: "send", id, text, silent: options?.effects?.includes("silent") ?? false });
+      // The approval inline keyboard (Phase 73 native UI) rides on `buttons` —
+      // recorded ONLY when present so the button-less golden fixtures stay
+      // byte-stable.
+      recorded.calls.push({
+        op: "send",
+        id,
+        text,
+        silent: options?.effects?.includes("silent") ?? false,
+        ...(options?.buttons !== undefined ? { buttons: options.buttons } : {}),
+      });
       return ok(id);
     },
 
