@@ -135,11 +135,18 @@ export async function bootstrapSession(
   const sepEnabled = ctx.config.sep?.enabled !== false && !ctx.overrides?.skipSep;
   const executionPlanRef: { current: ExecutionPlan | undefined } = { current: undefined };
 
-  // ACP-03: publish the live per-turn ref into the ExecutionPlanPort holder so
-  // the gateway/ACP plan bridge reads the active plan. SEP-guarded so a
-  // disabled turn does not point the port at a never-populated ref (T-74-07).
-  if (sepEnabled && ctx.executionPlanHolder) {
-    ctx.executionPlanHolder.publish(executionPlanRef);
+  // ACP-03: keep the ExecutionPlanPort holder lifecycle SYMMETRIC so the
+  // gateway/ACP plan bridge never reads a stale plan. A SEP-on turn publishes
+  // the live per-turn ref (so a disabled turn does not point the port at a
+  // never-populated ref — T-74-07); a SEP-off turn DE-PUBLISHES any ref left by
+  // a prior SEP-on turn so getCurrentPlan() cannot project the previous turn's
+  // plan during this turn (stale-plan leak — T-74-05).
+  if (ctx.executionPlanHolder) {
+    if (sepEnabled) {
+      ctx.executionPlanHolder.publish(executionPlanRef);
+    } else {
+      ctx.executionPlanHolder.clear();
+    }
   }
 
   return { executionStartMs, result, sepEnabled, executionPlanRef };
