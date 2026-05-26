@@ -31,7 +31,7 @@ Archive: `.planning/milestones/v1.0-ROADMAP.md` · `v1.0-REQUIREMENTS.md` · `v1
 - [x] **Phase 2: STORE — Zero-config secrets store** - Auto-generate master key on first boot; fail-early `env_set` UX; opt-out flag and docs (completed 2026-05-26)
 - [x] **Phase 3: CRED — MCP credential firewall & lifecycle** - Block plaintext secrets from headers/config/git/LKG; extract static secrets; steer OAuth to `auth:"oauth"` (completed 2026-05-26)
 - [x] **Phase 4: MCPX — MCP transport resilience** - Transport-aware keepalive; classify SSE self-heal errors; close old transport + generation guard (completed 2026-05-26)
-- [ ] **Phase 5: SUBA — Sub-agent tool governance** - Spawn-time `required_tools` validation; enriched "Tool not found"; lock gateway denylist invariant
+- [x] **Phase 5: SUBA — Sub-agent tool governance** - Spawn-time `required_tools` validation; enriched "Tool not found"; lock gateway denylist invariant (completed 2026-05-26)
 
 ## Phase Details
 
@@ -121,7 +121,7 @@ Plans:
 Plans:
 - [x] 05-01-PLAN.md — TDD: Move SUB_AGENT_TOOL_DENYLIST to @comis/core + RequiredToolsUnreachableError + gateway invariant guard (SUBA-03)
 - [x] 05-02-PLAN.md — TDD: pi-event-bridge enrichment for "Tool not found" with two-shape classifier (SUBA-02)
-- [ ] 05-03-PLAN.md — TDD: spawn() required_tools gate + SpawnParams field + RPC chain wiring (SUBA-01)
+- [x] 05-03-PLAN.md — TDD: spawn() required_tools gate + SpawnParams field + RPC chain wiring (SUBA-01)
 
 ---
 
@@ -133,7 +133,7 @@ Plans:
 | 2. STORE — Zero-config secrets store | v1.1 | 5/5 | Complete   | 2026-05-26 |
 | 3. CRED — MCP credential firewall & lifecycle | v1.1 | 4/4 | Complete   | 2026-05-26 |
 | 4. MCPX — MCP transport resilience | v1.1 | 4/4 | Complete   | 2026-05-26 |
-| 5. SUBA — Sub-agent tool governance | v1.1 | 2/3 | In Progress|  |
+| 5. SUBA — Sub-agent tool governance | v1.1 | 3/3 | Complete   | 2026-05-26 |
 
 ---
 
