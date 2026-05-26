@@ -23,7 +23,11 @@
  *   - `unsubscribe()` detaches BOTH bus handlers (vi.spyOn(bus, "off") called twice).
  */
 import { describe, it, expect, vi } from "vitest";
-import type { ReadonlyExecutionPlan, ExecutionPlanPort } from "@comis/core";
+import type {
+  ReadonlyExecutionPlan,
+  ExecutionPlanPort,
+  ComisLogger,
+} from "@comis/core";
 import { TypedEventBus, formatSessionKey } from "@comis/core";
 import type {
   AgentSideConnection,
@@ -69,6 +73,13 @@ const SESSION_KEY = formatSessionKey({
   channelId: "acp",
   peerId: ACP_SESSION_ID,
 });
+
+/** Flush microtasks so a discarded sessionUpdate promise settles before asserting. */
+async function flush(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 describe("createAcpPlanBridge (ACP-03 / §16.7 — SEP plan → SDK Plan, no new tool)", () => {
   it("emits a 3-step SDK Plan frame from sep:plan_extracted with mapped statuses", async () => {
@@ -337,6 +348,70 @@ describe("createAcpPlanBridge (ACP-03 / §16.7 — SEP plan → SDK Plan, no new
     expect(serialized).not.toContain("rawOutput");
     expect(serialized).not.toContain("params");
     expect(serialized).not.toContain("completedBy");
+
+    unsubscribe();
+  });
+
+  it("logs a rejected plan sessionUpdate and stays a non-throwing emitter (no unhandled rejection, WR-01)", async () => {
+    // The plan bridge fires `void connection.sessionUpdate(...)` per emit.
+    // Pre-fix: a rejected sessionUpdate (IDE disconnects mid-turn) surfaces as
+    // an unhandled rejection because nothing catches the discarded promise.
+    const bus = new TypedEventBus();
+    const { port } = makePlanPort({
+      active: true,
+      request: "do",
+      completedCount: 0,
+      steps: [{ index: 1, description: "s", status: "in_progress" }],
+    });
+    const sessionUpdate = vi
+      .fn()
+      .mockRejectedValue(new Error("ide plan panel closed"));
+    const conn = {
+      sessionUpdate,
+    } as unknown as AgentSideConnection;
+
+    const debugCalls: Array<{ fields: unknown; msg: string }> = [];
+    const logger = {
+      level: "debug",
+      trace: vi.fn(),
+      debug: vi.fn((fields: unknown, msg: string) => {
+        debugCalls.push({ fields, msg });
+      }),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      fatal: vi.fn(),
+      audit: vi.fn(),
+      child: vi.fn(),
+    } as unknown as ComisLogger;
+
+    const unsubscribe = createAcpPlanBridge({
+      eventBus: bus,
+      executionPlanPort: port,
+      getConnection: () => conn,
+      logger,
+    });
+
+    bus.emit("sep:plan_extracted", {
+      agentId: "a1",
+      sessionKey: SESSION_KEY,
+      stepCount: 1,
+      timestamp: 1,
+    });
+    // Drain the microtask queue so the discarded sessionUpdate promise settles.
+    await flush();
+
+    // (a) no unhandled rejection (the await of `flush()` would surface it),
+    // (b) the rejection was logged with the canonical `err` field + context.
+    expect(sessionUpdate).toHaveBeenCalledTimes(1);
+    const errLog = debugCalls.find(
+      (c) => (c.fields as { err?: unknown }).err !== undefined,
+    );
+    expect(errLog).toBeDefined();
+    expect((errLog!.fields as { err?: Error }).err).toBeInstanceOf(Error);
+    expect((errLog!.fields as { acpSessionId?: string }).acpSessionId).toBe(
+      ACP_SESSION_ID,
+    );
 
     unsubscribe();
   });
