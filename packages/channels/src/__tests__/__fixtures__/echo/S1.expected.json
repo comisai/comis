@@ -1,0 +1,13 @@
+{
+  "frames": [],
+  "outcome": {
+    "kind": "success",
+    "trivial": true,
+    "delivery": {
+      "ok": true,
+      "deliveredChunks": 1,
+      "lastChunkMessageId": "msg-final",
+      "deliveredAtMs": 5000
+    }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "frames": [
+    {
+      "frameSeq": 0,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000001",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "start",
+          "status": "running",
+          "kind": "tool",
+          "semanticPhase": "tool",
+          "defaultLabel": "running tool"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    },
+    {
+      "frameSeq": 1,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000001",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "end",
+          "status": "completed",
+          "kind": "tool",
+          "semanticPhase": "tool",
+          "defaultLabel": "tool done"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    }
+  ],
+  "outcome": {
+    "kind": "success",
+    "trivial": false,
+    "delivery": {
+      "ok": true,
+      "deliveredChunks": 1,
+      "lastChunkMessageId": "msg-final",
+      "deliveredAtMs": 5000
+    }
+  }
+}
