@@ -101,7 +101,7 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 04-01-PLAN.md — TDD RED: All MCPX-01/02/03 failing tests (mcp-client-reconnect.test.ts new + keepalive.test.ts + schema-integrations.test.ts additions)
+- [x] 04-01-PLAN.md — TDD RED: All MCPX-01/02/03 failing tests (mcp-client-reconnect.test.ts new + keepalive.test.ts + schema-integrations.test.ts additions)
 - [ ] 04-02-PLAN.md — GREEN MCPX-01 + MCPX-03: isSelfHealedTransientError predicate + generation guard + close-before-create + log levels (mcp-client-ticker.ts + mcp-client-reconnect.ts)
 - [ ] 04-03-PLAN.md — GREEN MCPX-02: resolveDefaultKeepaliveIntervalMs + remove both 180_000 defaults + schema optional + daemon wiring (mcp-client-keepalive.ts + types + index + schema + daemon)
 - [ ] 04-04-PLAN.md — GREEN MCPX-02/03: startKeepaliveTicker restart after reconnect via dynamic import (reconnectionLoop success block)
@@ -127,7 +127,7 @@ Plans:
 | 1. SEC — Secret-detection keystone | v1.1 | 2/2 | Complete   | 2026-05-26 |
 | 2. STORE — Zero-config secrets store | v1.1 | 5/5 | Complete   | 2026-05-26 |
 | 3. CRED — MCP credential firewall & lifecycle | v1.1 | 4/4 | Complete   | 2026-05-26 |
-| 4. MCPX — MCP transport resilience | v1.1 | 0/4 | Not started | - |
+| 4. MCPX — MCP transport resilience | v1.1 | 1/4 | In Progress|  |
 | 5. SUBA — Sub-agent tool governance | v1.1 | 0/TBD | Not started | - |
 
 ---

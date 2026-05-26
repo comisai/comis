@@ -14,7 +14,8 @@
  * @module
  */
 
-import { systemSetInterval, systemClearInterval, type SystemIntervalHandle } from "@comis/core";
+import { systemSetInterval, type SystemIntervalHandle } from "@comis/core";
+export { stopKeepaliveTicker } from "./mcp-client-ticker.js";
 import PQueue from "p-queue";
 import type { McpClientManagerDeps, McpClientManagerState, McpServerConfig } from "./mcp-client-types.js";
 import { handleDisconnection } from "./mcp-client-reconnect.js";
@@ -36,20 +37,6 @@ export function startKeepaliveTicker(state: McpClientManagerState, deps: McpClie
   const handle: SystemIntervalHandle = systemSetInterval(() => maybeEnqueueKeepalivePing(state, deps, config.name), intervalMs);
   handle.unref();
   state.keepaliveTickers.set(config.name, handle);
-}
-
-/**
- * Stop the keepalive ticker. Called from disconnectServer BEFORE the
- * call-queue clear so the ticker cannot fire one last `queue.add` against
- * a queue we are about to delete. (Defense in depth: maybeEnqueueKeepalivePing
- * also no-ops when the queue lookup returns undefined.)
- */
-export function stopKeepaliveTicker(state: McpClientManagerState, serverName: string): void {
-  const handle = state.keepaliveTickers.get(serverName);
-  if (handle !== undefined) {
-    systemClearInterval(handle);
-    state.keepaliveTickers.delete(serverName);
-  }
 }
 
 /**
