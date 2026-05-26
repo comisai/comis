@@ -54,14 +54,26 @@ function makeCtx(overrides?: Partial<TurnActivityContext>): TurnActivityContext 
   };
 }
 
+let tsCounter = 0;
 function makeEvent(overrides?: Partial<ActivityEvent>): ActivityEvent {
+  // Distinct ts per event (1s apart) so adjacent events never coalesce into one
+  // surrogate (sameGroup uses a <800ms window). durationMs above the
+  // fast-success drop threshold (1500ms) so "completed" events stay visible at
+  // normal verbosity (the projection drops sub-1500ms successes).
+  const ts = new Date(1_700_000_000_000 + tsCounter++ * 1_000).toISOString();
   return {
+    schemaVersion: 1,
     activityId: crypto.randomUUID(),
+    sessionKey: "default:user-1:chat-1",
+    agentId: "agent-1",
     channelKey: "chat-1",
-    timestamp: 1_000,
+    traceId: "trace-1",
+    ts,
     phase: "progress",
     status: "running",
     kind: "tool",
+    semanticPhase: "tool",
+    durationMs: 2_000,
     defaultLabel: "Running tool",
     ...overrides,
   } as ActivityEvent;
@@ -336,6 +348,116 @@ describe("createActivityTurnCoordinator — SEC-04 delete gate", () => {
     // No editMessage / assistant-message mutation surface exists on the coordinator.
     expect((coord as unknown as { editMessage?: unknown }).editMessage).toBeUndefined();
 
+    coord.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Error-kind mapping, finalize WARN, reject path, dispose-only, counters
+// ---------------------------------------------------------------------------
+
+describe("createActivityTurnCoordinator — error mapping + counters", () => {
+  it.each([
+    [{ kind: "rate_limited", retryAfterMs: 1 } as ActivityRenderError, "resource"],
+    [{ kind: "transient_network", cause: "x" } as ActivityRenderError, "network"],
+    [{ kind: "permission", detail: "x" } as ActivityRenderError, "auth"],
+    [{ kind: "not_supported", capability: "edit" } as ActivityRenderError, "platform"],
+    [{ kind: "internal", cause: "x" } as ActivityRenderError, "internal"],
+  ])("maps the %o render error to errorKind %s in the operator WARN", async (renderError, expectedKind) => {
+    const clock = createFakeClock(0);
+    const renderer = makeRenderer(clock, { applyError: renderError });
+    const logger = createMockLogger();
+    const { deps, timer, stream } = makeCoordinatorDeps({ clock, renderer, logger });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent());
+    timer.advance(800);
+    await Promise.resolve();
+
+    const warnArg = vi.mocked(logger.warn).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(warnArg.errorKind).toBe(expectedKind);
+    coord.dispose();
+  });
+
+  it("covers the exhaustive-never default of the render-error mapper via an out-of-union cast", async () => {
+    const clock = createFakeClock(0);
+    const renderer = makeRenderer(clock, {
+      applyError: { kind: "future_variant" } as unknown as ActivityRenderError,
+    });
+    const logger = createMockLogger();
+    const { deps, timer, stream } = makeCoordinatorDeps({ clock, renderer, logger });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent());
+    timer.advance(800);
+    await Promise.resolve();
+
+    // The defensive default arm classifies an unknown variant as "internal".
+    const warnArg = vi.mocked(logger.warn).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(warnArg.errorKind).toBe("internal");
+    coord.dispose();
+  });
+
+  it("translates a finalize ActivityRenderError into an operator WARN", async () => {
+    const clock = createFakeClock(0);
+    const renderer = makeRenderer(clock, { finalizeError: { kind: "internal", cause: "boom" } });
+    const logger = createMockLogger();
+    const { deps } = makeCoordinatorDeps({ clock, renderer, logger });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    await coord.finalize({ kind: "failure", errorKind: "internal", failedEvents: [] });
+
+    const warnArg = vi.mocked(logger.warn).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(warnArg).toMatchObject({ step: "finalize", errorKind: "internal" });
+    coord.dispose();
+  });
+
+  it("guards the debounced apply against an unexpected reject (projection throws) with a WARN", async () => {
+    const clock = createFakeClock(0);
+    const logger = createMockLogger();
+    const { deps, timer, stream } = makeCoordinatorDeps({ clock, logger });
+    // Replace the projection with one that throws to drive the suppressError path.
+    const throwingDeps = {
+      ...deps,
+      projection: () => { throw new Error("projection-blew-up"); },
+    };
+    const coord = createActivityTurnCoordinator(throwingDeps);
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent());
+    timer.advance(800);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(logger.warn).toHaveBeenCalled();
+    coord.dispose();
+  });
+
+  it("is safe to dispose without start or finalize, and exposes a counters snapshot", () => {
+    const { deps } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator(deps);
+    // dispose before start: no subscription to release, must not throw.
+    expect(() => coord.dispose()).not.toThrow();
+    const snap = coord.counters();
+    expect(snap).toMatchObject({ renderApply: 0, renderError: 0, deleteGated: 0, deleteApplied: 0 });
+  });
+
+  it("increments deleteGated then deleteApplied for a future-dated success receipt", async () => {
+    const clock = createFakeClock(1_000);
+    const { deps, timer } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    const p = coord.finalize({ kind: "success", trivial: false, delivery: makeReceipt(1_400) });
+    expect(coord.counters().deleteGated).toBe(1);
+    clock.advance(400);
+    timer.advance(400);
+    await p;
+    expect(coord.counters().deleteApplied).toBe(1);
+    expect(coord.counters().turnDurationMs).toBeGreaterThanOrEqual(0);
     coord.dispose();
   });
 });
