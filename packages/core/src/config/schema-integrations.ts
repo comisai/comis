@@ -111,7 +111,7 @@ export const McpServerEntrySchema = z.preprocess(
       /** RLIMIT_CPU — wall CPU seconds before SIGXCPU (module default: 300). */
       cpu: z.number().int().positive().optional(),
     }).optional(),
-    /** Per-server override of mcp.keepaliveIntervalMs. 0 disables for this server. Undefined ⇒ global default applies. */
+    /** Per-server keepalive ping interval (ms). 0 disables for this server. Undefined ⇒ transport-aware default (30 000 ms http/sse, 180 000 ms stdio). The global integrations.mcp.keepaliveIntervalMs override is the middle tier: per-server ?? global ?? transport-aware default. */
     keepaliveIntervalMs: z.number().int().nonnegative().optional(),
     /** Per-server override of mcp.circuitBreakerThreshold. */
     circuitBreakerThreshold: z.number().int().positive().optional(),

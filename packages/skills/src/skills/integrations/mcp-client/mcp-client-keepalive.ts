@@ -50,8 +50,15 @@ export function resolveDefaultKeepaliveIntervalMs(transport: McpServerConfig["tr
  * connectServer immediately after state.callQueues.set(...). The ticker
  * is .unref()'d so SIGTERM teardown is not blocked.
  *
- * Resolution: per-server `config.keepaliveIntervalMs` ?? transport-aware default
- * via resolveDefaultKeepaliveIntervalMs (MCPX-02 single source of truth).
+ * Resolution at this call site: `config.keepaliveIntervalMs` ??
+ * resolveDefaultKeepaliveIntervalMs(config.transport).
+ *
+ * The upstream callers (mcp-handlers.ts mcp.connect, setup-mcp.ts) apply the
+ * full three-tier chain before populating config.keepaliveIntervalMs:
+ *   per-server RPC param ?? persisted per-server entry ?? global
+ *   integrations.mcp.keepaliveIntervalMs. The result lands in
+ *   config.keepaliveIntervalMs before startKeepaliveTicker is called, so
+ *   this function only needs to resolve the final transport-aware default.
  * Uses `??` (NOT `||`) so an operator can set `0` to disable per-server.
  *
  * @param onFailure - Optional callback invoked when a keepalive ping fails. Callers

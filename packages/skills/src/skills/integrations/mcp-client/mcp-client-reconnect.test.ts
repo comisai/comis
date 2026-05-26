@@ -103,7 +103,6 @@ function makeOptions(): McpClientManagerOptions {
     stdioDefaultConcurrency: 1,
     httpDefaultConcurrency: 4,
     reconnectOpts: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 10, growFactor: 1 },
-    keepaliveIntervalMs: 0, // disabled during reconnect tests; removed in Plan 03
     circuitBreakerThreshold: 3,
     circuitBreakerCooldownMs: 60_000,
   };
