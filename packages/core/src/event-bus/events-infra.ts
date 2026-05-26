@@ -17,6 +17,17 @@ export interface InfraEvents {
   /** A privileged action requires operator approval before proceeding */
   "approval:requested": {
     requestId: string;
+    /**
+     * Short, renderer-safe approval id (12-char base62) minted by the
+     * approval gate. REQUIRED on the event so renderer prompts and the
+     * `/approve <id>` / `/deny <id>` slash commands share the same id, and
+     * the full `requestId` never reaches renderers (§4.2, §6.4.1; EVT-05).
+     *
+     * Build coupling: the SOLE emit site that mints + supplies `shortId`
+     * (`approval/approval-gate.ts`) lands in plan 70-12 — this schema only
+     * declares the required field.
+     */
+    shortId: string;
     toolName: string;
     action: string;
     params: Record<string, unknown>;
@@ -25,6 +36,10 @@ export interface InfraEvents {
     trustLevel: string;
     createdAt: number;
     timeoutMs: number;
+    /** Distributed trace id when the request is created inside a request
+     *  context. Optional — `restorePending()` preserves `shortId` but may
+     *  omit `traceId` after a graceful restart (§4.2). */
+    traceId?: string;
     /** Channel type of the originating request (e.g., "telegram", "discord"). Used by approval notifier. */
     channelType?: string;
   };
