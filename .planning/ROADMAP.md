@@ -98,7 +98,13 @@ Plans:
   1. Five consecutive `"SSE stream disconnected: …"` errors (SDK self-heal) leave `consecutiveErrors` at zero and do not invoke `handleDisconnection`; a `"Maximum reconnection attempts … exceeded"` error escalates normally; a generic `McpError` also escalates (proves predicate is narrow)
   2. An http/sse transport with no per-server `keepaliveIntervalMs` override uses 30 000 ms; stdio uses 180 000 ms; both schema default (`schema-integrations.ts:208`) and factory fallback (`index.ts:170`) are removed — `pnpm validate` passes with zero cycles
   3. During reconnect, the prior `client.close()` is awaited before `createTransport` is called; a stale-generation `onerror`/`onclose` after a newer reconnect leaves the new connection's counter untouched; reconnect start is logged at INFO and per-attempt failure at WARN (not DEBUG)
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — TDD RED: All MCPX-01/02/03 failing tests (mcp-client-reconnect.test.ts new + keepalive.test.ts + schema-integrations.test.ts additions)
+- [ ] 04-02-PLAN.md — GREEN MCPX-01 + MCPX-03: isSelfHealedTransientError predicate + generation guard + close-before-create + log levels (mcp-client-ticker.ts + mcp-client-reconnect.ts)
+- [ ] 04-03-PLAN.md — GREEN MCPX-02: resolveDefaultKeepaliveIntervalMs + remove both 180_000 defaults + schema optional + daemon wiring (mcp-client-keepalive.ts + types + index + schema + daemon)
+- [ ] 04-04-PLAN.md — GREEN MCPX-02/03: startKeepaliveTicker restart after reconnect via dynamic import (reconnectionLoop success block)
 
 ---
 
@@ -121,9 +127,9 @@ Plans:
 | 1. SEC — Secret-detection keystone | v1.1 | 2/2 | Complete   | 2026-05-26 |
 | 2. STORE — Zero-config secrets store | v1.1 | 5/5 | Complete   | 2026-05-26 |
 | 3. CRED — MCP credential firewall & lifecycle | v1.1 | 4/4 | Complete   | 2026-05-26 |
-| 4. MCPX — MCP transport resilience | v1.1 | 0/TBD | Not started | - |
+| 4. MCPX — MCP transport resilience | v1.1 | 0/4 | Not started | - |
 | 5. SUBA — Sub-agent tool governance | v1.1 | 0/TBD | Not started | - |
 
 ---
 
-*Last updated: 2026-05-26 — Phase 3 planned (4 plans, 3 waves)*
+*Last updated: 2026-05-26 — Phase 4 planned (4 plans, 3 waves)*
