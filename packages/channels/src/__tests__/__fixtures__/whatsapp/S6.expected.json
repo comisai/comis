@@ -1,0 +1,8 @@
+{
+  "calls": [
+    { "op": "send", "id": "wa-msg-0", "text": "plan: 2 steps", "silent": false, "buttons": false },
+    { "op": "edit", "id": "wa-msg-0", "text": "plan: step 1 done" },
+    { "op": "edit", "id": "wa-msg-0", "text": "✓ done" },
+    { "op": "delete", "id": "wa-msg-0" }
+  ]
+}
