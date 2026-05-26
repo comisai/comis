@@ -68,6 +68,9 @@ const RECEIPT: FinalDeliveryReceipt = {
   ok: true, deliveredChunks: 1, lastChunkMessageId: "final", deliveredAtMs: 0,
 };
 
+/** The ascii theme's markers (75-01): bracketed pure-ASCII tags, zero emoji. */
+const ASCII_MARKERS = { success: "[OK]", failure: "[ERR]", subagent: "[SUB]", running: "[..]" } as const;
+
 describe("createAppendOnlyRenderer", () => {
   it("reports an AppendOnly identity that cannot edit or delete", () => {
     const { actions } = makeRecordingActions();
@@ -125,6 +128,31 @@ describe("createAppendOnlyRenderer", () => {
     expect(closing.text).toContain("timeout");
     // No second failure follow-up.
     expect(sends.filter((s) => s.text.includes("❌"))).toHaveLength(1);
+  });
+
+  it("append-only failure send omits the cross emoji under ascii", async () => {
+    const { actions, calls } = makeRecordingActions();
+    const r = createAppendOnlyRenderer({ actions, markers: ASCII_MARKERS });
+
+    await r.apply(makeFrame(0, "step 1"));
+    await r.finalize({ kind: "failure", errorKind: "timeout", failedEvents: [] });
+
+    const sends = calls.filter((c): c is Extract<Call, { op: "send" }> => c.op === "send");
+    const closing = sends[sends.length - 1];
+    expect(closing.text).toBe("[ERR] timeout");
+    expect(closing.text).not.toContain("❌");
+    expect(closing.text).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+
+  it("append-only failure send is byte-identical to the cross glyph when markers are omitted", async () => {
+    const { actions, calls } = makeRecordingActions();
+    const r = createAppendOnlyRenderer({ actions });
+
+    await r.apply(makeFrame(0, "step 1"));
+    await r.finalize({ kind: "failure", errorKind: "timeout", failedEvents: [] });
+
+    const sends = calls.filter((c): c is Extract<Call, { op: "send" }> => c.op === "send");
+    expect(sends[sends.length - 1].text).toBe("❌ timeout");
   });
 
   it("on a trivial turn emits no activity at all", async () => {

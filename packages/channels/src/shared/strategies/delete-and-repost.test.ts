@@ -77,6 +77,9 @@ const RECEIPT: FinalDeliveryReceipt = {
   ok: true, deliveredChunks: 1, lastChunkMessageId: "final", deliveredAtMs: 0,
 };
 
+/** The ascii theme's markers (75-01): bracketed pure-ASCII tags, zero emoji. */
+const ASCII_MARKERS = { success: "[OK]", failure: "[ERR]", subagent: "[SUB]", running: "[..]" } as const;
+
 describe("createDeleteAndRepostRenderer", () => {
   it("reports a DeleteAndRepost identity that can delete but not edit", () => {
     const { actions } = makeRecordingActions();
@@ -155,5 +158,30 @@ describe("createDeleteAndRepostRenderer", () => {
     // The ❌ message id is NOT among the deletes (kept for diagnosis).
     const deletedIds = calls.filter((c) => c.op === "delete").map((c) => c.id);
     expect(deletedIds).not.toContain(lastSend.id);
+  });
+
+  it("delete-and-repost failure send omits the cross emoji under ascii", async () => {
+    const { actions, calls } = makeRecordingActions();
+    const r = createDeleteAndRepostRenderer({ actions, markers: ASCII_MARKERS });
+
+    await r.apply(makeFrame(0, "step 1"));
+    await r.finalize({ kind: "failure", errorKind: "timeout", failedEvents: [] });
+
+    const sends = calls.filter((c): c is Extract<Call, { op: "send" }> => c.op === "send");
+    const lastSend = sends[sends.length - 1];
+    expect(lastSend.text).toBe("[ERR] timeout");
+    expect(lastSend.text).not.toContain("❌");
+    expect(lastSend.text).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+
+  it("delete-and-repost failure send is byte-identical to the cross glyph when markers are omitted", async () => {
+    const { actions, calls } = makeRecordingActions();
+    const r = createDeleteAndRepostRenderer({ actions });
+
+    await r.apply(makeFrame(0, "step 1"));
+    await r.finalize({ kind: "failure", errorKind: "timeout", failedEvents: [] });
+
+    const sends = calls.filter((c): c is Extract<Call, { op: "send" }> => c.op === "send");
+    expect(sends[sends.length - 1].text).toBe("❌ timeout");
   });
 });

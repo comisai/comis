@@ -29,6 +29,8 @@ import { createEditPlaceRenderer } from "./edit-place.js";
 import type { ActivityRenderActions } from "./actions.js";
 
 const DEBOUNCE_MS = 800;
+/** The ascii theme's markers (75-01): bracketed pure-ASCII tags, zero emoji. */
+const ASCII_MARKERS = { success: "[OK]", failure: "[ERR]", subagent: "[SUB]", running: "[..]" } as const;
 
 type Call =
   | { op: "send"; text: string; id: string }
@@ -188,6 +190,70 @@ describe("createEditPlaceRenderer", () => {
     const edits = calls.filter((c): c is Extract<Call, { op: "edit" }> => c.op === "edit");
     // The final edit carries the ❌ failure marker.
     expect(edits[edits.length - 1].text).toContain("❌");
+  });
+
+  it("edit-place paints the ascii error marker on a failed finalize and drops the cross emoji", async () => {
+    const timer = createFakeTimers();
+    const clock = createFakeClock(0);
+    const { actions, calls } = makeRecordingActions();
+    const r = createEditPlaceRenderer({ actions, timer, clock, markers: ASCII_MARKERS });
+
+    await r.apply(makeFrame(0, "step 1"));
+    timer.advance(DEBOUNCE_MS);
+    await Promise.resolve();
+
+    await r.finalize({ kind: "failure", errorKind: "timeout", failedEvents: [] });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const edits = calls.filter((c): c is Extract<Call, { op: "edit" }> => c.op === "edit");
+    const finalEdit = edits[edits.length - 1].text;
+    expect(finalEdit).toBe("[ERR] timeout");
+    expect(finalEdit).not.toContain("❌");
+    expect(finalEdit).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+
+  it("edit-place paints the ascii success marker on a successful finalize and drops the check emoji", async () => {
+    const timer = createFakeTimers();
+    const clock = createFakeClock(0);
+    const { actions, calls } = makeRecordingActions();
+    const r = createEditPlaceRenderer({ actions, timer, clock, markers: ASCII_MARKERS });
+
+    await r.apply(makeFrame(0, "step 1"));
+    timer.advance(DEBOUNCE_MS);
+    await Promise.resolve();
+
+    // Non-trivial success → the final edit is the themed success closing line.
+    const deliveredAtMs = clock.now() + 1000;
+    await r.finalize({ kind: "success", trivial: false, delivery: receiptAt(deliveredAtMs) });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const edits = calls.filter((c): c is Extract<Call, { op: "edit" }> => c.op === "edit");
+    const successEdit = edits[edits.length - 1].text;
+    expect(successEdit).toBe("[OK] done");
+    expect(successEdit).not.toContain("✓");
+    expect(successEdit).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+
+  it("edit-place success closing line is byte-identical to the check-done glyph when markers are omitted", async () => {
+    const timer = createFakeTimers();
+    const clock = createFakeClock(0);
+    const { actions, calls } = makeRecordingActions();
+    // No markers → default-parity: the success edit must still be exactly "✓ done".
+    const r = createEditPlaceRenderer({ actions, timer, clock });
+
+    await r.apply(makeFrame(0, "step 1"));
+    timer.advance(DEBOUNCE_MS);
+    await Promise.resolve();
+
+    const deliveredAtMs = clock.now() + 1000;
+    await r.finalize({ kind: "success", trivial: false, delivery: receiptAt(deliveredAtMs) });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const edits = calls.filter((c): c is Extract<Call, { op: "edit" }> => c.op === "edit");
+    expect(edits[edits.length - 1].text).toBe("✓ done");
   });
 
   it("unref's the debounce-edit and deliveredAt-gated delete timers so they never hold the event loop open (WR-02)", async () => {
