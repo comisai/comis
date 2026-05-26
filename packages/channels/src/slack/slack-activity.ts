@@ -18,15 +18,17 @@
  *      rendered or logged as activity text.
  *
  *   2. `makeSlackRenderActions` — the `ActivityRenderActions` adapter. `send`
- *      posts the placeholder; the approval surface is a Block Kit `actions`
- *      AFFORDANCE SHELL only (display, via the existing `renderSlackButtons`
- *      send path) — it registers NO interaction handler and signs no interaction
- *      payload; the signed-callback router is Phase 73 (§17.3 / T-71-03-03).
- *      `edit`/`delete` GUARD the optional `ChannelPort` methods (early
- *      `not_supported` — never a non-null `!` cluster, AGENTS.md §2.8) and map
- *      every `.error` through `classifySlackError`. `delete` is `chat.delete`
- *      (CHAN-03's required delete-on-success op). All paths return `Result`;
- *      nothing throws across the boundary.
+ *      posts the placeholder and, on an approval frame, paints the signed Block
+ *      Kit `actions` (each element's callback value = the §6.4.2 wire string from
+ *      `buildApprovalButtons`, via the renderer-injected `SignCallbackData`); a
+ *      subagent placeholder opens a thread (`thread_ts`) for its expand. These
+ *      are DISPLAY affordances — resolution is owned by the Phase-73
+ *      InteractiveCallbackRouter, not this renderer. `edit`/`delete` GUARD the
+ *      optional `ChannelPort` methods (early `not_supported` — never a non-null
+ *      `!` cluster, AGENTS.md §2.8) and map every `.error` through
+ *      `classifySlackError`. `delete` is `chat.delete` (CHAN-03's required
+ *      delete-on-success op). All paths return `Result`; nothing throws across
+ *      the boundary.
  *
  *   3. `createSlackActivityRenderer` — wires the Phase-70
  *      `createEditPlaceRenderer` (the debounce/edit/delete state machine, which
@@ -51,6 +53,18 @@ import type {
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createEditPlaceRenderer } from "../shared/strategies/edit-place.js";
+import {
+  buildApprovalButtons,
+  type SignCallbackData,
+} from "../shared/strategies/approval-render.js";
+
+/**
+ * The subagent-expand marker the projection paints into the parent line
+ * (§18.2-S7). When a placeholder send carries it, Slack opens a thread
+ * (`thread_ts`) for the expand affordance — a DISPLAY affordance, not a
+ * resolution (the InteractiveCallbackRouter owns resolution).
+ */
+const SUBAGENT_MARKER = "🤖";
 
 /** Structural subset of a Slack-Bolt error the classifier reads (also off `error.cause`). */
 interface SlackErrorFields {
@@ -177,10 +191,17 @@ export function makeSlackRenderActions(
   }
 
   return {
-    async send(text): Promise<Result<string, ActivityRenderError>> {
-      // Slack has no silent-notification effect; the Block Kit approval surface
-      // (Phase 73) is a display affordance carried in the send payload only.
-      const r = await adapter.sendMessage(channelId, text);
+    async send(text, opts): Promise<Result<string, ActivityRenderError>> {
+      // Slack has no silent-notification effect. A subagent placeholder opens a
+      // thread (thread_ts) for its expand affordance; an approval placeholder
+      // carries the signed Block Kit action elements in `buttons` (each element's
+      // callback value = v1.<choice>.<shortId>.<hmac>). Both are display
+      // affordances — Phase 73's router owns resolution.
+      const threadReply = text.includes(SUBAGENT_MARKER);
+      const r = await adapter.sendMessage(channelId, text, {
+        ...(threadReply ? { threadReply: true } : {}),
+        ...(opts?.buttons !== undefined ? { buttons: opts.buttons } : {}),
+      });
       return r.ok ? ok(r.value) : err(classifySlackError(r.error));
     },
 
@@ -205,15 +226,27 @@ export function makeSlackRenderActions(
  * {@link createEditPlaceRenderer} with the per-channel render-actions adapter.
  * The daemon composition root constructs this with its runtime `TimerPort` /
  * `ClockPort` and the channel id (WIRE-02).
+ *
+ * `signCallbackData` is the secret-bound signer injected at the composition root
+ * (73-10): the renderer CONSUMES it to build signed Block Kit action elements and
+ * never imports the orchestrator package (Pitfall 5 / T-73-16). When omitted, an
+ * approval frame degrades to a button-less text prompt.
  */
 export function createSlackActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
-  deps: { timer: TimerPort; clock: ClockPort },
+  deps: { timer: TimerPort; clock: ClockPort; signCallbackData?: SignCallbackData },
 ): ChannelActivityRenderer {
+  const { signCallbackData } = deps;
   return createEditPlaceRenderer({
     actions: makeSlackRenderActions(adapter, channelId, { timer: deps.timer }),
     timer: deps.timer,
     clock: deps.clock,
+    // Approval frame → signed Block Kit action rows. The signer is the only path
+    // to the callback value; without it, no actions are painted.
+    buildButtons:
+      signCallbackData === undefined
+        ? undefined
+        : (events) => events.flatMap((event) => buildApprovalButtons(event, signCallbackData)),
   });
 }

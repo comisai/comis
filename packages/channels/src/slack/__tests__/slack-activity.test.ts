@@ -12,11 +12,12 @@
  * `chat.delete` on success (CHAN-03's required delete-on-success op) fires after
  * `deliveredAtMs` — proven by the delete-on-success test.
  *
- * S8 approval is a Block Kit `actions` affordance SHELL only: no interaction
- * handler is registered and no signed callback_data is produced — the
- * InteractiveCallbackRouter is Phase 73 (§17.3 / T-71-03-03). A negative
- * assertion confirms no callback wiring exists. S8 fixtures are DEFERRED to
- * Phase 73 (D-Q2).
+ * S8 approval (Phase 73 / 73-08): the renderer now paints signed Block Kit
+ * `actions` (each element's callback value = the §6.4.2 wire string) and opens a
+ * thread (thread_ts) for a subagent expand. The Phase-71 negative assertion is
+ * FLIPPED to a positive one (`buildApprovalButtons`/`signCallbackData` present);
+ * the behavioural proof lives in slack-activity.approval.test.ts /
+ * slack-activity.subagent.test.ts.
  *
  * Time discipline: every test drives the injected FakeTimers/FakeClock — no raw
  * setTimeout/Date.now. Golden fixtures assert via readFixture + toEqual (NEVER
@@ -384,7 +385,7 @@ describe("Slack golden fixtures (§18.2 EditPlace rows — readFixture + toEqual
     );
   });
 
-  it("S7 subagent — parent line (component-button expand SHELL), deleted on success", async () => {
+  it("S7 subagent — parent line + thread (thread_ts) expand, deleted on success", async () => {
     await runScenario(
       "S7",
       [
