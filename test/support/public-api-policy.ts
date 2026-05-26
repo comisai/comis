@@ -593,6 +593,47 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // @comis/core: baseline orphans tracked here. See inline comments
     // throughout this set for per-entry rationale.
     ["@comis/core", new Set<string>([
+      // ── v2.5 Agent Transparency (Phase 70 foundation) ──────────────
+      // Activity + redaction public surface shipped in the @comis/core
+      // barrel per ACT-12 (foundation phase). Consumers land in Phases
+      // 71-76: channel renderers wire chatProjection/acpProjection/
+      // coalesce/ActivityStrategy; the ACP bridge consumes acpProjection;
+      // label specs register via registerActivityLabelSpec; the redaction
+      // types/limits feed emit sites. redactValue itself already has
+      // cross-package consumers (template-engine + emit sites) so it is
+      // NOT listed here. Shrink each entry as it gains a real consumer.
+      "ActivityEventSchema",
+      "RedactedParamValueSchema",
+      "RedactedParamsSchema",
+      "ActivityParseError",
+      "ActivityVerbosity",
+      "isNonEmptyEvents",
+      "ApprovalChoice",
+      "ApprovalChoiceSchema",
+      "ApprovalCorrelation",
+      "ApprovalCorrelationSchema",
+      "TemplateOutput",
+      "TemplateError",
+      "SemanticPhase",
+      "classifySemanticPhase",
+      "LabelSpec",
+      "ActionLabelSpec",
+      "RegisteredLabelSpec",
+      "ResolveLabelOptions",
+      "registerActivityLabelSpec",
+      "chatProjection",
+      "acpProjection",
+      "coalesce",
+      "CoalesceResult",
+      "CHAT_COALESCE_RULES",
+      "ActivityStrategy",
+      "ReadonlyPlanStep",
+      "REDACT_LIMITS",
+      "RedactLimits",
+      "RedactOptions",
+      "RedactedValue",
+      "RedactionRecord",
+      // ───────────────────────────────────────────────────────────────
       "AttachmentSchema",
       "NormalizedMessageSchema",
       "parseMessage",
