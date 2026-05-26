@@ -283,4 +283,69 @@ describe("createAcpActivityBridge (ACP-02 / ACP-05 — redacted ActivityEvent �
     unsubscribe();
     expect(stream.unsubscribeCalls()).toBe(1);
   });
+
+  it("logs a rejected sessionUpdate and still delivers a later frame (no chain poisoning, WR-01)", async () => {
+    // A connection whose FIRST sessionUpdate rejects (IDE disconnects mid-turn)
+    // then succeeds. Pre-fix: the rejected promise poisons the `draining` chain
+    // so every later pump's `.then` callback never runs — the second frame is
+    // silently dropped — and the rejection surfaces unhandled.
+    const frames: SessionNotification[] = [];
+    const sessionUpdate = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("ide writer closed"))
+      .mockImplementation(async (p: SessionNotification) => {
+        frames.push(p);
+      });
+    const connection = {
+      sessionUpdate,
+      requestPermission: vi.fn(async () => ({
+        outcome: { outcome: "selected", optionId: "approve" },
+      })),
+    } as unknown as AgentSideConnection;
+
+    const debugCalls: Array<{ fields: unknown; msg: string }> = [];
+    const logger = {
+      level: "debug",
+      trace: vi.fn(),
+      debug: vi.fn((fields: unknown, msg: string) => {
+        debugCalls.push({ fields, msg });
+      }),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      fatal: vi.fn(),
+      audit: vi.fn(),
+      child: vi.fn(),
+    } as unknown as import("@comis/core").ComisLogger;
+
+    const stream = makeFakeStreamPort();
+    const bridge = createAcpActivityBridge({
+      activityStreamPort: stream.port,
+      getConnection: () => connection,
+      logger,
+    });
+    bridge.subscribe(makeTurnContext());
+
+    // First frame triggers the rejecting sessionUpdate.
+    stream.emit(makeActivityEvent({ phase: "start", toolCallId: "fail" }));
+    await flush();
+    // Second frame must still reach the connection — the chain is not poisoned.
+    stream.emit(makeActivityEvent({ phase: "end", toolCallId: "ok", status: "completed" }));
+    await flush();
+
+    // (a) no unhandled rejection (the await of `flush()` would surface it),
+    // (b) the rejection was logged with the canonical `err` field + context,
+    const errLog = debugCalls.find(
+      (c) => (c.fields as { err?: unknown }).err !== undefined,
+    );
+    expect(errLog).toBeDefined();
+    expect((errLog!.fields as { err?: Error }).err).toBeInstanceOf(Error);
+    expect((errLog!.fields as { acpSessionId?: string }).acpSessionId).toBe(
+      ACP_SESSION_ID,
+    );
+    // (c) the SECOND frame was delivered (proves the chain survived the failure).
+    expect(sessionUpdate).toHaveBeenCalledTimes(2);
+    expect(frames).toHaveLength(1);
+    expect((frames[0]!.update as Record<string, unknown>).toolCallId).toBe("ok");
+  });
 });
