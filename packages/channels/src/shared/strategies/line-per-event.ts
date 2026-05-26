@@ -9,10 +9,11 @@
  *     IRC cap is truncated with "…" (T-70-07-05 — IRC rejects/splits overlong
  *     lines).
  *   - `finalize`:
- *       • success (non-trivial): one closing line "✓ done · N steps · Xs"
+ *       • success (non-trivial): one closing line "<success> done · N steps · Xs"
  *         (N = lines emitted; Xs = elapsed since the first line, when a clock is
- *         injected).
- *       • failure: one closing line "[ERR] {errorKind}".
+ *         injected). The success/failure glyph follows the resolved theme
+ *         `markers` (UX-01); omitting them yields the default `✓`/`[ERR]`.
+ *       • failure: one closing line "<failure> {errorKind}".
  *       • trivial / silent / aborted: no closing line.
  *
  * Implements the core `ChannelActivityRenderer` port. The clock (optional) only
@@ -26,9 +27,23 @@ import type {
   ActivityEvent,
   TurnOutcome,
   ClockPort,
+  ActivityStatusMarkers,
 } from "@comis/core";
 import type { ActivityRenderActions } from "./actions.js";
 import { eventLabel } from "./render.js";
+
+/**
+ * Closing-line glyphs when no theme markers are injected (default-theme parity).
+ *
+ * LinePerEvent does NOT route through the shared `successLabel`/`failureLabel`
+ * helpers: IRC's defaults differ from the windowed-edit channels — the success
+ * line is the composed `"✓ done · N steps · Xs"` (not `"✓ done"`) and the failure
+ * line is `"[ERR] {errorKind}"` (a bracketed ASCII tag, NOT the `❌` the shared
+ * `DEFAULT_MARKERS` use). These two literals are the pre-75-06 IRC defaults; a
+ * marker-less call MUST stay byte-identical to them (golden-fixture parity).
+ */
+const DEFAULT_SUCCESS_MARKER = "✓";
+const DEFAULT_FAILURE_MARKER = "[ERR]";
 
 /** IRC's hard per-line cap (§7.1). Overlong lines truncate with the ellipsis. */
 const MAX_LINE_CHARS = 512;
@@ -48,6 +63,14 @@ export interface LinePerEventDeps {
    * the line BEFORE the 512-char cap (the strategy still truncates).
    */
   lineFor?: (event: ActivityEvent, visibleEvents: readonly ActivityEvent[]) => string;
+  /**
+   * Resolved theme status markers (UX-01). The success/failure glyphs on the
+   * closing summary line follow these. Omitted → the IRC defaults
+   * (`✓` success, `[ERR]` failure), keeping a marker-less call byte-identical to
+   * the pre-75-06 output. Only `success`/`failure` are read (the closing line
+   * paints neither `subagent` nor `running`).
+   */
+  markers?: ActivityStatusMarkers;
 }
 
 /** Truncate a single line to the 512-char cap, marking the cut with an ellipsis. */
@@ -57,7 +80,7 @@ function capLine(line: string): string {
 }
 
 export function createLinePerEventRenderer(deps: LinePerEventDeps): ChannelActivityRenderer {
-  const { actions, clock } = deps;
+  const { actions, clock, markers } = deps;
   const lineFor = deps.lineFor ?? ((event) => eventLabel(event));
 
   let stepCount = 0;
@@ -89,7 +112,7 @@ export function createLinePerEventRenderer(deps: LinePerEventDeps): ChannelActiv
         case "success":
         case "success_with_recovered_failures": {
           if (outcome.kind === "success" && outcome.trivial) return ok(undefined);
-          let line = `✓ done · ${stepCount} steps`;
+          let line = `${markers?.success ?? DEFAULT_SUCCESS_MARKER} done · ${stepCount} steps`;
           if (clock !== undefined && startMs !== undefined) {
             const elapsedS = ((clock.now() - startMs) / 1000).toFixed(1);
             line += ` · ${elapsedS}s`;
@@ -100,7 +123,9 @@ export function createLinePerEventRenderer(deps: LinePerEventDeps): ChannelActiv
         }
 
         case "failure": {
-          const sent = await actions.send(capLine(`[ERR] ${outcome.errorKind}`));
+          const sent = await actions.send(
+            capLine(`${markers?.failure ?? DEFAULT_FAILURE_MARKER} ${outcome.errorKind}`),
+          );
           if (!sent.ok) return sent;
           return ok(undefined);
         }

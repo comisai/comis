@@ -29,7 +29,9 @@
  *      {@link createLinePerEventRenderer} (one capped line per
  *      `frame.changeSet.added` event; a closing `✓ done · N steps · Xs` on a
  *      non-trivial success — elapsed via the injected clock — or `[ERR] {errorKind}`
- *      on failure). The per-line character cap + ellipsis truncation and the
+ *      on failure; the success/failure glyph follows the resolved theme `markers`
+ *      (UX-01), omitting them yields those defaults). The per-line character cap
+ *      + ellipsis truncation and the
  *      closing-summary logic live IN the strategy body; this file re-implements
  *      none of it. The `↳ ` subagent depth prefix is DATA
  *      carried on the event's `defaultLabel` (set upstream by the projection) and
@@ -47,6 +49,7 @@ import type {
   ChannelPort,
   ClockPort,
   ActivityEvent,
+  ActivityStatusMarkers,
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createLinePerEventRenderer } from "../shared/strategies/line-per-event.js";
@@ -151,11 +154,15 @@ export function ircLineFor(
 export function createIrcActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
-  deps: { clock: ClockPort },
+  deps: { clock: ClockPort; markers?: ActivityStatusMarkers },
 ): ChannelActivityRenderer {
   return createLinePerEventRenderer({
     actions: makeIrcRenderActions(adapter, channelId),
     clock: deps.clock,
+    // UX-01: forward the resolved theme markers so the closing success/failure
+    // glyphs follow the operator theme; omitting them keeps the `✓`/`[ERR]`
+    // defaults byte-identical to the pre-75-06 output.
+    markers: deps.markers,
     lineFor: ircLineFor,
   });
 }

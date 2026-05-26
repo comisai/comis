@@ -70,7 +70,13 @@
  * so no diagnostics primitive is reachable here.
  */
 import { ok, err, type Result } from "@comis/shared";
-import type { ChannelActivityRenderer, ActivityRenderError, ChannelPort, ActivityEvent } from "@comis/core";
+import type {
+  ChannelActivityRenderer,
+  ActivityRenderError,
+  ChannelPort,
+  ActivityEvent,
+  ActivityStatusMarkers,
+} from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createDigestOnlyRenderer } from "../shared/strategies/digest-only.js";
 
@@ -87,6 +93,12 @@ export type MintApprovalLink = (event: ActivityEvent) => string | undefined;
 /** Optional deps for the Email renderer. `mintApprovalLink` wires the APV-10 link. */
 export interface EmailActivityRendererDeps {
   mintApprovalLink?: MintApprovalLink;
+  /**
+   * Resolved theme status markers (UX-01). The `[FAILED]` digest header glyph
+   * follows the resolved `failure` marker. Omitted → the `[FAILED]` default,
+   * keeping the digest body byte-identical to the pre-75-06 Phase-72 fixtures.
+   */
+  markers?: ActivityStatusMarkers;
 }
 
 /**
@@ -175,9 +187,13 @@ export function createEmailActivityRenderer(
   channelId: string,
   deps: EmailActivityRendererDeps = {},
 ): ChannelActivityRenderer {
-  const { mintApprovalLink } = deps;
+  const { mintApprovalLink, markers } = deps;
   return createDigestOnlyRenderer({
     actions: makeEmailRenderActions(adapter, channelId),
+    // UX-01: forward the resolved theme markers so the `[FAILED]` digest header
+    // glyph follows the operator theme; omitting them keeps the `[FAILED]`
+    // default byte-identical to the 5 golden fixtures.
+    markers,
     // Append the APV-10 single-use approval link only when a minter is injected;
     // otherwise the digest stays byte-stable (the 5 golden fixtures are unaffected).
     appendToFailureDigest:

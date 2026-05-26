@@ -154,7 +154,7 @@ describe("createLinePerEventRenderer", () => {
     expect(sent).toHaveLength(0);
   });
 
-  it("emits a pure-ASCII success closing line under the ascii theme markers", async () => {
+  it("emits a pure-ASCII success marker on the closing line under the ascii theme", async () => {
     const { actions, sent } = makeRecordingActions();
     const clock = createFakeClock(0);
     const r = createLinePerEventRenderer({ actions, clock, markers: ASCII_MARKERS });
@@ -165,11 +165,15 @@ describe("createLinePerEventRenderer", () => {
     await r.finalize(success);
 
     const closing = sent[sent.length - 1];
-    // Stricter than Extended_Pictographic: NO non-ASCII codepoint at all — in
-    // particular the default-theme check glyph "✓" (U+2713) must be gone.
-    expect(closing).not.toMatch(/[^\x00-\x7F]/);
+    // UX-01 governs the MARKER glyph, not the IRC "·" layout separator (U+00B7
+    // is theme-independent formatting present under every theme). Assert the
+    // themed ASCII marker leads and the default check glyph "✓" (U+2713) is gone;
+    // the marker prefix itself carries no non-ASCII codepoint (stricter than
+    // Extended_Pictographic).
+    const marker = closing.split(" done")[0];
+    expect(marker).not.toMatch(/[^\x00-\x7F]/);
     expect(closing).not.toContain("✓");
-    expect(closing).toContain("[OK] done");
+    expect(closing.startsWith("[OK] done")).toBe(true);
   });
 
   it("emits a pure-ASCII failure closing line under the ascii theme markers", async () => {

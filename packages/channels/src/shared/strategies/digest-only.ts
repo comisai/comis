@@ -8,8 +8,9 @@
  *   - `apply(frame)`: buffer the latest visible trail; send NOTHING mid-turn.
  *   - `finalize`:
  *       • success: nothing (the model's reply carries the outcome).
- *       • failure: exactly one "[FAILED]" digest carrying the activity trail +
- *         the errorKind, so a failed turn still leaves a diagnostic record
+ *       • failure: exactly one failure digest (header "<failure> {errorKind}",
+ *         glyph from the resolved theme `markers` — default `[FAILED]`) carrying
+ *         the activity trail, so a failed turn still leaves a diagnostic record
  *         (T-70-07-02).
  *       • trivial / silent / aborted: nothing.
  *
@@ -23,9 +24,20 @@ import type {
   ActivityRenderError,
   ActivityEvent,
   TurnOutcome,
+  ActivityStatusMarkers,
 } from "@comis/core";
 import type { ActivityRenderActions } from "./actions.js";
 import { eventLabel } from "./render.js";
+
+/**
+ * Failure-digest header glyph when no theme markers are injected (default-theme
+ * parity). DigestOnly does NOT route through the shared `failureLabel` helper:
+ * Email's failure header is the bracketed ASCII tag `"[FAILED]"`, NOT the `❌`
+ * the shared `DEFAULT_MARKERS` use. This literal is the pre-75-06 Phase-72
+ * default; a marker-less call MUST stay byte-identical to it (golden-fixture
+ * parity for the 5 Email digest fixtures).
+ */
+const DEFAULT_FAILURE_MARKER = "[FAILED]";
 
 export interface DigestOnlyDeps {
   actions: ActivityRenderActions;
@@ -39,10 +51,18 @@ export interface DigestOnlyDeps {
    * trailer must carry an OPAQUE link only — never a raw HMAC/secret (T-73-31).
    */
   appendToFailureDigest?: (trail: readonly ActivityEvent[]) => string | undefined;
+  /**
+   * Resolved theme status markers (UX-01). The `failure` glyph on the digest
+   * header follows this. Omitted → the Email default (`[FAILED]`), keeping a
+   * marker-less call byte-identical to the pre-75-06 Phase-72 digest body. Only
+   * `failure` is read (success sends nothing; subagent/running never appear on
+   * the header).
+   */
+  markers?: ActivityStatusMarkers;
 }
 
 export function createDigestOnlyRenderer(deps: DigestOnlyDeps): ChannelActivityRenderer {
-  const { actions, appendToFailureDigest } = deps;
+  const { actions, appendToFailureDigest, markers } = deps;
 
   // Buffer the latest visible trail; the projection accumulates surviving events
   // so the final frame's visibleEvents is the full trail to digest.
@@ -51,7 +71,7 @@ export function createDigestOnlyRenderer(deps: DigestOnlyDeps): ChannelActivityR
   function renderFailureDigest(
     outcome: Extract<TurnOutcome, { kind: "failure" }>,
   ): string {
-    const header = `[FAILED] ${outcome.errorKind}`;
+    const header = `${markers?.failure ?? DEFAULT_FAILURE_MARKER} ${outcome.errorKind}`;
     const body = trail.map((e) => `  • ${eventLabel(e)}`).join("\n");
     const digest = body.length > 0 ? `${header}\n${body}` : header;
     // Optional approval-link trailer (Email). Absent → byte-stable Phase-72 body.

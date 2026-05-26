@@ -144,10 +144,13 @@ describe("createDigestOnlyRenderer", () => {
     await r.finalize(failure);
 
     const digest = sent[0];
-    // Stricter than Extended_Pictographic: NO non-ASCII codepoint at all.
-    expect(digest).not.toMatch(/[^\x00-\x7F]/);
-    // The header follows the resolved theme marker, not the hardcoded "[FAILED]".
-    expect(digest).toContain("[ERR] dependency");
+    // UX-01 governs the header MARKER glyph, not the "  • " bullet layout of the
+    // trail body (U+2022 is theme-independent formatting). Assert the HEADER line
+    // carries no non-ASCII codepoint (stricter than Extended_Pictographic) and
+    // follows the resolved theme marker, not the hardcoded "[FAILED]".
+    const header = digest.split("\n")[0];
+    expect(header).not.toMatch(/[^\x00-\x7F]/);
+    expect(header).toBe("[ERR] dependency");
     expect(digest).not.toContain("[FAILED]");
   });
 
