@@ -2335,6 +2335,308 @@ describe("MCP RPC Handlers", () => {
       expect(mockBuildConfigAuditBase).toHaveBeenCalledWith(expect.any(String), "mcp.disconnect");
     });
   });
+
+  // -------------------------------------------------------------------------
+  // mcp.connect headers credential firewall (CRED-01, CRED-05, CRED-06)
+  //
+  // The processHeaderCredentials helper (from mcp-header-credential.ts) must
+  // be called in BOTH mcp.connect and mcp.test BEFORE McpConnectContract /
+  // McpTestContract parse. The canonical RED case is the Higgsfield incident:
+  // an inline OAuth bearer in Authorization must be refused with
+  // [use_oauth_login]. These tests FAIL before the GREEN production patch
+  // because the handler does not yet call processHeaderCredentials.
+  // -------------------------------------------------------------------------
+
+  describe("mcp.connect headers credential firewall (CRED-01/05/06)", () => {
+    const OAUTH_BEARER_CONNECT = "hf_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const STATIC_SECRET_CONNECT = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    const mockSecretStoreConnect = {
+      set: vi.fn().mockReturnValue({ ok: true }),
+      get: vi.fn(),
+      has: vi.fn(),
+      list: vi.fn(),
+      delete: vi.fn(),
+    };
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockSecretStoreConnect.set.mockReturnValue({ ok: true });
+    });
+
+    // CRED-06: OAuth bearer in Authorization header — must throw [use_oauth_login]
+    // RED: before GREEN patch, handler passes through → no throw.
+    it("CRED-06 — rejects Authorization: Bearer hf_<44+> with [use_oauth_login]", async () => {
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretStore: mockSecretStoreConnect as any,
+      });
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "higgsfield",
+          transport: "http",
+          url: "https://api.higgsfield.ai/mcp",
+          headers: { Authorization: `Bearer ${OAUTH_BEARER_CONNECT}` },
+        }),
+      ).rejects.toThrow(/\[use_oauth_login\]/);
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    // CRED-06: disablePlaintextSecretCheck:true must NOT bypass oauth-bearer refusal.
+    // RED: before GREEN patch, handler passes through → no throw.
+    it("CRED-06 — rejects oauth bearer even with disablePlaintextSecretCheck:true (no opt-out)", async () => {
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretStore: mockSecretStoreConnect as any,
+      });
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "higgsfield",
+          transport: "http",
+          url: "https://api.higgsfield.ai/mcp",
+          headers: { Authorization: `Bearer ${OAUTH_BEARER_CONNECT}` },
+          disablePlaintextSecretCheck: true,
+        } as any),
+      ).rejects.toThrow(/\[use_oauth_login\]/);
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    // CRED-01: already-${VAR} Bearer form passes through without secretStore.set.
+    // This is an idempotency guard — must stay passing after GREEN patch.
+    it("CRED-01 — allows Authorization: Bearer \${HIGGSFIELD_TOKEN} without secretStore.set", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("higgsfield", [])));
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretStore: mockSecretStoreConnect as any,
+      });
+      await handlers["mcp.connect"]({
+        server_name: "higgsfield",
+        transport: "http",
+        url: "https://api.higgsfield.ai/mcp",
+        headers: { Authorization: "Bearer ${HIGGSFIELD_TOKEN}" },
+      });
+      expect(manager.connect).toHaveBeenCalled();
+      expect(mockSecretStoreConnect.set).not.toHaveBeenCalled();
+    });
+
+    // CRED-05: static-secret header → secretStore.set called, header rewritten.
+    // RED: before GREEN patch, secretStore.set is never called.
+    it("CRED-05 — extracts X-Api-Key: sk-ant-… to secretStore.set and rewrites header", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("myserver", [])));
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretStore: mockSecretStoreConnect as any,
+      });
+      await handlers["mcp.connect"]({
+        server_name: "myserver",
+        transport: "http",
+        url: "https://api.example.com/mcp",
+        headers: { "X-Api-Key": STATIC_SECRET_CONNECT },
+      });
+      expect(mockSecretStoreConnect.set).toHaveBeenCalledWith("MCP_MYSERVER_X_API_KEY", STATIC_SECRET_CONNECT);
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          headers: { "X-Api-Key": "${MCP_MYSERVER_X_API_KEY}" },
+        }),
+      );
+    });
+
+    // CRED-05 fail-safe: no secretStore + static-secret → throw [plaintext_secret_in_headers].
+    // RED: before GREEN patch, no throw occurs.
+    it("CRED-05 — throws [plaintext_secret_in_headers] when secretStore is undefined", async () => {
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        // secretStore intentionally absent — simulates COMIS_DISABLE_ENCRYPTED_SECRETS=1
+      });
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "myserver",
+          transport: "http",
+          url: "https://api.example.com/mcp",
+          headers: { "X-Api-Key": STATIC_SECRET_CONNECT },
+        }),
+      ).rejects.toThrow(/\[plaintext_secret_in_headers\]/);
+      expect(manager.connect).not.toHaveBeenCalled();
+    });
+
+    // CRED-01 opt-out: disablePlaintextSecretCheck:true + static-secret → WARN, no throw.
+    // RED: before GREEN patch the headers scan is absent entirely; test verifies
+    // that after GREEN the WARN fires for the headers block specifically.
+    it("CRED-01 — disablePlaintextSecretCheck:true + static-secret header emits WARN and allows", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("myserver", [])));
+      const logger = makeLogger();
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger,
+        // secretStore absent — opt-out should still WARN-and-allow
+      });
+      await handlers["mcp.connect"]({
+        server_name: "myserver",
+        transport: "http",
+        url: "https://api.example.com/mcp",
+        headers: { "X-Api-Key": STATIC_SECRET_CONNECT },
+        disablePlaintextSecretCheck: true,
+      } as any);
+      expect(manager.connect).toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ errorKind: "config" }),
+        expect.stringContaining("plaintext-secret check disabled"),
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // mcp.test headers credential firewall (CRED-01, CRED-05, CRED-06)
+  //
+  // Mirror of the mcp.connect tests above. The headers scan must also be
+  // present in mcp.test — the handler spawns a real child process and an
+  // OAuth bearer would reach the child without this guard.
+  // Note: the pre-Zod guards in mcp.test throw directly (outside the inner
+  // try/catch that wraps tempManager.connect), so rejects.toThrow is correct.
+  // -------------------------------------------------------------------------
+
+  describe("mcp.test headers credential firewall (CRED-01/05/06)", () => {
+    const OAUTH_BEARER_TEST = "hf_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const STATIC_SECRET_TEST = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    const mockSecretStoreTest = {
+      set: vi.fn().mockReturnValue({ ok: true }),
+      get: vi.fn(),
+      has: vi.fn(),
+      list: vi.fn(),
+      delete: vi.fn(),
+    };
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockSecretStoreTest.set.mockReturnValue({ ok: true });
+      mockTempDisconnectAll.mockResolvedValue(undefined);
+    });
+
+    // CRED-06: OAuth bearer in Authorization header — must throw [use_oauth_login]
+    // RED: before GREEN patch, handler's inner try/catch wraps it and returns
+    // { success: false, error: "..." } instead of rethrowing → rejects.toThrow fails.
+    it("CRED-06 — rejects Authorization: Bearer hf_<44+> with [use_oauth_login]", async () => {
+      const handlers = createMcpHandlers({
+        mcpClientManager: createMockManager(),
+        logger: makeLogger(),
+        secretStore: mockSecretStoreTest as any,
+      });
+      await expect(
+        handlers["mcp.test"]({
+          name: "higgsfield",
+          transport: "http",
+          url: "https://api.higgsfield.ai/mcp",
+          headers: { Authorization: `Bearer ${OAUTH_BEARER_TEST}` },
+        }),
+      ).rejects.toThrow(/\[use_oauth_login\]/);
+      expect(mockTempConnect).not.toHaveBeenCalled();
+    });
+
+    // CRED-06: disablePlaintextSecretCheck:true must NOT bypass oauth-bearer.
+    // RED: before GREEN patch, no throw.
+    it("CRED-06 — rejects oauth bearer even with disablePlaintextSecretCheck:true (no opt-out)", async () => {
+      const handlers = createMcpHandlers({
+        mcpClientManager: createMockManager(),
+        logger: makeLogger(),
+        secretStore: mockSecretStoreTest as any,
+      });
+      await expect(
+        handlers["mcp.test"]({
+          name: "higgsfield",
+          transport: "http",
+          url: "https://api.higgsfield.ai/mcp",
+          headers: { Authorization: `Bearer ${OAUTH_BEARER_TEST}` },
+          disablePlaintextSecretCheck: true,
+        } as any),
+      ).rejects.toThrow(/\[use_oauth_login\]/);
+      expect(mockTempConnect).not.toHaveBeenCalled();
+    });
+
+    // CRED-01: already-${VAR} Bearer form passes through without secretStore.set.
+    it("CRED-01 — allows Authorization: Bearer \${HIGGSFIELD_TOKEN} without secretStore.set", async () => {
+      mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__higgsfield", [])));
+      const handlers = createMcpHandlers({
+        mcpClientManager: createMockManager(),
+        logger: makeLogger(),
+        secretStore: mockSecretStoreTest as any,
+      });
+      const result = await handlers["mcp.test"]({
+        name: "higgsfield",
+        transport: "http",
+        url: "https://api.higgsfield.ai/mcp",
+        headers: { Authorization: "Bearer ${HIGGSFIELD_TOKEN}" },
+      }) as any;
+      expect(result.success).toBe(true);
+      expect(mockSecretStoreTest.set).not.toHaveBeenCalled();
+    });
+
+    // CRED-05: static-secret header → secretStore.set called.
+    // RED: before GREEN patch, secretStore.set is never called.
+    it("CRED-05 — extracts X-Api-Key: sk-ant-… to secretStore.set", async () => {
+      mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__myserver", [])));
+      const handlers = createMcpHandlers({
+        mcpClientManager: createMockManager(),
+        logger: makeLogger(),
+        secretStore: mockSecretStoreTest as any,
+      });
+      await handlers["mcp.test"]({
+        name: "myserver",
+        transport: "http",
+        url: "https://api.example.com/mcp",
+        headers: { "X-Api-Key": STATIC_SECRET_TEST },
+      });
+      expect(mockSecretStoreTest.set).toHaveBeenCalledWith("MCP_MYSERVER_X_API_KEY", STATIC_SECRET_TEST);
+    });
+
+    // CRED-05 fail-safe: no secretStore + static-secret → throw [plaintext_secret_in_headers].
+    // RED: before GREEN patch, handler's inner try/catch wraps it → returns
+    // { success: false } instead of rejecting → rejects.toThrow fails.
+    it("CRED-05 — throws [plaintext_secret_in_headers] when secretStore is undefined", async () => {
+      const handlers = createMcpHandlers({
+        mcpClientManager: createMockManager(),
+        logger: makeLogger(),
+        // secretStore intentionally absent
+      });
+      await expect(
+        handlers["mcp.test"]({
+          name: "myserver",
+          transport: "http",
+          url: "https://api.example.com/mcp",
+          headers: { "X-Api-Key": STATIC_SECRET_TEST },
+        }),
+      ).rejects.toThrow(/\[plaintext_secret_in_headers\]/);
+      expect(mockTempConnect).not.toHaveBeenCalled();
+    });
+
+    // CRED-01 opt-out: disablePlaintextSecretCheck:true + static-secret → WARN, no throw.
+    it("CRED-01 — disablePlaintextSecretCheck:true + static-secret header emits WARN and allows", async () => {
+      mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__myserver", [])));
+      const logger = makeLogger();
+      const handlers = createMcpHandlers({
+        mcpClientManager: createMockManager(),
+        logger,
+        // secretStore absent — opt-out should WARN-and-allow
+      });
+      const result = await handlers["mcp.test"]({
+        name: "myserver",
+        transport: "http",
+        url: "https://api.example.com/mcp",
+        headers: { "X-Api-Key": STATIC_SECRET_TEST },
+        disablePlaintextSecretCheck: true,
+      } as any) as any;
+      expect(result.success).toBe(true);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ errorKind: "config" }),
+        expect.stringContaining("plaintext-secret check disabled"),
+      );
+    });
+  });
 });
 
 // ===========================================================================
