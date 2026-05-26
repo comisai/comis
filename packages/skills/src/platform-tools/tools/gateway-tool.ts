@@ -339,6 +339,29 @@ export function createGatewayTool(
               };
             }
 
+            // STORE-03: fail-early — check store availability before confirmation or rpcCall.
+            // Uses gateway.status (no rate limit) to inspect manifest.secrets.encrypted.
+            // Returns structured error immediately if the encrypted store is not configured,
+            // preventing both the confirmation dance and any write-rate-limit token consumption.
+            const statusResult = await rpcCall("gateway.status", { _trustLevel });
+            const secretsEncrypted =
+              typeof statusResult === "object" &&
+              statusResult !== null &&
+              typeof (statusResult as Record<string, unknown>).manifest === "object" &&
+              (statusResult as Record<string, unknown>).manifest !== null &&
+              (((statusResult as Record<string, unknown>).manifest as Record<string, unknown>).secrets as Record<string, unknown> | undefined)?.encrypted === true;
+            if (!secretsEncrypted) {
+              return {
+                error: "secrets_store_unavailable",
+                hint:
+                  "The encrypted secrets store is not configured on this daemon. " +
+                  "On first boot, the store is auto-generated — if this error persists, check that " +
+                  "COMIS_DISABLE_ENCRYPTED_SECRETS is not set and that ~/.comis/.env contains " +
+                  "SECRETS_MASTER_KEY. Restart the daemon after adding the key. " +
+                  "Until then, secrets can be set manually in ~/.comis/.env (envfile mode).",
+              };
+            }
+
             const gate = envSetGate(p);
             if (gate.requiresConfirmation) {
               return {

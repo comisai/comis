@@ -67,7 +67,12 @@ function createMockRpcCall() {
       return { restarted: true };
     }
     if (method === "gateway.status") {
-      return { status: "running", uptime: 3600, connections: 5 };
+      return {
+        status: "running",
+        uptime: 3600,
+        connections: 5,
+        manifest: { secrets: { encrypted: true } },
+      };
     }
     if (method === "config.history") {
       return {
@@ -527,7 +532,7 @@ describe("gateway tool", () => {
       expect(details.actionType).toBe("env.set");
       expect(details.hint).toContain("MY_KEY");
       expect(details.hint).toContain("_confirmed");
-      expect(rpcCall).not.toHaveBeenCalled();
+      expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
     });
 
     it("delegates to env.set RPC when confirmed", async () => {
@@ -553,9 +558,12 @@ describe("gateway tool", () => {
     });
 
     it("strips value from result even if RPC returns it", async () => {
-      const rpcCall = vi.fn(async () => ({
-        set: true, key: "MY_KEY", storage: "encrypted", value: "leaked-secret",
-      }));
+      const rpcCall = vi.fn(async (method: string) => {
+        if (method === "gateway.status") {
+          return { status: "running", uptime: 3600, connections: 5, manifest: { secrets: { encrypted: true } } };
+        }
+        return { set: true, key: "MY_KEY", storage: "encrypted", value: "leaked-secret" };
+      });
       const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-e3", {
