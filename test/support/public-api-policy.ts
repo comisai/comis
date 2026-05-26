@@ -814,7 +814,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "resolveSecretRef",
       "ResolveSecretRefDeps",
       "ResolveSecretRefOptions",
-      "SECRET_FIELD_PATTERN",
+      // Secret detection keystone (Phase 1) — primitives exported from
+      // core/security/secret-detection.ts. isSecretFieldName + scanForSecrets
+      // are used within core itself (relative imports) rather than via
+      // @comis/core, so no in-package-external consumer exists yet.
+      // classifyHeaderCredential + CredentialKind + HeaderCredentialClassification
+      // are Phase 3 (CRED) primitives — consumers land in Phase 3.
+      // SecretFinding is used only in core's own test files (excluded from scan).
+      "isSecretFieldName",
+      "scanForSecrets",
+      "SecretFinding",
+      "classifyHeaderCredential",
+      "CredentialKind",
+      "HeaderCredentialClassification",
       "scanConfigForSecrets",
       "scanEnvForSecrets",
       "AuditSeverity",
@@ -1471,14 +1483,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // AST walker excludes test/** so this is the canonical place to record
       // the planned consumer.
       "_resetConfigMutatedCoalescer",
-      // plaintext-secret heuristic helper re-exported so the
-      // architecture-tier negative + positive control table at
-      // test/architecture/mcp-plaintext-secret-false-positives.test.ts can
-      // assert the heuristic shape against real-world token samples
-      // without duplicating the prefix list. The public-export-consumers
-      // AST walker only scans packages/*/src/** (NOT test/), mirroring the
-      // precedent set by MCP_STDIO_BUILTIN_ENV_ALLOWLIST / scrubStdioEnv.
-      "looksLikePlaintextSecret",
       // Residency-test harness consumers (dynamic require).
       "createTracingLogger",
       "TracingLoggerOptions",
