@@ -77,7 +77,7 @@ export { createOpenaiEmbeddingsRoute } from "./openai/index.js";
 export { createResponsesRoute } from "./responses/index.js";
 
 // ACP server for IDE integration
-export { createAcpAgent } from "./acp/index.js";
+export { createAcpAgent, startAcpServer } from "./acp/index.js";
 export type { AcpServerDeps, AcpAgentHandle } from "./acp/index.js";
 
 // ACP activity/plan/approval bridges + local queue — the daemon composition

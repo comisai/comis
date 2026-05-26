@@ -30,13 +30,24 @@ import {
   type CancelNotification,
 } from "@agentclientprotocol/sdk";
 
-// WIRE-04 (§17.7): the orchestrator-facing activity stream port, injected at the
-// composition root. The ACP server registers an activity renderer through it on
-// session open. The full frame→`connection.sessionUpdate` bridge
-// (acp-activity-bridge.ts) is Phase 74 — this plan adds only the registration HOOK.
-import type { ActivityStreamPort } from "@comis/core";
+import type {
+  AcpActivityBridge,
+} from "./acp-activity-bridge.js";
+import type { AcpApprovalBridge } from "./acp-approval-bridge.js";
+
+// WIRE-04 (§17.7): the orchestrator-facing activity stream port + the read-only
+// SEP plan port + the agent event bus, all injected at the composition root.
+// startAcpServer (74-07) constructs the three ACP bridges from these seams.
+import type {
+  ActivityStreamPort,
+  ExecutionPlanPort,
+  TypedEventBus,
+} from "@comis/core";
 
 import { createAcpSessionMap, type AcpSessionMap } from "./acp-session-map.js";
+import { createAcpActivityBridge } from "./acp-activity-bridge.js";
+import { createAcpApprovalBridge } from "./acp-approval-bridge.js";
+import { createAcpPlanBridge } from "./acp-plan-bridge.js";
 
 /**
  * Dependency interface for the ACP server.
@@ -66,14 +77,31 @@ export interface AcpServerDeps {
 
   /**
    * Orchestrator-facing activity stream port (WIRE-04, §17.7), injected at the
-   * composition root. When present, an ACP activity renderer is registered
-   * through it on session open so the (Phase 74) bridge can translate activity
-   * frames into `connection.sessionUpdate({ sessionId, update })` calls. Phase 70
-   * wires only the registration HOOK — the full frame→SessionUpdate mapping
-   * (acp-activity-bridge.ts) and the per-session `AgentSideConnection` retain/drop
-   * (ACP-01) land in Phase 74. Optional — absent in non-activity ACP runs.
+   * composition root. When present, startAcpServer constructs the activity +
+   * approval bridges (ACP-02 / ACP-04) from it (their `subscribe(ctx)` is the
+   * per-turn live-IDE seam — see startAcpServer). Optional — absent in
+   * non-activity ACP runs.
    */
   activityStreamPort?: ActivityStreamPort;
+
+  /**
+   * Read-only SEP plan accessor (ACP-03). This is the `ExecutionPlanHolder`
+   * from `@comis/agent`, consumed here as a `@comis/core` `ExecutionPlanPort` —
+   * the gateway never imports `@comis/agent` (hexagonal boundary). When present
+   * (together with {@link eventBus}), startAcpServer constructs the plan bridge
+   * so the IDE's native plan panel is driven from SEP. Optional — absent in
+   * non-ACP-plan runs.
+   */
+  executionPlanPort?: ExecutionPlanPort;
+
+  /**
+   * Agent event bus for the ACP plan bridge (`sep:plan_extracted` +
+   * `tool:executed`). Injected by the composition root alongside
+   * {@link executionPlanPort}. When {@link executionPlanPort} is present but
+   * this is absent, startAcpServer logs a single WARN and skips the plan bridge
+   * (fail-safe: no frames rather than a raw leak — T-74-34). Optional.
+   */
+  eventBus?: TypedEventBus;
 }
 
 /**
@@ -115,6 +143,21 @@ export interface AcpAgentHandle {
    * the registry is emptied when the connection's `signal` aborts (close).
    */
   registerConnection(connection: AgentSideConnection): void;
+  /**
+   * Constructed-but-not-yet-subscribed activity + approval bridges (ACP-02 /
+   * ACP-04), present when {@link AcpServerDeps.activityStreamPort} was injected.
+   * startAcpServer builds them once per connection from that port + this
+   * handle's `getConnection`. Their `subscribe(ctx)` is the PER-TURN seam: it
+   * must be invoked from the ACP turn lifecycle once a `TurnActivityContext`
+   * exists. That per-turn invocation is the live-IDE rendering path covered by
+   * the `human_needed` verification item (74-VERIFICATION.md) — the
+   * construction (here) is what 74-07 wires and tests; no fabricated per-turn
+   * ctx is invented. Undefined when no activityStreamPort was injected.
+   */
+  bridges?: {
+    readonly activity: AcpActivityBridge;
+    readonly approval: AcpApprovalBridge;
+  };
 }
 
 /**
@@ -260,7 +303,28 @@ export function createAcpAgent(deps: AcpServerDeps): AcpAgentHandle {
     });
   }
 
-  return { agent, sessionMap, getConnection, registerConnection };
+  // ACP-02 / ACP-04: construct the activity + approval bridge FACTORIES once
+  // (when the redacted ActivityStreamPort is injected) from that port + this
+  // handle's getConnection. §19.6 M6: only the redacted port + getConnection
+  // cross into the bridges — no raw event source. Their per-turn `subscribe(ctx)`
+  // is invoked from the ACP turn lifecycle (the live-IDE seam, human_needed).
+  const bridges = deps.activityStreamPort
+    ? {
+        // logger omitted: the narrow AcpServerDeps.logger ({info,error,warn})
+        // is not a ComisLogger (no `.debug`); the bridges' DEBUG traces are
+        // optional, so the construction stays type-honest without a cast.
+        activity: createAcpActivityBridge({
+          activityStreamPort: deps.activityStreamPort,
+          getConnection,
+        }),
+        approval: createAcpApprovalBridge({
+          activityStreamPort: deps.activityStreamPort,
+          getConnection,
+        }),
+      }
+    : undefined;
+
+  return { agent, sessionMap, getConnection, registerConnection, bridges };
 }
 
 /**
@@ -300,10 +364,45 @@ export async function startAcpServer(deps: AcpServerDeps): Promise<void> {
   // after this point are keyed to it; the registry empties on signal abort.
   handle.registerConnection(connection);
 
+  // ACP-03: construct the plan bridge ONCE per connection when both the
+  // read-only ExecutionPlanPort and the event bus are injected. The bridge
+  // subscribes `sep:plan_extracted` + `tool:executed` on the bus and pushes a
+  // `{ sessionUpdate: "plan", entries }` frame through the connection resolved
+  // via handle.getConnection. §19.6 M6: ONLY the read-only port + getConnection
+  // cross into the bridge — no raw plan ref / unredacted source. T-74-34: if the
+  // port is present but the bus is absent, log a single WARN and skip (fail-safe
+  // no-frames rather than fail-open). The activity + approval bridges are
+  // constructed on the handle (handle.bridges) — their per-turn `subscribe(ctx)`
+  // is the live-IDE seam invoked from the ACP turn lifecycle (human_needed).
+  let unsubscribePlan: (() => void) | undefined;
+  if (deps.executionPlanPort) {
+    if (deps.eventBus) {
+      unsubscribePlan = createAcpPlanBridge({
+        eventBus: deps.eventBus,
+        executionPlanPort: deps.executionPlanPort,
+        getConnection: handle.getConnection,
+      });
+    } else {
+      deps.logger.warn(
+        {
+          submodule: "acp-server",
+          hint: "Inject AcpServerDeps.eventBus alongside executionPlanPort to enable the SEP plan bridge",
+          errorKind: "config" as const,
+        },
+        "ACP executionPlanPort present but eventBus absent — plan bridge skipped",
+      );
+    }
+  }
+
   deps.logger.info("ACP server started, awaiting IDE connection on stdio");
 
   // Wait for the connection to close (stdin ends or IDE disconnects)
   await connection.closed;
+
+  // Teardown symmetry (RESEARCH Pattern 3 / 74-06 NOTE step 4): detach the plan
+  // bridge's bus handlers so it stops re-emitting once the connection ends
+  // (T-74-32 — no frame written to a dead/wrong session after close).
+  unsubscribePlan?.();
 
   deps.logger.info("ACP server connection closed, shutting down");
 }
