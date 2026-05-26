@@ -28,6 +28,15 @@ export { wrapExternalContent, wrapWebContent, detectSuspiciousPatterns, EXTERNAL
 export type { ExternalContentSource, WrapExternalContentOptions } from "../security/index.js";
 export { createOutputGuard } from "../security/index.js";
 export { generateCanaryToken, detectCanaryLeakage } from "../security/index.js";
+// Signed interactive-approval callback primitive (APV-05 / SEC-06) — channels
+// MAY import this; the orchestrator's InteractiveCallbackRouter delegates here.
+export {
+  signCallbackData,
+  verifyCallbackData,
+  renderCallbackData,
+  parseCallbackData,
+} from "../security/index.js";
+export type { CallbackChoice, CallbackRenderError, ParsedCallback } from "../security/index.js";
 export { createSecretsCrypto, parseMasterKey } from "../security/index.js";
 export type { SecretsCrypto, EncryptedSecret } from "../security/index.js";
 export { matchesSecretPattern, isSecretAccessible } from "../security/index.js";

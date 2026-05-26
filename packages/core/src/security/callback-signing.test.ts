@@ -223,8 +223,14 @@ describe("callback-signing module purity (secret-leak guard)", () => {
     const { fileURLToPath } = await import("node:url");
     const here = fileURLToPath(new URL("./callback-signing.ts", import.meta.url));
     const src = readFileSync(here, "utf8");
-    expect(src).not.toMatch(/\bconsole\./);
-    expect(src).not.toMatch(/\blogger\b/);
-    expect(src).not.toMatch(/getLogger/);
+    // Strip comments first so prose ("imports no logger") never trips the
+    // checks — only real code references to a log sink are forbidden.
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
+    expect(code).not.toMatch(/\bconsole\s*\./);
+    expect(code).not.toMatch(/getLogger/);
+    expect(code).not.toMatch(/\blogger\b/); // no logger identifier in code
+    expect(code).not.toMatch(/@comis\/infra/);
   });
 });

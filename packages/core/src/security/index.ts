@@ -74,6 +74,15 @@ export type { MemoryWriteValidationResult } from "./memory-write-validator.js";
 // Canary tokens
 export { generateCanaryToken, detectCanaryLeakage } from "./canary-token.js";
 
+// Signed interactive-approval callbacks (APV-05 / SEC-06)
+export {
+  signCallbackData,
+  verifyCallbackData,
+  renderCallbackData,
+  parseCallbackData,
+} from "./callback-signing.js";
+export type { CallbackChoice, CallbackRenderError, ParsedCallback } from "./callback-signing.js";
+
 // Secret encryption engine
 export { createSecretsCrypto, parseMasterKey } from "./secret-crypto.js";
 export type { SecretsCrypto, EncryptedSecret } from "./secret-crypto.js";
