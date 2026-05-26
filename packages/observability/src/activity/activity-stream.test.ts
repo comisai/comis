@@ -21,6 +21,7 @@ import { describe, it, expect, vi } from "vitest";
 import { TypedEventBus, registerActivityLabelSpec, themeForName, type ComisLogger } from "@comis/core";
 import type { TurnActivityContext, ActivityEvent } from "@comis/core";
 import { createActivityStream } from "./activity-stream.js";
+import { compressLabel } from "./label-compressor.js";
 
 const TRACE = "trace-1";
 const AGENT = "agent-1";
@@ -527,5 +528,84 @@ describe("SEC-05 -- failure paths leak nothing", () => {
     // No `at <fn> file.ts:NN` stack-frame substring anywhere in the event.
     expect(JSON.stringify(failedEvent)).not.toMatch(/\bat .*\.(ts|js):\d+/);
     sub.unsubscribe();
+  });
+});
+
+describe("buildLabel compresses the post-redaction defaultLabel (UX-02 wiring)", () => {
+  /** Register a tool spec and emit a tool:started for it; return the produced event. */
+  function renderToolLabel(
+    toolName: string,
+    spec: Parameters<typeof registerActivityLabelSpec>[1],
+    params: Record<string, unknown> = {},
+    deps: { homeDir?: string } = {},
+  ): ActivityEvent {
+    registerActivityLabelSpec(toolName, spec);
+    const bus = new TypedEventBus();
+    const stream = createActivityStream({
+      eventBus: bus,
+      ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}),
+    });
+    const received: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
+    bus.emit("tool:started", {
+      toolName,
+      toolCallId: `tc-${toolName}`,
+      timestamp: 1,
+      action: "run",
+      params,
+      agentId: AGENT,
+      sessionKey: SESSION,
+      traceId: TRACE,
+    });
+    sub.unsubscribe();
+    expect(received).toHaveLength(1);
+    return received[0];
+  }
+
+  it("compresses an iso timestamp surfaced in a rendered tool label", () => {
+    // A static label carrying an ISO-8601 timestamp flows through applyTemplate
+    // (no params → no redaction change) then compressLabel → HH:MM:SS only.
+    const event = renderToolLabel("ux02_ts_tool", {
+      actions: { run: { label: "snapshot at 2025-05-22T18:42:00.123Z", detailKeys: [] } },
+    });
+    // RED on pre-patch buildLabel (no compressLabel call): the raw timestamp survives.
+    expect(event.defaultLabel).toBe("snapshot at 18:42:00");
+    expect(event.defaultLabel).not.toContain("T18:42:00");
+    expect(event.defaultLabel).not.toContain(".123Z");
+  });
+
+  it("leaves a redact-compacted path untouched in the rendered label", () => {
+    // Pitfall 2 / redact-then-compress order: redactValue compacts the absolute
+    // path ($HOME→~, last-2-segments) BEFORE compressLabel runs; the compressor
+    // must treat that as a fixed point and NOT re-trim it.
+    const event = renderToolLabel(
+      "ux02_path_tool",
+      { actions: { run: { label: "reading {path}", detailKeys: ["path"] } } },
+      { path: "/Users/me/comis/packages/observability/src/activity/activity-stream.ts" },
+      { homeDir: "/Users/me" },
+    );
+    // The rendered label is exactly redactValue's compaction — byte-identical,
+    // proving compressLabel runs AFTER redaction and does not double-compact.
+    expect(event.defaultLabel).toBe("reading ~activity/activity-stream.ts");
+    // And it is a fixed point of the compressor (no further shrink).
+    expect(compressLabel(event.defaultLabel ?? "")).toBe(event.defaultLabel);
+  });
+
+  it("rendered label is a fixed point of compressLabel (idempotent at the call site)", () => {
+    // A second compressor pass over the rendered label is a no-op — proves the
+    // wiring did not break the one-pass idempotency contract.
+    const event = renderToolLabel("ux02_idem_tool", {
+      actions: { run: { label: "fetched at 2025-05-22T18:42:00.123Z", detailKeys: [] } },
+    });
+    expect(compressLabel(event.defaultLabel ?? "")).toBe(event.defaultLabel);
+  });
+
+  it("leaves a plain semantic label byte-identical after wiring (no-op)", () => {
+    // A plain label (no URL/timestamp/long-mcp-name) is unchanged by the
+    // compressor — no regression for existing label tests/fixtures.
+    const event = renderToolLabel("ux02_plain_tool", {
+      actions: { run: { label: "reading file", detailKeys: [] } },
+    });
+    expect(event.defaultLabel).toBe("reading file");
   });
 });
