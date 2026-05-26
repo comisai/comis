@@ -348,19 +348,18 @@ export function createGatewayTool(
             // Wrap in try/catch: on error, fall through to the downstream env.set handler
             // (which has its own !deps.secretStore guard) rather than propagating a raw
             // admin-gate error to the agent as an opaque thrown failure.
-            let secretsStoreAvailable = false;
-            try {
-              const statusResult = await rpcCall("gateway.status", { _trustLevel });
-              secretsStoreAvailable =
-                typeof statusResult === "object" &&
-                statusResult !== null &&
-                (statusResult as Record<string, unknown>).secretsStoreAvailable === true;
-            } catch {
-              // Preflight inconclusive (e.g. non-admin trust level or transient RPC error).
-              // Fall through: the downstream env.set handler will surface the correct error.
-              secretsStoreAvailable = true; // optimistic — let the downstream guard decide
-            }
-            if (!secretsStoreAvailable) {
+            // W3: catch all preflight errors — gateway.status is admin-only and throws
+            // for non-admin callers. On error, fall through optimistically: the downstream
+            // env.set handler (!deps.secretStore guard) surfaces the correct structured error.
+            const preflight = await rpcCall("gateway.status", { _trustLevel })
+              .then((statusResult) => ({
+                available:
+                  typeof statusResult === "object" &&
+                  statusResult !== null &&
+                  (statusResult as Record<string, unknown>).secretsStoreAvailable === true,
+              }))
+              .catch(() => ({ available: true })); // inconclusive → let downstream decide
+            if (!preflight.available) {
               return {
                 error: "secrets_store_unavailable",
                 hint:
