@@ -317,8 +317,12 @@ export { TELEGRAM_THREAD_META_KEYS } from "./telegram/thread-context.js";
 // the zero-adapter terminus; the four EditPlace channels (Telegram/Discord/
 // Slack/WhatsApp, Phase 71-02/03/04) wrap createEditPlaceRenderer over a
 // per-channel render-actions adapter + injected TimerPort/ClockPort. The
-// DeleteAndRepost/AppendOnly/LinePerEvent/DigestOnly strategies wire their
-// adapters in a later phase. The EditPlace + Echo factories + the
+// DeleteAndRepost (Signal), AppendOnly (iMessage/LINE), LinePerEvent (IRC), and
+// DigestOnly (Email) factories wire their per-channel render-actions adapters
+// here too (Phase 72-01..04); buildActivityRenderers dispatches each from this
+// barrel (72-05), completing the §18.3 coverage matrix. Deps differ per
+// strategy: DeleteAndRepost takes {timer, clock}, LinePerEvent takes {clock},
+// and AppendOnly/DigestOnly take none. The EditPlace + Echo factories + the
 // createEditPlaceRenderer machine are re-exported here (71-05) so the daemon's
 // buildActivityRenderers can construct them from the @comis/channels barrel.
 export { createTestSink } from "./shared/strategies/test-sink.js";
@@ -329,3 +333,11 @@ export { createDiscordActivityRenderer } from "./discord/discord-activity.js";
 export { createSlackActivityRenderer } from "./slack/slack-activity.js";
 export { createWhatsAppActivityRenderer } from "./whatsapp/whatsapp-activity.js";
 export { createEchoActivityRenderer } from "./echo/echo-activity.js";
+// Non-EditPlace strategy factories (Phase 72-01..04) — wired by
+// buildActivityRenderers (72-05). DeleteAndRepost→Signal, AppendOnly→{iMessage,
+// LINE}, LinePerEvent→IRC, DigestOnly→Email.
+export { createSignalActivityRenderer } from "./signal/signal-activity.js";
+export { createIMessageActivityRenderer } from "./imessage/imessage-activity.js";
+export { createLineActivityRenderer } from "./line/line-activity.js";
+export { createIrcActivityRenderer } from "./irc/irc-activity.js";
+export { createEmailActivityRenderer } from "./email/email-activity.js";
