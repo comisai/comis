@@ -3540,12 +3540,19 @@ describe("spawn required_tools gate (SUBA-01)", () => {
 
   it("spawn with requiredTools=['mcp_manage'] and toolGroups=['coding'] throws RequiredToolsUnreachableError before runId", () => {
     // 'mcp_manage' is in the 'supervisor' profile only — not in 'coding'.
-    // Pre-patch: spawn() has no gate → spawn succeeds and creates a run → this test is RED.
+    // The daemon provides reachableToolNames (coding set); gate detects mcp_manage is absent.
     const runner = createSubAgentRunner(deps);
+    const codingSet = new Set(["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"]);
 
     let caughtErr: unknown;
     try {
-      runner.spawn({ task: "test", agentId: "default", toolGroups: ["coding"], requiredTools: ["mcp_manage"] });
+      runner.spawn({
+        task: "test",
+        agentId: "default",
+        toolGroups: ["coding"],
+        requiredTools: ["mcp_manage"],
+        reachableToolNames: codingSet,
+      });
     } catch (e) {
       caughtErr = e;
     }
@@ -3585,9 +3592,16 @@ describe("spawn required_tools gate (SUBA-01)", () => {
   });
 
   it("spawn with requiredTools=['read'] and toolGroups=['coding'] succeeds and returns runId", () => {
-    // 'read' is in SUB_AGENT_TOOL_PROFILES['coding'] → gate passes.
+    // 'read' is in the coding reachable set → gate passes.
     const runner = createSubAgentRunner(deps);
-    const runId = runner.spawn({ task: "test", agentId: "default", toolGroups: ["coding"], requiredTools: ["read"] });
+    const codingSet = new Set(["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"]);
+    const runId = runner.spawn({
+      task: "test",
+      agentId: "default",
+      toolGroups: ["coding"],
+      requiredTools: ["read"],
+      reachableToolNames: codingSet,
+    });
     expect(runId).toMatch(/^[0-9a-f-]{36}$/);
     expect(runner.listRuns(60)).toHaveLength(1);
   });

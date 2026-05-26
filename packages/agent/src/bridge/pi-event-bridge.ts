@@ -131,7 +131,9 @@ function classifyUnreachableTool(toolName: string, activeGroups: string[]): stri
     return `Tool '${toolName}' is denied to ALL sub-agents — the parent must perform this step.`;
   }
   const broader = toolReachableGroups(toolName).filter((p) => !activeGroups.includes(p));
-  const suggestion = broader.length > 0 ? broader.join("' | '") : "supervisor' or 'full";
+  // WR-05: when no profile contains the tool, suggest only 'full' — 'supervisor' does not
+  // contain generic tools like web_fetch/browser/sessions_spawn, so it would fail again.
+  const suggestion = broader.length > 0 ? broader.join("' | '") : "full";
   return (
     `Tool '${toolName}' is outside this sub-agent's profile. ` +
     `Re-spawn with tool_groups:['${suggestion}'].`
@@ -592,12 +594,20 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // SUBA-02: Enrich "Tool X not found" errors with delegation routing hints.
             // Only applied when activeToolGroups is provided (sub-agent context).
             // NOT_FOUND_RE is anchored (^…$) — only the exact SDK format triggers.
+            // WR-07: Skip enrichment for MCP-namespaced tools (mcp__<server>--<tool>) —
+            // MCP tool reachability is governed by subAgentMcpTools policy, not by tool
+            // profiles. Profile-widening hints are misleading for MCP tools. Preserve the
+            // MCP-classified errorKind (dependency/timeout) rather than overwriting with "validation".
             if (errorText && deps.activeToolGroups && deps.activeToolGroups.length > 0) {
               const notFoundMatch = NOT_FOUND_RE.exec(errorText);
               if (notFoundMatch) {
                 const missingTool = notFoundMatch[1]!;
-                errorText = classifyUnreachableTool(missingTool, deps.activeToolGroups);
-                toolErrorKind = "validation";
+                if (extractMcpServerName(missingTool) === undefined) {
+                  // Non-MCP tool: enrich with profile-widening hint
+                  errorText = classifyUnreachableTool(missingTool, deps.activeToolGroups);
+                  toolErrorKind = "validation";
+                }
+                // MCP tool: leave errorText + classified MCP errorKind intact
               }
             }
 

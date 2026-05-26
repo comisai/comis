@@ -1433,7 +1433,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // gate — same Plan 05-03 consumer. SUB_AGENT_TOOL_DENYLIST /
       // toolReachableGroups have live in-repo consumers (daemon + agent
       // pi-event-bridge) and are NOT policy-listed.
+      // SUBA-04 (Plan 05-04): SUB_AGENT_TOOL_GROUPS mirrors TOOL_GROUPS for gate
+      // expansion (WR-02 fix); consumed by drift-guard test (excluded from scan)
+      // and by computeReachableToolNames. computeReachableToolNames has a live
+      // consumer in session-mutate.ts but the AST walker may miss daemon imports
+      // that go through indirect re-exports — policy-listed for safety.
       "SUB_AGENT_TOOL_PROFILES",
+      "SUB_AGENT_TOOL_GROUPS",
+      "computeReachableToolNames",
       "RequiredToolsUnreachableError",
       "UnreachableToolEntry",
     ])],

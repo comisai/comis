@@ -73,8 +73,10 @@ export {
   // Sub-agent tool governance
   SUB_AGENT_TOOL_DENYLIST,
   SUB_AGENT_TOOL_PROFILES,
+  SUB_AGENT_TOOL_GROUPS,
   RequiredToolsUnreachableError,
   toolReachableGroups,
+  computeReachableToolNames,
 } from "../domain/index.js";
 
 export { BackgroundTaskOriginSchema } from "../domain/background-task-origin.js";

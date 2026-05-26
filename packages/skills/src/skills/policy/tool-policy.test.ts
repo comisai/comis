@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { applyToolPolicy, TOOL_PROFILES, TOOL_GROUPS, expandGroups } from "./tool-policy.js";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ToolFilterReason, ToolPolicyResult } from "./tool-policy.js";
-import { SUB_AGENT_TOOL_DENYLIST, SUB_AGENT_TOOL_PROFILES } from "@comis/core";
+import { SUB_AGENT_TOOL_DENYLIST, SUB_AGENT_TOOL_PROFILES, SUB_AGENT_TOOL_GROUPS } from "@comis/core";
 
 /** Create a minimal mock tool with the given name. */
 function mockTool(name: string): AgentTool<any> {
@@ -646,13 +646,13 @@ describe("SUB_AGENT_TOOL_PROFILES drift-guard", () => {
   });
 
   it("WR-03: SUB_AGENT_TOOL_GROUPS in @comis/core mirrors TOOL_GROUPS from @comis/skills (no drift)", () => {
-    // SUB_AGENT_TOOL_GROUPS is added in core to support gate TOOL_GROUPS expansion (WR-02).
-    // Import it dynamically to verify the export exists (RED: not yet exported).
-    const { SUB_AGENT_TOOL_GROUPS } = require("@comis/core") as { SUB_AGENT_TOOL_GROUPS?: Record<string, ReadonlyArray<string>> };
+    // SUB_AGENT_TOOL_GROUPS is exported from @comis/core (added for WR-02 gate TOOL_GROUPS expansion).
+    // Assert the import is defined (not undefined/empty).
     expect(SUB_AGENT_TOOL_GROUPS, "SUB_AGENT_TOOL_GROUPS must be exported from @comis/core").toBeDefined();
+    expect(Object.keys(SUB_AGENT_TOOL_GROUPS).length).toBeGreaterThan(0);
 
-    // Every key/value in SUB_AGENT_TOOL_GROUPS must match TOOL_GROUPS exactly
-    for (const [groupKey, coreTools] of Object.entries(SUB_AGENT_TOOL_GROUPS!)) {
+    // Every key/value in SUB_AGENT_TOOL_GROUPS must match TOOL_GROUPS exactly (bidirectional)
+    for (const [groupKey, coreTools] of Object.entries(SUB_AGENT_TOOL_GROUPS)) {
       const canonicalTools = TOOL_GROUPS[groupKey];
       expect(
         canonicalTools,
@@ -667,7 +667,7 @@ describe("SUB_AGENT_TOOL_PROFILES drift-guard", () => {
     // Every TOOL_GROUPS key must exist in SUB_AGENT_TOOL_GROUPS
     for (const groupKey of Object.keys(TOOL_GROUPS)) {
       expect(
-        Object.keys(SUB_AGENT_TOOL_GROUPS!),
+        Object.keys(SUB_AGENT_TOOL_GROUPS),
         `TOOL_GROUPS['${groupKey}'] exists in skills but not in SUB_AGENT_TOOL_GROUPS — update core`,
       ).toContain(groupKey);
     }
