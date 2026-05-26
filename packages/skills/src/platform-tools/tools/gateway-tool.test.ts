@@ -978,4 +978,72 @@ describe("gateway tool", () => {
       expect(msg).not.toContain("Required fields for");
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // STORE-03: env_set store-unavailable pre-flight tests
+  // ---------------------------------------------------------------------------
+  function createUnavailableStoreMockRpcCall() {
+    return vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (method === "gateway.status") {
+        // Store unavailable: manifest.secrets.encrypted === false
+        return {
+          status: "running",
+          uptime: 3600,
+          connections: 0,
+          manifest: { secrets: { encrypted: false } },
+        };
+      }
+      // env.set should never be reached — but return a value if it is (for diagnostics)
+      if (method === "env.set") {
+        return { set: true, key: params.key, storage: "envfile" };
+      }
+      return { stub: true, method, params };
+    });
+  }
+
+  describe("env_set store-unavailable pre-flight (STORE-03)", () => {
+    it("returns secrets_store_unavailable error before confirmation when encrypted store is unavailable", async () => {
+      const rpcCall = createUnavailableStoreMockRpcCall();
+      const tool = createGatewayTool(rpcCall, mockLogger);
+
+      const result = await tool.execute("call-store-01", {
+        action: "env_set" as "read",
+        env_key: "MY_SECRET",
+        env_value: "secret-value-here",
+        _confirmed: true,
+      } as any);
+
+      const details = result.details as Record<string, unknown>;
+      // Pre-patch: this assertion FAILS (error is not "secrets_store_unavailable")
+      expect(details.error).toBe("secrets_store_unavailable");
+      expect(typeof details.hint).toBe("string");
+      expect(String(details.hint).length).toBeGreaterThan(20);
+      // env.set RPC must NOT have been called (no rate-limit consumed)
+      expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
+    });
+
+    it("does not consume write rate-limit on repeated env_set calls when store is unavailable", async () => {
+      const rpcCall = createUnavailableStoreMockRpcCall();
+      const tool = createGatewayTool(rpcCall, mockLogger);
+
+      const call1 = await tool.execute("call-store-02a", {
+        action: "env_set" as "read",
+        env_key: "KEY_A",
+        env_value: "value-a",
+        _confirmed: true,
+      } as any);
+      const call2 = await tool.execute("call-store-02b", {
+        action: "env_set" as "read",
+        env_key: "KEY_B",
+        env_value: "value-b",
+        _confirmed: true,
+      } as any);
+
+      // Both calls must return secrets_store_unavailable (no rate-limit exhaustion)
+      expect((call1.details as Record<string, unknown>).error).toBe("secrets_store_unavailable");
+      expect((call2.details as Record<string, unknown>).error).toBe("secrets_store_unavailable");
+      // env.set must never have been called
+      expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
+    });
+  });
 });
