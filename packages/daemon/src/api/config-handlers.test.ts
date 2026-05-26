@@ -2545,7 +2545,7 @@ describe("CRED-04 config.read never echoes MCP server headers credentials", () =
     // The operator uses secrets_manage to list variable names — config.read need not reveal them.
     // Regression guard: removing redactForDisplay from config-read.ts:64 would flip this RED.
     const deps = makeDepsWithMcpHeaders({
-      Authorization: "Bearer ${MCP_MYSERVER_AUTHORIZATION}",
+      Authorization: "Bearer ${MCP_MYSERVER__AUTHORIZATION}",
     });
     const handlers = createConfigHandlers(deps);
 

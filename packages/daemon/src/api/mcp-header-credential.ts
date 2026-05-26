@@ -13,7 +13,10 @@
  * Called from mcp.connect + mcp.test BEFORE contract parse so the mutated
  * headers map (with ${VAR} refs) is what flows into buildPersistedMcpEntry
  * and McpServerConfig. The input `headers` object is MUTATED in place so
- * the caller's pre-parse `userParams` copy sees the rewritten values.
+ * the caller's pre-parse `userParams` copy sees the rewritten ${VAR} values
+ * (for persistence). The returned `resolvedHeaders` map carries the original
+ * RAW values so the immediate live connect uses the real credential — not the
+ * unresolved `${VAR}` literal (WR-01 fix).
  *
  * When `plaintextOptOut` is true, oauth-bearer still throws unconditionally
  * (the token will expire; the PKCE flow is the correct answer), but
@@ -27,20 +30,34 @@ import type { SecretStorePort, ComisLogger } from "@comis/core";
 
 /**
  * Derive a `${VAR}` variable name from a server id + header name.
- * Pattern: `MCP_<SERVERID_UPPER>_<HEADERNAME_UPPER_SLUG>`
- * Non-alphanumeric chars → `_`; leading/trailing `_` stripped; upper-cased.
+ *
+ * Pattern: `MCP_<SERVERID_UPPER>__<HEADERNAME_UPPER_SLUG>`
+ *
+ * The DOUBLE-UNDERSCORE `__` separator prevents collisions between server
+ * and header segments (WR-02 fix). With a single `_` separator,
+ * ("foo-bar", "Key") and ("foo", "Bar-Key") both collapse to `MCP_FOO_BAR_KEY`.
+ * The double underscore guarantees distinctness because neither segment ever
+ * contains `__` after slugification (slugify replaces any non-[A-Z0-9] run
+ * with a single `_`).
+ *
+ * Non-empty sentinels ("SERVER" / "HEADER") guard against all-symbol inputs
+ * that would otherwise produce empty segments.
  *
  * Examples:
- *   buildVarName("higgsfield", "Authorization") → "MCP_HIGGSFIELD_AUTHORIZATION"
- *   buildVarName("context7", "X-Api-Key")       → "MCP_CONTEXT7_X_API_KEY"
+ *   buildVarName("higgsfield", "Authorization") → "MCP_HIGGSFIELD__AUTHORIZATION"
+ *   buildVarName("context7", "X-Api-Key")       → "MCP_CONTEXT7__X_API_KEY"
+ *   buildVarName("foo-bar", "Key")              → "MCP_FOO_BAR__KEY"  (distinct from...)
+ *   buildVarName("foo", "Bar-Key")              → "MCP_FOO__BAR_KEY"  (...this one)
  */
 export function buildVarName(serverId: string, headerName: string): string {
-  const slugify = (s: string) =>
+  const slug = (s: string) =>
     s
       .toUpperCase()
-      .replace(/[^A-Z0-9]/g, "_")
+      .replace(/[^A-Z0-9]+/g, "_")
       .replace(/^_+|_+$/g, "");
-  return `MCP_${slugify(serverId)}_${slugify(headerName)}`;
+  const s = slug(serverId) || "SERVER";
+  const h = slug(headerName) || "HEADER";
+  return `MCP_${s}__${h}`;
 }
 
 /**
@@ -62,6 +79,29 @@ export interface ProcessHeaderCredentialsOpts {
 }
 
 /**
+ * Result of {@link processHeaderCredentials}.
+ *
+ * `resolvedHeaders` carries the original RAW values for extracted static-secret
+ * headers (and the unchanged value for ref/oauth/optout headers). Pass this map
+ * to the live `manager.connect` so the immediate connection uses the actual
+ * credential — not the `${VAR}` literal that is only resolved after daemon restart
+ * (WR-01 fix).
+ *
+ * The input `headers` map is mutated in place to hold `${VAR}` refs for
+ * persistence / buildPersistedMcpEntry / config.yaml — plaintext never persisted.
+ */
+export interface ProcessHeaderCredentialsResult {
+  /**
+   * Headers with RESOLVED (raw) values for the live in-memory connect.
+   * Static-secret entries carry the original raw value (e.g. "sk-ant-…").
+   * Ref entries carry the original `${VAR}` string (already resolved at load
+   * time by the config loader; we cannot substitute it here without the store).
+   * plaintextOptOut entries carry the original raw value (passed through).
+   */
+  resolvedHeaders: Record<string, string>;
+}
+
+/**
  * Process all headers in `headers` map in place.
  *
  * For each header:
@@ -72,10 +112,19 @@ export interface ProcessHeaderCredentialsOpts {
  *   - "static-secret" + secretStore undefined + !plaintextOptOut → throw [plaintext_secret_in_headers]
  *   - "static-secret" + plaintextOptOut → WARN, pass through (operator bears risk)
  *
+ * Returns `{ resolvedHeaders }` — a map of header values for the LIVE connect,
+ * where extracted static-secret entries carry the original raw value (not the
+ * `${VAR}` ref written into `headers`). This ensures the immediate connect uses
+ * the real credential rather than an unresolved `${VAR}` literal (WR-01 fix).
+ *
  * @throws Error with [use_oauth_login] or [plaintext_secret_in_headers] marker
  */
-export function processHeaderCredentials(opts: ProcessHeaderCredentialsOpts): void {
+export function processHeaderCredentials(opts: ProcessHeaderCredentialsOpts): ProcessHeaderCredentialsResult {
   const { headers, serverName, secretStore, plaintextOptOut, logger, method } = opts;
+
+  // resolvedHeaders starts as a copy of the input; we update it below
+  // where a static-secret extraction would otherwise set ${VAR}.
+  const resolvedHeaders: Record<string, string> = { ...headers };
 
   for (const [headerName, headerValue] of Object.entries(headers)) {
     if (typeof headerValue !== "string") continue;
@@ -84,6 +133,7 @@ export function processHeaderCredentials(opts: ProcessHeaderCredentialsOpts): vo
 
     if (kind === "ref") {
       // Already ${VAR}-form — pass through, no extraction needed.
+      // resolvedHeaders already has the ${VAR} value (copied above).
       continue;
     }
 
@@ -109,6 +159,7 @@ export function processHeaderCredentials(opts: ProcessHeaderCredentialsOpts): vo
         },
         "MCP headers plaintext-secret check disabled per-server",
       );
+      // resolvedHeaders already has the raw value (copied above).
       continue;
     }
 
@@ -123,6 +174,8 @@ export function processHeaderCredentials(opts: ProcessHeaderCredentialsOpts): vo
     }
 
     // Extract: derive var name, call secretStore.set, rewrite header value.
+    // resolvedHeaders keeps the raw value (for the live connect).
+    // headers[headerName] is rewritten to ${VAR} (for persistence/config.yaml).
     const varName = buildVarName(serverName, headerName);
     const result = secretStore.set(varName, headerValue);
     if (!result.ok) {
@@ -132,9 +185,13 @@ export function processHeaderCredentials(opts: ProcessHeaderCredentialsOpts): vo
         `Hint: fix the secret store, then retry.`,
       );
     }
-    // Rewrite the header value in place to the ${VAR} reference.
+    // Rewrite the header value in place to the ${VAR} reference (for persistence).
+    // resolvedHeaders already holds the raw value from the initial copy above.
     // static-secret means NO Bearer scheme in the raw value (classifyHeaderCredential
     // returns "oauth-bearer" for Bearer+secret; "static-secret" is bare value only).
     headers[headerName] = `\${${varName}}`;
+    // resolvedHeaders[headerName] stays as the original raw value (already set above).
   }
+
+  return { resolvedHeaders };
 }

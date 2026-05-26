@@ -2443,10 +2443,12 @@ describe("MCP RPC Handlers", () => {
         url: "https://api.example.com/mcp",
         headers: { "X-Api-Key": STATIC_SECRET_CONNECT },
       });
-      expect(mockSecretStoreConnect.set).toHaveBeenCalledWith("MCP_MYSERVER_X_API_KEY", STATIC_SECRET_CONNECT);
+      expect(mockSecretStoreConnect.set).toHaveBeenCalledWith("MCP_MYSERVER__X_API_KEY", STATIC_SECRET_CONNECT);
+      // WR-01: manager.connect must receive the RAW value (the actual credential),
+      // not the ${VAR} literal that would cause auth failure on the immediate connect.
       expect(manager.connect).toHaveBeenCalledWith(
         expect.objectContaining({
-          headers: { "X-Api-Key": "${MCP_MYSERVER_X_API_KEY}" },
+          headers: { "X-Api-Key": STATIC_SECRET_CONNECT },
         }),
       );
     });
@@ -2598,7 +2600,7 @@ describe("MCP RPC Handlers", () => {
         url: "https://api.example.com/mcp",
         headers: { "X-Api-Key": STATIC_SECRET_TEST },
       });
-      expect(mockSecretStoreTest.set).toHaveBeenCalledWith("MCP_MYSERVER_X_API_KEY", STATIC_SECRET_TEST);
+      expect(mockSecretStoreTest.set).toHaveBeenCalledWith("MCP_MYSERVER__X_API_KEY", STATIC_SECRET_TEST);
     });
 
     // CRED-05 fail-safe: no secretStore + static-secret → throw [plaintext_secret_in_headers].

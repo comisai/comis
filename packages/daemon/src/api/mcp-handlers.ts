@@ -203,10 +203,14 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // Headers credential firewall (CRED-01/05/06). Runs AFTER the env-scan
       // block and BEFORE the Zod parse so the mutated ${VAR} refs flow through
       // McpConnectContract.request.parse and into buildPersistedMcpEntry.
-      // processHeaderCredentials mutates the headers map in place.
+      // processHeaderCredentials mutates the headers map in place (${VAR} refs
+      // for persistence) and returns resolvedHeaders with RAW values for the
+      // immediate live connect (WR-01 fix — the ${VAR} literal is not yet
+      // resolved in the in-memory SecretManager which is a frozen boot snapshot).
       const headersBlock = userParams.headers as Record<string, string> | undefined;
+      let resolvedConnectHeaders: Record<string, string> | undefined;
       if (headersBlock) {
-        processHeaderCredentials({
+        const credResult = processHeaderCredentials({
           headers: headersBlock,
           serverName: userParams.server_name as string,
           secretStore: deps.secretStore,
@@ -214,6 +218,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           logger: deps.logger,
           method: "mcp.connect",
         });
+        resolvedConnectHeaders = credResult.resolvedHeaders;
       }
 
       const params = McpConnectContract.request.parse(userParams);
@@ -255,7 +260,14 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         args: params.args,
         url: params.url,
         env: params.env,
-        headers: params.headers,
+        // WR-01: use resolvedConnectHeaders (raw values) for the live connect so the
+        // immediate connection uses the actual credential, not the unresolved ${VAR}
+        // literal that processHeaderCredentials wrote into params.headers for config
+        // persistence. The in-memory SecretManager is a frozen boot snapshot that
+        // secretStore.set does NOT update — ${VAR} refs in headers are only resolved
+        // after the NEXT daemon restart. resolvedConnectHeaders carries the raw values
+        // that were just extracted (already in hand) so the connect succeeds immediately.
+        headers: resolvedConnectHeaders ?? params.headers,
         enabled: true,
         safetyAllowedEnvKeys: mcpConfigRoot?.safetyAllowedEnvKeys,
         osvCheckEnabled: mcpConfigRoot?.osvCheckEnabled,
@@ -467,9 +479,13 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // These throws propagate directly (outside the inner try/catch that wraps
       // tempManager.connect) so the caller sees a proper RPC error, not a
       // success:false response.
+      // WR-01 fix applied here too: resolvedTestHeaders carries raw values for
+      // the live connect, headersBlockTest gets ${VAR} refs (not persisted but
+      // consistent with the extraction flow).
       const headersBlockTest = userParams.headers as Record<string, string> | undefined;
+      let resolvedTestHeaders: Record<string, string> | undefined;
       if (headersBlockTest) {
-        processHeaderCredentials({
+        const credResult = processHeaderCredentials({
           headers: headersBlockTest,
           serverName: userParams.name as string,
           secretStore: deps.secretStore,
@@ -477,6 +493,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           logger: deps.logger,
           method: "mcp.test",
         });
+        resolvedTestHeaders = credResult.resolvedHeaders;
       }
 
       const params = McpTestContract.request.parse(userParams);
@@ -511,7 +528,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         args: params.args,
         url: params.url,
         env: params.env,
-        headers: params.headers,
+        // WR-01: use resolvedTestHeaders (raw values) for the live test connect
+        // so the probe uses the actual credential (same rationale as mcp.connect).
+        headers: resolvedTestHeaders ?? params.headers,
         enabled: true,
         // Plumb the same protections as mcp.connect.
         safetyAllowedEnvKeys: mcpConfigRoot?.safetyAllowedEnvKeys,

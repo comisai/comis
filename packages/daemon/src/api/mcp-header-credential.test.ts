@@ -13,9 +13,11 @@ function makeSecretStore(
 ): SecretStorePort {
   return {
     set: vi.fn().mockReturnValue(ok(undefined)),
-    get: vi.fn().mockReturnValue(ok(undefined)),
-    delete: vi.fn().mockReturnValue(ok(undefined)),
+    getDecrypted: vi.fn().mockReturnValue(ok(undefined)),
+    decryptAll: vi.fn().mockReturnValue(ok(new Map())),
+    delete: vi.fn().mockReturnValue(ok(false)),
     list: vi.fn().mockReturnValue(ok([])),
+    close: vi.fn(),
     ...overrides,
   } as unknown as SecretStorePort;
 }
@@ -37,20 +39,40 @@ function makeLogger(): ComisLogger {
 // ---------------------------------------------------------------------------
 
 describe("buildVarName", () => {
-  it("upper-cases server id and header name into MCP_<SERVER>_<HEADER> pattern", () => {
-    expect(buildVarName("higgsfield", "Authorization")).toBe("MCP_HIGGSFIELD_AUTHORIZATION");
+  it("upper-cases server id and header name into MCP_<SERVER>__<HEADER> pattern (double-underscore separator)", () => {
+    expect(buildVarName("higgsfield", "Authorization")).toBe("MCP_HIGGSFIELD__AUTHORIZATION");
   });
 
-  it("replaces hyphens in header name with underscores", () => {
-    expect(buildVarName("context7", "X-Api-Key")).toBe("MCP_CONTEXT7_X_API_KEY");
+  it("replaces hyphens in header name with underscores within each segment", () => {
+    expect(buildVarName("context7", "X-Api-Key")).toBe("MCP_CONTEXT7__X_API_KEY");
   });
 
-  it("strips leading and trailing underscores after slugification", () => {
-    expect(buildVarName("my-server", "-X-Custom-")).toBe("MCP_MY_SERVER_X_CUSTOM");
+  it("strips leading and trailing underscores from each segment after slugification", () => {
+    expect(buildVarName("my-server", "-X-Custom-")).toBe("MCP_MY_SERVER__X_CUSTOM");
   });
 
   it("handles server names with hyphens and numbers", () => {
-    expect(buildVarName("my-mcp-1", "x-auth-token")).toBe("MCP_MY_MCP_1_X_AUTH_TOKEN");
+    expect(buildVarName("my-mcp-1", "x-auth-token")).toBe("MCP_MY_MCP_1__X_AUTH_TOKEN");
+  });
+
+  // WR-02: collision tests — distinct (serverId, headerName) pairs must produce distinct VARs.
+  it("WR-02: buildVarName('foo-bar', 'Key') and buildVarName('foo', 'Bar-Key') produce DIFFERENT var names (no silent collision)", () => {
+    const v1 = buildVarName("foo-bar", "Key");
+    const v2 = buildVarName("foo", "Bar-Key");
+    // With double-underscore separator: v1 = MCP_FOO_BAR__KEY, v2 = MCP_FOO__BAR_KEY — distinct.
+    expect(v1).not.toBe(v2);
+  });
+
+  it("WR-02: degenerate all-symbol server id falls back to 'SERVER' sentinel (no empty segment)", () => {
+    const v = buildVarName("@@@", "Key");
+    // Should be MCP_SERVER__KEY (sentinel), not MCP__KEY (empty server slug).
+    expect(v).toBe("MCP_SERVER__KEY");
+  });
+
+  it("WR-02: degenerate all-symbol header name falls back to 'HEADER' sentinel (no empty segment)", () => {
+    const v = buildVarName("srv", "---");
+    // Should be MCP_SRV__HEADER (sentinel), not MCP_SRV_ (empty header slug with trailing underscore).
+    expect(v).toBe("MCP_SRV__HEADER");
   });
 });
 
@@ -168,7 +190,7 @@ describe("processHeaderCredentials — oauth-bearer unconditional refusal", () =
 // ---------------------------------------------------------------------------
 
 describe("processHeaderCredentials — static-secret extraction", () => {
-  it("calls secretStore.set and rewrites header to ${VAR} form", () => {
+  it("calls secretStore.set and rewrites header to ${VAR} form (double-underscore separator)", () => {
     const secretStore = makeSecretStore();
     const headers: Record<string, string> = {
       "X-Api-Key": "sk-ant-abc123defghijklmnopqrstuvwxyz",
@@ -182,10 +204,10 @@ describe("processHeaderCredentials — static-secret extraction", () => {
       method: "mcp.connect",
     });
     expect(secretStore.set).toHaveBeenCalledWith(
-      "MCP_CONTEXT7_X_API_KEY",
+      "MCP_CONTEXT7__X_API_KEY",
       "sk-ant-abc123defghijklmnopqrstuvwxyz",
     );
-    expect(headers["X-Api-Key"]).toBe("${MCP_CONTEXT7_X_API_KEY}");
+    expect(headers["X-Api-Key"]).toBe("${MCP_CONTEXT7__X_API_KEY}");
   });
 
   it("uses buildVarName scheme for Authorization header", () => {
@@ -202,10 +224,10 @@ describe("processHeaderCredentials — static-secret extraction", () => {
       method: "mcp.test",
     });
     expect(secretStore.set).toHaveBeenCalledWith(
-      "MCP_HIGGSFIELD_AUTHORIZATION",
+      "MCP_HIGGSFIELD__AUTHORIZATION",
       "sk-ant-abc123defghijklmnopqrstuvwxyz",
     );
-    expect(headers["Authorization"]).toBe("${MCP_HIGGSFIELD_AUTHORIZATION}");
+    expect(headers["Authorization"]).toBe("${MCP_HIGGSFIELD__AUTHORIZATION}");
   });
 
   it("throws [plaintext_secret_in_headers] when secretStore is undefined and plaintextOptOut is false", () => {
@@ -329,7 +351,7 @@ describe("processHeaderCredentials — idempotency", () => {
   it("passes through ${VAR}-rewritten headers without re-extracting on a second call", () => {
     const secretStore = makeSecretStore();
     const headers: Record<string, string> = {
-      "X-Api-Key": "${MCP_SRV_X_API_KEY}",
+      "X-Api-Key": "${MCP_SRV__X_API_KEY}",
     };
     processHeaderCredentials({
       headers,
@@ -341,6 +363,72 @@ describe("processHeaderCredentials — idempotency", () => {
     });
     // No extraction on already-ref form
     expect(secretStore.set).not.toHaveBeenCalled();
-    expect(headers["X-Api-Key"]).toBe("${MCP_SRV_X_API_KEY}");
+    expect(headers["X-Api-Key"]).toBe("${MCP_SRV__X_API_KEY}");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-01: processHeaderCredentials — resolvedHeaders for immediate connect
+// ---------------------------------------------------------------------------
+// RED proof: processHeaderCredentials currently returns void (no resolvedHeaders).
+// These tests require the function to return { resolvedHeaders } — a new return
+// type — which would not compile on pre-patch code. Combined RED+GREEN commit
+// per AGENTS.md §2.10 (test would not compile against pre-patch code).
+
+describe("processHeaderCredentials — resolvedHeaders for immediate connect (WR-01)", () => {
+  it("WR-01: returns resolvedHeaders with the RAW secret value (not ${VAR} string) for the live connect", () => {
+    const rawValue = "sk-ant-abc123defghijklmnopqrstuvwxyz";
+    const secretStore = makeSecretStore();
+    const headers: Record<string, string> = {
+      "X-Api-Key": rawValue,
+    };
+    const result = processHeaderCredentials({
+      headers,
+      serverName: "context7",
+      secretStore,
+      plaintextOptOut: false,
+      logger: makeLogger(),
+      method: "mcp.connect",
+    });
+    // resolvedHeaders must carry the RAW value so the immediate connect uses the real credential
+    expect(result.resolvedHeaders["X-Api-Key"]).toBe(rawValue);
+    // The input headers map must still hold the ${VAR} form (for persistence)
+    expect(headers["X-Api-Key"]).toBe("${MCP_CONTEXT7__X_API_KEY}");
+  });
+
+  it("WR-01: resolvedHeaders for a ref header passes through the ${VAR} string unchanged", () => {
+    const secretStore = makeSecretStore();
+    const headers: Record<string, string> = {
+      Authorization: "Bearer ${MY_TOKEN}",
+    };
+    const result = processHeaderCredentials({
+      headers,
+      serverName: "srv",
+      secretStore,
+      plaintextOptOut: false,
+      logger: makeLogger(),
+      method: "mcp.connect",
+    });
+    // A ref form passes through — resolvedHeaders is identical to the input
+    expect(result.resolvedHeaders["Authorization"]).toBe("Bearer ${MY_TOKEN}");
+  });
+
+  it("WR-01: resolvedHeaders for a plaintextOptOut header passes through the original value", () => {
+    const secretStore = makeSecretStore();
+    const rawValue = "sk-ant-abc123defghijklmnopqrstuvwxyz";
+    const headers: Record<string, string> = {
+      "X-Api-Key": rawValue,
+    };
+    const result = processHeaderCredentials({
+      headers,
+      serverName: "opt-out-srv",
+      secretStore,
+      plaintextOptOut: true,
+      logger: makeLogger(),
+      method: "mcp.connect",
+    });
+    // plaintextOptOut: header left unchanged in both maps
+    expect(result.resolvedHeaders["X-Api-Key"]).toBe(rawValue);
+    expect(headers["X-Api-Key"]).toBe(rawValue);
   });
 });
