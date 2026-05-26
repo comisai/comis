@@ -254,6 +254,12 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       // agent/provider handlers above. When undefined the validator becomes
       // a no-op.
       secretManager: deps.container?.secretManager,
+      // Threaded for static-secret header extraction (CRED-05). ApiDispatchDeps
+      // already carries secretStore (from AuthApiDeps) which is populated from
+      // c.secretStore at daemon.ts:1071. When undefined the extraction
+      // fails-safe (throws [plaintext_secret_in_headers]) rather than
+      // persisting plaintext.
+      secretStore: deps.secretStore,
       // Thread persistDeps so mcp.connect/disconnect can route through
       // persistToConfig. Mirrors the heartbeat-handlers wiring at
       // :280-290. When deps.container is missing (test harnesses) persist
