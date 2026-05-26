@@ -68,6 +68,10 @@ import { looksLikeSecretValue } from "@comis/core";
 // Persisted-entry construction extracted (single source of
 // truth for the config-only field set; see mcp-persisted-entry.ts docblock).
 import { buildPersistedMcpEntry } from "./mcp-persisted-entry.js";
+// Header-credential firewall (CRED-01/05/06): classifies and processes each
+// (headerName, headerValue) pair before the Zod contract parse. Called in both
+// mcp.connect and mcp.test after the env-scan block. Mutates headers in place.
+import { processHeaderCredentials } from "./mcp-header-credential.js";
 
 // persistMcpServers helper extracted to a sibling module to keep
 // mcp-handlers.ts under the 800-line cap. The helper is the single
@@ -194,6 +198,22 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           },
           "MCP plaintext-secret check disabled per-server",
         );
+      }
+
+      // Headers credential firewall (CRED-01/05/06). Runs AFTER the env-scan
+      // block and BEFORE the Zod parse so the mutated ${VAR} refs flow through
+      // McpConnectContract.request.parse and into buildPersistedMcpEntry.
+      // processHeaderCredentials mutates the headers map in place.
+      const headersBlock = userParams.headers as Record<string, string> | undefined;
+      if (headersBlock) {
+        processHeaderCredentials({
+          headers: headersBlock,
+          serverName: userParams.server_name as string,
+          secretStore: deps.secretStore,
+          plaintextOptOut,
+          logger: deps.logger,
+          method: "mcp.connect",
+        });
       }
 
       const params = McpConnectContract.request.parse(userParams);
@@ -439,6 +459,24 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           },
           "MCP plaintext-secret check disabled per-server",
         );
+      }
+
+      // Headers credential firewall (CRED-01/05/06). Mirrors the mcp.connect
+      // insertion point: AFTER the env-scan block, BEFORE the Zod parse.
+      // Throws on oauth-bearer (unconditionally) or static-secret with no store.
+      // These throws propagate directly (outside the inner try/catch that wraps
+      // tempManager.connect) so the caller sees a proper RPC error, not a
+      // success:false response.
+      const headersBlockTest = userParams.headers as Record<string, string> | undefined;
+      if (headersBlockTest) {
+        processHeaderCredentials({
+          headers: headersBlockTest,
+          serverName: userParams.name as string,
+          secretStore: deps.secretStore,
+          plaintextOptOut,
+          logger: deps.logger,
+          method: "mcp.test",
+        });
       }
 
       const params = McpTestContract.request.parse(userParams);

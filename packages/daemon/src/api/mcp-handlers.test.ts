@@ -260,17 +260,19 @@ describe("MCP RPC Handlers", () => {
     it("passes headers to McpServerConfig", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("authed", [])));
 
+      // Use a ${VAR} reference form — the credential firewall (CRED-01) passes
+      // through already-substituted ${VAR} refs without touching them.
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       await handlers["mcp.connect"]({
         server_name: "authed",
         transport: "http",
         url: "https://example.com/mcp",
-        headers: { "Authorization": "Bearer token123" },
+        headers: { "Authorization": "Bearer ${MY_AUTH_TOKEN}" },
       });
 
       expect(manager.connect).toHaveBeenCalledWith(expect.objectContaining({
         name: "authed",
-        headers: { "Authorization": "Bearer token123" },
+        headers: { "Authorization": "Bearer ${MY_AUTH_TOKEN}" },
       }));
     });
 
@@ -661,17 +663,19 @@ describe("MCP RPC Handlers", () => {
     it("passes headers to temporary manager", async () => {
       mockTempConnect.mockResolvedValueOnce(ok(makeConnection("authed-test", [])));
 
+      // Use a ${VAR} reference form — the credential firewall (CRED-01) passes
+      // through already-substituted ${VAR} refs without touching them.
       const handlers = createMcpHandlers({ mcpClientManager: createMockManager(), logger: makeLogger() });
       await handlers["mcp.test"]({
         name: "authed-test",
         transport: "http",
         url: "https://mcp.example.com/mcp",
-        headers: { "X-API-Key": "test-key" },
+        headers: { "X-API-Key": "${MY_API_KEY}" },
       });
 
       expect(mockTempConnect).toHaveBeenCalledWith(
         expect.objectContaining({
-          headers: { "X-API-Key": "test-key" },
+          headers: { "X-API-Key": "${MY_API_KEY}" },
         }),
       );
     });
@@ -2348,7 +2352,9 @@ describe("MCP RPC Handlers", () => {
   // -------------------------------------------------------------------------
 
   describe("mcp.connect headers credential firewall (CRED-01/05/06)", () => {
-    const OAUTH_BEARER_CONNECT = "hf_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    // High-entropy Hugging Face token format: hf_ + 45 mixed-case chars (entropy > 3.5).
+    // looksLikeSecretValue detects this via the entropy backstop (length ≥ 44, entropy > 3.5).
+    const OAUTH_BEARER_CONNECT = "hf_bGkSrzmNqJpVxWyDcAoFuIeHtKlPwCvnMsRgTjUQhZBo";
     const STATIC_SECRET_CONNECT = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
     const mockSecretStoreConnect = {
@@ -2501,7 +2507,8 @@ describe("MCP RPC Handlers", () => {
   // -------------------------------------------------------------------------
 
   describe("mcp.test headers credential firewall (CRED-01/05/06)", () => {
-    const OAUTH_BEARER_TEST = "hf_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    // High-entropy Hugging Face token format: hf_ + 45 mixed-case chars (entropy > 3.5).
+    const OAUTH_BEARER_TEST = "hf_bGkSrzmNqJpVxWyDcAoFuIeHtKlPwCvnMsRgTjUQhZBo";
     const STATIC_SECRET_TEST = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
     const mockSecretStoreTest = {
