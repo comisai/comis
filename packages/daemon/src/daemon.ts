@@ -93,6 +93,8 @@ import {
   resolveConfigSecretRefs,
   validateMemoryWrite,
   BackgroundTasksConfigSchema,
+  writeMasterKeyIfAbsent,
+  systemGetEnv,
   type SecretStorePort,
   type ToolCapabilityPort,
   type PerAgentConfig,
@@ -419,6 +421,8 @@ function scrubProcessEnv(): void {
 function bootstrapSecretsAndEnv(deps: {
   setupSecrets: typeof _setupSecretsImpl;
   dataDir: string;
+  /** STORE-01: undefined on normal boot; 64-char hex string on first-boot auto-init */
+  seedKeyHex?: string;
 }): {
   mergedEnv: Record<string, string | undefined>;
   secretStore: SecretStorePort | undefined;
@@ -428,6 +432,7 @@ function bootstrapSecretsAndEnv(deps: {
   const secretsBootResult = deps.setupSecrets({
     env: process.env as Record<string, string | undefined>,
     dataDir: deps.dataDir,
+    seedKeyHex: deps.seedKeyHex, // STORE-01: thread first-boot key for same-boot usability
   });
   if (!secretsBootResult.ok) {
     throw new Error(`Secrets bootstrap failed: ${secretsBootResult.error.message}`);
@@ -1363,6 +1368,24 @@ async function bootFoundation(
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager is initialized
   const dataDir = process.env["COMIS_DATA_DIR"] ?? safePath(os.homedir(), ".comis");
   const envPath = safePath(dataDir, ".env");
+
+  // STORE-02: opt-out flag — read BEFORE writeMasterKeyIfAbsent (systemGetEnv: sanctioned root)
+  const disableEncrypted = (() => {
+    const raw = systemGetEnv("COMIS_DISABLE_ENCRYPTED_SECRETS");
+    if (typeof raw !== "string") return false;
+    const norm = raw.trim().toLowerCase();
+    return norm === "1" || norm === "true" || norm === "on";
+  })();
+
+  // STORE-01: auto-generate master key on first boot (before loadEnvFile — key must be in
+  // memory, not re-read from env, for same-boot usability).
+  // NEVER log autoInitKeyHex — it is raw 32-byte key material.
+  let autoInitKeyHex: string | undefined;
+  if (!disableEncrypted) {
+    const writeResult = writeMasterKeyIfAbsent(dataDir);
+    autoInitKeyHex = writeResult.keyHex; // defined iff written===true (first boot only)
+  }
+
   loadEnvFile(envPath);
 
   // 0.5. Decrypt secrets, merge with env, scrub process.env.
@@ -1370,6 +1393,7 @@ async function bootFoundation(
   const { mergedEnv, secretStore, secretsCrypto, secretsDb } = bootstrapSecretsAndEnv({
     setupSecrets: _setupSecrets,
     dataDir,
+    seedKeyHex: autoInitKeyHex, // STORE-01: undefined on normal boot; hex string on first boot
   });
 
   // 0.6. Runtime adapter construction (composition root). overrides.timers is opt-in for test fake-timers; never set in production.
@@ -1436,6 +1460,17 @@ async function bootFoundation(
         `Fixed permissions on ${c.file}: 0o${c.oldMode.toString(8)} -> 0o${c.newMode.toString(8)}`,
       );
     }
+  }
+
+  // STORE-02: deferred opt-out WARN (logger not available before setupLogging)
+  if (disableEncrypted) {
+    daemonLogger.warn(
+      {
+        errorKind: "config" as const,
+        hint: "Back up ~/.comis/.env immediately. Losing SECRETS_MASTER_KEY makes secrets.db permanently unreadable. To re-enable, unset COMIS_DISABLE_ENCRYPTED_SECRETS and restart.",
+      },
+      "COMIS_DISABLE_ENCRYPTED_SECRETS=1: encrypted secrets store disabled. Daemon running in envfile-only mode. Backup obligation is on the operator.",
+    );
   }
 
   // 3.5. Startup config warnings
