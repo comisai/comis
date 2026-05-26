@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * @comis/observability — activity substrate barrel (Phase 70 Workstream A).
+ *
+ * The observability-side of the activity pipeline (spec §5): the
+ * `ActivityStream` EventBus subscriber that maps real events to canonical,
+ * redacted `ActivityEvent`s, the per-consumer `bounded-queue`, the typed-first
+ * `label-resolver`, the OpenClaw `shell-label-parser`, and the SEP `plan-stream`.
+ *
+ * Boundary: this surface imports `@comis/core` only — never the channels
+ * package (the hexagonal constraint; the durable guard test lands in 70-10).
+ * The orchestrator consumes the `ActivityStreamPort` shape from `@comis/core`,
+ * not this package, so it gains no observability dependency (TURN-03).
+ */
+
+export { createActivityStream } from "./activity-stream.js";
+export type {
+  ActivityStream,
+  CreateActivityStreamDeps,
+  ActivityToolMetadata,
+  ActivityCounters,
+} from "./activity-stream.js";
+
+export {
+  createBoundedQueue,
+  DEFAULT_QUEUE_CAPACITY,
+  DEFAULT_FAILURE_OVERFLOW,
+} from "./bounded-queue.js";
+export type { BoundedQueue, BoundedQueueOptions } from "./bounded-queue.js";
+
+export { resolveLabel, resolveLabelDetailed } from "./label-resolver.js";
+export type {
+  ResolveLabelOpts,
+  ResolveLabelMetadata,
+  ResolvedLabel,
+} from "./label-resolver.js";
+
+export { parseShellCommand } from "./shell-label-parser.js";
+
+export { createPlanStream } from "./plan-stream.js";
+export type {
+  PlanStream,
+  PlanUpdate,
+  PlanEntry,
+  CreatePlanStreamDeps,
+} from "./plan-stream.js";

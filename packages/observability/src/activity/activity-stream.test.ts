@@ -292,4 +292,29 @@ describe("createActivityStream (STRAT-07 / spec §5)", () => {
     expect(counters.emitted).toBeGreaterThanOrEqual(1);
     sub.unsubscribe();
   });
+
+  it("buffers turn events through the per-consumer bounded queue at the subscription boundary", () => {
+    const bus = new TypedEventBus();
+    const logger = makeLogger();
+    const stream = createActivityStream({ eventBus: bus, logger });
+    const received: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
+    // Many distinct tool calls within one turn: each routes through the
+    // subscriber's bounded queue (spec §5.1) and is delivered in order.
+    for (let i = 0; i < 100; i++) {
+      bus.emit("tool:started", {
+        toolName: "edit",
+        toolCallId: `c-${i}`,
+        timestamp: i,
+        agentId: AGENT,
+        sessionKey: SESSION,
+        traceId: TRACE,
+      });
+    }
+    expect(received).toHaveLength(100);
+    expect(stream.counters().emitted).toBe(100);
+    // No drops under a draining consumer; the drop counter is the OBS-01 sink.
+    expect(stream.counters().dropped).toBe(0);
+    sub.unsubscribe();
+  });
 });
