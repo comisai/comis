@@ -46,7 +46,11 @@ export { classifySemanticPhase } from "./semantic-classifier.js";
 export type { SemanticPhase } from "./semantic-classifier.js";
 
 // --- 70-04: label-spec (test-only _clearActivityLabelSpecsForTest excluded) --
-export { registerActivityLabelSpec, resolveLabelSpec } from "./label-spec.js";
+export {
+  registerActivityLabelSpec,
+  resolveLabelSpec,
+  hasRegisteredLabelSpec,
+} from "./label-spec.js";
 export type {
   LabelSpec,
   ActionLabelSpec,

@@ -22,6 +22,7 @@ export {
   classifySemanticPhase,
   registerActivityLabelSpec,
   resolveLabelSpec,
+  hasRegisteredLabelSpec,
   // 70-05 strategy + projections
   selectStrategy,
   chatProjection,

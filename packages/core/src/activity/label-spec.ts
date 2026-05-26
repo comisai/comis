@@ -145,6 +145,20 @@ export function registerActivityLabelSpec(toolName: string, spec: RegisteredLabe
 }
 
 /**
+ * Returns `true` iff a label spec was **explicitly registered** for `toolName`
+ * via {@link registerActivityLabelSpec}. Introspects the registry `Map`
+ * directly (mirrors the `getToolMetadata` idiom in tool-metadata.ts).
+ *
+ * This is the coverage-gate primitive (LBL-03): {@link resolveLabelSpec} is
+ * TOTAL — it always returns a humanized fallback — so "did resolution succeed?"
+ * is a no-op check. The transparency gate must ask "was a spec registered?",
+ * which is exactly this predicate.
+ */
+export function hasRegisteredLabelSpec(toolName: string): boolean {
+  return registry.has(toolName);
+}
+
+/**
  * Clears the registry. Test-only — underscore prefix signals internal use.
  * Import directly from label-spec.ts in test files, NOT from a barrel.
  */

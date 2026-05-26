@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   registerActivityLabelSpec,
   resolveLabelSpec,
+  hasRegisteredLabelSpec,
   _clearActivityLabelSpecsForTest,
   type ActivityTheme,
 } from "./label-spec.js";
@@ -134,5 +135,30 @@ describe("resolveLabelSpec", () => {
 
     expect(resolved.semanticPhase).toBe("coding"); // theme wins
     expect(resolved.label).toBe("running custom tool"); // inherited from registered
+  });
+});
+
+describe("hasRegisteredLabelSpec", () => {
+  it("returns false for a tool name with no explicit registration", () => {
+    // resolveLabelSpec("mcp_manage") would still return a humanized fallback;
+    // the introspection predicate must report the registry's true state.
+    expect(hasRegisteredLabelSpec("mcp_manage")).toBe(false);
+  });
+
+  it("returns true after a spec is explicitly registered for that tool name", () => {
+    registerActivityLabelSpec("mcp_manage", {
+      semanticPhase: "tool",
+      label: "managing MCP servers",
+    });
+    expect(hasRegisteredLabelSpec("mcp_manage")).toBe(true);
+  });
+
+  it("returns false for an unknown tool name even though resolveLabelSpec is total", () => {
+    // resolveLabelSpec always yields a non-empty fallback label, so a coverage
+    // gate built on resolveLabelSpec would be a no-op. hasRegisteredLabelSpec
+    // distinguishes "registered" from "fallback".
+    const unknown = "definitely_not_registered_tool";
+    expect(resolveLabelSpec(unknown).label.length).toBeGreaterThan(0);
+    expect(hasRegisteredLabelSpec(unknown)).toBe(false);
   });
 });
