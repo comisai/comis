@@ -132,6 +132,13 @@ interface CorrelationEntry {
   readonly agentId: string;
   readonly sessionKey: string;
   readonly traceId: string;
+  /**
+   * The authoritative CSPRNG `shortId` minted by the approval gate and carried
+   * on `approval:requested` (EVT-05). Stored so `approval:resolved` (which
+   * carries only `requestId`) reuses the SAME unguessable id on the close
+   * event — never a weak re-derivation (WR-04).
+   */
+  readonly shortId: string;
   readonly channelType?: string;
 }
 
@@ -227,7 +234,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
    * scoped to. Logs ERROR + drops on a parse failure (OBS-03). Returns true on
    * successful emit.
    */
-  function dispatch(raw: unknown, requestIdForIndex?: string): boolean {
+  function dispatch(raw: unknown, indexFor?: { requestId: string; shortId: string }): boolean {
     const parsed = parseActivityEvent(raw);
     if (!parsed.ok) {
       childLogger?.error?.(
@@ -258,12 +265,15 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       "activity event emitted",
     );
     // Record/refresh the approval correlation index AFTER a successful parse.
-    if (requestIdForIndex !== undefined) {
-      approvalIndex.set(requestIdForIndex, {
+    // The authoritative shortId rides on the entry so the resolved event reuses
+    // it verbatim (WR-04) — no re-derivation.
+    if (indexFor !== undefined) {
+      approvalIndex.set(indexFor.requestId, {
         activityId: event.activityId,
         agentId: event.agentId,
         sessionKey: event.sessionKey,
         traceId: event.traceId,
+        shortId: indexFor.shortId,
         ...(event.channelKey !== undefined ? { channelType: event.channelKey } : {}),
       });
     }
@@ -422,7 +432,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
         },
         defaultLabel: `approval required: ${p.toolName}`,
       },
-      p.requestId,
+      { requestId: p.requestId, shortId: p.shortId },
     );
   }
 
@@ -442,10 +452,11 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       kind: "approval",
       semanticPhase: p.approved ? "done" : "queued",
       approval: {
-        // Re-create the minimal correlation block (renderers key off shortId on
-        // the start event; the close event carries a 2-choice block to satisfy
-        // the `kind === "approval"` refine).
-        shortId: deriveShortId(p.requestId),
+        // Reuse the AUTHORITATIVE shortId minted on the start event (carried on
+        // the correlation index, WR-04) so both activity events for one approval
+        // share the same unguessable id. The 2-choice block satisfies the
+        // `kind === "approval"` refine; renderers still key off the start event.
+        shortId: entry.shortId,
         expiresAt: 0,
         choices: [
           { id: "approve", defaultLabel: "Approve", style: "primary" },
@@ -515,25 +526,4 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       return { emitted, dropped, redactionReplacements };
     },
   };
-}
-
-/**
- * Derive a deterministic 12-char base62 placeholder shortId from a requestId so
- * the close event satisfies the `ApprovalCorrelation.shortId` regex without
- * re-querying the gate. The authoritative shortId is on the start event; the
- * close block exists only to satisfy the `kind === "approval"` refine.
- */
-function deriveShortId(requestId: string): string {
-  const ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-  let out = "";
-  let acc = 0;
-  for (let i = 0; i < requestId.length; i++) {
-    acc = (acc * 31 + requestId.charCodeAt(i)) >>> 0;
-    if (i % 2 === 0) {
-      out += ALPHABET.charAt(acc % ALPHABET.length);
-      if (out.length >= 12) break;
-    }
-  }
-  while (out.length < 12) out += "0";
-  return out.slice(0, 12);
 }

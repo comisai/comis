@@ -157,6 +157,43 @@ describe("createActivityStream (STRAT-07 / spec §5)", () => {
     sub.unsubscribe();
   });
 
+  it("carries the SAME authoritative shortId on the resolved event as the start event (WR-04)", () => {
+    const bus = new TypedEventBus();
+    const logger = makeLogger();
+    const stream = createActivityStream({ eventBus: bus, logger });
+    const received: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
+
+    const SHORT_ID = "Zx9Qw2Lp7Ka1"; // the CSPRNG shortId minted by the gate
+    bus.emit("approval:requested", {
+      requestId: "req-uuid-wr04",
+      shortId: SHORT_ID,
+      toolName: "shell",
+      action: "run",
+      params: {},
+      agentId: AGENT,
+      sessionKey: SESSION,
+      trustLevel: "external",
+      createdAt: 1000,
+      timeoutMs: 60000,
+      traceId: TRACE,
+    });
+    bus.emit("approval:resolved", {
+      requestId: "req-uuid-wr04",
+      approved: true,
+      approvedBy: "user",
+      resolvedAt: 2000,
+    });
+
+    expect(received).toHaveLength(2);
+    // The resolved event must reuse the authoritative minted shortId — NOT a
+    // weakly-derived placeholder. Pre-patch deriveShortId(requestId) produced a
+    // value that neither matched the start event nor was unguessable.
+    expect(received[1].approval?.shortId).toBe(SHORT_ID);
+    expect(received[1].approval?.shortId).toBe(received[0].approval?.shortId);
+    sub.unsubscribe();
+  });
+
   it("ignores an approval:resolved with no matching index entry", () => {
     const bus = new TypedEventBus();
     const logger = makeLogger();
