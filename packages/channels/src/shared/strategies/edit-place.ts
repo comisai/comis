@@ -36,6 +36,7 @@ import type {
   ClockPort,
 } from "@comis/core";
 import type { ActivityRenderActions } from "./actions.js";
+import { renderFrameText, failureLabel } from "./render.js";
 
 /** Debounce window: at most one edit per 800ms (§5.3). */
 const EDIT_DEBOUNCE_MS = 800;
@@ -49,17 +50,6 @@ export interface EditPlaceDeps {
    * clock so the §7.3 sequencing holds.
    */
   clock?: ClockPort;
-}
-
-/** Render the current frame to plain activity text from the redacted event hints. */
-function renderFrameText(frame: ActivityRenderFrame): string {
-  const lines = frame.visibleEvents.map((e) => e.defaultLabel ?? e.toolName ?? e.kind);
-  return lines.join("\n");
-}
-
-/** Render the closing ❌ failure form (kept on failure). */
-function renderFailureText(outcome: Extract<TurnOutcome, { kind: "failure" }>): string {
-  return `❌ ${outcome.errorKind}`;
 }
 
 export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRenderer {
@@ -105,7 +95,7 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
     canDelete: true,
 
     async apply(frame: ActivityRenderFrame): Promise<Result<void, ActivityRenderError>> {
-      latestText = renderFrameText(frame);
+      latestText = renderFrameText(frame.visibleEvents);
 
       // First frame posts the placeholder; later frames only debounce an edit.
       if (messageId === undefined) {
@@ -158,7 +148,7 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
         case "failure": {
           // KEEP the message: edit to the ❌ form, never delete (T-70-07-02).
           if (messageId !== undefined) {
-            const edited = await actions.edit(messageId, renderFailureText(outcome));
+            const edited = await actions.edit(messageId, failureLabel(outcome));
             if (!edited.ok) return edited;
           }
           return ok(undefined);
