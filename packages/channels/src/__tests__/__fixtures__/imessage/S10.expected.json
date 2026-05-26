@@ -1,0 +1,5 @@
+{
+  "calls": [
+    { "op": "send", "id": "imsg-msg-0", "text": "verbose 1" }
+  ]
+}
