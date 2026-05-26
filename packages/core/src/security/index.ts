@@ -79,7 +79,7 @@ export type { ScopedSecretManagerOptions } from "./secret-manager.js";
 export { generateStrongToken, generateRotationId } from "./token-generator.js";
 
 // Secret detection keystone (Phase 1)
-export { looksLikeSecretValue, isSecretFieldName, scanForSecrets, redactForDisplay } from "./secret-detection.js";
+export { looksLikeSecretValue, isSecretFieldName, isEnvRefString, scanForSecrets, redactForDisplay } from "./secret-detection.js";
 export type { SecretFinding } from "./secret-detection.js";
 export { classifyHeaderCredential } from "./credential-classify.js";
 export type { CredentialKind, HeaderCredentialClassification } from "./credential-classify.js";

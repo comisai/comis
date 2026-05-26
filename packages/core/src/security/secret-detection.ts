@@ -198,8 +198,11 @@ const WHOLE_ESCAPED_VAR_RE = new RegExp(`^${ESCAPED_VAR_PATTERN.source}$`);
  * optionally wrapped in surrounding quotes and/or a leading auth scheme
  * (`Bearer ${TOK}` is an env-ref credential, not a plaintext secret). Reuses
  * the canonical env-substitution patterns — no re-authored ref regexes.
+ *
+ * Exported so that `credential-classify.ts` can share the single authoritative
+ * implementation instead of maintaining a divergent trim-only copy (WR-02).
  */
-function isEnvRefString(value: string): boolean {
+export function isEnvRefString(value: string): boolean {
   const remainder = stripSurroundingQuotes(value).replace(AUTH_SCHEME_RE, "");
   return (
     WHOLE_ESCAPED_VAR_RE.test(remainder) ||
@@ -247,7 +250,9 @@ function walkScan(
 
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
-      walkScan(value[i], `${path}[${i}]`, undefined, findings);
+      // Preserve fieldName so a secret-named array (e.g. headers.Authorization: [...])
+      // still triggers the secret-field rule on each element (WR-01 fix).
+      walkScan(value[i], `${path}[${i}]`, fieldName, findings);
     }
     return;
   }
@@ -281,11 +286,36 @@ function walkRedact(obj: unknown): void {
   }
   const record = obj as Record<string, unknown>;
   for (const key of Object.keys(record)) {
-    if (isSecretFieldName(key) && typeof record[key] === "string") {
-      // eslint-disable-next-line no-restricted-syntax -- secret-detection sentinel for serialized config output (not the Pino censor literal)
-      record[key] = "[REDACTED]";
+    if (isSecretFieldName(key)) {
+      // Redact every nested string regardless of depth (string, array-of-strings,
+      // or nested objects) so arrays like Authorization: ["Bearer x", "Bearer y"]
+      // are fully redacted (IN-01 fix).
+      record[key] = redactSubtreeStrings(record[key]);
     } else {
       walkRedact(record[key]);
     }
   }
+}
+
+/**
+ * Recursively replace every string value in `value` with `[REDACTED]`.
+ * Used when the parent field name is a secret-bearing name, so ALL nested
+ * string content must be redacted regardless of structure.
+ */
+function redactSubtreeStrings(value: unknown): unknown {
+  if (typeof value === "string") {
+    // eslint-disable-next-line no-restricted-syntax -- secret-detection sentinel for serialized config output (not the Pino censor literal)
+    return "[REDACTED]";
+  }
+  if (Array.isArray(value)) {
+    return value.map(redactSubtreeStrings);
+  }
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = redactSubtreeStrings(v);
+    }
+    return out;
+  }
+  return value;
 }

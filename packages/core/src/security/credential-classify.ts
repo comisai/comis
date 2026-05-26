@@ -18,12 +18,7 @@
  */
 
 import { isSecretRef } from "../domain/secret-ref.js";
-import {
-  ENV_VAR_PATTERN,
-  ESCAPED_VAR_PATTERN,
-  BARE_VAR_PATTERN,
-} from "../config/env-substitution.js";
-import { looksLikeSecretValue } from "./secret-detection.js";
+import { looksLikeSecretValue, isEnvRefString } from "./secret-detection.js";
 
 /** Classification of a header credential. */
 export type CredentialKind = "ref" | "oauth-bearer" | "static-secret";
@@ -34,22 +29,6 @@ export interface HeaderCredentialClassification {
 }
 
 const BEARER_SCHEME_RE = /^Bearer\s+/i;
-
-// Non-global, whole-string testers derived from the canonical patterns'
-// `.source` — avoids re-authoring the ref regexes and the stateful `lastIndex`
-// of the global-flagged patterns.
-const WHOLE_ENV_VAR_RE = new RegExp(`^${ENV_VAR_PATTERN.source}$`);
-const WHOLE_ESCAPED_VAR_RE = new RegExp(`^${ESCAPED_VAR_PATTERN.source}$`);
-
-/** True if the trimmed string is a single `${VAR}`/`$${VAR}`/`$VAR` token. */
-function isEnvRefString(value: string): boolean {
-  const trimmed = value.trim();
-  return (
-    WHOLE_ESCAPED_VAR_RE.test(trimmed) ||
-    WHOLE_ENV_VAR_RE.test(trimmed) ||
-    BARE_VAR_PATTERN.test(trimmed)
-  );
-}
 
 /**
  * Classify a header credential by `(name, value)`.

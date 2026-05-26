@@ -24,7 +24,7 @@ export { matchesSecretPattern, isSecretAccessible } from "../security/index.js";
 export { createScopedSecretManager } from "../security/index.js";
 export type { ScopedSecretManagerOptions } from "../security/index.js";
 export { generateStrongToken, generateRotationId } from "../security/index.js";
-export { looksLikeSecretValue, isSecretFieldName, scanForSecrets, redactForDisplay } from "../security/index.js";
+export { looksLikeSecretValue, isSecretFieldName, isEnvRefString, scanForSecrets, redactForDisplay } from "../security/index.js";
 export type { SecretFinding } from "../security/index.js";
 export { classifyHeaderCredential } from "../security/index.js";
 export type { CredentialKind, HeaderCredentialClassification } from "../security/index.js";
