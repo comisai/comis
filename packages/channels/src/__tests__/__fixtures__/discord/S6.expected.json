@@ -1,0 +1,8 @@
+{
+  "calls": [
+    { "op": "send", "id": "dc-msg-0", "text": "planning", "silent": false },
+    { "op": "edit", "id": "dc-msg-0", "text": "executing" },
+    { "op": "edit", "id": "dc-msg-0", "text": "✓ done" },
+    { "op": "delete", "id": "dc-msg-0" }
+  ]
+}
