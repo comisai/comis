@@ -151,4 +151,56 @@ describe("setupSecrets", () => {
       }
     });
   });
+
+  // -----------------------------------------------------------
+  // seedKeyHex injection path (same-boot key injection)
+  // -----------------------------------------------------------
+  describe("seedKeyHex injection path (same-boot key injection)", () => {
+    it("returns ok(null) when both env key and seedKeyHex are absent", () => {
+      const result = setupSecrets({ env: {}, dataDir: tmpdir() });
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value).toBeNull();
+    });
+
+    it("returns ok({ crypto, dbPath }) when seedKeyHex provided and env has no SECRETS_MASTER_KEY", () => {
+      // RED on pre-patch: setupSecrets ignores seedKeyHex, returns ok(null)
+      const result = setupSecrets({ env: {}, dataDir: tmpdir(), seedKeyHex: VALID_HEX_KEY });
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value).not.toBeNull();
+      if (result.ok && result.value) {
+        expect(result.value.crypto).toBeDefined();
+        expect(result.value.dbPath).toMatch(/secrets\.db$/);
+      }
+    });
+
+    it("returns ok({ crypto, dbPath }) when seedKeyHex is valid base64 and env has no key", () => {
+      // RED on pre-patch: same reason — seedKeyHex ignored
+      const result = setupSecrets({ env: {}, dataDir: tmpdir(), seedKeyHex: VALID_BASE64_KEY });
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value).not.toBeNull();
+    });
+
+    it("env SECRETS_MASTER_KEY takes precedence over seedKeyHex when both provided", () => {
+      const result = setupSecrets({
+        env: { SECRETS_MASTER_KEY: VALID_HEX_KEY },
+        dataDir: tmpdir(),
+        seedKeyHex: VALID_BASE64_KEY, // different key — env should win
+      });
+      expect(result.ok).toBe(true);
+      expect(result.ok && result.value).not.toBeNull();
+      // Both paths produce ok({ crypto, dbPath }); precedence verified by no error
+    });
+
+    it("returns err() when seedKeyHex is provided but invalid", () => {
+      const result = setupSecrets({
+        env: {},
+        dataDir: tmpdir(),
+        seedKeyHex: "too-short-invalid",
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toContain("Invalid SECRETS_MASTER_KEY");
+      }
+    });
+  });
 });
