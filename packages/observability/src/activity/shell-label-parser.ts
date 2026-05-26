@@ -12,12 +12,19 @@
  *
  * Pipelines (`a | b | c`) summarize the FIRST stage and append a `(+N steps)`
  * counter for the remaining stages. Long arguments are truncated so the label
- * stays bounded. The SEC-07 secret-redaction-in-label pass is Phase 72 — this
- * parser stays pure (it produces a label from already-neutral inputs; the
- * ActivityStream re-redacts the produced label, defense-in-depth).
+ * stays bounded.
+ *
+ * SEC-07 secret redaction (WR-03): the produced label is run through the core
+ * `redactValue` primitive before it is returned, so a secret-bearing operand
+ * that flows into the label (e.g. a `grep 'Bearer …'` pattern, a file path) is
+ * masked to `<redacted>`. The parser itself never executes the command — it
+ * only ever tokenizes and matches the string. Redaction here is the primary
+ * defense (there is no separate re-redaction of an arbitrary already-rendered
+ * label downstream — the ActivityStream redacts params, not parser output).
  *
  * @module
  */
+import { redactValue } from "@comis/core";
 
 /** Hard cap on the produced label so a pathological command cannot blow up a render. */
 const MAX_LABEL_LENGTH = 120;
@@ -39,6 +46,14 @@ export function parseShellCommand(cmd: string): string {
   if (extra > 0) {
     label = `${label} (+${extra} steps)`;
   }
+  // SEC-07 / WR-03: mask any secret / PII / absolute-path shape that flowed into
+  // the label (e.g. a grep pattern or file operand) before returning. redactValue
+  // on a string leaf returns the redacted string in `.value` (pure, non-throwing,
+  // no homeDir needed here — $HOME compaction is applied at the param emit site).
+  const redacted = redactValue(label).value;
+  label = typeof redacted === "string" ? redacted : label;
+  // Bound AFTER redaction so the final label stays within the cap even when a
+  // `<redacted>` substitution lengthened it.
   if (label.length > MAX_LABEL_LENGTH) {
     label = label.slice(0, MAX_LABEL_LENGTH - 1).trimEnd() + "…";
   }

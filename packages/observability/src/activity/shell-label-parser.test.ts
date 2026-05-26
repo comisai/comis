@@ -70,3 +70,24 @@ describe("parseShellCommand (STRAT-09 / spec §6.3)", () => {
     expect(label).not.toContain("undefined");
   });
 });
+
+describe("parseShellCommand — secret redaction in the produced label (WR-03 / SEC-07)", () => {
+  it("redacts a Bearer token that reaches the label through a grep pattern operand", () => {
+    // grep's pattern operand flows straight into the label
+    // (`search for \`<pattern>\``), so a secret-bearing pattern would leak.
+    const label = parseShellCommand("grep 'Bearer abcdef0123456789abcdef' access.log");
+    expect(label).not.toContain("abcdef0123456789abcdef");
+    expect(label).toContain("<redacted>");
+  });
+
+  it("redacts an sk- API key that reaches the label through a grep pattern", () => {
+    const label = parseShellCommand("grep sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAA secrets.txt");
+    expect(label).not.toContain("sk-ant-api03");
+    expect(label).toContain("<redacted>");
+  });
+
+  it("leaves a benign command label unchanged (no spurious redaction)", () => {
+    expect(parseShellCommand("head -n 20 file.txt")).toBe("show first 20 lines of file.txt");
+    expect(parseShellCommand("grep foo .")).toBe("search for `foo` in .");
+  });
+});
