@@ -798,6 +798,156 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
 // Co-discovery metadata
 // ===========================================================================
 
+// ===========================================================================
+// Failure Detectors (UX-03, §16.10/§16.11)
+//
+// Per-tool failureDetector bodies registered (via spread-merge) on
+// web_search + web_fetch. They are consulted in pi-event-bridge.ts BEFORE
+// the tool:executed emit, over the RAW result — flagging a logically-failed
+// result the SDK reported as success (isError:false). Each non-false return
+// MUST carry a member of the closed 10-member ErrorKind union and the body
+// MUST never throw.
+// ===========================================================================
+
+describe("tool-metadata-registry -- failure detectors", () => {
+  // The closed 10-member ErrorKind union (log-fields.ts:56-66). A detector
+  // returning anything outside this set (e.g. "rate_limited") fails the
+  // valid-ErrorKind assertions below.
+  const ERROR_KINDS = new Set<string>([
+    "config", "network", "auth", "validation", "precondition",
+    "timeout", "resource", "dependency", "internal", "platform",
+  ]);
+
+  const webSearchDetector = () => getToolMetadata("web_search")?.failureDetector;
+  const webFetchDetector = () => getToolMetadata("web_fetch")?.failureDetector;
+
+  it("registers a failureDetector on web_search and web_fetch", () => {
+    expect(webSearchDetector()).toBeTypeOf("function");
+    expect(webFetchDetector()).toBeTypeOf("function");
+  });
+
+  // -------------------------------------------------------------------------
+  // web_search detector
+  // -------------------------------------------------------------------------
+
+  it("web_search flags a rate-limit body as a resource failure", () => {
+    const detect = webSearchDetector()!;
+    expect(detect({ message: "Rate limit exceeded, retry later" }, false)).toEqual({ errorKind: "resource" });
+    expect(detect({ error: "quota exceeded for this key" }, false)).toEqual({ errorKind: "resource" });
+    expect(detect("Too Many Requests", false)).toEqual({ errorKind: "resource" });
+  });
+
+  it("web_search flags a blocked/forbidden body as a dependency failure", () => {
+    const detect = webSearchDetector()!;
+    expect(detect({ status: "blocked by provider" }, false)).toEqual({ errorKind: "dependency" });
+    expect(detect({ message: "Forbidden" }, false)).toEqual({ errorKind: "dependency" });
+    expect(detect({ error: "provider error: upstream down" }, false)).toEqual({ errorKind: "dependency" });
+  });
+
+  it("web_search returns false for a normal results body and when isError is already set", () => {
+    const detect = webSearchDetector()!;
+    expect(detect({ results: [{ title: "x", url: "https://example.com" }] }, false)).toBe(false);
+    // SDK already flagged it — the detector defers (returns false, no double-flag).
+    expect(detect({ message: "rate limit exceeded" }, true)).toBe(false);
+  });
+
+  it("web_search returns only valid closed-union ErrorKind members (never rate_limited)", () => {
+    const detect = webSearchDetector()!;
+    for (const body of [
+      { message: "rate limit exceeded" },
+      { message: "too many requests" },
+      { message: "blocked" },
+      { message: "provider error" },
+    ]) {
+      const out = detect(body, false);
+      expect(out).not.toBe(false);
+      const kind = (out as { errorKind: string }).errorKind;
+      expect(ERROR_KINDS.has(kind), `errorKind "${kind}" must be a closed-union member`).toBe(true);
+      expect(kind).not.toBe("rate_limited");
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // web_fetch detector
+  // -------------------------------------------------------------------------
+
+  it("web_fetch flags a timeout body as a timeout failure", () => {
+    const detect = webFetchDetector()!;
+    expect(detect({ error: "request timed out after 30s" }, false)).toEqual({ errorKind: "timeout" });
+    expect(detect("Connection timeout", false)).toEqual({ errorKind: "timeout" });
+  });
+
+  it("web_fetch flags a blocked/403/forbidden body as a dependency failure", () => {
+    const detect = webFetchDetector()!;
+    expect(detect({ status: 403, body: "Forbidden" }, false)).toEqual({ errorKind: "dependency" });
+    expect(detect({ error: "connection refused" }, false)).toEqual({ errorKind: "dependency" });
+    expect(detect({ message: "request blocked by upstream" }, false)).toEqual({ errorKind: "dependency" });
+  });
+
+  it("web_fetch returns false for a normal HTML body and when isError is already set", () => {
+    const detect = webFetchDetector()!;
+    expect(detect({ content: "<html><body>Hello world</body></html>" }, false)).toBe(false);
+    expect(detect("plain text content with no failure signal", false)).toBe(false);
+    expect(detect({ error: "request timed out" }, true)).toBe(false);
+  });
+
+  it("web_fetch returns only valid closed-union ErrorKind members", () => {
+    const detect = webFetchDetector()!;
+    for (const body of [
+      { message: "timed out" },
+      { message: "403 forbidden" },
+      { message: "connection refused" },
+      { message: "blocked" },
+    ]) {
+      const out = detect(body, false);
+      expect(out).not.toBe(false);
+      const kind = (out as { errorKind: string }).errorKind;
+      expect(ERROR_KINDS.has(kind), `errorKind "${kind}" must be a closed-union member`).toBe(true);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Purity / no-throw (T-75-03-04): malformed results must not crash.
+  // -------------------------------------------------------------------------
+
+  it("both detectors are pure and never throw on malformed results", () => {
+    for (const detect of [webSearchDetector()!, webFetchDetector()!]) {
+      for (const malformed of [undefined, null, 42, true, { nested: { deep: 1 } }, []]) {
+        let out: boolean | { errorKind: string } = false;
+        expect(() => { out = detect(malformed, false) as typeof out; }, `threw on ${String(malformed)}`).not.toThrow();
+        const isValid = out === false || (typeof out === "object" && out !== null && "errorKind" in out);
+        expect(isValid, `detector returned a non-contract value for ${String(malformed)}`).toBe(true);
+      }
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Spread-merge guardrails: count unchanged + sibling fields preserved.
+  // -------------------------------------------------------------------------
+
+  it("keeps the unique-tool count at exactly 51 after detector registration", () => {
+    expect(getAllToolMetadata().size).toBe(51);
+  });
+
+  it("preserves web_search sibling fields (isReadOnly + mcpExportPolicy) alongside the new detector", () => {
+    const meta = getToolMetadata("web_search");
+    expect(meta).toBeDefined();
+    expect(meta!.isReadOnly).toBe(true);
+    expect(meta!.mcpExportPolicy).toBe("safe");
+    expect(meta!.maxResultSizeChars).toBe(50_000);
+    expect(meta!.failureDetector).toBeTypeOf("function");
+  });
+
+  it("preserves web_fetch sibling fields (isReadOnly + mcpExportPolicy) alongside the new detector", () => {
+    const meta = getToolMetadata("web_fetch");
+    expect(meta).toBeDefined();
+    expect(meta!.isReadOnly).toBe(true);
+    expect(meta!.mcpExportPolicy).toBe("safe");
+    expect(meta!.maxResultSizeChars).toBe(150_000);
+    expect(meta!.failureDetector).toBeTypeOf("function");
+  });
+});
+
 describe("tool-metadata-registry -- co-discovery metadata", () => {
   it("models_manage has coDiscoverWith pointing to agents_manage", () => {
     const meta = getToolMetadata("models_manage");
