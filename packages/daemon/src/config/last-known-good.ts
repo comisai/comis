@@ -22,6 +22,7 @@ import { existsSync, readFileSync, copyFileSync, chmodSync } from "node:fs";
 import { dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { safePath, scanForSecrets } from "@comis/core";
+import type { ComisLogger } from "@comis/core";
 import { parse as parseYaml } from "yaml";
 import { withAuditHookSync } from "./audit-hook.js";
 
@@ -47,6 +48,11 @@ export function lastKnownGoodPath(configPath: string): string {
  * audit JSONL append is skipped but the LKG copy itself still runs —
  * the audit log is a forensics aid, not a correctness gate.
  *
+ * `logger` is optional. When provided, a WARN is emitted if the snapshot
+ * is intentionally skipped (secret found in source config, or malformed YAML),
+ * so operators know the LKG was NOT updated and why (WR-03 fix). Without a
+ * logger the skip is still correct (security behavior unchanged) but silent.
+ *
  * The audit-record `configPath` field reflects the WRITE TARGET (the
  * `.last-good.yaml` file), not the source `config.yaml` — the record
  * describes state changes to the LKG file.
@@ -54,6 +60,7 @@ export function lastKnownGoodPath(configPath: string): string {
 export function saveLastKnownGood(
   configPath: string,
   auditEnabled: boolean = true,
+  logger?: ComisLogger,
 ): { saved: boolean; path: string } {
   const lkgPath = lastKnownGoodPath(configPath);
   if (!existsSync(configPath)) {
@@ -67,10 +74,29 @@ export function saveLastKnownGood(
   try {
     const sourceObj = parseYaml(readFileSync(configPath, "utf-8")) ?? {};
     if (scanForSecrets(sourceObj).length > 0) {
+      // WR-03: emit WARN so operators know the LKG snapshot was skipped and why.
+      // The secret path is included as context but the VALUE is never logged.
+      logger?.warn(
+        {
+          hint: "Remove plaintext secrets from config.yaml (use secrets_manage) so the LKG snapshot can be updated",
+          errorKind: "config" as const,
+          configPath,
+        },
+        "LKG snapshot skipped: source config contains a plaintext secret — snapshot NOT updated",
+      );
       return { saved: false, path: lkgPath };
     }
   } catch {
     // Unreadable / malformed YAML — fail-safe: skip the snapshot (Pitfall 5).
+    // WR-03: emit WARN so the operator knows the snapshot is stale.
+    logger?.warn(
+      {
+        hint: "Fix the malformed config.yaml so the LKG snapshot can be updated; current snapshot (if any) is stale",
+        errorKind: "config" as const,
+        configPath,
+      },
+      "LKG snapshot skipped: source config YAML is malformed or unreadable — snapshot NOT updated",
+    );
     return { saved: false, path: lkgPath };
   }
 
