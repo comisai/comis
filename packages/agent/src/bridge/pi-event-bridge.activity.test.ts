@@ -15,8 +15,9 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { ok } from "@comis/shared";
-import type { ModelOperationType } from "@comis/core";
-import { registerToolMetadata } from "@comis/core";
+import type { ModelOperationType, EventMap, TurnActivityContext, ActivityEvent } from "@comis/core";
+import { registerToolMetadata, TypedEventBus, formatSessionKey } from "@comis/core";
+import { createActivityStream } from "@comis/observability";
 import { createPiEventBridge } from "./pi-event-bridge.js";
 import type { PiEventBridgeDeps } from "./pi-event-bridge.js";
 
@@ -250,5 +251,141 @@ describe("PiEventBridge failureDetector hook (EVT-10, §16.10)", () => {
     const executed = emitPayload(deps, "tool:executed");
     expect(executed.success).toBe(true);
     expect(executed.errorKind).toBeUndefined();
+  });
+});
+
+// ===========================================================================
+// UX-03 end-to-end: a REAL registered detector flips success BEFORE the
+// tool:executed emit, and the flip propagates through ActivityStream as
+// status:"failed" + semanticPhase:"error" — without the raw result ever
+// reaching the emit or the rendered ActivityEvent.
+//
+// Per AGENTS.md §2.10 this is a CONTRACT test pinning the existing-correct
+// seam (pi-event-bridge.ts:566-593) + downstream mapping
+// (activity-stream.ts:414-435). It is the UX-03 "verified end-to-end"
+// success-criterion proof; it must fail if a future edit regresses the
+// before-emit flip, the status:"failed" mapping, or the no-raw-result-leak
+// boundary.
+//
+// The synthetic tool name keeps the end-to-end test self-contained — it does
+// not depend on the production web_search wiring being driven.
+// ===========================================================================
+
+describe("UX-03 end-to-end -- detector flip produces ActivityStream status:failed", () => {
+  const RAW_BODY = "rate limit exceeded";
+
+  // The mock deps emit with these identities (see createMockDeps); the turn
+  // subscription must match {agentId, sessionKey, traceId} exactly or the
+  // ActivityStream filters the event out.
+  const AGENT = "test-agent";
+  const TRACE = "exec-001";
+  const SESSION = formatSessionKey({ tenantId: "t1", channelId: "c1", userId: "u1" });
+
+  function makeTurnCtx(): TurnActivityContext {
+    return {
+      agentId: AGENT,
+      sessionKey: SESSION,
+      traceId: TRACE,
+      channelType: "telegram",
+      channelKey: "chat-1",
+      chatType: "direct",
+      inboundMessageId: "m-1",
+      rendererKey: "test-agent:telegram:chat-1:direct",
+    };
+  }
+
+  it("a success-shaped rate-limit body flips to success:false + errorKind:resource and renders status:failed with no raw-result leak", () => {
+    registerToolMetadata("activity_ratelimit_75_03", {
+      failureDetector: (r, isErr) =>
+        !isErr && /rate limit/i.test(JSON.stringify(r) ?? "")
+          ? { errorKind: "resource" as const }
+          : false,
+    });
+
+    // Shared real bus so the bridge emit drives the ActivityStream subscriber.
+    const bus = new TypedEventBus();
+    const stream = createActivityStream({ eventBus: bus });
+    const activityEvents: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(makeTurnCtx(), (e) => activityEvents.push(e));
+
+    const executedPayloads: EventMap["tool:executed"][] = [];
+    bus.on("tool:executed", (p) => executedPayloads.push(p));
+
+    const deps = createMockDeps({ eventBus: bus });
+    const { listener } = createPiEventBridge(deps);
+
+    listener(startEvent("activity_ratelimit_75_03", "tc-rl") as any);
+    // isError:false (SDK reported success) + a 200-shaped body whose TEXT
+    // signals failure — exactly the case the detector exists to catch.
+    listener(endEvent("activity_ratelimit_75_03", "tc-rl", false, { content: RAW_BODY }) as any);
+
+    // (1) Before-emit flip: the tool:executed payload is already failed.
+    expect(executedPayloads).toHaveLength(1);
+    const executed = executedPayloads[0]!;
+    expect(executed.success).toBe(false);
+    expect(executed.errorKind).toBe("resource");
+
+    // (2) Downstream mapping: the ActivityStream renders the end frame failed.
+    const endEvt = activityEvents.find((e) => e.phase === "end");
+    expect(endEvt).toBeDefined();
+    expect(endEvt!.status).toBe("failed");
+    expect(endEvt!.semanticPhase).toBe("error");
+    expect(endEvt!.errorKind).toBe("resource");
+
+    // (3) NO RAW RESULT LEAK (T-75-03-01) — the load-bearing UX-03 guarantee
+    // is "observability never sees the raw result". The OBSERVABILITY artifact
+    // is the rendered ActivityEvent (what reaches the channel painter): its
+    // defaultLabel is built from `params` ONLY (activity-stream.ts:417), never
+    // from the raw result or errorMessage. Assert the raw body is absent from
+    // the serialized ActivityEvent — the strong no-leak proof.
+    expect(JSON.stringify(endEvt)).not.toContain(RAW_BODY);
+
+    // On the tool:executed BUS event, the detector returned a fixed ErrorKind
+    // (never a result-derived string — see the registered detector), and the
+    // bridge never emits the raw result OBJECT: there is no `result` field and
+    // `params` carries only the redacted start args, not the body.
+    expect(executed).not.toHaveProperty("result");
+    expect(JSON.stringify(executed.params ?? {})).not.toContain(RAW_BODY);
+
+    // The bridge's failure-diagnostics path (pi-event-bridge.ts:606-607,752)
+    // DOES surface a sanitized, length-capped `errorMessage` derived from the
+    // result via extractErrorText()+sanitizeLogString() — this is the existing,
+    // intentional trajectory/alerting diagnostic (logged at WARN), NOT the
+    // activity renderer, and it never carries the raw result OBJECT. Pin that
+    // contract: errorMessage is a bounded string and the ActivityEvent above
+    // proves the raw text never reaches the rendered (observability) surface.
+    expect(typeof executed.errorMessage).toBe("string");
+    expect(executed.errorMessage!.length).toBeLessThanOrEqual(1500);
+
+    sub.unsubscribe();
+  });
+
+  it("a THROWING detector is caught: original success preserved + WARN errorKind:internal (verified, not re-implemented)", () => {
+    registerToolMetadata("activity_throw_75_03", {
+      failureDetector: () => {
+        throw new Error("detector exploded");
+      },
+    });
+
+    const bus = new TypedEventBus();
+    const executedPayloads: EventMap["tool:executed"][] = [];
+    bus.on("tool:executed", (p) => executedPayloads.push(p));
+
+    const deps = createMockDeps({ eventBus: bus });
+    const { listener } = createPiEventBridge(deps);
+
+    listener(startEvent("activity_throw_75_03", "tc-throw") as any);
+    listener(endEvent("activity_throw_75_03", "tc-throw", false) as any);
+
+    // Original SDK-reported success preserved (the throw must not flip it).
+    expect(executedPayloads).toHaveLength(1);
+    expect(executedPayloads[0]!.success).toBe(true);
+
+    // WARN logged with errorKind:"internal" + an operator hint.
+    const warnCall = vi
+      .mocked(deps.logger.warn)
+      .mock.calls.find((c) => (c[0] as Record<string, unknown>)?.errorKind === "internal");
+    expect(warnCall).toBeDefined();
+    expect((warnCall![0] as Record<string, unknown>).hint).toBeDefined();
   });
 });
