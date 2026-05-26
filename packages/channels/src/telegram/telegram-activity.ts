@@ -18,8 +18,8 @@
  *   2. `makeTelegramRenderActions` — the `ActivityRenderActions` adapter. `send`
  *      passes `{effects:["silent"]}` so the existing outbound path sets
  *      `disable_notification:true` (no new adapter code). `edit`/`delete` GUARD
- *      the OPTIONAL `ChannelPort` methods (early `not_supported` — never the
- *      `adapter.editMessage!` non-null cluster, AGENTS.md §2.8) and map every
+ *      the OPTIONAL `ChannelPort` methods (early `not_supported` — never a
+ *      non-null-asserted call, AGENTS.md §2.8) and map every
  *      `.error` through `classifyTelegramError`. All paths return `Result`;
  *      nothing throws across the boundary.
  *
@@ -27,12 +27,13 @@
  *      `createEditPlaceRenderer` (the debounce/edit/delete state machine). It
  *      does NOT re-implement any rendering logic.
  *
- * 429 backoff (CHAN-02, T-71-02-03): `@comis/channels` has no `@comis/observability`
- * dependency, so `createBoundedQueue` is unreachable. The 429 buffer is a LOCAL
- * fixed-cap latest-text slot with a `retryAfterMs`-gated retry through the
- * injected `TimerPort` (the retry handle is `unref`'d and `cancel()`-able —
- * never raw `clearTimeout`). It coalesces to the latest text and never grows
- * unbounded. A `not_supported` (message-not-found) edit drops all further edits.
+ * 429 backoff (CHAN-02, T-71-02-03): the channels package depends on `core` and
+ * `shared` only — no observability substrate — so a shared bounded-queue helper
+ * is unreachable here. The 429 buffer is a LOCAL fixed-cap latest-text slot with
+ * a `retryAfterMs`-gated retry through the injected `TimerPort` (the retry handle
+ * is `unref`'d and `cancel()`-able — never a raw timer clear). It coalesces to the
+ * latest text and never grows unbounded. A `not_supported` (message-not-found)
+ * edit drops all further edits.
  */
 import { ok, err, type Result } from "@comis/shared";
 import type {
@@ -111,7 +112,7 @@ export function makeTelegramRenderActions(
   let pendingText: string | undefined;
   /** The id of the message being edited under backoff. */
   let pendingId: string | undefined;
-  /** The single in-flight retry timer; cancelled + rescheduled, never raw clearTimeout. */
+  /** The single in-flight retry timer; cancelled + rescheduled via handle.cancel(). */
   let retryHandle: TimerHandle | undefined;
   /** Consecutive retry attempts; caps the backoff so a sustained 429 cannot loop forever. */
   let retryAttempts = 0;
