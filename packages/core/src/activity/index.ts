@@ -80,3 +80,11 @@ export type {
   CoalesceResult,
   ActivityVerbosity,
 } from "./projections/index.js";
+
+// --- 75-01: themes (UX-01) ---------------------------------------------------
+// The four bundled themes + their name→bundle registry. Plan 75-05 consumes
+// `themeForName` + `ActivityTheme.markers` to bake the resolved marker into
+// `ActivityEvent.defaultLabel` upstream of the channel painter.
+export { themeForName } from "./themes/index.js";
+export type { ThemeName } from "./themes/index.js";
+export type { ActivityStatusMarkers } from "./label-spec.js";
