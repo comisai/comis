@@ -31,6 +31,7 @@ import type {
   SendMessageOptions,
   FetchMessagesOptions,
   FetchedMessage,
+  RichButton,
 } from "@comis/core";
 
 /**
@@ -48,7 +49,7 @@ export interface DiscordErrorShape {
 
 /** One recorded adapter call — discriminated by `op`, ids deterministic, no timestamps. */
 export type FakeDiscordCall =
-  | { op: "send"; id: string; text: string; silent: boolean }
+  | { op: "send"; id: string; text: string; silent: boolean; buttons?: RichButton[][] }
   | { op: "threadCreate"; parentId: string }
   | { op: "edit"; id: string; text: string }
   | { op: "delete"; id: string }
@@ -113,12 +114,15 @@ export function createFakeDiscordAdapter(channelId = "chat-1"): FakeDiscordAdapt
       if (injected) return err(injected);
       const id = `dc-msg-${messageCounter++}`;
       // Discord silently ignores rich effects (discord-adapter.ts:392-395); the
-      // fixture records silent:false to reflect the real platform behaviour.
+      // fixture records silent:false to reflect the real platform behaviour. The
+      // approval `buttons` (Phase 73 native components) are recorded ONLY when
+      // present so the button-less golden fixtures stay byte-stable.
       recorded.calls.push({
         op: "send",
         id,
         text,
         silent: options?.effects?.includes("silent") ?? false,
+        ...(options?.buttons !== undefined ? { buttons: options.buttons } : {}),
       });
       // S7 affordance SHELL: a thread-expand request records the thread-create
       // egress (no callback handler, no signed callback_data — Phase 73).

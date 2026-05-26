@@ -259,9 +259,9 @@ describe("createDiscordActivityRenderer (EditPlace wiring + deliveredAt-gated de
   });
 });
 
-// --- Task 1: S7 thread-expand affordance SHELL (no callback wiring) ---------
+// --- Task 1: S7 subagent thread-expand affordance + Phase-73 approval UI -----
 
-describe("Discord S7 subagent thread-expand affordance SHELL (NO callback resolution)", () => {
+describe("Discord S7 subagent thread-expand affordance + signed approval UI (Phase 73)", () => {
   it("renders the parent line AND records a thread-create egress for a subagent placeholder", async () => {
     const timer = createFakeTimers();
     const clock = createFakeClock(0);
@@ -277,15 +277,21 @@ describe("Discord S7 subagent thread-expand affordance SHELL (NO callback resolu
     expect(thread).toEqual({ op: "threadCreate", parentId: "dc-msg-0" });
   });
 
-  it("does NOT register an interaction handler and signs NO callback_data (Phase 73 owns resolution)", async () => {
-    // The renderer surface is exactly the EditPlace ChannelActivityRenderer
-    // (strategy/canEdit/canDelete/apply/finalize) — there is no onInteraction /
-    // handleCallback / callback_data surface. A negative assertion via the
-    // renderer's own source confirms no signed-router wiring leaked in.
+  it("FLIPPED (§17.3): the renderer NOW wires the signed approval UI (Phase 73 owns resolution)", () => {
+    // Phase 71 forbade callback_data/signing in this file (the affordance was a
+    // deferral shell). Phase 73 (73-08) makes Discord paint native signed
+    // components: the renderer references `buildApprovalButtons` and threads the
+    // injected `signCallbackData` through to `callback_data`. This assertion is
+    // the positive inverse of the Phase-71 negative — see
+    // discord-activity.approval.test.ts for the behavioural proof.
     const here = dirname(fileURLToPath(import.meta.url));
     const src = fs.readFileSync(`${here}/../discord-activity.ts`, "utf8");
-    expect(src).not.toMatch(/callback_data|InteractiveCallbackRouter|truncateCallbackData|hmac|signCallback/);
+    expect(src).toMatch(/buildApprovalButtons/);
+    expect(src).toMatch(/signCallbackData/);
 
+    // The renderer surface stays the EditPlace ChannelActivityRenderer
+    // (strategy/canEdit/canDelete/apply/finalize) — the approval UI rides on the
+    // existing send path's `buttons`, not a new method on the renderer object.
     const timer = createFakeTimers();
     const clock = createFakeClock(0);
     const fake = createFakeDiscordAdapter();
