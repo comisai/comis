@@ -68,7 +68,9 @@ describe("ROTATION_STREAM_PATTERNS", () => {
 
 describe("sweepRotatedFiles", () => {
   it("sweeps daemon.log rotated files", async () => {
-    // Create a rotated daemon file.
+    // Create the active base file (daemon.log is present = pino-roll has not yet
+    // advanced to an indexed filename, so daemon.1.log is a genuine rotated file).
+    touch(tmpDir, "daemon.log");
     touch(tmpDir, "daemon.1.log");
 
     await sweepRotatedFiles(tmpDir, policy, {});
@@ -85,6 +87,8 @@ describe("sweepRotatedFiles", () => {
   });
 
   it("sweeps cache-trace.jsonl rotated files", async () => {
+    // Base file present means cache-trace.1.jsonl is a genuine rotated file.
+    touch(tmpDir, "cache-trace.jsonl");
     touch(tmpDir, "cache-trace.1.jsonl");
 
     await sweepRotatedFiles(tmpDir, policy, {});
@@ -96,6 +100,8 @@ describe("sweepRotatedFiles", () => {
   });
 
   it("sweeps config-audit.jsonl rotated files", async () => {
+    // Base file present means config-audit.jsonl.1 is a genuine rotated file.
+    touch(tmpDir, "config-audit.jsonl");
     touch(tmpDir, "config-audit.jsonl.1");
 
     await sweepRotatedFiles(tmpDir, policy, {});
@@ -134,6 +140,11 @@ describe("sweepRotatedFiles", () => {
   });
 
   it("iterates all five stream patterns in one sweep call", async () => {
+    // Create base files so the indexed siblings are treated as genuinely rotated
+    // (not protected by the no-base-file guard added to fix pino-roll collision).
+    touch(tmpDir, "daemon.log");
+    touch(tmpDir, "cache-trace.jsonl");
+    touch(tmpDir, "config-audit.jsonl");
     // Create one rotated artifact per stream.
     touch(tmpDir, "daemon.1.log");
     touch(tmpDir, "cache-trace.1.jsonl");
@@ -147,7 +158,7 @@ describe("sweepRotatedFiles", () => {
 
     await sweepRotatedFiles(tmpDir, policy, {});
 
-    // All 4 non-session-index files should have been gzipped.
+    // All 4 non-session-index rotated files should have been gzipped.
     expect(fs.existsSync(path.join(tmpDir, "daemon.1.log.gz"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "cache-trace.1.jsonl.gz"))).toBe(true);
     expect(fs.existsSync(path.join(tmpDir, "config-audit.jsonl.1.gz"))).toBe(true);
