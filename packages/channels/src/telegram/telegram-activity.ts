@@ -43,9 +43,15 @@ import type {
   TimerPort,
   TimerHandle,
   ClockPort,
+  RichButton,
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createEditPlaceRenderer } from "../shared/strategies/edit-place.js";
+import {
+  buildApprovalButtons,
+  type SignCallbackData,
+} from "../shared/strategies/approval-render.js";
+import { validateCallbackDataWithinBudget } from "./rich-renderer.js";
 
 /** Structural subset of a `GrammyError` the classifier reads (also matched on `error.cause`). */
 interface GrammyErrorFields {
@@ -178,8 +184,15 @@ export function makeTelegramRenderActions(
   }
 
   return {
-    async send(text): Promise<Result<string, ActivityRenderError>> {
-      const r = await adapter.sendMessage(channelId, text, { effects: ["silent"] });
+    async send(text, opts): Promise<Result<string, ActivityRenderError>> {
+      // An approval placeholder carries the signed inline-keyboard buttons
+      // (callback_data = v1.<choice>.<shortId>.<hmac>); the adapter maps them via
+      // renderTelegramButtons. The silent effect is preserved. Resolution is
+      // owned by the Phase-73 InteractiveCallbackRouter, not this renderer.
+      const r = await adapter.sendMessage(channelId, text, {
+        effects: ["silent"],
+        ...(opts?.buttons !== undefined ? { buttons: opts.buttons } : {}),
+      });
       return r.ok ? ok(r.value) : err(classifyTelegramError(r.error));
     },
 
@@ -199,19 +212,53 @@ export function makeTelegramRenderActions(
 }
 
 /**
+ * Drop any over-budget callback button BEFORE it reaches the adapter (T-73-24).
+ *
+ * `renderTelegramButtons` (73-05) is the adapter-side budget guard, but filtering
+ * here keeps the renderer's emitted rows honest: a >64-byte `callback_data` is
+ * OMITTED (refuse-loud), never truncated — truncation would corrupt the signed
+ * HMAC. The worst-case real signed payload is ~40 bytes, so this never fires in
+ * practice; it is defense-in-depth.
+ */
+function omitOverBudgetButtons(rows: RichButton[][]): RichButton[][] {
+  return rows.map((row) =>
+    row.filter((btn) => {
+      if (btn.callback_data === undefined) return true;
+      return validateCallbackDataWithinBudget(btn.callback_data).ok;
+    }),
+  );
+}
+
+/**
  * Create the Telegram EditPlace activity renderer — wires the Phase-70
  * {@link createEditPlaceRenderer} with the per-channel render-actions adapter.
  * The daemon composition root constructs this with its runtime `TimerPort` /
  * `ClockPort` and the chat id (WIRE-02).
+ *
+ * `signCallbackData` is the secret-bound signer injected at the composition root
+ * (73-10): the renderer CONSUMES it to build the signed inline keyboard and never
+ * imports the orchestrator package (Pitfall 5 / T-73-16). When omitted, an
+ * approval frame degrades to a button-less text prompt.
  */
 export function createTelegramActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
-  deps: { timer: TimerPort; clock: ClockPort },
+  deps: { timer: TimerPort; clock: ClockPort; signCallbackData?: SignCallbackData },
 ): ChannelActivityRenderer {
+  const { signCallbackData } = deps;
   return createEditPlaceRenderer({
     actions: makeTelegramRenderActions(adapter, channelId, { timer: deps.timer }),
     timer: deps.timer,
     clock: deps.clock,
+    // Approval frame → signed inline-keyboard rows (rendered to a grammY
+    // InlineKeyboard by renderTelegramButtons in the adapter). Over-budget
+    // buttons are omitted here too (never truncated — T-73-24).
+    buildButtons:
+      signCallbackData === undefined
+        ? undefined
+        : (events) =>
+            omitOverBudgetButtons(
+              events.flatMap((event) => buildApprovalButtons(event, signCallbackData)),
+            ),
   });
 }
