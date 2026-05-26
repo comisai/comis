@@ -46,10 +46,15 @@ function asErrorKind(value: unknown): ErrorKind | undefined {
  * @param tool - The AgentTool to wrap
  * @param eventBus - The TypedEventBus to emit events on
  * @param agentId - Optional agent ID to include in audit events
+ * @param homeDir - Optional operator `$HOME` for SEC-02 `$HOME`→`~` path
+ *   compaction of the redacted params (WR-05). When supplied, absolute home
+ *   paths in `tool:executed.params` compact to `~` for all bus consumers; when
+ *   omitted, secret/PII/absolute-path masking still applies (only home-prefix
+ *   compaction is skipped).
  * @returns A new AgentTool with audit instrumentation
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires `any` per pi-agent-core API
-export function wrapWithAudit(tool: AgentTool<any>, eventBus: TypedEventBus, agentId?: string): AgentTool<any> {
+export function wrapWithAudit(tool: AgentTool<any>, eventBus: TypedEventBus, agentId?: string, homeDir?: string): AgentTool<any> {
   return {
     ...tool,
     async execute(
@@ -102,10 +107,10 @@ export function wrapWithAudit(tool: AgentTool<any>, eventBus: TypedEventBus, age
         // EVT-06 / Pitfall 2 / T-70-06-01: redact params BEFORE the emit
         // crosses the bus. This closes the documented leak where raw tool
         // params (secrets, message bodies, absolute paths) were forwarded
-        // verbatim. `redactValue` is the only sanctioned path; no homeDir is
-        // in scope at this skill-bridge site, so $HOME path compaction is
-        // skipped, but secret/PII/absolute-path masking still applies.
-        const redactedParams = redactValue(params).value as
+        // verbatim. `redactValue` is the only sanctioned path. When the caller
+        // threads `homeDir` (WR-05), $HOME paths also compact to `~` for all
+        // consumers; otherwise secret/PII/absolute-path masking still applies.
+        const redactedParams = redactValue(params, { homeDir }).value as
           | Record<string, unknown>
           | undefined;
 

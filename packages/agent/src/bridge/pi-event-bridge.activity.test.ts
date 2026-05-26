@@ -157,6 +157,35 @@ describe("PiEventBridge activity emit-site redaction (EVT-01/02)", () => {
   });
 });
 
+describe("PiEventBridge $HOME compaction at the emit sites (WR-05)", () => {
+  const HOME = "/home/operator";
+
+  it("tool:started compacts a $HOME-rooted param path to ~ when homeDir is wired", () => {
+    const deps = createMockDeps({ homeDir: HOME });
+    const { listener } = createPiEventBridge(deps);
+
+    listener(startEvent("read", "tc-h1", { path: `${HOME}/.comis/agents.md` }) as any);
+
+    const started = emitPayload(deps, "tool:started");
+    // $HOME compacts to ~; the trailing 2 segments (.comis/agents.md) survive
+    // per the SEC-02 compaction contract.
+    expect(started.params.path).toContain("~/.comis/agents.md");
+    expect(JSON.stringify(started.params)).not.toContain(HOME);
+  });
+
+  it("tool:executed compacts a $HOME-rooted param path to ~ when homeDir is wired", () => {
+    const deps = createMockDeps({ homeDir: HOME });
+    const { listener } = createPiEventBridge(deps);
+
+    listener(startEvent("read", "tc-h2", { path: `${HOME}/.comis/config.yaml` }) as any);
+    listener(endEvent("read", "tc-h2", false) as any);
+
+    const executed = emitPayload(deps, "tool:executed");
+    expect(executed.params.path).toContain("~/.comis/config.yaml");
+    expect(JSON.stringify(executed.params)).not.toContain(HOME);
+  });
+});
+
 describe("PiEventBridge failureDetector hook (EVT-10, §16.10)", () => {
   it("a failureDetector returning true marks success:false with an errorKind on an isError:false result", () => {
     registerToolMetadata("activity_flaky_70_06", { failureDetector: () => true });

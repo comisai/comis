@@ -239,6 +239,25 @@ describe("wrapWithAudit", () => {
     expect(params!.q).toBe("weather");
   });
 
+  it("compacts $HOME paths to ~ in the emitted params when homeDir is threaded (WR-05)", async () => {
+    const eventBus = new TypedEventBus();
+    const events: EventMap["tool:executed"][] = [];
+    eventBus.on("tool:executed", (payload) => events.push(payload));
+
+    const tool = createMockTool();
+    const HOME = "/home/operator";
+    const wrapped = wrapWithAudit(tool, eventBus, "agent-x", HOME);
+
+    await wrapped.execute("call-home", { path: `${HOME}/.comis/config.yaml` });
+
+    expect(events).toHaveLength(1);
+    const params = events[0]!.params as Record<string, unknown> | undefined;
+    expect(params).toBeDefined();
+    // $HOME compacts to ~; the home username never crosses the bus.
+    expect(params!.path).toContain("~/.comis/config.yaml");
+    expect(JSON.stringify(params)).not.toContain(HOME);
+  });
+
   it("includes toolCallId on the tool:executed emit (was omitted at the leak site)", async () => {
     const eventBus = new TypedEventBus();
     const events: EventMap["tool:executed"][] = [];

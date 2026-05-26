@@ -1089,6 +1089,12 @@ async function runSessionLocked(
     model: config.model,
     operationType: executionOverrides?.operationType ?? "interactive",
     logger: deps.logger,
+    // WR-05: thread the operator $HOME so the bridge's tool:started/tool:executed
+    // params compact $HOME→~ for ALL bus consumers (delivery-tracer, trajectory
+    // writers, plan-stream), not only the activity renderer. Matches the
+    // os.homedir() sanctioned-root pattern already used in this file for the
+    // trajectory-confinement base.
+    homeDir: os.homedir(),
     onDelta,
     memoryPort: deps.memoryPort,
     onAbort: () => {

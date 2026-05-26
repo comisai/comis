@@ -254,6 +254,16 @@ export interface PiEventBridgeDeps {
    * ancestor (`~/.comis`) here.
    */
   dataDir?: string;
+  /**
+   * Operator home directory (`$HOME`) for SEC-02 `$HOME`→`~` path compaction at
+   * the tool-event emit sites (WR-05). When supplied, the redacted `params` on
+   * `tool:started` / `tool:executed` compact absolute home paths to `~` for ALL
+   * bus consumers (delivery-tracer, trajectory writers, plan-stream) — not only
+   * the activity renderer that re-redacts with its own injected homeDir. When
+   * omitted, secret/PII/absolute-path masking still applies; only the
+   * home-prefix compaction is skipped.
+   */
+  homeDir?: string;
 }
 
 /** Estimated cost payload for a timed-out API request. */
@@ -480,8 +490,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
           // EVT-02: thread redacted params + an `action` field onto tool:started.
           // redactValue is the only sanctioned path — secrets/PII/absolute paths
-          // are masked BEFORE the emit crosses the bus.
-          const startedRedactedParams = redactValue(toolEvent.args).value as
+          // are masked BEFORE the emit crosses the bus. homeDir (when wired)
+          // compacts $HOME→~ for all consumers, not just the re-redacting
+          // activity renderer (WR-05).
+          const startedRedactedParams = redactValue(toolEvent.args, { homeDir: deps.homeDir }).value as
             | Record<string, unknown>
             | undefined;
           const startedAction =
@@ -720,8 +732,9 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
 
           // EVT-01: forward redacted params (from the raw args stashed at
           // tool_execution_start). redactValue masks secrets/PII/absolute paths
-          // before the emit crosses the bus.
-          const executedRedactedParams = redactValue(rawArgsForParams).value as
+          // before the emit crosses the bus. homeDir (when wired) compacts
+          // $HOME→~ for all consumers, not just the activity renderer (WR-05).
+          const executedRedactedParams = redactValue(rawArgsForParams, { homeDir: deps.homeDir }).value as
             | Record<string, unknown>
             | undefined;
 
