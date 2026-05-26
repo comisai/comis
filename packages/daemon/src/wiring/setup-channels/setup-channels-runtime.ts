@@ -13,7 +13,7 @@
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";
-import type { Attachment, ChannelPort, ChannelPluginPort, DeliveryService, NormalizedMessage, SessionKey, ChannelActivityRenderer } from "@comis/core";
+import type { Attachment, ChannelPort, ChannelPluginPort, DeliveryService, NormalizedMessage, SessionKey, ClockPort, TimerPort } from "@comis/core";
 import { formatSessionKey, safePath, systemNowDate } from "@comis/core";
 import type { AppContainer } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
@@ -29,7 +29,7 @@ import {
   type ChannelRegistry,
 } from "@comis/channels";
 import { buildReadOnlyChannelRegistry } from "./setup-channels-registry-builder.js";
-import { buildActivityRenderers } from "./setup-channels-activity-renderers.js";
+import { buildActivityRenderers, type ActivityRendererFactory } from "./setup-channels-activity-renderers.js";
 import { createChannelManager, processInboundMessage, type ChannelManager } from "@comis/orchestrator";
 import { RetryConfigSchema, createRetryEngine } from "@comis/core";
 import {
@@ -63,6 +63,9 @@ export interface ChannelManagerBuildDeps {
   /** Per-channel plugin map; consumers read `plugin.capabilities` for
    *  features.reactions, replyToMetaKey, etc. */
   channelPlugins: Map<string, ChannelPluginPort>;
+  // System clock + timer (composition root) → buildActivityRenderers EditPlace branch (debounce + deliveredAtMs delete gate).
+  clock: ClockPort;
+  timers: TimerPort;
   preprocessMessageCallback: (msg: NormalizedMessage) => Promise<NormalizedMessage>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PreflightResult type from channels package is not re-exported; pass-through matches setup-channels-media.ts
   preflightFn?: (msg: NormalizedMessage) => Promise<any>;
@@ -103,7 +106,7 @@ export interface ChannelManagerBuildResult {
   lifecycleReactors: LifecycleReactor[];
   approvalNotifier?: ApprovalNotifier;
   commandQueue?: CommandQueue;
-  activityRenderers: Map<string, ChannelActivityRenderer>; // WIRE-02; see buildActivityRenderers
+  activityRenderers: Map<string, ActivityRendererFactory>; // WIRE-02; per-channelId factory, see buildActivityRenderers
 }
 
 /**
@@ -586,13 +589,10 @@ export async function buildAndStartChannelManager(
     approvalNotifier.start();
     channelsLogger.debug("Approval notifier started");
 
-    // eventBus.on("system:shutdown", () => approvalNotifier?.stop())
-    // subscriber deleted. The notifier handle is already in the return shape;
-    // the composition root invokes its .stop() directly via
-    // ShutdownDeps.approvalNotifierStop.
+    // No system:shutdown subscriber: composition root calls .stop() via ShutdownDeps.approvalNotifierStop.
   }
 
-  const activityRenderers = buildActivityRenderers(adaptersByType, channelPlugins, channelsLogger); // WIRE-02
+  const activityRenderers = buildActivityRenderers(adaptersByType, channelPlugins, channelsLogger, { timer: deps.timers, clock: deps.clock }); // WIRE-02
   return { channelManager, lifecycleReactors, approvalNotifier, commandQueue, activityRenderers };
 }
 // Re-export Attachment + ChannelPluginPort (silences lint; public-surface boundary).

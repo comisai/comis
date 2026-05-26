@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService, WrapExternalContentOptions } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -88,6 +88,12 @@ export interface ChannelsDeps {
   logger: ComisLogger;
   /** Module-bound logger for channels subsystem. */
   channelsLogger: ComisLogger;
+  /** System clock (composition root). Threaded to buildActivityRenderers so the
+   *  EditPlace renderer gates its delete on outcome.delivery.deliveredAtMs. */
+  clock: ClockPort;
+  /** System timers (composition root). Threaded to buildActivityRenderers so the
+   *  EditPlace renderer debounces edits via TimerPort (no raw setTimeout). */
+  timers: TimerPort;
   /** Link understanding runner for message text enrichment. */
   linkRunner: LinkRunner;
   /** SSRF-guarded fetcher for media downloads. */
@@ -286,6 +292,8 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       deliveryService,
       adaptersByType,
       channelPlugins,
+      clock: deps.clock,
+      timers: deps.timers,
       preprocessMessageCallback,
       preflightFn,
       assembleToolsForAgent: deps.assembleToolsForAgent,

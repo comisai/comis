@@ -634,7 +634,7 @@ function buildChannelManagerDeps(deps: {
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
-    onSuspiciousContent, dataDir,
+    onSuspiciousContent, dataDir, clock, timers,
   } = agents;
   // Build exportSessionBundle DI closure for the /export-trajectory slash
   // command. Uses exportTrajectoryBundle from @comis/observability (same
@@ -656,7 +656,7 @@ function buildChannelManagerDeps(deps: {
   };
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
-    logger, channelsLogger,
+    logger, channelsLogger, clock, timers,
     linkRunner, ssrfFetcher, transcriber,
     maxMediaBytes: container.config.integrations.media.infrastructure.maxRemoteFetchBytes,
     assembleToolsForAgent,
