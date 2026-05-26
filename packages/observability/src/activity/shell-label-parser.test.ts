@@ -86,6 +86,19 @@ describe("parseShellCommand — secret redaction in the produced label (WR-03 / 
     expect(label).toContain("<redacted>");
   });
 
+  it("redacts a ghp_* GitHub PAT that reaches the label through a grep pattern", () => {
+    // SEC-07 M5: CONTEXT names `ghp_*` explicitly as the secret shape the
+    // shell-label cases must cover; the sibling sk-/Bearer cases above did not.
+    // The shipped parser already masks it (it runs `redactValue`, whose
+    // `SECRET_SHAPE_PATTERNS` includes `GITHUB_TOKEN_FULL` = /\bgh[pousr]_…/),
+    // so this is a regression-lock for the named shape — GREEN on first run.
+    // A neutral 36-char PAT body (NOT a real token, AGENTS.md §2.2).
+    const pat = "ghp_" + "A".repeat(36);
+    const label = parseShellCommand(`grep ${pat} audit.log`);
+    expect(label).not.toContain(pat);
+    expect(label).toContain("<redacted>");
+  });
+
   it("leaves a benign command label unchanged (no spurious redaction)", () => {
     expect(parseShellCommand("head -n 20 file.txt")).toBe("show first 20 lines of file.txt");
     expect(parseShellCommand("grep foo .")).toBe("search for `foo` in .");
