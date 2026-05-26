@@ -124,6 +124,13 @@ vi.mock("@comis/core", async () => {
     createNoOpDeliveryQueue: vi.fn(() => ({})),
     systemNowMs: () => Date.now(),
     systemNowDate: () => new Date(),
+    // 75-06: setupChannels resolves the default agent's activity.theme →
+    // themeForName(name).markers for the activity renderers (UX-01). The fake
+    // returns the default-theme marker bundle so the resolved markers stay
+    // default-parity in these wiring tests.
+    themeForName: vi.fn(() => ({
+      markers: { success: "✓", failure: "❌", subagent: "🤖", running: "🔧" },
+    })),
   };
 });
 
