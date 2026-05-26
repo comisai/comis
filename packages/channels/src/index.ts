@@ -313,8 +313,19 @@ export { TELEGRAM_THREAD_META_KEYS } from "./telegram/thread-context.js";
 // Activity rendering strategies (§7.2; 70-07). The daemon composition root
 // (setup-channels-runtime.ts) selects a per-channel ChannelActivityRenderer via
 // `selectStrategy(caps, channelType)` from @comis/core, then constructs the
-// matching strategy here. In Phase 70 only Echo→TestSink is live end-to-end
-// (TestSink needs no platform ActivityRenderActions); the EditPlace/
-// DeleteAndRepost/AppendOnly/LinePerEvent/DigestOnly factories wire their
-// per-channel send/edit/delete adapters in Phases 71-72 and are exported then.
+// matching strategy here via buildActivityRenderers (WIRE-02). Echo→TestSink is
+// the zero-adapter terminus; the four EditPlace channels (Telegram/Discord/
+// Slack/WhatsApp, Phase 71-02/03/04) wrap createEditPlaceRenderer over a
+// per-channel render-actions adapter + injected TimerPort/ClockPort. The
+// DeleteAndRepost/AppendOnly/LinePerEvent/DigestOnly strategies wire their
+// adapters in a later phase. The EditPlace + Echo factories + the
+// createEditPlaceRenderer machine are re-exported here (71-05) so the daemon's
+// buildActivityRenderers can construct them from the @comis/channels barrel.
 export { createTestSink } from "./shared/strategies/test-sink.js";
+export { createEditPlaceRenderer } from "./shared/strategies/edit-place.js";
+export type { EditPlaceDeps } from "./shared/strategies/edit-place.js";
+export { createTelegramActivityRenderer } from "./telegram/telegram-activity.js";
+export { createDiscordActivityRenderer } from "./discord/discord-activity.js";
+export { createSlackActivityRenderer } from "./slack/slack-activity.js";
+export { createWhatsAppActivityRenderer } from "./whatsapp/whatsapp-activity.js";
+export { createEchoActivityRenderer } from "./echo/echo-activity.js";

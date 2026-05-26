@@ -578,6 +578,23 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DiscordTextLikeChannel",
       "asThreadInfo",
       "DiscordThreadInfo",
+      // Activity-renderer surface re-exported in 71-05 so the daemon's
+      // buildActivityRenderers (setup-channels-activity-renderers.ts) can
+      // construct the EditPlace renderers from the @comis/channels barrel.
+      // The four per-channel factories (createTelegramActivityRenderer,
+      // createDiscordActivityRenderer, createSlackActivityRenderer,
+      // createWhatsAppActivityRenderer) HAVE that in-repo consumer and are
+      // NOT listed. createEchoActivityRenderer is the Echo→TestSink wrapper
+      // (the daemon constructs createTestSink() directly, so the Echo factory
+      // has no production consumer yet — its consumer arrives with the Echo
+      // activity-renderer wiring). createEditPlaceRenderer + EditPlaceDeps are
+      // wrapped INTERNALLY by the four per-channel factories, so the daemon
+      // never imports them by name; they are public-surface for embedders +
+      // the per-channel factory implementations. Shrink each as a real
+      // cross-package consumer lands.
+      "createEchoActivityRenderer",
+      "createEditPlaceRenderer",
+      "EditPlaceDeps",
     ])],
     // @comis/cli: 3 documented external-API entries (withClient,
     // credentialsStep, RpcClient). All register*Command factories and
