@@ -7,7 +7,8 @@
  * Behavior under test:
  *   - maps tool:started → tool:executed to ordered ActivityEvents (validated by
  *     parseActivityEvent), scoped to a turn via subscribeForTurn.
- *   - subagent events are IGNORED at this layer (Phase 73 renders them).
+ *   - subagent events map to kind:"subagent" (APV-01) — the dedicated cases live
+ *     in `__tests__/activity-stream.subagent.test.ts`.
  *   - approval:requested → approval:resolved (same requestId) close the matching
  *     activity via the correlation index keyed by requestId.
  *   - subscribeForTurn delivers only events scoped to {agentId,sessionKey,traceId};
@@ -103,18 +104,21 @@ describe("createActivityStream (STRAT-07 / spec §5)", () => {
     sub.unsubscribe();
   });
 
-  it("ignores subagent events at this layer (rendered in Phase 73)", () => {
+  it("maps a subagent spawn to a kind:'subagent' event for the matching turn (APV-01)", () => {
     const bus = new TypedEventBus();
     const logger = makeLogger();
     const stream = createActivityStream({ eventBus: bus, logger });
     const received: ActivityEvent[] = [];
     const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
     bus.emit("session:sub_agent_spawned", {
+      runId: "run-x",
       parentSessionKey: SESSION,
-      subAgentId: "sub-1",
+      agentId: AGENT,
+      task: "do work",
       timestamp: 1,
-    } as never);
-    expect(received).toHaveLength(0);
+    });
+    expect(received).toHaveLength(1);
+    expect(received[0].kind).toBe("subagent");
     sub.unsubscribe();
   });
 

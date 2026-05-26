@@ -353,6 +353,144 @@ describe("createActivityTurnCoordinator — SEC-04 delete gate", () => {
 });
 
 // ---------------------------------------------------------------------------
+// APV-01 — active sub-agent stack + parentActivityId resolution
+// ---------------------------------------------------------------------------
+//
+// Linkage seam (Open Question 2 / Assumption A2): the ActivityStream emits a
+// kind:"subagent" event WITHOUT a parentActivityId (it has no turn state). The
+// coordinator — the §4.5 per-turn single owner — maintains a `runId →
+// parentActivityId` map plus an active-subagent stack and annotates the parent
+// link in onEvent: on a phase:"start" subagent event lacking parentActivityId,
+// it sets parentActivityId to the turn's root activity id (minted once at
+// start) and records runId→parent; on phase:"end" it pops the stack entry. The
+// stream side of this seam is pinned in
+// `observability/.../__tests__/activity-stream.subagent.test.ts`.
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+describe("createActivityTurnCoordinator — APV-01 sub-agent parent stack", () => {
+  it("annotates a subagent start event with a uuid parentActivityId resolved from the active turn", () => {
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    const seen: ActivityEvent[] = [];
+    const spy = vi.spyOn(renderer, "apply");
+
+    stream.emit(
+      makeEvent({
+        kind: "subagent",
+        semanticPhase: "thinking",
+        phase: "start",
+        status: "running",
+        defaultLabel: "🤖 sub-agent-1 subagent",
+        parentActivityId: undefined,
+      }),
+    );
+    timer.advance(800);
+
+    // The projection consumes the buffered event; assert the buffered event was
+    // annotated by inspecting the frame the renderer received.
+    const frame = spy.mock.calls.at(-1)?.[0];
+    const subEvent = frame?.visibleEvents.find((e) => e.kind === "subagent");
+    void seen;
+    expect(subEvent).toBeDefined();
+    expect(subEvent?.parentActivityId).toBeTypeOf("string");
+    expect(subEvent?.parentActivityId).toMatch(UUID_RE);
+
+    coord.dispose();
+  });
+
+  it("links nested sub-agents: each subagent's parentActivityId is a valid uuid (parent stack)", () => {
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    const spy = vi.spyOn(renderer, "apply");
+
+    // Outer sub-agent spawns, then a nested sub-agent spawns inside it.
+    stream.emit(
+      makeEvent({
+        kind: "subagent",
+        semanticPhase: "thinking",
+        phase: "start",
+        status: "running",
+        activityId: crypto.randomUUID(),
+        defaultLabel: "🤖 outer subagent",
+        parentActivityId: undefined,
+      }),
+    );
+    stream.emit(
+      makeEvent({
+        kind: "subagent",
+        semanticPhase: "thinking",
+        phase: "start",
+        status: "running",
+        activityId: crypto.randomUUID(),
+        defaultLabel: "🤖 nested subagent",
+        parentActivityId: undefined,
+      }),
+    );
+    timer.advance(800);
+
+    const frame = spy.mock.calls.at(-1)?.[0];
+    const subEvents = frame?.visibleEvents.filter((e) => e.kind === "subagent") ?? [];
+    expect(subEvents.length).toBeGreaterThanOrEqual(1);
+    for (const e of subEvents) {
+      expect(e.parentActivityId).toBeTypeOf("string");
+      expect(e.parentActivityId).toMatch(UUID_RE);
+    }
+
+    coord.dispose();
+  });
+
+  it("does not overwrite a parentActivityId that is already present on the event", () => {
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    const spy = vi.spyOn(renderer, "apply");
+    const PRESET = crypto.randomUUID();
+
+    stream.emit(
+      makeEvent({
+        kind: "subagent",
+        semanticPhase: "thinking",
+        phase: "start",
+        status: "running",
+        defaultLabel: "🤖 preset subagent",
+        parentActivityId: PRESET,
+      }),
+    );
+    timer.advance(800);
+
+    const frame = spy.mock.calls.at(-1)?.[0];
+    const subEvent = frame?.visibleEvents.find((e) => e.kind === "subagent");
+    expect(subEvent?.parentActivityId).toBe(PRESET);
+
+    coord.dispose();
+  });
+
+  it("leaves non-subagent events' parentActivityId untouched (no spurious annotation)", () => {
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator(deps);
+    coord.start(makeCtx());
+
+    const spy = vi.spyOn(renderer, "apply");
+    stream.emit(makeEvent({ kind: "tool", phase: "end", status: "completed", defaultLabel: "ran a tool" }));
+    timer.advance(800);
+
+    const frame = spy.mock.calls.at(-1)?.[0];
+    const toolEvent = frame?.visibleEvents.find((e) => e.kind === "tool");
+    expect(toolEvent).toBeDefined();
+    expect(toolEvent?.parentActivityId).toBeUndefined();
+
+    coord.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Error-kind mapping, finalize WARN, reject path, dispose-only, counters
 // ---------------------------------------------------------------------------
 
