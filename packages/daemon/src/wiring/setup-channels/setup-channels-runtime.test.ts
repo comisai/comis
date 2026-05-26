@@ -41,6 +41,13 @@ describe("setup-channels-runtime", () => {
       deliveryService: true,
       adaptersByType: true,
       channelPlugins: true,
+      clock: true,
+      timers: true,
+      signCallbackData: true,
+      mintApprovalLink: true,
+      // CR-01: the InteractiveCallbackRouter (verifier) threaded into
+      // createChannelManager so the inbound button-callback intercept fires.
+      interactiveCallbackRouter: true,
       preprocessMessageCallback: true,
       preflightFn: true,
       assembleToolsForAgent: true,
@@ -61,7 +68,7 @@ describe("setup-channels-runtime", () => {
       cronExecutionTrackers: true,
       exportSessionBundle: true,
     };
-    expect(Object.keys(witness).length).toBe(29);
+    expect(Object.keys(witness).length).toBe(34);
   });
 
   it("ChannelManagerBuildResult witness pins the manager handle output keys", () => {

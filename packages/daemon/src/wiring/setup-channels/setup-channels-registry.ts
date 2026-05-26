@@ -100,6 +100,12 @@ export interface ChannelsDeps {
    *  renderer (it has no buttons). Optional: absent → no approval link in the
    *  [FAILED] digest. */
   mintApprovalLink?: import("@comis/channels").MintApprovalLink;
+  /** Server-side interactive-callback router (CR-01 / 73-04). Threaded through
+   *  buildAndStartChannelManager → createChannelManager → the inbound pipeline so
+   *  inbound-gate.ts intercepts a signed button callback and verifies it BEFORE
+   *  slash parsing (the signed payload must never reach the LLM). Optional: absent
+   *  → button callbacks fall through to the normal pipeline (degrade, not crash). */
+  interactiveCallbackRouter?: import("@comis/orchestrator").InteractiveCallbackRouter;
   /** Link understanding runner for message text enrichment. */
   linkRunner: LinkRunner;
   /** SSRF-guarded fetcher for media downloads. */
@@ -302,6 +308,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       timers: deps.timers,
       signCallbackData: deps.signCallbackData,
       mintApprovalLink: deps.mintApprovalLink,
+      interactiveCallbackRouter: deps.interactiveCallbackRouter, // CR-01: verifier → inbound pipeline
       preprocessMessageCallback,
       preflightFn,
       assembleToolsForAgent: deps.assembleToolsForAgent,

@@ -64,6 +64,10 @@ export interface ChannelManagerBuildDeps {
   timers: TimerPort;
   signCallbackData?: import("@comis/channels").SignCallbackData;
   mintApprovalLink?: import("@comis/channels").MintApprovalLink;
+  // CR-01: the server-side interactive-callback router (verifier). Threaded into
+  // createChannelManager so inbound-gate.ts intercepts a signed button callback
+  // and verifies it BEFORE slash parsing — the signed payload never reaches the LLM.
+  interactiveCallbackRouter?: import("@comis/orchestrator").InteractiveCallbackRouter;
   preprocessMessageCallback: (msg: NormalizedMessage) => Promise<NormalizedMessage>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PreflightResult type from channels package is not re-exported; pass-through matches setup-channels-media.ts
   preflightFn?: (msg: NormalizedMessage) => Promise<any>;
@@ -394,6 +398,10 @@ export async function buildAndStartChannelManager(
       },
       // /approve and /deny chat command interception
       approvalGate: deps.approvalGate,
+      // CR-01: signed button-callback intercept (inbound-gate.ts) — the verifier
+      // that resolves a tapped approve/deny button. Reaches the inbound pipeline
+      // via pipelineDeps = deps inside createChannelManager.
+      interactiveCallbackRouter: deps.interactiveCallbackRouter,
       // General slash command handling via createCommandHandler
       handleSlashCommand: async (text: string, sessionKey: SessionKey, agentId: string) => {
         const parsed = parseSlashCommand(text);

@@ -663,6 +663,10 @@ function buildChannelManagerDeps(deps: {
     // (always present at runtime; optional-typed on BootContext).
     signCallbackData: interactiveCallbackWiring?.signCallbackData,
     mintApprovalLink: interactiveCallbackWiring?.mintApprovalLink,
+    // CR-01: thread the verifier. The InteractiveCallbackRouter is the server-side
+    // authority that intercepts inbound button callbacks (inbound-gate.ts) BEFORE
+    // slash parsing — without this hop the signed payload reaches the LLM as text.
+    interactiveCallbackRouter: interactiveCallbackWiring?.router,
     linkRunner, ssrfFetcher, transcriber,
     maxMediaBytes: container.config.integrations.media.infrastructure.maxRemoteFetchBytes,
     assembleToolsForAgent,
