@@ -12,6 +12,9 @@ import type { MediaResult } from "./wiring/setup-media.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as nodePath from "node:path";
+import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { mkdtempSync, rmSync } from "node:fs";
 import { inspect } from "node:util";
 import { createMockLogger } from "../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../test/support/mock-event-bus.js";
@@ -771,5 +774,93 @@ describe("applyInspectDefaultsForLogging", () => {
     expect(inspect.defaultOptions.depth).toBe(2);
     expect(inspect.defaultOptions.breakLength).toBe(80);
     expect(r2).toEqual({ depthChanged: false, breakLengthChanged: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// STORE-02 opt-out and STORE-01c same-boot init
+// ---------------------------------------------------------------------------
+
+describe("STORE-02 opt-out and STORE-01c same-boot init", () => {
+  const originalEnv = process.env;
+  const instances: DaemonInstance[] = [];
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(async () => {
+    delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
+    while (instances.length > 0) {
+      const inst = instances.shift()!;
+      try {
+        await inst.shutdownHandle.trigger("test-cleanup");
+      } catch {
+        // Best-effort
+      }
+      try {
+        inst.shutdownHandle.dispose();
+      } catch {
+        /* idempotent */
+      }
+    }
+    process.env = originalEnv;
+  });
+
+  it("emits WARN with hint about backup obligation when COMIS_DISABLE_ENCRYPTED_SECRETS=1", async () => {
+    // Set opt-out flag
+    process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"] = "1";
+    const { overrides, mocks } = buildOverrides();
+    const mockSetupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
+    overrides.setupSecrets = mockSetupSecrets;
+
+    const instance = await main(overrides);
+    instances.push(instance);
+
+    // Pre-patch: no WARN specifically about COMIS_DISABLE_ENCRYPTED_SECRETS is emitted.
+    // Post-patch: daemonLogger (obtained from logLevelManager.getLogger) emits warn with
+    // backup-obligation message. Access pattern mirrors daemon.test.ts:437.
+    const daemonLogger = (mocks.logLevelManager.getLogger as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+    const warnCalls = (daemonLogger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    // Must find a warn whose message (2nd arg) OR hint (in 1st arg object) contains
+    // "COMIS_DISABLE_ENCRYPTED_SECRETS" — specifically the opt-out WARN, not generic
+    // config warns (those exist pre-patch too, but none mention this flag).
+    const optOutWarn = warnCalls.find((args: unknown[]) => {
+      const msg = String(args[1] ?? "");
+      const hint = typeof args[0] === "object" && args[0] !== null
+        ? String((args[0] as Record<string, unknown>)["hint"] ?? "")
+        : "";
+      return msg.includes("COMIS_DISABLE_ENCRYPTED_SECRETS") ||
+             hint.includes("COMIS_DISABLE_ENCRYPTED_SECRETS") ||
+             hint.includes("backup obligation");
+    });
+    // This assertion FAILS pre-patch (no such WARN exists):
+    expect(optOutWarn).toBeDefined();
+  });
+
+  it("passes seedKeyHex to setupSecrets on first boot with a fresh data directory", async () => {
+    // Fresh tmpdir — no .env file present; use a subdirectory so writeMasterKeyIfAbsent
+    // writes there rather than the shared sandbox COMIS_DATA_DIR.
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-first-boot-test-"));
+    process.env["COMIS_DATA_DIR"] = freshDataDir;
+    // Ensure opt-out is NOT set so writeMasterKeyIfAbsent is called
+    delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
+    const { overrides } = buildOverrides();
+    const mockSetupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
+    overrides.setupSecrets = mockSetupSecrets;
+
+    const instance = await main(overrides);
+    instances.push(instance);
+
+    // Capture the call args to setupSecrets
+    const calls = mockSetupSecrets.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const firstCallOpts = calls[0]![0] as Record<string, unknown>;
+    // Pre-patch: seedKeyHex is NOT passed (undefined or missing key).
+    // Post-patch: seedKeyHex is a 64-char hex string.
+    expect(typeof firstCallOpts["seedKeyHex"]).toBe("string");
+    expect(String(firstCallOpts["seedKeyHex"])).toMatch(/^[0-9a-f]{64}$/);
+
+    rmSync(freshDataDir, { recursive: true, force: true });
   });
 });
