@@ -6,6 +6,7 @@
 
 export * from "./exports/domain.js";
 export * from "./exports/ports.js";
+export * from "./exports/activity.js";
 export * from "./exports/security.js";
 export * from "./exports/logging.js";
 export * from "./exports/event-bus.js";
