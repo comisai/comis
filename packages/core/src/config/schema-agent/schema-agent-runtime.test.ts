@@ -1,0 +1,115 @@
+// SPDX-License-Identifier: Apache-2.0
+import { describe, it, expect } from "vitest";
+import { PerAgentConfigSchema } from "./schema-agent-runtime.js";
+
+// ---------------------------------------------------------------------------
+// v2.5 Agent Transparency — per-agent activity + delivery config (TURN-08/09)
+//
+// §16.3: two NEW per-agent blocks — `activity` (presentation) and `delivery`
+// (final-assistant visibility). Every field defaulted so existing configs
+// validate unchanged. The top-level `verbosity` (response-style
+// VerbosityConfigSchema) is KEPT unchanged and is a distinct concept from the
+// new `activity.verbosity` (no rename, no shim — §16.3).
+//
+// These cases fail on the pre-patch schema (the parsed config lacks `activity`
+// and `delivery`) — RED proof.
+// ---------------------------------------------------------------------------
+
+describe("per-agent activity config block (TURN-08)", () => {
+  it("applies activity defaults for an empty agent config", () => {
+    const cfg = PerAgentConfigSchema.parse({});
+    expect(cfg.activity.verbosity).toBe("normal");
+    expect(cfg.activity.onSuccess).toBe("delete");
+    expect(cfg.activity.theme).toBe("default");
+    expect(cfg.activity.emergencyDisabled).toBe(false);
+    expect(cfg.activity.channels).toEqual({});
+  });
+
+  it("accepts every activity.verbosity level and rejects an unknown one", () => {
+    for (const verbosity of ["silent", "quiet", "normal", "verbose"] as const) {
+      const cfg = PerAgentConfigSchema.parse({ activity: { verbosity } });
+      expect(cfg.activity.verbosity).toBe(verbosity);
+    }
+    const bad = PerAgentConfigSchema.safeParse({ activity: { verbosity: "loud" } });
+    expect(bad.success).toBe(false);
+  });
+
+  it("accepts every activity.onSuccess value and rejects an unknown one", () => {
+    for (const onSuccess of ["delete", "keep", "collapse"] as const) {
+      const cfg = PerAgentConfigSchema.parse({ activity: { onSuccess } });
+      expect(cfg.activity.onSuccess).toBe(onSuccess);
+    }
+    const bad = PerAgentConfigSchema.safeParse({ activity: { onSuccess: "purge" } });
+    expect(bad.success).toBe(false);
+  });
+
+  it("accepts every activity.theme value and rejects an unknown one", () => {
+    for (const theme of [
+      "default",
+      "terminal-minimal",
+      "playful",
+      "ascii",
+    ] as const) {
+      const cfg = PerAgentConfigSchema.parse({ activity: { theme } });
+      expect(cfg.activity.theme).toBe(theme);
+    }
+    const bad = PerAgentConfigSchema.safeParse({ activity: { theme: "neon" } });
+    expect(bad.success).toBe(false);
+  });
+
+  it("activity.channels is a record of { enabled } defaulting enabled to false", () => {
+    const cfg = PerAgentConfigSchema.parse({
+      activity: { channels: { "telegram:dm": {}, "discord:thread": { enabled: true } } },
+    });
+    // Missing `enabled` defaults to false — every renderer off until enabled.
+    expect(cfg.activity.channels["telegram:dm"]?.enabled).toBe(false);
+    expect(cfg.activity.channels["discord:thread"]?.enabled).toBe(true);
+  });
+});
+
+describe("per-agent delivery.visibleReplies config block (TURN-09)", () => {
+  it("defaults visibleReplies.direct to 'automatic' and .group to 'message_tool'", () => {
+    const cfg = PerAgentConfigSchema.parse({});
+    expect(cfg.delivery.visibleReplies.direct).toBe("automatic");
+    expect(cfg.delivery.visibleReplies.group).toBe("message_tool");
+  });
+
+  it("accepts automatic|message_tool for direct and group and rejects others", () => {
+    for (const mode of ["automatic", "message_tool"] as const) {
+      const cfg = PerAgentConfigSchema.parse({
+        delivery: { visibleReplies: { direct: mode, group: mode } },
+      });
+      expect(cfg.delivery.visibleReplies.direct).toBe(mode);
+      expect(cfg.delivery.visibleReplies.group).toBe(mode);
+    }
+    const bad = PerAgentConfigSchema.safeParse({
+      delivery: { visibleReplies: { direct: "loud" } },
+    });
+    expect(bad.success).toBe(false);
+  });
+});
+
+describe("top-level verbosity stays unchanged alongside activity.verbosity (no-BC)", () => {
+  it("still parses the response-style top-level verbosity (VerbosityConfigSchema)", () => {
+    const cfg = PerAgentConfigSchema.parse({
+      verbosity: {
+        enabled: true,
+        defaultLevel: "concise",
+        overrides: { telegram: { level: "terse" } },
+      },
+    });
+    // Response-style verbosity uses the auto|terse|concise|standard|detailed scale.
+    expect(cfg.verbosity?.defaultLevel).toBe("concise");
+    expect(cfg.verbosity?.overrides.telegram?.level).toBe("terse");
+  });
+
+  it("keeps activity.verbosity distinct from the top-level response-style verbosity", () => {
+    const cfg = PerAgentConfigSchema.parse({
+      verbosity: { defaultLevel: "detailed" },
+      activity: { verbosity: "verbose" },
+    });
+    // Two independent fields with disjoint enums — they only share the word.
+    expect(cfg.verbosity?.defaultLevel).toBe("detailed");
+    expect(cfg.activity.verbosity).toBe("verbose");
+  });
+});
