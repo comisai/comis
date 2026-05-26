@@ -38,6 +38,15 @@ vi.mock("@comis/channels", () => ({
   createLifecycleReactor: vi.fn(() => ({ destroy: vi.fn() })),
   createApprovalNotifier: vi.fn(() => mockApprovalNotifier),
   reactWithFallback: vi.fn(),
+  // Activity-renderer factories consumed by buildActivityRenderers (WIRE-02).
+  // The EDIT_PLACE_RENDERER_FACTORIES const in setup-channels-activity-renderers.ts
+  // references the four per-channel factories at MODULE LOAD, so this explicit
+  // (non-importOriginal) mock must expose them or import-time collection fails.
+  createTestSink: vi.fn(() => ({ strategy: "TestSink", apply: vi.fn(), finalize: vi.fn() })),
+  createTelegramActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
+  createDiscordActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
+  createSlackActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
+  createWhatsAppActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
   filterResponse: vi.fn((text: string) => {
     if (text === "NO_REPLY" || text === "HEARTBEAT_OK" || !text) {
       return { shouldDeliver: false, cleanedText: "", suppressedBy: text === "NO_REPLY" ? "no_reply" : text === "HEARTBEAT_OK" ? "heartbeat_ok" : "empty" };
