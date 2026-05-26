@@ -340,17 +340,27 @@ export function createGatewayTool(
             }
 
             // STORE-03: fail-early — check store availability before confirmation or rpcCall.
-            // Uses gateway.status (no rate limit) to inspect manifest.secrets.encrypted.
+            // Uses gateway.status (no rate limit) to read the secretsStoreAvailable field.
             // Returns structured error immediately if the encrypted store is not configured,
             // preventing both the confirmation dance and any write-rate-limit token consumption.
-            const statusResult = await rpcCall("gateway.status", { _trustLevel });
-            const secretsEncrypted =
-              typeof statusResult === "object" &&
-              statusResult !== null &&
-              typeof (statusResult as Record<string, unknown>).manifest === "object" &&
-              (statusResult as Record<string, unknown>).manifest !== null &&
-              (((statusResult as Record<string, unknown>).manifest as Record<string, unknown>).secrets as Record<string, unknown> | undefined)?.encrypted === true;
-            if (!secretsEncrypted) {
+            //
+            // W3: gateway.status is admin-only and will throw for non-admin callers.
+            // Wrap in try/catch: on error, fall through to the downstream env.set handler
+            // (which has its own !deps.secretStore guard) rather than propagating a raw
+            // admin-gate error to the agent as an opaque thrown failure.
+            let secretsStoreAvailable = false;
+            try {
+              const statusResult = await rpcCall("gateway.status", { _trustLevel });
+              secretsStoreAvailable =
+                typeof statusResult === "object" &&
+                statusResult !== null &&
+                (statusResult as Record<string, unknown>).secretsStoreAvailable === true;
+            } catch {
+              // Preflight inconclusive (e.g. non-admin trust level or transient RPC error).
+              // Fall through: the downstream env.set handler will surface the correct error.
+              secretsStoreAvailable = true; // optimistic — let the downstream guard decide
+            }
+            if (!secretsStoreAvailable) {
               return {
                 error: "secrets_store_unavailable",
                 hint:

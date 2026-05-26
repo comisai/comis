@@ -566,7 +566,12 @@ describe("gateway tool", () => {
     it("strips value from result even if RPC returns it", async () => {
       const rpcCall = vi.fn(async (method: string) => {
         if (method === "gateway.status") {
-          return { status: "running", uptime: 3600, connections: 5, manifest: { secrets: { encrypted: true } } };
+          // Real GatewayStatusContract shape — secretsStoreAvailable=true so preflight passes.
+          return {
+            pid: 12345, uptime: 3600, memoryUsage: 50_000_000,
+            nodeVersion: "v22.0.0", configPaths: [], sections: [],
+            secretsStoreAvailable: true,
+          };
         }
         return { set: true, key: "MY_KEY", storage: "encrypted", value: "leaked-secret" };
       });
