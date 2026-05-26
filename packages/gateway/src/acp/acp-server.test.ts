@@ -2,12 +2,35 @@
 import { describe, it, expect, vi } from "vitest";
 import { createAcpAgent, type AcpServerDeps } from "./acp-server.js";
 import type {
+  AgentSideConnection,
   InitializeRequest,
   NewSessionRequest,
   PromptRequest,
   AuthenticateRequest,
   CancelNotification,
 } from "@agentclientprotocol/sdk";
+
+/**
+ * Hand-built fake AgentSideConnection (AGENTS.md §2.5 — only the members the
+ * SUT touches). Exposes a controllable `signal` so a test can fire the "abort"
+ * event the way the SDK does on connection close (acp.d.ts:150).
+ */
+function makeFakeConnection(): {
+  connection: AgentSideConnection;
+  abortController: AbortController;
+} {
+  const abortController = new AbortController();
+  const connection = {
+    sessionUpdate: vi.fn(async () => {}),
+    requestPermission: vi.fn(async () => ({
+      outcome: { outcome: "selected", optionId: "approve" },
+    })),
+    get signal(): AbortSignal {
+      return abortController.signal;
+    },
+  } as unknown as AgentSideConnection;
+  return { connection, abortController };
+}
 
 function createMockDeps(
   overrides?: Partial<AcpServerDeps>,
@@ -289,6 +312,60 @@ describe("createAcpAgent", () => {
           message: "Describe this image\nand this file",
         }),
       );
+    });
+  });
+
+  describe("per-session AgentSideConnection registry (ACP-01)", () => {
+    it("retains the registered connection per session id after newSession", async () => {
+      const deps = createMockDeps();
+      const { agent, registerConnection, getConnection } = createAcpAgent(deps);
+      const { connection } = makeFakeConnection();
+      registerConnection(connection);
+
+      const session = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+
+      // The bridges (Wave 2) reach the connection through getConnection.
+      expect(getConnection(session.sessionId)).toBe(connection);
+    });
+
+    it("returns undefined from getConnection for an unknown session id", () => {
+      const deps = createMockDeps();
+      const { getConnection } = createAcpAgent(deps);
+
+      expect(getConnection("nonexistent-session")).toBeUndefined();
+    });
+
+    it("drops the retained connection from the registry on cancel", async () => {
+      const deps = createMockDeps();
+      const { agent, registerConnection, getConnection } = createAcpAgent(deps);
+      const { connection } = makeFakeConnection();
+      registerConnection(connection);
+
+      const session = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+      expect(getConnection(session.sessionId)).toBe(connection);
+
+      await agent.cancel({ sessionId: session.sessionId });
+
+      expect(getConnection(session.sessionId)).toBeUndefined();
+    });
+
+    it("empties the connection registry when the connection signal aborts", async () => {
+      const deps = createMockDeps();
+      const { agent, registerConnection, getConnection } = createAcpAgent(deps);
+      const { connection, abortController } = makeFakeConnection();
+      registerConnection(connection);
+
+      const sessionA = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+      const sessionB = await agent.newSession({ cwd: "/tmp", mcpServers: [] });
+      expect(getConnection(sessionA.sessionId)).toBe(connection);
+      expect(getConnection(sessionB.sessionId)).toBe(connection);
+
+      // The SDK aborts connection.signal on close (acp.d.ts:150) — every
+      // retained connection for the aborted connection must be dropped.
+      abortController.abort();
+
+      expect(getConnection(sessionA.sessionId)).toBeUndefined();
+      expect(getConnection(sessionB.sessionId)).toBeUndefined();
     });
   });
 });
