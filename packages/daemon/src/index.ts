@@ -56,16 +56,6 @@ export type { McpHandlerDeps } from "./api/mcp-handlers.js";
 // mcp.oauth_login / mcp.oauth_logout RPC handlers.
 export { createMcpOauthHandlers } from "./api/mcp-oauth-handlers.js";
 export type { McpOauthHandlerDeps } from "./api/mcp-oauth-handlers.js";
-// Re-exported so the architecture-tier negative +
-// positive control table at
-// test/architecture/mcp-plaintext-secret-false-positives.test.ts can pin
-// the heuristic shape against real-world token samples WITHOUT
-// duplicating the prefix list / length-floor / entropy-floor constants.
-// Consumer:
-// test/architecture/mcp-plaintext-secret-false-positives.test.ts (static
-// import via @comis/daemon, alongside the daemon-side mcp.connect
-// integration tests in packages/daemon/src/api/mcp-handlers.test.ts).
-export { looksLikePlaintextSecret } from "./api/mcp-handlers.js";
 // Extracted single-writer for integrations.mcp.servers.
 // Consumers: the bundle-install helper and boot-path orchestrator both reach
 // the helper through this barrel re-export so neither needs a direct

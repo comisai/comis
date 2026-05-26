@@ -42,12 +42,12 @@ vi.mock("../config/audit-hook.js", () => ({
   appendConfigAuditWithOutcome: vi.fn(),
 }));
 
-import { createMcpHandlers, looksLikePlaintextSecret } from "./mcp-handlers.js";
+import { createMcpHandlers } from "./mcp-handlers.js";
 import { persistToConfig } from "./shared/persist-to-config.js";
 import { buildConfigAuditBase, appendConfigAuditWithOutcome } from "../config/audit-hook.js";
 import type { McpClientManager, McpConnection, McpToolDefinition } from "@comis/skills";
 import type { ComisLogger } from "@comis/infra";
-import { createSecretManager } from "@comis/core";
+import { createSecretManager, looksLikeSecretValue } from "@comis/core";
 
 const mockPersistToConfig = vi.mocked(persistToConfig);
 const mockBuildConfigAuditBase = vi.mocked(buildConfigAuditBase);
@@ -456,47 +456,47 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // looksLikePlaintextSecret pure-function unit tests.
+  // looksLikeSecretValue pure-function unit tests.
   //
   // Direct pure-function coverage so the heuristic shape (prefix list +
   // entropy >3.5 AND length >=44 backstop) is pinned independent of the
   // RPC handler integration. This block is the daemon-resident smoke check.
   // -------------------------------------------------------------------------
-  describe("looksLikePlaintextSecret pure-function heuristic", () => {
+  describe("looksLikeSecretValue pure-function heuristic", () => {
     it("returns true for ghp_ GitHub PAT prefix", () => {
-      expect(looksLikePlaintextSecret("ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789")).toBe(true);
+      expect(looksLikeSecretValue("ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789")).toBe(true);
     });
 
     it("returns true for sk- OpenAI key prefix", () => {
-      expect(looksLikePlaintextSecret("sk-aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdef")).toBe(true);
+      expect(looksLikeSecretValue("sk-aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdef")).toBe(true);
     });
 
     it("returns true for AWS AKIA prefix (short 20-char prefix-only rejection)", () => {
-      expect(looksLikePlaintextSecret("AKIAIOSFODNN7EXAMPLE")).toBe(true);
+      expect(looksLikeSecretValue("AKIAIOSFODNN7EXAMPLE")).toBe(true);
     });
 
     it("returns true for entropy backstop (length 44, entropy >3.5, no known prefix)", () => {
-      expect(looksLikePlaintextSecret("Z9aB3xK7mP2qLr5tEvF8nGwHsJ4uVbCdYxRzNoPqW1Aa")).toBe(true);
+      expect(looksLikeSecretValue("Z9aB3xK7mP2qLr5tEvF8nGwHsJ4uVbCdYxRzNoPqW1Aa")).toBe(true);
     });
 
     it("returns false for Notion DB UUID 36-char (no prefix, length < 44)", () => {
-      expect(looksLikePlaintextSecret("8f3b2c1a-9d4e-7f60-b5e2-c8d1a4f7b9c3")).toBe(false);
+      expect(looksLikeSecretValue("8f3b2c1a-9d4e-7f60-b5e2-c8d1a4f7b9c3")).toBe(false);
     });
 
     it("returns false for OpenAI org ID 28-char (no prefix, length < 44)", () => {
-      expect(looksLikePlaintextSecret("org-ScmHEqZDkG8eYLJBVxpOTEh1")).toBe(false);
+      expect(looksLikeSecretValue("org-ScmHEqZDkG8eYLJBVxpOTEh1")).toBe(false);
     });
 
     it("returns false for Stripe customer ID cus_* (no sk_ prefix)", () => {
-      expect(looksLikePlaintextSecret("cus_NffrFeUfNV2Hib")).toBe(false);
+      expect(looksLikeSecretValue("cus_NffrFeUfNV2Hib")).toBe(false);
     });
 
     it("returns false for unresolved env-ref placeholder ${KEY}", () => {
-      expect(looksLikePlaintextSecret("${GITHUB_TOKEN}")).toBe(false);
+      expect(looksLikeSecretValue("${GITHUB_TOKEN}")).toBe(false);
     });
 
     it("returns false for empty string", () => {
-      expect(looksLikePlaintextSecret("")).toBe(false);
+      expect(looksLikeSecretValue("")).toBe(false);
     });
   });
 

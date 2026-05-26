@@ -20,10 +20,9 @@
  * guarantees byte-equal JSON round-trip). Calling the resolver on its
  * own output is a fixed point.
  *
- * Cycle-safety note: imports `looksLikePlaintextSecret` via the LEAF module
- * path (`../api/mcp-plaintext-secret.js`) rather than the `@comis/daemon`
- * barrel — this file lives INSIDE `packages/daemon/src/`, so a barrel
- * import would close a self-cycle through `packages/daemon/src/index.ts`.
+ * Cycle-safety note: imports `looksLikeSecretValue` from `@comis/core` —
+ * core is a lower layer than daemon, so the import is strictly one-way and
+ * cannot introduce a cycle. No leaf-path workaround needed.
  *
  * @module
  */
@@ -31,7 +30,7 @@
 import { ok, err, type Result } from "@comis/shared";
 import type { McpServerEntry } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import { looksLikePlaintextSecret } from "../api/mcp-plaintext-secret.js";
+import { looksLikeSecretValue } from "@comis/core";
 import {
   osvMalwareCheck,
   extractMcpPackageName,
@@ -108,7 +107,7 @@ export interface ResolveBundleInput {
  *
  *   STEP 2 — Plaintext-secret scan (synchronous, no network).
  *     For each bundle entry's env block (skipping entries with
- *     `disablePlaintextSecretCheck === true`), run looksLikePlaintextSecret
+ *     `disablePlaintextSecretCheck === true`), run looksLikeSecretValue
  *     over each VALUE. First match short-circuits the whole resolver with
  *     err({kind:"plaintext_secret"}). Log emits envKey (the NAME) but
  *     NEVER the value.
@@ -247,7 +246,7 @@ export async function resolveBundle(
     if (entry.disablePlaintextSecretCheck === true) continue;
     for (const [envKey, value] of Object.entries(entry.env)) {
       if (typeof value !== "string") continue;
-      if (looksLikePlaintextSecret(value)) {
+      if (looksLikeSecretValue(value)) {
         input.logger.warn(
           {
             method: "skills.bundle.resolve",

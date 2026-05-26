@@ -39,7 +39,7 @@ export type BundleError =
       kind: "plaintext_secret";
       /** The bundle entry whose env tripped the heuristic. */
       serverName: string;
-      /** Env key whose VALUE matched looksLikePlaintextSecret. The VALUE
+      /** Env key whose VALUE matched looksLikeSecretValue. The VALUE
        *  is NEVER included — operator-facing logs and the BundleError
        *  payload both surface only the key name. */
       envKey: string;

@@ -64,13 +64,7 @@ import type { RpcHandler } from "./types.js";
 import type { WorkspaceApiDeps as McpHandlerDeps } from "./types.js";
 export type { McpHandlerDeps };
 
-// Plaintext-secret heuristic. Extracted to
-// `./mcp-plaintext-secret.ts` (keeps this leaf under the 800-line cap).
-// Re-exported so the architecture-tier negative-control test
-// (`mcp-plaintext-secret-false-positives.test.ts`) reaches it via the
-// `@comis/daemon` barrel.
-export { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
-import { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
+import { looksLikeSecretValue } from "@comis/core";
 // Persisted-entry construction extracted (single source of
 // truth for the config-only field set; see mcp-persisted-entry.ts docblock).
 import { buildPersistedMcpEntry } from "./mcp-persisted-entry.js";
@@ -182,7 +176,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       if (envBlock && !plaintextOptOut) {
         for (const [key, value] of Object.entries(envBlock)) {
           if (typeof value !== "string") continue;
-          if (looksLikePlaintextSecret(value)) {
+          if (looksLikeSecretValue(value)) {
             throw new Error(
               `[plaintext_secret_in_env] env.${key} (server "${userParams.server_name as string}") ` +
               `looks like a plaintext credential. ` +
@@ -427,7 +421,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       if (envBlock && !plaintextOptOut) {
         for (const [key, value] of Object.entries(envBlock)) {
           if (typeof value !== "string") continue;
-          if (looksLikePlaintextSecret(value)) {
+          if (looksLikeSecretValue(value)) {
             throw new Error(
               `[plaintext_secret_in_env] env.${key} (test for "${userParams.name as string}") ` +
                 `looks like a plaintext credential. ` +
