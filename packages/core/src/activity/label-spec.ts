@@ -70,6 +70,30 @@ export interface RegisteredLabelSpec extends ActionLabelSpec {
 }
 
 /**
+ * Theme-supplied status markers (UX-01). A theme overrides the default status
+ * glyphs (the `✓`/`❌`/`🤖`/running markers) that surface in activity labels.
+ * The ascii theme supplies emoji-free markers so "ASCII strips all emoji"
+ * holds. These are advisory display strings, NOT part of the label
+ * allowlist/merge — Plan 75-05 bakes the resolved marker into
+ * {@link import("./activity-event.js").ActivityEvent}.defaultLabel upstream of
+ * the channel painter, so {@link resolveLabelSpec} never reads them.
+ *
+ * All four fields are REQUIRED within this type: a theme that opts into markers
+ * supplies the full set (no partial-marker ambiguity). The field on
+ * {@link ActivityTheme} that carries this is itself optional (no-BC: additive).
+ */
+export interface ActivityStatusMarkers {
+  /** Marker for a completed/successful event (default theme: "✓"). */
+  readonly success: string;
+  /** Marker for a failed event (default theme: "❌"). */
+  readonly failure: string;
+  /** Marker prefix for a subagent event (default theme: "🤖"). */
+  readonly subagent: string;
+  /** Marker for an in-flight/running event (default theme: e.g. a wrench). */
+  readonly running: string;
+}
+
+/**
  * An operator activity theme (spec §6.2). Rebrands per-tool labels without
  * touching code via `agents.<id>.activity.theme`. A theme override deep-merges
  * ON TOP of the registered spec / semantic fallback — overridden fields win,
@@ -78,6 +102,13 @@ export interface RegisteredLabelSpec extends ActionLabelSpec {
 export interface ActivityTheme {
   /** Per-tool overrides, keyed by tool name. */
   readonly tools?: Readonly<Record<string, RegisteredLabelSpec>>;
+  /**
+   * Status-marker overrides (UX-01). Optional — a theme without markers
+   * inherits the default glyphs. Consumed by the observability layer
+   * (Plan 75-05), NOT by {@link resolveLabelSpec} (markers are a parallel
+   * advisory tier, never part of the label-merge).
+   */
+  readonly markers?: ActivityStatusMarkers;
 }
 
 /** Options for {@link resolveLabelSpec}. */
