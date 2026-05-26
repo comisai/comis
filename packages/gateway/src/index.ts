@@ -56,6 +56,18 @@ export type {
 // Web -- media routes
 export { createMediaRoutes } from "./web/index.js";
 
+// Web -- email approval-token route (single-use, 5-min, revoke-on-first-touch)
+export {
+  createApprovalTokenRoute,
+  insertPendingApprovalToken,
+  APPROVAL_TOKEN_TIMEOUT_MS,
+} from "./web/index.js";
+export type {
+  ApprovalTokenDeps,
+  PendingApprovalToken,
+  ApprovalLinkChoice,
+} from "./web/index.js";
+
 // OpenAI compatibility endpoints
 export { createOpenaiCompletionsRoute } from "./openai/index.js";
 export { createOpenaiModelsRoute } from "./openai/index.js";

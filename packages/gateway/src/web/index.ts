@@ -11,3 +11,14 @@ export { createStaticMiddleware } from "./static-middleware.js";
 
 export { createMediaRoutes } from "./media-routes.js";
 export type { MediaRoutesDeps } from "./media-routes.js";
+
+export {
+  createApprovalTokenRoute,
+  insertPendingApprovalToken,
+  APPROVAL_TOKEN_TIMEOUT_MS,
+} from "./approval-token-route.js";
+export type {
+  ApprovalTokenDeps,
+  PendingApprovalToken,
+  ApprovalLinkChoice,
+} from "./approval-token-route.js";

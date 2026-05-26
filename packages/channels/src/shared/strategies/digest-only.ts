@@ -29,10 +29,20 @@ import { eventLabel } from "./render.js";
 
 export interface DigestOnlyDeps {
   actions: ActivityRenderActions;
+  /**
+   * Optional trailer appended to the `[FAILED]` digest body (APV-10 / SEC-06).
+   * Email cannot show buttons, so it injects this to append a single-use,
+   * time-bounded, signed approval LINK when the buffered trail carries a
+   * `kind:"approval"` event. Receives the full buffered trail; returns the
+   * trailer text (already newline-prefixed by this strategy) or `undefined`
+   * when there is nothing to append (no approval event / no link minter). The
+   * trailer must carry an OPAQUE link only — never a raw HMAC/secret (T-73-31).
+   */
+  appendToFailureDigest?: (trail: readonly ActivityEvent[]) => string | undefined;
 }
 
 export function createDigestOnlyRenderer(deps: DigestOnlyDeps): ChannelActivityRenderer {
-  const { actions } = deps;
+  const { actions, appendToFailureDigest } = deps;
 
   // Buffer the latest visible trail; the projection accumulates surviving events
   // so the final frame's visibleEvents is the full trail to digest.
@@ -43,7 +53,12 @@ export function createDigestOnlyRenderer(deps: DigestOnlyDeps): ChannelActivityR
   ): string {
     const header = `[FAILED] ${outcome.errorKind}`;
     const body = trail.map((e) => `  • ${eventLabel(e)}`).join("\n");
-    return body.length > 0 ? `${header}\n${body}` : header;
+    const digest = body.length > 0 ? `${header}\n${body}` : header;
+    // Optional approval-link trailer (Email). Absent → byte-stable Phase-72 body.
+    const trailer = appendToFailureDigest?.(trail);
+    return trailer !== undefined && trailer.length > 0
+      ? `${digest}\n${trailer}`
+      : digest;
   }
 
   return {
