@@ -371,4 +371,68 @@ describe("createAcpApprovalBridge (ACP-04 — kind:'approval' ActivityEvent → 
     unsubscribe();
     expect(stream.unsubscribeCalls()).toBe(1);
   });
+
+  it("logs a rejected requestPermission and still serves a later approval (no chain poisoning, WR-01)", async () => {
+    // A connection whose FIRST requestPermission rejects (IDE disconnects
+    // mid-turn) then succeeds. Pre-fix: the rejected promise poisons the
+    // `chain` so every later approval's `.then` callback never runs — the
+    // second approval is silently dropped — and the rejection is unhandled.
+    const served: RequestPermissionRequest[] = [];
+    const requestPermission = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("ide permission channel closed"))
+      .mockImplementation(async (req: RequestPermissionRequest) => {
+        served.push(req);
+        return { outcome: { outcome: "selected", optionId: "approve" } };
+      });
+    const connection = {
+      sessionUpdate: vi.fn(async () => {}),
+      requestPermission,
+    } as unknown as AgentSideConnection;
+
+    const debugCalls: Array<{ fields: unknown; msg: string }> = [];
+    const logger = {
+      level: "debug",
+      trace: vi.fn(),
+      debug: vi.fn((fields: unknown, msg: string) => {
+        debugCalls.push({ fields, msg });
+      }),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      fatal: vi.fn(),
+      audit: vi.fn(),
+      child: vi.fn(),
+    } as unknown as ComisLogger;
+
+    const stream = makeFakeStreamPort();
+    const bridge = createAcpApprovalBridge({
+      activityStreamPort: stream.port,
+      getConnection: () => connection,
+      logger,
+    });
+    bridge.subscribe(makeTurnContext());
+
+    // First approval triggers the rejecting requestPermission.
+    stream.emit(makeApprovalEvent({ toolCallId: "fail" }));
+    await flush();
+    // Second approval must still reach the connection — chain not poisoned.
+    stream.emit(makeApprovalEvent({ toolCallId: "ok" }));
+    await flush();
+
+    // (a) no unhandled rejection (the await of `flush()` would surface it),
+    // (b) the rejection was logged with the canonical `err` field + context,
+    const errLog = debugCalls.find(
+      (c) => (c.fields as { err?: unknown }).err !== undefined,
+    );
+    expect(errLog).toBeDefined();
+    expect((errLog!.fields as { err?: Error }).err).toBeInstanceOf(Error);
+    expect((errLog!.fields as { acpSessionId?: string }).acpSessionId).toBe(
+      ACP_SESSION_ID,
+    );
+    // (c) the SECOND approval was served (proves the chain survived).
+    expect(requestPermission).toHaveBeenCalledTimes(2);
+    expect(served).toHaveLength(1);
+    expect(served[0]!.toolCall.toolCallId).toBe("ok");
+  });
 });
