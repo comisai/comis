@@ -287,6 +287,125 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // WR-01: global integrations.mcp.keepaliveIntervalMs override must reach
+  // the per-server McpServerConfig as the middle tier in the resolution chain:
+  //   per-server params ?? per-server persisted ?? global config ?? (transport default in ticker)
+  //
+  // RED tests (WR-01):
+  //   RED-KA-GBL-01: global keepaliveIntervalMs is forwarded to manager.connect
+  //                  when neither params nor persisted entry supply a per-server value
+  //   RED-KA-GBL-02 (invariant guard): per-server param wins over global
+  //   RED-KA-GBL-03 (invariant guard): per-server persisted entry wins over global when
+  //                  no caller param is supplied
+  // -------------------------------------------------------------------------
+  describe("WR-01: mcp.connect global keepaliveIntervalMs override", () => {
+    it("RED-KA-GBL-01: forwards global integrations.mcp.keepaliveIntervalMs to McpServerConfig when no per-server override", async () => {
+      // RED: current code resolves `params.keepaliveIntervalMs ?? persistedEntry?.keepaliveIntervalMs`
+      // — the global tier is absent. This test FAILS on pre-fix code because manager.connect
+      // receives keepaliveIntervalMs: undefined, not 60_000.
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ka-global", [])));
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        container: {
+          config: {
+            integrations: {
+              mcp: {
+                servers: [],
+                keepaliveIntervalMs: 60_000, // global override
+              },
+            },
+          },
+        },
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ka-global",
+        transport: "stdio",
+        command: "npx",
+        // no keepaliveIntervalMs in params
+      });
+
+      // GREEN: resolvedKeepaliveIntervalMs = undefined ?? undefined ?? 60_000 = 60_000
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({ keepaliveIntervalMs: 60_000 }),
+      );
+    });
+
+    it("RED-KA-GBL-02 (invariant guard): per-server param keeps priority over global keepaliveIntervalMs", async () => {
+      // Invariant: per-server param must beat the global tier.
+      // Already-passing test — must stay green after the WR-01 fix.
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ka-param-wins", [])));
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        container: {
+          config: {
+            integrations: {
+              mcp: {
+                servers: [],
+                keepaliveIntervalMs: 60_000, // global override
+              },
+            },
+          },
+        },
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ka-param-wins",
+        transport: "stdio",
+        command: "npx",
+        keepaliveIntervalMs: 10_000, // per-server param wins
+      } as any);
+
+      // Resolution: 10_000 (param) ?? undefined (no persisted) ?? 60_000 (global) = 10_000
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({ keepaliveIntervalMs: 10_000 }),
+      );
+    });
+
+    it("RED-KA-GBL-03 (invariant guard): per-server persisted entry wins over global keepaliveIntervalMs", async () => {
+      // Invariant: persisted per-server entry must beat the global tier.
+      // Already-passing test — must stay green after the WR-01 fix.
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ka-persisted-wins", [])));
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        container: {
+          config: {
+            integrations: {
+              mcp: {
+                servers: [
+                  {
+                    name: "ka-persisted-wins",
+                    transport: "stdio",
+                    command: "npx",
+                    enabled: true,
+                    keepaliveIntervalMs: 45_000, // per-server persisted
+                  },
+                ],
+                keepaliveIntervalMs: 60_000, // global override (lower priority)
+              },
+            },
+          },
+        },
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ka-persisted-wins",
+        transport: "stdio",
+        command: "npx",
+        // no keepaliveIntervalMs in params → falls to persisted (45_000), not global (60_000)
+      });
+
+      // Resolution: undefined (param) ?? 45_000 (persisted) ?? 60_000 (global) = 45_000
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({ keepaliveIntervalMs: 45_000 }),
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Plaintext-secret pre-Zod guard on mcp.connect.
   //
   // The guard runs IMMEDIATELY AFTER stripInternalFields and BEFORE
