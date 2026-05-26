@@ -49,7 +49,15 @@ import {
   HEX_SECRET_LONG,
   GITHUB_TOKEN_FULL,
   DISCORD_BOT_TOKEN,
+  BEARER_TOKEN_LOG,
+  URL_PASSWORD,
+  AWS_SECRET_KEY,
 } from "./injection-patterns.js";
+// Re-exported so the WR-06 containment guard can compare the activity shape list
+// against the log sanitizer's credential list from a single import site.
+import { CREDENTIAL_LOG_PATTERNS } from "./patterns/credential-log.js";
+
+export { CREDENTIAL_LOG_PATTERNS };
 
 // ---------------------------------------------------------------------------
 // Public contract
@@ -148,8 +156,17 @@ const SECRET_KEYS: ReadonlySet<string> = new Set([
  * Secret-SHAPE regexes reused from `injection-patterns.ts`. We borrow the
  * detection PATTERNS only — the replacement is our own `<redacted>` token
  * (Pitfall 5). All carry the `g` flag, so `lastIndex` is reset before use.
+ *
+ * MUST stay a superset of the log sanitizer's `CREDENTIAL_LOG_PATTERNS`
+ * (re-exported below) — a credential shape covered by the log sanitizer but
+ * missing here would survive verbatim into a user-visible activity label under
+ * a benign key (CR-01). The `WR-06` test in `redact-value.test.ts` enforces the
+ * containment by pattern `.source`.
+ *
+ * Exported for that containment guard test only — not part of the public API
+ * surface (this is an internal detection constant).
  */
-const SECRET_SHAPE_PATTERNS: readonly RegExp[] = [
+export const SECRET_SHAPE_PATTERNS: readonly RegExp[] = [
   ANTHROPIC_API_KEY,
   OPENAI_PROJECT_KEY,
   SK_API_KEY,
@@ -163,6 +180,16 @@ const SECRET_SHAPE_PATTERNS: readonly RegExp[] = [
   TELEGRAM_BOT_TOKEN,
   DISCORD_BOT_TOKEN,
   HEX_SECRET_LONG,
+  // CR-01: the three shapes the log sanitizer (CREDENTIAL_LOG_PATTERNS) covers
+  // but the activity redactor previously omitted. Without these, a secret-shaped
+  // value under a benign allowlisted key (url/cmd/note) reached the rendered
+  // label verbatim. BEARER_TOKEN_LOG and AWS_SECRET_KEY are simple-match
+  // patterns. URL_PASSWORD is a capturing-group pattern (`://user:pw@`); a bare
+  // `.replace(pat, "<redacted>")` (applyShape) masks the WHOLE match span, so
+  // the captured password is removed (the host stays masked by HOSTNAME_RE).
+  BEARER_TOKEN_LOG,
+  AWS_SECRET_KEY,
+  URL_PASSWORD,
 ];
 
 // PII / network shapes (local — these masks are not in injection-patterns.ts).

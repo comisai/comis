@@ -19,6 +19,12 @@ import {
   type RedactionReason,
   type RedactedValue,
 } from "./redact-value.js";
+import { applyTemplate } from "../activity/template-engine.js";
+import type { LabelSpec } from "../activity/label-spec.js";
+import {
+  CREDENTIAL_LOG_PATTERNS,
+  SECRET_SHAPE_PATTERNS,
+} from "./redact-value.js";
 
 const REDACTED = "<redacted>";
 
@@ -119,6 +125,123 @@ describe("redactValue — SEC-01 shape-based redaction (secret caught under a be
     expect(value.note).toContain(REDACTED);
     expect(value.note).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(reasons(out)).toContain("secret_shape");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CR-01 (BLOCKER): the three secret shapes the log sanitizer covers but the
+// activity shape pass omitted — URL-embedded password, Bearer token, and
+// aws_secret_access_key. Under a BENIGN allowlisted key these survived verbatim
+// into the user-visible label (reproduced end-to-end through applyTemplate).
+// RED on pre-patch code: the password / token / 40-char secret substring is
+// still present in redactValue(...).value.
+// ---------------------------------------------------------------------------
+
+describe("redactValue — CR-01 secret-shape gap (URL password / Bearer / AWS secret) under a benign key", () => {
+  it("redacts the password in a URL-embedded credential (://user:password@host)", () => {
+    const out = redactValue({ url: "https://user:hunter2secret@db.internal.example.com/path" });
+    const value = out.value as Record<string, unknown>;
+    // The password substring must be gone — URL_PASSWORD has capture groups, so
+    // verify .replace() masked the whole credential span (not just $0 leaving
+    // the captured password behind).
+    expect(value.url).not.toContain("hunter2secret");
+    expect(value.url).toContain(REDACTED);
+    expect(reasons(out)).toContain("secret_shape");
+  });
+
+  it("redacts a Bearer token in an Authorization-style value", () => {
+    const out = redactValue({ cmd: "Authorization: Bearer abcdef0123456789abcdef" });
+    const value = out.value as Record<string, unknown>;
+    expect(value.cmd).not.toContain("abcdef0123456789abcdef");
+    expect(value.cmd).toContain(REDACTED);
+    expect(reasons(out)).toContain("secret_shape");
+  });
+
+  it("redacts an aws_secret_access_key=<40 chars> value", () => {
+    const out = redactValue({
+      note: "aws_secret_access_key=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd",
+    });
+    const value = out.value as Record<string, unknown>;
+    expect(value.note).not.toContain("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd");
+    expect(value.note).toContain(REDACTED);
+    expect(reasons(out)).toContain("secret_shape");
+  });
+
+  it("strips ALL three credential substrings from a combined benign-keyed value", () => {
+    const out = redactValue({
+      detail:
+        "fetch https://admin:s3cr3tPassw0rd@host then Bearer abcdef0123456789abcdef and aws_secret_access_key=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd",
+    });
+    const value = out.value as Record<string, unknown>;
+    const rendered = String(value.detail);
+    expect(rendered).not.toContain("s3cr3tPassw0rd");
+    expect(rendered).not.toContain("abcdef0123456789abcdef");
+    expect(rendered).not.toContain("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd");
+  });
+});
+
+describe("applyTemplate — CR-01 no credential survives the rendered label/detail under an allowlisted key", () => {
+  it("masks a URL password in an allowlisted {url} label", () => {
+    const spec: LabelSpec = {
+      semanticPhase: "tool",
+      label: "fetch {url}",
+      detailKeys: ["url"],
+    };
+    const result = applyTemplate(spec, {
+      url: "https://admin:s3cr3tPassw0rd@host.example.com/v1",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.defaultLabel).not.toContain("s3cr3tPassw0rd");
+    expect(result.value.defaultLabel).toContain("<redacted>");
+    expect(result.value.redactionsApplied.some((r) => r.reason === "secret_shape")).toBe(true);
+  });
+
+  it("masks a Bearer token in an allowlisted {cmd} detail", () => {
+    const spec: LabelSpec = {
+      semanticPhase: "tool",
+      label: "run command",
+      detail: "run {cmd}",
+      detailKeys: ["cmd"],
+    };
+    const result = applyTemplate(spec, {
+      cmd: 'curl -H "Authorization: Bearer abcdef0123456789abcdefghij" https://x',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.defaultDetail).not.toContain("abcdef0123456789abcdefghij");
+    expect(result.value.defaultDetail).toContain("<redacted>");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WR-06 (regression guard): the activity SECRET_SHAPE_PATTERNS must stay a
+// superset of the log sanitizer's CREDENTIAL_LOG_PATTERNS. Any future credential
+// shape added to the log sanitizer but not the activity redactor is a silent
+// security regression (CR-01 was exactly this drift). Containment is asserted by
+// pattern `.source`, with an explicit allowlist for intentional exclusions
+// (expected empty after CR-01).
+// ---------------------------------------------------------------------------
+
+describe("WR-06 — activity SECRET_SHAPE_PATTERNS contains every log-sanitizer credential shape", () => {
+  /**
+   * Intentional exclusions, each with a reason. MUST stay empty after CR-01 —
+   * a non-empty entry is a deliberate, reviewed decision to NOT mirror a log
+   * sanitizer shape into the activity redactor.
+   */
+  const ALLOWED_EXCLUSIONS: ReadonlyArray<{ source: string; reason: string }> = [];
+
+  it("covers every CREDENTIAL_LOG_PATTERNS source (no silent drift)", () => {
+    const shapeSources = new Set(SECRET_SHAPE_PATTERNS.map((p) => p.source));
+    const excluded = new Set(ALLOWED_EXCLUSIONS.map((e) => e.source));
+    const missing = CREDENTIAL_LOG_PATTERNS.filter(
+      (p) => !shapeSources.has(p.source) && !excluded.has(p.source),
+    ).map((p) => p.source);
+    expect(missing).toEqual([]);
+  });
+
+  it("keeps the intentional-exclusion allowlist empty (CR-01 closed)", () => {
+    expect(ALLOWED_EXCLUSIONS).toHaveLength(0);
   });
 });
 
