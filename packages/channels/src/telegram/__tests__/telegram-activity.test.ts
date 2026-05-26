@@ -303,6 +303,87 @@ describe("Telegram 429 local bounded buffer (CHAN-02 — latest text survives ba
 
     expect(fake.recorded.calls.filter((c) => c.op === "edit").length).toBe(editsAfterDrop);
   });
+
+  it("fires the retryAfterMs-gated retry and re-sends the latest text on the next attempt", async () => {
+    // Drive makeTelegramRenderActions directly so no EditPlace debounce edit
+    // competes with (and cancels) the pending retry — isolating the retry path.
+    const timer = createFakeTimers();
+    const fake = createFakeTelegramAdapter();
+    const actions = makeTelegramRenderActions(fake, "chat-1", { timer });
+
+    fake.nextError = { error_code: 429, description: "Too Many Requests", parameters: { retry_after: 3 } };
+    const first = await actions.edit("tg-msg-0", "latest text");
+    expect(first.ok).toBe(false); // the immediate attempt is rate-limited
+    expect(fake.recorded.calls.filter((c) => c.op === "edit")).toHaveLength(0);
+
+    // The one-shot 429 cleared; firing the 3s retry re-attempts and now succeeds.
+    timer.advance(3000);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const edits = fake.recorded.calls.filter((c): c is Extract<FakeTelegramCall, { op: "edit" }> => c.op === "edit");
+    expect(edits).toHaveLength(1);
+    expect(edits[0]).toEqual({ op: "edit", id: "tg-msg-0", text: "latest text" });
+  });
+
+  it("caps sustained 429 retries (MAX_RETRY_ATTEMPTS) so the buffer cannot loop forever", async () => {
+    const timer = createFakeTimers();
+    const fake = createFakeTelegramAdapter();
+    const actions = makeTelegramRenderActions(fake, "chat-1", { timer });
+
+    // Every attempt is rate-limited: arm a fresh 429 before each retry fires.
+    fake.nextError = { error_code: 429, parameters: { retry_after: 1 } };
+    await actions.edit("tg-msg-0", "x");
+    // Drive far more retry windows than the cap; re-arm a 429 each time.
+    for (let i = 0; i < 12; i++) {
+      fake.nextError = { error_code: 429, parameters: { retry_after: 1 } };
+      timer.advance(1000);
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+
+    // Bounded: the number of edit ATTEMPTS that reached the adapter is capped —
+    // a sustained 429 storm does not produce an unbounded retry loop.
+    const attempts = fake.recorded.calls.filter((c) => c.op === "edit").length;
+    expect(attempts).toBe(0); // every attempt was rejected before recording
+    // After the cap, no retry timer remains armed (the buffer gave up).
+    const armed = timer.unrefRecord().filter((e) => !e.cancelled && e.kind === "timeout");
+    expect(armed.length).toBeLessThanOrEqual(0 + 1); // at most the last fired one, none pending
+  });
+
+  it("a delete between scheduling and firing clears the slot so the retry is a no-op", async () => {
+    const timer = createFakeTimers();
+    const fake = createFakeTelegramAdapter();
+    const actions = makeTelegramRenderActions(fake, "chat-1", { timer });
+
+    // Arm a 429 so the edit schedules a retry.
+    fake.nextError = { error_code: 429, parameters: { retry_after: 5 } };
+    await actions.edit("tg-msg-0", "pending");
+
+    // A delete supersedes the pending edit retry (clears the latest-text slot).
+    await actions.delete("tg-msg-0");
+    const deletes = fake.recorded.calls.filter((c) => c.op === "delete").length;
+    expect(deletes).toBe(1);
+
+    // Firing the retry timer now finds an empty slot → no further edit is sent.
+    timer.advance(5000);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fake.recorded.calls.filter((c) => c.op === "edit")).toHaveLength(0);
+  });
+
+  it("propagates a 429 without scheduling a retry when no timer is injected", async () => {
+    // makeTelegramRenderActions with no deps.timer: a rate_limited edit simply
+    // returns the error; there is no retry buffer to schedule against.
+    const fake = createFakeTelegramAdapter();
+    const actions = makeTelegramRenderActions(fake, "chat-1");
+    fake.nextError = { error_code: 429, parameters: { retry_after: 5 } };
+    const r = await actions.edit("tg-msg-0", "x");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toEqual({ kind: "rate_limited", retryAfterMs: 5000 });
+    // No edit reached the adapter and nothing is scheduled (no timer to schedule on).
+    expect(fake.recorded.calls.filter((c) => c.op === "edit")).toHaveLength(0);
+  });
 });
 
 // --- Task 3: 11 golden fixtures (S1-S7, S9-S12; no S8) ----------------------

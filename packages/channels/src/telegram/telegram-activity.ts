@@ -148,15 +148,15 @@ export function makeTelegramRenderActions(
     }
     if (classified.kind === "rate_limited" && timer !== undefined) {
       // Coalesce to the latest text in the single slot and schedule ONE retry.
+      // Pass the narrowed timer so scheduleRetry needs no undefined guard.
       pendingText = text;
       pendingId = id;
-      scheduleRetry(classified.retryAfterMs);
+      scheduleRetry(timer, classified.retryAfterMs);
     }
     return err(classified);
   }
 
-  function scheduleRetry(retryAfterMs: number): void {
-    if (timer === undefined) return;
+  function scheduleRetry(t: TimerPort, retryAfterMs: number): void {
     if (retryAttempts >= MAX_RETRY_ATTEMPTS) {
       // Bounded: give up replaying after the cap; the buffer never grows.
       cancelRetry();
@@ -165,10 +165,11 @@ export function makeTelegramRenderActions(
     }
     cancelRetry();
     retryAttempts += 1;
-    retryHandle = timer.setTimeout(() => {
+    retryHandle = t.setTimeout(() => {
       const text = pendingText;
       const id = pendingId;
       retryHandle = undefined;
+      // Defensive: a delete/success between scheduling and firing clears the slot.
       if (text === undefined || id === undefined || editsDropped) return;
       void attemptEdit(id, text);
     }, retryAfterMs);
