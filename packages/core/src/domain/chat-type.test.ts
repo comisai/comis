@@ -12,25 +12,25 @@ describe("ChatType (TURN-02)", () => {
     it("rejects an out-of-enum value", () => {
       expect(ChatTypeSchema.safeParse("dm").success).toBe(false);
     });
-    it("infers the ChatType union", () => {
+    it("returns the three-value direct/group/channel union as ChatType", () => {
       expectTypeOf<ChatType>().toEqualTypeOf<"direct" | "group" | "channel">();
     });
   });
 
   describe("narrowChatType maps the 5-value NormalizedMessage.chatType (spec §4.6)", () => {
-    it("maps dm -> direct", () => {
+    it("narrows dm to direct for one-to-one conversations", () => {
       expect(narrowChatType("dm")).toBe("direct");
     });
-    it("folds thread -> group (parent)", () => {
+    it("folds thread to its parent group classification", () => {
       expect(narrowChatType("thread")).toBe("group");
     });
-    it("folds forum -> group (parent)", () => {
+    it("folds forum to its parent group classification", () => {
       expect(narrowChatType("forum")).toBe("group");
     });
-    it("maps group -> group", () => {
+    it("passes group through unchanged as group", () => {
       expect(narrowChatType("group")).toBe("group");
     });
-    it("maps channel -> channel", () => {
+    it("passes channel through unchanged as channel", () => {
       expect(narrowChatType("channel")).toBe("channel");
     });
   });
