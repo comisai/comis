@@ -45,6 +45,7 @@
 import {
   deepMerge,
   AppConfigSchema,
+  scanForSecrets,
   type AppContainer,
   type ConfigGitManager,
   type GitCommitMetadata,
@@ -231,6 +232,19 @@ export async function persistToConfig(
         .map((i) => `${i.path.join(".")}: ${i.message}`)
         .join("; ");
       return err(`Config validation failed: ${issues}`);
+    }
+
+    // CRED-02: refuse to persist any config containing a plaintext secret.
+    // Scan the fully-merged object (same object validated above) — catches
+    // secrets in any config layer, not just the local-file delta.
+    const secretFindings = scanForSecrets(fullMerged);
+    if (secretFindings.length > 0) {
+      const firstPath = secretFindings[0]!.path;
+      return err(
+        `[plaintext_secret_blocked] Config contains a plaintext secret at "${firstPath}". ` +
+        `Persist aborted to prevent committing credentials to config.yaml. ` +
+        `Hint: store the secret via secrets_manage and reference it as "\${VAR}".`,
+      );
     }
 
     // 5. Atomic write: create parent dir, write to temp file, rename
