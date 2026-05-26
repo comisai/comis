@@ -80,7 +80,13 @@ Plans:
   3. The last-known-good snapshot is skipped (`{saved:false}`) when the source config contains any secret finding; `config.read` output has `headers.Authorization` masked by `redactForDisplay`
   4. A static secret header (e.g., `X-Api-Key: sk-ant-…`) is automatically extracted: `secretStore.set` is called with the raw value and the persisted entry holds the `${VAR}` ref; a mixed-form `"Bearer ${VAR}"` passes the §A scan without re-extraction
   5. A short-lived OAuth bearer in `Authorization` is refused with `[use_oauth_login]` — no extraction, no storage, actionable guidance to use `auth:"oauth"` + `comis mcp login`
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Wire `secretStore` into `WorkspaceApiDeps` + extract `mcp-header-credential.ts` helper (CRED-05 foundation)
+- [ ] 03-02-PLAN.md — TDD: mcp.connect/mcp.test headers credential firewall + extraction + OAuth refusal (CRED-01, CRED-05, CRED-06)
+- [ ] 03-03-PLAN.md — TDD: persistToConfig secret gate + saveLastKnownGood snapshot guard (CRED-02, CRED-03)
+- [ ] 03-04-PLAN.md — TDD: config.read header masking regression guard (CRED-04)
 
 ---
 
@@ -114,10 +120,10 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 1. SEC — Secret-detection keystone | v1.1 | 2/2 | Complete   | 2026-05-26 |
 | 2. STORE — Zero-config secrets store | v1.1 | 5/5 | Complete   | 2026-05-26 |
-| 3. CRED — MCP credential firewall & lifecycle | v1.1 | 0/TBD | Not started | - |
+| 3. CRED — MCP credential firewall & lifecycle | v1.1 | 0/4 | Not started | - |
 | 4. MCPX — MCP transport resilience | v1.1 | 0/TBD | Not started | - |
 | 5. SUBA — Sub-agent tool governance | v1.1 | 0/TBD | Not started | - |
 
 ---
 
-*Last updated: 2026-05-26 — Phase 2 planned (5 plans, 3 waves)*
+*Last updated: 2026-05-26 — Phase 3 planned (4 plans, 3 waves)*
