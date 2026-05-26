@@ -84,7 +84,7 @@ Plans:
 
 Plans:
 - [x] 03-01-PLAN.md — Wire `secretStore` into `WorkspaceApiDeps` + extract `mcp-header-credential.ts` helper (CRED-05 foundation)
-- [ ] 03-02-PLAN.md — TDD: mcp.connect/mcp.test headers credential firewall + extraction + OAuth refusal (CRED-01, CRED-05, CRED-06)
+- [x] 03-02-PLAN.md — TDD: mcp.connect/mcp.test headers credential firewall + extraction + OAuth refusal (CRED-01, CRED-05, CRED-06)
 - [ ] 03-03-PLAN.md — TDD: persistToConfig secret gate + saveLastKnownGood snapshot guard (CRED-02, CRED-03)
 - [ ] 03-04-PLAN.md — TDD: config.read header masking regression guard (CRED-04)
 
@@ -120,7 +120,7 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 1. SEC — Secret-detection keystone | v1.1 | 2/2 | Complete   | 2026-05-26 |
 | 2. STORE — Zero-config secrets store | v1.1 | 5/5 | Complete   | 2026-05-26 |
-| 3. CRED — MCP credential firewall & lifecycle | v1.1 | 1/4 | In Progress|  |
+| 3. CRED — MCP credential firewall & lifecycle | v1.1 | 2/4 | In Progress|  |
 | 4. MCPX — MCP transport resilience | v1.1 | 0/TBD | Not started | - |
 | 5. SUBA — Sub-agent tool governance | v1.1 | 0/TBD | Not started | - |
 
