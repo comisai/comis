@@ -85,7 +85,11 @@ export function resolveInteractiveCallbackSigningSecret(
   }
 
   const existing = secretStore.getDecrypted(INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME);
-  if (existing.ok && existing.value !== undefined) {
+  // WR-03: treat an EMPTY string the same as absent. HMAC accepts an empty key, so a
+  // degenerate/hand-edited store row decrypting to "" would not break verification —
+  // it would collapse the keyspace to a publicly-computable constant (empty key),
+  // making every callback forgeable. Reject it so the regenerate-and-persist path runs.
+  if (existing.ok && existing.value !== undefined && existing.value.length > 0) {
     logger.debug(
       {
         secretName: INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME,

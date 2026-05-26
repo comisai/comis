@@ -137,6 +137,26 @@ describe("resolveInteractiveCallbackSigningSecret (APV-07)", () => {
     expect(secret).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(secret.length).toBeGreaterThan(0);
   });
+
+  it("treats an EMPTY-STRING store value as absent and regenerates (WR-03 — never key HMAC with an empty secret)", () => {
+    // A degenerate/hand-edited store row decrypts to "". HMAC accepts an empty
+    // key, so an empty secret would not break verification — but it collapses the
+    // keyspace to a publicly-computable constant, making EVERY callback forgeable.
+    // The resolver must treat "" the same as undefined: regenerate + persist.
+    const { store, backing } = makeStubStore({
+      getDecrypted: vi.fn(() => ok("")),
+    });
+    const logger = makeLogger();
+
+    const secret = resolveInteractiveCallbackSigningSecret(store, logger);
+
+    // A real 32-byte base64url secret, NOT the empty string read from the store.
+    expect(secret.length).toBeGreaterThan(0);
+    expect(secret).toMatch(/^[A-Za-z0-9_-]+$/);
+    // The regenerate-and-persist branch ran (the empty value was rejected).
+    expect(store.set).toHaveBeenCalledWith(SECRET_NAME, secret);
+    expect(backing.get(SECRET_NAME)).toBe(secret);
+  });
 });
 
 // ---------------------------------------------------------------------------
