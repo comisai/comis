@@ -1,0 +1,8 @@
+{
+  "calls": [
+    { "op": "send", "id": "sig-msg-0", "text": "↳ subagent: 3 steps" },
+    { "op": "delete", "id": "sig-msg-0" },
+    { "op": "send", "id": "sig-msg-1", "text": "↳ subagent done" },
+    { "op": "delete", "id": "sig-msg-1" }
+  ]
+}

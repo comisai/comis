@@ -14,9 +14,9 @@
  * (no duplicated state machine).
  *
  * Time discipline: every fixture test drives the injected FakeTimers/FakeClock —
- * no raw setTimeout/Date.now (globals.test.ts fails the build otherwise). Golden
- * fixtures assert via readFixture + toEqual (NEVER toMatchSnapshot — auto-write
- * self-heals, Pitfall 3).
+ * no raw wall-time call (globals.test.ts fails the build otherwise). Golden
+ * fixtures assert via readFixture + toEqual (NEVER an auto-writing inline/file
+ * snapshot, which self-heals a wrong fixture — Pitfall 3).
  */
 import { describe, it, expect } from "vitest";
 import type {
@@ -228,5 +228,156 @@ describe("createSignalActivityRenderer (DeleteAndRepost wiring)", () => {
       const deletedIds = fake.recorded.calls.filter((c) => c.op === "delete").map((c) => c.id);
       expect(deletedIds).not.toContain(last.id);
     }
+  });
+});
+
+// --- Task 2: 11 golden fixtures (S1-S7, S9-S12; no S8) ---------------------
+
+/** Serialise the fake's ordered call-log — the exact shape the fixtures pin. */
+function serialiseCallLog(fake: ReturnType<typeof createFakeSignalAdapter>): unknown {
+  return JSON.parse(JSON.stringify({ calls: fake.recorded.calls }));
+}
+
+/**
+ * Drive the Signal DeleteAndRepost renderer through a scenario's frames +
+ * finalize (advancing the fake timers as a real coordinator would — the
+ * deliveredAt-gated success delete fires behind the timer) and RETURN the
+ * serialised call-log. Each `it(...)` asserts `toEqual(readFixture("signal", …))`
+ * itself (never an auto-writing snapshot) so the on-disk fixture cannot self-heal.
+ */
+async function runScenario(
+  frames: readonly ActivityRenderFrame[],
+  outcome: TurnOutcome,
+  deliveredAtMs: number,
+): Promise<unknown> {
+  const timer = createFakeTimers();
+  const clock = createFakeClock(0);
+  const fake = createFakeSignalAdapter();
+  const r = createSignalActivityRenderer(fake, "chat-1", { timer, clock });
+
+  for (const f of frames) {
+    await r.apply(f);
+    await Promise.resolve();
+  }
+  await r.finalize(outcome);
+  await Promise.resolve();
+  await Promise.resolve();
+  // Advance past any deliveredAt-gated success delete.
+  timer.advance(Math.max(0, deliveredAtMs - clock.now()) + 1000);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  return serialiseCallLog(fake);
+}
+
+function ev(id: number, over: Partial<ActivityEvent> = {}): ActivityEvent {
+  return makeEvent({ activityId: `00000000-0000-0000-0000-00000000000${id}`, ...over });
+}
+
+const okReceipt = (deliveredAtMs: number): FinalDeliveryReceipt => receiptAt(deliveredAtMs);
+
+describe("Signal golden fixtures (§18.3 DeleteAndRepost rows — readFixture + toEqual)", () => {
+  it("S1 trivial chat — zero renderer messages (kind:success trivial, no message ever posted)", async () => {
+    const log = await runScenario([], { kind: "success", trivial: true, delivery: okReceipt(0) }, 0);
+    expect(log).toEqual(readFixture("signal", "S1"));
+  });
+
+  it("S2 one fast tool — 1 posted message, then 1 delete after deliveredAt (success trivial)", async () => {
+    const log = await runScenario(
+      [makeFrame(0, "running tool")],
+      { kind: "success", trivial: true, delivery: okReceipt(2000) },
+      2000,
+    );
+    expect(log).toEqual(readFixture("signal", "S2"));
+  });
+
+  it("S3 multi-step success — delete-prev + post-new per transition, then a final delete after deliveredAt", async () => {
+    const frames = [0, 1, 2].map((i) => makeFrame(i, `step ${i + 1}`));
+    const log = await runScenario(frames, { kind: "success", trivial: false, delivery: okReceipt(5000) }, 5000);
+    expect(log).toEqual(readFixture("signal", "S3"));
+  });
+
+  it("S4 outright failure — running activity deleted, then a KEPT ❌ {errorKind} send (no trailing delete)", async () => {
+    const log = await runScenario(
+      [makeFrame(0, "running tool"), makeFrame(1, "tool failed")],
+      { kind: "failure", errorKind: "dependency", failedEvents: [ev(1, { status: "failed", errorKind: "dependency" })] },
+      0,
+    );
+    expect(log).toEqual(readFixture("signal", "S4"));
+  });
+
+  // NOTE: the shipped Phase-70 createDeleteAndRepostRenderer treats
+  // success_with_recovered_failures identically to success (delete the last
+  // activity after deliveredAt). §18.2-S5 aspires to "0 delete" for the recovered
+  // case; that keep-policy lives in delete-and-repost.ts (Phase-70) and is out of
+  // scope for this wiring plan. The fixture pins the ACTUAL renderer output (the
+  // delete is present) — mirroring the Telegram/Discord/Slack/WhatsApp S5 decision.
+  it("S5 recovered failure — repost-per-transition then a final delete, kind:success_with_recovered_failures (renderer deletes)", async () => {
+    const recovered = ev(1, { status: "failed", errorKind: "network" });
+    const log = await runScenario(
+      [makeFrame(0, "attempt 1"), makeFrame(1, "attempt 1 failed"), makeFrame(2, "attempt 2 ok")],
+      { kind: "success_with_recovered_failures", trivial: false, delivery: okReceipt(0), recoveredFailures: [recovered] },
+      0,
+    );
+    expect(log).toEqual(readFixture("signal", "S5"));
+  });
+
+  it("S6 plan-state — each transition reposts the visible-events line, deleted on success", async () => {
+    const plan = {
+      entries: [
+        { id: "p1", label: "step one", status: "done" as const },
+        { id: "p2", label: "step two", status: "in_progress" as const },
+      ],
+    };
+    const log = await runScenario(
+      [
+        { ...makeFrame(0, "planning"), planSnapshot: plan },
+        { ...makeFrame(1, "executing"), planSnapshot: plan },
+      ],
+      { kind: "success", trivial: false, delivery: okReceipt(3000) },
+      3000,
+    );
+    expect(log).toEqual(readFixture("signal", "S6"));
+  });
+
+  it("S7 subagent — the '↳ subagent' line is data on the event (renderer adds no prefix), deleted on success", async () => {
+    const log = await runScenario(
+      [
+        makeFrame(0, "↳ subagent: 3 steps"),
+        makeFrame(1, "↳ subagent done"),
+      ],
+      { kind: "success", trivial: false, delivery: okReceipt(4000) },
+      4000,
+    );
+    expect(log).toEqual(readFixture("signal", "S7"));
+  });
+
+  it("S9 message_tool visibility — activity reposts the running line, deleted on success", async () => {
+    const log = await runScenario(
+      [makeFrame(0, "running tool")],
+      { kind: "success", trivial: false, delivery: okReceipt(2000) },
+      2000,
+    );
+    expect(log).toEqual(readFixture("signal", "S9"));
+  });
+
+  it("S10 verbose — every event reposts per transition, deleted on success", async () => {
+    const frames = [0, 1, 2].map((i) => makeFrame(i, `verbose ${i + 1}`));
+    const log = await runScenario(frames, { kind: "success", trivial: false, delivery: okReceipt(5000) }, 5000);
+    expect(log).toEqual(readFixture("signal", "S10"));
+  });
+
+  it("S11 silent verbosity — zero activity messages from the renderer", async () => {
+    const log = await runScenario([], { kind: "silent", reason: "SILENT" }, 0);
+    expect(log).toEqual(readFixture("signal", "S11"));
+  });
+
+  it("S12 silent sentinel — the placeholder is deleted silently, kind:silent", async () => {
+    const log = await runScenario(
+      [makeFrame(0, "suppressed reply")],
+      { kind: "silent", reason: "NO_REPLY" },
+      0,
+    );
+    expect(log).toEqual(readFixture("signal", "S12"));
   });
 });
