@@ -36,9 +36,10 @@ import type {
   TimerHandle,
   ClockPort,
   RichButton,
+  ActivityStatusMarkers,
 } from "@comis/core";
 import type { ActivityRenderActions } from "./actions.js";
-import { renderFrameText, failureLabel, appendPrompt } from "./render.js";
+import { renderFrameText, failureLabel, successLabel, appendPrompt } from "./render.js";
 
 /** Debounce window: at most one edit per 800ms (§5.3). */
 const EDIT_DEBOUNCE_MS = 800;
@@ -69,10 +70,12 @@ export interface EditPlaceDeps {
    * paint native buttons instead. Returns `""` for a non-approval frame.
    */
   buildPrompt?: (events: readonly ActivityEvent[]) => string;
+  /** Resolved theme status markers (UX-01). Omitted → default glyphs. */
+  markers?: ActivityStatusMarkers;
 }
 
 export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRenderer {
-  const { actions, timer, clock, buildButtons, buildPrompt } = deps;
+  const { actions, timer, clock, buildButtons, buildPrompt, markers } = deps;
 
   let messageId: string | undefined;
   /** Pending debounce edit; cancelled + rescheduled on each apply. */
@@ -162,9 +165,11 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
             // Trivial turn: drop the placeholder, no edit history.
             return deletePlaceholder();
           }
-          // Edit to the final form, then delete AFTER deliveredAt.
+          // Edit to the final form, then delete AFTER deliveredAt. The success
+          // closing line follows the resolved theme markers (UX-01); omitting
+          // them yields the byte-identical default check-done line.
           if (messageId !== undefined) {
-            const edited = await actions.edit(messageId, "✓ done");
+            const edited = await actions.edit(messageId, successLabel(markers));
             if (!edited.ok) return edited;
           }
           const deliveredAtMs = outcome.delivery.deliveredAtMs;
@@ -184,9 +189,11 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
         }
 
         case "failure": {
-          // KEEP the message: edit to the ❌ form, never delete (T-70-07-02).
+          // KEEP the message: edit to the themed failure form, never delete
+          // (T-70-07-02). The marker follows the resolved theme (UX-01);
+          // omitting markers yields the byte-identical "❌ {errorKind}".
           if (messageId !== undefined) {
-            const edited = await actions.edit(messageId, failureLabel(outcome));
+            const edited = await actions.edit(messageId, failureLabel(outcome, markers));
             if (!edited.ok) return edited;
           }
           return ok(undefined);

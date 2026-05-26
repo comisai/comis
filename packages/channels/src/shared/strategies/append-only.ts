@@ -7,10 +7,10 @@
  *   - `apply(frame)`: post the opening status ONCE (the first non-trivial frame);
  *     later frames are no-ops (these channels cannot edit, so we don't spam).
  *   - `finalize`:
- *       • success: NO closing follow-up. (The §7.3 "✓ done" branch is the
+ *       • success: NO closing follow-up. (The §7.3 success-marker branch is the
  *         windowed-edit case, unavailable on append-only channels; posting a
  *         closing on every success would be noise.)
- *       • failure: exactly one "❌ {errorKind}" follow-up.
+ *       • failure: exactly one themed failure follow-up ("{marker} {errorKind}").
  *       • trivial / silent / aborted: nothing emitted.
  *
  * No timers needed — append-only has no delete to sequence. Implements the core
@@ -24,6 +24,7 @@ import type {
   ActivityEvent,
   TurnOutcome,
   RichButton,
+  ActivityStatusMarkers,
 } from "@comis/core";
 import type { ActivityRenderActions } from "./actions.js";
 import { renderFrameText, failureLabel, appendPrompt } from "./render.js";
@@ -47,10 +48,12 @@ export interface AppendOnlyDeps {
    * frame, so a button-less send stays byte-identical.
    */
   buildButtons?: (events: readonly ActivityEvent[]) => RichButton[][];
+  /** Resolved theme status markers (UX-01). Omitted → default glyphs. */
+  markers?: ActivityStatusMarkers;
 }
 
 export function createAppendOnlyRenderer(deps: AppendOnlyDeps): ChannelActivityRenderer {
-  const { actions, buildPrompt, buildButtons } = deps;
+  const { actions, buildPrompt, buildButtons, markers } = deps;
 
   let opened = false;
 
@@ -81,7 +84,9 @@ export function createAppendOnlyRenderer(deps: AppendOnlyDeps): ChannelActivityR
           return ok(undefined);
 
         case "failure": {
-          const sent = await actions.send(failureLabel(outcome));
+          // The marker follows the resolved theme (UX-01); omitting markers
+          // yields the byte-identical "❌ {errorKind}".
+          const sent = await actions.send(failureLabel(outcome, markers));
           if (!sent.ok) return sent;
           return ok(undefined);
         }

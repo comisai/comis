@@ -31,6 +31,7 @@ import type {
   TimerPort,
   TimerHandle,
   ClockPort,
+  ActivityStatusMarkers,
 } from "@comis/core";
 import type { ActivityRenderActions } from "./actions.js";
 import { renderFrameText, failureLabel, appendPrompt } from "./render.js";
@@ -49,12 +50,14 @@ export interface DeleteAndRepostDeps {
    * non-approval frame (nothing appended).
    */
   buildPrompt?: (events: readonly ActivityEvent[]) => string;
+  /** Resolved theme status markers (UX-01). Omitted → default glyphs. */
+  markers?: ActivityStatusMarkers;
 }
 
 export function createDeleteAndRepostRenderer(
   deps: DeleteAndRepostDeps,
 ): ChannelActivityRenderer {
-  const { actions, timer, clock, buildPrompt } = deps;
+  const { actions, timer, clock, buildPrompt, markers } = deps;
 
   let lastActivityId: string | undefined;
   let pendingDelete: TimerHandle | undefined;
@@ -107,12 +110,14 @@ export function createDeleteAndRepostRenderer(
         }
 
         case "failure": {
-          // Delete the running activity, then post the final ❌ and KEEP it.
+          // Delete the running activity, then post the final themed failure line
+          // and KEEP it. The marker follows the resolved theme (UX-01); omitting
+          // markers yields the byte-identical "❌ {errorKind}".
           const deleted = await deleteLast();
           if (!deleted.ok) return deleted;
-          const sent = await actions.send(failureLabel(outcome));
+          const sent = await actions.send(failureLabel(outcome, markers));
           if (!sent.ok) return sent;
-          // Do NOT track the ❌ message as deletable — it is the kept trail.
+          // Do NOT track the failure message as deletable — it is the kept trail.
           return ok(undefined);
         }
 
