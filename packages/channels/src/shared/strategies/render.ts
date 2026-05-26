@@ -15,7 +15,21 @@
  * plain-text, depth-aware renderer (IRC, §18.3) prepend a `↳ ` depth prefix;
  * the prefix is a renderer concern, not data baked into the event here.
  */
-import type { ActivityEvent, TurnOutcome } from "@comis/core";
+import type { ActivityEvent, TurnOutcome, ActivityStatusMarkers } from "@comis/core";
+
+/**
+ * Closing-line glyphs when no theme markers are injected (default-theme parity).
+ *
+ * Only `success`/`failure` are painted on closing lines (`subagent`/`running`
+ * are not), so a local `Pick` keeps the intent tight and avoids a runtime
+ * dependency on the `default` theme bundle from the channels tier. These two
+ * literals MUST mirror the `default` theme's markers (75-01) so a marker-less
+ * call stays byte-identical to the pre-75-06 cross/check closing lines.
+ */
+const DEFAULT_MARKERS: Pick<ActivityStatusMarkers, "success" | "failure"> = {
+  success: "✓",
+  failure: "❌",
+};
 
 /** Best-effort short label for one event, drawn from already-redacted hints. */
 export function eventLabel(event: ActivityEvent): string {
@@ -55,7 +69,27 @@ export function appendPrompt(text: string, prompt?: string): string {
   return `${text}\n${prompt}`;
 }
 
-/** Closing failure marker carrying the (closed-union) errorKind. */
-export function failureLabel(outcome: Extract<TurnOutcome, { kind: "failure" }>): string {
-  return `❌ ${outcome.errorKind}`;
+/**
+ * Closing failure marker carrying the (closed-union) errorKind; themed when
+ * markers are supplied. With no markers (or the default theme's markers) the
+ * output is byte-identical to the pre-75-06 cross-prefixed `"<marker> {errorKind}"`;
+ * the ascii theme yields `"[ERR] {errorKind}"` with no emoji (UX-01). Interpolates
+ * ONLY the closed-union `errorKind` — never raw outcome internals.
+ */
+export function failureLabel(
+  outcome: Extract<TurnOutcome, { kind: "failure" }>,
+  markers?: Pick<ActivityStatusMarkers, "failure">,
+): string {
+  return `${markers?.failure ?? DEFAULT_MARKERS.failure} ${outcome.errorKind}`;
+}
+
+/**
+ * Closing success marker for the windowed-edit success line (§7.3); themed when
+ * markers are supplied. With no markers (or the default theme's markers) the
+ * output is byte-identical to the pre-75-06 check-prefixed `"<marker> done"`; the
+ * ascii theme yields `"[OK] done"` with no emoji (UX-01). The success line carries
+ * no errorKind, so `successLabel` takes no outcome.
+ */
+export function successLabel(markers?: Pick<ActivityStatusMarkers, "success">): string {
+  return `${markers?.success ?? DEFAULT_MARKERS.success} done`;
 }
