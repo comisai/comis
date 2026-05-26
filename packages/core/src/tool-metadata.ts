@@ -40,6 +40,15 @@ export interface ToolCapabilityMetadata {
 // ---------------------------------------------------------------------------
 
 /** Per-tool metadata stored in the side-channel registry. All fields optional. */
+// @optional-field-count: 14 optional fields — this is a side-channel metadata
+// aggregator keyed by tool name, registered incrementally via spread-merge from
+// independent sources (result caps, parallel-safety flags, action-gating
+// schema, MCP-export policy, capability routing, and the v2.5 activity hints
+// suppressActivity/failureDetector). Every field is conditionally present per
+// tool by design; the registry merges partial registrations, so a required
+// field would force every caller to supply unrelated keys. Splitting would
+// fragment a single per-tool record into N parallel maps with no added type
+// safety. Well-bounded record, not an undermodeled type.
 export interface ComisToolMetadata {
   /** Per-tool result size cap in characters. */
   maxResultSizeChars?: number;
