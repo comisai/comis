@@ -433,3 +433,9 @@ export type {
   ActivityToolMetadata,
   ActivityCounters,
 } from "./activity/activity-stream.js";
+
+// The pure, one-pass, idempotent activity-label display-shortener (UX-02,
+// spec §8.4). Consumes already-redacted / already-path-compacted strings from
+// redactValue — it shortens URLs, ISO timestamps, and long mcp_ tool names
+// only, never re-redacting or re-compacting paths.
+export { compressLabel } from "./activity/label-compressor.js";

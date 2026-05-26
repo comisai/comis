@@ -35,6 +35,8 @@ export type {
   ResolvedLabel,
 } from "./label-resolver.js";
 
+export { compressLabel } from "./label-compressor.js";
+
 export { parseShellCommand } from "./shell-label-parser.js";
 
 export { createPlanStream } from "./plan-stream.js";
