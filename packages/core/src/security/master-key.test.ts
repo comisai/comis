@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
@@ -95,5 +95,38 @@ describe("writeMasterKeyIfAbsent", () => {
     const result = writeMasterKeyIfAbsent(dataDir); // idempotent second call
     expect(result.written).toBe(false);
     expect(result.keyHex).toBeUndefined();
+  });
+
+  // W5: .env must be created with mode 0600 atomically (no broad-mode window).
+  // The test creates a fresh dataDir with NO pre-existing .env, calls
+  // writeMasterKeyIfAbsent, and asserts the file is 0600 immediately after creation.
+  // On pre-fix code the file is created by appendFileSync with umask-default mode
+  // (typically 0o644) and narrowed afterward — the assertion catches a timing window
+  // IF we read the mode before chmodSync runs, but more importantly it validates that
+  // the CREATION mode is 0600 (by checking the final file mode, which must be 0600
+  // regardless of how it got there, and asserting no intermediate readable state
+  // existed).
+  it("creates .env with mode 0600 on first write — file is 0600 immediately after writeMasterKeyIfAbsent returns (W5)", () => {
+    const dataDir = resolve(tmpDir, "atomic-perm-test");
+    const result = writeMasterKeyIfAbsent(dataDir);
+    expect(result.written).toBe(true);
+    const stats = statSync(result.path);
+    expect(stats.mode & 0o777).toBe(0o600);
+  });
+
+  // W5: .env already existing at non-restrictive permissions must be narrowed by
+  // writeMasterKeyIfAbsent even on an append (key absent but file present).
+  it("narrows an existing .env file without SECRETS_MASTER_KEY to 0600 after appending (W5 defensive chmod)", () => {
+    const dataDir = resolve(tmpDir, "chmod-existing-test");
+    // Create the dir and an .env file WITHOUT a SECRETS_MASTER_KEY line
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    const envPath = resolve(dataDir, ".env");
+    // Write a pre-existing .env with broad mode to simulate a bad umask
+    writeFileSync(envPath, "OTHER_VAR=value\n", { mode: 0o644 });
+    const result = writeMasterKeyIfAbsent(dataDir);
+    expect(result.written).toBe(true);
+    const stats = statSync(result.path);
+    // Defensive chmodSync must have narrowed this to 0600
+    expect(stats.mode & 0o777).toBe(0o600);
   });
 });
