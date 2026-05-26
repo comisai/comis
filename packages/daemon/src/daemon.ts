@@ -1369,32 +1369,54 @@ async function bootFoundation(
   const dataDir = process.env["COMIS_DATA_DIR"] ?? safePath(os.homedir(), ".comis");
   const envPath = safePath(dataDir, ".env");
 
-  // STORE-02: opt-out flag — read BEFORE writeMasterKeyIfAbsent (systemGetEnv: sanctioned root)
-  const disableEncrypted = (() => {
-    const raw = systemGetEnv("COMIS_DISABLE_ENCRYPTED_SECRETS");
+  // STORE-02: opt-out flag pre-read — checked BEFORE writeMasterKeyIfAbsent to skip key
+  // auto-gen. Read from systemGetEnv (process.env) at this point; loadEnvFile hasn't run yet
+  // so a COMIS_DISABLE_ENCRYPTED_SECRETS entry in ~/.comis/.env is not visible here.
+  // W2: we re-evaluate after loadEnvFile below to also honour the flag from .env.
+  const parseDisableFlag = (raw: string | undefined): boolean => {
     if (typeof raw !== "string") return false;
     const norm = raw.trim().toLowerCase();
     return norm === "1" || norm === "true" || norm === "on";
-  })();
+  };
+  const disableEncryptedPreLoad = parseDisableFlag(systemGetEnv("COMIS_DISABLE_ENCRYPTED_SECRETS"));
 
   // STORE-01: auto-generate master key on first boot (before loadEnvFile — key must be in
   // memory, not re-read from env, for same-boot usability).
   // NEVER log autoInitKeyHex — it is raw 32-byte key material.
   let autoInitKeyHex: string | undefined;
-  if (!disableEncrypted) {
+  if (!disableEncryptedPreLoad) {
     const writeResult = writeMasterKeyIfAbsent(dataDir);
     autoInitKeyHex = writeResult.keyHex; // defined iff written===true (first boot only)
   }
 
   loadEnvFile(envPath);
 
+  // W2: Re-evaluate opt-out after loadEnvFile so COMIS_DISABLE_ENCRYPTED_SECRETS in
+  // ~/.comis/.env is honoured for the store-construction gate (not just key auto-gen).
+  // eslint-disable-next-line no-restricted-syntax -- must re-read process.env after loadEnvFile
+  const disableEncrypted = disableEncryptedPreLoad || parseDisableFlag(process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"]);
+
   // 0.5. Decrypt secrets, merge with env, scrub process.env.
   const permissionCorrections = hardenDataDirPermissions(dataDir);
-  const { mergedEnv, secretStore, secretsCrypto, secretsDb } = bootstrapSecretsAndEnv({
-    setupSecrets: _setupSecrets,
-    dataDir,
-    seedKeyHex: autoInitKeyHex, // STORE-01: undefined on normal boot; hex string on first boot
-  });
+  // CR-02: gate the entire store bootstrap on disableEncrypted. Pre-fix, bootstrapSecretsAndEnv
+  // ran unconditionally — after loadEnvFile loaded SECRETS_MASTER_KEY from ~/.comis/.env,
+  // setupSecrets found it and built a live store even when the opt-out was set.
+  // Post-fix: when opt-out is true, skip store construction entirely (mergedEnv = process.env).
+  let mergedEnv: Record<string, string | undefined>;
+  let secretStore: import("@comis/core").SecretStorePort | undefined;
+  let secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
+  let secretsDb: import("better-sqlite3").Database | undefined;
+  if (disableEncrypted) {
+    // Opt-out: no store construction. Keep loadEnvFile output (non-secret vars) in mergedEnv.
+    // eslint-disable-next-line no-restricted-syntax -- building mergedEnv from process.env after loadEnvFile
+    mergedEnv = process.env as Record<string, string | undefined>;
+  } else {
+    ({ mergedEnv, secretStore, secretsCrypto, secretsDb } = bootstrapSecretsAndEnv({
+      setupSecrets: _setupSecrets,
+      dataDir,
+      seedKeyHex: autoInitKeyHex, // STORE-01: undefined on normal boot; hex string on first boot
+    }));
+  }
 
   // 0.6. Runtime adapter construction (composition root). overrides.timers is opt-in for test fake-timers; never set in production.
   const clock = createSystemClock(); const env = createSystemEnv(mergedEnv); const timers = overrides.timers ?? createSystemTimers();
