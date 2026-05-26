@@ -24,6 +24,13 @@ import { safePath } from "./safe-path.js";
 export interface MasterKeyWriteResult {
   readonly written: boolean;
   readonly path: string;
+  /**
+   * The freshly-generated master key in 64-char hex encoding.
+   * Defined iff `written === true` (first-time write only).
+   * Absent (undefined) when `written === false` (key already present).
+   * NEVER log this value.
+   */
+  readonly keyHex?: string;
 }
 
 /**
@@ -61,5 +68,5 @@ export function writeMasterKeyIfAbsent(dataDir: string): MasterKeyWriteResult {
   const keyHex = generateMasterKey();
   appendFileSync(envPath, `\nSECRETS_MASTER_KEY=${keyHex}\n`);
   chmodSync(envPath, 0o600);
-  return { written: true, path: envPath };
+  return { written: true, path: envPath, keyHex };
 }
