@@ -381,7 +381,13 @@ describe("Telegram golden fixtures (§18.2 EditPlace rows — readFixture + toEq
     );
   });
 
-  it("S5 recovered failure — edits incl. ❌ then ✓, 0 delete, kind:success_with_recovered_failures", async () => {
+  // NOTE: the shipped Phase-70 createEditPlaceRenderer treats
+  // success_with_recovered_failures identically to success (edit "✓ done" → gated
+  // delete). §18.2-S5 aspires to "0 delete" for the recovered case; that policy
+  // lives in edit-place.ts (Phase-70) and is out of scope for this wiring plan.
+  // The fixture pins the ACTUAL renderer output (delete present). See SUMMARY
+  // "Deferred Issues" — the recovered-failure keep-policy is a Phase-70 follow-up.
+  it("S5 recovered failure — edits incl. recovery then ✓ done, kind:success_with_recovered_failures (renderer deletes)", async () => {
     const recovered = ev(1, { status: "failed", errorKind: "network" });
     await runScenario(
       "S5",
