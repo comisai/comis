@@ -4917,4 +4917,64 @@ describe("session-index emit sites", () => {
     expect(payload.inputTokens).toBe(123);
     expect(payload.outputTokens).toBe(456);
   });
+
+  // -------------------------------------------------------------------------
+  // tool_execution_end 'Tool not found' enrichment (SUBA-02)
+  // -------------------------------------------------------------------------
+
+  describe("tool_execution_end 'Tool not found' enrichment (SUBA-02)", () => {
+    it("'Tool mcp_manage not found' with activeToolGroups=['coding'] enriches errorText with supervisor re-spawn hint", () => {
+      // activeToolGroups field does not yet exist on PiEventBridgeDeps — cast via unknown for RED
+      const enrichedDeps = createMockDeps({
+        activeToolGroups: ["coding"],
+      } as unknown as Partial<PiEventBridgeDeps>);
+      const { listener } = createPiEventBridge(enrichedDeps);
+
+      // Use { message: "..." } shape so extractErrorText returns the raw SDK text
+      const result = { message: "Tool mcp_manage not found" };
+      listener(makeToolExecutionEndEvent("mcp_manage", "tc-suba02-a", true, result) as any);
+
+      // The warn log must include errorText containing "supervisor" (re-spawn hint)
+      const warnCalls = (enrichedDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const toolFailWarn = warnCalls.find(
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "mcp_manage",
+      );
+      expect(toolFailWarn).toBeDefined();
+      expect(toolFailWarn![0].errorText).toContain("supervisor");
+    });
+
+    it("'Tool gateway not found' with activeToolGroups=['full'] enriches errorText with denylist message", () => {
+      const enrichedDeps = createMockDeps({
+        activeToolGroups: ["full"],
+      } as unknown as Partial<PiEventBridgeDeps>);
+      const { listener } = createPiEventBridge(enrichedDeps);
+
+      const result = { message: "Tool gateway not found" };
+      listener(makeToolExecutionEndEvent("gateway", "tc-suba02-b", true, result) as any);
+
+      const warnCalls = (enrichedDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const toolFailWarn = warnCalls.find(
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "gateway",
+      );
+      expect(toolFailWarn).toBeDefined();
+      expect(toolFailWarn![0].errorText).toContain("denied to ALL sub-agents");
+    });
+
+    it("'Tool mcp_manage not found' with no activeToolGroups leaves errorText unchanged", () => {
+      // Bridge without activeToolGroups field — top-level agent, no enrichment
+      const plainDeps = createMockDeps();
+      const { listener } = createPiEventBridge(plainDeps);
+
+      const result = { message: "Tool mcp_manage not found" };
+      listener(makeToolExecutionEndEvent("mcp_manage", "tc-suba02-c", true, result) as any);
+
+      const warnCalls = (plainDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const toolFailWarn = warnCalls.find(
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "mcp_manage",
+      );
+      expect(toolFailWarn).toBeDefined();
+      // No enrichment: raw SDK error text preserved
+      expect(toolFailWarn![0].errorText).toBe("Tool mcp_manage not found");
+    });
+  });
 });

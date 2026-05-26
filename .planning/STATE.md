@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: MCP Hardening
-status: verifying
+status: executing
 stopped_at: Phase 01 Plan 02 complete — legacy detectors deleted, all call sites repointed, pnpm validate green.
-last_updated: "2026-05-26T19:41:06.397Z"
+last_updated: "2026-05-26T20:47:39.369Z"
 last_activity: 2026-05-26
 progress:
   total_phases: 5
   completed_phases: 4
-  total_plans: 15
-  completed_plans: 15
-  percent: 100
+  total_plans: 18
+  completed_plans: 16
+  percent: 89
 ---
 
 # Project State: Comis
@@ -24,22 +24,22 @@ progress:
 **Project:** Comis — security-first AI agent platform connecting agents to 9 chat channels. TypeScript monorepo, 15 packages, hexagonal architecture, Node.js ≥ 22, Linux-only.
 
 **Core value:** A fleet-wide bug must be diagnosable from one structured artifact with one command in under five minutes.
-**Current focus:** Phase 04 — mcpx-mcp-transport-resilience
+**Current focus:** Phase 05 — suba-sub-agent-tool-governance
 
 ## Current Position
 
-Phase: 04 (mcpx-mcp-transport-resilience) — EXECUTING
-Plan: 4 of 4
-Status: Phase complete — ready for verification
+Phase: 05 (suba-sub-agent-tool-governance) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
 Last activity: 2026-05-26
 
-Progress: [██████████] 100%
+Progress: [█████████░] 89%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 13
+- Total plans completed: 17
 - Average duration: ~11 min/plan
 - Total execution time: ~22 min
 
@@ -51,6 +51,7 @@ Progress: [██████████] 100%
 | 01 | 2 | - | - |
 | 02 | 5 | - | - |
 | 03 | 4 | - | - |
+| 04 | 4 | - | - |
 
 *Updated after each plan completion*
 | Phase 02-store-zero-config-secrets-store P02 | 8 | 2 tasks | 2 files |
@@ -99,6 +100,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-26T19:41:06.392Z
+Last session: 2026-05-26T20:47:39.361Z
 Stopped at: Phase 01 Plan 02 complete — legacy detectors deleted, all call sites repointed, pnpm validate green.
 Resume file: None
