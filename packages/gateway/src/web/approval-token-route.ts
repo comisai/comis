@@ -227,7 +227,12 @@ export function createApprovalTokenRoute(deps: ApprovalTokenDeps): Hono {
         },
         "Approval token resolution failed",
       );
-      return c.html(ERROR_HTML, 500);
+      // WR-02: the token is already irrevocably consumed above, so this is a
+      // CONSUMED-but-failed terminal state, not a transient server error. Return a
+      // non-retryable 409 (not 500 — the conventional "retry me" signal) so the
+      // status line agrees with the ERROR_HTML "cannot be retried" body copy and a
+      // mail-client prefetch that trips this path never invites a user retry.
+      return c.html(ERROR_HTML, 409);
     }
   });
 

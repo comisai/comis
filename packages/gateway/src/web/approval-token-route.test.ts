@@ -170,7 +170,12 @@ describe("createApprovalTokenRoute — single-use email approval token", () => {
 
     // The forced-failure resolution must not re-arm the token.
     const res = await request(app, "tok-1");
-    expect(res.status).toBe(500);
+    // WR-02: a post-revoke resolution failure is a CONSUMED-but-failed terminal
+    // state, NOT a transient server error. 500 is the conventional "retry me"
+    // signal and contradicts the "cannot be retried" body copy (a mail-client
+    // prefetch that trips this would invite the user to retry a dead token).
+    // Return a non-retryable 4xx so the status line agrees with the page.
+    expect(res.status).toBe(409);
     expect(deps.tokens.has("tok-1")).toBe(false);
 
     // A retry finds no reusable state and never reaches a second resolveApproval.
