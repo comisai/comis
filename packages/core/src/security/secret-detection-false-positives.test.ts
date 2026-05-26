@@ -63,7 +63,7 @@ const POSITIVE_CASES: ReadonlyArray<{ label: string; sample: string }> = [
   { label: "Stripe sk_test_ secret", sample: "sk_test_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
   // Scheme-strip positives — the load-bearing SEC-02 closure.
   { label: "Bearer hf_ token (scheme-strip)", sample: "Bearer hf_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789AbCdEf" },
-  { label: "Basic creds (scheme-strip)", sample: "Basic dXNlcjpwYXNzd29yZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGQ=" },
+  { label: "Basic creds (scheme-strip)", sample: "Basic dXNlcjpsb25ncGFzc3dvcmR3aXRoaGlnaGVudHJvcHkxMjM0NTY3OA" },
   { label: "Quoted ghp_ token (quote-strip)", sample: '"ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"' },
 ];
 

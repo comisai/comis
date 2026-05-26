@@ -37,8 +37,10 @@ describe("looksLikeSecretValue — scheme strip (SEC-02 bug closure)", () => {
   });
 
   it("strips Basic scheme before the entropy gate", () => {
+    // Base64 body without `=`/`+`/`/` padding (those are delimiter chars the
+    // entropy gate rejects — same set that excludes connection strings/URLs).
     expect(
-      looksLikeSecretValue("Basic dXNlcjpwYXNzd29yZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGQ="),
+      looksLikeSecretValue("Basic dXNlcjpsb25ncGFzc3dvcmR3aXRoaGlnaGVudHJvcHkxMjM0NTY3OA"),
     ).toBe(true);
   });
 
