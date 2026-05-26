@@ -91,6 +91,24 @@ describe("classifyDiscordError (structural DiscordAPIError fields, never the mes
     expect(classifyDiscordError({ code: 10008 })).toEqual({ kind: "not_supported", capability: "edit" });
   });
 
+  it("classifies a coded error (10008) carrying a stray retryAfter as not_supported, NOT rate_limited (WR-01: a terminal API code is never a rate limit — retrying an edit of a deleted message is the harmful direction)", () => {
+    // A DiscordAPIError code (10008 Unknown Message = editing a deleted message)
+    // takes precedence over a stray rate-limit signal: the structural code/status
+    // branches MUST be evaluated before the retryAfter branch, else the renderer
+    // would retry editing a message that no longer exists up to MAX_RETRY_ATTEMPTS
+    // times instead of dropping all further edits immediately.
+    expect(classifyDiscordError({ code: 10008, retryAfter: 5 })).toEqual({
+      kind: "not_supported",
+      capability: "edit",
+    });
+  });
+
+  it("classifies a coded permission error (50013) carrying a stray retryAfter as permission, NOT rate_limited (WR-01 precedence)", () => {
+    const r = classifyDiscordError({ code: 50013, message: "Missing Permissions", retryAfter: 2 });
+    expect(r.kind).toBe("permission");
+    if (r.kind === "permission") expect(r.detail).toBe("Missing Permissions");
+  });
+
   it("maps code 50013 Missing Permissions to permission", () => {
     const r = classifyDiscordError({ code: 50013, message: "Missing Permissions" });
     expect(r.kind).toBe("permission");
