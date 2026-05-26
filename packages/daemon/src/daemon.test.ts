@@ -838,6 +838,81 @@ describe("STORE-02 opt-out and STORE-01c same-boot init", () => {
     expect(optOutWarn).toBeDefined();
   });
 
+  // CR-02 RED: COMIS_DISABLE_ENCRYPTED_SECRETS=1 must make secretStore=undefined EVEN when
+  // SECRETS_MASTER_KEY already exists in the environment (the common post-first-boot case).
+  // Pre-fix: bootstrapSecretsAndEnv runs unconditionally, finds the env key, builds a live
+  // store. The WARN says "disabled" but the store is active — contradictory and dangerous.
+  // Post-fix: when disableEncrypted=true, the store construction is skipped entirely.
+  //
+  // The test seeds a real SECRETS_MASTER_KEY into process.env and passes the REAL setupSecrets
+  // through a spy-wrapper so we can observe whether a live store was returned. We assert the
+  // spy was never called with a result that produced a non-null SecretsBootResult, OR we
+  // assert via the daemonLogger banner that secrets.encrypted === false.
+  // CR-02 RED: COMIS_DISABLE_ENCRYPTED_SECRETS=1 must make secretStore=undefined EVEN when
+  // SECRETS_MASTER_KEY already exists in the environment (the common post-first-boot case).
+  // Pre-fix: bootstrapSecretsAndEnv runs unconditionally, finds the env key, builds a live
+  // store. The WARN says "disabled" but the store is active — contradictory and dangerous.
+  // Post-fix: when disableEncrypted=true, the store construction is skipped entirely.
+  //
+  // The test seeds a real SECRETS_MASTER_KEY into process.env and passes the REAL setupSecrets
+  // through a spy-wrapper so we can observe whether a live store was returned. We assert via the
+  // daemonLogger banner that secrets.encrypted === false.
+  it("CR-02: COMIS_DISABLE_ENCRYPTED_SECRETS=1 with existing SECRETS_MASTER_KEY must yield secretStore=undefined", async () => {
+    const { randomBytes: cryptoRandomBytes } = await import("node:crypto");
+    const existingKeyHex = cryptoRandomBytes(32).toString("hex");
+
+    // Use a fresh tmpdir so there is no pre-existing secrets.db to collide with.
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-cr02-test-"));
+    process.env["COMIS_DATA_DIR"] = freshDataDir;
+    // Plant a real key in the test env BEFORE setting the opt-out flag (simulates
+    // the post-first-boot state where the key was already loaded from ~/.comis/.env)
+    process.env["SECRETS_MASTER_KEY"] = existingKeyHex;
+    process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"] = "1";
+
+    const { overrides, mocks } = buildOverrides();
+    // Use real setupSecrets via spy: do NOT mock it to null (that hides the bug).
+    // Track whether the real setupSecrets returned a live SecretsBootResult.
+    let setupSecretsReturnedStore = false;
+    const { setupSecrets: realSetupSecrets } = await import("@comis/memory");
+    overrides.setupSecrets = vi.fn((opts) => {
+      const result = realSetupSecrets(opts);
+      if (result.ok && result.value !== null) {
+        setupSecretsReturnedStore = true;
+      }
+      return result;
+    });
+
+    const instance = await main(overrides);
+    instances.push(instance);
+
+    // Access the daemonLogger (index 0 from logLevelManager.getLogger calls)
+    const daemonLogger = (mocks.logLevelManager.getLogger as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+    const infoCallArgs = (daemonLogger.info as ReturnType<typeof vi.fn>).mock.calls;
+    // Find the startup banner call — it logs { manifest: { secrets: { encrypted: bool } } }
+    const bannerCall = infoCallArgs.find((args: unknown[]) => {
+      if (typeof args[0] !== "object" || args[0] === null) return false;
+      const obj = args[0] as Record<string, unknown>;
+      const manifest = obj["manifest"] as Record<string, unknown> | undefined;
+      return manifest !== undefined && typeof (manifest["secrets"] as Record<string, unknown> | undefined)?.["encrypted"] === "boolean";
+    });
+
+    // CR-02 RED assertion: with disableEncrypted=1, secrets.encrypted MUST be false
+    // even though a real SECRETS_MASTER_KEY was planted in the env.
+    // Pre-fix: setupSecretsReturnedStore=true AND banner shows encrypted=true (store active).
+    // Post-fix: setupSecretsCalled=false OR banner shows encrypted=false (store inactive).
+    if (bannerCall) {
+      const bannerManifest = (bannerCall[0] as Record<string, unknown>)["manifest"] as Record<string, unknown>;
+      const secretsEncrypted = (bannerManifest["secrets"] as Record<string, unknown>)["encrypted"];
+      // Pre-fix: this assertion FAILS (store was built despite opt-out)
+      expect(secretsEncrypted).toBe(false);
+    } else {
+      // Banner not found → check the spy: setupSecrets must not have returned a live store
+      expect(setupSecretsReturnedStore).toBe(false);
+    }
+
+    rmSync(freshDataDir, { recursive: true, force: true });
+  });
+
   it("passes seedKeyHex to setupSecrets on first boot with a fresh data directory", async () => {
     // Fresh tmpdir — no .env file present; use a subdirectory so writeMasterKeyIfAbsent
     // writes there rather than the shared sandbox COMIS_DATA_DIR.
