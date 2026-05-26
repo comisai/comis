@@ -8,7 +8,7 @@
  * @module
  */
 
-import type { AppContainer } from "@comis/core";
+import type { AppContainer, ActivityTheme } from "@comis/core";
 import { systemSetInterval, getToolMetadata } from "@comis/core";
 import { createActivityStream, type ActivityStream } from "@comis/observability";
 import { createCostTracker, createCacheBreakDiffWriter } from "@comis/agent";
@@ -83,6 +83,15 @@ export function setupObservability(deps: {
    * substrate performs no env reads of its own.
    */
   homeDir?: string;
+  /**
+   * Active operator theme for the ActivityStream (UX-01 runtime reachability).
+   * Resolved once at the daemon composition root from the DEFAULT agent's
+   * `activity.theme` (`themeForName(name)`) and forwarded into
+   * `createActivityStream`, so the four themes are reachable at runtime (the
+   * subagent marker baked into `defaultLabel` follows the configured theme).
+   * Optional — when absent the stream uses its DEFAULT_MARKERS (default-parity).
+   */
+  theme?: ActivityTheme;
 }): ObservabilityResult {
   const { eventBus, _createTokenTracker } = deps;
 
@@ -161,6 +170,9 @@ export function setupObservability(deps: {
     logger: deps.activityLogger,
     getToolMetadata,
     homeDir: deps.homeDir,
+    // UX-01: forward the resolved operator theme so the subagent marker baked
+    // into `defaultLabel` follows the configured theme (ascii strips emoji).
+    ...(deps.theme !== undefined ? { theme: deps.theme } : {}),
   });
 
   const diagnosticCollector = createDiagnosticCollector({

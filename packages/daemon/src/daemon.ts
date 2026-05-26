@@ -92,6 +92,7 @@ import {
   safePath,
   resolveConfigSecretRefs,
   validateMemoryWrite,
+  themeForName,
   BackgroundTasksConfigSchema,
   type SecretStorePort,
   type ToolCapabilityPort,
@@ -1475,6 +1476,15 @@ async function bootFoundation(
     activityLogger: logLevelManager.getLogger("activity-stream"),
     homeDir: mergedEnv["HOME"],
     dataDir,
+    // UX-01 runtime reachability: resolve the DEFAULT agent's activity.theme →
+    // themeForName bundle and forward it so the process-wide ActivityStream's
+    // subagent marker follows the configured theme (the four themes are now
+    // selectable at runtime; the schema fully-defaults activity.theme, the
+    // `?? "default"` is belt-and-suspenders). Per-agent-per-turn theming via
+    // TurnActivityContext is a documented future refinement.
+    theme: themeForName(
+      container.config.agents[container.config.routing.defaultAgentId]?.activity?.theme ?? "default",
+    ),
   });
   const contextPipelineCollector = createContextPipelineCollector({
     eventBus: container.eventBus,

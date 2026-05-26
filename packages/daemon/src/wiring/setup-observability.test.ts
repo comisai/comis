@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { themeForName } from "@comis/core";
+import type { ActivityEvent, TurnActivityContext } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -323,5 +325,46 @@ describe("setupObservability", () => {
     expect(result.billingEstimator).toBeDefined();
     expect(result.channelActivityTracker).toBeDefined();
     expect(result.deliveryTracer).toBeDefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // 10. UX-01 wiring: a forwarded ascii theme reaches the ActivityStream so the
+  //     subagent label is emoji-free (proves theme threads end-to-end here).
+  // -------------------------------------------------------------------------
+
+  it("forwards an ascii theme so the constructed stream strips emoji from the subagent label", async () => {
+    const eventBus = createMockEventBus();
+    const setupObservability = await getSetupObservability();
+
+    const result = setupObservability({
+      eventBus: eventBus as any,
+      _createTokenTracker: mockCreateTokenTracker,
+      theme: themeForName("ascii"),
+    });
+
+    const ctx: TurnActivityContext = {
+      agentId: "agent-1",
+      sessionKey: "session-1",
+      traceId: "trace-1",
+      channelType: "telegram",
+      channelKey: "chat-9",
+      chatType: "direct",
+      inboundMessageId: "m-1",
+      rendererKey: "agent-1:telegram:chat-9:direct",
+    };
+    const received: ActivityEvent[] = [];
+    const sub = result.activityStream.subscribeForTurn(ctx, (e) => received.push(e));
+    eventBus.emit("session:sub_agent_spawned", {
+      runId: "run-wiring",
+      parentSessionKey: "session-1",
+      agentId: "agent-1",
+      task: "do work",
+      timestamp: 1,
+    });
+    sub.unsubscribe();
+
+    expect(received).toHaveLength(1);
+    expect(received[0].defaultLabel).toBe("[SUB] agent-1 subagent");
+    expect(received[0].defaultLabel).not.toContain("🤖");
   });
 });
