@@ -144,7 +144,7 @@
     "@comis/orchestrator": "workspace:*",
     "@comis/observability": "workspace:*",
     "@comis/web": "workspace:*",
-    "@agentclientprotocol/sdk": "0.21.0",
+    "@agentclientprotocol/sdk": "0.22.1",
     "@clack/core": "1.2.0",
     "@clack/prompts": "1.2.0",
     "@elevenlabs/elevenlabs-js": "2.45.0",

@@ -32,7 +32,7 @@
     "test:cleanup": "npx tsx test/support/cleanup-test-artifacts.ts"
   },
   "devDependencies": {
-    "@agentclientprotocol/sdk": "0.21.0",
+    "@agentclientprotocol/sdk": "0.22.1",
     "@comis/core": "workspace:*",
     "@line/bot-sdk": "10.8.0",
     "@modelcontextprotocol/sdk": "1.29.0",
