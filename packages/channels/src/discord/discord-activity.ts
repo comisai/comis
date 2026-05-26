@@ -49,6 +49,10 @@ import type {
 } from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createEditPlaceRenderer } from "../shared/strategies/edit-place.js";
+import {
+  buildApprovalButtons,
+  type SignCallbackData,
+} from "../shared/strategies/approval-render.js";
 
 /** Structural subset of a `DiscordAPIError` / `RateLimitError` the classifier reads (also off `error.cause`). */
 interface DiscordErrorFields {
@@ -190,11 +194,17 @@ export function makeDiscordRenderActions(
   }
 
   return {
-    async send(text): Promise<Result<string, ActivityRenderError>> {
-      // S7 affordance SHELL: a subagent placeholder surfaces the thread-expand
-      // affordance (display only — no interaction handler, no signed payload).
+    async send(text, opts): Promise<Result<string, ActivityRenderError>> {
+      // A subagent placeholder surfaces the thread-expand affordance (the parent
+      // line in the channel, the expand in a public thread — display only). An
+      // approval placeholder carries the signed native component row in `buttons`
+      // (callback_data = v1.<choice>.<shortId>.<hmac>); the resolution is owned by
+      // the Phase-73 InteractiveCallbackRouter, not this renderer.
       const threadReply = text.includes(SUBAGENT_MARKER);
-      const r = await adapter.sendMessage(channelId, text, threadReply ? { threadReply: true } : {});
+      const r = await adapter.sendMessage(channelId, text, {
+        ...(threadReply ? { threadReply: true } : {}),
+        ...(opts?.buttons !== undefined ? { buttons: opts.buttons } : {}),
+      });
       return r.ok ? ok(r.value) : err(classifyDiscordError(r.error));
     },
 
@@ -217,15 +227,28 @@ export function makeDiscordRenderActions(
  * {@link createEditPlaceRenderer} with the per-channel render-actions adapter.
  * The daemon composition root constructs this with its runtime `TimerPort` /
  * `ClockPort` and the channel id (WIRE-02).
+ *
+ * `signCallbackData` is the secret-bound signer injected at the composition root
+ * (73-10): the renderer CONSUMES it to build signed approval components and never
+ * imports the orchestrator package (Pitfall 5 / T-73-16). When omitted, an
+ * approval frame degrades to a button-less text prompt (the signer is wired in a
+ * later plan; the rest of the renderer is unaffected).
  */
 export function createDiscordActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
-  deps: { timer: TimerPort; clock: ClockPort },
+  deps: { timer: TimerPort; clock: ClockPort; signCallbackData?: SignCallbackData },
 ): ChannelActivityRenderer {
+  const { signCallbackData } = deps;
   return createEditPlaceRenderer({
     actions: makeDiscordRenderActions(adapter, channelId, { timer: deps.timer }),
     timer: deps.timer,
     clock: deps.clock,
+    // Approval frame → signed native component rows. The signer is the only
+    // path to `callback_data`; without it, no buttons are painted.
+    buildButtons:
+      signCallbackData === undefined
+        ? undefined
+        : (events) => events.flatMap((event) => buildApprovalButtons(event, signCallbackData)),
   });
 }

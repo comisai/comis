@@ -30,10 +30,12 @@ import type {
   ChannelActivityRenderer,
   ActivityRenderFrame,
   ActivityRenderError,
+  ActivityEvent,
   TurnOutcome,
   TimerPort,
   TimerHandle,
   ClockPort,
+  RichButton,
 } from "@comis/core";
 import type { ActivityRenderActions } from "./actions.js";
 import { renderFrameText, failureLabel } from "./render.js";
@@ -50,10 +52,19 @@ export interface EditPlaceDeps {
    * clock so the §7.3 sequencing holds.
    */
   clock?: ClockPort;
+  /**
+   * Build the signed native-approval button rows for a frame's visible events
+   * (APV-02, §7.7). Wired by a button-capable per-channel renderer
+   * (Discord/Slack/Telegram) as a closure over `buildApprovalButtons` + the
+   * injected `SignCallbackData`; the placeholder `send` carries the returned rows
+   * to the adapter. Omitted by plain-text channels (IRC/WhatsApp) — they paint a
+   * text-only prompt and pass no buttons. Returns `[]` for a non-approval frame.
+   */
+  buildButtons?: (events: readonly ActivityEvent[]) => RichButton[][];
 }
 
 export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRenderer {
-  const { actions, timer, clock } = deps;
+  const { actions, timer, clock, buildButtons } = deps;
 
   let messageId: string | undefined;
   /** Pending debounce edit; cancelled + rescheduled on each apply. */
@@ -68,9 +79,14 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
     pendingEdit = undefined;
   }
 
-  async function ensurePlaceholder(text: string): Promise<Result<void, ActivityRenderError>> {
+  async function ensurePlaceholder(
+    text: string,
+    buttons: RichButton[][],
+  ): Promise<Result<void, ActivityRenderError>> {
     if (messageId !== undefined) return ok(undefined);
-    const sent = await actions.send(text);
+    // A non-approval frame yields no rows → omit `buttons` entirely so a
+    // button-less send stays byte-identical to the pre-73 placeholder.
+    const sent = await actions.send(text, buttons.length > 0 ? { buttons } : undefined);
     if (!sent.ok) return sent;
     messageId = sent.value;
     return ok(undefined);
@@ -99,7 +115,10 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
 
       // First frame posts the placeholder; later frames only debounce an edit.
       if (messageId === undefined) {
-        const placed = await ensurePlaceholder(latestText);
+        // Build the signed approval rows from the frame (APV-02). A button-less
+        // renderer (no `buildButtons`) or a non-approval frame yields `[]`.
+        const buttons = buildButtons?.(frame.visibleEvents) ?? [];
+        const placed = await ensurePlaceholder(latestText, buttons);
         if (!placed.ok) return placed;
         return ok(undefined);
       }
