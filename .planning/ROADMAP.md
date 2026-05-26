@@ -28,7 +28,7 @@ Archive: `.planning/milestones/v1.0-ROADMAP.md` · `v1.0-REQUIREMENTS.md` · `v1
 ### Phases
 
 - [x] **Phase 1: SEC — Secret-detection keystone** - Consolidate two fragmented detection copies into one authoritative module; delete both legacy files; repoint all call sites (completed 2026-05-26)
-- [ ] **Phase 2: STORE — Zero-config secrets store** - Auto-generate master key on first boot; fail-early `env_set` UX; opt-out flag and docs
+- [x] **Phase 2: STORE — Zero-config secrets store** - Auto-generate master key on first boot; fail-early `env_set` UX; opt-out flag and docs (completed 2026-05-26)
 - [ ] **Phase 3: CRED — MCP credential firewall & lifecycle** - Block plaintext secrets from headers/config/git/LKG; extract static secrets; steer OAuth to `auth:"oauth"`
 - [ ] **Phase 4: MCPX — MCP transport resilience** - Transport-aware keepalive; classify SSE self-heal errors; close old transport + generation guard
 - [ ] **Phase 5: SUBA — Sub-agent tool governance** - Spawn-time `required_tools` validation; enriched "Tool not found"; lock gateway denylist invariant
@@ -113,7 +113,7 @@ Plans:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. SEC — Secret-detection keystone | v1.1 | 2/2 | Complete   | 2026-05-26 |
-| 2. STORE — Zero-config secrets store | v1.1 | 0/5 | Not started | - |
+| 2. STORE — Zero-config secrets store | v1.1 | 5/5 | Complete   | 2026-05-26 |
 | 3. CRED — MCP credential firewall & lifecycle | v1.1 | 0/TBD | Not started | - |
 | 4. MCPX — MCP transport resilience | v1.1 | 0/TBD | Not started | - |
 | 5. SUBA — Sub-agent tool governance | v1.1 | 0/TBD | Not started | - |

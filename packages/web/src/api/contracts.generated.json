@@ -3225,6 +3225,9 @@
           "items": {
             "type": "string"
           }
+        },
+        "secretsStoreAvailable": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -3233,7 +3236,8 @@
         "memoryUsage",
         "nodeVersion",
         "configPaths",
-        "sections"
+        "sections",
+        "secretsStoreAvailable"
       ],
       "additionalProperties": false
     },
