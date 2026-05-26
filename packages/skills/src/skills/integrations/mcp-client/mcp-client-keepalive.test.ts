@@ -269,3 +269,97 @@ describe("keepalive ticker — maybeEnqueueKeepalivePing", () => {
     expect(state.keepaliveTickers.has("off")).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// MCPX-02 RED tests: transport-aware interval resolution.
+//
+// Plan 04-03 will:
+//   (a) export `resolveDefaultKeepaliveIntervalMs` from mcp-client-keepalive.ts
+//   (b) remove `state.options.keepaliveIntervalMs` as the fallback in
+//       startKeepaliveTicker, replacing it with resolveDefaultKeepaliveIntervalMs.
+//
+// All tests in this describe block use dynamic import to avoid a compile-time
+// hard reference to the (not-yet-existing) export, which would turn the entire
+// file's passing tests RED today.  Instead, each test fails at assertion time
+// with a clear message — guaranteeing these are genuine RED failures, not
+// infrastructure failures.
+//
+// RED tests:
+//   RED-KA-01: resolveDefaultKeepaliveIntervalMs returns 30000 for "http"
+//   RED-KA-02: resolveDefaultKeepaliveIntervalMs returns 180000 for "stdio"
+//   RED-KA-03: resolveDefaultKeepaliveIntervalMs returns 30000 for "sse"
+//   RED-KA-04: startKeepaliveTicker starts a ticker for http when no per-server override
+//              (currently resolves to state.options.keepaliveIntervalMs which is 0 → no-op)
+//   RED-KA-05 (invariant guard): per-server keepaliveIntervalMs override wins over
+//              transport-aware default. Already passes; must survive GREEN.
+// ---------------------------------------------------------------------------
+
+describe("mcp-client-keepalive — MCPX-02 transport-aware interval resolution", () => {
+  it("resolveDefaultKeepaliveIntervalMs returns 30000 for 'http' transport", async () => {
+    const mod = await import("./mcp-client-keepalive.js");
+    // RED: resolveDefaultKeepaliveIntervalMs does not exist yet → assertion fails.
+    // GREEN (Plan 04-03): the function is exported and returns 30_000 for http.
+    const fn = (mod as Record<string, unknown>)["resolveDefaultKeepaliveIntervalMs"] as
+      | ((t: string) => number)
+      | undefined;
+    expect(fn).toBeDefined();
+    expect(fn!("http")).toBe(30_000);
+  });
+
+  it("resolveDefaultKeepaliveIntervalMs returns 180000 for 'stdio' transport", async () => {
+    const mod = await import("./mcp-client-keepalive.js");
+    // RED: function does not exist yet → assertion fails.
+    const fn = (mod as Record<string, unknown>)["resolveDefaultKeepaliveIntervalMs"] as
+      | ((t: string) => number)
+      | undefined;
+    expect(fn).toBeDefined();
+    expect(fn!("stdio")).toBe(180_000);
+  });
+
+  it("resolveDefaultKeepaliveIntervalMs returns 30000 for 'sse' transport", async () => {
+    const mod = await import("./mcp-client-keepalive.js");
+    // RED: function does not exist yet → assertion fails.
+    const fn = (mod as Record<string, unknown>)["resolveDefaultKeepaliveIntervalMs"] as
+      | ((t: string) => number)
+      | undefined;
+    expect(fn).toBeDefined();
+    expect(fn!("sse")).toBe(30_000);
+  });
+
+  it("startKeepaliveTicker starts a ticker for http transport when no per-server override (RED-KA-04)", () => {
+    // RED: currently startKeepaliveTicker resolves interval via:
+    //   config.keepaliveIntervalMs ?? state.options.keepaliveIntervalMs
+    // With makeState(0), state.options.keepaliveIntervalMs=0, so intervalMs=0 → no-op.
+    // GREEN (Plan 04-03): resolves via resolveDefaultKeepaliveIntervalMs("http") = 30_000
+    // → ticker starts and state.keepaliveTickers.has("http-srv") is true.
+    const state = makeState(0); // keepaliveIntervalMs=0 in options (field removed in Plan 03)
+    const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
+    const config: McpServerConfig = {
+      name: "http-srv",
+      transport: "http",
+      url: "http://localhost:3000/mcp",
+      enabled: true,
+      // no keepaliveIntervalMs override
+    };
+    startKeepaliveTicker(state, deps, config);
+    // RED: currently no ticker (resolves to 0 from state.options → no-op)
+    // GREEN (after Plan 04-03): resolves to 30000 → ticker registered
+    expect(state.keepaliveTickers.has("http-srv")).toBe(true);
+  });
+
+  it("per-server keepaliveIntervalMs override wins over transport-aware default (invariant guard)", () => {
+    // Invariant guard — already passes (per-server override always wins via ??).
+    // Must remain passing after GREEN so the priority chain is preserved.
+    const state = makeState(0);
+    const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
+    const config: McpServerConfig = {
+      name: "override-srv",
+      transport: "http",
+      url: "http://localhost:3000/mcp",
+      enabled: true,
+      keepaliveIntervalMs: 60_000,
+    };
+    startKeepaliveTicker(state, deps, config);
+    expect(state.keepaliveTickers.has("override-srv")).toBe(true);
+  });
+});

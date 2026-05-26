@@ -483,6 +483,25 @@ describe("McpServerEntrySchema — OAuth opt-in fields", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// MCPX-02: keepaliveIntervalMs Zod schema default removed.
+//
+// Currently McpConfigSchema.keepaliveIntervalMs has .default(180_000) at
+// schema-integrations.ts:208, so omitting the field returns 180000.
+// Plan 04-03 removes the .default() and makes the field .optional() so
+// startKeepaliveTicker can resolve a transport-aware default instead.
+// ---------------------------------------------------------------------------
+
+describe("McpConfigSchema — MCPX-02 keepaliveIntervalMs default removed", () => {
+  it("keepaliveIntervalMs is undefined when omitted from config (no Zod default)", () => {
+    const result = McpConfigSchema.parse({ servers: [] });
+    // RED: currently returns 180000 because of .default(180_000) at schema-integrations.ts:208.
+    // GREEN (Plan 04-03): returns undefined after .default() is removed and
+    // the field becomes .optional().
+    expect(result.keepaliveIntervalMs).toBeUndefined();
+  });
+});
+
 describe("McpServerEntrySchema — bundle provenance + archive", () => {
   it("persists _bundleSource when supplied (provenance marker survives parse)", () => {
     const result = McpServerEntrySchema.parse({
