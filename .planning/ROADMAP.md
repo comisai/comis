@@ -120,7 +120,7 @@ Plans:
 
 Plans:
 - [x] 05-01-PLAN.md — TDD: Move SUB_AGENT_TOOL_DENYLIST to @comis/core + RequiredToolsUnreachableError + gateway invariant guard (SUBA-03)
-- [ ] 05-02-PLAN.md — TDD: pi-event-bridge enrichment for "Tool not found" with two-shape classifier (SUBA-02)
+- [x] 05-02-PLAN.md — TDD: pi-event-bridge enrichment for "Tool not found" with two-shape classifier (SUBA-02)
 - [ ] 05-03-PLAN.md — TDD: spawn() required_tools gate + SpawnParams field + RPC chain wiring (SUBA-01)
 
 ---
@@ -133,7 +133,7 @@ Plans:
 | 2. STORE — Zero-config secrets store | v1.1 | 5/5 | Complete   | 2026-05-26 |
 | 3. CRED — MCP credential firewall & lifecycle | v1.1 | 4/4 | Complete   | 2026-05-26 |
 | 4. MCPX — MCP transport resilience | v1.1 | 4/4 | Complete   | 2026-05-26 |
-| 5. SUBA — Sub-agent tool governance | v1.1 | 1/3 | In Progress|  |
+| 5. SUBA — Sub-agent tool governance | v1.1 | 2/3 | In Progress|  |
 
 ---
 

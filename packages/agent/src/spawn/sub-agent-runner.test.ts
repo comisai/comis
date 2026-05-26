@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { RequiredToolsUnreachableError } from "@comis/core";
 import { mkdtemp, writeFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -3518,6 +3519,84 @@ describe("persistent session reuse", () => {
     const run = runner.getRunStatus(runId);
     expect(run).toBeDefined();
     expect(run!.sessionKey).toContain("default:sub-agent-");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// spawn required_tools gate (SUBA-01)
+// ---------------------------------------------------------------------------
+
+describe("spawn required_tools gate (SUBA-01)", () => {
+  let deps: ReturnType<typeof createMockDeps>;
+
+  beforeEach(() => {
+    deps = createMockDeps();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("spawn with requiredTools=['mcp_manage'] and toolGroups=['coding'] throws RequiredToolsUnreachableError before runId", () => {
+    // 'mcp_manage' is in the 'supervisor' profile only — not in 'coding'.
+    // Pre-patch: spawn() has no gate → spawn succeeds and creates a run → this test is RED.
+    const runner = createSubAgentRunner(deps);
+
+    let caughtErr: unknown;
+    try {
+      runner.spawn({ task: "test", agentId: "default", toolGroups: ["coding"], requiredTools: ["mcp_manage"] });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    expect(caughtErr).toBeInstanceOf(RequiredToolsUnreachableError);
+    const err = caughtErr as RequiredToolsUnreachableError;
+    expect(err.unreachableTools).toHaveLength(1);
+    expect(err.unreachableTools[0]!.toolName).toBe("mcp_manage");
+    expect(err.unreachableTools[0]!.reason).toBe("outside_profile");
+    expect(err.unreachableTools[0]!.hint).toContain("supervisor");
+
+    // No run must have been created (gate fired BEFORE runId)
+    expect(runner.listRuns(60)).toHaveLength(0);
+  });
+
+  it("spawn with requiredTools=['gateway'] throws RequiredToolsUnreachableError with denylist reason", () => {
+    // 'gateway' is in SUB_AGENT_TOOL_DENYLIST — denied to ALL sub-agents.
+    // Pre-patch: spawn() has no gate → spawn succeeds → this test is RED.
+    const runner = createSubAgentRunner(deps);
+
+    let caughtErr: unknown;
+    try {
+      runner.spawn({ task: "test", agentId: "default", toolGroups: ["full"], requiredTools: ["gateway"] });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    expect(caughtErr).toBeInstanceOf(RequiredToolsUnreachableError);
+    const err = caughtErr as RequiredToolsUnreachableError;
+    expect(err.unreachableTools).toHaveLength(1);
+    expect(err.unreachableTools[0]!.toolName).toBe("gateway");
+    expect(err.unreachableTools[0]!.reason).toBe("denylist");
+    expect(err.unreachableTools[0]!.hint).toMatch(/denied to ALL sub-agents/i);
+
+    // No run must have been created
+    expect(runner.listRuns(60)).toHaveLength(0);
+  });
+
+  it("spawn with requiredTools=['read'] and toolGroups=['coding'] succeeds and returns runId", () => {
+    // 'read' is in SUB_AGENT_TOOL_PROFILES['coding'] → gate passes.
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({ task: "test", agentId: "default", toolGroups: ["coding"], requiredTools: ["read"] });
+    expect(runId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(runner.listRuns(60)).toHaveLength(1);
+  });
+
+  it("spawn with no requiredTools field ignores validation and starts normally (backward compatible)", () => {
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({ task: "test", agentId: "default" });
+    expect(typeof runId).toBe("string");
+    expect(runId.length).toBeGreaterThan(0);
   });
 });
 
