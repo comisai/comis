@@ -204,4 +204,44 @@ describe("sweepRotatedFiles", () => {
     expect(fs.readFileSync(basePath, "utf8")).toBe("active log content");
     expect(fs.existsSync(basePath + ".gz"), "daemon.log must NOT be gzipped").toBe(false);
   });
+
+  it("does not gzip or unlink pino-roll's live indexed file when no base file exists", async () => {
+    // Scenario A (collision): pino-roll has advanced to an indexed active file.
+    // No daemon.log base file exists. daemon.2.log is an older sibling (rotated),
+    // daemon.1.log is the live file (highest mtime = most recently modified).
+
+    // Write daemon.2.log first, then set its mtime to 10 seconds ago.
+    const older = touch(tmpDir, "daemon.2.log");
+    const nowSec = Date.now() / 1000;
+    fs.utimesSync(older, nowSec - 10, nowSec - 10);
+
+    // Write daemon.1.log last, set its mtime to now (clearly the newest / live file).
+    const live = touch(tmpDir, "daemon.1.log");
+    fs.utimesSync(live, nowSec, nowSec);
+
+    await sweepRotatedFiles(tmpDir, policy, {});
+
+    // The live indexed file must NOT be touched.
+    expect(
+      fs.existsSync(path.join(tmpDir, "daemon.1.log")),
+      "daemon.1.log (live) must still exist",
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(tmpDir, "daemon.1.log.gz")),
+      "daemon.1.log must NOT be gzipped",
+    ).toBe(false);
+
+    // The older sibling IS a genuinely rotated file and must be swept.
+    expect(
+      fs.existsSync(path.join(tmpDir, "daemon.2.log.gz")),
+      "daemon.2.log must be gzipped (aged file swept correctly)",
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(tmpDir, "daemon.2.log")),
+      "daemon.2.log original must be replaced by .gz",
+    ).toBe(false);
+  });
+
+  // NOTE: The "sweeps all indexed siblings when base file is present" scenario is
+  // already covered by "does not touch the active base file (daemon.log)" above.
 });
