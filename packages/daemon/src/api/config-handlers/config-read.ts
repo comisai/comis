@@ -16,7 +16,7 @@
 import {
   getConfigSchema,
   getConfigSections,
-  redactConfigSecrets,
+  redactForDisplay,
   ConfigReadContract,
   ConfigSchemaContract,
   ConfigHistoryContract,
@@ -50,7 +50,7 @@ export function bindConfigReadHandlers(deps: ConfigHandlerDeps): Record<string, 
         }
         const sectionData = deps.container.config[section as keyof typeof deps.container.config];
         deps.logger.debug({ method: "config.read", durationMs: systemNowMs() - startMs, outcome: "success", section }, "Config section read");
-        const sectionResult = redactConfigSecrets(sectionData) as Record<string, unknown>;
+        const sectionResult = redactForDisplay(sectionData) as Record<string, unknown>;
         if (systemGetEnv("NODE_ENV") !== "production") {
           // Sub-tree shape is loose (z.record) — primitives wrap as `{ value: ... }` would
           // disturb the wire format; only assert the parse is callable. Skip on primitives.
@@ -61,7 +61,7 @@ export function bindConfigReadHandlers(deps: ConfigHandlerDeps): Record<string, 
         return sectionResult;
       }
       const result = {
-        config: redactConfigSecrets(deps.container.config) as Record<string, unknown>,
+        config: redactForDisplay(deps.container.config) as Record<string, unknown>,
         sections: getConfigSections(),
       };
       if (systemGetEnv("NODE_ENV") !== "production") {
