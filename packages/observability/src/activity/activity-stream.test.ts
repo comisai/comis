@@ -18,7 +18,7 @@
  *   - OBS-01: counters expose emitted + dropped + redaction-replacement counts.
  */
 import { describe, it, expect, vi } from "vitest";
-import { TypedEventBus, registerActivityLabelSpec, type ComisLogger } from "@comis/core";
+import { TypedEventBus, registerActivityLabelSpec, themeForName, type ComisLogger } from "@comis/core";
 import type { TurnActivityContext, ActivityEvent } from "@comis/core";
 import { createActivityStream } from "./activity-stream.js";
 
@@ -357,5 +357,83 @@ describe("createActivityStream (STRAT-07 / spec §5)", () => {
     // No drops under a draining consumer; the drop counter is the OBS-01 sink.
     expect(stream.counters().dropped).toBe(0);
     sub.unsubscribe();
+  });
+});
+
+describe("ActivityStream themed status markers (UX-01)", () => {
+  /** Emit one subagent spawn and return the single produced ActivityEvent. */
+  function spawnSubagentLabel(theme?: ReturnType<typeof themeForName>): ActivityEvent {
+    const bus = new TypedEventBus();
+    const stream = createActivityStream({
+      eventBus: bus,
+      ...(theme !== undefined ? { theme } : {}),
+    });
+    const received: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
+    bus.emit("session:sub_agent_spawned", {
+      runId: "run-themed",
+      parentSessionKey: SESSION,
+      agentId: AGENT,
+      task: "do work",
+      timestamp: 1,
+    });
+    sub.unsubscribe();
+    expect(received).toHaveLength(1);
+    return received[0];
+  }
+
+  it("ascii theme strips the robot emoji from the subagent label", () => {
+    const event = spawnSubagentLabel(themeForName("ascii"));
+    // ascii subagent marker is the bracketed pure-ASCII tag [SUB] (75-01).
+    expect(event.defaultLabel).toBe(`[SUB] ${AGENT} subagent`);
+    expect(event.defaultLabel).not.toContain("🤖");
+    expect(event.defaultLabel ?? "").not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+
+  it("playful theme subagent marker differs from the ascii subagent marker", () => {
+    const playful = spawnSubagentLabel(themeForName("playful"));
+    const ascii = spawnSubagentLabel(themeForName("ascii"));
+    // Same event, different theme → different rendered marker (themes are real).
+    expect(playful.defaultLabel).not.toBe(ascii.defaultLabel);
+    expect(playful.defaultLabel).toContain(themeForName("playful").markers?.subagent ?? "");
+  });
+
+  it("default theme preserves the robot emoji subagent label byte-identically", () => {
+    const event = spawnSubagentLabel(themeForName("default"));
+    expect(event.defaultLabel).toBe(`🤖 ${AGENT} subagent`);
+  });
+
+  it("no theme preserves the robot emoji subagent label byte-identically", () => {
+    // Default-parity: a markerless construction is byte-identical to today's
+    // hardcoded glyph, so existing channel golden fixtures (71-73) do not regress.
+    const event = spawnSubagentLabel();
+    expect(event.defaultLabel).toBe(`🤖 ${AGENT} subagent`);
+  });
+
+  it("ascii theme strips the robot emoji from the completed-subagent label too", () => {
+    const bus = new TypedEventBus();
+    const stream = createActivityStream({ eventBus: bus, theme: themeForName("ascii") });
+    const received: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
+    // Spawn THEN complete the same runId (completed requires a prior spawn).
+    bus.emit("session:sub_agent_spawned", {
+      runId: "run-complete",
+      parentSessionKey: SESSION,
+      agentId: AGENT,
+      task: "do work",
+      timestamp: 1,
+    });
+    bus.emit("session:sub_agent_completed", {
+      runId: "run-complete",
+      agentId: AGENT,
+      success: true,
+      runtimeMs: 42,
+      timestamp: 2,
+    });
+    sub.unsubscribe();
+    expect(received).toHaveLength(2);
+    expect(received[1].phase).toBe("end");
+    expect(received[1].defaultLabel).toBe(`[SUB] ${AGENT} subagent`);
+    expect(received[1].defaultLabel).not.toContain("🤖");
   });
 });
