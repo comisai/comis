@@ -83,14 +83,21 @@ export function classifyDiscordError(e: unknown): ActivityRenderError {
   const de: DiscordErrorFields =
     !hasField && direct.cause != null ? ((direct.cause as DiscordErrorFields) ?? direct) : direct;
 
-  if (de.status === 429 || de.retryAfter != null) {
-    return { kind: "rate_limited", retryAfterMs: (de.retryAfter ?? 1) * 1000 };
-  }
+  // Terminal API-code classification takes precedence: a coded DiscordAPIError is
+  // NEVER a rate limit (WR-01). discord.js models rate limits as a distinct
+  // RateLimitError (no `.code`), so a `code:10008`/`50013` error carrying a stray
+  // `retryAfter` (a wrapped/merged error or a future shape change) must still drop
+  // edits / report permission — not enter the retry buffer and re-edit a deleted
+  // message. The `.retryAfter` branch is only a rate limit when no terminal code
+  // disqualifies it.
   if (de.code === CODE_UNKNOWN_MESSAGE) {
     return { kind: "not_supported", capability: "edit" };
   }
   if (de.code === CODE_MISSING_PERMISSIONS) {
     return { kind: "permission", detail: de.message ?? "Missing Permissions" };
+  }
+  if (de.status === 429 || de.retryAfter != null) {
+    return { kind: "rate_limited", retryAfterMs: (de.retryAfter ?? 1) * 1000 };
   }
   return { kind: "internal", cause: e };
 }
