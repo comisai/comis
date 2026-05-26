@@ -76,15 +76,14 @@ describe("TurnOutcome discriminated union (ACT-05)", () => {
     expect(o.kind).toBe("success_with_recovered_failures");
   });
 
-  it("rejects an EMPTY recoveredFailures tuple at the type level", () => {
-    // @ts-expect-error recoveredFailures must be a non-empty tuple
-    const bad: TurnOutcome = {
-      kind: "success_with_recovered_failures",
-      trivial: false,
-      delivery: goodReceipt,
-      recoveredFailures: [],
-    };
-    void bad;
+  it("types recoveredFailures as a non-empty tuple (rejects [] at the type level)", () => {
+    type Recovered = Extract<
+      TurnOutcome,
+      { kind: "success_with_recovered_failures" }
+    >["recoveredFailures"];
+    // The tuple type requires at least one element — `readonly []` is NOT assignable.
+    expectTypeOf<Recovered>().toEqualTypeOf<readonly [ActivityEvent, ...ActivityEvent[]]>();
+    expectTypeOf<readonly []>().not.toMatchTypeOf<Recovered>();
   });
 
   it("covers failure with an errorKind and failedEvents", () => {
@@ -97,10 +96,10 @@ describe("TurnOutcome discriminated union (ACT-05)", () => {
     expect(o.kind).toBe("silent");
   });
 
-  it("rejects silent.reason 'OTHER' at the type level", () => {
-    // @ts-expect-error 'OTHER' is not a valid silent reason
-    const bad: TurnOutcome = { kind: "silent", reason: "OTHER" };
-    void bad;
+  it("constrains silent.reason to the SILENT/HEARTBEAT_OK/NO_REPLY token set (rejects 'OTHER')", () => {
+    type SilentReason = Extract<TurnOutcome, { kind: "silent" }>["reason"];
+    expectTypeOf<SilentReason>().toEqualTypeOf<"SILENT" | "HEARTBEAT_OK" | "NO_REPLY">();
+    expectTypeOf<"OTHER">().not.toMatchTypeOf<SilentReason>();
   });
 
   it("silent.reason uses the SILENT/HEARTBEAT_OK/NO_REPLY token set", () => {
