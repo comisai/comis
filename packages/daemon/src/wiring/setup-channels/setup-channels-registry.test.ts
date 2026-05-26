@@ -39,14 +39,20 @@ vi.mock("@comis/channels", () => ({
   createApprovalNotifier: vi.fn(() => mockApprovalNotifier),
   reactWithFallback: vi.fn(),
   // Activity-renderer factories consumed by buildActivityRenderers (WIRE-02).
-  // The EDIT_PLACE_RENDERER_FACTORIES const in setup-channels-activity-renderers.ts
-  // references the four per-channel factories at MODULE LOAD, so this explicit
-  // (non-importOriginal) mock must expose them or import-time collection fails.
+  // The *_RENDERER_FACTORIES consts in setup-channels-activity-renderers.ts
+  // reference every per-channel factory at MODULE LOAD (EditPlace + the four
+  // non-EditPlace strategy maps added in 72-05), so this explicit
+  // (non-importOriginal) mock must expose them all or import-time collection fails.
   createTestSink: vi.fn(() => ({ strategy: "TestSink", apply: vi.fn(), finalize: vi.fn() })),
   createTelegramActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
   createDiscordActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
   createSlackActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
   createWhatsAppActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
+  createSignalActivityRenderer: vi.fn(() => ({ strategy: "DeleteAndRepost", apply: vi.fn(), finalize: vi.fn() })),
+  createIMessageActivityRenderer: vi.fn(() => ({ strategy: "AppendOnly", apply: vi.fn(), finalize: vi.fn() })),
+  createLineActivityRenderer: vi.fn(() => ({ strategy: "AppendOnly", apply: vi.fn(), finalize: vi.fn() })),
+  createIrcActivityRenderer: vi.fn(() => ({ strategy: "LinePerEvent", apply: vi.fn(), finalize: vi.fn() })),
+  createEmailActivityRenderer: vi.fn(() => ({ strategy: "DigestOnly", apply: vi.fn(), finalize: vi.fn() })),
   filterResponse: vi.fn((text: string) => {
     if (text === "NO_REPLY" || text === "HEARTBEAT_OK" || !text) {
       return { shouldDeliver: false, cleanedText: "", suppressedBy: text === "NO_REPLY" ? "no_reply" : text === "HEARTBEAT_OK" ? "heartbeat_ok" : "empty" };
