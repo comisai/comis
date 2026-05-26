@@ -18,8 +18,13 @@
 import { describe, it, expect, expectTypeOf } from "vitest";
 import type { Result } from "@comis/shared";
 import type { ActivityEvent, ActivityRenderError, RichButton } from "@comis/core";
-import { eventLabel, renderFrameText, failureLabel, subagentLine } from "./render.js";
+import { eventLabel, renderFrameText, failureLabel, successLabel, subagentLine } from "./render.js";
 import type { ActivityRenderActions } from "./actions.js";
+
+/** The ascii theme's markers (75-01): bracketed pure-ASCII tags, zero emoji. */
+const ASCII_MARKERS = { success: "[OK]", failure: "[ERR]", subagent: "[SUB]", running: "[..]" } as const;
+/** The default theme's markers (75-01): today's hardcoded closing-line glyphs. */
+const DEFAULT_THEME_MARKERS = { success: "✓", failure: "❌", subagent: "🤖", running: "🔧" } as const;
 
 function event(partial: Partial<ActivityEvent> & Pick<ActivityEvent, "kind">): ActivityEvent {
   return {
@@ -77,8 +82,52 @@ describe("subagentLine", () => {
 });
 
 describe("failureLabel", () => {
-  it("formats the closing ❌ {errorKind}", () => {
+  it("formats the closing ❌ {errorKind} by default (marker-less byte parity)", () => {
+    // No markers arg → today's hardcoded glyph, byte-identical to pre-75-06.
     expect(failureLabel({ kind: "failure", errorKind: "timeout" })).toBe("❌ timeout");
+  });
+
+  it("is byte-identical to the cross glyph when the default theme markers are passed", () => {
+    // Passing the default bundle's markers must reproduce the legacy output exactly.
+    expect(failureLabel({ kind: "failure", errorKind: "timeout" }, DEFAULT_THEME_MARKERS)).toBe(
+      "❌ timeout",
+    );
+  });
+
+  it("failure label uses the ascii marker and drops the cross emoji", () => {
+    // The ascii theme strips ALL emoji (UX-01): the closing failure line carries
+    // the bracketed `[ERR]` tag and NO `❌`.
+    const out = failureLabel({ kind: "failure", errorKind: "timeout" }, ASCII_MARKERS);
+    expect(out).toBe("[ERR] timeout");
+    expect(out).not.toContain("❌");
+    expect(out).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+
+  it("interpolates only the closed-union errorKind after the themed marker", () => {
+    // The marker carries the errorKind only — never raw outcome internals.
+    expect(failureLabel({ kind: "failure", errorKind: "dependency" }, ASCII_MARKERS)).toBe(
+      "[ERR] dependency",
+    );
+  });
+});
+
+describe("successLabel", () => {
+  it("success label is the bare check-done form by default", () => {
+    // No markers arg → today's hardcoded edit-place success literal, byte-identical.
+    expect(successLabel()).toBe("✓ done");
+  });
+
+  it("is byte-identical to the check-done glyph when the default theme markers are passed", () => {
+    expect(successLabel(DEFAULT_THEME_MARKERS)).toBe("✓ done");
+  });
+
+  it("success label uses the ascii marker and drops the check emoji", () => {
+    // The ascii theme strips ALL emoji (UX-01): the windowed-edit success line
+    // carries the bracketed `[OK]` tag and NO `✓`.
+    const out = successLabel(ASCII_MARKERS);
+    expect(out).toBe("[OK] done");
+    expect(out).not.toContain("✓");
+    expect(out).not.toMatch(/\p{Extended_Pictographic}/u);
   });
 });
 
