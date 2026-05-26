@@ -36,6 +36,7 @@ import {
   buildSlashCommandDeps,
   createCommandHandler,
   deriveTrustLevel,
+  detectGreetingTrigger,
   handleConfigChatCommand,
 } from "./setup-gateway-admin.js";
 
@@ -507,7 +508,13 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
       // If session reset command succeeded, try LLM greeting
       if (result.handled && (parsed.command === "new" || parsed.command === "reset") && greetingGenerator) {
         const greetingAgentConfig = agents[params.agentId ?? defaultAgentId] ?? agents[defaultAgentId];
-        const greetingResult = await greetingGenerator.generate(greetingAgentConfig?.name ?? "Comis");
+        // Interactivity signal (UX-04, spec §12): a concrete channel surface
+        // (Discord/Telegram/…) is interactive; the bare "gateway" sentinel
+        // (the headless RPC default applied when no channelId is supplied —
+        // see `sk` above) marks the non-interactive/onboarding-limited path.
+        const interactive = (params.sessionKey?.channelId ?? "gateway") !== "gateway";
+        const trigger = detectGreetingTrigger({ agentConfig: greetingAgentConfig, interactive });
+        const greetingResult = await greetingGenerator.generate(greetingAgentConfig?.name ?? "Comis", trigger);
         if (greetingResult.ok) {
           return { handled: true, response: greetingResult.value };
         }

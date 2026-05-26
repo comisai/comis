@@ -9,11 +9,20 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import type { AppConfig } from "@comis/core";
 import {
   buildExecutionRequestedLogFields,
   deriveTrustLevel,
+  detectGreetingTrigger,
   handleConfigChatCommand,
 } from "./setup-gateway-admin.js";
+
+type AgentConfig = AppConfig["agents"][string];
+
+/** Minimal configured agent record for trigger-detection tests. */
+function configuredAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
+  return { provider: "openai", model: "gpt-4o-mini", name: "Bot", ...overrides } as AgentConfig;
+}
 
 describe("deriveTrustLevel", () => {
   it('returns "admin" for admin scope', () => {
@@ -190,5 +199,35 @@ describe("buildSlashCommandDeps destroySession emits session:expired", () => {
     );
     expect(source).toContain('container.eventBus.emit("session:expired"');
     expect(source).toContain('"gateway-reset"');
+  });
+});
+
+describe("detectGreetingTrigger maps wiring-tier state to a GreetingTrigger (UX-04 §12)", () => {
+  it('returns "onboarding-limited" for a non-interactive surface regardless of config', () => {
+    expect(detectGreetingTrigger({ agentConfig: configuredAgent(), interactive: false })).toBe("onboarding-limited");
+    expect(detectGreetingTrigger({ agentConfig: undefined, interactive: false })).toBe("onboarding-limited");
+  });
+
+  it('returns "onboarding-pending" when the agent record is incomplete on an interactive surface', () => {
+    expect(detectGreetingTrigger({ agentConfig: undefined, interactive: true })).toBe("onboarding-pending");
+    expect(
+      detectGreetingTrigger({ agentConfig: configuredAgent({ provider: "" }), interactive: true }),
+    ).toBe("onboarding-pending");
+    expect(
+      detectGreetingTrigger({ agentConfig: configuredAgent({ model: "" }), interactive: true }),
+    ).toBe("onboarding-pending");
+  });
+
+  it('returns "standard" for a fully-configured agent on an interactive surface', () => {
+    expect(detectGreetingTrigger({ agentConfig: configuredAgent(), interactive: true })).toBe("standard");
+  });
+
+  it("is pure — reads no process.env (the helper body contains no env access)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(new URL("./setup-gateway-admin.ts", import.meta.url).pathname, "utf-8");
+    const helperStart = source.indexOf("export function detectGreetingTrigger");
+    const helperEnd = source.indexOf("\n}", helperStart);
+    const helperBody = source.slice(helperStart, helperEnd);
+    expect(helperBody).not.toContain("process.env");
   });
 });

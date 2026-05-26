@@ -156,7 +156,7 @@ export type { IdentityUpdater, PendingUpdate } from "./identity/identity-updater
 
 // Greeting (LLM-powered session greeting for /new and /reset)
 export { createGreetingGenerator } from "./greeting/session-greeting.js";
-export type { GreetingGenerator, GreetingGeneratorDeps } from "./greeting/session-greeting.js";
+export type { GreetingGenerator, GreetingGeneratorDeps, GreetingTrigger } from "./greeting/session-greeting.js";
 
 // Memory review (periodic session history extraction)
 export { runMemoryReview } from "./memory/memory-review-job.js";
