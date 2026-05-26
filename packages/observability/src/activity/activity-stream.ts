@@ -58,6 +58,7 @@ import {
   systemDateFrom,
   systemNowMs,
   type ActivityEvent,
+  type ActivityStatusMarkers,
   type ActivityTheme,
   type ComisLogger,
   type EventMap,
@@ -164,11 +165,36 @@ const SUBSCRIBED_EVENTS = [
 ] as const satisfies ReadonlyArray<keyof EventMap>;
 
 /**
+ * The status markers used when no theme is supplied (or a markerless theme is
+ * passed). These mirror the `default` theme bundle (75-01) byte-for-byte so the
+ * no-theme / default-theme output is identical to the historical hardcoded
+ * glyphs — existing channel golden fixtures (Phases 71-73) do not regress
+ * (T-75-05-05). Only `subagent` is read today (the event-produced marker baked
+ * into `defaultLabel`); the closing-line `success`/`failure` markers are
+ * RENDERER-derived from the `TurnOutcome` and are themed in Plan 75-06 (a
+ * channels-package change importing `ActivityStatusMarkers` from `@comis/core`
+ * — the legal channels→core direction). `core`/`observability` never import
+ * `channels`, so this plan bakes only the markers it produces here.
+ */
+const DEFAULT_MARKERS: ActivityStatusMarkers = {
+  success: "✓",
+  failure: "❌",
+  subagent: "🤖",
+  running: "🔧",
+};
+
+/**
  * Create the ActivityStream. Subscribes to the EventBus immediately; call
  * `dispose()` at shutdown.
  */
 export function createActivityStream(deps: CreateActivityStreamDeps): ActivityStream {
   const now = deps.nowMs ?? systemNowMs;
+  // UX-01: resolve the active status-marker set ONCE. A themed subagent marker
+  // is baked into `defaultLabel` here (upstream of the channel painter, which
+  // paints `defaultLabel` verbatim — render.ts:21), so the painter stays dumb
+  // and the ascii theme strips emoji at the source. No theme / markerless theme
+  // → DEFAULT_MARKERS → byte-identical to today (default-parity).
+  const markers = deps.theme?.markers ?? DEFAULT_MARKERS;
   const subscribers = new Set<TurnSubscriber>();
   // toolCallId/requestId → minted activityId (stable across start↔end).
   const activityIds = new Map<string, string>();
@@ -542,9 +568,10 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
   }
 
   function onSubAgentSpawned(p: EventMap["session:sub_agent_spawned"]): void {
-    // T-73-07: the label uses only agentId + the 🤖 marker — never the free-text
-    // `task` (which could echo user content). parentActivityId is set by the
-    // coordinator (§4.5), not here.
+    // T-73-07: the label uses only agentId + the resolved subagent marker
+    // (`markers.subagent`; 🤖 for default/no theme, [SUB] for ascii) — never the
+    // free-text `task` (which could echo user content). parentActivityId is set
+    // by the coordinator (§4.5), not here.
     subagentSessions.set(p.runId, p.parentSessionKey);
     dispatchSubagent({
       schemaVersion: 1,
@@ -556,7 +583,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       status: "running",
       kind: "subagent",
       semanticPhase: "thinking",
-      defaultLabel: `🤖 ${p.agentId} subagent`,
+      defaultLabel: `${markers.subagent} ${p.agentId} subagent`,
     });
   }
 
@@ -575,7 +602,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       kind: "subagent",
       semanticPhase: p.success ? "done" : "error",
       durationMs: p.runtimeMs,
-      defaultLabel: `🤖 ${p.agentId} subagent`,
+      defaultLabel: `${markers.subagent} ${p.agentId} subagent`,
     });
   }
 
