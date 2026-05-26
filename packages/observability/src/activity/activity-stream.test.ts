@@ -437,3 +437,95 @@ describe("ActivityStream themed status markers (UX-01)", () => {
     expect(received[1].defaultLabel).not.toContain("🤖");
   });
 });
+
+describe("SEC-05 -- failure paths leak nothing", () => {
+  // Neutral placeholders (AGENTS.md §2.2): an obviously-fake secret token and a
+  // non-routable example host. These ride on the model-fallback payload's `error`
+  // field — the field the stream must NEVER read into a label.
+  const FAKE_SECRET = "sk-ant-api03-EXAMPLESECRET";
+  const FAKE_HOST = "internal.host.example.com";
+
+  it("model fallback label omits the secret and host from the payload error", () => {
+    const bus = new TypedEventBus();
+    const logger = makeLogger();
+    const stream = createActivityStream({ eventBus: bus, logger });
+    const received: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
+    // A provider error body carrying BOTH a secret-shaped token and a hostname.
+    bus.emit("model:fallback_attempt", {
+      fromProvider: "anthropic",
+      fromModel: "claude-x",
+      toProvider: "openai",
+      toModel: "gpt-y",
+      error: `401 from ${FAKE_HOST}: invalid key ${FAKE_SECRET}`,
+      attemptNumber: 1,
+      timestamp: 1,
+      agentId: AGENT,
+      sessionKey: SESSION,
+      traceId: TRACE,
+    });
+    expect(received).toHaveLength(1);
+    const modelEvent = received[0];
+    // The label is STATIC — it never reflects p.error (onModelEvent :478).
+    expect(modelEvent.defaultLabel).toBe("switching model provider");
+    // Defense-in-depth: the WHOLE serialized event leaks neither secret nor host.
+    // (Would FAIL if a future edit read p.error into the label or any field.)
+    expect(JSON.stringify(modelEvent)).not.toContain(FAKE_SECRET);
+    expect(JSON.stringify(modelEvent)).not.toContain(FAKE_HOST);
+    sub.unsubscribe();
+  });
+
+  it("policy filtered event produces no activity so the denyEntry never renders", () => {
+    const bus = new TypedEventBus();
+    const logger = makeLogger();
+    const stream = createActivityStream({ eventBus: bus, logger });
+    const received: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
+    const before = received.length;
+    // The emit-site `reason` embeds a host-shaped denyEntry (tool-bridge.ts) — the
+    // Pitfall-5 leak vector. tool:policy_filtered is deliberately NOT in
+    // SUBSCRIBED_EVENTS, so it maps to ZERO ActivityEvents and the denyEntry never
+    // reaches any rendered label. (Would FAIL if it were subscribed.)
+    bus.emit("tool:policy_filtered", {
+      profile: "default",
+      agentId: AGENT,
+      filtered: [
+        { toolName: "web_fetch", reason: "explicit_deny:*.internal.example.com" },
+      ],
+      timestamp: 1,
+    });
+    const after = received.length;
+    expect(after).toBe(before);
+    expect(received).toHaveLength(0);
+    sub.unsubscribe();
+  });
+
+  it("failed tool event carries no stack frame to the renderer", () => {
+    const bus = new TypedEventBus();
+    const logger = makeLogger();
+    const stream = createActivityStream({ eventBus: bus, logger });
+    const received: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
+    // A failed tool: the bridge emits a sanitized errorKind + (capped)
+    // errorMessage, NEVER a raw error object/stack. Pin that the produced event's
+    // serialized surface carries no stack frame. (Would FAIL if a raw error/stack
+    // were forwarded into the event.)
+    bus.emit("tool:executed", {
+      toolName: "shell",
+      durationMs: 5,
+      success: false,
+      timestamp: 1,
+      toolCallId: "call-fail",
+      errorKind: "internal",
+      agentId: AGENT,
+      sessionKey: SESSION,
+      traceId: TRACE,
+    });
+    expect(received).toHaveLength(1);
+    const failedEvent = received[0];
+    expect(failedEvent.status).toBe("failed");
+    // No `at <fn> file.ts:NN` stack-frame substring anywhere in the event.
+    expect(JSON.stringify(failedEvent)).not.toMatch(/\bat .*\.(ts|js):\d+/);
+    sub.unsubscribe();
+  });
+});
