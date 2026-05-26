@@ -93,24 +93,62 @@ function extractUserMessage(prompt: PromptRequest["prompt"]): string {
 }
 
 /**
+ * Handle returned by {@link createAcpAgent} — the ACP Agent plus the seams the
+ * Phase 74 bridges need to reach a live session.
+ */
+export interface AcpAgentHandle {
+  /** The ACP Agent interface implementation. */
+  agent: Agent;
+  /** ACP session id → Comis SessionKey map. */
+  sessionMap: AcpSessionMap;
+  /**
+   * Look up the retained `AgentSideConnection` for an ACP session id (ACP-01).
+   * The Wave 2 bridges (acp-activity-bridge / acp-plan-bridge /
+   * acp-approval-bridge) call this so `connection.sessionUpdate(...)` /
+   * `connection.requestPermission(...)` target the right session from OUTSIDE
+   * the request handler. Returns `undefined` for an unknown / dropped session.
+   */
+  getConnection(acpSessionId: string): AgentSideConnection | undefined;
+  /**
+   * Register the `AgentSideConnection` constructed in {@link startAcpServer}
+   * (ACP-01). Sessions opened after this call are keyed to the connection, and
+   * the registry is emptied when the connection's `signal` aborts (close).
+   */
+  registerConnection(connection: AgentSideConnection): void;
+}
+
+/**
  * Create an ACP Agent implementation that delegates to Comis's agent executor.
  *
  * The returned object satisfies the ACP Agent interface with:
  * - initialize: Returns protocol version, agent info, and capabilities
- * - newSession: Creates an Comis session mapped to the ACP session
+ * - newSession: Creates an Comis session mapped to the ACP session and retains
+ *   the active connection per session id (ACP-01)
  * - prompt: Extracts user message and delegates to executeAgent
  * - authenticate: No-op for local agent
- * - cancel: Removes session from map (execution abort is a future enhancement)
+ * - cancel: Removes session from the map AND drops the retained connection
+ *
+ * The connection itself is constructed in {@link startAcpServer} (the SDK's
+ * `AgentSideConnection` is built there over the stdio stream). It is threaded
+ * back in via {@link AcpAgentHandle.registerConnection} so `newSession` can key
+ * it per ACP session id — giving the bridges a handle to push `sessionUpdate`.
  *
  * @param deps - Server dependencies (executeAgent, logger, version)
- * @returns Object exposing the ACP Agent interface and the internal session map
+ * @returns Handle exposing the ACP Agent, the session map, and the connection
+ *   registry accessors (ACP-01)
  */
-export function createAcpAgent(deps: AcpServerDeps): {
-  agent: Agent;
-  sessionMap: AcpSessionMap;
-} {
+export function createAcpAgent(deps: AcpServerDeps): AcpAgentHandle {
   const sessionMap = createAcpSessionMap();
   const version = deps.version ?? "0.0.1";
+
+  // Per-session AgentSideConnection registry (ACP-01). Keyed by ACP sessionId
+  // (which equals AcpSessionKey.peerId — see acp-session-map.ts). The bridges
+  // (Wave 2) read it via getConnection; populated in newSession, dropped in
+  // cancel and on connection-signal abort (close).
+  const connections = new Map<string, AgentSideConnection>();
+  // The connection registered by startAcpServer; sessions opened after
+  // registration are keyed to it.
+  let activeConnection: AgentSideConnection | undefined;
 
   const agent: Agent = {
     async initialize(params: InitializeRequest): Promise<InitializeResponse> {
@@ -134,6 +172,13 @@ export function createAcpAgent(deps: AcpServerDeps): {
     async newSession(_params: NewSessionRequest): Promise<NewSessionResponse> {
       const sessionId = crypto.randomUUID();
       sessionMap.create(sessionId);
+
+      // ACP-01: retain the active connection per ACP session id so the bridges
+      // (Wave 2) can push sessionUpdate / requestPermission from outside this
+      // handler. Dropped in cancel and on connection-signal abort.
+      if (activeConnection) {
+        connections.set(sessionId, activeConnection);
+      }
 
       // WIRE-04 hook: register an ACP activity renderer through the injected
       // ActivityStreamPort on session open so the activity pipe is reachable from
@@ -190,11 +235,32 @@ export function createAcpAgent(deps: AcpServerDeps): {
         "ACP cancel request received",
       );
       sessionMap.remove(params.sessionId);
+      // ACP-01: drop the retained connection for this session so a cancelled
+      // session is no longer reachable via getConnection (a dropped entry makes
+      // the bridges no-op — T-74-01 / T-74-04).
+      connections.delete(params.sessionId);
       // Actual execution abort is a future enhancement
     },
   };
 
-  return { agent, sessionMap };
+  function getConnection(
+    acpSessionId: string,
+  ): AgentSideConnection | undefined {
+    return connections.get(acpSessionId);
+  }
+
+  function registerConnection(connection: AgentSideConnection): void {
+    activeConnection = connection;
+    // Drop every retained connection when this connection closes (the SDK
+    // aborts connection.signal on close — acp.d.ts:150). A closed/aborted
+    // connection must never be used to write to a dead session (T-74-01).
+    connection.signal.addEventListener("abort", () => {
+      connections.clear();
+      activeConnection = undefined;
+    });
+  }
+
+  return { agent, sessionMap, getConnection, registerConnection };
 }
 
 /**
@@ -221,11 +287,18 @@ export async function startAcpServer(deps: AcpServerDeps): Promise<void> {
   // Create ndJson stream for ACP communication
   const stream = ndJsonStream(writableStdout, readableStdin);
 
+  // Build the ACP agent handle ONCE so the per-session connection registry
+  // (ACP-01) survives for the life of the connection. The handle's agent is
+  // handed to the SDK; the constructed connection is threaded back via
+  // registerConnection so newSession can key it per ACP session id.
+  const handle = createAcpAgent(deps);
+
   // Create the agent-side connection
-  const connection = new AgentSideConnection(
-    () => createAcpAgent(deps).agent,
-    stream,
-  );
+  const connection = new AgentSideConnection(() => handle.agent, stream);
+
+  // ACP-01: retain the connection in the per-session registry. Sessions opened
+  // after this point are keyed to it; the registry empties on signal abort.
+  handle.registerConnection(connection);
 
   deps.logger.info("ACP server started, awaiting IDE connection on stdio");
 
