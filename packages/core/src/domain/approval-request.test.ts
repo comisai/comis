@@ -10,7 +10,7 @@ import {
 // require a 12-char base62 `shortId` (the gate mints it). Malformed / wrong-length /
 // non-base62 values must reject. ApprovalResolutionSchema is UNCHANGED (no shortId).
 
-const VALID_SHORT_ID = "Ab3Xy9Qz0Lm"; // 12 chars, base62
+const VALID_SHORT_ID = "Ab3Xy9Qz0Lmp"; // 12 chars, base62
 const VALID_REQUEST_ID = "2a5cc745-9900-4165-864e-611542a1e753"; // valid RFC-4122 v4
 
 function baseRequest(): Record<string, unknown> {
@@ -50,12 +50,12 @@ describe("ApprovalRequestSchema shortId (EVT-05)", () => {
   });
 
   it("rejects an 11-char shortId (too short)", () => {
-    const result = ApprovalRequestSchema.safeParse({ ...baseRequest(), shortId: "Ab3Xy9Qz0L" });
+    const result = ApprovalRequestSchema.safeParse({ ...baseRequest(), shortId: "Ab3Xy9Qz0Lm" });
     expect(result.success).toBe(false);
   });
 
   it("rejects a 13-char shortId (too long)", () => {
-    const result = ApprovalRequestSchema.safeParse({ ...baseRequest(), shortId: "Ab3Xy9Qz0Lmn" });
+    const result = ApprovalRequestSchema.safeParse({ ...baseRequest(), shortId: "Ab3Xy9Qz0Lmpq" });
     expect(result.success).toBe(false);
   });
 
@@ -90,12 +90,12 @@ describe("SerializedApprovalRequestSchema shortId (EVT-05)", () => {
   });
 
   it("rejects a serialized 11-char shortId (too short)", () => {
-    const result = SerializedApprovalRequestSchema.safeParse({ ...baseRequest(), shortId: "Ab3Xy9Qz0L" });
+    const result = SerializedApprovalRequestSchema.safeParse({ ...baseRequest(), shortId: "Ab3Xy9Qz0Lm" });
     expect(result.success).toBe(false);
   });
 
   it("rejects a serialized 13-char shortId (too long)", () => {
-    const result = SerializedApprovalRequestSchema.safeParse({ ...baseRequest(), shortId: "Ab3Xy9Qz0Lmn" });
+    const result = SerializedApprovalRequestSchema.safeParse({ ...baseRequest(), shortId: "Ab3Xy9Qz0Lmpq" });
     expect(result.success).toBe(false);
   });
 
