@@ -116,6 +116,54 @@ function coerceArgs(p: Record<string, unknown>): unknown {
 }
 
 /**
+ * Coerce `headers` from a JSON-encoded string into a plain object.
+ *
+ * Mirrors the `coerceArgs` pattern above, adapted for the headers shape
+ * constraint (must be an object, not an array, not null).
+ *
+ * The Higgsfield incident passed headers as a JSON string
+ * (`'{"Authorization":"Bearer tok"}'`), which silently reached the daemon
+ * as a string, bypassing credential-shape expectations. Coercion must happen
+ * before `rpcCall("mcp.connect")` so the daemon-side credential firewall
+ * (Phase 2 R4/R8) sees the correct object shape.
+ *
+ * - Non-string `raw` (object, undefined, anything else): pass through unchanged.
+ * - String `raw` that parses to a non-null, non-array object: return the parsed object.
+ * - String `raw` that fails to parse: throw `[invalid_value]` with fix hint.
+ * - String `raw` that parses to null, array, or a non-object: throw `[invalid_value]`.
+ */
+function coerceHeaders(p: Record<string, unknown>): unknown {
+  const raw = p.headers;
+  if (typeof raw !== "string") {
+    return raw; // object/undefined: pass through
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throwToolError(
+      "invalid_value",
+      `mcp_manage headers must be an object; received a non-JSON string.`,
+      {
+        param: "headers",
+        hint: 'Pass headers as an object, e.g. {"Authorization":"Bearer ${TOKEN}"}, not a JSON string.',
+      },
+    );
+  }
+  if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+    return parsed;
+  }
+  throwToolError(
+    "invalid_value",
+    `mcp_manage headers must be an object; the supplied JSON did not parse to an object.`,
+    {
+      param: "headers",
+      hint: 'Pass headers as an object, e.g. {"Authorization":"Bearer ${TOKEN}"}, not a JSON string.',
+    },
+  );
+}
+
+/**
  * Up-front multi-field validator for `connect`: reports ALL missing required
  * fields in a single `[missing_param]` error rather than surfacing them
  * one-at-a-time across multiple LLM retries (the defect this task fixes).
@@ -218,7 +266,7 @@ export function createMcpManageTool(
             command: p.command,
             args: coercedArgs,
             url: p.url,
-            headers: p.headers,
+            headers: coerceHeaders(p) as Record<string, string> | undefined,
             _trustLevel: ctx.trustLevel,
           });
         },
@@ -235,7 +283,7 @@ export function createMcpManageTool(
             command: p.command,
             args: coercedArgs,
             url: p.url,
-            headers: p.headers,
+            headers: coerceHeaders(p) as Record<string, string> | undefined,
             _trustLevel: ctx.trustLevel,
           });
         },
