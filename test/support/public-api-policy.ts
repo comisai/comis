@@ -652,6 +652,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RegisteredLabelSpec",
       "ResolveLabelOptions",
       "registerActivityLabelSpec",
+      // hasRegisteredLabelSpec (Phase 76, LBL-03): the explicit-registration
+      // introspection primitive the transparency coverage gate
+      // (packages/skills/src/__tests__/transparency-label-coverage.test.ts)
+      // calls. resolveLabelSpec is total (always returns a humanized fallback)
+      // so it cannot gate; the gate must ask "was a spec explicitly
+      // registered?". The sole consumer is that __tests__ gate (excluded from
+      // the consumer scan), so the public primitive has no in-repo production
+      // import yet — tracked here. Shrink when a production caller lands.
+      "hasRegisteredLabelSpec",
+      // ThemeName (Phase 75, UX-01): the activity-theme name union shipped on
+      // the @comis/core barrel for the four bundled themes. Channel renderers
+      // pass a theme through resolveLabelSpec options; the type name itself has
+      // no in-repo value consumer yet — tracked here.
+      "ThemeName",
       "chatProjection",
       "acpProjection",
       "coalesce",

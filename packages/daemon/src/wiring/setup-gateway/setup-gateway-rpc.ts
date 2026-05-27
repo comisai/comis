@@ -433,8 +433,9 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
       // exact fields the safe default object already emits are returnable, and
       // each is projected the SAME way the default does (gateway → {enabled,
       // host,port}, NOT the raw object, which carries bearer `tokens`). A
-      // non-allowlisted section falls through to the safe default object — no
-      // verbatim passthrough, no backward-compat escape hatch.
+      // non-allowlisted section falls through to the safe default object —
+      // the prior verbatim-passthrough path is removed outright, with no
+      // opt-out flag preserving the old behaviour (no-BC policy).
       const safeDefault = {
         tenantId: container.config.tenantId,
         logLevel: container.config.logLevel,
