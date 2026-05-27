@@ -269,6 +269,29 @@ describe("buildRpcAdapterDeps getConfig non-secret allowlist (WR-03)", () => {
     expect(serialized).not.toContain("ANTHROPIC_API_KEY");
     expect(serialized).not.toContain("apiKey");
   });
+
+  it("listChannelSummaries returns only non-secret name/enabled fields (no tokens)", async () => {
+    // makeContainerConfig has no channels; add one carrying a secret-shaped
+    // token plus the internal healthCheck block to prove both are handled.
+    const config = {
+      ...makeContainerConfig(),
+      channels: {
+        telegram: { enabled: true, botToken: "tok-LEAK" },
+        discord: { enabled: false },
+        healthCheck: { enabled: true },
+      },
+    } as ReturnType<typeof makeContainerConfig>;
+    const deps = await makeDeps(config);
+
+    const summaries = deps.listChannelSummaries?.();
+
+    // healthCheck excluded (not a chat adapter); bot token dropped.
+    expect(summaries).toEqual([
+      { name: "telegram", enabled: true },
+      { name: "discord", enabled: false },
+    ]);
+    expect(JSON.stringify(summaries)).not.toContain("tok-LEAK");
+  });
 });
 
 describe("setup-gateway-rpc source guard", () => {

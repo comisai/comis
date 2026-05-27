@@ -83,6 +83,15 @@ export interface RpcAdapterDeps {
    */
   listAgentSummaries?: () => Array<{ id: string; name: string; provider: string; model: string }>;
 
+  /**
+   * List non-secret channel summaries for the dashboard's `GET /api/channels`.
+   *
+   * Companion to {@link listAgentSummaries} — WR-03 removed `channels` from
+   * getConfig's allowlist too. Returns ONLY channel name + enabled state;
+   * never bot tokens, webhook secrets, or any credential-bearing field.
+   */
+  listChannelSummaries?: () => Array<{ name: string; enabled: boolean }>;
+
   /** Logger */
   logger: RpcAdapterLogger;
 }

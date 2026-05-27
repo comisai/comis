@@ -243,25 +243,19 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
     }
   });
 
-  // GET /channels - Channel connection status
+  // GET /channels - Channel connection status (non-secret name/enabled only).
+  //
+  // Sources from rpcAdapterDeps.listChannelSummaries, NOT getConfig: WR-03
+  // removed `channels` from getConfig's allowlist (mirrors /agents). The
+  // projection already excludes the internal healthCheck block and every
+  // credential field; here we surface only the enabled adapters.
   api.get("/channels", async (c) => {
     try {
-      const result = await rpcAdapterDeps.getConfig({ section: "channels" });
-      const channelsCfg = (result as Record<string, unknown>)["channels"] as
-        | Record<string, unknown>
-        | undefined;
-
-      if (!channelsCfg) {
-        return c.json({ channels: [] });
-      }
-
-      // Convert channel config object to array, include only enabled channels
-      // Exclude healthCheck — it's an internal monitoring config, not a channel adapter
-      const channels = Object.entries(channelsCfg)
-        .filter(([name, cfg]) => name !== "healthCheck" && (cfg as Record<string, unknown>).enabled === true)
-        .map(([name]) => ({
-          type: name,
-          name,
+      const channels = (rpcAdapterDeps.listChannelSummaries?.() ?? [])
+        .filter((ch) => ch.enabled)
+        .map((ch) => ({
+          type: ch.name,
+          name: ch.name,
           enabled: true,
           status: "connected" as const,
         }));
