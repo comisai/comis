@@ -409,4 +409,42 @@ describe("ResultCondenser", () => {
       expect(resultText).not.toContain(rawToken);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // R8 secure handoff advisory tests (Fix-b)
+  // -------------------------------------------------------------------------
+
+  describe("R8 secure handoff advisory", () => {
+    it("appends secure-store advisory when fullResult contained a token (after redaction, fix-b)", async () => {
+      const deps = createTestDeps({ maxResultTokens: 1000 });
+      const condenser = createResultCondenser(deps);
+
+      // A Bearer token that scrubSecretsFromText will detect and redact
+      const rawToken = "hf_" + "c".repeat(44);
+      const result = await condenser.condense(createTestParams({
+        fullResult: `The video was generated. Authorization: Bearer ${rawToken} was used.`,
+      }));
+
+      // The raw token must be absent from the condensed relay result
+      const resultText = JSON.stringify(result.result);
+      expect(resultText).not.toContain(rawToken);
+
+      // A generic secure-store advisory must be present in the summary
+      // (Fix-b: server name is NOT available at condenseInternal — generic advisory only;
+      //  threading serverName requires invasive cross-package CondenseParams API change, deferred per R8-handoff)
+      expect(result.result.summary).toContain("stored in the secure credential store");
+    });
+
+    it("does NOT append advisory when fullResult contains no credential (clean result)", async () => {
+      const deps = createTestDeps({ maxResultTokens: 1000 });
+      const condenser = createResultCondenser(deps);
+
+      const result = await condenser.condense(createTestParams({
+        fullResult: "The task completed successfully. No credentials were used.",
+      }));
+
+      // No advisory should appear for clean results
+      expect(result.result.summary).not.toContain("stored in the secure credential store");
+    });
+  });
 });
