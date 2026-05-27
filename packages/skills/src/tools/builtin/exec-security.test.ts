@@ -122,6 +122,34 @@ describe("sanitizeCommandInput", () => {
     expect(sanitizeCommandInput("")).toBeNull();
   });
 
+  // ---------- R7 #1: boundary-lock negative controls (must stay GREEN after patch) ----------
+  it("boundary-lock: top-level unquoted newline still blocked after quote-aware patch (R7 #1)", () => {
+    const result = sanitizeCommandInput("python3 script.py\nrm -rf /");
+    expect(result).not.toBeNull();
+    expect(result!).toMatch(/U\+000A/);
+  });
+
+  it("boundary-lock: unquoted newline before a quoted segment still blocked (R7 #1)", () => {
+    const result = sanitizeCommandInput("echo hi\npython3 -c 'safe'");
+    expect(result).not.toBeNull();
+    expect(result!).toMatch(/U\+000A/);
+  });
+
+  // ---------- R7 #1: acceptance tests (RED on pre-patch, GREEN after patch) ----------
+  it("accepts newline inside single-quoted string (R7 #1)", () => {
+    expect(sanitizeCommandInput("python3 -c 'line1\nline2'")).toBeNull();
+  });
+
+  it("accepts newline inside double-quoted string (R7 #1)", () => {
+    expect(sanitizeCommandInput('echo "line1\nline2"')).toBeNull();
+  });
+
+  it("accepts newline inside backtick expression (R7 #1)", () => {
+    // Backtick substitution is caught by Gate 1 (detectShellSubstitutions); Gate 0 need not
+    // also block it. Allowing the newline here while Gate 1 blocks the backtick is correct.
+    expect(sanitizeCommandInput('result=`echo "multi\nline"`')).toBeNull();
+  });
+
   // Error message format
   it("error contains U+ followed by 4+ uppercase hex digits", () => {
     const result = sanitizeCommandInput("rm\u200B-rf /");
