@@ -110,6 +110,19 @@ const DANGEROUS_PIPE_TARGETS = new Set([
 ]);
 
 /**
+ * curl/wget as pipe targets are allowed ONLY when no upload/data flag is present.
+ * All other DANGEROUS_PIPE_TARGETS remain unconditionally blocked.
+ */
+const READ_ONLY_PIPE_TARGETS = new Set(["curl", "wget"]);
+
+/**
+ * Flags that transform a curl/wget pipe target into a data-exfiltration risk.
+ * Conservative: any flag that sends data to a remote server.
+ */
+const CURL_UPLOAD_FLAGS =
+  /(?:^|\s)(?:-T|--upload-file|-d\b|--data(?:-raw|-binary|-urlencode)?|-F\b|--form|--post-data|--post-file|-X\s+(?:POST|PUT)|--method=(?:POST|PUT))\b/;
+
+/**
  * Detect pipes to dangerous targets (shell interpreters, network tools).
  * Runs on the FULL command before compound splitting, because splitCommandSegments
  * splits on | and removes the pipe context from individual segments.
@@ -128,6 +141,11 @@ export function detectDangerousPipeTargets(command: string): string | null {
       ? firstWord.split("/").pop()!
       : firstWord;
     if (DANGEROUS_PIPE_TARGETS.has(basename)) {
+      // curl/wget: allow ONLY when no upload/data flag is present in the segment.
+      // nc/ncat/socat/telnet/sh/bash/...: unconditionally blocked (not in READ_ONLY_PIPE_TARGETS).
+      if (READ_ONLY_PIPE_TARGETS.has(basename) && !CURL_UPLOAD_FLAGS.test(segment)) {
+        continue; // read-only pipe target — no upload/data flag found
+      }
       return `Pipe to '${basename}' detected (potential data exfiltration or remote code execution). Piping data to shell interpreters or network tools is blocked.`;
     }
   }
