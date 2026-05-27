@@ -99,7 +99,18 @@ Plans:
   - **`core/security/secrets-audit.ts` already exists** (`scanConfigForSecrets`/`auditSecrets`) — R4's audit-doctor check is ≈ wiring, not a new build. Confirm before building.
   - **Borrows**: **OpenClaw** (not Hermes) for cross-origin redirect header scrubbing (13-header allowlist + 20-redirect cap) and the stdio env denylist (~90-key denylist on user-declared env). **Hermes** for the `needs_reauth` result + per-server circuit breaker.
   - **Delivery scan placement**: one pass on assembled `deliveryText` **before** chunking with a cheap combined-prefix pre-filter — not ~15 regexes per chunk per message fleet-wide. Verify `perf-budget.test.ts` baseline; add a large-message delivery case.
-**Plans**: TBD
+**Plans**: 5 plans
+
+**Wave 1** *(R4 foundation — self-contained intra-core)*
+- [ ] 02-01-PLAN.md — R4: secret-egress-guard core module + OutputGuard redact upgrade + validateMemoryWrite secret branch + config schema knob
+
+**Wave 2** *(parallel, depend on Wave 1)*
+- [ ] 02-02-PLAN.md — R4: write/edit tool guard + sub-agent result relay+persist scrub + memory-store-tool SECRET_PATTERNS retirement
+- [ ] 02-03-PLAN.md — R4: delivery scan (deliverToChannel) + redirect header expansion + secrets-audit doctor check
+
+**Wave 3** *(R8 credential home — depend on Wave 1+2)*
+- [ ] 02-04-PLAN.md — R8: createPortBackedMcpTokenStore adapter in daemon + setup-mcp.ts oauthDeps injection + oauth.storage encrypted default
+- [ ] 02-05-PLAN.md — R8: needs_reauth structured result + circuit-breaker-on-401 + sub-agent secure handoff hint
 
 > **Parallel non-code Ops workstream (out of code scope, runs alongside Phase 2):** The operational completion of the incident (plan Part C) — revoke/rotate every leaked Higgsfield `hf_`/`hfr_` token, scrub `~/.comis/.git` history (commits `c2e85b6`, `ad1f7e7`) with `git filter-repo`/BFG, delete the plaintext workspace artifacts (`higgsfield_token.json`, `output/higgsfield_tokens.json`, the token-bearing `subagent-results/…` file), and rotate/scrub the `daemon.log` lines carrying raw `Bearer hf_…` — must run concurrently. It is not a code requirement (mirrors v1.1's git-scrub workstream) but must not be forgotten. The R4 secrets-audit doctor is the code-side complement that flags exactly these inlined-plaintext cases going forward.
 
@@ -157,7 +168,7 @@ Plans:
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. REGR — Critical regressions | v1.2 | 3/3 | Complete   | 2026-05-27 |
+| 1. REGR — Critical regressions | v1.2 | 3/3 | Complete    | 2026-05-27 |
 | 2. EGRESS — Secret egress firewall + secure credential home | v1.2 | 0/? | Not started | - |
 | 3. CONNECT — MCP connect correctness + delivery UX | v1.2 | 0/? | Not started | - |
 | 4. OAUTH — OAuth refresh robustness | v1.2 | 0/? | Not started | - |
