@@ -949,6 +949,33 @@ describe("createChannelManager", () => {
 
       await expect(manager.injectMessage("telegram", makeMessage())).resolves.not.toThrow();
     });
+
+    it("processes a message whose metadata is FROZEN without throwing on the traceId write (WR-05)", async () => {
+      // WR-05: the inbound traceId-seed wrote `msg.metadata.traceId = …` in place.
+      // On a frozen metadata object that assignment throws a TypeError in strict
+      // mode (ES module), which aborts the whole injected turn. Context propagation
+      // already rides on runWithContext({ traceId }) — the metadata write is a
+      // best-effort convenience for downstream consumers, so a frozen object must
+      // NOT break processing.
+      const adapter = makeAdapter();
+      const onMessageProcessed = vi.fn();
+      const processInboundMessage = vi.fn(async () => {});
+      const deps = makeDeps({
+        adapters: [adapter],
+        onMessageProcessed,
+        processInboundMessage: processInboundMessage as unknown as ChannelManagerDeps["processInboundMessage"],
+      });
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      // Frozen metadata WITHOUT a traceId → the seed path tries to write it in place.
+      const frozenMsg = makeMessage({ metadata: Object.freeze({ telegramMessageId: 7 }) });
+
+      await expect(manager.injectMessage("telegram", frozenMsg)).resolves.not.toThrow();
+      // The turn still processed (the frozen write did not abort it).
+      expect(processInboundMessage).toHaveBeenCalledTimes(1);
+      expect(onMessageProcessed).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("onMessageReceived / onMessageProcessed timing", () => {

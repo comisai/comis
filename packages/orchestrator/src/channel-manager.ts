@@ -58,6 +58,21 @@ import type { VoiceResponsePipelineDeps } from "@comis/channels";
 // ChannelManagerDeps to preserve that direction.
 
 /**
+ * WR-05: best-effort seed of `msg.metadata.traceId` for downstream consumers.
+ * Context propagation does NOT depend on this — `runWithContext({ traceId })`
+ * already carries the canonical id. The metadata write is a convenience; if the
+ * caller passed a FROZEN/non-extensible metadata object, an in-place assignment
+ * would throw a TypeError (strict mode) and abort the whole turn. Guard the write
+ * so a frozen metadata is a silent no-op rather than a turn-killing throw. Only
+ * seeds when the field is absent (never overwrites a caller-provided traceId).
+ */
+function seedMetadataTraceId(msg: NormalizedMessage, traceId: string): void {
+  if (typeof msg.metadata.traceId === "string") return;
+  if (Object.isFrozen(msg.metadata) || !Object.isExtensible(msg.metadata)) return;
+  msg.metadata.traceId = traceId;
+}
+
+/**
  * Callback shape matching @comis/orchestrator.processInboundMessage.
  * Typed structurally so channels does not depend on orchestrator's type
  * exports. Parameter contravariance lets the daemon pass the real
@@ -336,9 +351,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
           // channel→queue→agent correlation is preserved even without the
           // adapter-level wrap).
           const traceId = getMessageTraceId(msg) ?? randomUUID();
-          if (typeof msg.metadata.traceId !== "string") {
-            msg.metadata.traceId = traceId;
-          }
+          seedMetadataTraceId(msg, traceId);
           await runWithContext(
             {
               traceId,
@@ -511,9 +524,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       // renderer.apply never fires (WIRE-06). Sharing one traceId across the pipeline +
       // the agent run makes the coordinator's subscription observe the turn's tool:*/model:* events.
       const traceId = getMessageTraceId(msg) ?? randomUUID();
-      if (typeof msg.metadata.traceId !== "string") {
-        msg.metadata.traceId = traceId;
-      }
+      seedMetadataTraceId(msg, traceId);
       await runWithContext(
         {
           traceId,
