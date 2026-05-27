@@ -118,9 +118,26 @@ const READ_ONLY_PIPE_TARGETS = new Set(["curl", "wget"]);
 /**
  * Flags that transform a curl/wget pipe target into a data-exfiltration risk.
  * Conservative: any flag that sends data to a remote server.
+ *
+ * Detection strategy:
+ *   1. Short-flag cluster containing an upload letter (d/F/T), e.g. `-sd`, `-fsSd`, `-kT`, `-sF`.
+ *      curl bundles short flags freely, so the upload letter can sit anywhere in the cluster
+ *      (e.g. `-fsSd` = `-f -s -S -d`). Matched as: `(?:^|\s)-[A-Za-z]*[dFT]` at a
+ *      word boundary, to avoid matching filenames that happen to start with `-`.
+ *      NOT matched: `-o` / `-O` / `-s` / `-k` / `-L` / `-f` / `-G` (all read-only/benign).
+ *   2. Long-form upload flags: `--upload-file`, `--data*`, `--form`, `--post-data`,
+ *      `--post-file`, `--body-data`, `--body-file` (wget-specific).
+ *   3. `-X POST`/`-X PUT` with optional space (covers both `-X POST` and `-XPOST`).
+ *   4. `--method=POST`/`--method=PUT`.
+ *
+ * Residual known gap (accepted design): `-H "…"` header injection is allowed because
+ * `-H` is required for legitimate read-only API calls (Accept, Authorization).
+ * The egress allowlist (exec-security-allowlist.ts) is the backstop for that vector.
  */
 const CURL_UPLOAD_FLAGS =
-  /(?:^|\s)(?:-T|--upload-file|-d\b|--data(?:-raw|-binary|-urlencode)?|-F\b|--form|--post-data|--post-file|-X\s+(?:POST|PUT)|--method=(?:POST|PUT))\b/;
+  // 1. Bundled short-flag cluster with upload letter d (data), F (form), or T (upload-file).
+  //    Case-sensitive: uppercase D is --dump-header, not data.
+  /(?:^|\s)-[A-Za-z]*[dFT]\b|(?:^|\s)(?:--upload-file|--data(?:-raw|-binary|-urlencode)?|--form|--post-data|--post-file|--body-(?:data|file))\b|(?:^|\s)-X\s*(?:POST|PUT)\b|--method=(?:POST|PUT)\b/;
 
 /**
  * Detect pipes to dangerous targets (shell interpreters, network tools).
