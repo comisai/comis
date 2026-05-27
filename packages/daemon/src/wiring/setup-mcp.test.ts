@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { McpDeps } from "./setup-mcp.js";
+import type { OAuthCredentialStorePort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mock factories
@@ -725,6 +726,84 @@ describe("setupMcp", () => {
     const callArg = mockConnect.mock.calls[0][0];
     expect(callArg).not.toHaveProperty("auth");
     expect(callArg).not.toHaveProperty("oauth");
+  });
+
+  // ---------------------------------------------------------------------------
+  // R8: oauthDeps injection — McpDeps.oauthCredentialStore + dataDir
+  // These tests fail until setup-mcp.ts is patched to pass oauthDeps to
+  // createMcpClientManager when oauthCredentialStore + dataDir are provided.
+  // ---------------------------------------------------------------------------
+
+  describe("R8 oauthDeps injection", () => {
+    /** Minimal OAuthCredentialStorePort mock for injection tests. */
+    function makePortMock(): OAuthCredentialStorePort {
+      return {
+        async get() { return { ok: true as const, value: undefined }; },
+        async set() { return { ok: true as const, value: undefined }; },
+        async delete() { return { ok: true as const, value: false }; },
+        async list() { return { ok: true as const, value: [] }; },
+        async has() { return { ok: true as const, value: false }; },
+      };
+    }
+
+    it("createMcpClientManager is called with oauthDeps.createTokenStore when oauthCredentialStore and dataDir are provided", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+      const oauthCredentialStore = makePortMock();
+
+      await callSetupMcp({
+        servers: [],
+        logger,
+        oauthCredentialStore,
+        dataDir: "/fake/data",
+      });
+
+      // The factory must have been called with an oauthDeps object containing
+      // a createTokenStore factory when oauthCredentialStore + dataDir are provided.
+      expect(mockCreateMcpClientManager).toHaveBeenCalledTimes(1);
+      const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
+      expect(factoryArg).toHaveProperty("oauthDeps");
+      const oauthDeps = factoryArg["oauthDeps"] as Record<string, unknown>;
+      expect(typeof oauthDeps["createTokenStore"]).toBe("function");
+    });
+
+    it("McpDeps accepts oauthCredentialStore and dataDir fields (structural TypeScript check)", () => {
+      // This is a compile-time structural check — TypeScript will error if the
+      // fields do not exist on McpDeps. The runtime assertion is a type-safe
+      // construction.
+      const deps: McpDeps = {
+        servers: [],
+        logger,
+        oauthCredentialStore: makePortMock(),
+        dataDir: "/fake/data",
+      };
+      // Must compile and have the fields accessible
+      expect(deps.oauthCredentialStore).toBeDefined();
+      expect(deps.dataDir).toBe("/fake/data");
+    });
+
+    it("createMcpClientManager is called WITHOUT oauthDeps when oauthCredentialStore is absent", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+
+      await callSetupMcp({ servers: [], logger });
+
+      const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
+      // No oauthDeps injected — the default resolution in createMcpClientManager applies
+      expect(factoryArg).not.toHaveProperty("oauthDeps");
+    });
+
+    it("createMcpClientManager is called WITHOUT oauthDeps when only oauthCredentialStore provided but no dataDir", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+
+      await callSetupMcp({
+        servers: [],
+        logger,
+        oauthCredentialStore: makePortMock(),
+        // dataDir intentionally omitted
+      });
+
+      const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
+      expect(factoryArg).not.toHaveProperty("oauthDeps");
+    });
   });
 
   it("logs tool names from connected servers", async () => {

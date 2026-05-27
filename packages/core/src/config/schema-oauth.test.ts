@@ -27,3 +27,17 @@ describe("OAuthConfigSchema", () => {
     expect(() => OAuthConfigSchema.parse({ storage: "file", extraField: "x" })).toThrow(z.ZodError);
   });
 });
+
+// ---------------------------------------------------------------------------
+// R8: oauth.storage default changed to "encrypted" for provider tokens
+// This describe block fails until schema-oauth.ts is patched (RED phase).
+// ---------------------------------------------------------------------------
+
+describe("OAuthConfigSchema R8 provider default", () => {
+  it("oauth.storage defaults to 'encrypted' when not specified (R8 provider token default)", () => {
+    // RED: This test fails on the current schema because the default is "file".
+    // GREEN: After patching schema-oauth.ts default to "encrypted", this passes.
+    const parsed = OAuthConfigSchema.parse({});
+    expect(parsed.storage).toBe("encrypted");
+  });
+});
