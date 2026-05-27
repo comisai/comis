@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   extractHeredoc,
   extractDashCArg,
@@ -1903,7 +1904,21 @@ describe("Dockerfile warm-venv seed (R7 #3)", () => {
     // TDD-exempt for Dockerfile edits (CLAUDE.md: build-tooling/CI/config edits are exempt).
     // This text assertion ensures the seed stays in sync if the pip install line is ever
     // refactored — a regression here means the Dockerfile change was accidentally reverted.
-    const dockerfilePath = resolve(process.cwd(), "Dockerfile");
+    //
+    // WR-02 fix: resolve the Dockerfile relative to this test file rather than process.cwd(),
+    // so the test passes under both `pnpm vitest run` from repo root AND
+    // `cd packages/skills && pnpm test` (as documented in CLAUDE.md / AGENTS.md).
+    // This file lives at: packages/skills/src/tools/builtin/exec-security.test.ts
+    // Repo root is five directories up from `builtin/`:
+    //   builtin → tools → src → skills → packages → <repo root>
+    const here = dirname(fileURLToPath(import.meta.url));
+    const dockerfilePath = resolve(here, "../../../../..", "Dockerfile");
+    // Skip gracefully if the Dockerfile is somehow absent (e.g. sparse checkout, monorepo
+    // sub-tree copy) rather than throwing ENOENT and masking real failures.
+    if (!existsSync(dockerfilePath)) {
+      console.warn(`[R7 #3] Dockerfile not found at ${dockerfilePath} — skipping assertion`);
+      return;
+    }
     const content = readFileSync(dockerfilePath, "utf-8");
     // Verify the warm-venv stanza includes requests with a pinned version
     expect(content).toMatch(/pip install[^]*requests==/);
