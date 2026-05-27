@@ -88,6 +88,24 @@ export type ActivityKillSwitch = () =>
   | { emergencyDisabled: boolean; channels: Record<string, { enabled: boolean }> }
   | undefined;
 
+/**
+ * The slice of the WIRE-08 circuit breaker the coordinator consumes. Keyed on
+ * the turn's `(agentId, channelKey)`; the coordinator calls `isTripped(key)`
+ * before `renderer.apply` (skip when tripped) and `record(key, result)` after
+ * the apply result is available. `record` returns whether THIS call caused a
+ * fresh trip so the coordinator fires its single WARN + bumps the counter
+ * exactly once per trip. The concrete breaker lives in
+ * `activity-circuit-breaker.ts`; only this narrow surface is depended on here so
+ * the coordinator keeps no construction-time coupling to its lifecycle.
+ */
+export interface ActivityBreakerGate {
+  isTripped(key: { agentId: string; channelKey: string }): boolean;
+  record(
+    key: { agentId: string; channelKey: string },
+    result: Result<void, ActivityRenderError>,
+  ): { tripped: boolean; reason?: "permission" | "transient" };
+}
+
 /** Injected dependencies for one per-turn coordinator. */
 export interface ActivityTurnCoordinatorDeps {
   activityStreamPort: ActivityStreamPort;
@@ -105,6 +123,16 @@ export interface ActivityTurnCoordinatorDeps {
    * emergency-disabled or the turn's rendererKey is not explicitly enabled.
    */
   killSwitch?: ActivityKillSwitch;
+  /**
+   * WIRE-08 auto-managed per-agent×channel circuit breaker. OPTIONAL: when
+   * absent, no breaker gating is applied (preserving behavior for callers that
+   * do not inject it — the daemon thread-through is the same documented
+   * composition-root follow-on as `killSwitch`, per 76-02-SUMMARY). When
+   * present, `flushApply` skips `renderer.apply` while the turn's
+   * `(agentId, channelKey)` is tripped (AFTER the killSwitch gate) and records
+   * every apply result so the breaker can count toward / recover from a trip.
+   */
+  breaker?: ActivityBreakerGate;
 }
 
 /**
@@ -123,6 +151,12 @@ export interface ActivityTurnCounters {
   deleteApplied: number;
   /** `activity.turn.duration_ms` — turn wall-clock at finalize (0 until finalized). */
   turnDurationMs: number;
+  /**
+   * `activity.circuit_breaker.tripped` — count of FRESH breaker trips observed
+   * by this coordinator (WIRE-08). Incremented once per trip, never per
+   * subsequent skipped flush. Zero when no breaker is injected.
+   */
+  circuitBreakerTripped: number;
 }
 
 /** The per-turn coordinator handle (§4.6). */
@@ -210,6 +244,7 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     deleteGated: 0,
     deleteApplied: 0,
     turnDurationMs: 0,
+    circuitBreakerTripped: 0,
   };
 
   /** Translate an apply/finalize render error into an operator WARN (TURN-04). */
@@ -246,6 +281,38 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     return ks.channels[rendererKey]?.enabled !== true;
   }
 
+  /**
+   * The current turn's breaker key (agentId, channelKey). Both fields live on
+   * `TurnActivityContext` (:14,:20); undefined until `start(ctx)` captures the
+   * context. The WIRE-08 breaker keys on the (agent, channel) pair — distinct
+   * from the WIRE-07 kill switch which keys on `ctx.rendererKey`.
+   */
+  function breakerKey(): { agentId: string; channelKey: string } | undefined {
+    if (turnCtx === undefined) return undefined;
+    return { agentId: turnCtx.agentId, channelKey: turnCtx.channelKey };
+  }
+
+  /**
+   * WIRE-08 fresh-trip handler: a single operator WARN (mirrors warnRenderError
+   * :216-225) naming the channelKey + reason, plus one counter increment. Fired
+   * ONLY on the record that crossed a threshold — never on a subsequent skipped
+   * flush (the breaker reports `tripped:true` exactly once per trip).
+   */
+  function onFreshTrip(reason: "permission" | "transient"): void {
+    counters.circuitBreakerTripped++;
+    deps.logger.warn({
+      submodule: "activity-turn-coordinator",
+      step: "circuit_breaker",
+      errorKind: reason === "permission" ? ("auth" as const) : ("internal" as const),
+      breakerReason: reason,
+      channelKey: turnCtx?.channelKey,
+      hint:
+        reason === "permission"
+          ? "Activity rendering auto-disabled for this channel after repeated permission errors; resets on config reload"
+          : "Activity rendering auto-disabled for this channel after repeated failures; a half-open probe retries after 5 minutes",
+    }, "Activity circuit breaker tripped — channel rendering suppressed");
+  }
+
   /** Build the next frame from the buffered events and paint it (idempotent). */
   async function flushApply(): Promise<void> {
     // Gate BEFORE rendering — never paint when an operator has the renderer or
@@ -253,9 +320,24 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     // flow through separate paths (lifecycle-reactor.ts / execution-deliver.ts)
     // and are intentionally NOT gated here.
     if (isActivitySuppressed()) return;
+    // WIRE-08: after the kill switch, before the paint — skip apply while this
+    // (agent, channel) breaker is tripped. A half-open transient breaker reports
+    // not-tripped (one probe allowed), so the apply runs and its result is
+    // recorded below, closing or re-opening the breaker.
+    const key = breakerKey();
+    if (key !== undefined && deps.breaker?.isTripped(key) === true) return;
+
     const frame = deps.projection(events, deps.config, prevFrame);
     prevFrame = frame;
     const result: Result<void, ActivityRenderError> = await deps.renderer.apply(frame);
+
+    // Record every apply result (success or failure) so the breaker advances /
+    // recovers; a FRESH trip fires the single WARN + counter bump exactly once.
+    if (key !== undefined) {
+      const trip = deps.breaker?.record(key, result);
+      if (trip?.tripped === true && trip.reason !== undefined) onFreshTrip(trip.reason);
+    }
+
     if (!result.ok) {
       warnRenderError("apply", result.error);
       return;

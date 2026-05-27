@@ -632,4 +632,157 @@ describe("createActivityTurnCoordinator — error mapping + counters", () => {
     const gate = timer.unrefRecord().find((e) => e.delay === 400 && e.kind === "timeout");
     expect(gate?.cancelled).toBe(true);
   });
+
+  it("starts the circuitBreakerTripped counter at zero in the snapshot", () => {
+    const { deps } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator(deps);
+    expect(coord.counters().circuitBreakerTripped).toBe(0);
+    coord.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WIRE-08 — circuit-breaker gate inside flushApply (skip apply when tripped,
+// record every apply result, single WARN + counter bump per fresh trip)
+// ---------------------------------------------------------------------------
+
+/**
+ * A controllable breaker double exposing the `{ isTripped, record }` surface the
+ * coordinator consumes. `tripped` toggles the gate; `nextRecord` is the
+ * fresh-trip outcome the next `record` call reports (consumed once).
+ */
+function makeBreakerStub(opts?: { tripped?: boolean }) {
+  let tripped = opts?.tripped ?? false;
+  const recordCalls: Array<{ key: { agentId: string; channelKey: string }; ok: boolean }> = [];
+  let nextRecord: { tripped: boolean; reason?: "permission" | "transient" } = { tripped: false };
+  return {
+    breaker: {
+      isTripped: (_key: { agentId: string; channelKey: string }): boolean => tripped,
+      record: (
+        key: { agentId: string; channelKey: string },
+        result: { ok: boolean },
+      ): { tripped: boolean; reason?: "permission" | "transient" } => {
+        recordCalls.push({ key, ok: result.ok });
+        const out = nextRecord;
+        nextRecord = { tripped: false };
+        return out;
+      },
+    },
+    setTripped: (v: boolean): void => { tripped = v; },
+    armFreshTrip: (reason: "permission" | "transient"): void => { nextRecord = { tripped: true, reason }; },
+    recordCalls,
+  };
+}
+
+describe("createActivityTurnCoordinator — WIRE-08 circuit-breaker gate", () => {
+  it("skips renderer.apply for a turn whose breaker key is already tripped", () => {
+    const stub = makeBreakerStub({ tripped: true });
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator({ ...deps, breaker: stub.breaker });
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent());
+    timer.advance(800);
+
+    // Tripped → apply is never called (mirrors the kill-switch early return).
+    expect(renderer.applyFrames.length).toBe(0);
+    coord.dispose();
+  });
+
+  it("records the apply result with the agentId+channelKey key after a successful paint", async () => {
+    const stub = makeBreakerStub({ tripped: false });
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator({ ...deps, breaker: stub.breaker });
+    coord.start(makeCtx({ agentId: "agent-x", channelKey: "chan-y" }));
+
+    stream.emit(makeEvent());
+    timer.advance(800);
+    await Promise.resolve(); // let the awaited apply settle so record() runs
+
+    expect(renderer.applyFrames.length).toBe(1);
+    expect(stub.recordCalls.length).toBe(1);
+    expect(stub.recordCalls[0].key).toEqual({ agentId: "agent-x", channelKey: "chan-y" });
+    expect(stub.recordCalls[0].ok).toBe(true);
+    coord.dispose();
+  });
+
+  it("records the failing apply result so the breaker can count toward a trip", async () => {
+    const clock = createFakeClock(0);
+    const renderer = makeRenderer(clock, { applyError: { kind: "permission", detail: "forbidden" } });
+    const stub = makeBreakerStub({ tripped: false });
+    const { deps, timer, stream } = makeCoordinatorDeps({ clock, renderer });
+    const coord = createActivityTurnCoordinator({ ...deps, breaker: stub.breaker });
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent());
+    timer.advance(800);
+    await Promise.resolve();
+
+    // The apply ran (not gated) and its failing Result was recorded.
+    expect(stub.recordCalls.length).toBe(1);
+    expect(stub.recordCalls[0].ok).toBe(false);
+    coord.dispose();
+  });
+
+  it("fires exactly one WARN and bumps circuitBreakerTripped once on a fresh permission trip", async () => {
+    const clock = createFakeClock(0);
+    const renderer = makeRenderer(clock, { applyError: { kind: "permission", detail: "forbidden" } });
+    const logger = createMockLogger();
+    const stub = makeBreakerStub({ tripped: false });
+    stub.armFreshTrip("permission"); // the next record reports a fresh trip
+    const { deps, timer, stream } = makeCoordinatorDeps({ clock, renderer, logger });
+    const coord = createActivityTurnCoordinator({ ...deps, breaker: stub.breaker });
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent());
+    timer.advance(800);
+    await Promise.resolve();
+
+    expect(coord.counters().circuitBreakerTripped).toBe(1);
+    // The fresh trip emits a circuit_breaker-step WARN naming the reason.
+    const tripWarn = vi
+      .mocked(logger.warn)
+      .mock.calls.map((c) => c[0] as Record<string, unknown>)
+      .find((a) => a.step === "circuit_breaker");
+    expect(tripWarn).toBeDefined();
+    expect(tripWarn).toHaveProperty("hint");
+    coord.dispose();
+  });
+
+  it("does not double-count the counter once the breaker is open on subsequent flushes", async () => {
+    const clock = createFakeClock(0);
+    const stub = makeBreakerStub({ tripped: false });
+    stub.armFreshTrip("transient");
+    const { deps, timer, stream } = makeCoordinatorDeps({ clock });
+    const coord = createActivityTurnCoordinator({ ...deps, breaker: stub.breaker });
+    coord.start(makeCtx());
+
+    // First flush: a fresh trip is reported → counter = 1.
+    stream.emit(makeEvent());
+    timer.advance(800);
+    await Promise.resolve();
+    expect(coord.counters().circuitBreakerTripped).toBe(1);
+
+    // Now the breaker is open: the next flush is gated (no apply, no record, no
+    // counter movement).
+    stub.setTripped(true);
+    stream.emit(makeEvent());
+    timer.advance(800);
+    await Promise.resolve();
+    expect(coord.counters().circuitBreakerTripped).toBe(1);
+    coord.dispose();
+  });
+
+  it("paints normally when no breaker is injected (optional dep is a no-op)", () => {
+    const { deps, timer, stream, renderer } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator(deps); // no breaker dep
+    coord.start(makeCtx());
+
+    stream.emit(makeEvent());
+    timer.advance(800);
+
+    expect(renderer.applyFrames.length).toBe(1);
+    expect(coord.counters().circuitBreakerTripped).toBe(0);
+    coord.dispose();
+  });
 });
