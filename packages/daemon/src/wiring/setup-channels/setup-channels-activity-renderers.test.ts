@@ -19,7 +19,8 @@
  * @module
  */
 import { describe, it, expect, vi } from "vitest";
-import type { ChannelPort, ChannelPluginPort, ChannelCapability } from "@comis/core";
+import type { ChannelPort, ChannelPluginPort, ChannelCapability, TurnOutcome, ActivityStatusMarkers } from "@comis/core";
+import { themeForName } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
@@ -243,6 +244,52 @@ describe("buildActivityRenderers — non-EditPlace strategies (CHAN-11, §18.3 m
     expect(factory).toBeDefined();
     expect(renderers.size).toBe(1);
     expect(factory!("user@example.com").strategy).toBe("DigestOnly");
+  });
+
+  it("threads PER-CALL markers (not just the boot-time default) into the renderer it builds (WR-04)", async () => {
+    // WR-04: markers were baked once from the DEFAULT agent's theme and shared
+    // across every per-turn renderer, so a non-default agent rendered with the
+    // wrong theme. The factory must accept per-call markers (resolved per-agent in
+    // the coordinatorFactory) that OVERRIDE the boot-time default. Drive an IRC
+    // (LinePerEvent) closing line and assert it follows the per-call theme glyph.
+    const sentLines: string[] = [];
+    const recordingAdapter: ChannelPort = {
+      ...makeStubAdapter("irc"),
+      sendMessage: (async (_channelId: string, text: string) => {
+        sentLines.push(text);
+        return { ok: true, value: "msg-id" };
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- stub signature
+      }) as any,
+    };
+    const adapters = new Map<string, ChannelPort>([["irc", recordingAdapter]]);
+    const plugins = new Map<string, ChannelPluginPort>([
+      ["irc", makeStubPlugin("irc", makeCaps({}, 512))],
+    ]);
+
+    const bootMarkers: ActivityStatusMarkers = themeForName("default").markers; // success "✓"
+    const perCallMarkers: ActivityStatusMarkers = themeForName("ascii").markers; // success "[OK]"
+    expect(bootMarkers.success).not.toBe(perCallMarkers.success);
+
+    const { timer, clock } = makeTime();
+    const renderers = buildActivityRenderers(adapters, plugins, makeLogger(), { timer, clock, markers: bootMarkers });
+    const factory = renderers.get("irc");
+    expect(factory).toBeDefined();
+
+    // Build the renderer the way a NON-default-agent turn would: with per-call markers.
+    const renderer = factory!("#room", perCallMarkers);
+    const success: TurnOutcome = {
+      kind: "success",
+      trivial: false,
+      delivery: { ok: true, deliveredChunks: 1, lastChunkMessageId: "m1", deliveredAtMs: 1 },
+    };
+    const result = await renderer.finalize(success);
+    expect(result.ok).toBe(true);
+
+    // The closing line must follow the PER-CALL ascii theme ("[OK] done"), NOT the
+    // boot-time default ("✓ done"). Pre-fix, the factory ignored the second arg and
+    // baked bootMarkers → this asserts RED on the default-only behavior.
+    expect(sentLines.some((l) => l.startsWith(`${perCallMarkers.success} done`))).toBe(true);
+    expect(sentLines.some((l) => l.startsWith(`${bootMarkers.success} done`))).toBe(false);
   });
 
   it("constructs all six live strategies for a full mixed adapter set", () => {

@@ -211,8 +211,13 @@ export async function buildAndStartChannelManager(
     ? (ctx: TurnActivityContext): ActivityTurnCoordinator => {
         // D1: renderer from the live map; an unmapped channelType (post-boot test adapter)
         // consults the WIRE-06 seam, then falls back to a no-op createTestSink().
+        // WR-04: resolve the theme markers PER-TURN from THIS agent's activity.theme
+        // (not the default agent's, baked once at boot) and thread them into the
+        // renderer so a non-default agent renders with its own theme. verbosity is
+        // already per-agent (config below); markers now match.
+        const turnMarkers = themeForName(agents[ctx.agentId]?.activity?.theme ?? "default").markers;
         const make = activityRenderers.get(ctx.channelType);
-        const renderer = make?.(ctx.channelKey) ?? deps.activityRendererFactory?.(ctx.channelType) ?? createTestSink();
+        const renderer = make?.(ctx.channelKey, turnMarkers) ?? deps.activityRendererFactory?.(ctx.channelType) ?? createTestSink();
         return createActivityTurnCoordinator({
           activityStreamPort: activityStream,
           renderer,

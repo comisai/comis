@@ -53,6 +53,7 @@ import type {
   TimerPort,
   ActivityStatusMarkers,
 } from "@comis/core";
+// (ActivityStatusMarkers also used in the per-call factory signature below — WR-04.)
 import { selectStrategy } from "@comis/core";
 import {
   createTestSink,
@@ -70,8 +71,18 @@ import type { SignCallbackData, MintApprovalLink } from "@comis/channels";
 import type { ComisLogger } from "@comis/infra";
 
 /** A per-channelId renderer factory. The render-actions adapter binds the
- *  concrete channelId at turn time (channelId is unknown at boot). */
-export type ActivityRendererFactory = (channelId: string) => ChannelActivityRenderer;
+ *  concrete channelId at turn time (channelId is unknown at boot).
+ *
+ *  WR-04: the OPTIONAL second arg is the per-turn theme markers, resolved
+ *  per-agent in the coordinatorFactory from `agents[ctx.agentId]?.activity?.theme`.
+ *  When provided it OVERRIDES the boot-time default markers baked into the map at
+ *  `buildActivityRenderers` time — so a non-default agent renders with ITS theme,
+ *  not the default agent's. Omitted → the boot-time default markers (the
+ *  process-wide stream / single-agent case stays byte-identical). */
+export type ActivityRendererFactory = (
+  channelId: string,
+  markers?: ActivityStatusMarkers,
+) => ChannelActivityRenderer;
 
 /** System clock + timer injected from the daemon composition root. The
  *  EditPlace machine debounces edits (TimerPort) and gates the delete on
@@ -177,7 +188,11 @@ function setFromFactoryMap<K extends string>(
   // the index yields `RendererFactory | undefined`, and the guard below is real.
   const make = (factories as Readonly<Partial<Record<string, RendererFactory>>>)[channelType];
   if (!make) return false;
-  out.set(channelType, (channelId: string) => make(adapter, channelId, deps));
+  // WR-04: per-call markers (per-agent theme, resolved at turn time) override the
+  // boot-time default baked into `deps.markers`; omitted → the boot-time default.
+  out.set(channelType, (channelId: string, markers?: ActivityStatusMarkers) =>
+    make(adapter, channelId, markers ? { ...deps, markers } : deps),
+  );
   return true;
 }
 
