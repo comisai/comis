@@ -79,6 +79,43 @@ describe("createCommandHandler", () => {
     expect(deps.getSessionInfo).toHaveBeenCalledWith(sessionKey);
   });
 
+  it("/status surfaces an Activity section listing each tripped circuit breaker", () => {
+    deps = makeDeps({
+      getActivityBreakerStatus: vi.fn().mockReturnValue([
+        { agentId: "agent-1", channelKey: "discord-chan", reason: "permission" },
+        { agentId: "agent-1", channelKey: "slack-chan", reason: "transient" },
+      ]),
+    });
+    handler = createCommandHandler(deps);
+
+    const result = handler.handle(parseSlashCommand("/status"), sessionKey);
+
+    expect(result.handled).toBe(true);
+    expect(result.response).toContain("**Activity**");
+    expect(result.response).toContain("discord-chan");
+    expect(result.response).toContain("permission");
+    expect(result.response).toContain("slack-chan");
+    expect(result.response).toContain("transient");
+  });
+
+  it("/status omits the Activity breaker section when no breakers are tripped", () => {
+    deps = makeDeps({ getActivityBreakerStatus: vi.fn().mockReturnValue([]) });
+    handler = createCommandHandler(deps);
+
+    const result = handler.handle(parseSlashCommand("/status"), sessionKey);
+
+    expect(result.handled).toBe(true);
+    expect(result.response).not.toContain("**Activity**");
+  });
+
+  it("/status omits the Activity breaker section when the accessor is not provided", () => {
+    // The default makeDeps() has no getActivityBreakerStatus — no spurious noise.
+    const result = handler.handle(parseSlashCommand("/status"), sessionKey);
+
+    expect(result.handled).toBe(true);
+    expect(result.response).not.toContain("**Activity**");
+  });
+
   // -----------------------------------------------------------------------
   // /context
   // -----------------------------------------------------------------------
