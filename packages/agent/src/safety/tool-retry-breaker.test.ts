@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
-import { createToolRetryBreaker, extractErrorTag } from "./tool-retry-breaker.js";
+import { createToolRetryBreaker, extractErrorTag, buildBlockReason } from "./tool-retry-breaker.js";
 import type { ToolRetryBreaker } from "./tool-retry-breaker.js";
 
 describe("tool retry breaker", () => {
@@ -806,6 +806,38 @@ describe("tool retry breaker", () => {
       const verdict = breaker.beforeToolCall(tool, args);
       expect(verdict.block).toBe(true);
       expect(verdict.alternatives).toEqual([]);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // R10b — buildBlockReason must produce repair-not-abandon message for
+  // parameter-validation tags (exported direct call — the recordResult
+  // accumulation path is unreachable for validation tags per lines 402-404).
+  // -------------------------------------------------------------------------
+  describe("buildBlockReason (R10b: validation-tag repair-not-abandon)", () => {
+    it("produces 'Fix the arguments' and NOT 'appears to be unavailable' for a parameter-validation tag", () => {
+      const reason = buildBlockReason(
+        "mcp_manage",
+        2,
+        "[invalid_value] headers must be an object",
+        [],
+        "invalid_value",
+        false,
+      );
+      expect(reason).not.toMatch(/appears to be unavailable/i);
+      expect(reason).toMatch(/[Ff]ix the arguments/);
+    });
+
+    it("still says 'appears to be unavailable' for a non-validation error (non-regression)", () => {
+      const reason = buildBlockReason(
+        "mcp_manage",
+        5,
+        "[network_error] timeout",
+        [],
+        "network_error",
+        true,
+      );
+      expect(reason).toMatch(/appears to be unavailable/i);
     });
   });
 });
