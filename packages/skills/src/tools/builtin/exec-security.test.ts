@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   extractHeredoc,
   extractDashCArg,
@@ -1801,5 +1803,21 @@ describe("extractDashCArg", () => {
   it("handles single-quoted body identically to double-quoted body for multiline scripts", () => {
     const result = extractDashCArg("python3 -c 'import os\nprint(1)'", undefined);
     expect(result).toEqual({ command: "python3 -", input: "import os\nprint(1)" });
+  });
+});
+
+// --------------------------------------------------------------------------
+// R7 #3: Dockerfile warm-venv seed assertion
+// --------------------------------------------------------------------------
+
+describe("Dockerfile warm-venv seed (R7 #3)", () => {
+  it("warm-venv pip install line includes 'requests' (R7 #3)", () => {
+    // TDD-exempt for Dockerfile edits (CLAUDE.md: build-tooling/CI/config edits are exempt).
+    // This text assertion ensures the seed stays in sync if the pip install line is ever
+    // refactored — a regression here means the Dockerfile change was accidentally reverted.
+    const dockerfilePath = resolve(process.cwd(), "Dockerfile");
+    const content = readFileSync(dockerfilePath, "utf-8");
+    // Verify the warm-venv stanza includes requests with a pinned version
+    expect(content).toMatch(/pip install[^]*requests==/);
   });
 });

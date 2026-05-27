@@ -346,7 +346,7 @@ USER comis
 RUN mkdir -p /home/comis/.comis/workspace && \
     python3 -m venv /home/comis/.comis/workspace/venv && \
     /home/comis/.comis/workspace/venv/bin/pip install --no-cache-dir --disable-pip-version-check \
-        matplotlib==3.9.2 numpy==2.1.0 pandas==2.2.3
+        matplotlib==3.9.2 numpy==2.1.0 pandas==2.2.3 requests==2.32.3
 
 # Default environment.
 # COMIS_GATEWAY_HOST=0.0.0.0 — the container's network namespace is isolated, so
