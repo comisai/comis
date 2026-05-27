@@ -373,4 +373,40 @@ describe("ResultCondenser", () => {
     expect(result.result.summary).not.toContain("</final>");
     expect(result.result.summary).toContain("answer");
   });
+
+  // -------------------------------------------------------------------------
+  // R4 relay scrub tests
+  // -------------------------------------------------------------------------
+
+  describe("R4 relay scrub", () => {
+    it("scrubs token from fullResult before persistFullResult receives it", async () => {
+      const deps = createTestDeps({ maxResultTokens: 1000 });
+      const condenser = createResultCondenser(deps);
+
+      const rawToken = "hf_" + "a".repeat(44);
+      await condenser.condense(createTestParams({
+        fullResult: `Result text containing Bearer ${rawToken} as part of the output`,
+      }));
+
+      expect(writeFile).toHaveBeenCalled();
+      const writeCall = (writeFile as Mock).mock.calls[0];
+      const diskJson = JSON.parse(writeCall![1] as string);
+      // persistFullResult must NOT receive the raw token in fullResult
+      expect(diskJson.fullResult).not.toContain(rawToken);
+    });
+
+    it("scrubs token from fullResult before relay (condensed output does not contain raw token)", async () => {
+      const deps = createTestDeps({ maxResultTokens: 1000 });
+      const condenser = createResultCondenser(deps);
+
+      const rawToken = "hf_" + "b".repeat(44);
+      const result = await condenser.condense(createTestParams({
+        fullResult: `Agent completed task. Token: Bearer ${rawToken}`,
+      }));
+
+      // The condensed relay result (summary/conclusions) must not contain the raw token
+      const resultText = JSON.stringify(result.result);
+      expect(resultText).not.toContain(rawToken);
+    });
+  });
 });

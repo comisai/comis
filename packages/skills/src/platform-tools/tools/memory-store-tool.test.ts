@@ -117,3 +117,19 @@ describe("memory_store tool", () => {
     expect(result.details).not.toHaveProperty("warning");
   });
 });
+
+// ---------------------------------------------------------------------------
+// R4 retirement: memory-store-tool SECRET_PATTERNS
+// ---------------------------------------------------------------------------
+
+describe("R4 retirement: private SECRET_PATTERNS retired", () => {
+  it("does NOT have a private SECRET_PATTERNS constant (retired in favor of validateMemoryWrite)", async () => {
+    // Read the actual source file and assert SECRET_PATTERNS is gone
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const { dirname, join } = await import("node:path");
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const sourceText = readFileSync(join(__dirname, "memory-store-tool.ts"), "utf-8");
+    expect(sourceText).not.toContain("SECRET_PATTERNS");
+  });
+});

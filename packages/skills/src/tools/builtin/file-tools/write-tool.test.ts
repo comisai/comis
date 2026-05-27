@@ -650,3 +650,85 @@ describe("error code format", () => {
     expect(errors.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// R4 secret egress guard tests
+// ---------------------------------------------------------------------------
+
+describe("R4 secret egress guard", () => {
+  it("warns and proceeds with scrubbed content when content contains Bearer hf_ token (default warn mode)", async () => {
+    const tool = createComisWriteTool(
+      workspaceDir,
+      undefined,
+      tracker,
+      undefined,
+      { security: { writeSecretGuard: "warn" as const } },
+    );
+    const tokenContent = "Bearer hf_" + "a".repeat(44);
+    const result = await tool.execute("id", {
+      path: "secret-test.txt",
+      content: tokenContent,
+    });
+    // Result must include a [warn] signal
+    const resultText = result.content.map((b: { text: string }) => b.text).join("\n");
+    expect(resultText).toMatch(/\[warn\]/);
+    // Written file must NOT contain the raw token
+    const written = await fs.readFile(
+      path.join(workspaceDir, "secret-test.txt"),
+      "utf-8",
+    );
+    expect(written).not.toContain("hf_" + "a".repeat(44));
+  });
+
+  it("does NOT warn for env-ref content API_KEY=${API_KEY} (false-positive guard)", async () => {
+    const tool = createComisWriteTool(
+      workspaceDir,
+      undefined,
+      tracker,
+      undefined,
+      { security: { writeSecretGuard: "warn" as const } },
+    );
+    const result = await tool.execute("id", {
+      path: "env-ref-test.txt",
+      content: "API_KEY=${API_KEY}\nFOO=bar",
+    });
+    const resultText = result.content.map((b: { text: string }) => b.text).join("\n");
+    expect(resultText).not.toMatch(/\[warn\]/);
+    expect(result.isError).toBeFalsy();
+  });
+
+  it("does NOT warn for 64-char hex SHA content (false-positive guard)", async () => {
+    const tool = createComisWriteTool(
+      workspaceDir,
+      undefined,
+      tracker,
+      undefined,
+      { security: { writeSecretGuard: "warn" as const } },
+    );
+    const result = await tool.execute("id", {
+      path: "hex-sha-test.txt",
+      content: "sha=" + "a".repeat(64),
+    });
+    const resultText = result.content.map((b: { text: string }) => b.text).join("\n");
+    expect(resultText).not.toMatch(/\[warn\]/);
+    expect(result.isError).toBeFalsy();
+  });
+
+  it("blocks write and returns error when writeSecretGuard is block mode", async () => {
+    const tool = createComisWriteTool(
+      workspaceDir,
+      undefined,
+      tracker,
+      undefined,
+      { security: { writeSecretGuard: "block" as const } },
+    );
+    const tokenContent = "Bearer hf_" + "a".repeat(44);
+    const result = await tool.execute("id", {
+      path: "blocked-secret.txt",
+      content: tokenContent,
+    });
+    expect(result.isError).toBe(true);
+    const resultText = result.content.map((b: { text: string }) => b.text).join("\n");
+    expect(resultText).toMatch(/\[write_secret_blocked\]/);
+  });
+});
