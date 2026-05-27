@@ -33,6 +33,9 @@ const mockCreateMcpClientManager = vi.hoisted(() => vi.fn(() => ({
 
 vi.mock("@comis/skills", () => ({
   createMcpClientManager: mockCreateMcpClientManager,
+  // resolveDiscovery is used by setup-mcp.ts in the oauthDeps seam (R8).
+  // Provide a minimal mock so the module import succeeds.
+  resolveDiscovery: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------

@@ -10,9 +10,15 @@
 
 import { mkdirSync } from "node:fs";
 import { safePath } from "@comis/core";
-import type { McpServerEntry, TypedEventBus } from "@comis/core";
+import type { McpServerEntry, TypedEventBus, OAuthCredentialStorePort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import { createMcpClientManager, type McpClientManager, type McpServerConfig } from "@comis/skills";
+import {
+  createMcpClientManager,
+  resolveDiscovery,
+  type McpClientManager,
+  type McpServerConfig,
+} from "@comis/skills";
+import { createPortBackedMcpTokenStore } from "./mcp-token-port-adapter.js";
 
 // ---------------------------------------------------------------------------
 // Deps / Result types
@@ -43,6 +49,19 @@ export interface McpDeps {
    * this applies when no per-server value is set; transport-aware default applies when this too
    * is undefined (resolveDefaultKeepaliveIntervalMs in mcp-client-keepalive.ts). */
   readonly globalKeepaliveIntervalMs?: number;
+  /**
+   * Port-backed OAuth credential store for unified MCP token home (R8).
+   * When provided together with `dataDir`, MCP OAuth tokens are synced to this
+   * store on every saveTokens call. Closes the structural credential home gap.
+   * Threaded from setup-agents-registry via daemon.ts.
+   */
+  readonly oauthCredentialStore?: OAuthCredentialStorePort;
+  /**
+   * Absolute path to the daemon data directory (e.g. ~/.comis).
+   * Required together with `oauthCredentialStore` to construct the port-backed
+   * token store with the correct tokensDir (`{dataDir}/mcp-tokens`).
+   */
+  readonly dataDir?: string;
 }
 
 /** Result of MCP server setup. */
@@ -129,6 +148,28 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
   // configured at startup. If this throws, it's a build/deploy defect,
   // not a runtime condition — re-raise so bootstrap surfaces the failure
   // loudly rather than masking it behind a nulled manager.
+  // Build the port-backed oauthDeps seam when the daemon wiring supplies both
+  // oauthCredentialStore and dataDir. The adapter wraps createTokenStore (chokidar
+  // watch + 0600 preserved) and syncs tokens to the unified OAuthCredentialStorePort
+  // on every saveTokens call. When either field is absent, oauthDeps is omitted
+  // and createMcpClientManager applies its own default (disk token store at
+  // ~/.comis/mcp-tokens/ + real resolveDiscovery cascade).
+  const oauthDepsArg =
+    deps.oauthCredentialStore !== undefined && deps.dataDir !== undefined
+      ? {
+          oauthDeps: {
+            createTokenStore: () =>
+              createPortBackedMcpTokenStore(deps.oauthCredentialStore!, {
+                tokensDir: safePath(deps.dataDir!, "mcp-tokens"),
+                logger: deps.logger,
+              }),
+            // Use the real discovery cascade from skills (same as the default).
+            // Passed explicitly so TypeScript sees a complete McpOAuthDeps.
+            resolveDiscovery,
+          },
+        }
+      : {};
+
   const manager = createMcpClientManager({
     logger,
     callToolTimeoutMs: deps.callToolTimeoutMs,
@@ -140,6 +181,9 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
     // keepaliveIntervalMs removed — transport-aware default via resolveDefaultKeepaliveIntervalMs.
     circuitBreakerThreshold: deps.circuitBreakerThreshold,
     circuitBreakerCooldownMs: deps.circuitBreakerCooldownMs,
+    // R8: inject port-backed oauthDeps when both store + dataDir are provided.
+    // Omitted when not supplied so createMcpClientManager uses its default.
+    ...oauthDepsArg,
   });
 
   try {

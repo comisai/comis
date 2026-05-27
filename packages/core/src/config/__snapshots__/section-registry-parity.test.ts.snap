@@ -11129,14 +11129,14 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
-      "storage": "file"
+      "storage": "encrypted"
     },
     "immutable": false,
     "path": "oauth",
     "type": "object"
   },
   {
-    "default": "file",
+    "default": "encrypted",
     "immutable": false,
     "path": "oauth.storage",
     "type": "string"
@@ -29877,11 +29877,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "oauth": {
       "additionalProperties": false,
       "default": {
-        "storage": "file"
+        "storage": "encrypted"
       },
       "properties": {
         "storage": {
-          "default": "file",
+          "default": "encrypted",
           "enum": [
             "file",
             "encrypted"

@@ -4,9 +4,9 @@ import { z } from "zod";
 import { OAuthConfigSchema } from "./schema-oauth.js";
 
 describe("OAuthConfigSchema", () => {
-  it("parses an empty object and applies the default storage = 'file'", () => {
+  it("parses an empty object and applies the default storage = 'encrypted' (R8)", () => {
     const parsed = OAuthConfigSchema.parse({});
-    expect(parsed).toEqual({ storage: "file" });
+    expect(parsed).toEqual({ storage: "encrypted" });
   });
 
   it("accepts storage = 'file' explicitly", () => {
