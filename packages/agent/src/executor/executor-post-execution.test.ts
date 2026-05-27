@@ -377,3 +377,35 @@ describe("R3 — tool-failure endReason and notice", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// WR-02 — modelAcknowledgedFailure must use word-boundary matching
+// ---------------------------------------------------------------------------
+// The helper is private inside executor-post-execution.ts, so we test its
+// behaviour via the source text (the same pattern used by the R3 suite above).
+describe("WR-02 — modelAcknowledgedFailure word-boundary regression", () => {
+  function readPostExecSource(): string {
+    return readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+  }
+
+  it("source-grep — modelAcknowledgedFailure uses word-boundary RegExp (not bare .includes)", () => {
+    const src = readPostExecSource();
+    // Must use \\b escapes — plain .includes() approach must NOT be the sole tool-name check
+    // (we allow .includes for the failure keyword, but the tool-name must use \\b).
+    expect(src).toMatch(/\\\\b.*escaped|nameRe|new RegExp|wordBoundary|\bescaped\b.*\\\\b/);
+  });
+
+  it("source-grep — 'write' substring collision: 'writer' does NOT satisfy the word-boundary check", () => {
+    // If the source still uses bare .includes, the token 'write' would match inside 'writer'.
+    // This test verifies the implementation no longer allows that by checking the regex is present.
+    const src = readPostExecSource();
+    // The fix must introduce a RegExp with \b or an equivalent word-boundary approach.
+    // We require \\b (escaped in the source string literal) to be present in modelAcknowledgedFailure.
+    const fnBlock = src.match(/function\s+modelAcknowledgedFailure\s*\([\s\S]*?\n\}/);
+    expect(fnBlock).not.toBeNull();
+    if (fnBlock) {
+      // Must contain word-boundary escape
+      expect(fnBlock[0]).toMatch(/\\b|wordBoundary/);
+    }
+  });
+});

@@ -717,4 +717,76 @@ describe("surfaceDiscardedPreToolUrl", () => {
       expect.stringContaining("Surfaced discarded pre-tool URL"),
     );
   });
+
+  // WR-01 regression tests — SHORT_CODE_RE must NOT match plain English words.
+  it("Case G — benign non-framing pre-tool narration 'Checking the weather forecast now.' is NOT surfaced", () => {
+    // Reviewer repro: pre-tool text that doesn't start with FRAMING_PROSE_RE but
+    // contains only dictionary words must not get the first word prepended.
+    const messages = [
+      { role: "user", content: "What's the weather like?" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Checking the weather forecast now." },
+          { type: "tool_use", id: "tc1", name: "exec", input: {} },
+        ],
+      },
+    ];
+    const result = surfaceDiscardedPreToolUrl("It will be sunny.", messages, 0, mockLogger());
+    expect(result).toBe("It will be sunny.");
+    expect(result).not.toMatch(/^weather/);
+    expect(result).not.toMatch(/^checking/i);
+  });
+
+  it("Case H — benign non-framing pre-tool narration 'Running the analysis pipeline.' is NOT surfaced", () => {
+    // Reviewer repro: "analysis" must not be prepended as a code candidate.
+    const messages = [
+      { role: "user", content: "Run the analysis." },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Running the analysis pipeline." },
+          { type: "tool_use", id: "tc1", name: "exec", input: {} },
+        ],
+      },
+    ];
+    const result = surfaceDiscardedPreToolUrl("Done.", messages, 0, mockLogger());
+    expect(result).toBe("Done.");
+    expect(result).not.toMatch(/^analysis/);
+    expect(result).not.toMatch(/^running/i);
+  });
+
+  it("Case I — real one-time numeric code '493021' in pre-tool text IS surfaced when absent from response", () => {
+    // Positive control: a 6-digit numeric code (digit-containing) must still be surfaced.
+    const messages = [
+      { role: "user", content: "What is my code?" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Your verification code is 493021" },
+          { type: "tool_use", id: "tc1", name: "sessions_spawn", input: {} },
+        ],
+      },
+    ];
+    const result = surfaceDiscardedPreToolUrl("Done.", messages, 0, mockLogger());
+    expect(result).toMatch(/^493021/);
+    expect(result).toContain("Done.");
+  });
+
+  it("Case J — alphanumeric device code 'A1B2C3' in pre-tool text IS surfaced when absent from response", () => {
+    // Positive control: a mixed-case alphanumeric code (contains digit) must still be surfaced.
+    const messages = [
+      { role: "user", content: "What is the pairing code?" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Use pairing code A1B2C3 to connect." },
+          { type: "tool_use", id: "tc1", name: "exec", input: {} },
+        ],
+      },
+    ];
+    const result = surfaceDiscardedPreToolUrl("Done.", messages, 0, mockLogger());
+    expect(result).toMatch(/^A1B2C3/);
+    expect(result).toContain("Done.");
+  });
 });
