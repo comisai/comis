@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: MCP Hardening II
-status: verifying
+status: executing
 stopped_at: v1.2 roadmap created
-last_updated: "2026-05-27T14:40:42.121Z"
+last_updated: "2026-05-27T16:46:06.453Z"
 last_activity: 2026-05-27
 progress:
   total_phases: 5
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
-  percent: 100
+  total_plans: 8
+  completed_plans: 4
+  percent: 50
 ---
 
 # Project State: Comis
@@ -24,13 +24,13 @@ progress:
 **Project:** Comis — security-first AI agent platform connecting agents to 9 chat channels. TypeScript monorepo, 15 packages, hexagonal architecture, Node.js ≥ 22, Linux-only.
 
 **Core value:** A fleet-wide bug must be diagnosable from one structured artifact with one command in under five minutes.
-**Current focus:** Phase 1 — REGR — Critical regressions
+**Current focus:** Phase 2 — EGRESS — Secret egress firewall + secure credential home
 
 ## Current Position
 
-Phase: 1 (REGR — Critical regressions) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
+Phase: 2 (EGRESS — Secret egress firewall + secure credential home) — EXECUTING
+Plan: 2 of 5
+Status: Ready to execute
 Last activity: 2026-05-27
 
 ### Phases (v1.2 — restart at 1)
@@ -45,7 +45,7 @@ Last activity: 2026-05-27
 
 **Velocity (cumulative across milestones):**
 
-- Total plans completed: 20 (v1.1)
+- Total plans completed: 23 (v1.1)
 - Average duration: ~11 min/plan
 - v1.2 plans completed: 0
 
@@ -58,10 +58,12 @@ Last activity: 2026-05-27
 | 3 — CONNECT | 0 | - | - |
 | 4 — OAUTH | 0 | - | - |
 | 5 — SANDBOX | 0 | - | - |
+| 1 | 3 | - | - |
 
 *Updated after each plan completion*
 | Phase 01-regr-critical-regressions P02 | 43min | 2 tasks | 8 files |
 | Phase 01-regr-critical-regressions P03 | 15 | 2 tasks | 2 files |
+| Phase 02-egress P01 | 23 | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -105,7 +107,7 @@ Carried from research as load-bearing constraints (the verifier and planner rely
 
 ## Session Continuity
 
-Last session: 2026-05-27T14:40:42.108Z
+Last session: 2026-05-27T16:46:06.448Z
 Stopped at: v1.2 roadmap created
 Resume file: None
 
