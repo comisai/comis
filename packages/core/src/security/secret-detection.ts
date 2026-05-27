@@ -48,7 +48,7 @@ export interface SecretFinding {
  * Order matters for the early-return scan: list longer / more-specific
  * prefixes BEFORE their shorter generalizations (e.g. `sk-ant-` before `sk-`).
  */
-const PLAINTEXT_SECRET_PREFIXES: readonly string[] = [
+export const PLAINTEXT_SECRET_PREFIXES: readonly string[] = [
   "ghp_", // GitHub personal access token
   "github_pat_", // GitHub fine-grained PAT
   "sk-ant-", // Anthropic API key (check BEFORE sk-)

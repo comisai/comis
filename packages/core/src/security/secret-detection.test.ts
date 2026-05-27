@@ -16,6 +16,7 @@ import {
   isSecretFieldName,
   scanForSecrets,
   redactForDisplay,
+  PLAINTEXT_SECRET_PREFIXES,
 } from "./secret-detection.js";
 
 // A high-entropy 44+ char credential body (no delimiter chars) so the entropy
@@ -229,5 +230,66 @@ describe("redactForDisplay — secret-named array values (IN-01)", () => {
       headers: { authorization: ["Bearer x", "Bearer y"] },
     });
     expect(out).toEqual({ headers: { authorization: ["[REDACTED]", "[REDACTED]"] } });
+  });
+});
+
+// ── R0: explicit prefix entries — vocabulary unification (Phase 1) ──────────
+
+describe("R0: explicit prefix entries — hf_/hfr_/r8_ (vocabulary unification)", () => {
+  // Short tokens that fall below the entropy backstop (length < 44).
+  // Pre-patch: the entropy backstop requires length >= 44, so these slip through.
+  // Post-patch: the explicit prefix entry returns true regardless of length.
+  const SHORT_HF = "hf_abcdefghij"; // length 12 — below the entropy floor of 44
+  const SHORT_HFR = "hfr_shorttoken"; // length 14
+  const SHORT_R8 = "r8_shorttoken"; // length 13
+
+  it("R0-a: looksLikeSecretValue returns true for short hf_ token (fails pre-patch: entropy backstop rejects length < 44)", () => {
+    // PRE-PATCH: returns false (entropy backstop requires length >= 44)
+    // POST-PATCH: returns true (explicit prefix match, length-independent)
+    expect(looksLikeSecretValue(SHORT_HF)).toBe(true);
+  });
+
+  it("R0-b: scanForSecrets flags hfr_ value in a non-secret-named field (fails pre-patch: no prefix match, below entropy floor)", () => {
+    // PRE-PATCH: returns [] (no prefix match; field name "k" is not secret-named; short value below entropy floor)
+    // POST-PATCH: returns a non-empty findings array (hfr_ prefix is explicit, length-independent)
+    const findings = scanForSecrets({ k: SHORT_HFR });
+    expect(findings.length).toBeGreaterThan(0);
+  });
+
+  it("R0-c: PLAINTEXT_SECRET_PREFIXES covers every prefix-kind pattern in observability patterns.ts (drift guard)", async () => {
+    // Test-file cross-import of @comis/observability is allowed (test file only).
+    // Production @comis/core MUST NOT import @comis/observability — forbidden edge.
+    const { getDefaultRedactPatterns } = await import("@comis/observability");
+    // PLAINTEXT_SECRET_PREFIXES is imported statically at the top of this test file.
+    const keystonePrefixes = PLAINTEXT_SECRET_PREFIXES;
+    const patterns = getDefaultRedactPatterns();
+    const prefixKindPatterns = patterns.filter((p) => p.kind === "prefix");
+
+    for (const p of prefixKindPatterns) {
+      // Extract the token prefix from the regex source:
+      //   /\bhf_[A-Za-z0-9_]{18,}\b/g  →  "hf_"
+      //   /\bghp_[A-Za-z0-9_]{20,}\b/g →  "ghp_"
+      //   /\bsk-[A-Za-z0-9_-]{16,}\b/g →  "sk-"
+      // The \b word-boundary precedes the prefix in all prefix-kind patterns.
+      const m = /\\b([A-Za-z0-9][A-Za-z0-9_]*)/.exec(p.regex.source);
+      if (!m) continue; // structural/non-prefix pattern (no \b anchor) — skip
+      const prefix = m[1]!;
+      // Only assert if the extracted string looks like a real token prefix
+      // (ends with _ or - so it's a delimiter-bounded prefix, or all-caps >= 4 chars like AKIA/AKID/LTAI).
+      if (!prefix.endsWith("_") && !prefix.endsWith("-") && !/^[A-Z0-9]{4,}$/.test(prefix)) {
+        continue; // e.g. "eyJ" (JWT) or numeric — not a structured prefix
+      }
+      expect(keystonePrefixes, `keystone missing "${prefix}" (from pattern "${p.name}")`).toContain(prefix);
+    }
+
+    // Also verify the short tokens (the direct R0 regression) are explicitly covered:
+    expect(keystonePrefixes, 'keystone must contain "hf_" (Higgsfield/HuggingFace)').toContain("hf_");
+    expect(keystonePrefixes, 'keystone must contain "hfr_" (HuggingFace refresh)').toContain("hfr_");
+    expect(keystonePrefixes, 'keystone must contain "r8_" (Replicate)').toContain("r8_");
+
+    // Verify the short tokens are detected by looksLikeSecretValue
+    expect(looksLikeSecretValue(SHORT_HF), "hf_ short token must be detected").toBe(true);
+    expect(looksLikeSecretValue(SHORT_HFR), "hfr_ short token must be detected").toBe(true);
+    expect(looksLikeSecretValue(SHORT_R8), "r8_ short token must be detected").toBe(true);
   });
 });
