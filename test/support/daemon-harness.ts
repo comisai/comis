@@ -255,6 +255,16 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
   // Start the daemon
   const daemon = await main(overrides as unknown as Parameters<typeof main>[0]);
 
+  // Re-seed dummy provider keys AFTER boot. The daemon's bootstrap snapshots
+  // sensitive env vars into the SecretManager and then scrubs them from
+  // process.env (scrubProcessEnv in daemon.ts — ANTHROPIC_* et al. match
+  // SENSITIVE_PREFIXES). That deletes the keys seeded above, so the runtime
+  // credential resolver (credential-resolver.ts Source B → getEnvApiKey reads
+  // process.env LIVE at agents.create time) can no longer see them and rejects
+  // agent-CRUD with "no API key found". Re-seeding post-boot restores the
+  // guard-satisfying placeholder for CRUD tests that never make real LLM calls.
+  const restoreProviderEnvPostBoot = seedDummyProviderApiKeys();
+
   // Verify critical subsystems are present (main() awaits all initialization)
   if (!daemon.container) {
     throw new Error("Daemon bootstrap failed: container missing");
@@ -298,6 +308,7 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
     } finally {
       delete process.env["COMIS_CONFIG_PATHS"];
       restoreProviderEnv();
+      restoreProviderEnvPostBoot();
       // Dispose signal handlers to prevent leaks between test suites
       daemon.shutdownHandle.dispose();
       // Reset double-start guard

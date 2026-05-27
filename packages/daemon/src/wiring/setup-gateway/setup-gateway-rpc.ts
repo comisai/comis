@@ -458,6 +458,18 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
       // Non-allowlisted (incl. agents/security/channels/providers) → safe default.
       return safeDefault;
     },
+    listAgentSummaries: () => {
+      // Non-secret projection of container.config.agents for the dashboard's
+      // GET /api/agents (WR-03 dropped `agents` from getConfig's allowlist, so
+      // this — not getConfig — is the REST source). Returns ONLY
+      // id/name/provider/model; never the secret-bearing fields.
+      return Object.entries(container.config.agents ?? {}).map(([id, cfg]) => ({
+        id,
+        name: cfg.name ?? "Comis",
+        provider: cfg.provider ?? "unknown",
+        model: cfg.model ?? "unknown",
+      }));
+    },
     getSessionHistory: async (params) => {
       const sk: SessionKey = {
         tenantId: container.config.tenantId,

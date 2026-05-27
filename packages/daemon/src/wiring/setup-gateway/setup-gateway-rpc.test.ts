@@ -171,13 +171,13 @@ describe("buildRpcAdapterDeps getConfig non-secret allowlist (WR-03)", () => {
     };
   }
 
-  async function makeGetConfig(config: ReturnType<typeof makeContainerConfig>) {
+  async function makeDeps(config: ReturnType<typeof makeContainerConfig>) {
     const mod = await import("./setup-gateway-rpc.js");
     const container = {
       config,
       eventBus: { emit: vi.fn() },
     } as unknown as Parameters<typeof mod.buildRpcAdapterDeps>[0]["container"];
-    const deps = mod.buildRpcAdapterDeps({
+    return mod.buildRpcAdapterDeps({
       container,
       gwConfig: config.gateway as never,
       agents: config.agents as never,
@@ -193,7 +193,10 @@ describe("buildRpcAdapterDeps getConfig non-secret allowlist (WR-03)", () => {
       workspaceDirs: new Map() as never,
       activeExecutions: new Map() as never,
     });
-    return deps.getConfig;
+  }
+
+  async function makeGetConfig(config: ReturnType<typeof makeContainerConfig>) {
+    return (await makeDeps(config)).getConfig;
   }
 
   it("does not egress apiKey-shaped values when getConfig requests the agents section", async () => {
@@ -246,6 +249,25 @@ describe("buildRpcAdapterDeps getConfig non-secret allowlist (WR-03)", () => {
       logLevel: "info",
       gateway: { enabled: true, host: "127.0.0.1", port: 4766 },
     });
+  });
+
+  it("listAgentSummaries returns only non-secret id/name/provider/model fields", async () => {
+    const deps = await makeDeps(makeContainerConfig());
+
+    // Dedicated non-secret projection for the dashboard's GET /api/agents.
+    // WR-03 removed `agents` from getConfig's allowlist, so the REST listing
+    // can no longer source agents from getConfig; this is its replacement.
+    const summaries = deps.listAgentSummaries?.();
+
+    expect(summaries).toEqual([
+      { id: "default", name: "Comis", provider: "anthropic", model: "claude" },
+    ]);
+    // The same secret-shaped fields the getConfig egress test guards against
+    // must NOT appear in this projection either.
+    const serialized = JSON.stringify(summaries);
+    expect(serialized).not.toContain("sk-LEAK-TOKEN");
+    expect(serialized).not.toContain("ANTHROPIC_API_KEY");
+    expect(serialized).not.toContain("apiKey");
   });
 });
 

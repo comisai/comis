@@ -71,6 +71,18 @@ export interface RpcAdapterDeps {
   /** Check whether an agent ID exists in the current config. */
   isValidAgentId?: (agentId: string) => boolean;
 
+  /**
+   * List non-secret agent summaries for the dashboard's `GET /api/agents`.
+   *
+   * Distinct from {@link getConfig}: WR-03 (§17.8) removed `agents` from
+   * getConfig's non-secret allowlist, so getConfig no longer egresses agent
+   * configs. This dedicated projection returns ONLY non-secret identity/model
+   * fields (id/name/provider/model) — never auth profiles, secret-allow
+   * patterns, OAuth profiles, or any credential-bearing field — so the REST
+   * layer can list agents without re-opening the egress path getConfig closed.
+   */
+  listAgentSummaries?: () => Array<{ id: string; name: string; provider: string; model: string }>;
+
   /** Logger */
   logger: RpcAdapterLogger;
 }

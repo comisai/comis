@@ -134,12 +134,15 @@ describe("Config-driven queue tests (no LLM key required)", () => {
         expect(response).toHaveProperty("result");
         expect(response).not.toHaveProperty("error");
 
-        // Verify queue config is present with our expected values
+        // WR-03 (§17.8): `queue` is NOT on the getConfig non-secret allowlist,
+        // so config.get returns the safe default with the `queue` section
+        // ABSENT — it is no longer RPC-observable. Assert that contract plus
+        // daemon health (a well-formed result carrying the allowlisted gateway
+        // projection). The queue config values themselves are covered by unit
+        // tests (queue config schema + withSessionLock concurrency tests).
         const result = response.result as Record<string, unknown>;
-        const queueConfig = result.queue as Record<string, unknown>;
-        expect(queueConfig).toBeDefined();
-        expect(queueConfig.maxConcurrentSessions).toBe(5);
-        expect(queueConfig.enabled).toBe(true);
+        expect(result.queue).toBeUndefined();
+        expect(result).toHaveProperty("gateway");
       } finally {
         ws?.close();
       }

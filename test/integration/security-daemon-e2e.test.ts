@@ -69,7 +69,11 @@ describe("Security Daemon E2E Tests (real daemon)", () => {
   // ---------------------------------------------------------------------------
 
   describe("Security Config Bootstrap Propagation", () => {
-    it("config.get({section: 'security'}) returns logRedaction: true and auditLog: true", async () => {
+    // WR-03: config.get no longer egresses the secret-bearing security section.
+    // The logRedaction/auditLog/actionConfirmation values were previously asserted
+    // via config.get({section:"security"}) but are no longer RPC-observable post-WR-03;
+    // we instead assert the section is absent from the response.
+    it("config.get does not egress the security section (WR-03)", async () => {
       const response = (await sendJsonRpc(ws, "config.get", { section: "security" }, 100, {
         timeoutMs: RPC_FAST_MS,
       })) as Record<string, unknown>;
@@ -79,30 +83,28 @@ describe("Security Daemon E2E Tests (real daemon)", () => {
       expect(response).toHaveProperty("result");
 
       const result = response.result as Record<string, unknown>;
-      expect(result).toHaveProperty("security");
-      const security = result.security as Record<string, unknown>;
-      expect(security.logRedaction).toBe(true);
-      expect(security.auditLog).toBe(true);
+      // The requested section must be absent: only the safe default is returned.
+      expect(result.security).toBeUndefined();
+      expect(result).toHaveProperty("tenantId");
+      expect(result).toHaveProperty("logLevel");
+      expect(result).toHaveProperty("gateway");
     });
 
-    it("config.get({section: 'security'}) returns actionConfirmation with requireForDestructive and autoApprove", async () => {
+    it("config.get does not egress security actionConfirmation details (WR-03)", async () => {
       const response = (await sendJsonRpc(ws, "config.get", { section: "security" }, 101, {
         timeoutMs: RPC_FAST_MS,
       })) as Record<string, unknown>;
 
       expect(response).toHaveProperty("result");
       const result = response.result as Record<string, unknown>;
-      const security = result.security as Record<string, unknown>;
-      const actionConfirmation = security.actionConfirmation as Record<string, unknown>;
 
-      expect(actionConfirmation.requireForDestructive).toBe(true);
-      expect(actionConfirmation.requireForSensitive).toBe(false);
-      expect(actionConfirmation.autoApprove).toEqual(
-        expect.arrayContaining(["config.read"]),
-      );
+      // actionConfirmation lived under the security section, which is no longer egressed.
+      expect(result.security).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain("actionConfirmation");
+      expect(JSON.stringify(result)).not.toContain("requireForDestructive");
     });
 
-    it("config.get({section: 'gateway'}) returns corsOrigins containing configured origin", async () => {
+    it("config.get does not egress gateway corsOrigins (WR-03)", async () => {
       const response = (await sendJsonRpc(ws, "config.get", { section: "gateway" }, 102, {
         timeoutMs: RPC_FAST_MS,
       })) as Record<string, unknown>;
@@ -110,13 +112,14 @@ describe("Security Daemon E2E Tests (real daemon)", () => {
       expect(response).toHaveProperty("result");
       const result = response.result as Record<string, unknown>;
       const gateway = result.gateway as Record<string, unknown>;
-      const corsOrigins = gateway.corsOrigins as string[];
 
-      expect(Array.isArray(corsOrigins)).toBe(true);
-      expect(corsOrigins).toContain("https://dashboard.example.com");
+      // Gateway section is limited to { enabled, host, port }; corsOrigins is not egressed.
+      expect(Object.keys(gateway).sort()).toEqual(["enabled", "host", "port"]);
+      expect(gateway.corsOrigins).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain("dashboard.example.com");
     });
 
-    it("config.get({section: 'gateway'}) returns trustedProxies containing configured IP", async () => {
+    it("config.get does not egress gateway trustedProxies (WR-03)", async () => {
       const response = (await sendJsonRpc(ws, "config.get", { section: "gateway" }, 103, {
         timeoutMs: RPC_FAST_MS,
       })) as Record<string, unknown>;
@@ -124,10 +127,11 @@ describe("Security Daemon E2E Tests (real daemon)", () => {
       expect(response).toHaveProperty("result");
       const result = response.result as Record<string, unknown>;
       const gateway = result.gateway as Record<string, unknown>;
-      const trustedProxies = gateway.trustedProxies as string[];
 
-      expect(Array.isArray(trustedProxies)).toBe(true);
-      expect(trustedProxies).toContain("192.168.1.1");
+      // Gateway section is limited to { enabled, host, port }; trustedProxies is not egressed.
+      expect(Object.keys(gateway).sort()).toEqual(["enabled", "host", "port"]);
+      expect(gateway.trustedProxies).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain("192.168.1.1");
     });
   });
 
@@ -261,34 +265,35 @@ describe("Security Daemon E2E Tests (real daemon)", () => {
       expect(typeof result.uptime).toBe("number");
     });
 
-    it("security config section is retrievable and has expected shape", async () => {
-      // Use section-based config.get to verify the security section exists and is correct
+    it("config.get does not egress security/gateway-internal/agents sections (WR-03)", async () => {
+      // WR-03: requesting restricted sections returns only the safe default
+      // { tenantId, logLevel, gateway: { enabled, host, port } } -- the requested
+      // section is absent. These shapes were previously asserted via config.get but
+      // are no longer RPC-observable post-WR-03.
       const secResponse = (await sendJsonRpc(ws, "config.get", { section: "security" }, 201, {
         timeoutMs: RPC_FAST_MS,
       })) as Record<string, unknown>;
 
       expect(secResponse).toHaveProperty("result");
       const secResult = secResponse.result as Record<string, unknown>;
-      expect(secResult).toHaveProperty("security");
-      const security = secResult.security as Record<string, unknown>;
-      expect(security).toHaveProperty("logRedaction");
-      expect(security).toHaveProperty("auditLog");
-      expect(security).toHaveProperty("actionConfirmation");
+      expect(secResult.security).toBeUndefined();
 
-      // Also verify gateway and agents sections are retrievable
+      // Gateway section is limited to { enabled, host, port } -- no internals egressed.
       const gwResponse = (await sendJsonRpc(ws, "config.get", { section: "gateway" }, 202, {
         timeoutMs: RPC_FAST_MS,
       })) as Record<string, unknown>;
       expect(gwResponse).toHaveProperty("result");
       const gwResult = gwResponse.result as Record<string, unknown>;
-      expect(gwResult).toHaveProperty("gateway");
+      const gateway = gwResult.gateway as Record<string, unknown>;
+      expect(Object.keys(gateway).sort()).toEqual(["enabled", "host", "port"]);
 
+      // Agents section is not egressed either.
       const agResponse = (await sendJsonRpc(ws, "config.get", { section: "agents" }, 203, {
         timeoutMs: RPC_FAST_MS,
       })) as Record<string, unknown>;
       expect(agResponse).toHaveProperty("result");
       const agResult = agResponse.result as Record<string, unknown>;
-      expect(agResult).toHaveProperty("agents");
+      expect(agResult.agents).toBeUndefined();
     });
   });
 });
