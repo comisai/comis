@@ -13,6 +13,7 @@
  */
 
 import type { SessionKey } from "@comis/core";
+import type { BreakerReason } from "../execution/activity-circuit-breaker.js";
 
 // ---------------------------------------------------------------------------
 // Command type enum
@@ -198,5 +199,5 @@ export interface CommandHandlerDeps {
    * documented composition-root follow-on (same boundary as the WIRE-07/08
    * coordinator deps); this is the seam, not the wiring.
    */
-  getActivityBreakerStatus?: () => Array<{ agentId: string; channelKey: string; reason: string }>;
+  getActivityBreakerStatus?: () => Array<{ agentId: string; channelKey: string; reason: BreakerReason }>;
 }
