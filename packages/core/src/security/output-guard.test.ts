@@ -239,6 +239,36 @@ describe("createOutputGuard", () => {
   });
 
   // -------------------------------------------------------------------------
+  // R4 redact behavior (bearer_token severity: critical; hf_token entry)
+  // -------------------------------------------------------------------------
+
+  describe("R4 redact behavior", () => {
+    it("bearer_token rule REDACTS in sanitized output (not warn-only)", () => {
+      // After R4: severity is "critical" → token replaced in sanitized
+      const token = "hf_" + "a".repeat(44);
+      const response = `Authorization: Bearer ${token}`;
+      const result = guard.scan(response);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.blocked).toBe(true);
+        // sanitized must NOT contain the raw token (critical → replaced)
+        expect(result.value.sanitized).not.toContain(token);
+      }
+    });
+
+    it("bare hf_ token without Bearer prefix is caught and redacted", () => {
+      const token = "hf_" + "a".repeat(44);
+      const response = `Use this token: ${token}`;
+      const result = guard.scan(response);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.blocked).toBe(true);
+        expect(result.value.sanitized).not.toContain(token);
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Regression: global regex lastIndex state
   // -------------------------------------------------------------------------
 
