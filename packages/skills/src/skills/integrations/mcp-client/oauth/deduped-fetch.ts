@@ -199,6 +199,9 @@ export function createDedupedRefreshFetch(deps: DedupedRefreshFetchDeps): FetchL
         accessToken: expiredAccessToken,
         refreshToken,
         clientInformation: clientInfo,
+        ...(discovery.authorizationServerMetadata !== undefined
+          ? { metadata: discovery.authorizationServerMetadata }
+          : {}),
         ...(addClientAuthentication !== undefined ? { addClientAuthentication } : {}),
       });
     } catch (err) {
