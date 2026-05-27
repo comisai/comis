@@ -23,6 +23,7 @@ import {
   scanWithOutputGuard,
   recoverEmptyFinalResponse,
   extractExecutionPlan,
+  surfaceDiscardedPreToolUrl,
 } from "../executor-response-filter.js";
 import { runPostBatchContinuation } from "../post-batch-continuation.js";
 import { getVisibleAssistantText } from "../phase-filter.js";
@@ -303,6 +304,16 @@ async function processSuccessPath(
   if (budgetTracker) {
     await runBudgetContinuation(params, budgetTracker, budgetCapped, requestedBudget);
   }
+
+  // R9: surface discarded pre-tool URLs/short-codes absent from final response.
+  // MUST run BEFORE the OutputGuard scan below so the surfaced URL passes through
+  // the egress firewall (Phase 2 R4) and any embedded credential is redacted.
+  result.response = surfaceDiscardedPreToolUrl(
+    result.response,
+    sessionMessages,
+    userMessageIndex,
+    deps.logger,
+  );
 
   // Redact LLM output -- log only character count.
   // OutputGuard scans the full response for secrets immediately after.

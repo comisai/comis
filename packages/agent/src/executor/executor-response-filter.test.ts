@@ -712,7 +712,7 @@ describe("surfaceDiscardedPreToolUrl", () => {
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         surfacedUrl: "https://oauth.example.com/auth?code=XYZ",
-        module: "executor-response-filter",
+        submodule: "executor-response-filter.surfaceDiscardedPreToolUrl",
       }),
       expect.stringContaining("Surfaced discarded pre-tool URL"),
     );

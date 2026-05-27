@@ -20,6 +20,7 @@ import {
   type ClockPort,
 } from "@comis/core";
 import type { ComisLogger, ErrorKind } from "@comis/core";
+import { isSilentResponse } from "@comis/shared";
 import type { ExecutionPlan } from "../planner/types.js";
 import { extractPlanFromResponse } from "../planner/plan-extractor.js";
 import { stripReasoningTagsFromText } from "../response-filter/reasoning-tags.js";
@@ -350,6 +351,89 @@ function summarizeToolCall(call: any): string {
   }
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
+
+// ---------------------------------------------------------------------------
+// R9: surfaceDiscardedPreToolUrl — URL/short-code safety-net
+// ---------------------------------------------------------------------------
+
+/**
+ * Regex constants for R9 pre-tool URL/short-code surfacing.
+ *
+ * ORDERING IS LOAD-BEARING (per RESEARCH.md Pitfall 3):
+ * FRAMING_PROSE_RE must be checked BEFORE URL_RE/SHORT_CODE_RE.
+ * A framing-prose block that happens to contain a URL must NOT be surfaced.
+ */
+const URL_RE = /https?:\/\/[^\s)>]+/;
+// Short codes: uppercase/lowercase alphanum, 6-20 chars (OAuth verification codes etc.)
+const SHORT_CODE_RE = /\b[A-Z0-9]{6,20}\b|\b[a-z0-9]{6,20}\b/;
+// Framing prose patterns — if text matches, the block is NEVER surfaced regardless
+// of URL/code content. This guard fires first, before URL_RE or SHORT_CODE_RE.
+const FRAMING_PROSE_RE = /^(I('m| will| am going to)[\s\S]|Let me|Step \d+\/\d+:)/i;
+
+/**
+ * Safety-net for discarded pre-tool auth links and one-time codes (R9).
+ *
+ * When the LLM places a URL or short code in pre-tool text (e.g. "Visit
+ * https://oauth.example.com/auth?code=XYZ to authorize") and that text is
+ * absent from the final delivered response, this helper prepends only the
+ * matched URL/code token to the final response so it reaches the user.
+ *
+ * Predicate order (CRITICAL — do not reorder):
+ * 1. Sentinel guard: never modify NO_REPLY / HEARTBEAT_OK responses.
+ * 2. Framing-prose exclusion: skip blocks matching FRAMING_PROSE_RE entirely
+ *    (even if they contain a URL — prevents surfacing "I'm going to fetch
+ *    https://example.com/docs" as a user-visible auth hint).
+ * 3. URL / short-code detection: skip blocks with no URL or code candidate.
+ * 4. Absence check: skip candidates already present in the final response
+ *    (avoids duplicating URLs the model included in its final turn).
+ *
+ * The call site in output-escalation.ts:processSuccessPath MUST run BEFORE
+ * the OutputGuard scan so the surfaced URL is part of the content the egress
+ * firewall (Phase 2 R4) scans — any credential in a URL query parameter
+ * (e.g. `?token=hf_…`) is redacted before channel delivery. Placing this
+ * call AFTER the OutputGuard scan would be an egress regression.
+ *
+ * Only the matched URL/code token (not the full prose block) is surfaced.
+ */
+export function surfaceDiscardedPreToolUrl(
+  response: string,
+  messages: unknown[],
+  userMessageIndex: number,
+  logger: ComisLogger,
+): string {
+  // Guard 1: never modify sentinel responses
+  if (!response || isSilentResponse(response)) return response;
+
+  const lowerBound = userMessageIndex ?? 0;
+  if (!Array.isArray(messages)) return response;
+
+  for (let i = lowerBound; i < messages.length; i++) {
+    const msg = messages[i] as Record<string, unknown>; // eslint-disable-line security/detect-object-injection
+    if (msg?.role !== "assistant" || !Array.isArray(msg.content)) continue;
+    for (const block of (msg.content as unknown[])) {
+      const b = block as Record<string, unknown>;
+      // Only look at text blocks
+      if (b?.type !== "text" || typeof b.text !== "string") continue;
+      const text = b.text as string;
+      // Guard 2: framing prose → skip (MUST check before URL predicate per Pitfall 3)
+      if (FRAMING_PROSE_RE.test(text)) continue;
+      // Guard 3: does this block contain a URL or short code?
+      const urlMatch = URL_RE.exec(text);
+      const codeMatch = !urlMatch ? SHORT_CODE_RE.exec(text) : null;
+      const candidate = urlMatch?.[0] ?? codeMatch?.[0];
+      if (!candidate) continue;
+      // Guard 4: is the candidate absent from the final response?
+      if (response.includes(candidate)) continue;
+      // Surface: prepend candidate (just the URL/code token, not the full prose block)
+      logger.info(
+        { surfacedUrl: candidate, submodule: "executor-response-filter.surfaceDiscardedPreToolUrl" },
+        "Surfaced discarded pre-tool URL",
+      );
+      return candidate + "\n" + response;
+    }
+  }
+  return response;
+}
 
 // ---------------------------------------------------------------------------
 // SEP plan extraction (extracted from execute() success path)
