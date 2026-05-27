@@ -221,7 +221,7 @@ describe("createContextEngine", () => {
 
     expect(logger.info).toHaveBeenCalledTimes(1);
     expect(logger.info).toHaveBeenCalledWith(
-      { thinkingKeepTurns: 10, historyTurns: 15, evictionMinAge: 15, observationKeepWindow: 25, ephemeralKeepWindow: 10, observationTriggerChars: 120_000, compactionEnabled: false, compactionCooldownTurns: 5, compactionPrefixAnchorTurns: 2, rehydrationEnabled: false, channelType: undefined, layerCount: 6 },
+      { thinkingKeepTurns: 10, historyTurns: 15, evictionMinAge: 15, observationKeepWindow: 25, ephemeralKeepWindow: 10, observationTriggerChars: 120_000, compactionEnabled: false, compactionCooldownTurns: 5, compactionPrefixAnchorTurns: 2, rehydrationEnabled: false, channelType: undefined, layerCount: 6, layerNames: expect.any(Array) },
       "Context engine active",
     );
   });
@@ -1869,5 +1869,86 @@ describe("token anchor estimation", () => {
     await engine.transformContext(messages);
 
     expect(onAnchorReset).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // R5: signature-replay-scrubber layer wiring (prevents Anthropic 400 on continuation)
+  // ---------------------------------------------------------------------------
+
+  describe("R5: signature-replay-scrubber layer wiring (prevents Anthropic 400 on continuation)", () => {
+    it("R5-a: built pipeline contains 'signature-replay-scrubber' layer (fails pre-patch: layer absent)", () => {
+      const { deps, logger } = createMockDeps({ reasoning: true });
+      const config: ContextEngineConfig = {
+        enabled: true,
+        thinkingKeepTurns: 3,
+        historyTurns: 15,
+      };
+      createContextEngine(config, deps);
+      // Inspect via the startup log's layerNames field
+      const layerNamesCall = logger.info.mock.calls
+        .find((args: unknown[]) => {
+          const obj = args[0] as Record<string, unknown> | null;
+          return obj !== null && typeof obj === "object" && Array.isArray(obj["layerNames"]);
+        });
+      const names: string[] = (layerNamesCall?.[0] as Record<string, unknown>)?.["layerNames"] as string[] ?? [];
+      expect(names).toContain("signature-replay-scrubber");
+    });
+
+    it("R5-b: signature-replay-scrubber is ordered after thinking-block-cleaner and before signature-surrogate-guard (fails pre-patch: layer absent, indexOf -1)", () => {
+      const { deps, logger } = createMockDeps({ reasoning: true });
+      createContextEngine(
+        { enabled: true, thinkingKeepTurns: 3, historyTurns: 15 },
+        deps,
+      );
+      const layerNamesCall = logger.info.mock.calls
+        .find((args: unknown[]) => {
+          const obj = args[0] as Record<string, unknown> | null;
+          return obj !== null && typeof obj === "object" && Array.isArray(obj["layerNames"]);
+        });
+      const names: string[] = (layerNamesCall?.[0] as Record<string, unknown>)?.["layerNames"] as string[] ?? [];
+      const scrubberIdx = names.indexOf("signature-replay-scrubber");
+      const thinkingIdx = names.indexOf("thinking-block-cleaner");
+      const surrogateIdx = names.indexOf("signature-surrogate-guard");
+      expect(scrubberIdx).toBeGreaterThan(-1);          // present
+      expect(scrubberIdx).toBeGreaterThan(thinkingIdx); // after thinking-block-cleaner
+      expect(scrubberIdx).toBeLessThan(surrogateIdx);   // before signature-surrogate-guard
+    });
+
+    it("R5-c: transformContext strips signed thinking blocks from continuation history (fails pre-patch: scrubber absent, thinkingSignature survives)", async () => {
+      const { deps } = createMockDeps({ reasoning: true });
+      const engine = createContextEngine(
+        { enabled: true, thinkingKeepTurns: 3, historyTurns: 15 },
+        deps,
+      );
+      // Build continuation history: [user, assistant(signed-thinking + tool_use), toolResult]
+      // The scrubber checks for `thinkingSignature` on `type: "thinking"` blocks.
+      const signedThinkingBlock = { type: "thinking" as const, thinking: "internal reasoning", thinkingSignature: "sig_abc123" };
+      const messages = [
+        { role: "user" as const, content: [{ type: "text" as const, text: "hello" }] },
+        {
+          role: "assistant" as const,
+          content: [
+            signedThinkingBlock,
+            { type: "tool_use" as const, id: "t1", name: "search", input: {} },
+          ],
+        },
+        {
+          role: "user" as const,
+          content: [{ type: "tool_result" as const, tool_use_id: "t1", content: [] }],
+        },
+      ] as AgentMessage[];
+      const transformed = await engine.transformContext(messages);
+      // No signed thinking block (one with thinkingSignature) must survive
+      for (const msg of transformed) {
+        const m = msg as { role?: string; content?: unknown[] };
+        if (m.role === "assistant" && Array.isArray(m.content)) {
+          for (const block of m.content) {
+            if (typeof block === "object" && block !== null && (block as { type?: string }).type === "thinking") {
+              expect(block).not.toHaveProperty("thinkingSignature");
+            }
+          }
+        }
+      }
+    });
   });
 });

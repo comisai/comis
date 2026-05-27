@@ -402,6 +402,7 @@ export function createContextEngine(
       rehydrationEnabled,
       channelType: deps.channelType,
       layerCount: layers.length,
+      layerNames: layers.map((l) => l.name),
     },
     "Context engine active",
   );
