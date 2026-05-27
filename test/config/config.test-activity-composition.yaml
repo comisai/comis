@@ -27,6 +27,18 @@ agents:
       halfOpenTimeoutMs: 500
     rag:
       enabled: false
+    # WIRE-06 fail-closed enable map (research §H): the activation test drives an
+    # Echo turn for agent `default`, channelType `echo`, channelId `echo-activation`,
+    # so the pipeline (execution-pipeline.ts:407) mints the 3-segment rendererKey
+    # `default:echo:echo-activation`. Enabling it + emergencyDisabled:false ensures
+    # the kill-switch gate (activity-turn-coordinator.ts:277-279) does NOT suppress
+    # the render — otherwise a passing assertion would be a false negative.
+    activity:
+      verbosity: "normal"
+      emergencyDisabled: false
+      channels:
+        "default:echo:echo-activation":
+          enabled: true
     scheduler:
       cron:
         enabled: true

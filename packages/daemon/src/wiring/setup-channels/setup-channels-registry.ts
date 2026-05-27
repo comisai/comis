@@ -92,6 +92,12 @@ export interface ChannelsDeps {
   /** System timers (composition root). Threaded to buildActivityRenderers so the
    *  EditPlace renderer debounces edits via TimerPort (no raw setTimeout). */
   timers: TimerPort;
+  /** WIRE-06 test-only renderer-injection seam (daemon-types.ts
+   *  DaemonOverrides.activityRendererFactory). When set, replaces the renderer
+   *  produced by buildActivityRenderers for a given channelType so an integration
+   *  test can inject a spy/TestSink and assert `apply` fired on a real inbound
+   *  turn. Optional + default-undefined; production never sets it. */
+  activityRendererFactory?: (channelType: string) => import("@comis/core").ChannelActivityRenderer | undefined;
   /** Secret-bound callback signer (73-10). Threaded to buildActivityRenderers so
    *  button-capable renderers (Telegram/Discord/Slack/LINE) paint signed
    *  approval callback_data. Optional: absent → button-less approval prompts. */
@@ -306,6 +312,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       channelPlugins,
       clock: deps.clock,
       timers: deps.timers,
+      activityRendererFactory: deps.activityRendererFactory, // WIRE-06 test seam
       signCallbackData: deps.signCallbackData,
       mintApprovalLink: deps.mintApprovalLink,
       interactiveCallbackRouter: deps.interactiveCallbackRouter, // CR-01: verifier → inbound pipeline

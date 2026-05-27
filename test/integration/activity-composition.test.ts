@@ -17,8 +17,11 @@
  */
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, afterAll } from "vitest";
 import { startTestDaemon, type TestDaemonHandle } from "../support/daemon-harness.js";
+import { EchoChannelAdapter, createTestSink } from "@comis/channels";
+import type { NormalizedMessage } from "@comis/core";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const COMPOSITION_CONFIG_PATH = resolve(
@@ -79,5 +82,122 @@ describe("WIRE-06 activity composition: daemon boot wires + drains the ActivityS
       leaked,
       `every long-running daemon interval must be cancelled or unref'd by shutdown; leaked:\n${JSON.stringify(leaked, null, 2)}`,
     ).toEqual([]);
+  }, 120_000);
+});
+
+/**
+ * WIRE-06 real-daemon-turn activation test (research §G).
+ *
+ * This is the RED gate for the whole phase. It boots the REAL daemon via
+ * `startTestDaemon`, injects a TestSink spy renderer for the `echo` channelType
+ * through the test-only `DaemonOverrides.activityRendererFactory` seam (threaded
+ * via the typed `activityRendererFactory` harness option), drives a real inbound
+ * Echo turn through the daemon's REAL inbound deps assembly, and asserts the spy
+ * received `apply(frame)` at least once.
+ *
+ * RED proof (pre-Plan-03): the inbound `coordinatorFactory` is unassigned, so the
+ * pipeline gate at execution-pipeline.ts:395 (`deps.activityStreamPort &&
+ * deps.coordinatorFactory`) is FALSE — no per-turn coordinator is constructed,
+ * `coordinator.start()` never subscribes, and `renderer.apply` is never called →
+ * `spy.recorded.frames.length === 0` → this assertion FAILS. Plan 03 builds the
+ * inbound coordinatorFactory over the renderers map (where the seam injected the
+ * spy) and flips this GREEN.
+ *
+ * Stale-dist trap (Pitfall 3): imports `@comis/daemon` from dist/ — run
+ * `pnpm build` before this test or the daemon-side seam edits are masked.
+ */
+describe("WIRE-06 activity composition: a real inbound Echo turn drives renderer.apply through the daemon's real deps assembly", () => {
+  let handle: TestDaemonHandle | undefined;
+
+  afterAll(async () => {
+    if (handle) {
+      try {
+        await handle.cleanup();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!msg.includes("Daemon exit with code")) throw err;
+      }
+      handle = undefined;
+    }
+  });
+
+  it("drives renderer.apply on a real inbound Echo turn through the daemon's real deps assembly (WIRE-06)", async () => {
+    // The spy the test retains — the per-turn renderer created inside the daemon
+    // factory is otherwise unreachable. The seam injects this exact instance for
+    // the `echo` channelType at the composition root.
+    const spy = createTestSink();
+
+    // Drive the turn inside a try/finally so the daemon is torn down on this
+    // attempt even when the assertion below throws — the integration runner sets
+    // `retry: 1`, and the double-start guard (daemon-harness.ts) would otherwise
+    // reject the retry with "Test daemon already running". Cleanup before the
+    // assertion keeps each attempt isolated; `afterAll` is a belt-and-suspenders net.
+    let appliedFrames = 0;
+    try {
+      handle = await startTestDaemon({
+        configPath: COMPOSITION_CONFIG_PATH,
+        activityRendererFactory: (channelType) => (channelType === "echo" ? spy : undefined),
+      });
+
+      // Register the Echo adapter on the daemon's REAL adapter map (the same
+      // Map<string, ChannelPort> exposed as adapterRegistry === adaptersByType, and
+      // the delivery-side map) so the daemon's pipeline can find it for the turn.
+      const echo = new EchoChannelAdapter({ channelId: "echo-activation", channelType: "echo" });
+      handle.daemon.adapterRegistry.set("echo", echo);
+      handle.daemon.deliveryAdapters.set("echo", echo);
+
+      // Drive a real inbound turn through the daemon's REAL inbound pipeline deps.
+      // channelManager.injectMessage(channelType, msg) → processInboundMessage(pipelineDeps, …)
+      // is the same code path a live channel takes; pipelineDeps is the daemon's
+      // real deps record (the one Plan 03 injects coordinatorFactory onto).
+      const msg: NormalizedMessage = {
+        id: randomUUID(),
+        channelId: "echo-activation",
+        channelType: "echo",
+        senderId: "wire06-sender",
+        text: "WIRE-06 activation turn",
+        timestamp: Date.now(),
+        attachments: [],
+        metadata: {},
+      };
+      // channelManager is undefined when no channels are configured at boot
+      // (setup-channels-runtime.ts only builds it when adaptersByType.size > 0).
+      // Drive through it when present; otherwise the inbound path cannot run and
+      // the assertion below stays RED (frames.length 0) on the pre-Plan-03 tree.
+      const cm = handle.daemon.channelManager;
+      if (cm) {
+        await cm.injectMessage("echo", msg);
+      }
+
+      // Wait for the turn's activity to reach the coordinator → spy.apply. The apply
+      // is debounced ~800ms (activity-turn-coordinator.ts:58); poll on real timers
+      // with a bounded cap rather than asserting on a single tick. On the pre-Plan-03
+      // tree no coordinator is ever constructed, so this poll exhausts its budget
+      // and the assertion below fails (the captured RED).
+      const deadline = Date.now() + 10_000;
+      while (spy.recorded.frames.length === 0 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      appliedFrames = spy.recorded.frames.length;
+    } finally {
+      if (handle) {
+        try {
+          await handle.cleanup();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!msg.includes("Daemon exit with code")) throw err;
+        }
+        handle = undefined;
+      }
+    }
+
+    // GREEN (after Plan 03): renderer.apply fired on the real inbound turn.
+    // RED (current): frames.length === 0 — no inbound coordinatorFactory → gate
+    // execution-pipeline.ts:395 false → coordinator never built → apply never called.
+    expect(
+      appliedFrames,
+      "renderer.apply must fire >= 1 on a real inbound Echo turn through the daemon's real deps assembly " +
+        "(RED until Plan 03 injects the inbound coordinatorFactory onto createChannelManager)",
+    ).toBeGreaterThanOrEqual(1);
   }, 120_000);
 });

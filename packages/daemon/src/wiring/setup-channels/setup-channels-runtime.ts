@@ -62,6 +62,11 @@ export interface ChannelManagerBuildDeps {
   // Composition root → buildActivityRenderers: clock/timer (EditPlace debounce + deliveredAtMs gate); 73-10 signCallbackData (button channels) + mintApprovalLink (Email single-use link).
   clock: ClockPort;
   timers: TimerPort;
+  // WIRE-06 test-only renderer-injection seam (daemon-types.ts
+  // DaemonOverrides.activityRendererFactory). Applied AFTER buildActivityRenderers
+  // to replace a channelType's renderer factory with one returning the injected
+  // spy. Optional + default-undefined; production never sets it.
+  activityRendererFactory?: (channelType: string) => import("@comis/core").ChannelActivityRenderer | undefined;
   signCallbackData?: import("@comis/channels").SignCallbackData;
   mintApprovalLink?: import("@comis/channels").MintApprovalLink;
   // CR-01: the server-side interactive-callback router (verifier). Threaded into
@@ -585,6 +590,17 @@ export async function buildAndStartChannelManager(
   // so `?? "default"` is belt-and-suspenders. ascii config → emoji-free closing lines.
   const activityMarkers = themeForName(agents[defaultAgentId]?.activity?.theme ?? "default").markers;
   const activityRenderers = buildActivityRenderers(adaptersByType, channelPlugins, channelsLogger, { timer: deps.timers, clock: deps.clock, signCallbackData: deps.signCallbackData, mintApprovalLink: deps.mintApprovalLink, markers: activityMarkers }); // WIRE-02 + 73-10 signer/link + 75-06 markers
+  // WIRE-06 test-only renderer-injection seam: for each channelType the override
+  // returns a non-undefined renderer for, replace the map entry with a factory
+  // that returns the injected spy. Inert in production (override default-undefined)
+  // AND inert on the inbound path until Plan 03 builds the inbound coordinatorFactory
+  // over this map — until then the map is dropped at the registry (Pitfall 6).
+  if (deps.activityRendererFactory) {
+    for (const channelType of [...activityRenderers.keys()]) {
+      const injected = deps.activityRendererFactory(channelType);
+      if (injected) activityRenderers.set(channelType, () => injected);
+    }
+  }
   return { channelManager, lifecycleReactors, commandQueue, activityRenderers };
 }
 // Re-export Attachment + ChannelPluginPort (silences lint; public-surface boundary).

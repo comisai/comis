@@ -636,7 +636,7 @@ function buildChannelManagerDeps(deps: {
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
-    onSuspiciousContent, dataDir, clock, timers,
+    onSuspiciousContent, dataDir, clock, timers, activityRendererFactoryOverride,
   } = agents;
   // Build exportSessionBundle DI closure for the /export-trajectory slash
   // command. Uses exportTrajectoryBundle from @comis/observability (same
@@ -659,6 +659,10 @@ function buildChannelManagerDeps(deps: {
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, clock, timers,
+    // WIRE-06 test-only renderer-injection seam. Default-undefined in production
+    // (the daemon override is never set); threaded into buildActivityRenderers so
+    // an integration test can inject a spy renderer.
+    activityRendererFactory: activityRendererFactoryOverride,
     // 73-10: signed approval buttons (Telegram/Discord/Slack/LINE) + the Email
     // single-use approval link. The wiring is built once in the agents phase
     // (always present at runtime; optional-typed on BootContext).
@@ -1385,6 +1389,10 @@ async function bootFoundation(
 
   // 0.6. Runtime adapter construction (composition root). overrides.timers is opt-in for test fake-timers; never set in production.
   const clock = createSystemClock(); const env = createSystemEnv(mergedEnv); const timers = overrides.timers ?? createSystemTimers();
+  // WIRE-06 test-only renderer-injection seam (mirrors overrides.timers): captured here
+  // and threaded onto BootContext so buildChannelManagerDeps can forward it into
+  // buildActivityRenderers. Never set in production; inert on the inbound path until Plan 03.
+  const activityRendererFactory = overrides.activityRendererFactory;
 
   // 1. Bootstrap core container. Fix A (log-review): under VITEST=true, refuse to silently read ~/.comis/config.yaml when COMIS_CONFIG_PATHS is unset.
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution + VITEST guard
@@ -1635,7 +1643,7 @@ async function bootFoundation(
   boot.bgNotifyRef = bgNotifyRef;
   Object.assign(boot, {
     container, dataDir, configPaths, envPath,
-    clock, env, timers,
+    clock, env, timers, activityRendererFactoryOverride: activityRendererFactory,
     secretStore, secretsCrypto, secretsDb, permissionCorrections,
     execGit, configGitManager,
     logger, logLevelManager, daemonLogger, gatewayLogger, channelsLogger, agentLogger,
@@ -2618,6 +2626,11 @@ async function bootShutdown(
     container, logger, logLevelManager, tokenTracker,
     processMonitor, shutdownHandle, cronSchedulers, resetSchedulers,
     browserServices, heartbeatRunner, gatewayHandle, adapterRegistry: adaptersByType,
+    // Expose the orchestrator ChannelManager so integration tests can drive a
+    // real inbound turn through the daemon's REAL pipeline deps
+    // (channelManager.injectMessage). Undefined when no channels are configured
+    // at boot — see DaemonInstance.channelManager doc.
+    channelManager,
     // Expose the delivery-queue-side adapter map and the queue port itself so
     // integration tests can register adapters that the recurring drainer sees
     // and assert on queue depth.

@@ -17,6 +17,7 @@ import { cleanupDatabase } from "./db-cleanup.js";
 import { ASYNC_SETTLE_MS } from "./timeouts.js";
 import { createFakeTimers, type FakeTimers, type FakeTimerEntry } from "./fake-timers.js";
 import type { DaemonInstance } from "@comis/daemon";
+import type { ChannelActivityRenderer } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,6 +57,17 @@ export interface TestDaemonOptions {
    * `setInterval`/`setTimeout` fire as the daemon expects.
    */
   useFakeTimers?: boolean;
+  /**
+   * Override the per-channelType activity-renderer factory at the daemon
+   * composition root (WIRE-06 test seam). When provided, the harness forwards
+   * this into the daemon override bag (under the activityRendererFactory key) so
+   * the daemon's `DaemonOverrides` replaces the renderer produced by
+   * `buildActivityRenderers`. Lets an integration test inject a spy/TestSink it
+   * retains a reference to and assert `apply` fired on a real inbound turn.
+   * Production must never set this; the override is test-only (mirrors the
+   * useFakeTimers → timers-override discipline above).
+   */
+  activityRendererFactory?: (channelType: string) => ChannelActivityRenderer | undefined;
 }
 
 /** Handle to a running test daemon instance. */
@@ -215,6 +227,15 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
     : undefined;
   if (fakeTimers) {
     overrides["timers"] = fakeTimers;
+  }
+
+  // WIRE-06 test-only renderer-injection seam. Mirrors the useFakeTimers →
+  // overrides["timers"] wiring: thread the typed option into the daemon's
+  // DaemonOverrides.activityRendererFactory so the composition root injects the
+  // spy renderer the activation test retains a reference to. Never set in
+  // production (the typed field keeps the contract honest in the harness type).
+  if (options?.activityRendererFactory) {
+    overrides["activityRendererFactory"] = options.activityRendererFactory;
   }
 
   // Compose tracing-logger override based on logStream + disableRedaction.

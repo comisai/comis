@@ -21,7 +21,9 @@
 
 import type { TimerPort } from "@comis/core";
 import type { AppContainer, ChannelPort, DeliveryQueuePort, DeliveryAdapter } from "@comis/core";
+import type { ChannelActivityRenderer } from "@comis/core";
 import type { ApprovalGate } from "@comis/core";
+import type { ChannelManager } from "@comis/orchestrator";
 import type { ChannelHealthMonitor } from "@comis/channels";
 import type { ComisLogger } from "@comis/infra";
 import type { SessionResetScheduler, BackgroundTaskManager } from "@comis/agent";
@@ -134,6 +136,16 @@ export interface DaemonInstance {
   readonly gatewayHandle?: GatewayServerHandle;
   readonly adapterRegistry: Map<string, ChannelPort>;
   /**
+   * The orchestrator ChannelManager (undefined when no channel adapters are
+   * configured at boot — `setup-channels-runtime.ts` only constructs it when
+   * `adaptersByType.size > 0`). Exposed so integration tests can drive a real
+   * inbound turn through the daemon's REAL pipeline deps via
+   * `channelManager.injectMessage(channelType, msg)` — the WIRE-06 activation
+   * test (`test/integration/activity-composition.test.ts`) registers a test
+   * adapter on `adapterRegistry` and drives `renderer.apply` end-to-end.
+   */
+  readonly channelManager?: ChannelManager;
+  /**
    * Delivery-queue-side adapter map. Adapters registered here are
    * used by the recurring delivery-queue drainer for crash-safe outbound
    * delivery. Distinct from `adapterRegistry` (which serves direct dispatch
@@ -213,6 +225,14 @@ export interface DaemonOverrides {
    * Production must never set this; the override is test-only.
    */
   timers?: TimerPort;
+  /**
+   * Override the per-channelType activity-renderer factory at the composition
+   * root (WIRE-06 test seam). When provided, replaces the renderer produced by
+   * `buildActivityRenderers` for a given channelType so an integration test can
+   * inject a spy/TestSink it retains a reference to and assert `apply` fired on
+   * a real inbound turn. Production must never set this; the override is test-only.
+   */
+  activityRendererFactory?: (channelType: string) => ChannelActivityRenderer | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +314,14 @@ export interface BootContext {
   clock: import("@comis/core").ClockPort;
   env: import("@comis/core").EnvPort;
   timers: import("@comis/core").TimerPort;
+  // WIRE-06 test-only renderer-injection seam, captured from the daemon override
+  // in bootFoundation and threaded to `buildChannelManagerDeps` → `ChannelsDeps`
+  // → `buildActivityRenderers`. Named distinctly from the DaemonOverrides field
+  // (which is the canonical test-only seam) so the seam declaration stays
+  // single-sourced. Optional + default-undefined; production never sets it
+  // (mirrors the `timers` test-only discipline). Inert on the inbound path until
+  // Plan 03 builds the inbound coordinatorFactory over the renderers map.
+  activityRendererFactoryOverride?: (channelType: string) => ChannelActivityRenderer | undefined;
   // Secrets (4 fields)
   secretStore: SecretStorePort | undefined;
   secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
