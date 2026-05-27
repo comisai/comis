@@ -15,7 +15,14 @@ import type { Result } from "@comis/shared";
 import { ok, err } from "@comis/shared";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { systemNowMs } from "@comis/core";
+
+/**
+ * R8: Structured result tag for MCP tool-call 401 failures.
+ * Mirrors the needs_oauth_login tag pattern from mcp-client-oauth-connect.ts.
+ */
+export const NEEDS_REAUTH = "needs_reauth" as const;
 import type {
   McpClientManagerDeps,
   McpClientManagerState,
@@ -161,11 +168,14 @@ export async function callTool(
       // fall through -- half-open allows one probe
     } else {
       const remainingS = Math.ceil((breakerCooldownMs - elapsed) / 1000);
+      // R8: when breaker was tripped by an auth failure (reason="auth"), return
+      // needs_reauth instead of server_unavailable so the agent gets an actionable stop signal.
+      const text = breaker.reason === "auth"
+        ? `[needs_reauth] MCP server "${serverName}" requires re-authentication (circuit open). ` +
+          `Run \`comis mcp login ${serverName}\` to authenticate. Do NOT retry this tool.`
+        : `[server_unavailable] MCP server "${serverName}" circuit breaker is open (${remainingS}s until half-open probe).`;
       return ok({
-        content: [{
-          type: "text" as const,
-          text: `[server_unavailable] MCP server "${serverName}" circuit breaker is open (${remainingS}s until half-open probe).`,
-        }],
+        content: [{ type: "text" as const, text }],
         isError: true,
       });
     }
@@ -225,6 +235,43 @@ export async function callTool(
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
+
+      // R8: Intercept 401/UnauthorizedError FIRST — return structured needs_reauth result,
+      // trip the circuit breaker IMMEDIATELY (bypass threshold), and record reason="auth" so
+      // subsequent open-state calls return needs_reauth instead of server_unavailable.
+      const isUnauthorized =
+        error instanceof UnauthorizedError ||
+        (error instanceof Error &&
+          (error.message.includes("401") ||
+            (error as { status?: number }).status === 401));
+
+      if (isUnauthorized) {
+        const existing = state.circuitBreakers.get(serverName);
+        state.circuitBreakers.set(serverName, {
+          status: "open",
+          failureCount: (existing?.failureCount ?? 0) + 1,
+          openedAtMs: systemNowMs(),
+          reason: "auth",
+        });
+        deps.logger.warn(
+          {
+            serverName,
+            toolName,
+            hint: `Re-authentication required — run \`comis mcp login ${serverName}\``,
+            errorKind: "auth" as const,
+          },
+          "MCP tool call returned 401 — needs_reauth; circuit breaker tripped immediately",
+        );
+        return ok({
+          content: [{
+            type: "text" as const,
+            text:
+              `[needs_reauth] MCP server "${serverName}" requires re-authentication. ` +
+              `Run \`comis mcp login ${serverName}\` to authenticate. Do NOT retry this tool.`,
+          }],
+          isError: true,
+        });
+      }
 
       // Detect session expiry BEFORE timeout check
       const isSessionExpired =

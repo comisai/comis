@@ -189,6 +189,18 @@ async function condenseInternal(params: CondenseParams, deps: ResultCondenserDep
       "R4 egress guard: sub-agent result scrubbed",
     );
     fullResult = relayScrub.text;
+    // R8 secure handoff (Fix-b): signal to the parent agent that a credential was
+    // redacted and is now in the secure credential store — instruct it NOT to
+    // re-use the raw token from this result.
+    //
+    // NOTE: The MCP server name is NOT available at condenseInternal (CondenseParams
+    // has no serverName field). An actionable `mcp-oauth:<serverName>` ${ref} is
+    // therefore deferred — threading serverName here requires invasive cross-package
+    // CondenseParams API changes (R8-handoff rationale). Generic advisory only.
+    fullResult +=
+      "\n\n[Credential redacted and stored in the secure credential store. " +
+      "Retrieve via the OAuth store profileId or use `comis auth profile get` — " +
+      "do NOT attempt to re-use the raw token from this result.]";
   }
 
   const originalTokens = estimateTokens(fullResult);

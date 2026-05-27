@@ -215,7 +215,7 @@ export type McpConnectionStatus = "connected" | "disconnected" | "connecting" | 
  */
 export type CircuitState =
   | { readonly status: "closed"; readonly failureCount: number }
-  | { readonly status: "open"; readonly failureCount: number; readonly openedAtMs: number }
+  | { readonly status: "open"; readonly failureCount: number; readonly openedAtMs: number; readonly reason?: "auth" }
   | { readonly status: "half-open"; readonly failureCount: number };
 
 /** Configuration for automatic reconnection behavior. */
