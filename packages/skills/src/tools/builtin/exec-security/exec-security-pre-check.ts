@@ -203,7 +203,12 @@ export function sanitizeCommandInput(command: string): string | null {
     // immediately on quote chars, so checking state AFTER feed would incorrectly
     // treat the opening quote character itself as "inside a quote" (check-before-feed
     // mirrors validateRedirectTargets:288 pattern).
-    const inQuote = tracker.escaped || tracker.state !== "NORMAL";
+    //
+    // A pending backslash escape (tracker.escaped) is NOT a quoted context. In bash,
+    // `\` + newline is a line continuation that joins the next physical line as
+    // executable code — exactly the injection vector Gate 0 must block. Only suppress
+    // newline rejection when genuinely inside single/double quotes (state !== "NORMAL").
+    const inQuote = tracker.state !== "NORMAL";
 
     if (ch === "\n") {
       // U+000A: only reject when NOT inside a quoted context.
