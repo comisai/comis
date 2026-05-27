@@ -182,6 +182,9 @@ function renderErrorKind(e: ActivityRenderError): ErrorKind {
 export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps): ActivityTurnCoordinator {
   const events: ActivityEvent[] = [];
   let subscription: ActivitySubscription | undefined;
+  // WIRE-07: the per-turn context, captured at start(). flushApply reads
+  // ctx.rendererKey to key the per-renderer kill switch.
+  let turnCtx: TurnActivityContext | undefined;
   let prevFrame: ActivityRenderFrame | undefined;
   let debounceHandle: TimerHandle | undefined;
   // SEC-04 success-path delivery gate timer; captured so it can be unref'd (so
@@ -221,8 +224,35 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     }, "Activity renderer reported an error");
   }
 
+  /**
+   * WIRE-07 kill-switch gate. Returns true when this renderer's activity must be
+   * suppressed for the current turn. Reads the LIVE getter on every call (no
+   * captured snapshot) so an in-memory config.write flip hot-reloads without
+   * reconstructing the coordinator (Pitfall 4 / §22.2):
+   *   • emergencyDisabled === true → suppress ALL activity for the agent,
+   *   • channels[ctx.rendererKey]?.enabled !== true → suppress this renderer
+   *     (a missing entry OR an explicit false is disabled — fail-closed).
+   * When the getter is absent or returns undefined, nothing is suppressed (the
+   * un-wired composition path is unaffected — daemon injection is the documented
+   * follow-on).
+   */
+  function isActivitySuppressed(): boolean {
+    const ks = deps.killSwitch?.();
+    if (!ks) return false;
+    if (ks.emergencyDisabled === true) return true;
+    const rendererKey = turnCtx?.rendererKey;
+    if (rendererKey === undefined) return true;
+    // eslint-disable-next-line security/detect-object-injection -- rendererKey is a trusted TurnActivityContext field minted by the composition root, not user input
+    return ks.channels[rendererKey]?.enabled !== true;
+  }
+
   /** Build the next frame from the buffered events and paint it (idempotent). */
   async function flushApply(): Promise<void> {
+    // Gate BEFORE rendering — never paint when an operator has the renderer or
+    // the whole agent killed (WIRE-07). Lifecycle reactions and final delivery
+    // flow through separate paths (lifecycle-reactor.ts / execution-deliver.ts)
+    // and are intentionally NOT gated here.
+    if (isActivitySuppressed()) return;
     const frame = deps.projection(events, deps.config, prevFrame);
     prevFrame = frame;
     const result: Result<void, ActivityRenderError> = await deps.renderer.apply(frame);
@@ -357,6 +387,9 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   return {
     start(ctx: TurnActivityContext): void {
       startedAtMs = deps.clock.now();
+      // Capture the per-turn context so flushApply can key the WIRE-07 kill
+      // switch on ctx.rendererKey.
+      turnCtx = ctx;
       // Mint the turn's root activity id once — the parent of every sub-agent
       // event observed during this turn (APV-01).
       turnRootActivityId = randomUUID();
