@@ -95,7 +95,7 @@ export const PLAINTEXT_SECRET_PREFIXES: readonly string[] = [
  * values below are derived from patterns.ts: each is the {N,} minimum from
  * the corresponding pattern's regex body.
  */
-const PREFIX_MIN_BODY_LENGTHS: ReadonlyMap<string, number> = new Map([
+export const PREFIX_MIN_BODY_LENGTHS: ReadonlyMap<string, number> = new Map([
   // patterns.ts minimum body lengths (after the prefix):
   ["sk-", 16], // sk-[A-Za-z0-9_-]{16,}
   ["xapp-", 18], // xapp-[A-Za-z0-9_-]{18,}

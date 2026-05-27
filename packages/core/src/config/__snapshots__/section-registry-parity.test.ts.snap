@@ -6186,6 +6186,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
     "immutable": true,
     "path": "security.secrets.enabled",
     "type": "boolean"
+  },
+  {
+    "default": "warn",
+    "immutable": true,
+    "path": "security.writeSecretGuard",
+    "type": "string"
   }
 ]"
 `;
@@ -11965,7 +11971,8 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "secrets": {
         "dbPath": "secrets.db",
         "enabled": false
-      }
+      },
+      "writeSecretGuard": "warn"
     },
     "immutable": true,
     "path": "security",
@@ -12309,6 +12316,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": true,
     "path": "security.secrets.enabled",
     "type": "boolean"
+  },
+  {
+    "default": "warn",
+    "immutable": true,
+    "path": "security.writeSecretGuard",
+    "type": "string"
   },
   {
     "default": {
@@ -21237,6 +21250,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
         "dbPath"
       ],
       "type": "object"
+    },
+    "writeSecretGuard": {
+      "default": "warn",
+      "enum": [
+        "warn",
+        "block",
+        "off"
+      ],
+      "type": "string"
     }
   },
   "required": [
@@ -31181,7 +31203,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "secrets": {
           "dbPath": "secrets.db",
           "enabled": false
-        }
+        },
+        "writeSecretGuard": "warn"
       },
       "properties": {
         "actionConfirmation": {
@@ -31568,6 +31591,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "dbPath"
           ],
           "type": "object"
+        },
+        "writeSecretGuard": {
+          "default": "warn",
+          "enum": [
+            "warn",
+            "block",
+            "off"
+          ],
+          "type": "string"
         }
       },
       "required": [

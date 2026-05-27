@@ -25,7 +25,7 @@ describe("scrubSecretsFromText", () => {
     expect(result.text).toContain("[REDACTED]");
   });
 
-  it("scrubs hfr_ prefix token", () => {
+  it("scrubs token with hfr_ prefix from text", () => {
     const token = "hfr_" + "b".repeat(44);
     const result = scrubSecretsFromText(token);
     expect(result.redactions).toBe(1);
@@ -47,7 +47,7 @@ describe("scrubSecretsFromText", () => {
     expect(result.text).toBe(input);
   });
 
-  it("scrubs sk-ant- prefix token", () => {
+  it("scrubs token with sk-ant- prefix from text", () => {
     const token = "sk-ant-api03-" + "X".repeat(36);
     const result = scrubSecretsFromText(`Key: ${token}`);
     expect(result.redactions).toBe(1);

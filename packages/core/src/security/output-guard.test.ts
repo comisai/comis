@@ -110,17 +110,19 @@ describe("createOutputGuard", () => {
   // Warning findings -- detect-only, NOT redacted
   // -------------------------------------------------------------------------
 
-  it("does NOT redact bearer token (warning severity), blocked=false", () => {
+  it("REDACTS bearer token (R4: severity upgraded to critical), blocked=true", () => {
+    // R4: bearer_token severity is now "critical" — token is redacted in sanitized output.
+    // Pre-R4 this was "warning" (detect-only). Test updated to reflect the R4 change.
     const response = "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9";
     const result = guard.scan(response);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.safe).toBe(false);
-      expect(result.value.blocked).toBe(false);
-      expect(result.value.sanitized).toBe(response);
+      expect(result.value.blocked).toBe(true);
+      expect(result.value.sanitized).not.toContain("eyJhbGciOiJIUzI1NiJ9");
       const finding = result.value.findings.find((f) => f.pattern === "bearer_token");
       expect(finding).toBeDefined();
-      expect(finding!.severity).toBe("warning");
+      expect(finding!.severity).toBe("critical");
     }
   });
 

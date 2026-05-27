@@ -79,7 +79,7 @@ export type { ScopedSecretManagerOptions } from "./secret-manager.js";
 export { generateStrongToken, generateRotationId } from "./token-generator.js";
 
 // Secret detection keystone (Phase 1)
-export { looksLikeSecretValue, isSecretFieldName, isEnvRefString, scanForSecrets, redactForDisplay } from "./secret-detection.js";
+export { looksLikeSecretValue, isSecretFieldName, isEnvRefString, scanForSecrets, redactForDisplay, PLAINTEXT_SECRET_PREFIXES, PREFIX_MIN_BODY_LENGTHS } from "./secret-detection.js";
 export type { SecretFinding } from "./secret-detection.js";
 export { classifyHeaderCredential } from "./credential-classify.js";
 export type { CredentialKind, HeaderCredentialClassification } from "./credential-classify.js";
@@ -181,3 +181,7 @@ export type { ResolveSecretRefDeps, ResolveSecretRefOptions } from "./secret-ref
 // Secrets audit scanner
 export { scanConfigForSecrets, scanEnvForSecrets, auditSecrets } from "./secrets-audit.js";
 export type { AuditFinding, AuditSeverity, AuditOptions } from "./secrets-audit.js";
+
+// Secret egress guard — shared text scrubber for R4 egress firewall (intra-core only)
+export type { ScrubResult } from "./secret-egress-guard.js";
+export { mightContainSecret, scrubSecretsFromText } from "./secret-egress-guard.js";

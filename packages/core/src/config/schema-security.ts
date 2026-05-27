@@ -75,6 +75,14 @@ export const SecurityConfigSchema = z.strictObject({
     agentToAgent: AgentToAgentConfigSchema.default(() => AgentToAgentConfigSchema.parse({})),
     /** Encrypted secrets store configuration */
     secrets: SecretsConfigSchema.default(() => SecretsConfigSchema.parse({})),
+    /**
+     * R4: Secret egress guard behavior for file write/edit tools.
+     * - "warn"  (default): write proceeds with scrubbed content + redirect hint (safe for .env.example, test fixtures)
+     * - "block": write is rejected when secret-shaped values are detected
+     * - "off":   no write-time secret scan
+     * Default is "warn" — never "block" by default (false-positive risk on .env.example / hex SHAs / ${VAR} refs).
+     */
+    writeSecretGuard: z.enum(["warn", "block", "off"]).default("warn").optional(),
   });
 
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;

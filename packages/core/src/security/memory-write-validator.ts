@@ -17,6 +17,7 @@
 
 import { detectSuspiciousPatterns } from "./external-content.js";
 import { DANGEROUS_COMMAND_PATTERNS } from "./injection-patterns.js";
+import { scrubSecretsFromText } from "./secret-egress-guard.js";
 
 /**
  * Result of memory write validation.
@@ -48,6 +49,13 @@ const CRITICAL_PATTERN_SOURCES: ReadonlySet<string> = new Set(
  * @returns Validation result with severity classification and matched patterns
  */
 export function validateMemoryWrite(content: string): MemoryWriteValidationResult {
+  // R4: secret scan FIRST — pre-persist block using the shared keystone guard.
+  // scrubSecretsFromText uses the fast pre-filter; most content pays O(prefixes) only.
+  const scrub = scrubSecretsFromText(content);
+  if (scrub.redactions > 0) {
+    return { severity: "critical", patterns: ["secret-egress-guard"], criticalPatterns: ["secret-egress-guard"] };
+  }
+
   const patterns = detectSuspiciousPatterns(content);
 
   if (patterns.length === 0) {
