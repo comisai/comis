@@ -26,6 +26,7 @@
     "test": "vitest",
     "validate": "pnpm build && pnpm test && pnpm lint:security && pnpm cycles",
     "test:architecture": "vitest run --project architecture",
+    "test:transparency": "vitest run packages/skills/src/__tests__/transparency-label-coverage.test.ts",
     "test:e2e": "vitest run --config test/e2e/vitest.config.ts",
     "smoke:tarball": "node scripts/smoke/tarball-smoke.mjs",
     "test:integration": "vitest run --config test/vitest.config.ts",
