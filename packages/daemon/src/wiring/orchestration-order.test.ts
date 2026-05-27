@@ -21,6 +21,9 @@
 //      use.
 
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { setupMcp } from "./setup-mcp.js";
 // setupAgents is imported as TYPE-ONLY so the type-level dependency surface
 // is exercised at compile time -- a future refactor that breaks the
@@ -231,5 +234,48 @@ describe("daemon orchestration order runtime check", () => {
     // Adapter sees the new state on the next call -- live closure, not a
     // snapshot.
     expect(port.getConnectedMcpServers()).toEqual(["test-server"]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // R8 daemon-wiring gap: setupMcp must receive oauthCredentialStore + dataDir
+  // (02-06 gap-closure).
+  //
+  // Confirms that daemon.ts passes `oauthCredentialStore` and `dataDir` to
+  // `setupMcp` so that MCP OAuth tokens are routed through the unified
+  // OAuthCredentialStorePort (not the disk-default fallback).
+  //
+  // The test is structural: it reads daemon.ts source and verifies the
+  // `setupMcp({...})` call block contains these wiring fields. A runtime
+  // integration harness that spins up `bootAgents` is out of scope (see the
+  // deferred-coverage note in the second `it` block above); the structural
+  // check is sufficient to prevent regression — any future edit to daemon.ts
+  // that strips these fields is caught immediately.
+  //
+  // RED: daemon.ts currently does NOT pass oauthCredentialStore/dataDir to
+  // setupMcp — this test must fail before the fix and pass after.
+  // ---------------------------------------------------------------------------
+  it("daemon.ts passes oauthCredentialStore and dataDir to setupMcp (R8 wiring gap closure 02-06)", () => {
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    // daemon.ts lives two directories up from wiring/
+    const daemonSrc = readFileSync(join(__dirname, "..", "daemon.ts"), "utf-8");
+
+    // Find the setupMcp({ call block. The block ends at the first `});` that
+    // closes the call (the call is never nested inside another block, so this
+    // is safe). Slice from the call opener to the first `});` after it.
+    const setupMcpCallStart = daemonSrc.indexOf("const { mcpClientManager } = await setupMcp({");
+    expect(setupMcpCallStart).toBeGreaterThan(-1); // sanity: call exists
+
+    // Narrow window: slice from the opening brace to the first `});` that
+    // closes setupMcp's argument object. The call is written as a multi-line
+    // object literal, so the first `});` after the opener closes it.
+    const windowEnd = daemonSrc.indexOf("});", setupMcpCallStart);
+    expect(windowEnd).toBeGreaterThan(setupMcpCallStart); // sanity: close found
+    const setupMcpCallBlock = daemonSrc.slice(setupMcpCallStart, windowEnd + 3);
+
+    // Both wiring fields MUST be present in the setupMcp call block.
+    // These are the fields that route MCP OAuth tokens through the port
+    // instead of the disk-default fallback (R8 SC5 second clause).
+    expect(setupMcpCallBlock).toContain("oauthCredentialStore");
+    expect(setupMcpCallBlock).toContain("dataDir");
   });
 });
