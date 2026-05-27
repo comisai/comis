@@ -24,6 +24,7 @@ import {
 } from "@comis/channels";
 import { buildReadOnlyChannelRegistry } from "./setup-channels-registry-builder.js";
 import { buildActivityRenderers, type ActivityRendererFactory } from "./setup-channels-activity-renderers.js";
+import { resolveActivityKillSwitchSlice } from "./activity-kill-switch.js";
 import { createChannelManager, processInboundMessage, type ChannelManager } from "@comis/orchestrator";
 import { RetryConfigSchema, createRetryEngine } from "@comis/core";
 import {
@@ -226,10 +227,8 @@ export async function buildAndStartChannelManager(
           // capture an `agentActivity` const. The per-agent object is REPLACED wholesale on
           // hot-reload (setup-agents-runtime.ts:99); re-reading `agents[ctx.agentId]?.activity`
           // through the stable top-level `agents` ref observes the new object.
-          killSwitch: () => {
-            const activity = agents[ctx.agentId]?.activity;
-            return activity ? { emergencyDisabled: activity.emergencyDisabled, channels: activity.channels } : undefined;
-          },
+          // CR-01: delegate to the fail-CLOSED resolver — NEVER returns undefined (see module).
+          killSwitch: () => resolveActivityKillSwitchSlice(agents, ctx.agentId),
           breaker: deps.activityBreaker, // WIRE-08: process-singleton (shared across coordinators)
         });
       }
