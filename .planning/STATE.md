@@ -4,14 +4,14 @@ milestone: v1.2
 milestone_name: MCP Hardening II
 status: executing
 stopped_at: v1.2 roadmap created
-last_updated: "2026-05-27T13:41:28.147Z"
+last_updated: "2026-05-27T14:27:35.443Z"
 last_activity: 2026-05-27
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
-  percent: 33
+  completed_plans: 2
+  percent: 67
 ---
 
 # Project State: Comis
@@ -29,7 +29,7 @@ progress:
 ## Current Position
 
 Phase: 1 (REGR — Critical regressions) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-05-27
 
@@ -60,6 +60,7 @@ Last activity: 2026-05-27
 | 5 — SANDBOX | 0 | - | - |
 
 *Updated after each plan completion*
+| Phase 01-regr-critical-regressions P02 | 43min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -103,7 +104,7 @@ Carried from research as load-bearing constraints (the verifier and planner rely
 
 ## Session Continuity
 
-Last session: 2026-05-27T13:41:28.143Z
+Last session: 2026-05-27T14:27:35.436Z
 Stopped at: v1.2 roadmap created
 Resume file: None
 
