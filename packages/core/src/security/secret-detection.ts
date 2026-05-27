@@ -47,6 +47,9 @@ export interface SecretFinding {
  * Real-world credential prefixes that almost-certainly indicate a raw secret.
  * Order matters for the early-return scan: list longer / more-specific
  * prefixes BEFORE their shorter generalizations (e.g. `sk-ant-` before `sk-`).
+ *
+ * Used ONLY as keys for `PREFIX_MIN_BODY_LENGTHS` below — do not iterate this
+ * array directly for detection; `looksLikeSecretValue` uses the gated map.
  */
 export const PLAINTEXT_SECRET_PREFIXES: readonly string[] = [
   "ghp_", // GitHub personal access token
@@ -55,14 +58,14 @@ export const PLAINTEXT_SECRET_PREFIXES: readonly string[] = [
   "sk-", // OpenAI API key
   "xoxb-", // Slack bot token
   "xoxp-", // Slack user token
+  "xapp-", // Slack app-level token (gap vs patterns.ts slack-app-token) — WR-02
   "AKIA", // AWS access key ID (canonical prefix)
   "secret_", // Notion internal v1 (legacy)
   "ntn_", // Notion v2 (>= Sept 2024)
   "glpat-", // GitLab personal access token
   "sk_live_", // Stripe live secret key
   "sk_test_", // Stripe test secret key
-  // R0 additions — explicit length-independent entries (prerequisite for R1 + R4).
-  // These close the parity gap vs @comis/observability patterns.ts prefix-kind patterns.
+  // R0 additions — WR-02: complete the parity gap vs @comis/observability patterns.ts.
   "hf_", // HuggingFace access token (Higgsfield + HuggingFace Hub)
   "hfr_", // HuggingFace OAuth refresh token
   "r8_", // Replicate token (gap vs patterns.ts:143)
@@ -70,7 +73,44 @@ export const PLAINTEXT_SECRET_PREFIXES: readonly string[] = [
   "npm_", // npm automation/publish token (gap vs patterns.ts npm-token)
   "AKID", // AWS access-key-ID alternative prefix (gap vs patterns.ts aws-access-key-id)
   "LTAI", // Alibaba Cloud access key ID (gap vs patterns.ts alibaba-key)
+  "AIza", // Google API key — AIzaSy + 33 chars canonical shape (gap vs patterns.ts google-api-key)
+  "ya29.", // Google OAuth bearer token (gap vs patterns.ts google-oauth-bearer)
+  "pplx-", // Perplexity API key (gap vs patterns.ts perplexity-key)
+  "comis_", // Comis platform token (gap vs patterns.ts comis-prefix-token)
 ];
+
+/**
+ * Minimum number of body characters AFTER the prefix required before flagging.
+ * Mirrors the `{N,}` quantifiers in `@comis/observability`'s `patterns.ts` so
+ * the keystone's false-positive rate matches the observability scanner.
+ *
+ * Prefixes NOT in this map have `minBody = 0` (no length gate — they are
+ * high-specificity enough that even a short occurrence is meaningful, e.g.
+ * `ghp_`, `github_pat_`, `sk-ant-`, `glpat-`, `sk_live_`, `sk_test_`,
+ * `xoxb-`, `xoxp-`, `secret_`, `ntn_`, `AKIA`).
+ *
+ * WR-03 fix: short/ambiguous prefixes (hf_, r8_, gsk_, npm_, AKID, LTAI, …)
+ * previously triggered on any value that started with the prefix, falsely
+ * flagging npm_config_cache, AKIDNEYBEAN, hf_model_config, etc. The gate
+ * values below are derived from patterns.ts: each is the {N,} minimum from
+ * the corresponding pattern's regex body.
+ */
+const PREFIX_MIN_BODY_LENGTHS: ReadonlyMap<string, number> = new Map([
+  // patterns.ts minimum body lengths (after the prefix):
+  ["sk-", 16], // sk-[A-Za-z0-9_-]{16,}
+  ["xapp-", 18], // xapp-[A-Za-z0-9_-]{18,}
+  ["gsk_", 18], // gsk_[A-Za-z0-9_]{18,}
+  ["AIza", 20], // AIza[A-Za-z0-9_-]{20,}
+  ["ya29.", 20], // ya29.[A-Za-z0-9_-]{20,}
+  ["pplx-", 20], // pplx-[A-Za-z0-9_-]{20,}
+  ["npm_", 20], // npm_[A-Za-z0-9_]{20,}
+  ["AKID", 14], // AKID[A-Z0-9]{14,}  (total 18 chars)
+  ["LTAI", 16], // LTAI[A-Za-z0-9]{16,}
+  ["hf_", 18], // hf_[A-Za-z0-9_]{18,}
+  ["hfr_", 18], // hfr_ — same class as hf_, mirror the minimum
+  ["r8_", 18], // r8_[A-Za-z0-9_]{18,}
+  ["comis_", 16], // comis_[A-Za-z0-9_-]{16,}
+]);
 
 /** Shannon entropy in bits-per-character. Pure function. */
 function shannonEntropy(value: string): number {
@@ -132,12 +172,13 @@ function stripSurroundingQuotes(value: string): string {
  *   1. strip surrounding quotes
  *   2. strip a leading case-insensitive auth scheme (Bearer/Basic/Token/Digest)
  *   3. skip unresolved env-ref placeholders on the remainder
- * then run the unchanged legacy logic on the remainder:
- *   - curated-prefix scan (early-return true)
+ * then run the gated-prefix scan, then the entropy backstop:
+ *   - curated-prefix scan with per-prefix minimum body length (WR-03 fix):
+ *     short-ambiguous prefixes (hf_, gsk_, npm_, AKID, LTAI, …) require a
+ *     minimum body length matching patterns.ts to avoid false-positives on
+ *     config keys like npm_config_cache or words like AKIDNEYBEAN.
  *   - delimiter-char short-circuit to false
  *   - entropy backstop (length >= 44 AND entropy > 3.5)
- *
- * So `Bearer hf_<44+>` → `hf_<44+>` → entropy path catches it.
  */
 export function looksLikeSecretValue(value: string): boolean {
   if (typeof value !== "string" || value.length === 0) return false;
@@ -150,7 +191,14 @@ export function looksLikeSecretValue(value: string): boolean {
   if (remainder.startsWith("${") && remainder.endsWith("}")) return false;
 
   for (const prefix of PLAINTEXT_SECRET_PREFIXES) {
-    if (remainder.startsWith(prefix)) return true;
+    if (remainder.startsWith(prefix)) {
+      // WR-03 fix: apply minimum body-length gate for ambiguous/short prefixes.
+      // High-specificity prefixes (ghp_, glpat-, sk-ant-, etc.) have no entry
+      // in PREFIX_MIN_BODY_LENGTHS so minBody is 0 — they match unconditionally.
+      const minBody = PREFIX_MIN_BODY_LENGTHS.get(prefix) ?? 0;
+      const bodyLength = remainder.length - prefix.length;
+      if (bodyLength >= minBody) return true;
+    }
   }
 
   // Entropy backstop only applies to credential-shaped values (no URL/path/

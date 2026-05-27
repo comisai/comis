@@ -106,7 +106,9 @@ export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams>
         if (validationError) {
           eventBus?.emit("command:blocked", {
             agentId: tryGetContext()?.sessionKey ?? "unknown",
-            commandPrefix: command.slice(0, 200),
+            // IN-01 fix: redact BEFORE slicing so a credential straddling the
+            // boundary char is fully masked in the event payload sent to SSE consumers.
+            commandPrefix: redactSecretsInText(command).slice(0, 200),
             reason: validationError.message,
             blocker: validationError.blocker as "sanitize" | "substitution" | "pipe" | "denylist" | "path" | "redirect" | "env",
             timestamp: systemNowMs(),
@@ -123,7 +125,9 @@ export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams>
         const breakSystemWarning = command.includes("--break-system-packages")
           ? "⚠️ WARNING: --break-system-packages modifies the system Python. Use a virtualenv: the workspace's pre-warmed venv (venv/bin/pip install ...) or a per-project one (python3 -m venv projects/<name>/.venv).\n\n"
           : "";
-        logger?.debug({ toolName: "exec", command: redactSecretsInText(command.slice(0, 200)), background, pty, ...(description && { description }) }, "Exec command start");
+        // IN-01 fix: redact BEFORE slicing so a bare token straddling char 200 cannot
+        // appear as a truncated-but-still-recognizable fragment in the log field.
+        logger?.debug({ toolName: "exec", command: redactSecretsInText(command).slice(0, 200), background, pty, ...(description && { description }) }, "Exec command start");
         if (userEnv) logger?.debug({ toolName: "exec", envOverrides: Object.keys(userEnv) }, "Exec env override applied");
         const timeoutMs = Math.min(Math.max(rawTimeout ?? DEFAULT_TIMEOUT_MS, 100), MAX_TIMEOUT_MS);
         const cwd = cwdParam ? resolveCwd(workspacePath, cwdParam) : workspacePath;
@@ -142,7 +146,8 @@ export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams>
             for (const name of Object.keys(resolvedSecretEnv)) {
               eventBus?.emit("secret:accessed", { secretName: name, agentId, outcome: "success", timestamp: systemNowMs() });
             }
-            logger?.info({ toolName: "exec", secretRefs: Object.keys(resolvedSecretEnv), commandPrefix: command.slice(0, 80) }, "Exec resolved secretRefs for subprocess");
+            // IN-01 fix: redact BEFORE slicing to prevent boundary-straddle leaks.
+            logger?.info({ toolName: "exec", secretRefs: Object.keys(resolvedSecretEnv), commandPrefix: redactSecretsInText(command).slice(0, 80) }, "Exec resolved secretRefs for subprocess");
           }
         }
         const finalEnv = buildExecEnv({ workspacePath, subprocessEnv, userEnv, resolvedSecretEnv, sandboxConfig, logger });

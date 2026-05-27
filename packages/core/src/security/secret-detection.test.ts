@@ -240,22 +240,24 @@ describe("redactForDisplay — secret-named array values (IN-01)", () => {
 // ── R0: explicit prefix entries — vocabulary unification (Phase 1) ──────────
 
 describe("R0: explicit prefix entries — hf_/hfr_/r8_ (vocabulary unification)", () => {
-  // Short tokens that fall below the entropy backstop (length < 44).
-  // Pre-patch: the entropy backstop requires length >= 44, so these slip through.
-  // Post-patch: the explicit prefix entry returns true regardless of length.
-  const SHORT_HF = "hf_abcdefghij"; // length 12 — below the entropy floor of 44
-  const SHORT_HFR = "hfr_shorttoken"; // length 14
-  const SHORT_R8 = "r8_shorttoken"; // length 13
+  // Tokens that are above the minimum-body-length gate (patterns.ts requires 18+)
+  // but below the 44-char entropy backstop floor, so they only match via the
+  // explicit prefix entry. Pre-patch: missing from PLAINTEXT_SECRET_PREFIXES so
+  // these 21-30 char tokens slipped the entropy backstop (length < 44).
+  // Post-patch: explicit prefix entry + length gate detects them.
+  const SHORT_HF = "hf_" + "a".repeat(20); // 23 chars total — prefix + 20 body (> 18 gate, < 44 entropy floor)
+  const SHORT_HFR = "hfr_" + "a".repeat(20); // 24 chars total
+  const SHORT_R8 = "r8_" + "a".repeat(20); // 23 chars total
 
-  it("R0-a: looksLikeSecretValue returns true for short hf_ token (fails pre-patch: entropy backstop rejects length < 44)", () => {
-    // PRE-PATCH: returns false (entropy backstop requires length >= 44)
-    // POST-PATCH: returns true (explicit prefix match, length-independent)
+  it("R0-a: looksLikeSecretValue returns true for hf_ token below entropy backstop length floor (fails pre-patch: no prefix entry)", () => {
+    // PRE-PATCH: returns false (no hf_ prefix entry; entropy backstop requires length >= 44)
+    // POST-PATCH: returns true (explicit prefix match with 20-char body >= 18-char gate)
     expect(looksLikeSecretValue(SHORT_HF)).toBe(true);
   });
 
   it("R0-b: scanForSecrets flags hfr_ value in a non-secret-named field (fails pre-patch: no prefix match, below entropy floor)", () => {
     // PRE-PATCH: returns [] (no prefix match; field name "k" is not secret-named; short value below entropy floor)
-    // POST-PATCH: returns a non-empty findings array (hfr_ prefix is explicit, length-independent)
+    // POST-PATCH: returns a non-empty findings array (hfr_ prefix is explicit, length-gated)
     const findings = scanForSecrets({ k: SHORT_HFR });
     expect(findings.length).toBeGreaterThan(0);
   });
@@ -268,12 +270,22 @@ describe("R0: explicit prefix entries — hf_/hfr_/r8_ (vocabulary unification)"
     // up to the first character-class [ or quantifier { or end-of-pattern.
     // Then assert it's in PLAINTEXT_SECRET_PREFIXES unless explicitly exempted.
     //
-    // Explicit exemptions (not true provider-prefix patterns):
-    //   "eyJ"   — JWT is structurally identified by the base64 header, not a fixed prefix
-    //   telegram (\d{8,}:...) — numeric prefix, no \b match on a letter
-    //   apple   — [a-z]{4}-[a-z]{4}-..., character-class start, no fixed prefix
-    // These patterns do NOT start with a fixed alphanumeric provider prefix.
-    const EXEMPT_PATTERN_NAMES = new Set(["jwt-token", "telegram-bot-token", "apple-app-password"]);
+    // Explicit exemptions (not a single fixed provider-prefix — the regex uses a
+    // character class or non-alphanumeric anchor rather than a plain literal prefix):
+    //   "eyJ"   — JWT: base64 header anchor, body-shaped, no fixed 4-char prefix
+    //   telegram — \d{8,}: pattern; numeric prefix, no \b match on a letter
+    //   apple   — [a-z]{4}-[a-z]{4}-...; character-class start, no fixed prefix
+    //   slack-legacy-token — xox[abprs]-: character class after "xox"; keystone has xoxb-/xoxp-.
+    //   google-refresh-token — 1//0: prefix contains "/" which is a NON_CREDENTIAL_DELIMITER
+    //     char; looksLikeSecretValue always returns false for these (delimiter gate rejects
+    //     them before the prefix scan hits). Not possible to add to the keystone value heuristic.
+    const EXEMPT_PATTERN_NAMES = new Set([
+      "jwt-token",
+      "telegram-bot-token",
+      "apple-app-password",
+      "slack-legacy-token", // xox[abprs]- uses char-class; keystone has xoxb-/xoxp-
+      "google-refresh-token", // 1//0 prefix contains "/" delimiter; blocked by delimiter gate
+    ]);
 
     const keystonePrefixes = PLAINTEXT_SECRET_PREFIXES;
     const patterns = getDefaultRedactPatterns();
