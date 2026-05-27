@@ -112,12 +112,23 @@ export function startKeepaliveTicker(state: McpClientManagerState, deps: McpClie
  * undefined (test-only call sites that don't test the failure path) the
  * failure is a silent no-op.
  *
+ * Deadlock-free proactive refresh (CR-01):
+ * The near-expiry check and `await dedupedRefresh(...)` run inside
+ * `primary.add(refreshAndPing)` but the deduper's internal critical section
+ * uses a DEDICATED per-tick cc-1 queue (not the primary queue) so there is no
+ * nested `primary.add` inside a running `primary.add`. This preserves the
+ * single-queue atomicity contract for the dedup map check+set while
+ * eliminating the deadlock. The dedup guarantee is provided by `inflightRefreshes`
+ * (shared across proactive + 401 paths); the per-tick queue merely prevents
+ * two concurrent ticks from double-refreshing via the same accessToken key.
+ *
  * @param deduper - TEST SEAM (D-TS-01, Option A). When provided (tests), the
  *   proactive-refresh path uses the injected deduper's dedupedRefresh as the spy.
  *   When omitted (all production call sites — startKeepaliveTicker stays 4-arg),
- *   the deduper is reconstructed in-place from state.inflightRefreshes + state.callQueues
- *   (D-02: behavior identical to before this param was added). Do NOT thread this
- *   param through startKeepaliveTicker.
+ *   the deduper is reconstructed in-place from state.inflightRefreshes + a fresh
+ *   per-tick cc-1 queue (D-02-revised: uses a dedicated queue, not primary, to
+ *   prevent the concurrency-1 deadlock; inflightRefreshes still coalesces with the
+ *   401 path). Do NOT thread this param through startKeepaliveTicker.
  */
 export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: McpClientManagerDeps, serverName: string, onFailure?: (serverName: string) => void, deduper?: RefreshDeduper): void {
   const primary = state.callQueues.get(serverName);
@@ -135,72 +146,119 @@ export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: Mc
   // keepalive_failed reconnect.
   const capturedGeneration = conn.generation;
 
+  // WR-02: obtain the token store ONCE per tick at the top level (before doPing),
+  // not inside the queue body — createTokenStore() is a singleton factory; calling it
+  // per queue-execution would invoke per-tick ensureContainedDir syscalls and violate
+  // the singleton contract. The result is closed over by doPing and doProactiveRefresh.
+  const serverConfig = state.serverConfigs.get(serverName);
+  const oauthDeps = deps.oauthDeps;
+  const tokenStore =
+    serverConfig?.auth === "oauth" && oauthDeps !== undefined
+      ? oauthDeps.createTokenStore()
+      : undefined;
+
+  /**
+   * R6 #2 — Proactive pre-expiry OAuth token refresh (CR-01 deadlock-free).
+   *
+   * MUST run inside the primary queue slot (or the keepalive queue slot) but
+   * the deduper's internal critical-section queue MUST NOT be the same as the
+   * primary queue — that would nest `primary.add(criticalSection)` inside a
+   * running `primary.add(doPing)` body → deadlock on concurrency-1.
+   *
+   * Fix: the deduper receives a fresh per-tick cc-1 queue (not primary).
+   * The dedup guarantee is unchanged — `inflightRefreshes` (shared map on state)
+   * still coalesces concurrent proactive + 401 refreshes for the same access
+   * token. The cc-1 queue merely serializes the has()/get()/set() critical
+   * section; it does not need to be the same object as primary to preserve
+   * the dedup invariant.
+   *
+   * Failure degrades safely (WARN + continue to ping) — never throws.
+   */
+  const doProactiveRefreshIfNeeded = async (): Promise<void> => {
+    if (tokenStore === undefined) return;
+
+    const stored = await tokenStore.tokens(serverName);
+    // WR-03: tokens() always sets expires_in; the !== undefined guard is technically
+    // dead code but kept for TypeScript narrowing (SDK type is number | undefined).
+    if (
+      stored === undefined ||
+      stored.refresh_token === undefined ||
+      stored.expires_in === undefined ||
+      stored.expires_in > PRE_EXPIRY_BUFFER_SEC
+    ) {
+      return;
+    }
+
+    // Parallel-load discovery + clientInfo — both are needed for the refresh.
+    const [discovery, clientInfo] = await Promise.all([
+      tokenStore.discoveryState(serverName),
+      tokenStore.clientInformation(serverName),
+    ]);
+    if (discovery === undefined || clientInfo === undefined) return;
+
+    // D-TS-01: injected deduper (tests) ?? in-place reconstruction (production, D-02-revised).
+    // CR-01 key: the production deduper uses a fresh per-tick cc-1 queue (NOT primary).
+    // inflightRefreshes is still shared so proactive + 401 refreshes coalesce on the
+    // same map — the dedup guarantee is preserved regardless of the queue object used
+    // for the map check+set critical section.
+    const tickQueue = new PQueue({ concurrency: 1 });
+    const activeDeduper = deduper ?? createRefreshDeduper({
+      inflightRefreshes: state.inflightRefreshes,
+      queue: tickQueue as unknown as Parameters<typeof createRefreshDeduper>[0]["queue"],
+      tokenStore,
+      logger: deps.logger,
+    });
+
+    // WR-01: Forward addClientAuthentication from the per-server oauth config
+    // (stripeAccount → Stripe-Account header), mirroring what the on-401 path
+    // (deduped-fetch.ts) already does so connected-account refreshes carry
+    // the required header on the proactive path too.
+    const stripeAccount = serverConfig?.oauth?.stripeAccount;
+    const addClientAuthentication =
+      stripeAccount !== undefined
+        ? (headers: Headers): void => {
+            // SECURITY: the account id is a non-secret connected-account label;
+            // safe as a header. Never logged.
+            headers.set("Stripe-Account", stripeAccount);
+          }
+        : undefined;
+
+    try {
+      await activeDeduper.dedupedRefresh({
+        serverName,
+        authServerUrl: discovery.authorizationServerUrl,
+        accessToken: stored.access_token,
+        refreshToken: stored.refresh_token,
+        ...(discovery.authorizationServerMetadata !== undefined
+          ? { metadata: discovery.authorizationServerMetadata }
+          : {}),
+        clientInformation: clientInfo,
+        ...(addClientAuthentication !== undefined ? { addClientAuthentication } : {}),
+      });
+    } catch (err) {
+      deps.logger.warn(
+        {
+          serverName,
+          err: err instanceof Error ? err : new Error(String(err)),
+          hint: "Proactive token refresh failed; next tool call will handle via 401 path",
+          errorKind: "auth" as const,
+        },
+        "MCP keepalive: proactive OAuth refresh failed",
+      );
+      // Do not rethrow — keepalive must not crash on a refresh failure (T-04-02-01)
+    }
+  };
+
   const doPing = async (): Promise<void> => {
     const current = state.connections.get(serverName);
     if (!current || current.status !== "connected" || current.generation !== capturedGeneration) {
       return;
     }
 
-    // R6 #2 — Proactive pre-expiry OAuth token refresh.
-    // Only runs when the server config declares auth:"oauth" AND oauthDeps is present.
-    // If the token's remaining lifetime (expires_in seconds) is within PRE_EXPIRY_BUFFER_SEC,
-    // call dedupedRefresh before the ping so the connection never sits with an expired token.
-    // Failure degrades safely (logs WARN + continues to ping) — never crashes the tick.
-    const serverConfig = state.serverConfigs.get(serverName);
-    if (serverConfig?.auth === "oauth" && deps.oauthDeps !== undefined) {
-      const tokenStore = deps.oauthDeps.createTokenStore();
-      const stored = await tokenStore.tokens(serverName);
-      if (stored !== undefined && stored.refresh_token !== undefined && stored.expires_in !== undefined && stored.expires_in <= PRE_EXPIRY_BUFFER_SEC) {
-        // Parallel-load discovery + clientInfo — both are needed for the refresh.
-        const [discovery, clientInfo] = await Promise.all([
-          tokenStore.discoveryState(serverName),
-          tokenStore.clientInformation(serverName),
-        ]);
-        if (discovery !== undefined && clientInfo !== undefined) {
-          // D-TS-01: injected deduper (tests) ?? in-place reconstruction (production default, D-02).
-          // The in-place build threads state.inflightRefreshes so proactive + 401 refreshes
-          // coalesce on the same shared-future map (Pitfall 2). All real call sites omit the
-          // param, so production always takes the createRefreshDeduper branch — behavior unchanged.
-          const queue = state.callQueues.get(serverName);
-          if (queue !== undefined) {
-            // Cast PQueue to the structural CriticalSectionQueue interface required by
-            // createRefreshDeduper — PQueue satisfies it at runtime but TypeScript's
-            // stricter inference on generic return types (Promise<T | Promise<T>>) prevents
-            // the assignability check from passing without the explicit cast.
-            const criticalQueue = queue as unknown as Parameters<typeof createRefreshDeduper>[0]["queue"];
-            const activeDeduper = deduper ?? createRefreshDeduper({
-              inflightRefreshes: state.inflightRefreshes,
-              queue: criticalQueue,
-              tokenStore,
-              logger: deps.logger,
-            });
-            try {
-              await activeDeduper.dedupedRefresh({
-                serverName,
-                authServerUrl: discovery.authorizationServerUrl,
-                accessToken: stored.access_token,
-                refreshToken: stored.refresh_token,
-                ...(discovery.authorizationServerMetadata !== undefined
-                  ? { metadata: discovery.authorizationServerMetadata }
-                  : {}),
-                clientInformation: clientInfo,
-              });
-            } catch (err) {
-              deps.logger.warn(
-                {
-                  serverName,
-                  err: err instanceof Error ? err : new Error(String(err)),
-                  hint: "Proactive token refresh failed; next tool call will handle via 401 path",
-                  errorKind: "auth" as const,
-                },
-                "MCP keepalive: proactive OAuth refresh failed",
-              );
-              // Do not rethrow — keepalive must not crash on a refresh failure (T-04-02-01)
-            }
-          }
-        }
-      }
-    }
+    // R6 #2 — Proactive refresh runs BEFORE the ping (still inside the same
+    // primary.add slot). The deduper uses a per-tick cc-1 queue (not primary)
+    // so there is no nested primary.add → no deadlock (CR-01).
+    await doProactiveRefreshIfNeeded();
 
     try {
       await current.client.ping();
