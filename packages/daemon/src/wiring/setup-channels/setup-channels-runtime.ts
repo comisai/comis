@@ -195,13 +195,11 @@ export async function buildAndStartChannelManager(
   // coordinatorFactory can close over it (UX-01 markers from the default agent activity.theme).
   const activityMarkers = themeForName(agents[defaultAgentId]?.activity?.theme ?? "default").markers;
   const activityRenderers = buildActivityRenderers(adaptersByType, channelPlugins, channelsLogger, { timer: deps.timers, clock: deps.clock, signCallbackData: deps.signCallbackData, mintApprovalLink: deps.mintApprovalLink, markers: activityMarkers });
-  // WIRE-06 seam: swap a mapped channelType factory for the injected spy (inert in production).
-  if (deps.activityRendererFactory) {
-    for (const channelType of [...activityRenderers.keys()]) {
-      const injected = deps.activityRendererFactory(channelType);
-      if (injected) activityRenderers.set(channelType, () => injected);
-    }
-  }
+  // WIRE-06 seam (WR-01): the SOLE renderer-injection point is the per-turn fallback in
+  // the coordinatorFactory below (`deps.activityRendererFactory?.(ctx.channelType)`) — it
+  // fires for any channelType the live map does not serve (the activation test's post-boot
+  // `echo`). No boot-time map-swap loop: it would only override an ALREADY-mapped configured
+  // adapter (untested, and activityRendererFactory is test-only / default-undefined).
 
   // WIRE-03+07+08: the per-turn coordinatorFactory the inbound pipeline gate
   // (execution-pipeline.ts:395) needs — over the renderers map + redacted ActivityStream +
