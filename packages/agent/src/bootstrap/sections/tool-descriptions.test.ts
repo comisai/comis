@@ -48,10 +48,10 @@ describe("TOOL_SUMMARIES", () => {
 // ---------------------------------------------------------------------------
 
 describe("TOOL_GUIDES", () => {
-  it("has entries for all 13 guided tools", () => {
+  it("has entries for all 14 guided tools", () => {
     const expected = [
       "agents_manage", "apply_patch", "channels_manage", "edit", "exec",
-      "gateway", "grep", "message", "pipeline", "providers_manage", "read",
+      "gateway", "grep", "mcp_manage", "message", "pipeline", "providers_manage", "read",
       "sessions_spawn", "write",
     ].sort();
     expect(Object.keys(TOOL_GUIDES).sort()).toEqual(expected);
