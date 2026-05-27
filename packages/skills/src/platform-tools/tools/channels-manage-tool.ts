@@ -13,7 +13,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { ApprovalGate } from "@comis/core";
-import { tryGetContext } from "@comis/core";
+import { tryGetContext, registerActivityLabelSpec } from "@comis/core";
 import {
   readStringParam,
   readBooleanParam,
@@ -21,6 +21,21 @@ import {
 } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
+
+// Activity label spec (LBL-01, §17.6). Descriptor name == emitted name.
+// Per-action overrides use the tool's REAL action enum.
+registerActivityLabelSpec("channels_manage", {
+  semanticPhase: "tool",
+  label: "managing channels",
+  actions: {
+    list: { label: "listing channels" },
+    get: { label: "reading channel config" },
+    enable: { label: "enabling channel" },
+    disable: { label: "disabling channel" },
+    restart: { label: "restarting channel" },
+    configure: { label: "configuring channel" },
+  },
+});
 
 // ---------------------------------------------------------------------------
 // Parameter schema

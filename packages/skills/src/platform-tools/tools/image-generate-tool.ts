@@ -11,8 +11,15 @@
  */
 
 import { Type } from "typebox";
+import { registerActivityLabelSpec } from "@comis/core";
 import { createRpcDispatchTool } from "../messaging-factory.js";
 import type { RpcCall } from "./cron-tool.js";
+
+// Activity label spec (LBL-01, §17.6). Descriptor name == emitted name.
+registerActivityLabelSpec("image_generate", {
+  semanticPhase: "media",
+  label: "generating image",
+});
 
 const ImageGenerateToolParams = Type.Object({
   prompt: Type.String({

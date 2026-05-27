@@ -13,9 +13,23 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { ApprovalGate } from "@comis/core";
+import { registerActivityLabelSpec } from "@comis/core";
 import { readStringParam, throwToolError } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
+
+// Activity label spec (LBL-01, §17.6). Descriptor name == emitted name.
+// Per-action overrides use the tool's REAL action enum.
+registerActivityLabelSpec("tokens_manage", {
+  semanticPhase: "tool",
+  label: "managing API tokens",
+  actions: {
+    list: { label: "listing API tokens" },
+    create: { label: "creating API token" },
+    revoke: { label: "revoking API token" },
+    rotate: { label: "rotating API token" },
+  },
+});
 
 // ---------------------------------------------------------------------------
 // Parameter schema

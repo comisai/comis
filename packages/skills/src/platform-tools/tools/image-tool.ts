@@ -11,8 +11,16 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import { registerActivityLabelSpec } from "@comis/core";
 import { jsonResult, readStringParam } from "../tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";
+
+// Activity label spec (LBL-01, §17.6). Keyed on the EMITTED tool name
+// `image_analyze` (NOT the `image` descriptor name).
+registerActivityLabelSpec("image_analyze", {
+  semanticPhase: "media",
+  label: "analyzing image",
+});
 
 // ── Parameter Schema ────────────────────────────────────────────────
 
