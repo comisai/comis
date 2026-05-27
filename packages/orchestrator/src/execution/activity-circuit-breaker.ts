@@ -116,6 +116,16 @@ type BreakerPhase = "closed" | "open" | "halfOpen";
 
 interface BreakerState {
   phase: BreakerPhase;
+  /**
+   * The ORIGINAL composite-key components, carried verbatim so `getTripped()`
+   * returns the exact `agentId`/`channelKey` with no string round-trip. The Map
+   * key string (`${agentId}::${channelKey}`) is lossy when either component
+   * contains `::` (agent/channel ids are unvalidated free-form strings —
+   * config schema: `z.record(z.string().min(1), …)`), so the snapshot reads
+   * these fields rather than re-splitting the key (WR-04).
+   */
+  agentId: string;
+  channelKey: string;
   /** Which mode opened the breaker; only meaningful while `phase !== "closed"`. */
   reason: BreakerReason;
   /** Consecutive `permission` failures since the last reset/success. */
@@ -150,9 +160,11 @@ function classify(e: ActivityRenderError): Classification {
   }
 }
 
-function freshState(): BreakerState {
+function freshState(key: BreakerKey): BreakerState {
   return {
     phase: "closed",
+    agentId: key.agentId,
+    channelKey: key.channelKey,
     reason: "transient",
     permissionFailures: 0,
     transientFailures: 0,
@@ -179,10 +191,11 @@ export function createActivityCircuitBreaker(
     return `${key.agentId}::${key.channelKey}`;
   }
 
-  function getOrCreate(id: string): BreakerState {
+  function getOrCreate(key: BreakerKey): BreakerState {
+    const id = keyOf(key);
     let s = states.get(id);
     if (s === undefined) {
-      s = freshState();
+      s = freshState(key);
       states.set(id, s);
     }
     return s;
@@ -201,7 +214,7 @@ export function createActivityCircuitBreaker(
 
   return {
     record(key: BreakerKey, result: Result<void, ActivityRenderError>): RecordOutcome {
-      const s = getOrCreate(keyOf(key));
+      const s = getOrCreate(key);
 
       // A successful apply resets both consecutive counters and closes a
       // transient half-open probe. A sticky permission trip is intentionally
@@ -268,18 +281,21 @@ export function createActivityCircuitBreaker(
     },
 
     reset(key: BreakerKey): void {
-      states.set(keyOf(key), freshState());
+      states.set(keyOf(key), freshState(key));
     },
 
     getTripped(): TrippedEntry[] {
       const out: TrippedEntry[] = [];
-      for (const [id, s] of states) {
+      for (const s of states.values()) {
         maybeHalfOpen(s);
         if (s.phase !== "open") continue;
-        const sep = id.indexOf("::");
+        // Return the ORIGINAL components verbatim — no `::` re-split, so an
+        // agentId/channelKey that itself contains `::` is reported exactly
+        // (WR-04). The lossy string-key parse + `slice(sep + 2)` magic offset
+        // are gone.
         out.push({
-          agentId: id.slice(0, sep),
-          channelKey: id.slice(sep + 2),
+          agentId: s.agentId,
+          channelKey: s.channelKey,
           reason: s.reason,
         });
       }
