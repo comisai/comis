@@ -120,11 +120,13 @@ const READ_ONLY_PIPE_TARGETS = new Set(["curl", "wget"]);
  * Conservative: any flag that sends data to a remote server.
  *
  * Detection strategy:
- *   1. Short-flag cluster containing an upload letter (d/F/T), e.g. `-sd`, `-fsSd`, `-kT`, `-sF`.
- *      curl bundles short flags freely, so the upload letter can sit anywhere in the cluster
- *      (e.g. `-fsSd` = `-f -s -S -d`). Matched as: `(?:^|\s)-[A-Za-z]*[dFT]` at a
- *      word boundary, to avoid matching filenames that happen to start with `-`.
- *      NOT matched: `-o` / `-O` / `-s` / `-k` / `-L` / `-f` / `-G` (all read-only/benign).
+ *   1. Short-flag cluster containing an upload letter (d/F/T), caught ANYWHERE in the cluster —
+ *      e.g. `-sd`, `-fsSd`, `-kT`, `-sF`, and attached-value forms `-Fs=@-`/`-ds=@-`/`-Ts=@-`.
+ *      curl lets the first value-taking letter consume the cluster remainder as its argument
+ *      (`-Fs=@-` ≡ `-F s=@-`, a multipart upload of stdin — verified vs curl 8.7.1), so there is
+ *      NO trailing `\b`: `(?:^|\s)-[A-Za-z]*[dFT]` matches the letter mid-cluster; the leading
+ *      `(?:^|\s)-` still avoids `-`-prefixed filenames. Case-sensitive (lowercase d, uppercase
+ *      F/T). NOT matched: `-o`/`-O`/`-s`/`-S`/`-k`/`-L`/`-f`/`-G`/`-I`/`-D` (read-only/benign).
  *   2. Long-form upload flags: `--upload-file`, `--data*`, `--form`, `--post-data`,
  *      `--post-file`, `--body-data`, `--body-file` (wget-specific).
  *   3. `-X POST`/`-X PUT` with optional space (covers both `-X POST` and `-XPOST`).
@@ -135,9 +137,11 @@ const READ_ONLY_PIPE_TARGETS = new Set(["curl", "wget"]);
  * The egress allowlist (exec-security-allowlist.ts) is the backstop for that vector.
  */
 const CURL_UPLOAD_FLAGS =
-  // 1. Bundled short-flag cluster with upload letter d (data), F (form), or T (upload-file).
-  //    Case-sensitive: uppercase D is --dump-header, not data.
-  /(?:^|\s)-[A-Za-z]*[dFT]\b|(?:^|\s)(?:--upload-file|--data(?:-raw|-binary|-urlencode)?|--form|--post-data|--post-file|--body-(?:data|file))\b|(?:^|\s)-X\s*(?:POST|PUT)\b|--method=(?:POST|PUT)\b/;
+  // 1. Bundled short-flag cluster with upload letter d (data), F (form), or T (upload-file),
+  //    caught ANYWHERE in the cluster — including before an attached value (`-Fs=@-`). No trailing
+  //    `\b`: requiring the letter at cluster end missed attached-value forms (verified vs curl 8.7.1).
+  //    Case-sensitive: uppercase D is --dump-header, not data; uppercase O/I/L/G stay read-only.
+  /(?:^|\s)-[A-Za-z]*[dFT]|(?:^|\s)(?:--upload-file|--data(?:-raw|-binary|-urlencode)?|--form|--post-data|--post-file|--body-(?:data|file))\b|(?:^|\s)-X\s*(?:POST|PUT)\b|--method=(?:POST|PUT)\b/;
 
 /**
  * Detect pipes to dangerous targets (shell interpreters, network tools).
