@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: MCP Hardening II
-status: executing
+status: verifying
 stopped_at: v1.2 roadmap created
-last_updated: "2026-05-27T17:53:14.135Z"
+last_updated: "2026-05-27T18:02:13.059Z"
 last_activity: 2026-05-27
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 8
-  completed_plans: 7
-  percent: 88
+  completed_plans: 8
+  percent: 100
 ---
 
 # Project State: Comis
@@ -30,7 +30,7 @@ progress:
 
 Phase: 2 (EGRESS — Secret egress firewall + secure credential home) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-05-27
 
 ### Phases (v1.2 — restart at 1)
@@ -109,7 +109,7 @@ Carried from research as load-bearing constraints (the verifier and planner rely
 
 ## Session Continuity
 
-Last session: 2026-05-27T17:53:14.119Z
+Last session: 2026-05-27T18:02:13.055Z
 Stopped at: v1.2 roadmap created
 Resume file: None
 
