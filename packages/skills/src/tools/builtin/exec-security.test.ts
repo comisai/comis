@@ -152,6 +152,40 @@ describe("sanitizeCommandInput", () => {
     expect(sanitizeCommandInput('result=`echo "multi\nline"`')).toBeNull();
   });
 
+  // ---------- R7 #4 CR-01: boundary-lock — trailing backslash before newline (line continuation) ----------
+  // These tests FAIL on pre-fix code (tracker.escaped wrongly treated as "in quote").
+  // After fix (const inQuote = tracker.state !== "NORMAL") they must pass.
+  it("boundary-lock: trailing backslash before newline still blocked — line continuation is top-level (CR-01)", () => {
+    // `echo hello \<NL>echo world` — bash line continuation at NORMAL state.
+    // Pre-fix: tracker.escaped=true makes inQuote=true, newline leaks (returns null).
+    // Post-fix: only tracker.state !== "NORMAL" counts; escaped flag irrelevant.
+    const result = sanitizeCommandInput("echo hello \\\necho world");
+    expect(result).not.toBeNull();
+    expect(result!).toMatch(/U\+000A/);
+  });
+
+  it("boundary-lock: backslash-newline at command start still blocked — line continuation (CR-01)", () => {
+    // `\<NL>touch MARK` — same line-continuation bypass
+    const result = sanitizeCommandInput("\\\ntrue");
+    expect(result).not.toBeNull();
+    expect(result!).toMatch(/U\+000A/);
+  });
+
+  it("boundary-lock: backslash-newline after rm still blocked — injection via line continuation (CR-01)", () => {
+    const result = sanitizeCommandInput("true \\\nrm -rf /");
+    expect(result).not.toBeNull();
+    expect(result!).toMatch(/U\+000A/);
+  });
+
+  // ---------- R7 #4 CR-01: quotes still accept newlines post-fix ----------
+  it("still accepts newline inside single-quoted string after CR-01 fix (R7 #4)", () => {
+    expect(sanitizeCommandInput("python3 -c 'line1\nline2'")).toBeNull();
+  });
+
+  it("still accepts newline inside double-quoted string after CR-01 fix (R7 #4)", () => {
+    expect(sanitizeCommandInput('echo "line1\nline2"')).toBeNull();
+  });
+
   // Error message format
   it("error contains U+ followed by 4+ uppercase hex digits", () => {
     const result = sanitizeCommandInput("rm\u200B-rf /");
