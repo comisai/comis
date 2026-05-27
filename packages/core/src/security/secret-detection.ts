@@ -55,12 +55,21 @@ export const PLAINTEXT_SECRET_PREFIXES: readonly string[] = [
   "sk-", // OpenAI API key
   "xoxb-", // Slack bot token
   "xoxp-", // Slack user token
-  "AKIA", // AWS access key ID
+  "AKIA", // AWS access key ID (canonical prefix)
   "secret_", // Notion internal v1 (legacy)
   "ntn_", // Notion v2 (>= Sept 2024)
   "glpat-", // GitLab personal access token
   "sk_live_", // Stripe live secret key
   "sk_test_", // Stripe test secret key
+  // R0 additions — explicit length-independent entries (prerequisite for R1 + R4).
+  // These close the parity gap vs @comis/observability patterns.ts prefix-kind patterns.
+  "hf_", // HuggingFace access token (Higgsfield + HuggingFace Hub)
+  "hfr_", // HuggingFace OAuth refresh token
+  "r8_", // Replicate token (gap vs patterns.ts:143)
+  "gsk_", // Groq API key (gap vs patterns.ts groq-key)
+  "npm_", // npm automation/publish token (gap vs patterns.ts npm-token)
+  "AKID", // AWS access-key-ID alternative prefix (gap vs patterns.ts aws-access-key-id)
+  "LTAI", // Alibaba Cloud access key ID (gap vs patterns.ts alibaba-key)
 ];
 
 /** Shannon entropy in bits-per-character. Pure function. */

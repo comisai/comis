@@ -11,6 +11,10 @@
  * @module
  */
 import { describe, it, expect } from "vitest";
+// R0 parity guard: test-file cross-import of @comis/observability is allowed.
+// Production @comis/core must NOT import @comis/observability — forbidden edge.
+// This import lives in a test file only; devDependency in package.json.
+import { getDefaultRedactPatterns } from "@comis/observability";
 import {
   looksLikeSecretValue,
   isSecretFieldName,
@@ -256,11 +260,10 @@ describe("R0: explicit prefix entries — hf_/hfr_/r8_ (vocabulary unification)"
     expect(findings.length).toBeGreaterThan(0);
   });
 
-  it("R0-c: PLAINTEXT_SECRET_PREFIXES covers every prefix-kind pattern in observability patterns.ts (drift guard)", async () => {
-    // Test-file cross-import of @comis/observability is allowed (test file only).
-    // Production @comis/core MUST NOT import @comis/observability — forbidden edge.
-    const { getDefaultRedactPatterns } = await import("@comis/observability");
-    // PLAINTEXT_SECRET_PREFIXES is imported statically at the top of this test file.
+  it("R0-c: PLAINTEXT_SECRET_PREFIXES covers every prefix-kind pattern in observability patterns.ts (drift guard)", () => {
+    // getDefaultRedactPatterns is imported statically from @comis/observability at the top.
+    // PLAINTEXT_SECRET_PREFIXES is imported statically from ./secret-detection.js.
+    // Both are test-time imports only; this is NOT a production core → observability edge.
     const keystonePrefixes = PLAINTEXT_SECRET_PREFIXES;
     const patterns = getDefaultRedactPatterns();
     const prefixKindPatterns = patterns.filter((p) => p.kind === "prefix");
