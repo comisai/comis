@@ -26,6 +26,11 @@ import type { CommandQueue } from "./queue/command-queue.js";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { InteractiveCallbackRouter } from "./approval/index.js";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
+// WIRE-03: orchestrator imports ONLY the @comis/core activity port + ctx type
+// (never the observability impl — TURN-03 hexagonal boundary). The
+// ActivityTurnCoordinator is a local execution type.
+import type { ActivityStreamPort, TurnActivityContext } from "@comis/core";
+import type { ActivityTurnCoordinator } from "./execution/activity-turn-coordinator.js";
 import type { StreamingConfig } from "@comis/core";
 import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig } from "@comis/core";
 import { formatSessionKey, runWithContext, getMessageTraceId, systemNowMs } from "@comis/core";
@@ -182,6 +187,13 @@ export interface ChannelManagerDeps {
   >;
   /** Per-agent enforceFinalTag config lookup. */
   getEnforceFinalTag?: (agentId: string) => boolean | undefined;
+  /** WIRE-03: orchestrator-facing redacted activity stream port. Daemon injects
+   *  setupObservability's `activityStream`. Absent ⇒ activity pipe inert. */
+  activityStreamPort?: ActivityStreamPort;
+  /** WIRE-03: per-turn coordinator factory built at the daemon composition root
+   *  (setup-channels-runtime.ts). The pipeline calls it once both this and
+   *  `activityStreamPort` are present (execution-pipeline.ts:395). */
+  coordinatorFactory?: (ctx: TurnActivityContext) => ActivityTurnCoordinator;
   /**
    * REQUIRED. Inbound message processor — injected at composition root from
    * `@comis/orchestrator.processInboundMessage`. Lives on deps so the

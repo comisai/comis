@@ -22,6 +22,11 @@ import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent"
 // Relative path used because orchestrator cannot import its own published name.
 import type { InteractiveCallbackRouter } from "../approval/index.js";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
+// WIRE-03: orchestrator imports ONLY the @comis/core activity port + ctx type
+// (never the observability impl — TURN-03 hexagonal boundary). The
+// ActivityTurnCoordinator is a local execution type.
+import type { ActivityStreamPort, TurnActivityContext } from "@comis/core";
+import type { ActivityTurnCoordinator } from "../execution/activity-turn-coordinator.js";
 import type { StreamingConfig } from "@comis/core";
 import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig } from "@comis/core";
 import type { ComisLogger } from "@comis/core";
@@ -117,6 +122,10 @@ export interface InboundPipelineDeps {
   handleSlashCommand?: (text: string, sessionKey: SessionKey, agentId: string) => Promise<{ handled: boolean; response?: string; directives?: Record<string, unknown>; cleanedText?: string } | undefined>;
   /** Per-agent enforceFinalTag config lookup. Returns boolean or undefined if agent not found. */
   getEnforceFinalTag?: (agentId: string) => boolean | undefined;
+  /** WIRE-03: see ChannelManagerDeps. */
+  activityStreamPort?: ActivityStreamPort;
+  /** WIRE-03: see ChannelManagerDeps. */
+  coordinatorFactory?: (ctx: TurnActivityContext) => ActivityTurnCoordinator;
   /** Optional allowFrom sender filter lookup. Returns allowed sender IDs for a channel type. Empty array = allow all. */
   getAllowFrom?: (channelType: string) => string[];
   /** Optional duplicate-inbound detector. When present, the pipeline checks each
