@@ -81,6 +81,7 @@ function makeState(): McpClientManagerState {
     circuitBreakers: new Map(),
     idleEvictionTimers: new Map(),
     lastActivityMs: new Map<string, number>(),
+    inflightRefreshes: new Map(),
     options: makeOptions(),
   };
 }
