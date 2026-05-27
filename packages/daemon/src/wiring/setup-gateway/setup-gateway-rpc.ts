@@ -40,6 +40,16 @@ import {
   handleConfigChatCommand,
 } from "./setup-gateway-admin.js";
 
+/**
+ * WR-03 (§17.8 security sign-off): non-secret section allowlist for the
+ * `getConfig` RPC. Exactly the scalar/projected fields the safe default object
+ * emits — sections carrying credentials (`agents` auth/model profiles,
+ * `security.secrets`, `channels` tokens, `providers` keys, raw `gateway.tokens`)
+ * are intentionally absent and never returned verbatim.
+ */
+const NON_SECRET_SECTIONS = ["tenantId", "logLevel", "gateway"] as const;
+type NonSecretSection = (typeof NON_SECRET_SECTIONS)[number];
+
 // RPC Bridge (deferred dispatch wiring) ----------------------------------
 
 /** All services produced by the RPC bridge setup. */
@@ -416,16 +426,36 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
       return { stats: stats as unknown as Record<string, unknown> };
     },
     getConfig: async (params) => {
-      // Return sanitized config (no secrets)
-      const section = params?.section;
-      if (section && section in container.config) {
-        return { [section]: container.config[section as keyof typeof container.config] };
-      }
-      return {
+      // WR-03 (§17.8 sign-off): a non-secret section ALLOWLIST is enforced.
+      // The prior top-level-key passthrough returned ANY requested section
+      // verbatim — including `agents` (per-provider auth/model profiles) and
+      // `security.secrets` — a real secret-egress path. Only the
+      // exact fields the safe default object already emits are returnable, and
+      // each is projected the SAME way the default does (gateway → {enabled,
+      // host,port}, NOT the raw object, which carries bearer `tokens`). A
+      // non-allowlisted section falls through to the safe default object — no
+      // verbatim passthrough, no backward-compat escape hatch.
+      const safeDefault = {
         tenantId: container.config.tenantId,
         logLevel: container.config.logLevel,
         gateway: { enabled: gwConfig.enabled, host: gwConfig.host, port: gwConfig.port },
       };
+      // Closed allowlist — extend ONLY with sections proven to carry no secrets.
+      const section = params?.section;
+      if (section !== undefined && NON_SECRET_SECTIONS.includes(section as NonSecretSection)) {
+        // Project each allowlisted section exactly as the safe default does
+        // (closed union → exhaustive switch, no dynamic key indexing).
+        switch (section as NonSecretSection) {
+          case "tenantId":
+            return { tenantId: safeDefault.tenantId };
+          case "logLevel":
+            return { logLevel: safeDefault.logLevel };
+          case "gateway":
+            return { gateway: safeDefault.gateway };
+        }
+      }
+      // Non-allowlisted (incl. agents/security/channels/providers) → safe default.
+      return safeDefault;
     },
     getSessionHistory: async (params) => {
       const sk: SessionKey = {
