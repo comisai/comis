@@ -292,21 +292,20 @@ export async function buildAndStartChannelManager(
         return { ok: true as const, value: { buffer: result.value.buffer, mimeType: result.value.mimeType } };
       },
 
-      handleConfigCommand: deps.rpcCall ? async (args: string[], _channelType: string) => {
+      // WR-02: static refusals — channel-originated /config is never admin-trusted
+      // (admin is CLI/gateway-only). Body returns only string literals, so the old
+      // try/catch was dead and the old `deps.rpcCall ?` gate was misleading (rpcCall
+      // unused, yet its absence dropped /config to `undefined`). Always defined now.
+      handleConfigCommand: async (args: string[], _channelType: string) => {
         const subcommand = args[0] ?? "show";
-        try {
-          if (subcommand === "show" || subcommand === "history") {
-            return "Config read requires admin trust. Use the CLI or gateway client with admin scope.";
-          }
-          if (subcommand === "set") {
-            // Channel-originated messages always have user trust
-            return "Config modification requires admin trust. Use the CLI or gateway client with admin scope.";
-          }
-          return `Unknown config subcommand: ${subcommand}. Available: show, set, history`;
-        } catch (err) {
-          return `Config command failed: ${err instanceof Error ? err.message : String(err)}`;
+        if (subcommand === "show" || subcommand === "history") {
+          return "Config read requires admin trust. Use the CLI or gateway client with admin scope.";
         }
-      } : undefined,
+        if (subcommand === "set") {
+          return "Config modification requires admin trust. Use the CLI or gateway client with admin scope.";
+        }
+        return `Unknown config subcommand: ${subcommand}. Available: show, set, history`;
+      },
       onMessageReceived: deps.onMessageReceived,
       onMessageProcessed: deps.onMessageProcessed,
       // Graph report button callback intercept: deliver full report as .md file attachment
