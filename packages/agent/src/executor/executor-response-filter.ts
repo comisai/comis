@@ -364,8 +364,13 @@ function summarizeToolCall(call: any): string {
  * A framing-prose block that happens to contain a URL must NOT be surfaced.
  */
 const URL_RE = /https?:\/\/[^\s)>]+/;
-// Short codes: uppercase/lowercase alphanum, 6-20 chars (OAuth verification codes etc.)
-const SHORT_CODE_RE = /\b[A-Z0-9]{6,20}\b|\b[a-z0-9]{6,20}\b/;
+// Short codes: alphanumeric token, 6-20 chars, MUST contain at least one digit.
+// Requiring a digit prevents plain English words (e.g. "weather", "analysis")
+// from matching — one-time codes, OTP tokens, and device pairing codes almost
+// always contain at least one digit (e.g. "493021", "A1B2C3", "WDJB4-MJHT").
+// The lookahead (?=\S*\d) enforces the digit requirement; the character class
+// [A-Za-z0-9] then matches the full token.
+const SHORT_CODE_RE = /\b(?=[A-Za-z0-9]{6,20}\b)(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{6,20}\b/;
 // Framing prose patterns — if text matches, the block is NEVER surfaced regardless
 // of URL/code content. This guard fires first, before URL_RE or SHORT_CODE_RE.
 const FRAMING_PROSE_RE = /^(I('m| will| am going to)[\s\S]|Let me|Step \d+\/\d+:)/i;

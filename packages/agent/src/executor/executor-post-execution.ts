@@ -388,10 +388,16 @@ export function buildSessionEndMetadata(args: {
 function modelAcknowledgedFailure(response: string, failedTools: string[]): boolean {
   if (!response || failedTools.length === 0) return false;
   const lower = response.toLowerCase();
-  return failedTools.some(t =>
-    lower.includes(t.toLowerCase()) &&
-    (lower.includes("fail") || lower.includes("error") || lower.includes("unable") || lower.includes("could not"))
-  );
+  return failedTools.some(t => {
+    const name = t.toLowerCase();
+    // Escape regex metacharacters in the tool name before inserting into a RegExp.
+    // Word-boundary match (\b) prevents short tool names like "write" from matching
+    // substrings in unrelated words like "writer" or "writing" (WR-02).
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const nameRe = new RegExp(`\\b${escaped}\\b`);
+    if (!nameRe.test(lower)) return false;
+    return /\b(fail(ed|ure|s)?|error|unable|could\s+not|couldn'?t)\b/.test(lower);
+  });
 }
 
 // ---------------------------------------------------------------------------

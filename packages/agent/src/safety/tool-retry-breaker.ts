@@ -271,7 +271,8 @@ function buildSandboxRedirectMessage(errorText: string | undefined): string | un
  * @param isToolLevel - Whether this is a tool-level (total) or signature-level (consecutive) block
  *
  * Exported as a test seam for R10b — the recordResult accumulation path is
- * unreachable for parameter-validation tags (early-return at lines 402-404),
+ * unreachable for parameter-validation tags (early-return on
+ * `PARAMETER_VALIDATION_TAGS.has(errorTag)` in `recordResult`),
  * so tests call this function directly.
  */
 export function buildBlockReason(
