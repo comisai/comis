@@ -41,6 +41,7 @@ export {
   type ActivityTurnCounters,
   type ActivityProjection,
   type ActivityBreakerGate,
+  type ActivityKillSwitch,
   type CoordinatorFactory,
 } from "./execution/activity-turn-coordinator.js";
 
