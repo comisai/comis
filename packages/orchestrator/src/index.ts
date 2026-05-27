@@ -43,6 +43,24 @@ export {
   type CoordinatorFactory,
 } from "./execution/activity-turn-coordinator.js";
 
+// Auto-managed per-agent×channel circuit breaker (76-03; WIRE-08, §17.7).
+// Classifies on the ActivityRenderError.kind union: 3 consecutive `permission`
+// errors trip STICKY (reset only on config reload), 5 consecutive
+// `internal`|`transient_network` errors trip with a clock-delta half-open probe
+// after 5 min. The daemon composition root will construct one instance and feed
+// `isTripped`/`record` into the coordinator + `getTripped()` into the /status
+// accessor — the live thread-through is the same documented composition-root
+// follow-on as the WIRE-07 kill switch (Phase-74 factory wiring; see 76-02).
+export {
+  createActivityCircuitBreaker,
+  type ActivityCircuitBreaker,
+  type ActivityCircuitBreakerOptions,
+  type BreakerKey,
+  type BreakerReason,
+  type RecordOutcome,
+  type TrippedEntry,
+} from "./execution/activity-circuit-breaker.js";
+
 // Channel manager lifecycle.
 // Exports: createChannelManager (factory), ChannelManager (interface),
 // ChannelManagerDeps (deps shape), ProcessInboundMessageFn (callback type alias).
