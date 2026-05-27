@@ -293,6 +293,39 @@ describe("createActivityCircuitBreaker — WIRE-08 dual-threshold per agent×cha
     });
   });
 
+  it("getTripped reports the exact agentId and channelKey when the agentId itself contains the separator", () => {
+    // Agent IDs are unvalidated free-form strings (config schema:
+    // z.record(z.string().min(1), …) — no charset restriction), so an id may
+    // contain the `::` composite-key separator. The internal Map key is
+    // `${agentId}::${channelKey}`; getTripped() must round-trip the ORIGINAL
+    // fields, not re-split the string on the first/any `::` (WR-04).
+    const cb = createActivityCircuitBreaker(testClock);
+    const COLON_KEY = { agentId: "tenant::a1", channelKey: "discord-chan" } as const;
+    for (let i = 0; i < 3; i++) cb.record(COLON_KEY, FAIL(PERMISSION));
+    expect(cb.isTripped(COLON_KEY)).toBe(true);
+
+    expect(cb.getTripped()).toContainEqual({
+      agentId: "tenant::a1",
+      channelKey: "discord-chan",
+      reason: "permission",
+    });
+  });
+
+  it("getTripped reports the exact channelKey when the channelKey itself contains the separator", () => {
+    // The channelKey is equally unrestricted; a `::` inside it must not bleed
+    // into the reported agentId either (WR-04).
+    const cb = createActivityCircuitBreaker(testClock);
+    const COLON_CHAN = { agentId: "agent-1", channelKey: "discord::guild::42" } as const;
+    for (let i = 0; i < 5; i++) cb.record(COLON_CHAN, FAIL(INTERNAL));
+    expect(cb.isTripped(COLON_CHAN)).toBe(true);
+
+    expect(cb.getTripped()).toContainEqual({
+      agentId: "agent-1",
+      channelKey: "discord::guild::42",
+      reason: "transient",
+    });
+  });
+
   // -------------------------------------------------------------------------
   // Custom thresholds
   // -------------------------------------------------------------------------
