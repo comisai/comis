@@ -31,6 +31,7 @@ import { LAYER_CIRCUIT_BREAKER_THRESHOLD, CHARS_PER_TOKEN_RATIO, DEFAULT_COMPACT
 import { computeTokenBudget } from "./token-budget.js";
 import { createThinkingBlockCleaner } from "./thinking-block-cleaner.js";
 import { createSignatureSurrogateGuard } from "./signature-surrogate-guard.js";
+import { createSignatureReplayScrubber } from "./signature-replay-scrubber.js";
 import { createReasoningTagStripper } from "./reasoning-tag-stripper.js";
 import { createHistoryWindowLayer } from "./history-window.js";
 import { createObservationMaskerLayer } from "./observation-masker.js";
@@ -291,6 +292,18 @@ export function createContextEngine(
     layers.push(thinkingCleaner);
   }
 
+  // Signature replay scrubber (R5 re-wire): strip signed thinking blocks
+  // from EVERY assistant message (latest included) before the next API call.
+  // Always-on (not gated by model.reasoning): Gemini's thoughtSignature on
+  // toolCall blocks requires this even for non-reasoning models.
+  // Must run AFTER thinkingCleaner and BEFORE signatureSurrogateGuard.
+  layers.push(createSignatureReplayScrubber({
+    logger: deps.logger,
+    onScrubbed: (stats) => {
+      callbackState.signatureReplayScrubber = stats;
+      deps.onSignatureReplayScrubbed?.(stats);
+    },
+  }));
 
   // Signature surrogate guard (Fix #3): scrub thinkingSignature from blocks
   // whose text contains unpaired UTF-16 surrogates so pi-ai's
