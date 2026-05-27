@@ -478,6 +478,159 @@ describe("mcp_manage tool", () => {
   });
 
   // -----------------------------------------------------------------------
+  // connect action -- headers coercion (R2)
+  // -----------------------------------------------------------------------
+
+  describe("connect action -- headers coercion (R2)", () => {
+    it("coerces JSON-string headers to object before rpcCall", async () => {
+      mockRpcCall.mockResolvedValue({ connected: true });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-h1", {
+          action: "connect",
+          server_name: "x",
+          transport: "http",
+          url: "https://example.com/mcp",
+          headers: '{"Authorization":"Bearer tok"}',
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("mcp.connect", expect.objectContaining({
+        headers: { Authorization: "Bearer tok" },
+      }));
+    });
+
+    it("passes through already-object headers unchanged", async () => {
+      mockRpcCall.mockResolvedValue({ connected: true });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-h2", {
+          action: "connect",
+          server_name: "x",
+          transport: "http",
+          url: "https://example.com/mcp",
+          headers: { Authorization: "Bearer tok" },
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("mcp.connect", expect.objectContaining({
+        headers: { Authorization: "Bearer tok" },
+      }));
+    });
+
+    it("passes through undefined headers", async () => {
+      mockRpcCall.mockResolvedValue({ connected: true });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-h3", {
+          action: "connect",
+          server_name: "x",
+          transport: "http",
+          url: "https://example.com/mcp",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("mcp.connect", expect.objectContaining({
+        headers: undefined,
+      }));
+    });
+
+    it("non-JSON string headers throws [invalid_value] with fix hint", async () => {
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-h4", {
+            action: "connect",
+            server_name: "x",
+            transport: "http",
+            url: "https://example.com/mcp",
+            headers: "not-valid-json",
+          } as never),
+        ),
+      ).rejects.toThrow(/\[invalid_value\]/);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-h4b", {
+            action: "connect",
+            server_name: "x",
+            transport: "http",
+            url: "https://example.com/mcp",
+            headers: "not-valid-json",
+          } as never),
+        ),
+      ).rejects.toThrow(/Pass headers as an object/);
+
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
+    it("JSON null string headers throws [invalid_value]", async () => {
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-h5", {
+            action: "connect",
+            server_name: "x",
+            transport: "http",
+            url: "https://example.com/mcp",
+            headers: "null",
+          } as never),
+        ),
+      ).rejects.toThrow(/\[invalid_value\]/);
+
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
+    it("JSON array string headers throws [invalid_value]", async () => {
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-h6", {
+            action: "connect",
+            server_name: "x",
+            transport: "http",
+            url: "https://example.com/mcp",
+            headers: '["arr"]',
+          } as never),
+        ),
+      ).rejects.toThrow(/\[invalid_value\]/);
+
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // reconnect action -- headers coercion (R2)
+  // -----------------------------------------------------------------------
+
+  describe("reconnect action -- headers coercion (R2)", () => {
+    it("coerces JSON-string headers to object before rpcCall", async () => {
+      mockRpcCall.mockResolvedValue({ reconnected: true });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-rh1", {
+          action: "reconnect",
+          server_name: "x",
+          transport: "http",
+          url: "https://example.com/mcp",
+          headers: '{"Authorization":"Bearer tok"}',
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith("mcp.reconnect", expect.objectContaining({
+        headers: { Authorization: "Bearer tok" },
+      }));
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // error handling
   // -----------------------------------------------------------------------
 

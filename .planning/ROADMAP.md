@@ -131,7 +131,15 @@ Plans:
   - **Keep `pi-executor.test.ts:4892` and `:4966` green**: R9 must not re-introduce framing/step-prose noise into `result.response`. The carve-out predicate surfaces only URL/short-code-bearing pre-tool text; test it against the framing-prose-with-no-URL negative control.
   - **R2 is the keystone**: its `coerceArgs`-style coercion + self-correcting error collapses most of the R10 cascade (build R2 first, then close the R10 guidance/misdiagnosis gap). R2 mirrors the pattern already in `providers-manage-tool.ts`.
   - **R3 notice gating**: append the failure notice only when failed tools are non-empty AND the model did not already acknowledge the failure, to avoid noise on recovered turns.
-**Plans**: TBD
+**Plans**: 4 plans
+
+**Wave 1** *(R2, R3, R9 — independent, run in parallel)*
+- [ ] 03-01-PLAN.md — R2: coerceHeaders JSON-string coercion in mcp-manage connect/reconnect + [invalid_value] self-correcting error
+- [ ] 03-02-PLAN.md — R3: completed_with_tool_errors endReason + failure notice for silent tool failures
+- [ ] 03-03-PLAN.md — R9: surfaceDiscardedPreToolUrl URL/short-code safety-net (executor-response-filter + output-escalation call site)
+
+**Wave 2** *(blocked on 03-01 R2)*
+- [ ] 03-04-PLAN.md — R10: NEVER gateway.patch for MCP installs (guide prohibition) + validation-tag repair block reason (isParameterValidationTag)
 
 ---
 
@@ -170,10 +178,10 @@ Plans:
 |-------|-----------|----------------|--------|-----------|
 | 1. REGR — Critical regressions | v1.2 | 3/3 | Complete    | 2026-05-27 |
 | 2. EGRESS — Secret egress firewall + secure credential home | v1.2 | 5/5 | Complete   | 2026-05-27 |
-| 3. CONNECT — MCP connect correctness + delivery UX | v1.2 | 0/? | Not started | - |
+| 3. CONNECT — MCP connect correctness + delivery UX | v1.2 | 0/4 | Planned     | - |
 | 4. OAUTH — OAuth refresh robustness | v1.2 | 0/? | Not started | - |
 | 5. SANDBOX — Sandbox ergonomics | v1.2 | 0/? | Not started | - |
 
 ---
 
-*Last updated: 2026-05-27 — v1.2 roadmap created (5 phases, 11 requirements R0–R10, coarse granularity). v1.1 collapsed to archive.*
+*Last updated: 2026-05-27 — v1.2 roadmap created (5 phases, 11 requirements R0–R10, coarse granularity). v1.1 collapsed to archive. Phase 3 planned (4 plans, 2 waves).*
