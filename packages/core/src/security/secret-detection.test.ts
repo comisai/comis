@@ -261,27 +261,40 @@ describe("R0: explicit prefix entries — hf_/hfr_/r8_ (vocabulary unification)"
   });
 
   it("R0-c: PLAINTEXT_SECRET_PREFIXES covers every prefix-kind pattern in observability patterns.ts (drift guard)", () => {
-    // getDefaultRedactPatterns is imported statically from @comis/observability at the top.
-    // PLAINTEXT_SECRET_PREFIXES is imported statically from ./secret-detection.js.
-    // Both are test-time imports only; this is NOT a production core → observability edge.
+    // WR-01 fix: extract prefixes that include - and . characters (the old \b([A-Za-z0-9_]*)
+    // regex stopped at - and . so sk-, ya29., xapp-, pplx- were silently skipped).
+    //
+    // Strategy: for each prefix-kind pattern, extract the literal token sequence after \b
+    // up to the first character-class [ or quantifier { or end-of-pattern.
+    // Then assert it's in PLAINTEXT_SECRET_PREFIXES unless explicitly exempted.
+    //
+    // Explicit exemptions (not true provider-prefix patterns):
+    //   "eyJ"   — JWT is structurally identified by the base64 header, not a fixed prefix
+    //   telegram (\d{8,}:...) — numeric prefix, no \b match on a letter
+    //   apple   — [a-z]{4}-[a-z]{4}-..., character-class start, no fixed prefix
+    // These patterns do NOT start with a fixed alphanumeric provider prefix.
+    const EXEMPT_PATTERN_NAMES = new Set(["jwt-token", "telegram-bot-token", "apple-app-password"]);
+
     const keystonePrefixes = PLAINTEXT_SECRET_PREFIXES;
     const patterns = getDefaultRedactPatterns();
     const prefixKindPatterns = patterns.filter((p) => p.kind === "prefix");
 
     for (const p of prefixKindPatterns) {
-      // Extract the token prefix from the regex source:
-      //   /\bhf_[A-Za-z0-9_]{18,}\b/g  →  "hf_"
-      //   /\bghp_[A-Za-z0-9_]{20,}\b/g →  "ghp_"
-      //   /\bsk-[A-Za-z0-9_-]{16,}\b/g →  "sk-"
-      // The \b word-boundary precedes the prefix in all prefix-kind patterns.
-      const m = /\\b([A-Za-z0-9][A-Za-z0-9_]*)/.exec(p.regex.source);
-      if (!m) continue; // structural/non-prefix pattern (no \b anchor) — skip
-      const prefix = m[1]!;
-      // Only assert if the extracted string looks like a real token prefix
-      // (ends with _ or - so it's a delimiter-bounded prefix, or all-caps >= 4 chars like AKIA/AKID/LTAI).
-      if (!prefix.endsWith("_") && !prefix.endsWith("-") && !/^[A-Z0-9]{4,}$/.test(prefix)) {
-        continue; // e.g. "eyJ" (JWT) or numeric — not a structured prefix
-      }
+      if (EXEMPT_PATTERN_NAMES.has(p.name)) continue;
+
+      // Extract the literal prefix after the mandatory \b anchor.
+      // Character class [A-Za-z0-9_.\-] captures hyphens and dots so sk-, ya29., xapp- are included.
+      // Stop at the first [ (character class) or { (quantifier) in the regex source.
+      const m = /\\b([A-Za-z0-9][A-Za-z0-9_.\\-]*)/.exec(p.regex.source);
+      if (!m) continue; // no \b anchor — truly not a prefix pattern, skip
+
+      // Unescape any \\ sequences (the regex source represents literal \ as \\)
+      const raw = m[1]!;
+      // Extract up to the first unescaped quantifier or character class opener
+      // The match already stops at [ or { because those aren't in the char class above.
+      // Remove any trailing backslash-escaped fragment (e.g. \\ from \. in the source).
+      const prefix = raw.replace(/\\(.)/g, "$1"); // unescape \\. → . etc.
+
       expect(keystonePrefixes, `keystone missing "${prefix}" (from pattern "${p.name}")`).toContain(prefix);
     }
 
@@ -294,5 +307,106 @@ describe("R0: explicit prefix entries — hf_/hfr_/r8_ (vocabulary unification)"
     expect(looksLikeSecretValue(SHORT_HF), "hf_ short token must be detected").toBe(true);
     expect(looksLikeSecretValue(SHORT_HFR), "hfr_ short token must be detected").toBe(true);
     expect(looksLikeSecretValue(SHORT_R8), "r8_ short token must be detected").toBe(true);
+  });
+});
+
+// ── WR-02: keystone false-negatives — common credential shapes slip the scanner ──
+
+describe("WR-02: looksLikeSecretValue correctly detects provider prefixes absent from keystone", () => {
+  // PRE-PATCH: these all return false because their prefixes are absent from
+  // PLAINTEXT_SECRET_PREFIXES and they are too short for the entropy backstop.
+  // POST-PATCH: returns true after adding missing prefixes to PLAINTEXT_SECRET_PREFIXES.
+
+  it("WR-02-a: realistic Google API key (AIzaSy...) detected as secret (pre-patch returns false)", () => {
+    // AIzaSy + 33 chars = 39 chars total — below the 44-char entropy backstop floor
+    expect(looksLikeSecretValue("AIzaSyA1234567890abcdefghijklmnopqrstu")).toBe(true);
+  });
+
+  it("WR-02-b: realistic Google OAuth bearer token (ya29....) detected as secret (pre-patch returns false)", () => {
+    // ya29.a0AfH6SMBxxxxxxxxxxxxxxxxx — 31 chars, well below entropy backstop
+    expect(looksLikeSecretValue("ya29.a0AfH6SMBxxxxxxxxxxxxxxxxxxxxxxxxx")).toBe(true);
+  });
+
+  it("WR-02-c: realistic Slack app token (xapp-...) detected as secret (pre-patch returns false)", () => {
+    // xapp-1-A0123456789-ABCDEF012345 — 31 chars
+    expect(looksLikeSecretValue("xapp-1-A0123456789-ABCDEF012345")).toBe(true);
+  });
+
+  it("WR-02-d: realistic Perplexity key (pplx-...) detected as secret (pre-patch returns false)", () => {
+    expect(looksLikeSecretValue("pplx-abc123def456ghi789jkl012m")).toBe(true);
+  });
+
+  it("WR-02-e: Comis platform token (comis_...) detected as secret (pre-patch returns false)", () => {
+    expect(looksLikeSecretValue("comis_abc123def456ghi789")).toBe(true);
+  });
+
+  it("WR-02-f: scanForSecrets flags AIza key inside MCP args array (pre-patch returns [])", () => {
+    // Confirmed end-to-end regression: plaintext Google API key in mcp args passes the firewall
+    const findings = scanForSecrets({
+      integrations: {
+        mcp: {
+          servers: [{ args: ["--key", "AIzaSyA1234567890abcdefghijklmnopqrstu"] }],
+        },
+      },
+    });
+    expect(findings.length, "AIza key in mcp args must be flagged by scanForSecrets").toBeGreaterThan(0);
+  });
+});
+
+// ── WR-03: keystone false-positives — short/ambiguous prefixes falsely flag legit config ──
+
+describe("WR-03: looksLikeSecretValue does NOT false-positive on legit config strings", () => {
+  // PRE-PATCH: bare startsWith() with no length gate returns true for all these.
+  // POST-PATCH: length/format gating (matching patterns.ts minimum body length)
+  // means these short/legit strings return false.
+
+  it("WR-03-a: npm_config_cache is NOT flagged as a secret (pre-patch returns true)", () => {
+    // npm_ prefix but this is a standard npm env var name — 16 chars total, benign
+    expect(looksLikeSecretValue("npm_config_cache")).toBe(false);
+  });
+
+  it("WR-03-b: AKIDNEYBEAN is NOT flagged as a secret (pre-patch returns true)", () => {
+    // AKID prefix but only 11 chars — not a real AWS key (needs 20 total: AKID + 16)
+    expect(looksLikeSecretValue("AKIDNEYBEAN")).toBe(false);
+  });
+
+  it("WR-03-c: LTAILGATE is NOT flagged as a secret (pre-patch returns true)", () => {
+    // LTAI prefix but only 9 chars — not a real Alibaba key (needs 20+ total)
+    expect(looksLikeSecretValue("LTAILGATE")).toBe(false);
+  });
+
+  it("WR-03-d: hf_model_config is NOT flagged as a secret (pre-patch returns true)", () => {
+    // hf_ prefix but only 14 chars — real HuggingFace tokens are hf_ + 18+ alphanumerics
+    expect(looksLikeSecretValue("hf_model_config")).toBe(false);
+  });
+
+  it("WR-03-e: gsk_test is NOT flagged as a secret (pre-patch returns true)", () => {
+    // gsk_ prefix but only 8 chars — real Groq keys are gsk_ + 18+ alphanumerics
+    expect(looksLikeSecretValue("gsk_test")).toBe(false);
+  });
+
+  it("WR-03-f: r8_unit_tests is NOT flagged as a secret (pre-patch returns true)", () => {
+    // r8_ prefix but only 13 chars — real Replicate tokens are r8_ + 18+ alphanumerics
+    expect(looksLikeSecretValue("r8_unit_tests")).toBe(false);
+  });
+
+  // Positive controls: real long tokens with the same prefixes MUST still be detected.
+  it("WR-03-g: a real long npm token (npm_ + 40+ chars) IS still flagged", () => {
+    // Real npm automation tokens are npm_ + 36-char UUID-like body
+    expect(looksLikeSecretValue("npm_" + "a".repeat(40))).toBe(true);
+  });
+
+  it("WR-03-h: a real AWS AKID key (AKID + 16 uppercase alphanumerics) IS still flagged", () => {
+    // AWS AKID prefix + 16 chars minimum per patterns.ts AKID[A-Z0-9]{14,}
+    expect(looksLikeSecretValue("AKIDABCDEF1234567890")).toBe(true);
+  });
+
+  it("WR-03-i: a real Alibaba LTAI key (LTAI + 16 alphanumerics) IS still flagged", () => {
+    // Alibaba LTAI prefix + 16 chars minimum per patterns.ts LTAI[A-Za-z0-9]{16,}
+    expect(looksLikeSecretValue("LTAIabcdef123456789012")).toBe(true);
+  });
+
+  it("WR-03-j: a real HuggingFace token (hf_ + 18+ chars) IS still flagged", () => {
+    expect(looksLikeSecretValue("hf_" + "A".repeat(18))).toBe(true);
   });
 });
