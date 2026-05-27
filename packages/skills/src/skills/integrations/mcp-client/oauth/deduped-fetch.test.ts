@@ -422,6 +422,94 @@ describe("createDedupedRefreshFetch", () => {
     expect(payload.err).toBe(refreshError);
   });
 
+  it("on-401 refresh: dedupedRefresh receives authorizationServerMetadata from discovery state (R6 #1)", async () => {
+    await store.saveDiscoveryState("notion", {
+      authorizationServerUrl: "https://auth.example.test",
+      authorizationServerMetadata: {
+        token_endpoint: "https://auth.example.test/token",
+        issuer: "https://auth.example.test",
+      } as import("@modelcontextprotocol/sdk/shared/auth.js").AuthorizationServerMetadata,
+    });
+    await store.saveTokens("notion", {
+      access_token: EXPIRED_BEARER,
+      refresh_token: REFRESH_TOKEN,
+      token_type: "Bearer",
+      expires_in: 0,
+    });
+    await store.saveClientInformation("notion", CLIENT_INFO);
+
+    const dedupedRefreshSpy = vi.fn(async () => ({
+      tokens: { access_token: NEW_BEARER, token_type: "Bearer" as const, expires_in: 3600 },
+    }));
+    const deduper: RefreshDeduper = {
+      dedupedRefresh: dedupedRefreshSpy as unknown as RefreshDeduper["dedupedRefresh"],
+    };
+
+    const { fetch: inner } = makeFetchSpy([
+      () => new Response("", { status: 401 }),
+      () => new Response("ok", { status: 200 }),
+    ]);
+    const wrapped = createDedupedRefreshFetch({
+      serverName: "notion",
+      tokenStore: store,
+      deduper,
+      innerFetch: inner,
+      logger,
+    });
+
+    const res = await wrapped("http://example.test/x", {
+      headers: { Authorization: `Bearer ${EXPIRED_BEARER}` },
+    });
+    expect(res.status).toBe(200);
+    expect(dedupedRefreshSpy).toHaveBeenCalledTimes(1);
+    // RED pre-fix: metadata is undefined because deduped-fetch.ts does not thread it.
+    // GREEN post-fix: metadata matches the stored authorizationServerMetadata.
+    const call = dedupedRefreshSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(call.metadata).toMatchObject({ token_endpoint: "https://auth.example.test/token" });
+  });
+
+  it("on-401 refresh: metadata absent from dedupedRefresh args when discovery has no authorizationServerMetadata (R6 #1 fallback)", async () => {
+    // Discovery state WITHOUT authorizationServerMetadata (the minimal shape)
+    await store.saveDiscoveryState("notion", {
+      authorizationServerUrl: "https://auth.example.test",
+    });
+    await store.saveTokens("notion", {
+      access_token: EXPIRED_BEARER,
+      refresh_token: REFRESH_TOKEN,
+      token_type: "Bearer",
+      expires_in: 0,
+    });
+    await store.saveClientInformation("notion", CLIENT_INFO);
+
+    const dedupedRefreshSpy = vi.fn(async () => ({
+      tokens: { access_token: NEW_BEARER, token_type: "Bearer" as const, expires_in: 3600 },
+    }));
+    const deduper: RefreshDeduper = {
+      dedupedRefresh: dedupedRefreshSpy as unknown as RefreshDeduper["dedupedRefresh"],
+    };
+
+    const { fetch: inner } = makeFetchSpy([
+      () => new Response("", { status: 401 }),
+      () => new Response("ok", { status: 200 }),
+    ]);
+    const wrapped = createDedupedRefreshFetch({
+      serverName: "notion",
+      tokenStore: store,
+      deduper,
+      innerFetch: inner,
+      logger,
+    });
+
+    const res = await wrapped("http://example.test/x", {
+      headers: { Authorization: `Bearer ${EXPIRED_BEARER}` },
+    });
+    expect(res.status).toBe(200);
+    expect(dedupedRefreshSpy).toHaveBeenCalledTimes(1);
+    // metadata should be absent when discovery has no authorizationServerMetadata
+    const call = dedupedRefreshSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(call.metadata).toBeUndefined();
+  });
+
   it("refresh returns no access_token (provider spec violation) → surfaces 401, no retry", async () => {
     await store.saveTokens("notion", {
       access_token: EXPIRED_BEARER,
