@@ -314,6 +314,12 @@ export interface BootContext {
   clock: import("@comis/core").ClockPort;
   env: import("@comis/core").EnvPort;
   timers: import("@comis/core").TimerPort;
+  // WIRE-08: the single process-singleton ActivityCircuitBreaker, constructed once
+  // in bootFoundation (D2) and threaded to `buildChannelManagerDeps` → `ChannelsDeps`
+  // → the inbound coordinatorFactory, where it is shared across every per-turn
+  // coordinator. Structurally the `ActivityBreakerGate` slice the coordinator
+  // consumes (the concrete breaker's record/isTripped satisfy it).
+  activityBreaker: import("@comis/orchestrator").ActivityBreakerGate;
   // WIRE-06 test-only renderer-injection seam, captured from the daemon override
   // in bootFoundation and threaded to `buildChannelManagerDeps` → `ChannelsDeps`
   // → `buildActivityRenderers`. Named distinctly from the DaemonOverrides field

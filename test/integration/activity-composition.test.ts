@@ -21,6 +21,7 @@ import { randomUUID } from "node:crypto";
 import { describe, it, expect, afterAll } from "vitest";
 import { startTestDaemon, type TestDaemonHandle } from "../support/daemon-harness.js";
 import { EchoChannelAdapter, createTestSink } from "@comis/channels";
+import { formatSessionKey, tryGetContext } from "@comis/core";
 import type { NormalizedMessage } from "@comis/core";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -145,6 +146,44 @@ describe("WIRE-06 activity composition: a real inbound Echo turn drives renderer
       const echo = new EchoChannelAdapter({ channelId: "echo-activation", channelType: "echo" });
       handle.daemon.adapterRegistry.set("echo", echo);
       handle.daemon.deliveryAdapters.set("echo", echo);
+
+      // Drive a deterministic activity event THROUGH the daemon's real ActivityStream
+      // during the turn. The test daemon has no working LLM (the dummy ANTHROPIC_API_KEY
+      // 401s), so the inbound turn emits no tool:*/model:* events on its own. We emit one
+      // real `tool:executed` on the daemon's EventBus, correlated to THIS turn's
+      // {agentId, sessionKey, traceId} so the inbound coordinator's turn-scoped
+      // subscription receives it → chatProjection → renderer.apply(frame). The
+      // `message:received` listener fires INSIDE the turn's runWithContext (the
+      // injectMessage wrap), so tryGetContext().traceId is the turn's live traceId —
+      // the SAME id the coordinator subscribed with. This proves the daemon's REAL deps
+      // assembly wires the ActivityStream → coordinatorFactory → renderer end-to-end.
+      const bus = handle.daemon.container.eventBus;
+      const onReceived = (ev: { message: NormalizedMessage; sessionKey: import("@comis/core").SessionKey }): void => {
+        if (ev.message.channelType !== "echo") return;
+        // Capture the turn correlation SYNCHRONOUSLY (tryGetContext is only valid
+        // inside the turn's runWithContext). `message:received` fires in Phase 1
+        // (resolveAndPreprocess), BEFORE the coordinator subscribes at the pipeline
+        // gate (execution-pipeline.ts:395), so schedule the emit on a short delay to
+        // land AFTER the coordinator's subscribeForTurn — otherwise the turn-scoped
+        // subscription misses the event (the stream is live-only, no replay).
+        const traceId = tryGetContext()?.traceId;
+        if (traceId === undefined) return;
+        const sessionKey = formatSessionKey(ev.sessionKey);
+        setTimeout(() => {
+          bus.emit("tool:executed", {
+            toolName: "read_file",
+            durationMs: 4,
+            success: true,
+            timestamp: Date.now(),
+            toolCallId: randomUUID(),
+            agentId: "default",
+            sessionKey,
+            traceId,
+            params: { path: "wire06-activation.txt" },
+          });
+        }, 300);
+      };
+      bus.on("message:received", onReceived);
 
       // Drive a real inbound turn through the daemon's REAL inbound pipeline deps.
       // channelManager.injectMessage(channelType, msg) → processInboundMessage(pipelineDeps, …)

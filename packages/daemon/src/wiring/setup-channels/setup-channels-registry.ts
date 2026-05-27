@@ -13,14 +13,14 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { createSessionStore } from "@comis/memory";
 import type { CommandQueue } from "@comis/orchestrator";
 import type { VoiceResponsePipelineDeps, LifecycleReactor } from "@comis/channels";
-import type { ChannelManager } from "@comis/orchestrator";
+import type { ChannelManager, ActivityBreakerGate } from "@comis/orchestrator";
 import { initTelegramFileGuardConfig } from "@comis/core";
 import type { MediaResolverPort } from "@comis/core";
 import type { SsrfGuardedFetcher, LinkRunner, AudioConverter, MediaTempManager, MediaSemaphore } from "@comis/skills";
@@ -92,6 +92,17 @@ export interface ChannelsDeps {
   /** System timers (composition root). Threaded to buildActivityRenderers so the
    *  EditPlace renderer debounces edits via TimerPort (no raw setTimeout). */
   timers: TimerPort;
+  /** WIRE-03: the orchestrator-facing redacted activity stream port (the
+   *  setupObservability ActivityStream). Threaded into the inbound
+   *  coordinatorFactory built in buildAndStartChannelManager as its
+   *  activityStreamPort. Optional: absent → no inbound coordinatorFactory is built
+   *  (the pipeline gate stays false, fail-closed §22.2 Day-0). */
+  activityStream?: ActivityStreamPort;
+  /** WIRE-08: the process-singleton activity circuit breaker (constructed once in
+   *  daemon.ts, D2). Threaded into every per-turn coordinator so a permission/error
+   *  storm on one (agentId, channelKey) pair auto-quiesces it across turns.
+   *  Optional: absent → no breaker gating (the un-wired path is unaffected). */
+  activityBreaker?: ActivityBreakerGate;
   /** WIRE-06 test-only renderer-injection seam (daemon-types.ts
    *  DaemonOverrides.activityRendererFactory). When set, replaces the renderer
    *  produced by buildActivityRenderers for a given channelType so an integration
@@ -312,6 +323,8 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       channelPlugins,
       clock: deps.clock,
       timers: deps.timers,
+      activityStream: deps.activityStream, // WIRE-03: ActivityStreamPort for the inbound coordinatorFactory
+      activityBreaker: deps.activityBreaker, // WIRE-08: process-singleton breaker (shared)
       activityRendererFactory: deps.activityRendererFactory, // WIRE-06 test seam
       signCallbackData: deps.signCallbackData,
       mintApprovalLink: deps.mintApprovalLink,

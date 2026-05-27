@@ -160,6 +160,11 @@ import {
   detectSandboxProvider,
 } from "@comis/skills";
 import { createChannelHealthMonitor } from "@comis/channels";
+// WIRE-08: the single process-singleton activity circuit breaker is constructed
+// here (D2) and threaded down through ChannelsDeps → buildAndStartChannelManager
+// into every per-turn coordinator. The daemon is the composition root that owns
+// the breaker's lifetime; the orchestrator owns its logic.
+import { createActivityCircuitBreaker } from "@comis/orchestrator";
 import { createGraphCoordinator, createNodeTypeRegistry } from "./graph/index.js";
 import { createWakeCoalescer, createSystemEventQueue, type WakeReasonKind } from "@comis/scheduler";
 import { createTokenRegistry } from "./api/token-handlers.js";
@@ -636,7 +641,7 @@ function buildChannelManagerDeps(deps: {
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
-    onSuspiciousContent, dataDir, clock, timers, activityRendererFactoryOverride,
+    onSuspiciousContent, dataDir, clock, timers, activityBreaker, activityStream, activityRendererFactoryOverride,
   } = agents;
   // Build exportSessionBundle DI closure for the /export-trajectory slash
   // command. Uses exportTrajectoryBundle from @comis/observability (same
@@ -659,6 +664,10 @@ function buildChannelManagerDeps(deps: {
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, clock, timers,
+    // WIRE-03: the orchestrator-facing redacted ActivityStream (setupObservability)
+    // injected into the inbound coordinatorFactory as its activityStreamPort.
+    // WIRE-08: the process-singleton circuit breaker shared across every coordinator.
+    activityStream, activityBreaker,
     // WIRE-06 test-only renderer-injection seam. Default-undefined in production
     // (the daemon override is never set); threaded into buildActivityRenderers so
     // an integration test can inject a spy renderer.
@@ -1393,6 +1402,13 @@ async function bootFoundation(
   // and threaded onto BootContext so buildChannelManagerDeps can forward it into
   // buildActivityRenderers. Never set in production; inert on the inbound path until Plan 03.
   const activityRendererFactory = overrides.activityRendererFactory;
+  // WIRE-08: ONE process-singleton ActivityCircuitBreaker, constructed at the
+  // composition root (D2) and shared across EVERY per-turn coordinator the inbound
+  // coordinatorFactory builds. Constructed once here (NOT inside a per-turn or
+  // per-agent loop) so a permission/error storm on one (agentId, channelKey) pair
+  // auto-quiesces that pair across turns. Threaded down via BootContext →
+  // buildChannelManagerDeps → ChannelsDeps → buildAndStartChannelManager.
+  const activityBreaker = createActivityCircuitBreaker(clock);
 
   // 1. Bootstrap core container. Fix A (log-review): under VITEST=true, refuse to silently read ~/.comis/config.yaml when COMIS_CONFIG_PATHS is unset.
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution + VITEST guard
@@ -1500,11 +1516,15 @@ async function bootFoundation(
   });
 
   // WIRE-01 ack: the ActivityStream substrate is live and subscribed to the
-  // EventBus. The orchestrator-facing ActivityStreamPort + the per-channel
-  // coordinator-factory threading into the inbound execution pipeline
-  // (ExecutionPipelineDeps.activityStreamPort / coordinatorFactory) land when the
-  // pipeline consumes the injected port; until then the substrate runs (counters
-  // observable) and is drained on shutdown via disposeActivityStream (WIRE-05).
+  // EventBus. WIRE-03 (Plan 77-03): the orchestrator-facing ActivityStreamPort +
+  // the per-channel coordinator-factory are now threaded into the INBOUND
+  // execution pipeline (ExecutionPipelineDeps.activityStreamPort /
+  // coordinatorFactory) — `activityStream` flows through buildChannelManagerDeps →
+  // ChannelsDeps → buildAndStartChannelManager, which assembles the
+  // coordinatorFactory over the live activityRenderers map and injects it onto
+  // createChannelManager. The substrate is drained on shutdown via
+  // disposeActivityStream (WIRE-05). Per-renderer egress stays fail-closed until an
+  // operator opts in via activity.channels.<rendererKey> (§22.2 Day-0).
   daemonLogger.debug(
     { component: "activity-stream", counters: activityStream.counters() },
     "ActivityStream substrate constructed and subscribed to EventBus",
@@ -1643,7 +1663,7 @@ async function bootFoundation(
   boot.bgNotifyRef = bgNotifyRef;
   Object.assign(boot, {
     container, dataDir, configPaths, envPath,
-    clock, env, timers, activityRendererFactoryOverride: activityRendererFactory,
+    clock, env, timers, activityBreaker, activityRendererFactoryOverride: activityRendererFactory,
     secretStore, secretsCrypto, secretsDb, permissionCorrections,
     execGit, configGitManager,
     logger, logLevelManager, daemonLogger, gatewayLogger, channelsLogger, agentLogger,

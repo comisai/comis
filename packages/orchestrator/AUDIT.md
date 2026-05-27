@@ -58,6 +58,9 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | processInboundMessage | required | — | packages/orchestrator/src/channel-manager.ts:205 |
 | getAllowFrom | optional | no allowFrom sender filter (all senders allowed) | packages/orchestrator/src/channel-manager.ts:217 |
 | exportSessionBundle | optional | /export-trajectory falls through to generic handleSlashCommand (no-op — export-trajectory has no case in command-handler.ts switch, returns handled:false, message with empty text reaches executor) | packages/orchestrator/src/channel-manager.ts:189 |
+| activityStreamPort | optional | WIRE-03: absent → the inbound pipeline activity gate (execution-pipeline.ts:395) is false; no per-turn coordinator is built and renderer.apply never fires (fail-closed §22.2 Day-0) | packages/orchestrator/src/channel-manager.ts:192 |
+| coordinatorFactory | optional | WIRE-03: absent → the activity gate stays false (the daemon supplies it only alongside activityStreamPort); the turn runs exactly as before with no activity rendering | packages/orchestrator/src/channel-manager.ts:196 |
+| adapterRegistry | optional | injectMessage falls back to the daemon's live boot adapter map for adapters registered after startAll(); absent → only startAll()-registered adapters drive injectMessage (production registers every real adapter at boot) | packages/orchestrator/src/channel-manager.ts:224 |
 
 ## Removed Fields (stale-fallback)
 
