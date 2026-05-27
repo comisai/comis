@@ -46,7 +46,7 @@ Archive: `.planning/milestones/v1.1-ROADMAP.md` · `v1.1-REQUIREMENTS.md` · `v1
 
 ### Phases
 
-- [ ] **Phase 1: REGR — Critical regressions** - Re-wire the dead signed-thinking scrubber (R5), stop the `daemon.log` redaction bypass (R1), unify the secret-detection vocabulary with a parity guard (R0)
+- [x] **Phase 1: REGR — Critical regressions** - Re-wire the dead signed-thinking scrubber (R5), stop the `daemon.log` redaction bypass (R1), unify the secret-detection vocabulary with a parity guard (R0) (completed 2026-05-27)
 - [ ] **Phase 2: EGRESS — Secret egress firewall + secure credential home** - Shared `secret-egress-guard` at 4 boundaries (R4); one enforced out-of-workspace credential home with `needs_reauth`/breaker (R8)
 - [ ] **Phase 3: CONNECT — MCP connect correctness + delivery UX** - JSON-string `headers` coercion with self-correcting error (R2), honest `endReason` (R3), never drop auth links/codes (R9), kill the validation-misdiagnosis cascade (R10)
 - [ ] **Phase 4: OAUTH — OAuth refresh robustness** - Thread discovery metadata into on-401 refresh + proactive pre-expiry refresh (R6)
@@ -76,7 +76,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [x] 01-02-PLAN.md — R1: stop daemon.log plaintext credential leak (pipeline redact stage + serializers.err + exec command sanitize)
-- [ ] 01-03-PLAN.md — R5: re-wire createSignatureReplayScrubber into context-engine pipeline (layer membership + ordering test)
+- [x] 01-03-PLAN.md — R5: re-wire createSignatureReplayScrubber into context-engine pipeline (layer membership + ordering test)
 
 ---
 
@@ -157,7 +157,7 @@ Plans:
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. REGR — Critical regressions | v1.2 | 2/3 | In Progress|  |
+| 1. REGR — Critical regressions | v1.2 | 3/3 | Complete   | 2026-05-27 |
 | 2. EGRESS — Secret egress firewall + secure credential home | v1.2 | 0/? | Not started | - |
 | 3. CONNECT — MCP connect correctness + delivery UX | v1.2 | 0/? | Not started | - |
 | 4. OAUTH — OAuth refresh robustness | v1.2 | 0/? | Not started | - |

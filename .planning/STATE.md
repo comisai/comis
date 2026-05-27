@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: MCP Hardening II
-status: executing
+status: verifying
 stopped_at: v1.2 roadmap created
-last_updated: "2026-05-27T14:27:35.443Z"
+last_updated: "2026-05-27T14:40:42.121Z"
 last_activity: 2026-05-27
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
-  percent: 67
+  completed_plans: 3
+  percent: 100
 ---
 
 # Project State: Comis
@@ -30,7 +30,7 @@ progress:
 
 Phase: 1 (REGR — Critical regressions) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-05-27
 
 ### Phases (v1.2 — restart at 1)
@@ -61,6 +61,7 @@ Last activity: 2026-05-27
 
 *Updated after each plan completion*
 | Phase 01-regr-critical-regressions P02 | 43min | 2 tasks | 8 files |
+| Phase 01-regr-critical-regressions P03 | 15 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -104,7 +105,7 @@ Carried from research as load-bearing constraints (the verifier and planner rely
 
 ## Session Continuity
 
-Last session: 2026-05-27T14:27:35.436Z
+Last session: 2026-05-27T14:40:42.108Z
 Stopped at: v1.2 roadmap created
 Resume file: None
 
