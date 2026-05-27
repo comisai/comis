@@ -177,22 +177,41 @@ const FILE_WRITE_HEURISTIC =
   /^\s*(?:cat|tee|echo|printf)\b|>\s*["']?[^|<&\s]+\s*(?:<<|$)/;
 
 export function sanitizeCommandInput(command: string): string | null {
-  const match = INVISIBLE_CHAR_REGEX.exec(command);
-  if (match) {
-    const cp = match[0].codePointAt(0)!;
-    const hex = cp.toString(16).toUpperCase().padStart(4, "0");
-    let msg = `Command contains invisible/ambiguous character U+${hex} at position ${match.index}. This can bypass security validation. Remove the character and retry.`;
-    if (cp === 0x0a) {
-      // Disambiguate: is the LLM writing a file (use `write` tool) or
-      // running a multi-line script (use python3/node/bash with stdin)?
-      // The heuristic fires on the line the newline was rejected on, so
-      // the hint matches the LLM's actual intent.
-      const looksLikeFileWrite = FILE_WRITE_HEURISTIC.test(command);
-      msg += looksLikeFileWrite
-        ? ` To write files, use the 'write' tool (or 'edit' for targeted changes) instead of a shell heredoc in exec.`
-        : ` For multi-line scripts, use command='python3 -' (or 'node -', 'bash -') with the 'input' parameter for the script body.`;
+  const tracker = new ShellQuoteTracker();
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+
+    // CRITICAL: capture quote state BEFORE feeding — tracker.feed() mutates state
+    // immediately on quote chars, so checking state AFTER feed would incorrectly
+    // treat the opening quote character itself as "inside a quote" (check-before-feed
+    // mirrors validateRedirectTargets:288 pattern).
+    const inQuote = tracker.escaped || tracker.state !== "NORMAL";
+
+    if (ch === "\n") {
+      // U+000A: only reject when NOT inside a quoted context.
+      // A newline inside single/double quotes is legitimate (multi-line script body).
+      if (!inQuote) {
+        const looksLikeFileWrite = FILE_WRITE_HEURISTIC.test(command);
+        let msg = `Command contains invisible/ambiguous character U+000A at position ${i}. This can bypass security validation. Remove the character and retry.`;
+        msg += looksLikeFileWrite
+          ? ` To write files, use the 'write' tool (or 'edit' for targeted changes) instead of a shell heredoc in exec.`
+          : ` For multi-line scripts, use command='python3 -' (or 'node -', 'bash -') with the 'input' parameter for the script body.`;
+        return msg;
+      }
+      // In a quoted context: allow and continue.
+    } else {
+      // For all non-newline chars: apply the full INVISIBLE_CHAR_REGEX without quote context.
+      // These characters (zero-width spaces, BOM, soft hyphen, etc.) have no legitimate use
+      // even inside quoted strings, so quote context is irrelevant for them.
+      const singleMatch = INVISIBLE_CHAR_REGEX.exec(ch);
+      if (singleMatch) {
+        const cp = ch.codePointAt(0)!;
+        const hex = cp.toString(16).toUpperCase().padStart(4, "0");
+        return `Command contains invisible/ambiguous character U+${hex} at position ${i}. This can bypass security validation. Remove the character and retry.`;
+      }
     }
-    return msg;
+
+    tracker.feed(ch);
   }
   return null;
 }
