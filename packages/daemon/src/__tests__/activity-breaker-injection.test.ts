@@ -33,7 +33,7 @@ import {
 } from "@comis/core";
 import { createActivityStream } from "@comis/observability";
 import { createTestSink } from "@comis/channels";
-import { createActivityTurnCoordinator, type ActivityBreakerGate } from "@comis/orchestrator";
+import { createActivityTurnCoordinator, type ActivityBreakerGate, type RecordOutcome } from "@comis/orchestrator";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
@@ -131,7 +131,11 @@ async function driveTurn(
 describe("WIRE-08 breaker injection: a tripped breaker skips renderer.apply on the live coordinator path", () => {
   it("suppresses the paint while the (agent, channel) breaker isTripped and renders + records when not tripped", async () => {
     let tripped = true;
-    const recordSpy = vi.fn(() => ({ tripped: false }) as { tripped: boolean; reason?: "permission" | "transient" });
+    // WR-03: type the fake against the EXPORTED RecordOutcome (not an inline cast) so a
+    // rename of the breaker contract (`tripped`/`reason`) fails this test at compile time.
+    // `recordResult` is mutable so the fresh-trip arm below can drive the `onFreshTrip` path.
+    let recordResult: RecordOutcome = { tripped: false };
+    const recordSpy = vi.fn((): RecordOutcome => recordResult);
     const isTrippedSpy = vi.fn((key: { agentId: string; channelKey: string }) => {
       // Confirm the coordinator keys the breaker on the turn's (agent, channel).
       expect(key).toEqual({ agentId: AGENT, channelKey: CHANNEL_KEY });
@@ -161,6 +165,18 @@ describe("WIRE-08 breaker injection: a tripped breaker skips renderer.apply on t
     expect(sink.recorded.frames.length).toBeGreaterThanOrEqual(1);
     expect(recordSpy).toHaveBeenCalled();
     c2.dispose();
+
+    // (3) WR-03: not tripped at the gate, but the apply's `record` returns a FRESH trip
+    // → the coordinator must take the onFreshTrip branch exactly once (counter bump). The
+    // prior arm's cast hid that `record` never returned a `reason`, leaving onFreshTrip
+    // (activity-turn-coordinator.ts:337-338) untested at this seam.
+    recordResult = { tripped: true, reason: "permission" };
+    const freshCtx = makeCtx("t-fresh-trip");
+    const c3 = factory(freshCtx);
+    await driveTurn(bus, timer, c3, freshCtx);
+    expect(sink.recorded.frames.length).toBeGreaterThanOrEqual(1);
+    expect(c3.counters().circuitBreakerTripped).toBe(1);
+    c3.dispose();
 
     stream.dispose();
   });
