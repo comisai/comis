@@ -30,6 +30,10 @@ import type {
   McpConnection,
   McpServerConfig,
 } from "./mcp-client-types.js";
+import type { TokenStore } from "./oauth/token-store.js";
+import type { RefreshDeduper, RefreshResult } from "./oauth/refresh-deduper.js";
+import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
+import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
 
 // Mock the reconnect module so handleDisconnection is a spy — a real call would
 // mutate state to "reconnecting" and fire a background reconnect loop. We only
@@ -356,4 +360,188 @@ describe("mcp-client-keepalive — MCPX-02 transport-aware interval resolution",
     startKeepaliveTicker(state, deps, config);
     expect(state.keepaliveTickers.has("override-srv")).toBe(true);
   });
+});
+
+// ---------------------------------------------------------------------------
+// R6 #2: Proactive pre-expiry OAuth token refresh on keepalive tick.
+//
+// When a server has `auth:"oauth"` and the token's remaining lifetime
+// (expires_in) is within PRE_EXPIRY_BUFFER_SEC (300s), the keepalive tick
+// MUST call dedupedRefresh before the ping so the token never sits expired
+// until the next tool call 401s.
+//
+// SEAM (D-TS-01, Option A): all three tests inject a `mockDeduper` via the
+// OPTIONAL 5th parameter of maybeEnqueueKeepalivePing, cast through a
+// loosely-typed reference (callKeepalive) so the call does NOT produce a
+// compile-time arity error on pre-patch code. Pre-patch JS ignores the extra
+// argument at runtime → test 1 fails at ASSERTION time (genuine RED). Tests
+// 2 and 3 assert the spy is NOT called — they are meaningful regression
+// fences post-patch (a missing expiry/auth guard would fire the spy there).
+// ---------------------------------------------------------------------------
+
+describe("maybeEnqueueKeepalivePing — R6 #2 proactive pre-expiry OAuth refresh", () => {
+  const PRE_EXPIRY_BUFFER_SEC = 300; // 5 minutes in seconds (matches PRE_EXPIRY_BUFFER_MS / 1000)
+
+  // Loosely-typed call seam: tolerates the optional 5th `deduper` param across the
+  // RED (param absent) → GREEN (param present) transition without a compile-time arity
+  // error. Pre-patch JS ignores the extra arg at runtime → the test fails at the
+  // dedupedRefresh assertion (genuine RED), not at compile time.
+  type KeepaliveWithDeduper = (
+    state: McpClientManagerState,
+    deps: McpClientManagerDeps,
+    serverName: string,
+    onFailure?: (serverName: string) => void,
+    deduper?: RefreshDeduper,
+  ) => void;
+  const callKeepalive = maybeEnqueueKeepalivePing as unknown as KeepaliveWithDeduper;
+
+  function makeStateWithRefreshes(): McpClientManagerState {
+    return {
+      ...makeState(), // spread existing makeState fields
+      inflightRefreshes: new Map<string, Promise<RefreshResult>>(),
+    } as McpClientManagerState;
+  }
+
+  function makeTokenStoreMock(expiresIn: number): Pick<TokenStore, "tokens" | "discoveryState" | "clientInformation"> {
+    return {
+      tokens: vi.fn(async () => ({
+        access_token: "AT_EXPIRING",
+        refresh_token: "RT_CURRENT",
+        token_type: "Bearer" as const,
+        expires_in: expiresIn,
+      })),
+      discoveryState: vi.fn(async () => ({
+        authorizationServerUrl: "https://auth.example.test",
+        authorizationServerMetadata: {
+          token_endpoint: "https://auth.example.test/token",
+          issuer: "https://auth.example.test",
+        },
+      } as OAuthDiscoveryState)),
+      clientInformation: vi.fn(async () => ({
+        client_id: "c",
+        redirect_uris: ["http://127.0.0.1:0/cb"],
+      } as OAuthClientInformationFull)),
+    };
+  }
+
+  function makeMockDeduper(): { mockDeduper: RefreshDeduper; dedupedRefreshSpy: ReturnType<typeof vi.fn> } {
+    const dedupedRefreshSpy = vi.fn(async () => ({
+      tokens: { access_token: "AT_NEW", token_type: "Bearer" as const, expires_in: 3600 },
+    }));
+    const mockDeduper: RefreshDeduper = {
+      dedupedRefresh: dedupedRefreshSpy as unknown as RefreshDeduper["dedupedRefresh"],
+    };
+    return { mockDeduper, dedupedRefreshSpy };
+  }
+
+  it("token within PRE_EXPIRY_BUFFER_SEC: injected deduper.dedupedRefresh fires before ping (R6 #2)", async () => {
+    const state = makeStateWithRefreshes();
+    const { ping } = wireConnected(state, "higgsfield", { concurrency: 1 });
+
+    // Set auth:"oauth" config for this server
+    state.serverConfigs.set("higgsfield", {
+      name: "higgsfield",
+      transport: "http",
+      url: "http://localhost:3000/mcp",
+      enabled: true,
+      auth: "oauth",
+    });
+
+    const { mockDeduper, dedupedRefreshSpy } = makeMockDeduper();
+    const mockTokenStore = makeTokenStoreMock(60); // 60s remaining — within 300s buffer
+
+    const deps: McpClientManagerDeps = {
+      logger: NOOP_LOGGER,
+      oauthDeps: {
+        createTokenStore: () => mockTokenStore as unknown as TokenStore,
+        resolveDiscovery: vi.fn(),
+      },
+    };
+
+    // Inject the mockDeduper via the OPTIONAL 5th param (D-TS-01). Pre-patch: the param is
+    // ignored at runtime (no proactive-refresh logic) → dedupedRefreshSpy stays uncalled (RED).
+    // Post-patch: near-expiry triggers deduper.dedupedRefresh exactly once before the ping.
+    callKeepalive(state, deps, "higgsfield", undefined, mockDeduper);
+    await state.callQueues.get("higgsfield")!.onIdle();
+
+    // RED pre-patch (Expected: 1 / Received: 0); GREEN post-patch.
+    expect(dedupedRefreshSpy).toHaveBeenCalledTimes(1);
+    expect(dedupedRefreshSpy.mock.calls[0]![0]).toMatchObject({
+      serverName: "higgsfield",
+      metadata: expect.objectContaining({ token_endpoint: "https://auth.example.test/token" }),
+    });
+    // Ping still fires after refresh
+    expect(ping).toHaveBeenCalledTimes(1);
+  });
+
+  it("token comfortably valid (expires_in > buffer): injected deduper NOT called, ping fires normally (R6 #2)", async () => {
+    const state = makeStateWithRefreshes();
+    const { ping } = wireConnected(state, "higgsfield", { concurrency: 1 });
+
+    state.serverConfigs.set("higgsfield", {
+      name: "higgsfield",
+      transport: "http",
+      url: "http://localhost:3000/mcp",
+      enabled: true,
+      auth: "oauth",
+    });
+
+    const { mockDeduper, dedupedRefreshSpy } = makeMockDeduper();
+    const mockTokenStore = makeTokenStoreMock(3600); // 1h remaining — well outside 300s buffer
+
+    const deps: McpClientManagerDeps = {
+      logger: NOOP_LOGGER,
+      oauthDeps: {
+        createTokenStore: () => mockTokenStore as unknown as TokenStore,
+        resolveDiscovery: vi.fn(),
+      },
+    };
+
+    // Inject the mockDeduper so .not.toHaveBeenCalled() is MEANINGFUL: post-patch the refresh
+    // path exists, so a missing/incorrect expiry guard would make this spy fire and fail here.
+    callKeepalive(state, deps, "higgsfield", undefined, mockDeduper);
+    await state.callQueues.get("higgsfield")!.onIdle();
+
+    // Fresh token → expiry guard skips the refresh.
+    expect(dedupedRefreshSpy).not.toHaveBeenCalled();
+    // But ping still fires normally
+    expect(ping).toHaveBeenCalledTimes(1);
+  });
+
+  it("non-oauth server: injected deduper NOT called, ping fires normally (R6 #2)", async () => {
+    const state = makeStateWithRefreshes();
+    const { ping } = wireConnected(state, "plain-http", { concurrency: 1 });
+
+    // No auth:"oauth" on this server
+    state.serverConfigs.set("plain-http", {
+      name: "plain-http",
+      transport: "http",
+      url: "http://localhost:3000/mcp",
+      enabled: true,
+      // auth is absent (defaults to "none" behavior)
+    });
+
+    const { mockDeduper, dedupedRefreshSpy } = makeMockDeduper();
+    const mockTokenStore = makeTokenStoreMock(60); // would be near-expiry if it mattered
+
+    const deps: McpClientManagerDeps = {
+      logger: NOOP_LOGGER,
+      oauthDeps: {
+        createTokenStore: () => mockTokenStore as unknown as TokenStore,
+        resolveDiscovery: vi.fn(),
+      },
+    };
+
+    // Inject the mockDeduper so .not.toHaveBeenCalled() is MEANINGFUL: post-patch a missing
+    // auth==="oauth" guard would make the spy fire on this non-oauth server and fail here.
+    callKeepalive(state, deps, "plain-http", undefined, mockDeduper);
+    await state.callQueues.get("plain-http")!.onIdle();
+
+    // auth!=="oauth" → refresh path skipped entirely.
+    expect(dedupedRefreshSpy).not.toHaveBeenCalled();
+    // Ping fires normally
+    expect(ping).toHaveBeenCalledTimes(1);
+  });
+
+  void PRE_EXPIRY_BUFFER_SEC; // referenced in test comments; satisfies unused-variable checks
 });
