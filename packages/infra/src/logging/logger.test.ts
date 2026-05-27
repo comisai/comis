@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Writable } from "node:stream";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createLogger, DEFAULT_REDACT_PATHS } from "./logger.js";
 import { isValidLogLevel } from "@comis/core";
 
@@ -784,5 +787,79 @@ describe("createLogger", () => {
         expect(result).toBe("SAFE-VALUE");
       });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R1: log redaction — multi-target transport and err serializer
+//
+// These tests write to a temp file via createLogger with a multi-target
+// transport mirroring the daemon's createFileTransport structure, then
+// assert that credential bodies are masked before hitting the file.
+//
+// RED phase: these tests MUST fail on pre-patch code because:
+//   - R1-a: the pipeline stage does not exist yet → Bearer hf_… appears in
+//     the file as-is (createLogger installs the caller-supplied transport
+//     unchanged at logger.ts:229)
+//   - R1-b: no serializers.err exists → err.message/err.stack verbatim
+// ---------------------------------------------------------------------------
+describe("R1: log redaction — multi-target transport and err serializer", () => {
+  let tmpDir: string;
+  let logFile: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "comis-r1-test-"));
+    logFile = join(tmpDir, "test.log");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("R1-a: multi-target file transport masks Bearer hf_<44+> in errorText and msg fields; env-ref passes through", async () => {
+    const HF_TOKEN = "hf_" + "A".repeat(44);
+    const ENV_REF = "${HF_TOKEN}"; // must NOT be masked
+
+    const logger = createLogger({
+      name: "r1-test",
+      // Mirror the daemon's createFileTransport structure: two pino/file targets
+      transport: {
+        targets: [
+          { target: "pino/file", options: { destination: logFile } },
+          { target: "pino/file", options: { destination: 1 } }, // stdout (ignored for assertion)
+        ],
+      },
+    });
+
+    logger.error({ errorText: `auth failed: Bearer ${HF_TOKEN}` }, "test R1-a");
+    logger.info({ msg: `token is ${HF_TOKEN}` }, "R1-a msg test");
+    logger.info({ msg: `ref is ${ENV_REF}` }, "R1-a env-ref pass");
+
+    // Allow transport worker thread to flush
+    await new Promise((r) => setTimeout(r, 300));
+
+    const content = await readFile(logFile, "utf8");
+    expect(content).not.toContain(HF_TOKEN); // raw token must be masked
+    expect(content).toContain(ENV_REF); // env-ref must pass through
+  });
+
+  it("R1-b: serializers.err scrubs hf_ token from err.message and err.stack", async () => {
+    const HF_TOKEN = "hf_" + "B".repeat(44);
+    const err = new Error(`auth failed token=${HF_TOKEN}`);
+
+    const logger = createLogger({
+      name: "r1-err-test",
+      transport: {
+        targets: [{ target: "pino/file", options: { destination: logFile } }],
+      },
+    });
+
+    logger.error({ err }, "R1-b err serializer test");
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    const content = await readFile(logFile, "utf8");
+    // Must fail pre-patch: no serializers.err → err.message appears verbatim
+    expect(content).not.toContain(HF_TOKEN);
   });
 });
