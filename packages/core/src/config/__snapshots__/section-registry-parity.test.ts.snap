@@ -5,6 +5,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   {
     "default": {
       "channels": {},
+      "defaultChannelEnabled": false,
       "emergencyDisabled": false,
       "onSuccess": "delete",
       "theme": "default",
@@ -19,6 +20,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.activity.channels",
     "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.activity.defaultChannelEnabled",
+    "type": "boolean"
   },
   {
     "default": false,
@@ -6539,6 +6546,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "default": {
         "activity": {
           "channels": {},
+          "defaultChannelEnabled": false,
           "emergencyDisabled": false,
           "onSuccess": "delete",
           "theme": "default",
@@ -13178,6 +13186,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       "additionalProperties": false,
       "default": {
         "channels": {},
+        "defaultChannelEnabled": false,
         "emergencyDisabled": false,
         "onSuccess": "delete",
         "theme": "default",
@@ -13203,6 +13212,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "type": "string"
           },
           "type": "object"
+        },
+        "defaultChannelEnabled": {
+          "default": false,
+          "type": "boolean"
         },
         "emergencyDisabled": {
           "default": false,
@@ -13243,7 +13256,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "onSuccess",
         "theme",
         "emergencyDisabled",
-        "channels"
+        "channels",
+        "defaultChannelEnabled"
       ],
       "type": "object"
     },
@@ -21855,6 +21869,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "additionalProperties": false,
             "default": {
               "channels": {},
+              "defaultChannelEnabled": false,
               "emergencyDisabled": false,
               "onSuccess": "delete",
               "theme": "default",
@@ -21880,6 +21895,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "type": "string"
                 },
                 "type": "object"
+              },
+              "defaultChannelEnabled": {
+                "default": false,
+                "type": "boolean"
               },
               "emergencyDisabled": {
                 "default": false,
@@ -21920,7 +21939,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "onSuccess",
               "theme",
               "emergencyDisabled",
-              "channels"
+              "channels",
+              "defaultChannelEnabled"
             ],
             "type": "object"
           },
@@ -24350,6 +24370,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "default": {
           "activity": {
             "channels": {},
+            "defaultChannelEnabled": false,
             "emergencyDisabled": false,
             "onSuccess": "delete",
             "theme": "default",

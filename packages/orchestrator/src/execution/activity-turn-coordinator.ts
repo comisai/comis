@@ -85,7 +85,14 @@ export type ActivityProjection = (
  * config) means "no suppression" — the un-wired composition path is unaffected.
  */
 export type ActivityKillSwitch = () =>
-  | { emergencyDisabled: boolean; channels: Record<string, { enabled: boolean }> }
+  | {
+      emergencyDisabled: boolean;
+      channels: Record<string, { enabled: boolean }>;
+      /** §22.2 operator opt-in to default-ON: when true, a rendererKey with no
+       *  explicit `channels` entry is enabled (an explicit entry still wins).
+       *  Absent/false preserves the fail-closed Day-0 posture. */
+      defaultEnabled?: boolean;
+    }
   | undefined;
 
 /**
@@ -265,8 +272,10 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
    * captured snapshot) so an in-memory config.write flip hot-reloads without
    * reconstructing the coordinator (Pitfall 4 / §22.2):
    *   • emergencyDisabled === true → suppress ALL activity for the agent,
-   *   • channels[ctx.rendererKey]?.enabled !== true → suppress this renderer
-   *     (a missing entry OR an explicit false is disabled — fail-closed).
+   *   • an explicit channels[ctx.rendererKey] entry always wins: enabled:true
+   *     renders, enabled:false suppresses (per-channel opt-out),
+   *   • no explicit entry → suppress UNLESS defaultEnabled === true (§22.2
+   *     operator opt-in to default-ON); fail-closed otherwise.
    * When the getter is absent or returns undefined, nothing is suppressed (the
    * un-wired composition path is unaffected — daemon injection is the documented
    * follow-on).
@@ -278,7 +287,9 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     const rendererKey = turnCtx?.rendererKey;
     if (rendererKey === undefined) return true;
     // eslint-disable-next-line security/detect-object-injection -- rendererKey is a trusted TurnActivityContext field minted by the composition root, not user input
-    return ks.channels[rendererKey]?.enabled !== true;
+    const entry = ks.channels[rendererKey];
+    if (entry !== undefined) return entry.enabled !== true; // explicit opt-in/opt-out wins
+    return ks.defaultEnabled !== true; // no entry → default-on only if operator opted in
   }
 
   /**

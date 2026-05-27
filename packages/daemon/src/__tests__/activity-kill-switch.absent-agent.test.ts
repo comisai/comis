@@ -54,15 +54,15 @@ describe("WIRE-07 §22.2 resolveActivityKillSwitchSlice fails closed (CR-01)", (
       default: { activity: { emergencyDisabled: false, channels: {} } },
     };
     const slice = resolveActivityKillSwitchSlice(agents, "ghost");
-    // Fail-closed: no emergency, empty channels → every renderer suppressed by
-    // the gate (channels[rendererKey]?.enabled !== true).
-    expect(slice).toEqual({ emergencyDisabled: false, channels: {} });
+    // Fail-closed: no emergency, empty channels, defaultEnabled false → every
+    // renderer suppressed by the gate.
+    expect(slice).toEqual({ emergencyDisabled: false, channels: {}, defaultEnabled: false });
   });
 
   it("returns a suppressing slice when the agent entry has no activity config", () => {
     const agents = { default: {} } as AgentActivityConfigMap;
     const slice = resolveActivityKillSwitchSlice(agents, "default");
-    expect(slice).toEqual({ emergencyDisabled: false, channels: {} });
+    expect(slice).toEqual({ emergencyDisabled: false, channels: {}, defaultEnabled: false });
   });
 
   it("preserves a configured slice verbatim (emergency + enabled channels pass through)", () => {
@@ -70,7 +70,7 @@ describe("WIRE-07 §22.2 resolveActivityKillSwitchSlice fails closed (CR-01)", (
       default: { activity: { emergencyDisabled: true, channels: { "default:echo:c1": { enabled: true } } } },
     };
     const slice = resolveActivityKillSwitchSlice(agents, "default");
-    expect(slice).toEqual({ emergencyDisabled: true, channels: { "default:echo:c1": { enabled: true } } });
+    expect(slice).toEqual({ emergencyDisabled: true, channels: { "default:echo:c1": { enabled: true } }, defaultEnabled: false });
   });
 
   it("end-to-end: a real tool turn for an absent agentId drives ZERO renderer.apply", async () => {

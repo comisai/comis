@@ -23,20 +23,31 @@
 export interface ActivityKillSwitchSlice {
   emergencyDisabled: boolean;
   channels: Record<string, { enabled: boolean }>;
+  /** §22.2 operator opt-in to default-ON. A no-entry renderer is enabled only
+   *  when this is true; an absent agent collapses to false (fail-closed). */
+  defaultEnabled: boolean;
 }
 
 /** The minimal per-agent shape this resolver reads (a structural supertype of
  *  the parsed `container.config.agents` value). */
 export type AgentActivityConfigMap = Record<
   string,
-  { activity?: { emergencyDisabled?: boolean; channels?: Record<string, { enabled: boolean }> } }
+  {
+    activity?: {
+      emergencyDisabled?: boolean;
+      channels?: Record<string, { enabled: boolean }>;
+      defaultChannelEnabled?: boolean;
+    };
+  }
 >;
 
 /**
  * Resolve the fail-closed kill-switch slice for a turn's agentId. Returns a
- * fully-suppressing slice ({@link ActivityKillSwitchSlice} with `channels: {}`)
- * when the agent is absent from the map or carries no `activity` config — never
- * `undefined`.
+ * fully-suppressing slice ({@link ActivityKillSwitchSlice} with `channels: {}`
+ * and `defaultEnabled: false`) when the agent is absent from the map or carries
+ * no `activity` config — never `undefined`. When the agent set
+ * `activity.defaultChannelEnabled`, that flows through as `defaultEnabled` so a
+ * no-entry renderer follows the operator's default-on opt-in (§22.2).
  */
 export function resolveActivityKillSwitchSlice(
   agents: AgentActivityConfigMap,
@@ -46,5 +57,6 @@ export function resolveActivityKillSwitchSlice(
   return {
     emergencyDisabled: activity?.emergencyDisabled ?? false,
     channels: activity?.channels ?? {},
+    defaultEnabled: activity?.defaultChannelEnabled ?? false,
   };
 }
