@@ -74,6 +74,20 @@ export type ActivityProjection = (
   prev?: ActivityRenderFrame,
 ) => ActivityRenderFrame;
 
+/**
+ * Live read of the operator kill switches for the agent owning this turn
+ * (WIRE-07, §22.2). Returns the per-agent `activity` slice the gate cares about:
+ * the agent-wide `emergencyDisabled` stop and the per-renderer `channels` enable
+ * map (keyed by `TurnActivityContext.rendererKey`). MUST be a getter, not a
+ * snapshot — the coordinator reads it on every `flushApply` so an in-memory
+ * `config.write` flip hot-reloads without reconstructing the coordinator
+ * (Pitfall 4). `undefined` (getter absent, or the agent has no `activity`
+ * config) means "no suppression" — the un-wired composition path is unaffected.
+ */
+export type ActivityKillSwitch = () =>
+  | { emergencyDisabled: boolean; channels: Record<string, { enabled: boolean }> }
+  | undefined;
+
 /** Injected dependencies for one per-turn coordinator. */
 export interface ActivityTurnCoordinatorDeps {
   activityStreamPort: ActivityStreamPort;
@@ -83,6 +97,14 @@ export interface ActivityTurnCoordinatorDeps {
   clock: ClockPort;
   logger: ComisLogger;
   config: ProjectionConfig;
+  /**
+   * WIRE-07 live kill-switch getter. OPTIONAL: when absent, no suppression is
+   * applied (preserving behavior for callers that do not inject it — the daemon
+   * thread-through is the documented composition-root follow-on). When present,
+   * `flushApply` early-returns BEFORE `renderer.apply` if the agent is
+   * emergency-disabled or the turn's rendererKey is not explicitly enabled.
+   */
+  killSwitch?: ActivityKillSwitch;
 }
 
 /**
