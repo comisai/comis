@@ -176,12 +176,13 @@ async function withStepTimeout(
   component: string,
   logger: ComisLogger,
 ): Promise<void> {
+  let timer: ReturnType<typeof systemSetTimeout> | undefined;
   try {
     await Promise.race([
       Promise.resolve(fn()),
-      new Promise<never>((_, reject) =>
-        systemSetTimeout(() => reject(new Error(`Shutdown step "${component}" timed out after ${STEP_TIMEOUT_MS}ms`)), STEP_TIMEOUT_MS),
-      ),
+      new Promise<never>((_, reject) => {
+        timer = systemSetTimeout(() => reject(new Error(`Shutdown step "${component}" timed out after ${STEP_TIMEOUT_MS}ms`)), STEP_TIMEOUT_MS);
+      }),
     ]);
   } catch (err) {
     logger.warn(
@@ -194,6 +195,10 @@ async function withStepTimeout(
       },
       "Shutdown step timed out or failed, continuing",
     );
+  } finally {
+    // Clear the step timer once the race settles so a fast step does not
+    // leave a dangling 5s timer (≈30 of them per shutdown otherwise).
+    if (timer !== undefined) systemClearTimeout(timer);
   }
 }
 
