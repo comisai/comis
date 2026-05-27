@@ -816,7 +816,7 @@ describe("R1: log redaction — multi-target transport and err serializer", () =
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("R1-a: multi-target file transport masks Bearer hf_<44+> in errorText and msg fields; env-ref passes through", { timeout: 12000 }, async () => {
+  it("R1-a: multi-target file transport masks Bearer hf_<44+> in errorText, msg, and argsPreview fields; env-ref passes through", { timeout: 12000 }, async () => {
     const HF_TOKEN = "hf_" + "A".repeat(44);
     const ENV_REF = "${HF_TOKEN}"; // must NOT be masked
 
@@ -842,6 +842,8 @@ describe("R1: log redaction — multi-target transport and err serializer", () =
 
     logger.error({ errorText: `auth failed: Bearer ${HF_TOKEN}` }, "test R1-a");
     logger.info({ msg: `token is ${HF_TOKEN}` }, "R1-a msg test");
+    // SC3 explicitly names argsPreview as a must-mask field (exec/tool arg previews).
+    logger.info({ argsPreview: `run --auth Bearer ${HF_TOKEN}` }, "R1-a argsPreview test");
     logger.info({ msg: `ref is ${ENV_REF}` }, "R1-a env-ref pass");
 
     // Allow transport worker thread(s) to flush.
@@ -860,8 +862,9 @@ describe("R1: log redaction — multi-target transport and err serializer", () =
       await new Promise((r) => setTimeout(r, 100));
     }
 
-    expect(content).not.toContain(HF_TOKEN); // raw token must be masked
+    expect(content).not.toContain(HF_TOKEN); // raw token must be masked (covers errorText, msg, AND argsPreview)
     expect(content).toContain(ENV_REF); // env-ref must pass through
+    expect(content).toContain("argsPreview"); // the argsPreview line was written through the stage (field key survives; value masked above)
   });
 
   it("R1-b: serializers.err scrubs hf_ token from err.message and err.stack", { timeout: 8000 }, async () => {
