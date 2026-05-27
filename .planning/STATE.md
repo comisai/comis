@@ -4,14 +4,14 @@ milestone: v1.2
 milestone_name: MCP Hardening II
 status: executing
 stopped_at: v1.2 roadmap created
-last_updated: "2026-05-27T17:09:23.226Z"
+last_updated: "2026-05-27T17:35:24.802Z"
 last_activity: 2026-05-27
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 8
-  completed_plans: 5
-  percent: 63
+  completed_plans: 6
+  percent: 75
 ---
 
 # Project State: Comis
@@ -29,7 +29,7 @@ progress:
 ## Current Position
 
 Phase: 2 (EGRESS — Secret egress firewall + secure credential home) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-05-27
 
@@ -108,7 +108,7 @@ Carried from research as load-bearing constraints (the verifier and planner rely
 
 ## Session Continuity
 
-Last session: 2026-05-27T17:09:23.221Z
+Last session: 2026-05-27T17:35:24.797Z
 Stopped at: v1.2 roadmap created
 Resume file: None
 
