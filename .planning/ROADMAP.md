@@ -105,7 +105,7 @@ Plans:
 - [x] 02-01-PLAN.md — R4: secret-egress-guard core module + OutputGuard redact upgrade + validateMemoryWrite secret branch + config schema knob
 
 **Wave 2** *(parallel, depend on Wave 1)*
-- [ ] 02-02-PLAN.md — R4: write/edit tool guard + sub-agent result relay+persist scrub + memory-store-tool SECRET_PATTERNS retirement
+- [x] 02-02-PLAN.md — R4: write/edit tool guard + sub-agent result relay+persist scrub + memory-store-tool SECRET_PATTERNS retirement
 - [ ] 02-03-PLAN.md — R4: delivery scan (deliverToChannel) + redirect header expansion + secrets-audit doctor check
 
 **Wave 3** *(R8 credential home — depend on Wave 1+2)*
@@ -169,7 +169,7 @@ Plans:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. REGR — Critical regressions | v1.2 | 3/3 | Complete    | 2026-05-27 |
-| 2. EGRESS — Secret egress firewall + secure credential home | v1.2 | 1/5 | In Progress|  |
+| 2. EGRESS — Secret egress firewall + secure credential home | v1.2 | 2/5 | In Progress|  |
 | 3. CONNECT — MCP connect correctness + delivery UX | v1.2 | 0/? | Not started | - |
 | 4. OAUTH — OAuth refresh robustness | v1.2 | 0/? | Not started | - |
 | 5. SANDBOX — Sandbox ergonomics | v1.2 | 0/? | Not started | - |
