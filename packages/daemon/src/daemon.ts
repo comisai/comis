@@ -95,6 +95,8 @@ import {
   BackgroundTasksConfigSchema,
   writeMasterKeyIfAbsent,
   systemGetEnv,
+  selectOAuthCredentialStore,
+  createFileLock,
   type SecretStorePort,
   type ToolCapabilityPort,
   type PerAgentConfig,
@@ -110,6 +112,7 @@ import {
   createContextStore,
   createObservabilityStore,
   createSqliteSecretStore,
+  createOAuthProfileStoreEncrypted,
 } from "@comis/memory";
 import { createGatewayServer } from "@comis/gateway";
 import {
@@ -1759,8 +1762,46 @@ async function bootAgents(
     logger: skillsLogger,
   });
 
+  // R8 gap-closure (02-06): hoist oauthCredentialStore construction to BEFORE
+  // setupMcp so MCP OAuth tokens are routed through the unified
+  // OAuthCredentialStorePort (not the disk-default fallback).
+  //
+  // All dependencies are available here from `foundation`:
+  //   - container.config.oauth.storage, dataDir  → already in scope
+  //   - secretsCrypto, secretsDb                 → from foundation (line ~1713)
+  //   - createFileLock()                         → pure factory, no deps
+  //
+  // The same store instance is later consumed by setupAgents (threaded into
+  // singleAgentDeps.oauthCredentialStore) and the RPC dispatcher. This is
+  // safe: setupAgents in setup-agents-registry.ts already guards against
+  // double-construction — it constructs its own if not provided. However,
+  // since we declare it here, we pass it through so both sites share one
+  // instance (no duplicate SQLite handles for the encrypted-mode store).
+  let encryptedStoreForMcp: import("@comis/core").OAuthCredentialStorePort | undefined;
+  if (container.config.oauth.storage === "encrypted") {
+    if (!secretsCrypto || !secretsDb) {
+      throw new Error(
+        "OAuth storage mode is 'encrypted' but secretsDb/secretsCrypto were not initialized. " +
+          "Hint: set SECRETS_MASTER_KEY env var (and restart the daemon) so the encrypted " +
+          "secrets store boots, or change appConfig.oauth.storage to 'file' to use the " +
+          "plaintext file backend.",
+      );
+    }
+    encryptedStoreForMcp = createOAuthProfileStoreEncrypted(secretsDb, secretsCrypto);
+  }
+  const oauthCredentialStoreForceMcp = selectOAuthCredentialStore({
+    storage: container.config.oauth.storage,
+    dataDir: container.config.dataDir && container.config.dataDir.length > 0
+      ? container.config.dataDir
+      : dataDir,
+    fileLock: createFileLock(),
+    encryptedStore: encryptedStoreForMcp,
+  });
+
   // Construct daemon-global MCP manager BEFORE setupAgents (ordering constraint
   // -- per-agent ToolCapabilityPort adapters close over mcpClientManager).
+  // R8: oauthCredentialStore + dataDir now threaded in so MCP OAuth tokens
+  // go through the unified OAuthCredentialStorePort (not the disk default).
   // Inlined setupMcpManager — pure in-memory state holder construction.
   const { mcpClientManager } = await setupMcp({
     servers: container.config.integrations.mcp.servers,
@@ -1777,14 +1818,22 @@ async function bootAgents(
     globalKeepaliveIntervalMs: container.config.integrations.mcp.keepaliveIntervalMs,
     circuitBreakerThreshold: container.config.integrations.mcp.circuitBreakerThreshold,
     circuitBreakerCooldownMs: container.config.integrations.mcp.circuitBreakerCooldownMs,
+    // R8 (02-06): route MCP OAuth tokens through the unified credential port.
+    oauthCredentialStore: oauthCredentialStoreForceMcp,
+    dataDir: container.config.dataDir && container.config.dataDir.length > 0
+      ? container.config.dataDir
+      : dataDir,
   });
 
   const {
     sessionManager, executors, workspaceDirs, costTrackers, budgetGuards, stepCounters,
     getExecutor, piSessionAdapters,
     skillWatcherHandles, skillRegistries, lockCleanupTimer, singleAgentDeps, providerHealth,
-    // Daemon-level OAuth credential store, threaded into ApiDispatchDeps
-    // below so agents.update can validate oauthProfiles patches via has().
+    // Daemon-level OAuth credential store from setupAgents — same port instance
+    // threaded into ApiDispatchDeps so agents.update can validate oauthProfiles
+    // patches via has(). setupAgents constructs its own store internally via
+    // selectOAuthCredentialStore; the R8-hoisted store above is a separate
+    // instance used exclusively by setupMcp (the MCP OAuth token seam).
     oauthCredentialStore,
     // Per-agent live ToolCapabilityPort adapters; daemon.ts threads
     // getCapabilityPortForAgent into setupTools and mutates this map on
