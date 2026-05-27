@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import pino from "pino";
 import type { TransportMultiOptions, TransportSingleOptions } from "pino";
 import type { ComisLogger as CoreComisLogger } from "@comis/core";
-import { CREDENTIAL_KEYS } from "@comis/observability";
+import { CREDENTIAL_KEYS, redactSecretsInText } from "@comis/observability";
 
 // `maskToken` is loaded via createRequire on the EDGE-KEEPING SUBPATH
 // (not the package barrel) to defeat the cyclic-package cycle detection
@@ -212,6 +212,29 @@ export function createLogger(options: LoggerOptions): ComisLogger {
 
   if (mixin) {
     pinoOptions.mixin = mixin;
+  }
+
+  // Serializer for err objects: redact credential bodies from err.message and err.stack.
+  // Pino's structured-field fast-redact (above) only covers named key paths; err.message
+  // and err.stack are unstructured text that bypass it entirely. This serializer applies
+  // the same free-form regex pass (`redactSecretsInText`) to both fields before Pino
+  // serializes the err object to JSON — covering all `logger.xxx({ err }, "…")` call sites.
+  //
+  // Gated on !options.disableRedaction to preserve the residency-test invariant (the
+  // harness enables that flag so raw values appear in logs for test assertion).
+  if (!options.disableRedaction) {
+    pinoOptions.serializers = {
+      err: (err: unknown) => {
+        if (err instanceof Error) {
+          return {
+            message: redactSecretsInText(err.message),
+            stack: err.stack ? redactSecretsInText(err.stack) : undefined,
+            name: err.name,
+          };
+        }
+        return err as Record<string, unknown>;
+      },
+    };
   }
 
   // Transport selection:

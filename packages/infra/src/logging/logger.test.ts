@@ -816,17 +816,26 @@ describe("R1: log redaction — multi-target transport and err serializer", () =
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("R1-a: multi-target file transport masks Bearer hf_<44+> in errorText and msg fields; env-ref passes through", async () => {
+  it("R1-a: multi-target file transport masks Bearer hf_<44+> in errorText and msg fields; env-ref passes through", { timeout: 12000 }, async () => {
     const HF_TOKEN = "hf_" + "A".repeat(44);
     const ENV_REF = "${HF_TOKEN}"; // must NOT be masked
 
     const logger = createLogger({
       name: "r1-test",
-      // Mirror the daemon's createFileTransport structure: two pino/file targets
+      // Mirror the daemon's createFileTransport structure:
+      // Each target is expressed as a pipeline (stage → destination), matching
+      // the correct pino API for chaining a Transform upstream of a Writable.
       transport: {
         targets: [
-          { target: "pino/file", options: { destination: logFile } },
-          { target: "pino/file", options: { destination: 1 } }, // stdout (ignored for assertion)
+          {
+            // File target with upstream redact stage
+            pipeline: [
+              { target: "@comis/infra/dist/logging/pipeline-redact-stage.js" },
+              { target: "pino/file", options: { destination: logFile } },
+            ],
+          },
+          // Stdout target for visual verification (no assertion on stdout content)
+          { target: "pino/file", options: { destination: 1 } },
         ],
       },
     });
@@ -835,15 +844,27 @@ describe("R1: log redaction — multi-target transport and err serializer", () =
     logger.info({ msg: `token is ${HF_TOKEN}` }, "R1-a msg test");
     logger.info({ msg: `ref is ${ENV_REF}` }, "R1-a env-ref pass");
 
-    // Allow transport worker thread to flush
-    await new Promise((r) => setTimeout(r, 300));
+    // Allow transport worker thread(s) to flush.
+    // Pipeline transports spawn a chain of worker threads; they need more time
+    // than a simple single-target transport to flush to disk. Poll until the
+    // file is non-empty (or until the deadline) to avoid flakiness under load.
+    const deadline = Date.now() + 8000;
+    let content = "";
+    while (Date.now() < deadline) {
+      try {
+        content = await readFile(logFile, "utf8");
+        if (content.length > 0) break;
+      } catch {
+        // File not yet created by the pipeline worker — keep polling
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
 
-    const content = await readFile(logFile, "utf8");
     expect(content).not.toContain(HF_TOKEN); // raw token must be masked
     expect(content).toContain(ENV_REF); // env-ref must pass through
   });
 
-  it("R1-b: serializers.err scrubs hf_ token from err.message and err.stack", async () => {
+  it("R1-b: serializers.err scrubs hf_ token from err.message and err.stack", { timeout: 8000 }, async () => {
     const HF_TOKEN = "hf_" + "B".repeat(44);
     const err = new Error(`auth failed token=${HF_TOKEN}`);
 
@@ -856,9 +877,19 @@ describe("R1: log redaction — multi-target transport and err serializer", () =
 
     logger.error({ err }, "R1-b err serializer test");
 
-    await new Promise((r) => setTimeout(r, 300));
+    // Poll until the file exists and has content (worker thread may take time to start).
+    const deadline = Date.now() + 5000;
+    let content = "";
+    while (Date.now() < deadline) {
+      try {
+        content = await readFile(logFile, "utf8");
+        if (content.length > 0) break;
+      } catch {
+        // File not yet created — keep polling
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
 
-    const content = await readFile(logFile, "utf8");
     // Must fail pre-patch: no serializers.err → err.message appears verbatim
     expect(content).not.toContain(HF_TOKEN);
   });

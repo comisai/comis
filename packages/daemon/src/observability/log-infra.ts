@@ -128,31 +128,53 @@ export function createFileTransport(
     : config.maxSize;
   const countLimit = logRotation ? logRotation.maxFiles : config.maxFiles;
 
-  const targets: pino.TransportTargetOptions[] = [];
+  // Each destination is expressed as a TransportPipelineOptions entry:
+  //   pipeline[0] = upstream redact stage (Transform)
+  //   pipeline[1] = final destination (Writable)
+  //
+  // This is the correct pino pattern for chaining a transform before a writable:
+  // targets[] may contain TransportPipelineOptions (pipeline array, no `target` property)
+  // OR TransportTargetOptions (target string, no `pipeline` property) — pino's worker
+  // routes them differently. A pipeline entry runs as a chain:
+  //   source → redact-stage → file-destination
+  //
+  // IMPORTANT: `target + pipeline` on the same object is NOT supported — pino's transport.js
+  // adds such entries to BOTH `options.targets` (raw write) AND `options.pipelines` (stage-only,
+  // no final dest). Using TransportPipelineOptions (pipeline-only, no target) is the correct API.
+  const targets: pino.TransportPipelineOptions[] = [];
 
   // File transport: always active -- ~/.comis/logs/ is the canonical log location
+  // The redact stage runs upstream of pino-roll so every line is scrubbed before disk write (R1)
   targets.push({
-    target: "pino-roll",
-    options: {
-      file: expandedPath,
-      size: sizeStr,
-      mkdir: true,
-      limit: {
-        count: countLimit,
-        removeOtherLogFiles: true,
+    pipeline: [
+      { target: "@comis/infra/dist/logging/pipeline-redact-stage.js" },
+      {
+        target: "pino-roll",
+        options: {
+          file: expandedPath,
+          size: sizeStr,
+          mkdir: true,
+          limit: {
+            count: countLimit,
+            removeOtherLogFiles: true,
+          },
+        },
       },
-    },
+    ],
     ...(level ? { level } : {}),
   });
 
   // Stdout: skip under pm2 (pm2 captures stdout to ~/.pm2/logs/, so it would be a duplicate)
+  // The redact stage runs upstream of pino/file so every line is scrubbed before stdout write (R1)
   if (!pm2Detected) {
     targets.push({
-      target: "pino/file",
-      options: { destination: 1 }, // stdout
+      pipeline: [
+        { target: "@comis/infra/dist/logging/pipeline-redact-stage.js" },
+        { target: "pino/file", options: { destination: 1 } }, // stdout
+      ],
       ...(level ? { level } : {}),
     });
   }
 
-  return { targets };
+  return { targets: targets as unknown as pino.TransportTargetOptions[] };
 }

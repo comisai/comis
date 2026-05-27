@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { Type } from "typebox";
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { safePath, systemNowMs, tryGetContext } from "@comis/core";
+import { redactSecretsInText } from "@comis/observability";
 import {
   jsonResult,
   throwToolError,
@@ -122,7 +123,7 @@ export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams>
         const breakSystemWarning = command.includes("--break-system-packages")
           ? "⚠️ WARNING: --break-system-packages modifies the system Python. Use a virtualenv: the workspace's pre-warmed venv (venv/bin/pip install ...) or a per-project one (python3 -m venv projects/<name>/.venv).\n\n"
           : "";
-        logger?.debug({ toolName: "exec", command: command.slice(0, 200), background, pty, ...(description && { description }) }, "Exec command start");
+        logger?.debug({ toolName: "exec", command: redactSecretsInText(command.slice(0, 200)), background, pty, ...(description && { description }) }, "Exec command start");
         if (userEnv) logger?.debug({ toolName: "exec", envOverrides: Object.keys(userEnv) }, "Exec env override applied");
         const timeoutMs = Math.min(Math.max(rawTimeout ?? DEFAULT_TIMEOUT_MS, 100), MAX_TIMEOUT_MS);
         const cwd = cwdParam ? resolveCwd(workspacePath, cwdParam) : workspacePath;
