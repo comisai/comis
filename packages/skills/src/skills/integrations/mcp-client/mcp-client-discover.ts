@@ -94,6 +94,20 @@ const NPM_CONFIG_PREFIX = "npm_config_";
 const XDG_PREFIX = "XDG_";
 
 /**
+ * Interpreter-control vars blocked from child env unconditionally (R4 — T-02-14).
+ * These instruct runtimes to load attacker-controlled code at startup.
+ * Blocked even via operator config.env — NEVER remove without security review.
+ */
+const INTERPRETER_CONTROL_BLOCKLIST: ReadonlySet<string> = new Set([
+  "BASH_ENV", "ENV",          // sh/bash startup file injection
+  "PYTHONSTARTUP",             // Python startup code
+  "RUBYOPT",                   // Ruby option injection (-r loads modules)
+  "JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS", // JVM agent injection
+  "PERL5OPT",                  // Perl option injection (-M loads modules)
+  "NODE_OPTIONS",              // Node.js --require / --experimental-* injection
+]);
+
+/**
  * Build the stdio-child env from the allowlist + operator extension +
  * explicit config.env passthrough.
  *
@@ -122,6 +136,9 @@ export function scrubStdioEnv(
   const result: Record<string, string> = {};
   const snapshot = systemEnvSnapshot();
   for (const key of Object.keys(snapshot)) {
+    // R4: interpreter-control vars are blocked even if they appear in the
+    // allowlist or a prefix-match — defense-in-depth against accidental addition.
+    if (INTERPRETER_CONTROL_BLOCKLIST.has(key)) continue;
     const passes =
       allowlist.has(key) ||
       key.startsWith(NPM_CONFIG_PREFIX) ||
@@ -132,9 +149,11 @@ export function scrubStdioEnv(
     if (v.startsWith("()")) continue; // Shellshock / function-export skip
     result[key] = v;
   }
-  // Operator-named config.env passes through unconditionally.
+  // Operator-named config.env passes through — EXCEPT interpreter-control vars
+  // (R4: these must never reach a child process even via explicit operator config).
   if (configEnv) {
     for (const [key, value] of Object.entries(configEnv)) {
+      if (INTERPRETER_CONTROL_BLOCKLIST.has(key)) continue; // R4 block
       result[key] = value;
     }
   }

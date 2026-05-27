@@ -19,9 +19,21 @@
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 const SENSITIVE_HEADERS_TO_STRIP_ON_CROSS_HOST: readonly string[] = [
+  // Standard auth headers
   "authorization",
   "cookie",
   "proxy-authorization",
+  // Extended auth headers (OpenClaw 13-header set — cross-origin exfil vectors)
+  "x-auth-token",
+  "x-api-key",
+  "x-authorization",
+  "authorization-token",
+  "x-forwarded-authorization",
+  "x-access-token",
+  "x-amz-security-token",
+  "x-goog-api-key",
+  "x-client-id",
+  "x-client-secret",
 ];
 
 export interface RedirectPolicyOptions {

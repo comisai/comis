@@ -1567,18 +1567,17 @@ describe("R4 delivery egress scan", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
-  it("large message (10k chars, no secrets) scan completes under 5ms", async () => {
+  it("large message (10k chars, no secrets) scrub completes under 5ms (pre-filter path)", async () => {
     // Verifies the cheap mightContainSecret pre-filter path.
-    // Timing assertion may pass once pre-filter is implemented; fails at RED
-    // because there is no scrub call at all (undefined is not a number).
-    const service = createDeliveryService(makeDeps({ maxCharsOverride: 500 }));
-    const adapter = makeAdapter(vi.fn().mockResolvedValue(ok("msg-perf")), "telegram");
+    // Measures ONLY the scrubSecretsFromText call itself (not the whole
+    // delivery pipeline) — the scrub must be near-zero on secret-free text.
     const longText = "x".repeat(10_000);
     const before = performance.now();
-    await service.deliverToChannel(adapter, "chat-perf", longText);
+    const result = secretEgressGuard.scrubSecretsFromText(longText);
     const elapsed = performance.now() - before;
-    // The scrub itself (not the whole delivery) must be cheap;
-    // entire call under 5ms proves pre-filter path is cheap enough.
+    // Secret-free text hits the mightContainSecret pre-filter and returns
+    // immediately — must complete in under 5ms even at 10k chars.
+    expect(result.redactions).toBe(0);
     expect(elapsed).toBeLessThan(5);
   });
 });
