@@ -36,13 +36,18 @@ export default function createPipelineRedactStage(_opts?: unknown): Transform {
     (source: Transform & build.OnUnknown) =>
       (async function* () {
         for await (const line of source as AsyncIterable<unknown>) {
-          const lineStr = typeof line === "string" ? line : JSON.stringify(line);
+          // parse:"lines" guarantees string delivery (split2 always emits strings
+          // in line-parse mode). The ternary fallback is a defensive no-op.
+          const lineStr = line as string;
           try {
-            yield redactSecretsInText(lineStr);
+            // CR-01 fix: re-append "\n" stripped by split2's line-parse mode.
+            // Without this, every yielded value is written back-to-back with no
+            // delimiter, producing one concatenated unparseable blob.
+            yield redactSecretsInText(lineStr) + "\n";
           } catch {
             // Pino transport invariant: never throw. If redaction itself errors,
             // pass the line through unmodified so the log is never lost.
-            yield lineStr;
+            yield lineStr + "\n";
           }
         }
       })() as unknown as Transform & build.OnUnknown,
