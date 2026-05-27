@@ -69,7 +69,10 @@ describe("memory_store tool", () => {
     });
   });
 
-  it("warns when content contains a Google API key", async () => {
+  it("passes content with Google API key directly to rpcCall (R4: in-tool detection retired, daemon-side validateMemoryWrite handles it)", async () => {
+    // R4: The private SECRET_PATTERNS / contentLooksLikeSecret check is retired.
+    // Secret detection now lives daemon-side in validateMemoryWrite (memory-write-validator.ts).
+    // The tool itself no longer intercepts or warns — it passes content through to the RPC.
     const rpcCall = vi.fn(async () => ({ stored: true, id: "mem-006" }));
     const tool = createMemoryStoreTool(rpcCall);
 
@@ -77,17 +80,14 @@ describe("memory_store tool", () => {
       content: "Here is my Gemini API key AIzaFAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_X",
     });
 
-    // Should still store it
+    // Should store it (tool-level warning is retired; daemon validates)
     expect(rpcCall).toHaveBeenCalledOnce();
-    // But should include a warning
-    expect(result.details).toEqual(
-      expect.objectContaining({
-        warning: expect.stringContaining("API key"),
-      }),
-    );
+    // No in-tool warning — secret check is now daemon-side only
+    expect(result.details).not.toHaveProperty("warning");
   });
 
-  it("warns when content contains an OpenAI API key", async () => {
+  it("passes content with OpenAI API key directly to rpcCall (R4: in-tool detection retired, daemon-side validateMemoryWrite handles it)", async () => {
+    // R4: same as above — tool passes content through, daemon validates.
     const rpcCall = vi.fn(async () => ({ stored: true }));
     const tool = createMemoryStoreTool(rpcCall);
 
@@ -96,11 +96,8 @@ describe("memory_store tool", () => {
     });
 
     expect(rpcCall).toHaveBeenCalledOnce();
-    expect(result.details).toEqual(
-      expect.objectContaining({
-        warning: expect.stringContaining("API key"),
-      }),
-    );
+    // No in-tool warning after R4 retirement
+    expect(result.details).not.toHaveProperty("warning");
   });
 
   it("does not warn for normal content", async () => {

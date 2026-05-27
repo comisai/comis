@@ -42,6 +42,8 @@ export { resolveSecretRef, resolveConfigSecretRefs } from "../security/index.js"
 export type { ResolveSecretRefDeps, ResolveSecretRefOptions } from "../security/index.js";
 export { scanConfigForSecrets, scanEnvForSecrets, auditSecrets } from "../security/index.js";
 export type { AuditFinding, AuditSeverity, AuditOptions } from "../security/index.js";
+// Secret egress guard — R4 shared text scrubber (wave 2 wiring sites: write-tool, edit-tool, result-condenser, sub-agent-result-processor)
+export { scrubSecretsFromText } from "../security/index.js";
 export {
   ZERO_WIDTH_REGEX,
   TAG_BLOCK_REGEX,

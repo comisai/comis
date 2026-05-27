@@ -25,7 +25,7 @@
 
 import { generateSummary, truncateHead, truncateTail } from "@earendil-works/pi-coding-agent";
 import { type SubagentResult, SubagentResultSchema, type CondensedResult } from "@comis/core";
-import { safePath, systemNowMs, systemNowDate } from "@comis/core";
+import { safePath, systemNowMs, systemNowDate, scrubSecretsFromText } from "@comis/core";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { CHARS_PER_TOKEN } from "../safety/token-estimator.js";
@@ -174,7 +174,23 @@ export function createResultCondenser(deps: ResultCondenserDeps) {
 // ---------------------------------------------------------------------------
 
 async function condenseInternal(params: CondenseParams, deps: ResultCondenserDeps): Promise<CondensedResult> {
-  const { fullResult, task, runId, sessionKey, agentId } = params;
+  const { task, runId, sessionKey, agentId } = params;
+
+  // R4: scrub before condense, relay, and persist — one pass, pre-filter inside.
+  // This single reassignment ensures wrapAsSubagentResult, persistFullResult,
+  // and all downstream uses receive scrubbed text.
+  const relayScrub = scrubSecretsFromText(params.fullResult);
+  let fullResult = params.fullResult;
+  if (relayScrub.redactions > 0) {
+    deps.logger.warn(
+      { runId, agentId, redactions: relayScrub.redactions,
+        hint: "Secret found in sub-agent full result — redacted before relay and persist",
+        errorKind: "internal" as const },
+      "R4 egress guard: sub-agent result scrubbed",
+    );
+    fullResult = relayScrub.text;
+  }
+
   const originalTokens = estimateTokens(fullResult);
 
   // Compute disk path eagerly.

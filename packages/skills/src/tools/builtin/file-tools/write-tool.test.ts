@@ -714,7 +714,7 @@ describe("R4 secret egress guard", () => {
     expect(result.isError).toBeFalsy();
   });
 
-  it("blocks write and returns error when writeSecretGuard is block mode", async () => {
+  it("blocks write and throws [write_secret_blocked] when writeSecretGuard is block mode", async () => {
     const tool = createComisWriteTool(
       workspaceDir,
       undefined,
@@ -723,12 +723,11 @@ describe("R4 secret egress guard", () => {
       { security: { writeSecretGuard: "block" as const } },
     );
     const tokenContent = "Bearer hf_" + "a".repeat(44);
-    const result = await tool.execute("id", {
-      path: "blocked-secret.txt",
-      content: tokenContent,
-    });
-    expect(result.isError).toBe(true);
-    const resultText = result.content.map((b: { text: string }) => b.text).join("\n");
-    expect(resultText).toMatch(/\[write_secret_blocked\]/);
+    await expect(
+      tool.execute("id", {
+        path: "blocked-secret.txt",
+        content: tokenContent,
+      }),
+    ).rejects.toThrow("[write_secret_blocked]");
   });
 });
