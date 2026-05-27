@@ -894,3 +894,70 @@ describe("R1: log redaction — multi-target transport and err serializer", () =
     expect(content).not.toContain(HF_TOKEN);
   });
 });
+
+// ── CR-01 regression: pipeline-redact-stage must preserve line delimiters ──
+
+describe("CR-01: pipeline-redact-stage preserves newline-delimited JSON lines", () => {
+  let tmpDir: string;
+  let logFile: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "comis-cr01-test-"));
+    logFile = join(tmpDir, "cr01.log");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("CR-01: three log records produce three newline-terminated individually JSON-parseable lines (pre-patch: all concatenated into one unparseable blob)", { timeout: 15000 }, async () => {
+    // Pre-patch: parse:"lines" strips trailing \n and the stage never re-appends it,
+    // so all records are written back-to-back without delimiters — one giant blob.
+    // Post-patch: each yielded string gets "\n" appended; three parseable lines.
+
+    const logger = createLogger({
+      name: "cr01-test",
+      transport: {
+        pipeline: [
+          { target: "@comis/infra/dist/logging/pipeline-redact-stage.js" },
+          { target: "pino/file", options: { destination: logFile } },
+        ],
+      },
+    });
+
+    logger.info({ step: "one" }, "CR-01 line one");
+    logger.info({ step: "two" }, "CR-01 line two");
+    logger.info({ step: "three" }, "CR-01 line three");
+
+    // Poll until all 3 records are flushed (worker threads need time to start and flush).
+    const deadline = Date.now() + 10000;
+    let content = "";
+    while (Date.now() < deadline) {
+      try {
+        content = await readFile(logFile, "utf8");
+        // Wait until at least 3 "CR-01 line" substrings appear so we know all records landed
+        if ((content.match(/CR-01 line/g) ?? []).length >= 3) break;
+      } catch {
+        // File not yet created — keep polling
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    // Split on \n to get lines (ignoring trailing empty string after final \n)
+    const rawLines = content.split("\n").filter((l) => l.trim().length > 0);
+
+    // ASSERT 1: exactly 3 lines (pre-patch: 1 line — concatenated blob)
+    expect(rawLines.length, "expected 3 newline-delimited lines, got a concatenated blob").toBe(3);
+
+    // ASSERT 2: each line is individually JSON-parseable (pre-patch: }{...}{ is invalid JSON)
+    for (const line of rawLines) {
+      expect(() => JSON.parse(line), `line is not valid JSON: ${line.substring(0, 80)}`).not.toThrow();
+    }
+
+    // ASSERT 3: each parsed record has the expected msg field
+    const parsed = rawLines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(parsed.map((r) => r["msg"])).toEqual(
+      expect.arrayContaining(["CR-01 line one", "CR-01 line two", "CR-01 line three"]),
+    );
+  });
+});
