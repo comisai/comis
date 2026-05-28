@@ -1790,6 +1790,129 @@ describe("MCP RPC Handlers", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // R11-01: first-install auth:"oauth" promotion
+  //
+  // When mcp.connect is called with auth:"oauth" and there is no prior
+  // persistedEntry (first install), buildPersistedMcpEntry must receive
+  // auth:"oauth" so the stored config entry retains it. Without this, the
+  // mcp.oauth_login precondition check (entry.auth !== "oauth") later rejects
+  // with "not configured for OAuth".
+  //
+  // The RED tests below FAIL on HEAD because mcp-handlers.ts currently does
+  // NOT pass params.auth to buildPersistedMcpEntry — the comment at line 343
+  // explicitly says "No explicit pass-through needed", which is wrong for
+  // the first-install case.
+  // -------------------------------------------------------------------------
+  describe("mcp.connect first-install auth:oauth promotion (R11-01)", () => {
+    it("stores auth:oauth on the persisted entry when params.auth='oauth' on first install (no prior persistedEntry)", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("higgsfield", [])));
+      const { persistDeps, container } = makePersistDeps([]); // empty — no prior entry
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "higgsfield",
+        transport: "http",
+        url: "https://mcp.higgsfield.ai/mcp",
+        auth: "oauth",
+      } as any);
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      const persistedEntry = callOpts.patch.integrations.mcp.servers.find(
+        (s: { name: string }) => s.name === "higgsfield",
+      );
+      expect(persistedEntry).toBeDefined();
+      expect(persistedEntry.auth).toBe("oauth");
+    });
+
+    it("forwards auth:oauth to manager.connect runtime config on first install", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("higgsfield", [])));
+      const { persistDeps, container } = makePersistDeps([]); // first install
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "higgsfield",
+        transport: "http",
+        url: "https://mcp.higgsfield.ai/mcp",
+        auth: "oauth",
+      } as any);
+
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "higgsfield", auth: "oauth" }),
+      );
+    });
+
+    it("explicit params.auth wins over persistedEntry.auth when both are present", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("reauth", [])));
+      const { persistDeps, container } = makePersistDeps([
+        {
+          name: "reauth",
+          transport: "http",
+          url: "https://mcp.reauth.example/mcp",
+          enabled: true,
+          auth: "headers",
+        } as any,
+      ]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      // Override from headers -> oauth via explicit param
+      await handlers["mcp.connect"]({
+        server_name: "reauth",
+        transport: "http",
+        url: "https://mcp.reauth.example/mcp",
+        auth: "oauth",
+      } as any);
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      const persistedEntry = callOpts.patch.integrations.mcp.servers.find(
+        (s: { name: string }) => s.name === "reauth",
+      );
+      expect(persistedEntry.auth).toBe("oauth");
+      expect(manager.connect).toHaveBeenCalledWith(
+        expect.objectContaining({ auth: "oauth" }),
+      );
+    });
+
+    it("omits auth from persisted entry when params.auth is absent and no prior persistedEntry", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("noauth", [])));
+      const { persistDeps, container } = makePersistDeps([]); // no prior entry
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "noauth",
+        transport: "stdio",
+        command: "npx",
+      } as any);
+
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      const persistedEntry = callOpts.patch.integrations.mcp.servers.find(
+        (s: { name: string }) => s.name === "noauth",
+      );
+      expect(persistedEntry).toBeDefined();
+      expect(persistedEntry).not.toHaveProperty("auth");
+    });
+  });
+
   describe("mcp.connect rlimits accepted, forwarded, and persisted", () => {
     it("forwards rlimits to manager.connect (spawn-time) on a fresh connect with no prior persisted entry", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("limited", [])));

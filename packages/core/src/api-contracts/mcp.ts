@@ -305,6 +305,12 @@ export const McpConnectContract = defineContract({
     keepaliveIntervalMs: z.number().int().nonnegative().optional(),
     circuitBreakerThreshold: z.number().int().positive().optional(),
     circuitBreakerCooldownMs: z.number().int().positive().optional(),
+    // Auth scheme for remote transports. "oauth" triggers PKCE flow via
+    // mcp_login. Default: "headers" (header-auth / no-auth pass-through).
+    // Accepted on `mcp.connect` and PERSISTED so the auth requirement
+    // survives a daemon restart. Added for R11-01 first-install OAuth
+    // promotion (Plan 01-02).
+    auth: z.enum(["headers", "oauth"]).optional(),
   }),
   response: z.object({
     name: z.string(),
