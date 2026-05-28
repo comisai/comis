@@ -990,7 +990,15 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         // -----------------------------------------------------------------
         case "message_end": {
           const msgEvent = event as { message: unknown };
-          const assistantMsg = msgEvent.message as AssistantMessage | undefined;
+          // pi-mono emits message_end for EVERY message (user prompts, pending
+          // tool-result messages, AND assistant responses — agent-loop.js:52, 96,
+          // 198, 214, 227). The eager SEP extraction only makes sense for the
+          // assistant's response; scanning a user prompt produces phantom plans
+          // from numbered/bulleted content in the injected memory/system context.
+          // Discriminate on role to ensure only assistant messages reach the extractor.
+          const candidate = msgEvent.message as { role?: string } | undefined;
+          if (candidate?.role !== "assistant") break;
+          const assistantMsg = candidate as AssistantMessage;
           if (deps.executionPlan && deps.sepConfig && !deps.executionPlan.current) {
             const assistantTextForPlan = Array.isArray(assistantMsg?.content)
               ? assistantMsg!.content
