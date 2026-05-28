@@ -179,4 +179,111 @@ describe("port-backed adapter", () => {
       store.saveTokens("srv", { access_token: "at", expires_in: 60, token_type: "Bearer" }),
     ).resolves.toBeUndefined();
   });
+
+  it("port write failure is logged at WARN with errorKind: 'internal' (observability over silence)", async () => {
+    // WR-02 regression: the prior implementation silently swallowed both
+    // ok:false Results AND thrown rejections, leaving a port-set drift
+    // completely undiagnosable. The fix logs at WARN with the canonical
+    // Pino fields (err, hint, errorKind, submodule) but does NOT throw —
+    // the disk store remains authoritative.
+    const failingPort: OAuthCredentialStorePort = {
+      async get() { return { ok: true as const, value: undefined }; },
+      async set() { return { ok: false as const, error: new Error("disk corruption on credential partition") }; },
+      async delete() { return { ok: true as const, value: false }; },
+      async list() { return { ok: true as const, value: [] }; },
+      async has() { return { ok: true as const, value: false }; },
+    };
+
+    const store = createPortBackedMcpTokenStore(failingPort, {
+      tokensDir: dir,
+      confinedBaseDir: dir,
+      now: () => 1_700_000_000_000,
+      logger,
+    });
+
+    await store.saveTokens("srv", { access_token: "at", expires_in: 60, token_type: "Bearer" });
+
+    // WARN was emitted with the canonical observability fields
+    expect(logger.warn).toHaveBeenCalledOnce();
+    const [obj, msg] = logger.warn.mock.calls[0]!;
+    expect(obj).toMatchObject({
+      serverName: "srv",
+      provider: "mcp-oauth",
+      errorKind: "internal",
+      submodule: "mcp-token-port-adapter",
+    });
+    expect(typeof obj.err).toBe("string");
+    expect(String(obj.err)).toContain("disk corruption");
+    expect(typeof obj.hint).toBe("string");
+    expect(typeof msg).toBe("string");
+  });
+
+  it("port write thrown rejection is logged at WARN (not just ok:false Results)", async () => {
+    // Defensive: a port adapter that throws (rather than returning ok:false)
+    // must also surface — the prior .then(noop, noop) silenced both paths.
+    const throwingPort: OAuthCredentialStorePort = {
+      async get() { return { ok: true as const, value: undefined }; },
+      async set() { throw new Error("connection refused"); },
+      async delete() { return { ok: true as const, value: false }; },
+      async list() { return { ok: true as const, value: [] }; },
+      async has() { return { ok: true as const, value: false }; },
+    };
+
+    const store = createPortBackedMcpTokenStore(throwingPort, {
+      tokensDir: dir,
+      confinedBaseDir: dir,
+      now: () => 1_700_000_000_000,
+      logger,
+    });
+
+    // Must NOT propagate the throw
+    await expect(
+      store.saveTokens("srv", { access_token: "at", expires_in: 60, token_type: "Bearer" }),
+    ).resolves.toBeUndefined();
+
+    expect(logger.warn).toHaveBeenCalledOnce();
+    const [obj] = logger.warn.mock.calls[0]!;
+    expect(obj.errorKind).toBe("internal");
+    expect(String(obj.err)).toContain("connection refused");
+  });
+
+  it("saveTokens rejects server names containing characters outside /^[a-zA-Z0-9_-]+$/", async () => {
+    // CR-01 regression: an unvalidated server name with `:` corrupts the
+    // composed profileId "mcp-oauth:<server>" and could overwrite another
+    // server's port entry. The wrapper must reject malformed names BEFORE
+    // touching the disk store (filename) or the port (profileId key).
+    const store = createPortBackedMcpTokenStore(port, {
+      tokensDir: dir,
+      confinedBaseDir: dir,
+      now: () => 1_700_000_000_000,
+      logger,
+    });
+
+    // Each of these contains a character outside the schema's character class.
+    const malformedNames = [
+      "foo:bar",         // colon would split the profileId
+      "foo/bar",         // slash is a path traversal risk via filePath()
+      "foo bar",         // whitespace
+      "foo.bar",         // dot
+      "",                // empty string
+      "üñïcødé",         // non-ASCII
+    ];
+
+    for (const bad of malformedNames) {
+      await expect(
+        store.saveTokens(bad, {
+          access_token: "at",
+          expires_in: 60,
+          token_type: "Bearer",
+        }),
+      ).rejects.toThrow(/invalid_server_name/);
+    }
+
+    // Neither the disk store nor the port should have received any writes.
+    expect(port._setCallArgs).toHaveLength(0);
+    const { existsSync: exists, readdirSync } = await import("node:fs");
+    // Only the tokens dir itself may exist — no `*.json` files written.
+    const entries = exists(dir) ? readdirSync(dir) : [];
+    expect(entries.filter((e) => e.endsWith(".json"))).toHaveLength(0);
+  });
 });

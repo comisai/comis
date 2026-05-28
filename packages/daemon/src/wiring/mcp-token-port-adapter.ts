@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: server-name validator at the wrapper boundary; the throw
+// surfaces to the SDK's OAuthClientProvider.saveTokens callback (which has no
+// Result-typed surface). Disk + port writes are guarded so a malformed server
+// name cannot corrupt either store. See CR-01 in the phase-01 review.
 /**
  * Port-backed MCP token store adapter.
  *
@@ -15,6 +19,12 @@
  * SECURITY:
  * - No AES-at-rest: the disk-backed createTokenStore owns 0o600 perms + the
  *   fs-safe substrate. AES-at-rest for MCP tokens is deferred to a later phase.
+ * - Server-name validation is ENFORCED at the wrapper boundary: every method
+ *   that uses the server identity to compose a profileId or filename rejects
+ *   names that do not match the same /^[a-zA-Z0-9_-]+$/ class enforced by
+ *   `McpServerEntrySchema`. This guards against profileId corruption (e.g. a
+ *   `:` would split "mcp-oauth:<server>" ambiguously) and against the unsaved/
+ *   runtime-only paths that skip the config schema (CR-01).
  * - Port write failure is NON-FATAL: the disk store is authoritative.
  *   A port.set failure is silently suppressed (non-fatal) to preserve the
  *   existing MCP OAuth flow; callers must not rely on the port for read-back.
@@ -49,9 +59,35 @@ import {
 const MCP_OAUTH_PROVIDER = "mcp-oauth" as const;
 
 /**
+ * Identifier character class shared with `McpServerEntrySchema` in
+ * `packages/core/src/config/schema-skills.ts`. Any server name that flows into
+ * the wrapper's filename or profileId composition MUST satisfy this pattern.
+ */
+const MCP_SERVER_NAME_RE = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * Assert that a server name is safe to interpolate into both the disk filename
+ * (`<server>.json` under `tokensDir`) and the composed profileId
+ * (`mcp-oauth:<server>`). Throws — see CR-01: a `:` would split the profileId
+ * ambiguously, and a `/` would risk traversal at the inner store's safePath
+ * boundary. Schema-validated config names already pass; this guard exists for
+ * the unsaved/runtime callers that skip the schema (e.g. mcp.connect with a
+ * runtime-only `name`, future SDK lifecycle callbacks).
+ */
+function assertValidServerName(serverName: string): void {
+  if (typeof serverName !== "string" || !MCP_SERVER_NAME_RE.test(serverName)) {
+    throw new Error(
+      `[invalid_server_name] MCP server name "${String(serverName)}" must match /^[a-zA-Z0-9_-]+$/. ` +
+        `This guards against profileId corruption in OAuthCredentialStorePort and traversal at the disk filename.`,
+    );
+  }
+}
+
+/**
  * Compose the profileId for a given MCP server name.
  * Format: "mcp-oauth:<serverName>" — matches the OAuthProfile.profileId convention
- * of "<provider>:<identity>".
+ * of "<provider>:<identity>". Callers MUST `assertValidServerName(serverName)`
+ * first; this helper does not re-validate.
  */
 function mcpProfileId(serverName: string): string {
   return `${MCP_OAUTH_PROVIDER}:${serverName}`;
@@ -88,6 +124,12 @@ export function createPortBackedMcpTokenStore(
     },
 
     async saveTokens(server: string, sdkTokens): Promise<void> {
+      // CR-01: reject malformed server names BEFORE any side effect (disk write
+      // OR port write). Schema-validated config names already pass; this guard
+      // covers unsaved/runtime callers and future SDK lifecycle callbacks that
+      // skip `McpServerEntrySchema`.
+      assertValidServerName(server);
+
       // Write to disk first (disk store is authoritative).
       await inner.saveTokens(server, sdkTokens);
 
@@ -111,13 +153,40 @@ export function createPortBackedMcpTokenStore(
         version: 1,
       };
 
-      // Non-fatal: suppress port write errors. The disk store is authoritative.
-      // We do NOT use suppressError from @comis/shared to avoid a circular dep
-      // concern — a simple .then/catch is explicit and self-contained here.
-      await port.set(profileId, profile).then(
-        () => undefined,
-        () => undefined,
-      );
+      // Non-fatal: a port-set failure must NOT interrupt the disk write or
+      // throw to the SDK saveTokens caller. But silence is an observability
+      // regression (WR-02): without a log, a persistent port-side error (disk
+      // corruption on the credential partition, future schema mismatch, etc.)
+      // leaves the disk store and the unified credential port silently
+      // desynced. Surface both failure shapes (ok:false Result + thrown
+      // rejection) at WARN with the canonical Pino fields so an operator
+      // querying port.list({provider:"mcp-oauth"}) has a diagnostic trail.
+      let portSetResult: Awaited<ReturnType<typeof port.set>> | undefined;
+      let thrown: unknown;
+      try {
+        portSetResult = await port.set(profileId, profile);
+      } catch (err) {
+        thrown = err;
+      }
+      if (thrown !== undefined || (portSetResult !== undefined && !portSetResult.ok)) {
+        const errPayload =
+          thrown !== undefined
+            ? thrown instanceof Error
+              ? thrown.message
+              : String(thrown)
+            : (portSetResult as { ok: false; error: Error }).error.message;
+        deps.logger.warn(
+          {
+            serverName: server,
+            provider: MCP_OAUTH_PROVIDER,
+            err: errPayload,
+            hint: "OAuthCredentialStorePort.set failed; disk-backed MCP token store remains authoritative",
+            errorKind: "internal" as const,
+            submodule: "mcp-token-port-adapter",
+          },
+          "MCP OAuth credential-port sync failed (non-fatal)",
+        );
+      }
     },
 
     saveClientInformation(server: string, info) {

@@ -26,7 +26,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ensureWarmVenvSeed } from "./exec-shared.js";
+import { ensureWarmVenvSeed, VENV_SEED_LOCK_DIR } from "./exec-shared.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -94,5 +94,54 @@ describe("ensureWarmVenvSeed", () => {
 
     // pip must NOT be spawned again (idempotent)
     expect(spawnSync).not.toHaveBeenCalled();
+  });
+
+  it("ensureWarmVenv aborts seed when the lock directory is already held (concurrent caller)", async () => {
+    // WR-01 regression: two concurrent calls into ensureWarmVenvSeed must NOT
+    // both spawn pip. The atomic mkdirSync({recursive:false}) acts as the
+    // lock — simulating a holding caller by pre-creating the lock directory
+    // must cause the next call to bail without spawning pip.
+    expect(existsSync(join(workspaceDir, "venv", ".seed-done"))).toBe(false);
+    mkdirSync(join(workspaceDir, "venv", VENV_SEED_LOCK_DIR), { recursive: false });
+
+    await ensureWarmVenvSeed(workspaceDir, ["requests==2.32.3"]);
+
+    // No pip spawn (the holder owns the seed pass)
+    expect(spawnSync).not.toHaveBeenCalled();
+    // No sentinel written (the caller did NOT do the install)
+    expect(existsSync(join(workspaceDir, "venv", ".seed-done"))).toBe(false);
+  });
+
+  it("ensureWarmVenv removes the lock directory after a successful seed (next caller can proceed)", async () => {
+    // The lock must be released — otherwise a daemon crash mid-seed plus a
+    // restart leaves a stale lock that blocks every subsequent agent. The
+    // success path must rmSync the lock dir.
+    await ensureWarmVenvSeed(workspaceDir, ["requests==2.32.3"]);
+
+    expect(existsSync(join(workspaceDir, "venv", ".seed-done"))).toBe(true);
+    // Lock dir must NOT linger after a successful seed
+    expect(existsSync(join(workspaceDir, "venv", VENV_SEED_LOCK_DIR))).toBe(false);
+  });
+
+  it("ensureWarmVenv removes the lock directory after pip failure (next caller can retry)", async () => {
+    // Failed pip must still release the lock — otherwise a transient pip
+    // failure permanently wedges the venv. Same contract as the success path.
+    vi.mocked(spawnSync).mockReturnValue({
+      status: 1,
+      stdout: Buffer.from(""),
+      stderr: Buffer.from("pip: connection error"),
+      output: [],
+      pid: 1,
+      signal: null,
+    } as ReturnType<typeof spawnSync>);
+
+    await ensureWarmVenvSeed(workspaceDir, ["requests==2.32.3"]);
+
+    // pip ran (status 1)
+    expect(spawnSync).toHaveBeenCalledOnce();
+    // No sentinel (failure path)
+    expect(existsSync(join(workspaceDir, "venv", ".seed-done"))).toBe(false);
+    // Lock dir released
+    expect(existsSync(join(workspaceDir, "venv", VENV_SEED_LOCK_DIR))).toBe(false);
   });
 });

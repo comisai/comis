@@ -13,29 +13,14 @@
  * @module
  */
 
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import {
-  PathTraversalError,
-  safePath,
-  systemEnvSnapshot,
-  systemNowMs,
-  tryGetContext,
-} from "@comis/core";
-import type {
-  SecretManager,
-  ToolCapabilityPort,
-  ApprovalGate,
-  TypedEventBus,
-} from "@comis/core";
+import { PathTraversalError, safePath, systemEnvSnapshot, systemNowMs, tryGetContext } from "@comis/core";
+import type { SecretManager, ToolCapabilityPort, ApprovalGate, TypedEventBus } from "@comis/core";
 import type { ExecSandboxConfig } from "../sandbox/types.js";
 import { resolvePaths } from "../file/safe-path-wrapper.js";
 import { throwToolError } from "../../../platform-tools/tool-helpers.js";
-import {
-  parseInstallDetour,
-  type InstallDetourDecision,
-  type DetourOverlap,
-} from "../install-detour.js";
+import { parseInstallDetour, type InstallDetourDecision, type DetourOverlap } from "../install-detour.js";
 import { SECRET_REF_NAME_PATTERN, type ToolLogger } from "./exec-types.js";
 
 // ---------------------------------------------------------------------------
@@ -335,7 +320,10 @@ function buildInstallDetourEventPayload(
 } {
   const ctx = tryGetContext();
   return {
-    agentId: ctx?.sessionKey ?? "unknown",
+    // WR-03: RequestContext has no `agentId` field — `userId` is the agent
+    // identity (matches evaluateInstallDetourGate's approval-gate precedent
+    // below). sessionKey is a separate formatted key and must not shadow it.
+    agentId: ctx?.userId ?? "unknown",
     sessionKey: ctx?.sessionKey ?? "unknown",
     traceId: ctx?.traceId,
     packageManager: decision.packageManager,
@@ -489,13 +477,23 @@ export async function evaluateInstallDetourGate(deps: {
 const VENV_SEED_SENTINEL = ".seed-done";
 
 /**
- * Install seed packages into the workspace venv on first creation.
+ * Lock directory serializing concurrent ensureWarmVenvSeed callers. Atomic
+ * `mkdirSync(..., {recursive:false})` gives O_CREAT|O_EXCL semantics on POSIX:
+ * the loser receives EEXIST and bails. Exported for tests.
+ */
+export const VENV_SEED_LOCK_DIR = ".seed-lock";
+
+/**
+ * Install seed packages into the workspace venv on first creation. Idempotent:
+ * skips if `.seed-done` exists; no-op on empty packages.
  *
- * Idempotent: skips if `venv/.seed-done` sentinel already exists.
- * No-op when `packages` is empty.
+ * WR-01 concurrency: two callers passing existsSync would both spawn pip
+ * (wasted CPU + risk on write-locked FS). The mkdir lock serializes; the
+ * finally{} releases on success AND pip-failure so transient errors do not
+ * wedge the venv.
  *
- * T-01-09-01 (threat): packages come from operator config processed by Zod
- * schema; spawned via explicit array args (no shell string injection).
+ * T-01-09-01: packages come from operator config validated by Zod; spawned
+ * via explicit array args (no shell string injection).
  */
 export function ensureWarmVenvSeed(
   workspacePath: string,
@@ -503,25 +501,49 @@ export function ensureWarmVenvSeed(
   logger?: ToolLogger,
 ): void {
   if (packages.length === 0) return;
-  const sentinelPath = safePath(safePath(workspacePath, "venv"), VENV_SEED_SENTINEL);
-  if (existsSync(sentinelPath)) return;  // already seeded
-  const pip = safePath(safePath(workspacePath, "venv"), "bin", "pip");
-  const result = spawnSync(pip, ["install", "--quiet", ...packages], {
-    encoding: "utf8",
-    stdio: "pipe",
-  });
-  if (result.status === 0) {
-    // Sentinel file's existence is the signal; contents are the seeded
-    // package list (one per line) for human / log diagnostics. Avoids
-    // `new Date()` so the architecture globals.test.ts (no NEW callable
-    // globals outside the bootstrap regex) stays clean.
-    writeFileSync(sentinelPath, packages.join("\n") + "\n");
-    logger?.debug({ workspaceDir: workspacePath, seeded: packages }, "Warm venv seed installed");
-  } else {
+  const venvDir = safePath(workspacePath, "venv");
+  const sentinelPath = safePath(venvDir, VENV_SEED_SENTINEL);
+  if (existsSync(sentinelPath)) return;
+  const lockPath = safePath(venvDir, VENV_SEED_LOCK_DIR);
+
+  try {
+    mkdirSync(lockPath, { recursive: false });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    const isEexist = code === "EEXIST";
     logger?.debug(
-      { workspaceDir: workspacePath, packages, exitCode: result.status, hint: "pip seed failed; venv will work but may lack default packages" },
-      "Warm venv seed skipped (pip error)",
+      {
+        workspaceDir: workspacePath,
+        err: isEexist ? undefined : err instanceof Error ? err.message : String(err),
+        hint: isEexist
+          ? "Concurrent seed caller holds the lock; bailing"
+          : "Failed to acquire venv seed lock; skipping seed",
+      },
+      isEexist ? "Warm venv seed already in progress (lock held)" : "Warm venv seed skipped (lock acquisition failed)",
     );
+    return;
+  }
+
+  try {
+    const pip = safePath(safePath(workspacePath, "venv"), "bin", "pip");
+    const result = spawnSync(pip, ["install", "--quiet", ...packages], {
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    if (result.status === 0) {
+      // Sentinel content = seeded package list (one per line) for diagnostics.
+      // Avoids `new Date()` (globals.test.ts gate).
+      writeFileSync(sentinelPath, packages.join("\n") + "\n");
+      logger?.debug({ workspaceDir: workspacePath, seeded: packages }, "Warm venv seed installed");
+    } else {
+      logger?.debug(
+        { workspaceDir: workspacePath, packages, exitCode: result.status, hint: "pip seed failed; venv will work but may lack default packages" },
+        "Warm venv seed skipped (pip error)",
+      );
+    }
+  } finally {
+    // Release unconditionally — transient pip failure must not wedge the venv.
+    rmSync(lockPath, { recursive: true, force: true });
   }
 }
 

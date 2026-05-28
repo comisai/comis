@@ -791,6 +791,31 @@ describe("surfaceDiscardedPreToolUrl", () => {
     expect(result).toMatch(/^A1B2C3/);
     expect(result).toContain("Done.");
   });
+
+  it("substring-dedupe suppresses re-surfacing a prefix URL already covered by a longer URL in the response (WR-05)", () => {
+    // WR-05 pins the substring-dedupe semantics documented on
+    // surfaceDiscardedPreToolUrl. A pre-tool block containing a shorter URL
+    // (https://x.ai/device) must NOT be surfaced when the response already
+    // carries a longer URL with the same prefix (https://x.ai/device?code=…).
+    // This is the conservative direction — duplicate surfacing of a URL that
+    // shares a prefix with a credential-bearing URL widens the exposure
+    // surface. The substring check is load-bearing safety, not an oversight.
+    const messages = [
+      { role: "user", content: "Authorize" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Open https://x.ai/device to start." },
+          { type: "tool_use", id: "tc1", name: "exec", input: {} },
+        ],
+      },
+    ];
+    // Final response already contains the longer, more-specific URL.
+    const finalResponse = "Visit https://x.ai/device?code=ABC123 to complete.";
+    const result = surfaceDiscardedPreToolUrl(finalResponse, messages, 0, mockLogger());
+    // The shorter URL is a substring of the longer one — must NOT be re-surfaced.
+    expect(result).toBe(finalResponse);
+  });
 });
 
 // ---------------------------------------------------------------------------
