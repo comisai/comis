@@ -226,7 +226,11 @@ export function recoverEmptyFinalResponse(params: {
           },
           "Empty-turn recovery: synthesized from tool-call history",
         );
-        return synthesis; // tool-call-synthesis-gate — see comment above.
+        const artifacts = extractActionableArtifacts(messages, lowerBound);
+        const artifactSuffix = artifacts.length > 0
+          ? `\nUser actions: ${artifacts.join(" ")}`
+          : "";
+        return synthesis + artifactSuffix; // tool-call-synthesis-gate — see comment above.
       }
 
       // Standalone walk-backward (pure-conversational fallback): reachable
@@ -438,6 +442,51 @@ export function surfaceDiscardedPreToolUrl(
     }
   }
   return response;
+}
+
+// ---------------------------------------------------------------------------
+// extractActionableArtifacts — URL/code extraction for synthesis branch
+// ---------------------------------------------------------------------------
+
+/**
+ * Scan assistant text blocks in the window [lowerBound, messages.length) for
+ * URLs or short codes that should be surfaced to the user via the synthesis
+ * branch of `recoverEmptyFinalResponse`.
+ *
+ * Predicate order (mirrors surfaceDiscardedPreToolUrl — do not reorder):
+ * 1. Only assistant text blocks are considered.
+ * 2. Framing prose (FRAMING_PROSE_RE) is skipped entirely — prevents
+ *    "I'm going to fetch https://example.com" from leaking.
+ * 3. URL_RE is tried first; SHORT_CODE_RE is tried only when no URL matches.
+ * 4. At most 3 distinct candidates are collected.
+ *
+ * Module-private — not exported. Called only from the synthesis branch of
+ * recoverEmptyFinalResponse, before the gate return.
+ */
+function extractActionableArtifacts(
+  messages: unknown[],
+  lowerBound: number,
+): string[] {
+  const hits: string[] = [];
+  if (!Array.isArray(messages)) return hits;
+  for (let i = lowerBound; i < messages.length; i++) {
+    const msg = messages[i] as Record<string, unknown>; // eslint-disable-line security/detect-object-injection
+    if (msg?.role !== "assistant" || !Array.isArray(msg.content)) continue;
+    for (const block of (msg.content as unknown[])) {
+      const b = block as Record<string, unknown>;
+      if (b?.type !== "text" || typeof b.text !== "string") continue;
+      const text = b.text as string;
+      // Guard: framing prose → skip (MUST check before URL predicate)
+      if (FRAMING_PROSE_RE.test(text)) continue;
+      const urlMatch = URL_RE.exec(text);
+      const codeMatch = !urlMatch ? SHORT_CODE_RE.exec(text) : null;
+      const candidate = urlMatch?.[0] ?? codeMatch?.[0];
+      if (candidate && hits.length < 3 && !hits.includes(candidate)) {
+        hits.push(candidate);
+      }
+    }
+  }
+  return hits;
 }
 
 // ---------------------------------------------------------------------------
