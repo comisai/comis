@@ -19150,6 +19150,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
               "format": "uri",
               "type": "string"
             },
+            "deviceAuthorizationEndpoint": {
+              "format": "uri",
+              "type": "string"
+            },
             "scope": {
               "type": "string"
             },
@@ -21820,6 +21824,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "additionalProperties": false,
           "properties": {
             "authorizationEndpoint": {
+              "format": "uri",
+              "type": "string"
+            },
+            "deviceAuthorizationEndpoint": {
               "format": "uri",
               "type": "string"
             },
