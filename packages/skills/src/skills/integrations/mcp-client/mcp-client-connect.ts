@@ -21,6 +21,7 @@ import type { Result } from "@comis/shared";
 import { ok, err, withTimeout } from "@comis/shared";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import PQueue from "p-queue";
 import { systemNowMs, systemScheduleTimeout } from "@comis/core";
 import type {
@@ -295,12 +296,18 @@ export async function connectServer(
     const message = error instanceof Error ? error.message : String(error);
 
     // The SDK throws UnauthorizedError from client.connect when an auth:"oauth"
-    // server has no valid token (or refresh failed). Do NOT auto-launch a
+    // server has no valid token (or refresh failed). For first-install (no
+    // OAuthClientProvider attached), the SDK throws StreamableHTTPError(401, ...)
+    // instead. Both must be treated as needs_oauth_login. Do NOT auto-launch a
     // browser daemon-side — return a `needs_oauth_login`-tagged Result so the
     // daemon RPC layer tells the operator to run `comis mcp login <server>`.
     // The error-state connection entry is still recorded so mcp.list surfaces
     // the server's auth-needed state.
-    const isUnauthorized = error instanceof UnauthorizedError;
+    // NOTE: Do NOT inspect www-authenticate headers — the SDK has already
+    // consumed and closed the response by the time StreamableHTTPError is thrown.
+    const isUnauthorized =
+      error instanceof UnauthorizedError ||
+      (error instanceof StreamableHTTPError && (error as { code?: unknown }).code === 401);
 
     // Store error state
     state.connections.set(config.name, {
