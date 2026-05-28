@@ -13,7 +13,7 @@
  * @module
  */
 
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import {
   PathTraversalError,
@@ -489,10 +489,29 @@ export async function evaluateInstallDetourGate(deps: {
 const VENV_SEED_SENTINEL = ".seed-done";
 
 /**
+ * Lock directory name used to serialize concurrent ensureWarmVenvSeed callers.
+ *
+ * mkdirSync(lockPath, { recursive: false }) is atomic on POSIX — when two
+ * agents race the sentinel-existsSync check, exactly one wins the mkdirSync
+ * and runs pip; the other receives EEXIST and bails. Exported for use by the
+ * regression test that simulates a holding concurrent caller.
+ */
+export const VENV_SEED_LOCK_DIR = ".seed-lock";
+
+/**
  * Install seed packages into the workspace venv on first creation.
  *
  * Idempotent: skips if `venv/.seed-done` sentinel already exists.
  * No-op when `packages` is empty.
+ *
+ * Concurrency (WR-01): two concurrent callers (e.g. admin agent + sub-agent
+ * firing exec on the same workspace) would both pass the sentinel existsSync
+ * check and both spawn pip — wasted CPU at best, write-locked-filesystem
+ * mid-install failure at worst. Serialize with an atomic mkdirSync on a
+ * sibling lock directory. The holder runs pip + writes the sentinel + removes
+ * the lock; the loser receives EEXIST and bails. The finally{} releases the
+ * lock on both success and pip-failure paths so a transient failure does NOT
+ * permanently wedge the venv.
  *
  * T-01-09-01 (threat): packages come from operator config processed by Zod
  * schema; spawned via explicit array args (no shell string injection).
@@ -503,25 +522,64 @@ export function ensureWarmVenvSeed(
   logger?: ToolLogger,
 ): void {
   if (packages.length === 0) return;
-  const sentinelPath = safePath(safePath(workspacePath, "venv"), VENV_SEED_SENTINEL);
+  const venvDir = safePath(workspacePath, "venv");
+  const sentinelPath = safePath(venvDir, VENV_SEED_SENTINEL);
   if (existsSync(sentinelPath)) return;  // already seeded
-  const pip = safePath(safePath(workspacePath, "venv"), "bin", "pip");
-  const result = spawnSync(pip, ["install", "--quiet", ...packages], {
-    encoding: "utf8",
-    stdio: "pipe",
-  });
-  if (result.status === 0) {
-    // Sentinel file's existence is the signal; contents are the seeded
-    // package list (one per line) for human / log diagnostics. Avoids
-    // `new Date()` so the architecture globals.test.ts (no NEW callable
-    // globals outside the bootstrap regex) stays clean.
-    writeFileSync(sentinelPath, packages.join("\n") + "\n");
-    logger?.debug({ workspaceDir: workspacePath, seeded: packages }, "Warm venv seed installed");
-  } else {
+  const lockPath = safePath(venvDir, VENV_SEED_LOCK_DIR);
+
+  // Atomic lock-create: O_CREAT|O_EXCL semantics on POSIX. EEXIST = a sibling
+  // caller is currently running the seed; bail without spawning pip again.
+  try {
+    mkdirSync(lockPath, { recursive: false });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") {
+      logger?.debug(
+        {
+          workspaceDir: workspacePath,
+          hint: "Concurrent ensureWarmVenvSeed caller holds the seed lock; bailing",
+        },
+        "Warm venv seed already in progress (lock held)",
+      );
+      return;
+    }
+    // Unexpected mkdir error (permissions, ENOENT on parent, etc.): log + bail
+    // rather than racing pip without a lock.
     logger?.debug(
-      { workspaceDir: workspacePath, packages, exitCode: result.status, hint: "pip seed failed; venv will work but may lack default packages" },
-      "Warm venv seed skipped (pip error)",
+      {
+        workspaceDir: workspacePath,
+        err: err instanceof Error ? err.message : String(err),
+        hint: "Failed to acquire venv seed lock; skipping seed",
+      },
+      "Warm venv seed skipped (lock acquisition failed)",
     );
+    return;
+  }
+
+  try {
+    const pip = safePath(safePath(workspacePath, "venv"), "bin", "pip");
+    const result = spawnSync(pip, ["install", "--quiet", ...packages], {
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+    if (result.status === 0) {
+      // Sentinel file's existence is the signal; contents are the seeded
+      // package list (one per line) for human / log diagnostics. Avoids
+      // `new Date()` so the architecture globals.test.ts (no NEW callable
+      // globals outside the bootstrap regex) stays clean.
+      writeFileSync(sentinelPath, packages.join("\n") + "\n");
+      logger?.debug({ workspaceDir: workspacePath, seeded: packages }, "Warm venv seed installed");
+    } else {
+      logger?.debug(
+        { workspaceDir: workspacePath, packages, exitCode: result.status, hint: "pip seed failed; venv will work but may lack default packages" },
+        "Warm venv seed skipped (pip error)",
+      );
+    }
+  } finally {
+    // Release the lock unconditionally — a transient pip failure must NOT
+    // permanently wedge the venv. Next caller can re-attempt the seed.
+    // force:true tolerates the lock having already been removed externally.
+    rmSync(lockPath, { recursive: true, force: true });
   }
 }
 
