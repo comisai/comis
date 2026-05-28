@@ -973,6 +973,66 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
         }
 
         // -----------------------------------------------------------------
+        // Assistant message stream closed (BEFORE tools fire)
+        //
+        // pi-mono emits `message_end` when the assistant message stream
+        // resolves (agent-loop.js:214,227) — strictly before any
+        // `tool_execution_start` for tool_calls in that same message
+        // (agent-loop.js:245-249). Eager-extract the SEP plan here so
+        // plan-stream paints the checkbox header DURING the turn rather
+        // than ~3 ms before scaffold deletion at turn_end.
+        //
+        // The shared `!deps.executionPlan.current` guard makes the
+        // existing `case "turn_end"` SEP-extract block (below) a
+        // self-disabling no-op once we extract at message_end. The
+        // turn_end block is preserved as a defensive fallback for
+        // pi-mono shape variants where text appears only at turn_end.
+        // -----------------------------------------------------------------
+        case "message_end": {
+          const msgEvent = event as { message: unknown };
+          const assistantMsg = msgEvent.message as AssistantMessage | undefined;
+          if (deps.executionPlan && deps.sepConfig && !deps.executionPlan.current) {
+            const assistantTextForPlan = Array.isArray(assistantMsg?.content)
+              ? assistantMsg!.content
+                  .filter((c: unknown) => (c as { type?: string })?.type === "text")
+                  .map((c: unknown) => (c as { text?: string }).text ?? "")
+                  .join(" ")
+              : "";
+
+            if (assistantTextForPlan.length > 0) {
+              const steps = extractPlanFromResponse(assistantTextForPlan, deps.sepConfig.maxSteps);
+              if (steps && steps.length >= deps.sepConfig.minSteps) {
+                const plan: ExecutionPlan = {
+                  active: true,
+                  request: (deps.sepMessageText ?? "").slice(0, 200),
+                  steps,
+                  completedCount: 0,
+                  createdAtMs: systemNowMs(),
+                };
+                deps.executionPlan.current = plan;
+                deps.logger.info(
+                  {
+                    agentId: deps.agentId,
+                    stepCount: steps.length,
+                    durationMs: deps.sepExecutionStartMs
+                      ? systemNowMs() - deps.sepExecutionStartMs
+                      : undefined,
+                  },
+                  "SEP plan extracted (message_end, eager)",
+                );
+                deps.eventBus.emit("sep:plan_extracted", {
+                  agentId: deps.agentId ?? "default",
+                  sessionKey: formatSessionKey(deps.sessionKey),
+                  stepCount: steps.length,
+                  timestamp: systemNowMs(),
+                });
+              }
+            }
+          }
+          break;
+        }
+
+        // -----------------------------------------------------------------
         // LLM turn completed
         // -----------------------------------------------------------------
         case "turn_end": {
