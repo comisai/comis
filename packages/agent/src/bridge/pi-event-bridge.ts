@@ -438,7 +438,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
           deps.eventBus.emit("session:started", {
             agentId: deps.agentId,
             sessionKey: formattedKey,
-            traceId: deps.executionId,
+            traceId: tryGetContext()?.traceId ?? deps.executionId,
             channelType,
             channelId: deps.channelId,
             timestamp: systemNowMs(),
@@ -546,7 +546,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             timestamp: systemNowMs(),
             agentId: deps.agentId,
             sessionKey: formatSessionKey(deps.sessionKey),
-            traceId: deps.executionId,
+            traceId: tryGetContext()?.traceId ?? deps.executionId,
             ...(startedRedactedParams !== undefined && { params: startedRedactedParams }),
             ...(startedAction !== undefined && { action: startedAction }),
           });
@@ -805,7 +805,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             timestamp: systemNowMs(),
             agentId: deps.agentId,
             sessionKey: formatSessionKey(deps.sessionKey),
-            traceId: deps.executionId,
+            traceId: tryGetContext()?.traceId ?? deps.executionId,
             ...(executedRedactedParams !== undefined && { params: executedRedactedParams }),
             ...(toolErrorKind !== undefined && { errorKind: toolErrorKind }),
             ...(errorText && { errorMessage: sanitizeLogString(errorText).slice(0, 1500) }),
@@ -823,7 +823,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             deps.eventBus.emit("tool:timeout", {
               agentId: deps.agentId,
               sessionKey: formatSessionKey(deps.sessionKey),
-              traceId: deps.executionId,
+              traceId: tryGetContext()?.traceId ?? deps.executionId,
               toolName: endEvent.toolName,
               toolCallId: endEvent.toolCallId,
               timeoutMs: durationMs,
@@ -1320,7 +1320,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 : {};
             deps.eventBus.emit("observability:token_usage", {
               timestamp: systemNowMs(),
-              traceId: deps.executionId,
+              traceId: tryGetContext()?.traceId ?? deps.executionId,
               agentId: deps.agentId,
               channelId: deps.channelId,
               executionId: deps.executionId,
@@ -1366,7 +1366,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 event: "turn_completed",
                 ts: systemDateFrom(systemNowMs()).toISOString(),
                 sessionId: formatSessionKey(deps.sessionKey),
-                traceId: deps.executionId,
+                traceId: tryGetContext()?.traceId ?? deps.executionId,
                 durationMs: llmLatencyMs ?? 0,
                 inputTokens: usage.input,
                 outputTokens: usage.output,
