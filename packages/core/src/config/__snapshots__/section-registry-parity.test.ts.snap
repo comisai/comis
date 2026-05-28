@@ -6261,7 +6261,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
   {
     "default": {
       "dbPath": "secrets.db",
-      "enabled": false
+      "enabled": true
     },
     "immutable": true,
     "path": "security.secrets",
@@ -6274,7 +6274,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
     "type": "string"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "security.secrets.enabled",
     "type": "boolean"
@@ -12076,7 +12076,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       },
       "secrets": {
         "dbPath": "secrets.db",
-        "enabled": false
+        "enabled": true
       },
       "writeSecretGuard": "warn"
     },
@@ -12405,7 +12405,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   {
     "default": {
       "dbPath": "secrets.db",
-      "enabled": false
+      "enabled": true
     },
     "immutable": true,
     "path": "security.secrets",
@@ -12418,7 +12418,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "security.secrets.enabled",
     "type": "boolean"
@@ -21478,7 +21478,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
       "additionalProperties": false,
       "default": {
         "dbPath": "secrets.db",
-        "enabled": false
+        "enabled": true
       },
       "properties": {
         "dbPath": {
@@ -21486,7 +21486,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
           "type": "string"
         },
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         }
       },
@@ -31600,7 +31600,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         },
         "secrets": {
           "dbPath": "secrets.db",
-          "enabled": false
+          "enabled": true
         },
         "writeSecretGuard": "warn"
       },
@@ -31972,7 +31972,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "additionalProperties": false,
           "default": {
             "dbPath": "secrets.db",
-            "enabled": false
+            "enabled": true
           },
           "properties": {
             "dbPath": {
@@ -31980,7 +31980,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "type": "string"
             },
             "enabled": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             }
           },

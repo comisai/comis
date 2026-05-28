@@ -923,4 +923,54 @@ describe("opt-out and same-boot init", () => {
 
     rmSync(freshDataDir, { recursive: true, force: true });
   });
+
+  // Config-driven opt-out: when YAML sets `security.secrets.enabled: false`,
+  // the encrypted secrets store must NOT bootstrap — even with no env var set
+  // and even on a fresh data directory. The daemon must consult the YAML
+  // BEFORE writeMasterKeyIfAbsent so `.env` is left untouched (no SECRETS_MASTER_KEY
+  // line is appended) and setupSecrets is never called.
+  //
+  // Pre-fix, the schema field `secrets.enabled` was read only by the web view
+  // and the daemon ignored it — secrets.db would be created on first boot
+  // regardless of what config said. This test pins the contract that the
+  // daemon honors the config-level opt-out.
+  it("YAML security.secrets.enabled=false skips writeMasterKeyIfAbsent and setupSecrets on a fresh data dir", async () => {
+    // Fresh data dir (no pre-existing .env), and a YAML that explicitly opts out.
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-cfg-opt-out-test-"));
+    const configPath = nodePath.resolve(freshDataDir, "config.yaml");
+    fs.writeFileSync(
+      configPath,
+      "security:\n  secrets:\n    enabled: false\n",
+      { mode: 0o600 },
+    );
+
+    process.env["COMIS_DATA_DIR"] = freshDataDir;
+    process.env["COMIS_CONFIG_PATHS"] = configPath;
+    delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
+    // Ensure no SECRETS_MASTER_KEY leaks from the test runner env into the daemon.
+    delete process.env["SECRETS_MASTER_KEY"];
+
+    const { overrides } = buildOverrides();
+    const mockSetupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
+    overrides.setupSecrets = mockSetupSecrets;
+
+    const instance = await main(overrides);
+    instances.push(instance);
+
+    // 1. The daemon must NOT have invoked setupSecrets — the store-bootstrap
+    //    branch is gated entirely behind the combined disable check, which is
+    //    now true because YAML explicitly opted out.
+    expect(mockSetupSecrets).not.toHaveBeenCalled();
+
+    // 2. writeMasterKeyIfAbsent must NOT have run, so `.env` either does not
+    //    exist or contains no SECRETS_MASTER_KEY line. We assert the strict
+    //    form: no key written.
+    const envPath = nodePath.resolve(freshDataDir, ".env");
+    if (fs.existsSync(envPath)) {
+      const contents = fs.readFileSync(envPath, "utf-8");
+      expect(contents).not.toMatch(/^SECRETS_MASTER_KEY=/m);
+    }
+
+    rmSync(freshDataDir, { recursive: true, force: true });
+  });
 });
