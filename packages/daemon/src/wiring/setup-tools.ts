@@ -504,6 +504,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
               sharedPaths: effectiveSharedPaths,
               readOnlyPaths,
               configReadOnlyPaths: [...skillsConfig.execSandbox.readOnlyAllowPaths, logsDir],
+              warmVenvSeed: skillsConfig.execSandbox.warmVenvSeed,
             }
           : undefined;
 
