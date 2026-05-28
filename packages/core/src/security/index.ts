@@ -97,8 +97,11 @@ export type { ScopedSecretManagerOptions } from "./secret-manager.js";
 // Strong token generation
 export { generateStrongToken, generateRotationId } from "./token-generator.js";
 
-// Config secret redaction
-export { redactConfigSecrets } from "./config-redaction.js";
+// Secret detection keystone
+export { looksLikeSecretValue, isSecretFieldName, isEnvRefString, scanForSecrets, redactForDisplay, PLAINTEXT_SECRET_PREFIXES, PREFIX_MIN_BODY_LENGTHS } from "./secret-detection.js";
+export type { SecretFinding } from "./secret-detection.js";
+export { classifyHeaderCredential } from "./credential-classify.js";
+export type { CredentialKind, HeaderCredentialClassification } from "./credential-classify.js";
 
 // Injection pattern constants
 export {
@@ -193,9 +196,11 @@ export type { InjectionRateLimiter, InjectionRateLimiterConfig, RateLimitResult 
 export { resolveSecretRef, resolveConfigSecretRefs } from "./secret-ref-resolver.js";
 export type { ResolveSecretRefDeps, ResolveSecretRefOptions } from "./secret-ref-resolver.js";
 
-// Config secret redaction pattern (reused by audit scanner)
-export { SECRET_FIELD_PATTERN } from "./config-redaction.js";
 
 // Secrets audit scanner
 export { scanConfigForSecrets, scanEnvForSecrets, auditSecrets } from "./secrets-audit.js";
 export type { AuditFinding, AuditSeverity, AuditOptions } from "./secrets-audit.js";
+
+// Secret egress guard — shared text scrubber for the egress firewall (intra-core only)
+export type { ScrubResult } from "./secret-egress-guard.js";
+export { mightContainSecret, scrubSecretsFromText } from "./secret-egress-guard.js";

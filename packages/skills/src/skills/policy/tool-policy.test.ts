@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { applyToolPolicy, TOOL_PROFILES, TOOL_GROUPS, expandGroups } from "./tool-policy.js";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ToolFilterReason, ToolPolicyResult } from "./tool-policy.js";
+import { SUB_AGENT_TOOL_DENYLIST, SUB_AGENT_TOOL_PROFILES, SUB_AGENT_TOOL_GROUPS } from "@comis/core";
 
 /** Create a minimal mock tool with the given name. */
 function mockTool(name: string): AgentTool<any> {
@@ -584,5 +585,91 @@ describe("applyToolPolicy - operational opt-in behavior", () => {
 
     const names = result.tools.map((t) => t.name);
     expect(names.sort()).toEqual(["discover_tools", "memory_search", "memory_store", "message"]);
+  });
+});
+
+describe("gateway denylist invariant", () => {
+  it("no profile or group exposes 'gateway' AND SUB_AGENT_TOOL_DENYLIST contains it", () => {
+    // Denylist membership — sub-agent-tool-denylist.ts in @comis/core must include 'gateway'.
+    expect(SUB_AGENT_TOOL_DENYLIST.has("gateway")).toBe(true);
+
+    // No named profile (except 'full' which means all-tools-allowed and is
+    // constrained by the denylist filter in buildExecuteSubAgent) exposes gateway
+    for (const [profileName, tools] of Object.entries(TOOL_PROFILES)) {
+      if (profileName === "full") continue;
+      expect(tools, `profile '${profileName}' must not contain 'gateway'`).not.toContain("gateway");
+    }
+
+    // No tool group exposes gateway
+    for (const [groupName, tools] of Object.entries(TOOL_GROUPS)) {
+      expect(tools, `group '${groupName}' must not contain 'gateway'`).not.toContain("gateway");
+    }
+  });
+});
+
+describe("SUB_AGENT_TOOL_PROFILES drift-guard", () => {
+  it("core classification data is consistent with skills canonical TOOL_PROFILES (no drift)", () => {
+    // Every profile name in @comis/core must exist in the skills canonical TOOL_PROFILES
+    for (const profileName of Object.keys(SUB_AGENT_TOOL_PROFILES)) {
+      expect(
+        Object.keys(TOOL_PROFILES),
+        `SUB_AGENT_TOOL_PROFILES has profile '${profileName}' not present in TOOL_PROFILES — rename in both`,
+      ).toContain(profileName);
+    }
+    // Every tool in a core profile entry must also be present in the skills canonical entry
+    // (core copy may be a subset for minimal classification; it must not reference phantom tools)
+    for (const [profileName, coreTools] of Object.entries(SUB_AGENT_TOOL_PROFILES)) {
+      const canonicalTools = TOOL_PROFILES[profileName] ?? [];
+      for (const tool of coreTools) {
+        expect(
+          canonicalTools,
+          `SUB_AGENT_TOOL_PROFILES['${profileName}'] contains '${tool}' but TOOL_PROFILES['${profileName}'] does not — update both`,
+        ).toContain(tool);
+      }
+    }
+  });
+
+  // Bidirectional drift guard — catches when canonical adds a tool but core copy doesn't.
+  // Also asserts TOOL_GROUPS consistency for the groups that @comis/core mirrors via
+  // SUB_AGENT_TOOL_GROUPS.
+  it("bidirectional — every canonical TOOL_PROFILES tool also exists in core copy (guards against over-rejection)", () => {
+    // For every profile the core copy mirrors, require EXACT equality
+    // so divergence in EITHER direction is caught.
+    for (const profileName of Object.keys(SUB_AGENT_TOOL_PROFILES)) {
+      const core = [...(SUB_AGENT_TOOL_PROFILES[profileName] ?? [])].sort();
+      const canon = [...(TOOL_PROFILES[profileName] ?? [])].sort();
+      expect(
+        core,
+        `core/canonical bidirectional drift for profile '${profileName}': sets must be equal`,
+      ).toEqual(canon);
+    }
+  });
+
+  it("SUB_AGENT_TOOL_GROUPS in @comis/core mirrors TOOL_GROUPS from @comis/skills (no drift)", () => {
+    // SUB_AGENT_TOOL_GROUPS is exported from @comis/core to gate TOOL_GROUPS expansion.
+    // Assert the import is defined (not undefined/empty).
+    expect(SUB_AGENT_TOOL_GROUPS, "SUB_AGENT_TOOL_GROUPS must be exported from @comis/core").toBeDefined();
+    expect(Object.keys(SUB_AGENT_TOOL_GROUPS).length).toBeGreaterThan(0);
+
+    // Every key/value in SUB_AGENT_TOOL_GROUPS must match TOOL_GROUPS exactly (bidirectional)
+    for (const [groupKey, coreTools] of Object.entries(SUB_AGENT_TOOL_GROUPS)) {
+      const canonicalTools = TOOL_GROUPS[groupKey];
+      expect(
+        canonicalTools,
+        `SUB_AGENT_TOOL_GROUPS['${groupKey}'] exists in core but not in TOOL_GROUPS — update both`,
+      ).toBeDefined();
+      expect(
+        [...coreTools].sort(),
+        `SUB_AGENT_TOOL_GROUPS['${groupKey}'] core/canonical drift — sets must be equal`,
+      ).toEqual([...(canonicalTools ?? [])].sort());
+    }
+
+    // Every TOOL_GROUPS key must exist in SUB_AGENT_TOOL_GROUPS
+    for (const groupKey of Object.keys(TOOL_GROUPS)) {
+      expect(
+        Object.keys(SUB_AGENT_TOOL_GROUPS),
+        `TOOL_GROUPS['${groupKey}'] exists in skills but not in SUB_AGENT_TOOL_GROUPS — update core`,
+      ).toContain(groupKey);
+    }
   });
 });

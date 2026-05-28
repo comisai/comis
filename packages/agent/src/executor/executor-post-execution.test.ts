@@ -272,3 +272,141 @@ describe("Execution-complete log — costCorrectionDeltaUsd", () => {
     expect(src).toMatch(/totalCostCorrectionDeltaUsd\?:\s*number/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// tool-failure endReason and notice
+//
+// Contract:
+//   - When finishReason ∈ {stop, end_turn} AND failedTools is non-empty, the
+//     session metadata endReason MUST be "completed_with_tool_errors" — this
+//     override is UNCONDITIONAL, independent of model acknowledgement.
+//   - A failure notice ("\n[tool failure] <toolName> reported an error (see
+//     session log for details)") is appended to result.response ONLY when the
+//     model did not already acknowledge the failure (modelAcknowledgedFailure)
+//     AND the response is not a silent sentinel (isSilentResponse).
+//   - endReason="success" when finishReason="stop" and failedTools is empty
+//     (baseline unchanged).
+// ---------------------------------------------------------------------------
+describe("tool-failure endReason and notice", () => {
+  const baseClock = { now: () => Date.now(), nowDate: () => new Date() };
+
+  // -------------------------------------------------------------------------
+  // Unit tests against buildSessionEndMetadata (pure function)
+  // -------------------------------------------------------------------------
+
+  it("buildSessionEndMetadata maps completed_with_tool_errors to completed_with_tool_errors", () => {
+    const result = buildSessionEndMetadata({
+      finishReason: "completed_with_tool_errors",
+      durationMs: 100,
+      totalTokens: 10,
+      executionId: "exec-1",
+      traceId: undefined,
+      clock: baseClock,
+    });
+    expect(result.sessionEnd?.endReason).toBe("completed_with_tool_errors");
+  });
+
+  it("buildSessionEndMetadata baseline: stop still maps to success when no tool failure", () => {
+    const result = buildSessionEndMetadata({
+      finishReason: "stop",
+      durationMs: 100,
+      totalTokens: 10,
+      executionId: "exec-2",
+      traceId: undefined,
+      clock: baseClock,
+    });
+    expect(result.sessionEnd?.endReason).toBe("success");
+  });
+
+  // -------------------------------------------------------------------------
+  // Source-grep tests — call-site structure in executor-post-execution.ts
+  // -------------------------------------------------------------------------
+
+  function readPostExecStripped(): string {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    return src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+  }
+
+  it("source-grep — effectiveFinishReason derived from failedTools when finishReason is stop or end_turn", () => {
+    const stripped = readPostExecStripped();
+    // The effectiveFinishReason override must exist in the source.
+    expect(stripped).toMatch(/effectiveFinishReason/);
+    // The override must use the completed_with_tool_errors literal.
+    expect(stripped).toMatch(/completed_with_tool_errors/);
+  });
+
+  it("source-grep — modelAcknowledgedFailure function exists in executor-post-execution.ts", () => {
+    const stripped = readPostExecStripped();
+    // The helper function must be defined in the module.
+    expect(stripped).toMatch(/function\s+modelAcknowledgedFailure\s*\(/);
+  });
+
+  it("source-grep — failure notice '[tool failure]' appended to result.response at call site", () => {
+    const stripped = readPostExecStripped();
+    // The notice text must appear in non-comment source.
+    expect(stripped).toMatch(/\[tool failure\]/);
+  });
+
+  it("source-grep — isSilentResponse guards the failure notice append (not the endReason override)", () => {
+    const stripped = readPostExecStripped();
+    // isSilentResponse must be referenced near the [tool failure] notice append.
+    // The pattern: isSilentResponse appears before or in the same conditional as [tool failure].
+    expect(stripped).toMatch(/isSilentResponse/);
+    // Critically: modelAcknowledgedFailure must NOT appear in the effectiveFinishReason
+    // derivation — the endReason override is unconditional.
+    // Verify: effectiveFinishReason assignment does NOT reference modelAcknowledgedFailure.
+    const effectiveFRBlock = stripped.match(/effectiveFinishReason\s*=[\s\S]*?;/);
+    expect(effectiveFRBlock).not.toBeNull();
+    if (effectiveFRBlock) {
+      expect(effectiveFRBlock[0]).not.toMatch(/modelAcknowledgedFailure/);
+    }
+  });
+
+  it("source-grep — buildSessionEndMetadata call passes effectiveFinishReason (not result.finishReason)", () => {
+    const stripped = readPostExecStripped();
+    // The buildSessionEndMetadata call site must use effectiveFinishReason.
+    expect(stripped).toMatch(/buildSessionEndMetadata\s*\(\s*\{[\s\S]*?finishReason\s*:\s*effectiveFinishReason/);
+    // And must NOT use result.finishReason for that argument.
+    const buildCallMatch = stripped.match(/buildSessionEndMetadata\s*\(\s*\{[\s\S]*?\}\s*\)/);
+    if (buildCallMatch) {
+      expect(buildCallMatch[0]).not.toMatch(/finishReason\s*:\s*result\.finishReason/);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// modelAcknowledgedFailure must use word-boundary matching
+// ---------------------------------------------------------------------------
+// The helper is private inside executor-post-execution.ts, so we test its
+// behaviour via the source text (the same pattern used by the tool-failure
+// suite above).
+describe("modelAcknowledgedFailure word-boundary regression", () => {
+  function readPostExecSource(): string {
+    return readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+  }
+
+  it("source-grep — modelAcknowledgedFailure uses word-boundary RegExp (not bare .includes)", () => {
+    const src = readPostExecSource();
+    // Must use \\b escapes — plain .includes() approach must NOT be the sole tool-name check
+    // (we allow .includes for the failure keyword, but the tool-name must use \\b).
+    expect(src).toMatch(/\\\\b.*escaped|nameRe|new RegExp|wordBoundary|\bescaped\b.*\\\\b/);
+  });
+
+  it("source-grep — 'write' substring collision: 'writer' does NOT satisfy the word-boundary check", () => {
+    // If the source still uses bare .includes, the token 'write' would match inside 'writer'.
+    // This test verifies the implementation no longer allows that by checking the regex is present.
+    const src = readPostExecSource();
+    // The fix must introduce a RegExp with \b or an equivalent word-boundary approach.
+    // We require \\b (escaped in the source string literal) to be present in modelAcknowledgedFailure.
+    const fnBlock = src.match(/function\s+modelAcknowledgedFailure\s*\([\s\S]*?\n\}/);
+    expect(fnBlock).not.toBeNull();
+    if (fnBlock) {
+      // Must contain word-boundary escape
+      expect(fnBlock[0]).toMatch(/\\b|wordBoundary/);
+    }
+  });
+});

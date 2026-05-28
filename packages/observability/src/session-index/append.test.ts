@@ -69,6 +69,16 @@ function makeSessionEnded(): SessionEndedEvent {
   };
 }
 
+/**
+ * The session-index filename is keyed by the current UTC date — `append.ts`
+ * derives it as `new Date().toISOString().slice(0, 10)`. Tests that assert on
+ * the written file must compute the expected day the same way, otherwise they
+ * pass only on the single hardcoded calendar day they were written on.
+ */
+function todayUtcDay(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 // ---------------------------------------------------------------------------
 // Test setup
 // ---------------------------------------------------------------------------
@@ -108,7 +118,7 @@ describe("appendSessionIndexEntry — JSONL write", () => {
     // Await async flush via microtask
     await vi.runAllTimersAsync();
 
-    const expectedPath = path.join(tmpDir, "logs", "session-index.2026-05-25.jsonl");
+    const expectedPath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
     expect(fs.existsSync(expectedPath)).toBe(true);
 
     const lines = fs.readFileSync(expectedPath, "utf8").trim().split("\n");
@@ -152,7 +162,7 @@ describe("appendSessionIndexEntry — JSONL write", () => {
 
     await vi.runAllTimersAsync();
 
-    const filePath = path.join(tmpDir, "logs", "session-index.2026-05-25.jsonl");
+    const filePath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
     const lines = fs.readFileSync(filePath, "utf8").trim().split("\n");
 
     for (const line of lines) {
@@ -168,7 +178,7 @@ describe("appendSessionIndexEntry — JSONL write", () => {
 
     await vi.runAllTimersAsync();
 
-    const filePath = path.join(tmpDir, "logs", "session-index.2026-05-25.jsonl");
+    const filePath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8").trim());
 
     expect(typeof parsed.inputTokens).toBe("number");
@@ -183,7 +193,7 @@ describe("appendSessionIndexEntry — JSONL write", () => {
 
     await vi.runAllTimersAsync();
 
-    const filePath = path.join(tmpDir, "logs", "session-index.2026-05-25.jsonl");
+    const filePath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
     const stat = fs.statSync(filePath);
     expect(stat.mode & 0o777).toBe(0o600);
   });
@@ -203,7 +213,7 @@ describe("appendSessionIndexEntry — JSONL write", () => {
 
     await vi.runAllTimersAsync();
 
-    const filePath = path.join(tmpDir, "logs", "session-index.2026-05-25.jsonl");
+    const filePath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
     const lines = fs.readFileSync(filePath, "utf8").trim().split("\n");
 
     const isoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;

@@ -381,3 +381,62 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
     expect(secondInit.body).toBeUndefined();
   });
 });
+
+// =============================================================================
+// Expanded header stripping
+// =============================================================================
+// These tests assert that the expanded allowlist (12+ headers) strips
+// x-auth-token, x-api-key, and peers on cross-origin redirects.
+
+describe("expanded header stripping on cross-origin redirect", () => {
+  it("strips x-auth-token on cross-origin redirect to a different host", async () => {
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeRedirect("https://server-b.com/v1"))
+      .mockResolvedValueOnce(makeOk());
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+    await wrapped("https://server-a.com/v1", {
+      headers: { "x-auth-token": "secret-token-abc" },
+    });
+    expect(baseFetch).toHaveBeenCalledTimes(2);
+    const secondHeaders = new Headers((baseFetch.mock.calls[1]![1] as RequestInit).headers as HeadersInit);
+    expect(secondHeaders.get("x-auth-token")).toBeNull();
+  });
+
+  it("strips x-api-key on cross-origin redirect to a different host", async () => {
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeRedirect("https://server-b.com/v1"))
+      .mockResolvedValueOnce(makeOk());
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+    await wrapped("https://server-a.com/v1", {
+      headers: { "x-api-key": "api-key-xyz-12345" },
+    });
+    expect(baseFetch).toHaveBeenCalledTimes(2);
+    const secondHeaders = new Headers((baseFetch.mock.calls[1]![1] as RequestInit).headers as HeadersInit);
+    expect(secondHeaders.get("x-api-key")).toBeNull();
+  });
+
+  it("preserves authorization on same-origin redirect (same host — must NOT strip)", async () => {
+    const baseFetch = vi
+      .fn()
+      .mockResolvedValueOnce(makeRedirect("https://server-a.com/path2"))
+      .mockResolvedValueOnce(makeOk());
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+    await wrapped("https://server-a.com/path1", {
+      headers: { authorization: "Bearer same-host-token" },
+    });
+    expect(baseFetch).toHaveBeenCalledTimes(2);
+    const secondHeaders = new Headers((baseFetch.mock.calls[1]![1] as RequestInit).headers as HeadersInit);
+    expect(secondHeaders.get("authorization")).toBe("Bearer same-host-token");
+  });
+});

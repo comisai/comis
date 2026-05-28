@@ -2,7 +2,6 @@
 /**
  * Tests for createHealthAggregator — sliding-window in-memory rate aggregator.
  *
- * RED phase — these assertions fail because the module does not yet exist.
  * @module
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";

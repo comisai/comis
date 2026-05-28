@@ -40,12 +40,34 @@ import {
   wireStderrCapture,
 } from "./mcp-client-discover.js";
 import { qualifyToolName } from "./mcp-client-types.js";
+import { stopKeepaliveTicker } from "./mcp-client-ticker.js";
+import { startKeepaliveTicker } from "./mcp-client-keepalive.js";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const MAX_ERRORS_BEFORE_RECONNECT = 3;
+
+// ---------------------------------------------------------------------------
+// Self-heal predicate (MCPX-01)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true if the error is the SDK's internal SSE GET-stream self-heal
+ * churn (streamableHttp.js:233 — `"SSE stream disconnected: ${error}"`). The
+ * SDK fires this via onerror while simultaneously calling _scheduleReconnection
+ * internally. Comis must NOT double-count these as connection errors.
+ *
+ * Intentionally NARROW — matches only the `"SSE stream disconnected:"` prefix.
+ * These messages do NOT match and always escalate:
+ *   - "Maximum reconnection attempts (N) exceeded." (streamableHttp.js:143)
+ *   - "MCP error <code>: <message>"               (McpError, types.js:2032)
+ *   - "Failed to reconnect SSE stream: ..."        (streamableHttp.js:152)
+ */
+function isSelfHealedTransientError(error: Error): boolean {
+  return error.message.startsWith("SSE stream disconnected:");
+}
 
 // ---------------------------------------------------------------------------
 // Lifecycle callback wiring (shared by connectServer + reconnectionLoop)
@@ -68,11 +90,25 @@ export function wireClientLifecycleCallbacks(
   serverName: string,
 ): void {
   const { logger } = deps;
+  // MCPX-03: capture generation at wire time so stale callbacks from superseded
+  // connections early-return without corrupting the live connection's state.
+  const wiredGeneration = state.generations.get(serverName) ?? 0;
+
   client.onclose = () => {
+    // MCPX-03: generation guard — stale close callbacks are silenced.
+    if ((state.generations.get(serverName) ?? 0) !== wiredGeneration) return;
     state.consecutiveErrors.set(serverName, 0);
     handleDisconnection(state, deps, serverName, "client_closed");
   };
+
   client.onerror = (error: Error) => {
+    // MCPX-03: generation guard — stale error callbacks are silenced.
+    if ((state.generations.get(serverName) ?? 0) !== wiredGeneration) return;
+    // MCPX-01: absorb SDK SSE self-heal churn — do not count, do not reconnect.
+    if (isSelfHealedTransientError(error)) {
+      logger.debug?.({ serverName, err: error.message }, "MCP SSE self-heal churn (suppressed)");
+      return;
+    }
     const count = (state.consecutiveErrors.get(serverName) ?? 0) + 1;
     state.consecutiveErrors.set(serverName, count);
     if (count >= MAX_ERRORS_BEFORE_RECONNECT) {
@@ -180,6 +216,11 @@ async function reconnectionLoop(
   let lastError = "";
   const startTime = systemNowMs();
 
+  logger.info(
+    { serverName, maxAttempts: reconnectOpts.maxAttempts },
+    "MCP server reconnect started",
+  );
+
   for (let attempt = 0; attempt < reconnectOpts.maxAttempts; attempt++) {
     if (signal.aborted) return;
 
@@ -214,8 +255,18 @@ async function reconnectionLoop(
     if (signal.aborted) return;
 
     try {
-      // Increment generation counter
+      // MCPX-03: increment generation FIRST so the prior client's lifecycle callbacks
+      // (wiredGeneration captures the OLD generation) see a mismatch and early-return,
+      // preventing a duplicate reconnect loop from being triggered by the close below.
       state.generations.set(serverName, (state.generations.get(serverName) ?? 0) + 1);
+
+      // MCPX-03: stop the old keepalive ticker and close the prior client before
+      // creating a new transport — prevents orphaned SSE streams and duplicate tickers.
+      stopKeepaliveTicker(state, serverName);
+      const priorConn = state.connections.get(serverName);
+      if (priorConn?.client) {
+        try { await priorConn.client.close(); } catch { /* already broken — ignore */ }
+      }
 
       // Create new transport and client (logger threaded for the prlimit-skip
       // WARN; reconnect re-spawns the child each attempt so the same WARN-once
@@ -249,6 +300,14 @@ async function reconnectionLoop(
 
       // Wire lifecycle callbacks for reconnection
       wireClientLifecycleCallbacks(state, deps, client, serverName);
+
+      // MCPX-02/03: restart the keepalive ticker for the new connection so the
+      // transport-aware interval beats the idle window after auto-reconnect.
+      // The static import of startKeepaliveTicker is safe because mcp-client-keepalive.ts
+      // no longer imports from mcp-client-reconnect.ts — handleDisconnection is
+      // threaded in as the `onFailure` callback instead, breaking the former
+      // keepalive ↔ reconnect source cycle.
+      startKeepaliveTicker(state, deps, config, (srvName) => handleDisconnection(state, deps, srvName, "keepalive_failed"));
 
       // Fetch server metadata
       const metadata = extractServerMetadata(client);
@@ -298,7 +357,10 @@ async function reconnectionLoop(
       return;
     } catch (error: unknown) {
       lastError = error instanceof Error ? error.message : String(error);
-      logger.debug?.({ serverName, attempt: attempt + 1, err: lastError }, "MCP reconnection attempt failed");
+      logger.warn(
+        { serverName, attempt: attempt + 1, err: lastError, hint: "Retry scheduled; check MCP server logs", errorKind: "dependency" as const },
+        "MCP reconnection attempt failed",
+      );
     }
   }
 

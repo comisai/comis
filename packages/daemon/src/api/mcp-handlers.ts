@@ -64,16 +64,14 @@ import type { RpcHandler } from "./types.js";
 import type { WorkspaceApiDeps as McpHandlerDeps } from "./types.js";
 export type { McpHandlerDeps };
 
-// Plaintext-secret heuristic. Extracted to
-// `./mcp-plaintext-secret.ts` (keeps this leaf under the 800-line cap).
-// Re-exported so the architecture-tier negative-control test
-// (`mcp-plaintext-secret-false-positives.test.ts`) reaches it via the
-// `@comis/daemon` barrel.
-export { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
-import { looksLikePlaintextSecret } from "./mcp-plaintext-secret.js";
+import { looksLikeSecretValue } from "@comis/core";
 // Persisted-entry construction extracted (single source of
 // truth for the config-only field set; see mcp-persisted-entry.ts docblock).
 import { buildPersistedMcpEntry } from "./mcp-persisted-entry.js";
+// Header-credential firewall: classifies and processes each
+// (headerName, headerValue) pair before the Zod contract parse. Called in both
+// mcp.connect and mcp.test after the env-scan block. Mutates headers in place.
+import { processHeaderCredentials } from "./mcp-header-credential.js";
 
 // persistMcpServers helper extracted to a sibling module to keep
 // mcp-handlers.ts under the 800-line cap. The helper is the single
@@ -182,7 +180,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       if (envBlock && !plaintextOptOut) {
         for (const [key, value] of Object.entries(envBlock)) {
           if (typeof value !== "string") continue;
-          if (looksLikePlaintextSecret(value)) {
+          if (looksLikeSecretValue(value)) {
             throw new Error(
               `[plaintext_secret_in_env] env.${key} (server "${userParams.server_name as string}") ` +
               `looks like a plaintext credential. ` +
@@ -202,6 +200,27 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         );
       }
 
+      // Headers credential firewall. Runs AFTER the env-scan
+      // block and BEFORE the Zod parse so the mutated ${VAR} refs flow through
+      // McpConnectContract.request.parse and into buildPersistedMcpEntry.
+      // processHeaderCredentials mutates the headers map in place (${VAR} refs
+      // for persistence) and returns resolvedHeaders with RAW values for the
+      // immediate live connect — the ${VAR} literal is not yet
+      // resolved in the in-memory SecretManager which is a frozen boot snapshot.
+      const headersBlock = userParams.headers as Record<string, string> | undefined;
+      let resolvedConnectHeaders: Record<string, string> | undefined;
+      if (headersBlock) {
+        const credResult = processHeaderCredentials({
+          headers: headersBlock,
+          serverName: userParams.server_name as string,
+          secretStore: deps.secretStore,
+          plaintextOptOut,
+          logger: deps.logger,
+          method: "mcp.connect",
+        });
+        resolvedConnectHeaders = credResult.resolvedHeaders;
+      }
+
       const params = McpConnectContract.request.parse(userParams);
 
       const manager = deps.mcpClientManager;
@@ -216,6 +235,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
             safetyAllowedEnvKeys?: readonly string[];
             osvCheckEnabled?: boolean;
             osvCacheTtlMs?: number;
+            keepaliveIntervalMs?: number;
           }
         | undefined;
 
@@ -228,9 +248,11 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const persistedEntry = persistedServers.find((s) => s.name === params.server_name);
       const resolvedRlimits = params.rlimits ?? persistedEntry?.rlimits;
 
-      // Per-server reliability overrides. Same resolution order as
-      // resolvedRlimits — current intent > persisted > undefined.
-      const resolvedKeepaliveIntervalMs = params.keepaliveIntervalMs ?? persistedEntry?.keepaliveIntervalMs;
+      // Per-server reliability overrides. Resolution chain:
+      //   caller param > persisted per-server entry > global config override > transport-aware default (in ticker)
+      // Uses ?? so 0 is preserved (explicit "disable keepalive for this server").
+      const resolvedKeepaliveIntervalMs =
+        params.keepaliveIntervalMs ?? persistedEntry?.keepaliveIntervalMs ?? mcpConfigRoot?.keepaliveIntervalMs;
       const resolvedCircuitBreakerThreshold = params.circuitBreakerThreshold ?? persistedEntry?.circuitBreakerThreshold;
       const resolvedCircuitBreakerCooldownMs = params.circuitBreakerCooldownMs ?? persistedEntry?.circuitBreakerCooldownMs;
 
@@ -241,7 +263,14 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         args: params.args,
         url: params.url,
         env: params.env,
-        headers: params.headers,
+        // Use resolvedConnectHeaders (raw values) for the live connect so the
+        // immediate connection uses the actual credential, not the unresolved ${VAR}
+        // literal that processHeaderCredentials wrote into params.headers for config
+        // persistence. The in-memory SecretManager is a frozen boot snapshot that
+        // secretStore.set does NOT update — ${VAR} refs in headers are only resolved
+        // after the NEXT daemon restart. resolvedConnectHeaders carries the raw values
+        // that were just extracted (already in hand) so the connect succeeds immediately.
+        headers: resolvedConnectHeaders ?? params.headers,
         enabled: true,
         safetyAllowedEnvKeys: mcpConfigRoot?.safetyAllowedEnvKeys,
         osvCheckEnabled: mcpConfigRoot?.osvCheckEnabled,
@@ -427,7 +456,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       if (envBlock && !plaintextOptOut) {
         for (const [key, value] of Object.entries(envBlock)) {
           if (typeof value !== "string") continue;
-          if (looksLikePlaintextSecret(value)) {
+          if (looksLikeSecretValue(value)) {
             throw new Error(
               `[plaintext_secret_in_env] env.${key} (test for "${userParams.name as string}") ` +
                 `looks like a plaintext credential. ` +
@@ -445,6 +474,29 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           },
           "MCP plaintext-secret check disabled per-server",
         );
+      }
+
+      // Headers credential firewall. Mirrors the mcp.connect
+      // insertion point: AFTER the env-scan block, BEFORE the Zod parse.
+      // Throws on oauth-bearer (unconditionally) or static-secret with no store.
+      // These throws propagate directly (outside the inner try/catch that wraps
+      // tempManager.connect) so the caller sees a proper RPC error, not a
+      // success:false response.
+      // resolvedTestHeaders carries raw values for
+      // the live connect, headersBlockTest gets ${VAR} refs (not persisted but
+      // consistent with the extraction flow).
+      const headersBlockTest = userParams.headers as Record<string, string> | undefined;
+      let resolvedTestHeaders: Record<string, string> | undefined;
+      if (headersBlockTest) {
+        const credResult = processHeaderCredentials({
+          headers: headersBlockTest,
+          serverName: userParams.name as string,
+          secretStore: deps.secretStore,
+          plaintextOptOut,
+          logger: deps.logger,
+          method: "mcp.test",
+        });
+        resolvedTestHeaders = credResult.resolvedHeaders;
       }
 
       const params = McpTestContract.request.parse(userParams);
@@ -479,7 +531,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         args: params.args,
         url: params.url,
         env: params.env,
-        headers: params.headers,
+        // Use resolvedTestHeaders (raw values) for the live test connect
+        // so the probe uses the actual credential (same rationale as mcp.connect).
+        headers: resolvedTestHeaders ?? params.headers,
         enabled: true,
         // Plumb the same protections as mcp.connect.
         safetyAllowedEnvKeys: mcpConfigRoot?.safetyAllowedEnvKeys,

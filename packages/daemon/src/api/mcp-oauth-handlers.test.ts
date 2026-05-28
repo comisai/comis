@@ -338,7 +338,7 @@ describe("MCP OAuth RPC handlers", () => {
       ).rejects.toThrow(/not found/);
       // The unknown-server guard runs BEFORE any token-store side effect —
       // deleteAll must NEVER be called for a name that is not in the persisted
-      // server list. (Pre-fix this was called regardless.)
+      // server list. (Previously this was called regardless.)
       expect(deleteAll).not.toHaveBeenCalled();
     });
   });

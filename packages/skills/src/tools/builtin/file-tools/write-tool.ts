@@ -17,7 +17,7 @@ import * as fs from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, dirname, extname } from "node:path";
 import { fromPromise } from "@comis/shared";
-import { safePath, PathTraversalError } from "@comis/core";
+import { safePath, PathTraversalError, scrubSecretsFromText } from "@comis/core";
 import type { FileStateTracker } from "../file/file-state-tracker.js";
 import { isDeviceFile } from "../file/file-state-tracker.js";
 import {
@@ -51,6 +51,14 @@ const MAX_FILE_SIZE = 1024 * 1024 * 1024;
 /** Minimal pino-compatible logger interface (skills does not import @comis/infra). */
 interface ToolLogger {
   debug?(msg: string, ...args: unknown[]): void;
+  warn?(obj: Record<string, unknown>, msg: string): void;
+}
+
+/** Minimal config shape for the write tool guard knob (avoids importing full SecurityConfig). */
+interface WriteToolConfig {
+  security?: {
+    writeSecretGuard?: "warn" | "block" | "off";
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -151,12 +159,14 @@ function resolveWritePath(
  * @param logger - Optional pino-compatible logger
  * @param tracker - Optional FileStateTracker for read-before-write and staleness
  * @param sharedPaths - Optional shared paths (lazily resolved) accessible by all tools
+ * @param config - Optional config for secret egress guard (security.writeSecretGuard)
  */
 export function createComisWriteTool(
   workspacePath: string,
   logger?: ToolLogger,
   tracker?: FileStateTracker,
   sharedPaths?: LazyPaths,
+  config?: WriteToolConfig,
 ): AgentTool<typeof WriteParams> {
   // Comis extension: promptGuidelines (not part of AgentTool type, spread to bypass excess property check)
   const ext = { promptGuidelines: [
@@ -181,7 +191,8 @@ export function createComisWriteTool(
     ): Promise<AgentToolResult<unknown>> {
       // --- V1: Extract params ---
       const filePath = readStringParam(params, "path");
-      const content = readStringParam(params, "content", false) ?? "";
+      // `let` — may be reassigned by secret egress guard (scrubbed content).
+      let content = readStringParam(params, "content", false) ?? "";
       const createDirs = readBooleanParam(params, "createDirectories", false) ?? true;
 
       if (!filePath) {
@@ -212,6 +223,28 @@ export function createComisWriteTool(
         throw new Error(
           "[jupyter_rejected] Cannot overwrite Jupyter notebooks with the write tool. Use the notebook_edit tool instead for cell-level operations.",
         );
+      }
+
+      // --- Secret egress guard — default "warn" + redirect hint (never hard-block by default).
+      const writeGuardMode = (config?.security?.writeSecretGuard ?? "warn") as "warn" | "block" | "off";
+      let warnRedactions = 0;
+      if (writeGuardMode !== "off") {
+        const scrub = scrubSecretsFromText(content);
+        if (scrub.redactions > 0) {
+          if (writeGuardMode === "block") {
+            throw new Error(
+              `[write_secret_blocked] File write blocked: content contains ${scrub.redactions} secret-shaped value(s). ` +
+                `Store credentials using the secure credential store instead of writing plaintext files.`,
+            );
+          }
+          // warn (default): proceed with SCRUBBED content, record warn count for result annotation.
+          content = scrub.text;
+          warnRedactions = scrub.redactions;
+          logger?.warn?.(
+            { hint: "Secret-shaped value redacted from file write; use secure credential store", errorKind: "internal" as const, redactions: scrub.redactions },
+            "Egress guard: write-tool content scrubbed",
+          );
+        }
       }
 
       // --- V4: Check existence ---
@@ -296,7 +329,7 @@ export function createComisWriteTool(
           // --- V8: Overwrite: preserve encoding ---
           // CRITICAL: Pass LF-normalized content directly to writeFilePreserving.
           // Do NOT call restoreLineEndings separately -- writeFilePreserving handles it internally.
-          // Double-restoration corrupts CRLF files (see PITFALLS.md).
+          // Double-restoration corrupts CRLF files.
           const metadata = await readFileWithMetadata(absolutePath);
           await writeFilePreserving(
             absolutePath,
@@ -358,6 +391,12 @@ export function createComisWriteTool(
       const resultBlocks: Array<{ type: "text"; text: string }> = [
         { type: "text" as const, text: output },
       ];
+      if (warnRedactions > 0) {
+        resultBlocks.push({
+          type: "text" as const,
+          text: `[warn] ${warnRedactions} secret-shaped value(s) were redacted from the file. Use the secure credential store for sensitive values.`,
+        });
+      }
       if (resultData.auditNotice) {
         resultBlocks.push({ type: "text" as const, text: resultData.auditNotice });
       }

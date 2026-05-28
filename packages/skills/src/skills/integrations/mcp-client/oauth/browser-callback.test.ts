@@ -314,10 +314,10 @@ describe("runBrowserCallback — loopback callback server", () => {
 
   it("8. defensive isTTY default — does NOT throw when process.stdout is undefined", async () => {
     // Some platforms (worker threads, some test environments, stubbed-process
-    // shims) expose `process` without a `stdout` property. Pre-fix the code
-    // read `Boolean(process.stdout.isTTY)` which throws a TypeError when
-    // `process.stdout` is undefined. The fix uses optional chaining
-    // (`process.stdout?.isTTY`) so the headless decision falls back to its
+    // shims) expose `process` without a `stdout` property. Reading
+    // `Boolean(process.stdout.isTTY)` would throw a TypeError when
+    // `process.stdout` is undefined; optional chaining
+    // (`process.stdout?.isTTY`) makes the headless decision fall back to its
     // default-headless behavior (no TTY → headless) instead of crashing.
     const original = Object.getOwnPropertyDescriptor(process, "stdout");
     try {

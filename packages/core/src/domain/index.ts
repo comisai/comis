@@ -134,3 +134,14 @@ export type {
   TranscriptToolCallIdMode,
   ProviderCapabilities,
 } from "./provider-capabilities.js";
+
+// Sub-agent tool governance
+export {
+  SUB_AGENT_TOOL_DENYLIST,
+  SUB_AGENT_TOOL_PROFILES,
+  SUB_AGENT_TOOL_GROUPS,
+  RequiredToolsUnreachableError,
+  toolReachableGroups,
+  computeReachableToolNames,
+} from "./sub-agent-tool-denylist.js";
+export type { UnreachableToolEntry } from "./sub-agent-tool-denylist.js";

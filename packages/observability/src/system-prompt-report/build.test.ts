@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * buildSystemPromptReport — TDD cases.
+ * buildSystemPromptReport tests.
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { createHash } from "node:crypto";

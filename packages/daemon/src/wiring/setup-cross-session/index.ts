@@ -7,8 +7,11 @@
  *
  * Decomposition:
  *   - setup-cross-session-runtime.ts — setupCrossSession orchestrator + sendToChannel + announceToParent + crossSessionSender + announcement batcher + result condenser + sub-agent runner construction
- *   - setup-cross-session-graph.ts   — buildExecuteSubAgent + resolveGraphCacheRetention + SUB_AGENT_TOOL_DENYLIST + MIN_SUB_AGENT_STEPS
+ *   - setup-cross-session-graph.ts   — buildExecuteSubAgent + resolveGraphCacheRetention + MIN_SUB_AGENT_STEPS
  *   - setup-cross-session-events.ts  — registerProxyTypingListeners (typing:proxy_start/stop + TTL sweep + shutdown)
+ *
+ * SUB_AGENT_TOOL_DENYLIST was moved to @comis/core in SUBA-03. Import it from
+ * there: `import { SUB_AGENT_TOOL_DENYLIST } from "@comis/core"`.
  *
  * @module
  */
@@ -18,5 +21,4 @@ export { setupCrossSession } from "./setup-cross-session-runtime.js";
 export {
   resolveGraphCacheRetention,
   MIN_SUB_AGENT_STEPS,
-  SUB_AGENT_TOOL_DENYLIST,
 } from "./setup-cross-session-graph.js";

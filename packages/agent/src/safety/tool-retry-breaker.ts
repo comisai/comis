@@ -186,6 +186,17 @@ export const PARAMETER_VALIDATION_TAGS = new Set([
   "validation_failed",
 ]);
 
+/**
+ * Returns true if the given error tag indicates a parameter-validation
+ * failure (invalid_value, missing_param, validation_failed).
+ *
+ * Used in buildBlockReason to produce a repair-not-abandon message instead
+ * of the generic "appears to be unavailable" block reason.
+ */
+export function isParameterValidationTag(tag: string): boolean {
+  return PARAMETER_VALIDATION_TAGS.has(tag);
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -256,20 +267,29 @@ function buildSandboxRedirectMessage(errorText: string | undefined): string | un
  * @param count - Number of failures (consecutive or total)
  * @param lastError - Last error text from the tool, if available
  * @param alternatives - Alternative tool names to suggest
+ * @param errorTag - Normalized error tag extracted from lastError (used to branch on validation errors)
  * @param isToolLevel - Whether this is a tool-level (total) or signature-level (consecutive) block
+ *
+ * Exported as a test seam for R10b — the recordResult accumulation path is
+ * unreachable for parameter-validation tags (early-return on
+ * `PARAMETER_VALIDATION_TAGS.has(errorTag)` in `recordResult`),
+ * so tests call this function directly.
  */
-function buildBlockReason(
+export function buildBlockReason(
   toolName: string,
   count: number,
   lastError: string | undefined,
   alternatives: string[],
+  errorTag: string | undefined,
   isToolLevel: boolean,
 ): string {
   const failureType = isToolLevel ? "total" : "consecutive";
   const errorClause = lastError
     ? ` with the same error: "${lastError.slice(0, 150)}"`
     : "";
-  const header = `Tool "${toolName}" has failed ${count} ${failureType} times${errorClause}. This tool appears to be unavailable.`;
+  const header = errorTag && isParameterValidationTag(errorTag)
+    ? `Tool "${toolName}" failed parameter validation ${count} times (same args). Fix the arguments before retrying.`
+    : `Tool "${toolName}" has failed ${count} ${failureType} times${errorClause}. This tool appears to be unavailable.`;
   const suggestion = alternatives.length > 0
     ? alternatives.map(a => `- Use ${a}`).join("\n")
     : "- Use alternative approaches to complete your task";
@@ -331,7 +351,7 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
         const redirect = buildSandboxRedirectMessage(lastErr);
         return {
           block: true,
-          reason: redirect ?? buildBlockReason(toolName, toolState?.count ?? maxToolFailures, lastErr, alternatives, true),
+          reason: redirect ?? buildBlockReason(toolName, toolState?.count ?? maxToolFailures, lastErr, alternatives, extractErrorTag(toolState?.lastError ?? ""), true),
           alternatives,
         };
       }
@@ -351,7 +371,7 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
           const redirect = buildSandboxRedirectMessage(lastErr);
           return {
             block: true,
-            reason: redirect ?? buildBlockReason(toolName, state.consecutiveFailures, lastErr, alternatives, false),
+            reason: redirect ?? buildBlockReason(toolName, state.consecutiveFailures, lastErr, alternatives, errorTag, false),
             alternatives,
           };
         }
@@ -366,7 +386,7 @@ export function createToolRetryBreaker(config: ToolRetryBreakerConfig): ToolRetr
         const redirect = buildSandboxRedirectMessage(lastErr);
         return {
           block: true,
-          reason: redirect ?? buildBlockReason(toolName, sigState.consecutiveFailures, lastErr, alternatives, false),
+          reason: redirect ?? buildBlockReason(toolName, sigState.consecutiveFailures, lastErr, alternatives, extractErrorTag(sigState.lastError ?? ""), false),
           alternatives,
         };
       }

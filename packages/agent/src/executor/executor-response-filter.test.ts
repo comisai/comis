@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { recoverEmptyFinalResponse } from "./executor-response-filter.js";
+import { recoverEmptyFinalResponse, surfaceDiscardedPreToolUrl } from "./executor-response-filter.js";
 import type { ComisLogger } from "@comis/core";
 
 /** Minimal mock logger satisfying ComisLogger for recovery tests. */
@@ -473,9 +473,9 @@ describe("recoverEmptyFinalResponse — tool-call synthesis", () => {
   it("disambiguates parallel gateway.patch calls with different keys in the same batch", () => {
     // Production repro from 2026-04-30 OpenRouter onboarding test: model fired
     // gateway.patch agents.default.model + gateway.patch agents.default.provider
-    // in the same turn. Pre-fix, both bullets rendered identically as
-    // `gateway({action: "patch", section: "agents"})`. Post-fix, key field
-    // disambiguates them.
+    // in the same turn. Without the key field, both bullets render identically
+    // as `gateway({action: "patch", section: "agents"})`; including the key
+    // field disambiguates them.
     const result = recoverEmptyFinalResponse({
       extractedResponse: "",
       textEmitted: true,
@@ -526,9 +526,9 @@ describe("recoverEmptyFinalResponse — tool-call synthesis", () => {
 describe("recoverEmptyFinalResponse — silent-token pass-through (cron heartbeat regression)", () => {
   it("cron heartbeat case: HEARTBEAT_OK after observation tools (web_search + get_stock_price) passes through unchanged", () => {
     // Production trace from May 2026: iran-war-monitor Telegram cron agent
-    // emitted HEARTBEAT_OK after observation-only tools. Pre-fix, recovery
+    // emitted HEARTBEAT_OK after observation-only tools. Previously, recovery
     // synthesized a fake "[comis: tool-call summary recovered ...]" message
-    // and delivered it hourly via Telegram. Post-fix, the silent token
+    // and delivered it hourly via Telegram. Now the silent token
     // passes through to the channel-layer filter for suppression.
     const result = recoverEmptyFinalResponse({
       extractedResponse: "HEARTBEAT_OK",
@@ -554,5 +554,241 @@ describe("recoverEmptyFinalResponse — silent-token pass-through (cron heartbea
     expect(result).toBe("HEARTBEAT_OK");
     expect(result).not.toContain("tool-call summary recovered");
     expect(result).not.toContain("Completed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// surfaceDiscardedPreToolUrl — URL/short-code safety-net
+// ---------------------------------------------------------------------------
+
+describe("surfaceDiscardedPreToolUrl", () => {
+  it("Case A — pre-tool text with OAuth URL absent from final response is prepended to result", () => {
+    const messages = [
+      { role: "user", content: "Please authorize." },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Visit https://oauth.example.com/auth?code=XYZ to authorize" },
+          { type: "tool_use", id: "tc1", name: "sessions_spawn", input: {} },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Tool completed." }],
+      },
+    ];
+    const result = surfaceDiscardedPreToolUrl("Tool completed.", messages, 0, mockLogger());
+    expect(result).toMatch(/^https:\/\/oauth\.example\.com\/auth\?code=XYZ/);
+    expect(result).toContain("Tool completed.");
+  });
+
+  it("Case B — pre-tool framing prose \"I'm going to...\" without URL is not surfaced (negative control)", () => {
+    // Stock-scanner scenario: pre-tool prose that begins with "I'm going to..."
+    // must not be surfaced as a user-visible auth hint.
+    const messages = [
+      { role: "user", content: "Create a stock scanner skill", timestamp: 1 },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I'm going to build it as a private skill, scaffold it, validate it, and leave it ready to use." },
+          { type: "tool_use", id: "tc1", name: "read", input: {} },
+        ],
+        stopReason: "toolUse",
+        timestamp: 2,
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Step 4/4: sanity-testing the trigger with a real prompt that ought to activate the skill." },
+          { type: "tool_use", id: "tc5", name: "sessions_spawn", input: {} },
+        ],
+        stopReason: "toolUse",
+        timestamp: 10,
+      },
+    ];
+    const result = surfaceDiscardedPreToolUrl("Done.", messages, 0, mockLogger());
+    expect(result).toBe("Done.");
+    expect(result).not.toContain("I'm going to build");
+    expect(result).not.toContain("Step 4/4");
+  });
+
+  it("Case C — pre-tool framing prose \"Let me handle that for you.\" is not surfaced (negative control)", () => {
+    // Negative control: pre-tool prose that begins with "Let me ..." must not
+    // be surfaced as a user-visible auth hint.
+    const messages = [
+      { role: "user", content: "Do something", timestamp: 1 },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Let me handle that for you." },
+          { type: "tool_use", id: "tc1", name: "exec", input: {} },
+        ],
+        stopReason: "toolUse",
+        timestamp: 2,
+      },
+    ];
+    const result = surfaceDiscardedPreToolUrl("Done.", messages, 0, mockLogger());
+    expect(result).toBe("Done.");
+    expect(result).not.toContain("Let me handle that for you.");
+  });
+
+  it("Case D — URL already in final response is not re-prepended", () => {
+    const messages = [
+      { role: "user", content: "Please authorize." },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Visit https://oauth.example.com/auth to continue." },
+          { type: "tool_use", id: "tc1", name: "sessions_spawn", input: {} },
+        ],
+      },
+    ];
+    const finalResponse = "Please visit https://oauth.example.com/auth to continue.";
+    const result = surfaceDiscardedPreToolUrl(finalResponse, messages, 0, mockLogger());
+    expect(result).toBe(finalResponse);
+  });
+
+  it("Case E — NO_REPLY sentinel response is not modified by URL safety-net", () => {
+    const messages = [
+      { role: "user", content: "Please authorize." },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Visit https://oauth.example.com/auth?code=XYZ to authorize" },
+          { type: "tool_use", id: "tc1", name: "sessions_spawn", input: {} },
+        ],
+      },
+    ];
+    const result = surfaceDiscardedPreToolUrl("NO_REPLY", messages, 0, mockLogger());
+    expect(result).toBe("NO_REPLY");
+  });
+
+  it("Case E2 — HEARTBEAT_OK sentinel response is not modified by URL safety-net", () => {
+    const messages = [
+      { role: "user", content: "heartbeat" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Visit https://oauth.example.com/auth?code=XYZ to authorize" },
+          { type: "tool_use", id: "tc1", name: "sessions_spawn", input: {} },
+        ],
+      },
+    ];
+    const result = surfaceDiscardedPreToolUrl("HEARTBEAT_OK", messages, 0, mockLogger());
+    expect(result).toBe("HEARTBEAT_OK");
+  });
+
+  it("Case F — pre-tool framing prose containing URL is not surfaced (FRAMING_PROSE_RE wins over URL predicate)", () => {
+    // FRAMING_PROSE_RE must fire BEFORE the URL predicate
+    const messages = [
+      { role: "user", content: "Fetch the docs." },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I'm going to fetch https://example.com/docs for you" },
+          { type: "tool_use", id: "tc1", name: "exec", input: {} },
+        ],
+      },
+    ];
+    const result = surfaceDiscardedPreToolUrl("Done.", messages, 0, mockLogger());
+    expect(result).toBe("Done.");
+  });
+
+  it("logs info when a pre-tool URL is surfaced", () => {
+    const logger = mockLogger();
+    const messages = [
+      { role: "user", content: "Please authorize." },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Visit https://oauth.example.com/auth?code=XYZ to authorize" },
+          { type: "tool_use", id: "tc1", name: "sessions_spawn", input: {} },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Tool completed." }],
+      },
+    ];
+    surfaceDiscardedPreToolUrl("Tool completed.", messages, 0, logger);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        surfacedUrl: "https://oauth.example.com/auth?code=XYZ",
+        submodule: "executor-response-filter.surfaceDiscardedPreToolUrl",
+      }),
+      expect.stringContaining("Surfaced discarded pre-tool URL"),
+    );
+  });
+
+  // Regression tests — SHORT_CODE_RE must NOT match plain English words.
+  it("Case G — benign non-framing pre-tool narration 'Checking the weather forecast now.' is NOT surfaced", () => {
+    // Pre-tool text that doesn't start with FRAMING_PROSE_RE but contains only
+    // dictionary words must not get the first word prepended.
+    const messages = [
+      { role: "user", content: "What's the weather like?" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Checking the weather forecast now." },
+          { type: "tool_use", id: "tc1", name: "exec", input: {} },
+        ],
+      },
+    ];
+    const result = surfaceDiscardedPreToolUrl("It will be sunny.", messages, 0, mockLogger());
+    expect(result).toBe("It will be sunny.");
+    expect(result).not.toMatch(/^weather/);
+    expect(result).not.toMatch(/^checking/i);
+  });
+
+  it("Case H — benign non-framing pre-tool narration 'Running the analysis pipeline.' is NOT surfaced", () => {
+    // "analysis" must not be prepended as a code candidate.
+    const messages = [
+      { role: "user", content: "Run the analysis." },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Running the analysis pipeline." },
+          { type: "tool_use", id: "tc1", name: "exec", input: {} },
+        ],
+      },
+    ];
+    const result = surfaceDiscardedPreToolUrl("Done.", messages, 0, mockLogger());
+    expect(result).toBe("Done.");
+    expect(result).not.toMatch(/^analysis/);
+    expect(result).not.toMatch(/^running/i);
+  });
+
+  it("Case I — real one-time numeric code '493021' in pre-tool text IS surfaced when absent from response", () => {
+    // Positive control: a 6-digit numeric code (digit-containing) must still be surfaced.
+    const messages = [
+      { role: "user", content: "What is my code?" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Your verification code is 493021" },
+          { type: "tool_use", id: "tc1", name: "sessions_spawn", input: {} },
+        ],
+      },
+    ];
+    const result = surfaceDiscardedPreToolUrl("Done.", messages, 0, mockLogger());
+    expect(result).toMatch(/^493021/);
+    expect(result).toContain("Done.");
+  });
+
+  it("Case J — alphanumeric device code 'A1B2C3' in pre-tool text IS surfaced when absent from response", () => {
+    // Positive control: a mixed-case alphanumeric code (contains digit) must still be surfaced.
+    const messages = [
+      { role: "user", content: "What is the pairing code?" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Use pairing code A1B2C3 to connect." },
+          { type: "tool_use", id: "tc1", name: "exec", input: {} },
+        ],
+      },
+    ];
+    const result = surfaceDiscardedPreToolUrl("Done.", messages, 0, mockLogger());
+    expect(result).toMatch(/^A1B2C3/);
+    expect(result).toContain("Done.");
   });
 });

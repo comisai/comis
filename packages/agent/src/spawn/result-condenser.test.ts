@@ -373,4 +373,78 @@ describe("ResultCondenser", () => {
     expect(result.result.summary).not.toContain("</final>");
     expect(result.result.summary).toContain("answer");
   });
+
+  // -------------------------------------------------------------------------
+  // relay scrub tests
+  // -------------------------------------------------------------------------
+
+  describe("relay scrub", () => {
+    it("scrubs token from fullResult before persistFullResult receives it", async () => {
+      const deps = createTestDeps({ maxResultTokens: 1000 });
+      const condenser = createResultCondenser(deps);
+
+      const rawToken = "hf_" + "a".repeat(44);
+      await condenser.condense(createTestParams({
+        fullResult: `Result text containing Bearer ${rawToken} as part of the output`,
+      }));
+
+      expect(writeFile).toHaveBeenCalled();
+      const writeCall = (writeFile as Mock).mock.calls[0];
+      const diskJson = JSON.parse(writeCall![1] as string);
+      // persistFullResult must NOT receive the raw token in fullResult
+      expect(diskJson.fullResult).not.toContain(rawToken);
+    });
+
+    it("scrubs token from fullResult before relay (condensed output does not contain raw token)", async () => {
+      const deps = createTestDeps({ maxResultTokens: 1000 });
+      const condenser = createResultCondenser(deps);
+
+      const rawToken = "hf_" + "b".repeat(44);
+      const result = await condenser.condense(createTestParams({
+        fullResult: `Agent completed task. Token: Bearer ${rawToken}`,
+      }));
+
+      // The condensed relay result (summary/conclusions) must not contain the raw token
+      const resultText = JSON.stringify(result.result);
+      expect(resultText).not.toContain(rawToken);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // secure handoff advisory tests
+  // -------------------------------------------------------------------------
+
+  describe("secure handoff advisory", () => {
+    it("appends secure-store advisory when fullResult contained a token (after redaction)", async () => {
+      const deps = createTestDeps({ maxResultTokens: 1000 });
+      const condenser = createResultCondenser(deps);
+
+      // A Bearer token that scrubSecretsFromText will detect and redact
+      const rawToken = "hf_" + "c".repeat(44);
+      const result = await condenser.condense(createTestParams({
+        fullResult: `The video was generated. Authorization: Bearer ${rawToken} was used.`,
+      }));
+
+      // The raw token must be absent from the condensed relay result
+      const resultText = JSON.stringify(result.result);
+      expect(resultText).not.toContain(rawToken);
+
+      // A generic secure-store advisory must be present in the summary.
+      // Server name is NOT available at condenseInternal — generic advisory only;
+      // threading serverName requires invasive cross-package CondenseParams API change.
+      expect(result.result.summary).toContain("stored in the secure credential store");
+    });
+
+    it("does NOT append advisory when fullResult contains no credential (clean result)", async () => {
+      const deps = createTestDeps({ maxResultTokens: 1000 });
+      const condenser = createResultCondenser(deps);
+
+      const result = await condenser.condense(createTestParams({
+        fullResult: "The task completed successfully. No credentials were used.",
+      }));
+
+      // No advisory should appear for clean results
+      expect(result.result.summary).not.toContain("stored in the secure credential store");
+    });
+  });
 });

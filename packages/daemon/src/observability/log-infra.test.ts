@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createLogLevelManager, expandTilde, createFileTransport, isPm2Managed } from "./log-infra.js";
 import os from "node:os";
 import type { LoggingConfig } from "@comis/core";
+import type pino from "pino";
 
 // ===========================================================================
 // Log Level Manager tests
@@ -200,12 +201,36 @@ describe("createFileTransport", () => {
     }
   });
 
+  // Each entry in targets[] is a TransportPipelineOptions:
+  //   pipeline[0] = redact stage  (upstream Transform)
+  //   pipeline[1] = destination   (Writable: pino-roll or pino/file)
+  // Helper to extract the destination options from targets[i].pipeline[1].
+  function getPipelineTarget(
+    transport: pino.TransportMultiOptions,
+    targetIdx: number,
+  ): Record<string, unknown> {
+    const entry = transport.targets[targetIdx] as unknown as {
+      pipeline: Array<{ target: string; options?: Record<string, unknown> }>;
+    };
+    return entry.pipeline[1]!.options ?? {};
+  }
+
+  function getPipelineTargetName(
+    transport: pino.TransportMultiOptions,
+    targetIdx: number,
+  ): string {
+    const entry = transport.targets[targetIdx] as unknown as {
+      pipeline: Array<{ target: string }>;
+    };
+    return entry.pipeline[1]!.target;
+  }
+
   it("returns pino-roll and stdout when not under pm2", () => {
     const transport = createFileTransport(defaultConfig);
 
     expect(transport.targets).toHaveLength(2);
-    expect(transport.targets[0]!.target).toBe("pino-roll");
-    expect(transport.targets[1]!.target).toBe("pino/file");
+    expect(getPipelineTargetName(transport, 0)).toBe("pino-roll");
+    expect(getPipelineTargetName(transport, 1)).toBe("pino/file");
   });
 
   it("returns only pino-roll when under pm2 (stdout skipped)", () => {
@@ -213,34 +238,34 @@ describe("createFileTransport", () => {
     const transport = createFileTransport(defaultConfig);
 
     expect(transport.targets).toHaveLength(1);
-    expect(transport.targets[0]!.target).toBe("pino-roll");
+    expect(getPipelineTargetName(transport, 0)).toBe("pino-roll");
   });
 
   it("expands tilde in filePath for pino-roll", () => {
     const transport = createFileTransport(defaultConfig);
-    const rollOpts = transport.targets[0]!.options as Record<string, unknown>;
+    const rollOpts = getPipelineTarget(transport, 0);
 
     expect(rollOpts.file).toBe(`${os.homedir()}/.comis/logs/daemon.log`);
-    expect(rollOpts.file).not.toContain("~");
+    expect(rollOpts.file as string).not.toContain("~");
   });
 
   it("passes maxSize as size to pino-roll", () => {
     const transport = createFileTransport({ ...defaultConfig, maxSize: "50m" });
-    const rollOpts = transport.targets[0]!.options as Record<string, unknown>;
+    const rollOpts = getPipelineTarget(transport, 0);
 
     expect(rollOpts.size).toBe("50m");
   });
 
   it("sets mkdir:true for auto-creating log directories", () => {
     const transport = createFileTransport(defaultConfig);
-    const rollOpts = transport.targets[0]!.options as Record<string, unknown>;
+    const rollOpts = getPipelineTarget(transport, 0);
 
     expect(rollOpts.mkdir).toBe(true);
   });
 
   it("sets removeOtherLogFiles:true in limit", () => {
     const transport = createFileTransport(defaultConfig);
-    const rollOpts = transport.targets[0]!.options as Record<string, unknown>;
+    const rollOpts = getPipelineTarget(transport, 0);
     const limit = rollOpts.limit as Record<string, unknown>;
 
     expect(limit.removeOtherLogFiles).toBe(true);
@@ -249,7 +274,7 @@ describe("createFileTransport", () => {
 
   it("uses maxFiles as limit.count", () => {
     const transport = createFileTransport({ ...defaultConfig, maxFiles: 10 });
-    const rollOpts = transport.targets[0]!.options as Record<string, unknown>;
+    const rollOpts = getPipelineTarget(transport, 0);
     const limit = rollOpts.limit as Record<string, unknown>;
 
     expect(limit.count).toBe(10);
@@ -257,8 +282,8 @@ describe("createFileTransport", () => {
 
   it("stdout target uses fd=1", () => {
     const transport = createFileTransport(defaultConfig);
-    // Without PM2: stdout is the second target (index 1)
-    const stdoutOpts = transport.targets[1]!.options as Record<string, unknown>;
+    // Without PM2: stdout is the second pipeline (index 1)
+    const stdoutOpts = getPipelineTarget(transport, 1);
 
     expect(stdoutOpts.destination).toBe(1);
   });
@@ -268,7 +293,7 @@ describe("createFileTransport", () => {
       ...defaultConfig,
       filePath: "/var/log/comis/daemon.log",
     });
-    const rollOpts = transport.targets[0]!.options as Record<string, unknown>;
+    const rollOpts = getPipelineTarget(transport, 0);
 
     expect(rollOpts.file).toBe("/var/log/comis/daemon.log");
   });
@@ -296,7 +321,7 @@ describe("createFileTransport", () => {
       maxSizeBytes: 52428800,
       maxFiles: 5,
     });
-    const rollOpts = transport.targets[0]!.options as Record<string, unknown>;
+    const rollOpts = getPipelineTarget(transport, 0);
     expect(rollOpts.size).toBe("50m");
   });
 
@@ -305,14 +330,26 @@ describe("createFileTransport", () => {
       maxSizeBytes: 50 * 1024 * 1024,
       maxFiles: 7,
     });
-    const rollOpts = transport.targets[0]!.options as Record<string, unknown>;
+    const rollOpts = getPipelineTarget(transport, 0);
     const limit = rollOpts.limit as Record<string, unknown>;
     expect(limit.count).toBe(7);
   });
 
   it("falls back to config.maxSize when logRotation is absent", () => {
     const transport = createFileTransport({ ...defaultConfig, maxSize: "10m" });
-    const rollOpts = transport.targets[0]!.options as Record<string, unknown>;
+    const rollOpts = getPipelineTarget(transport, 0);
     expect(rollOpts.size).toBe("10m");
+  });
+
+  it("includes pipeline-redact-stage as upstream stage in each target", () => {
+    const transport = createFileTransport(defaultConfig);
+
+    for (const rawTarget of transport.targets) {
+      const entry = rawTarget as unknown as {
+        pipeline: Array<{ target: string }>;
+      };
+      expect(entry.pipeline).toBeDefined();
+      expect(entry.pipeline[0]!.target).toContain("pipeline-redact-stage");
+    }
   });
 });

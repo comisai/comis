@@ -335,6 +335,7 @@ const END_REASON_MAP: Record<string, NonNullable<SessionMetadata["sessionEnd"]>[
   circuit_open: "circuit_open",
   provider_degraded: "provider_degraded", max_steps: "error",
   context_loop: "error", context_exhausted: "error",
+  completed_with_tool_errors: "completed_with_tool_errors",
 };
 
 /**
@@ -375,6 +376,28 @@ export function buildSessionEndMetadata(args: {
       totalTokens: args.totalTokens,
     },
   };
+}
+
+/**
+ * Returns true when the model response already acknowledges the failure of
+ * one of the failed tools — used to suppress the auto-appended failure notice
+ * when the model has explicitly mentioned the error.
+ *
+ * Pure: no I/O, no side effects.
+ */
+function modelAcknowledgedFailure(response: string, failedTools: string[]): boolean {
+  if (!response || failedTools.length === 0) return false;
+  const lower = response.toLowerCase();
+  return failedTools.some(t => {
+    const name = t.toLowerCase();
+    // Escape regex metacharacters in the tool name before inserting into a RegExp.
+    // Word-boundary match (\b) prevents short tool names like "write" from matching
+    // substrings in unrelated words like "writer" or "writing".
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const nameRe = new RegExp(`\\b${escaped}\\b`);
+    if (!nameRe.test(lower)) return false;
+    return /\b(fail(ed|ure|s)?|error|unable|could\s+not|couldn'?t)\b/.test(lower);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -660,6 +683,28 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     );
   }
 
+  // Derive effectiveFinishReason — override is UNCONDITIONAL when a tool
+  // failed on a stop/end_turn turn (modelAcknowledgedFailure does NOT gate this).
+  const hasToolFailures = (bridgeResult.failedTools?.length ?? 0) > 0;
+  const finishReasonStr = result.finishReason as string;
+  const isStopTurn = finishReasonStr === "stop" || finishReasonStr === "end_turn";
+  const effectiveFinishReason =
+    hasToolFailures && isStopTurn
+      ? "completed_with_tool_errors"
+      : result.finishReason;
+  // Notice append is gated: only when the model did NOT acknowledge the failure
+  // AND the response is not a silent sentinel.
+  if (
+    hasToolFailures &&
+    isStopTurn &&
+    !modelAcknowledgedFailure(result.response ?? "", bridgeResult.failedTools ?? []) &&
+    !isSilentResponse(result.response ?? "")
+  ) {
+    const failedToolName = bridgeResult.failedTools?.[0] ?? "unknown tool";
+    result.response = (result.response ?? "") +
+      `\n[tool failure] ${failedToolName} reported an error (see session log for details)`;
+  }
+
   // Write session metadata companion file with trace correlation.
   // traceId comes from the AsyncLocalStorage request scope so `_session-metadata.json`
   // can be cross-correlated against daemon.log via grep; runId stays as the
@@ -667,7 +712,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   // Fire-and-forget: metadata write failure must not affect execution.
   try {
     sessionAdapter.writeSessionMetadata(sessionKey, buildSessionEndMetadata({
-      finishReason: result.finishReason,
+      finishReason: effectiveFinishReason,
       durationMs,
       totalTokens: result.tokensUsed.total,
       executionId,

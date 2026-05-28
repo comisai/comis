@@ -72,4 +72,21 @@ describe("validateMemoryWrite", () => {
     expect(result.severity).toBe("clean");
     expect(result.patterns).toEqual([]);
   });
+
+  // -------------------------------------------------------------------------
+  // secret scan branch
+  // -------------------------------------------------------------------------
+
+  describe("secret scan branch", () => {
+    it("validateMemoryWrite returns critical when content contains a bearer token", () => {
+      const token = "hf_" + "a".repeat(44);
+      const result = validateMemoryWrite(`store this: Bearer ${token}`);
+      expect(result.severity).toBe("critical");
+    });
+
+    it("validateMemoryWrite returns clean for normal memory content", () => {
+      const result = validateMemoryWrite("Remember: the user's name is Alice");
+      expect(result.severity).toBe("clean");
+    });
+  });
 });

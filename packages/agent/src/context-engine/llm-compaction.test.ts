@@ -1288,7 +1288,7 @@ describe("three-zone middle-out compaction", () => {
     // Reproduces the V5 production incident:
     //   messageCount climbs past CACHE_AWARE_COMPACTION_BLOCK_THRESHOLD (60)
     //   while every message is small enough that head+tail absorbs everything,
-    //   leaving middle empty. Pre-fix, every apply() call logged the trigger
+    //   leaving middle empty. Previously, every apply() call logged the trigger
     //   warn; we observed 19 warns in 90s while the count climbed 61 -> 113.
     const { deps, logger } = createMockDeps();
     const layer = createLlmCompactionLayer(

@@ -2,7 +2,6 @@
 /**
  * Tests for SYNTHETIC_ERROR_KIND_MAP and resolveErrorKind helper.
  *
- * RED phase — these assertions fail because the module does not yet exist.
  * @module
  */
 import { describe, it, expect } from "vitest";

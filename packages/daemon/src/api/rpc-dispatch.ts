@@ -19,6 +19,7 @@ import type { ApiDispatchDeps } from "./types.js";
 export type { ApiDispatchDeps };
 
 import { PreconditionError, ValidationError } from "./errors.js";
+import { RequiredToolsUnreachableError } from "@comis/core";
 
 import { createCronHandlers } from "./cron-handlers.js";
 import { createMemoryHandlers } from "./memory-handlers.js";
@@ -93,6 +94,9 @@ export function classifyRpcError(err: unknown): { errorKind: ErrorKind; hint: st
   // handlers migrate; do NOT re-introduce substring-match fallbacks.
   if (err instanceof PreconditionError) return { errorKind: "precondition", hint: "Caller precondition not met; check resource state before retry", level: "warn" };
   if (err instanceof ValidationError) return { errorKind: "validation", hint: "Check parameter types and values against the schema", level: "warn" };
+  // RequiredToolsUnreachableError is a caller-side validation failure (caller passed
+  // invalid required_tools). Classify as validation/warn — NOT internal/error.
+  if (err instanceof RequiredToolsUnreachableError) return { errorKind: "validation", hint: "Adjust required_tools and/or tool_groups per the per-tool hints in the error message", level: "warn" };
   return { errorKind: "internal", hint: "Check the RPC method handler and its dependencies", level: "error" };
 }
 
@@ -254,6 +258,12 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       // agent/provider handlers above. When undefined the validator becomes
       // a no-op.
       secretManager: deps.container?.secretManager,
+      // Threaded for static-secret header extraction. ApiDispatchDeps
+      // already carries secretStore (from AuthApiDeps) which is populated from
+      // c.secretStore at daemon.ts:1071. When undefined the extraction
+      // fails-safe (throws [plaintext_secret_in_headers]) rather than
+      // persisting plaintext.
+      secretStore: deps.secretStore,
       // Thread persistDeps so mcp.connect/disconnect can route through
       // persistToConfig. Mirrors the heartbeat-handlers wiring at
       // :280-290. When deps.container is missing (test harnesses) persist

@@ -57,6 +57,23 @@ pnpm build && pm2 flush && pm2 restart comis     # rebuild + restart (`pm2 start
 pm2 status comis
 ```
 
+**Clean the pm2 cache before every start — do not rely on `pm2 restart`.** `pm2 restart` re-execs the **cached exec path** stored in the running process (and in `~/.pm2/dump.pm2`); it does **not** re-read `ecosystem.config.js`. So once the daemon has been started from any checkout, every later `restart` stays pinned to that path — your `pnpm build` in *this* checkout then has zero effect on the live process, and the symptom is silent (daemon looks healthy, runs stale code from another directory). The saved `dump.pm2` / `dump.pm2.bak` persist those stale paths across reboots via `pm2 resurrect`, and have been observed pointing at long-dead sibling checkouts (`clawdbot/…`, a second `comisai/comis`, etc.).
+
+Canonical start/restart — force pm2 to re-read the config and refresh its saved state:
+```bash
+node packages/cli/dist/cli.js pm2 setup        # regenerate ecosystem.config.js for THIS checkout's cwd
+pm2 delete comis 2>/dev/null                    # drop the cached process def (next start re-reads the config)
+rm -f ~/.pm2/dump.pm2 ~/.pm2/dump.pm2.bak        # purge stale saved exec paths (may point at old checkouts)
+pnpm build && pm2 flush                          # rebuild this checkout + clear logs
+node packages/cli/dist/cli.js pm2 start          # starts from the freshly-written ecosystem.config.js
+pm2 save --force                                 # rewrite dump.pm2 to the current, correct state
+```
+After starting, **verify pm2 is actually running this checkout** (not a cached path):
+```bash
+pm2 jlist | node -e 'const p=JSON.parse(require("fs").readFileSync(0)).find(x=>x.name==="comis");console.log(p.pm2_env.pm_exec_path)'
+```
+It must print `…/<this checkout>/packages/daemon/dist/daemon.js`. If it points elsewhere, the cache wasn't cleared — repeat the block above.
+
 Always `pm2 flush` before start/restart to keep logs clean. Verify startup (use `run_in_background: true`):
 ```bash
 sleep 5 && pm2 logs comis --lines 10 --nostream
@@ -64,11 +81,6 @@ sleep 5 && pm2 logs comis --lines 10 --nostream
 Look for `"Comis daemon started"`. On `FATAL: Bootstrap failed`, restore last-known-good:
 ```bash
 cp ~/.comis/config.last-good.yaml ~/.comis/config.yaml && pm2 restart comis
-```
-
-Full reset (clears restart counter — `pm2 flush` only clears logs):
-```bash
-pm2 delete comis && pm2 flush && node packages/cli/dist/cli.js pm2 start
 ```
 
 ### Direct (production)

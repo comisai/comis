@@ -35,6 +35,12 @@ export interface SetupSecretsOptions {
   env: Record<string, string | undefined>;
   /** Data directory where secrets.db will be stored */
   dataDir: string;
+  /**
+   * Same-boot key injection: the freshly-generated master key hex from
+   * `writeMasterKeyIfAbsent`. Used when SECRETS_MASTER_KEY is not yet in `env`
+   * (because `loadEnvFile` hasn't run yet on the new key). NEVER log this value.
+   */
+  seedKeyHex?: string;
 }
 
 /**
@@ -46,7 +52,10 @@ export interface SetupSecretsOptions {
 export function setupSecrets(
   opts: SetupSecretsOptions,
 ): Result<SecretsBootResult | null, Error> {
-  const raw = opts.env.SECRETS_MASTER_KEY;
+  // W1: treat empty/whitespace SECRETS_MASTER_KEY as absent so seedKeyHex is not
+  // silently discarded when the operator exports an empty SECRETS_MASTER_KEY.
+  const envKey = opts.env.SECRETS_MASTER_KEY;
+  const raw = (envKey !== undefined && envKey.trim() !== "") ? envKey : opts.seedKeyHex;
 
   // Branch 1: absent or empty → envfile mode
   if (raw === undefined || raw.trim() === "") {

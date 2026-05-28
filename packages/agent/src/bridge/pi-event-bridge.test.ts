@@ -2290,7 +2290,7 @@ describe("createPiEventBridge", () => {
       expect(emitCall[1].savedVsUncached).toBeCloseTo(-0.03723, 5);
     });
 
-    // COST-FIX: Cost correction delta tests
+    // Cost correction delta tests
     it("cost correction delta applied when ttlSplit has 1h tokens", () => {
       // Sonnet: cacheWrite(5m) = 0.00000375, cacheWrite1h = 0.000006
       // delta per 1h token = 0.000006 - 0.00000375 = 0.00000225
@@ -4534,7 +4534,7 @@ describe("session and tool-timeout lifecycle events", () => {
   it("emits session:started on pi-mono agent_start with channelType from ALS context (legacy path: no trajectoryRegistry)", () => {
     // Legacy callers (tests, embedded harnesses) omit trajectoryRegistry
     // from PiEventBridgeDeps. The bridge falls through to the legacy
-    // unconditional emit so behavior matches the pre-tlx baseline.
+    // unconditional emit so behavior matches the legacy baseline.
     const deps = createMockDeps();
     const { listener } = createPiEventBridge(deps);
 
@@ -4607,7 +4607,7 @@ describe("session and tool-timeout lifecycle events", () => {
   });
 
   it("agent_start_falls_back_to_unconditional_emit_when_trajectoryRegistry_absent (legacy path)", () => {
-    // Legacy callers (tests, embedded use) get the pre-tlx behavior so
+    // Legacy callers (tests, embedded use) get the legacy behavior so
     // existing harnesses keep working. The registry-backed latch is the
     // production path; without it, every agent_start emits.
     const deps = createMockDeps(); // no trajectoryRegistry
@@ -4916,5 +4916,108 @@ describe("session-index emit sites", () => {
     expect(typeof payload.outputTokens).toBe("number");
     expect(payload.inputTokens).toBe(123);
     expect(payload.outputTokens).toBe(456);
+  });
+
+  // -------------------------------------------------------------------------
+  // tool_execution_end 'Tool not found' enrichment
+  // -------------------------------------------------------------------------
+
+  describe("tool_execution_end 'Tool not found' enrichment", () => {
+    it("'Tool mcp_manage not found' with activeToolGroups=['coding'] enriches errorText with supervisor re-spawn hint", () => {
+      // Cast via unknown since activeToolGroups is an optional extension to PiEventBridgeDeps.
+      const enrichedDeps = createMockDeps({
+        activeToolGroups: ["coding"],
+      } as unknown as Partial<PiEventBridgeDeps>);
+      const { listener } = createPiEventBridge(enrichedDeps);
+
+      // Use { message: "..." } shape so extractErrorText returns the raw SDK text
+      const result = { message: "Tool mcp_manage not found" };
+      listener(makeToolExecutionEndEvent("mcp_manage", "tc-suba02-a", true, result) as any);
+
+      // The warn log must include errorText containing "supervisor" (re-spawn hint)
+      const warnCalls = (enrichedDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const toolFailWarn = warnCalls.find(
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "mcp_manage",
+      );
+      expect(toolFailWarn).toBeDefined();
+      expect(toolFailWarn![0].errorText).toContain("supervisor");
+    });
+
+    it("'Tool gateway not found' with activeToolGroups=['full'] enriches errorText with denylist message", () => {
+      const enrichedDeps = createMockDeps({
+        activeToolGroups: ["full"],
+      } as unknown as Partial<PiEventBridgeDeps>);
+      const { listener } = createPiEventBridge(enrichedDeps);
+
+      const result = { message: "Tool gateway not found" };
+      listener(makeToolExecutionEndEvent("gateway", "tc-suba02-b", true, result) as any);
+
+      const warnCalls = (enrichedDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const toolFailWarn = warnCalls.find(
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "gateway",
+      );
+      expect(toolFailWarn).toBeDefined();
+      expect(toolFailWarn![0].errorText).toContain("denied to ALL sub-agents");
+    });
+
+    it("'Tool mcp_manage not found' with no activeToolGroups leaves errorText unchanged", () => {
+      // Bridge without activeToolGroups field — top-level agent, no enrichment
+      const plainDeps = createMockDeps();
+      const { listener } = createPiEventBridge(plainDeps);
+
+      const result = { message: "Tool mcp_manage not found" };
+      listener(makeToolExecutionEndEvent("mcp_manage", "tc-suba02-c", true, result) as any);
+
+      const warnCalls = (plainDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const toolFailWarn = warnCalls.find(
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "mcp_manage",
+      );
+      expect(toolFailWarn).toBeDefined();
+      // No enrichment: raw SDK error text preserved
+      expect(toolFailWarn![0].errorText).toBe("Tool mcp_manage not found");
+    });
+
+    // MCP-namespaced tool names (mcp__<server>--<tool>) must NOT be enriched
+    // with profile-widening hint — MCP reachability is governed by subAgentMcpTools policy,
+    // not by tool profiles. The classified errorKind must also be preserved (not overwritten
+    // with "validation").
+    it("'Tool mcp__context7--search not found' with activeToolGroups does NOT get profile-widening hint", () => {
+      const enrichedDeps = createMockDeps({
+        activeToolGroups: ["coding"],
+      } as unknown as Partial<PiEventBridgeDeps>);
+      const { listener } = createPiEventBridge(enrichedDeps);
+
+      // MCP tool — name matches mcp__<server>--<tool> pattern
+      const result = { message: "Tool mcp__context7--search not found" };
+      listener(makeToolExecutionEndEvent("mcp__context7--search", "tc-wr07-a", true, result) as any);
+
+      const warnCalls = (enrichedDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const toolFailWarn = warnCalls.find(
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "mcp__context7--search",
+      );
+      expect(toolFailWarn).toBeDefined();
+      // Must NOT contain profile-widening hint for MCP tools
+      expect(toolFailWarn![0].errorText).not.toContain("outside this sub-agent's profile");
+      expect(toolFailWarn![0].errorText).not.toContain("Re-spawn with tool_groups");
+    });
+
+    it("'Tool mcp__db--query not found' errorKind is NOT overwritten to 'validation' (MCP kind preserved)", () => {
+      const enrichedDeps = createMockDeps({
+        activeToolGroups: ["coding"],
+      } as unknown as Partial<PiEventBridgeDeps>);
+      const { listener } = createPiEventBridge(enrichedDeps);
+
+      const result = { message: "Tool mcp__db--query not found" };
+      listener(makeToolExecutionEndEvent("mcp__db--query", "tc-wr07-b", true, result) as any);
+
+      const warnCalls = (enrichedDeps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const toolFailWarn = warnCalls.find(
+        (c) => c[1] === "Tool execution failed" && c[0]?.toolName === "mcp__db--query",
+      );
+      expect(toolFailWarn).toBeDefined();
+      // MCP not-found should NOT be classified as "validation" (profile-widening is wrong remedy)
+      // It should preserve the MCP-classified kind (dependency or similar)
+      expect(toolFailWarn![0].errorKind).not.toBe("validation");
+    });
   });
 });

@@ -27,6 +27,11 @@ import {
   type MemoryEntry,
   type ModelOperationType,
   type ErrorKind,
+  // Classification data for "Tool X not found" enrichment.
+  // @comis/agent has no @comis/skills edge in the architecture graph
+  // (agent = [shared, core, observability, scheduler]). Import ONLY from @comis/core.
+  SUB_AGENT_TOOL_DENYLIST,
+  toolReachableGroups,
 } from "@comis/core";
 import type { SessionTrajectoryHandleRegistry } from "@comis/observability";
 import { buildTraceMetadata } from "@comis/observability";
@@ -107,6 +112,35 @@ export function __resetSdkBreakdownNoticeForTest(): void {
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Tool-not-found enrichment helpers
+// ---------------------------------------------------------------------------
+
+/** Matches the SDK's exact "Tool not found" error format (agent-loop.js:356):
+ *  `Tool ${toolCall.name} not found` */
+const NOT_FOUND_RE = /^Tool (\S+) not found$/;
+
+/**
+ * Classify a tool that was not found during sub-agent execution.
+ * Uses SUB_AGENT_TOOL_DENYLIST and toolReachableGroups from @comis/core.
+ * Returns enriched hint text that replaces the opaque SDK error.
+ *
+ * @comis/agent has no @comis/skills edge — do NOT import TOOL_PROFILES from @comis/skills.
+ */
+function classifyUnreachableTool(toolName: string, activeGroups: string[]): string {
+  if (SUB_AGENT_TOOL_DENYLIST.has(toolName)) {
+    return `Tool '${toolName}' is denied to ALL sub-agents — the parent must perform this step.`;
+  }
+  const broader = toolReachableGroups(toolName).filter((p) => !activeGroups.includes(p));
+  // When no profile contains the tool, suggest only 'full' — 'supervisor' does not
+  // contain generic tools like web_fetch/browser/sessions_spawn, so it would fail again.
+  const suggestion = broader.length > 0 ? broader.join("' | '") : "full";
+  return (
+    `Tool '${toolName}' is outside this sub-agent's profile. ` +
+    `Re-spawn with tool_groups:['${suggestion}'].`
+  );
+}
 
 /** Per-call TTL split estimate, populated by requestBodyInjector's onPayload.
  *  Shared mutable object — written by the stream wrapper, read by the bridge. */
@@ -229,7 +263,7 @@ export interface PiEventBridgeDeps {
    * turn so the latch lives there.
    *
    * When omitted (legacy/test callers), the bridge falls back to the
-   * pre-tlx unconditional emit so existing harnesses keep working.
+   * legacy unconditional emit so existing harnesses keep working.
    */
   trajectoryRegistry?: SessionTrajectoryHandleRegistry;
   /**
@@ -264,6 +298,11 @@ export interface PiEventBridgeDeps {
    * home-prefix compaction is skipped.
    */
   homeDir?: string;
+  /** Active tool group names for the sub-agent's profile ceiling.
+   *  When provided, "Tool X not found" errors in tool_execution_end are
+   *  enriched with delegation routing hints. Omit for top-level
+   *  agents where all tools are reachable. */
+  activeToolGroups?: string[];
 }
 
 /** Estimated cost payload for a timed-out API request. */
@@ -625,6 +664,26 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 toolErrorKind = classifyToolError(endEvent.toolName, errorText);
               }
             }
+            // Enrich "Tool X not found" errors with delegation routing hints.
+            // Only applied when activeToolGroups is provided (sub-agent context).
+            // NOT_FOUND_RE is anchored (^…$) — only the exact SDK format triggers.
+            // Skip enrichment for MCP-namespaced tools (mcp__<server>--<tool>) —
+            // MCP tool reachability is governed by subAgentMcpTools policy, not by tool
+            // profiles. Profile-widening hints are misleading for MCP tools. Preserve the
+            // MCP-classified errorKind (dependency/timeout) rather than overwriting with "validation".
+            if (errorText && deps.activeToolGroups && deps.activeToolGroups.length > 0) {
+              const notFoundMatch = NOT_FOUND_RE.exec(errorText);
+              if (notFoundMatch) {
+                const missingTool = notFoundMatch[1]!;
+                if (extractMcpServerName(missingTool) === undefined) {
+                  // Non-MCP tool: enrich with profile-widening hint
+                  errorText = classifyUnreachableTool(missingTool, deps.activeToolGroups);
+                  toolErrorKind = "validation";
+                }
+                // MCP tool: leave errorText + classified MCP errorKind intact
+              }
+            }
+
             m.failedToolCount++;
             if (!m.failedToolNames.includes(endEvent.toolName)) {
               m.failedToolNames.push(endEvent.toolName);
@@ -1017,7 +1076,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             deps.onTurnUsage?.(usage.input);
             m.totalOutputTokens += usage.output;
             m.totalTokens += usage.totalTokens;
-            // NOTE: m.totalCost accumulation deferred until after cost correction (see COST-FIX below)
+            // NOTE: m.totalCost accumulation deferred until after cost correction (see below)
             m.totalCacheReadTokens += usage.cacheRead ?? 0;
             m.totalCacheWriteTokens += usage.cacheWrite ?? 0;
 
@@ -1101,7 +1160,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // Record usage in budget guard (token-based, not cost-based -- stays before correction)
             deps.budgetGuard.recordUsage(usage.totalTokens);
 
-            // COST-FIX ordering: Normalize TTL split estimates BEFORE cost correction.
+            // Ordering: Normalize TTL split estimates BEFORE cost correction.
             // The injector provides raw per-TTL estimates; normalize so they sum to the
             // SDK-reported total (eliminates the 28% estimation error).
             // Mutate in-place so per-TTL cost and accumulation use normalized values.
@@ -1116,7 +1175,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               }
             }
 
-            // COST-FIX: Compute cost correction for 1h tokens the SDK underpriced at the 5m rate.
+            // Compute cost correction for 1h tokens the SDK underpriced at the 5m rate.
             // The SDK prices ALL cacheWrite tokens at pricing.cacheWrite (5m rate).
             // When TTL split is available, 1h tokens should be priced at pricing.cacheWrite1h.
             // Delta = cacheWrite1hTokens * (cacheWrite1h - cacheWrite) -- the underpayment per 1h token.

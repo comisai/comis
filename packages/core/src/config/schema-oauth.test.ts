@@ -4,9 +4,9 @@ import { z } from "zod";
 import { OAuthConfigSchema } from "./schema-oauth.js";
 
 describe("OAuthConfigSchema", () => {
-  it("parses an empty object and applies the default storage = 'file'", () => {
+  it("parses an empty object and applies the default storage = 'encrypted'", () => {
     const parsed = OAuthConfigSchema.parse({});
-    expect(parsed).toEqual({ storage: "file" });
+    expect(parsed).toEqual({ storage: "encrypted" });
   });
 
   it("accepts storage = 'file' explicitly", () => {
@@ -25,5 +25,16 @@ describe("OAuthConfigSchema", () => {
 
   it("rejects extra fields with a ZodError (strictObject)", () => {
     expect(() => OAuthConfigSchema.parse({ storage: "file", extraField: "x" })).toThrow(z.ZodError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// oauth.storage default is "encrypted" for provider tokens
+// ---------------------------------------------------------------------------
+
+describe("OAuthConfigSchema provider default", () => {
+  it("oauth.storage defaults to 'encrypted' when not specified (provider token default)", () => {
+    const parsed = OAuthConfigSchema.parse({});
+    expect(parsed.storage).toBe("encrypted");
   });
 });

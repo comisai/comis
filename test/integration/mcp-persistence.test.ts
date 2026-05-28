@@ -7,20 +7,20 @@
 // packages/daemon/src/api/mcp-handlers.test.ts mock persistToConfig and only
 // assert call-args; this integration test catches what mocks cannot:
 //
-//   - R1: connect persists the new entry to integrations.mcp.servers via
+//   - connect persists the new entry to integrations.mcp.servers via
 //     real YAML round-trip
-//   - R2: disconnect filters the named entry from the array via real YAML
-//   - R3: bootstrap round-trip (in-process simulated restart re-reads the
+//   - disconnect filters the named entry from the array via real YAML
+//   - bootstrap round-trip (in-process simulated restart re-reads the
 //     persisted YAML and reconnect succeeds without override params)
-//   - R5: literal $\{KEY\} env-ref preserved through deepMerge + YAML
+//   - literal $\{KEY\} env-ref preserved through deepMerge + YAML
 //     stringify + YAML parse (no secret leakage into config.yaml)
-//   - R6: deepMerge array-replacement semantics (re-connecting with the same
+//   - deepMerge array-replacement semantics (re-connecting with the same
 //     name overwrites the prior entry)
-//   - R8: config-audit JSONL record emitted with
+//   - config-audit JSONL record emitted with
 //     event=config.write, callerSource=mcp.connect/mcp.disconnect,
 //     result=rename
-//   - R11: this test suite IS R11 (the meta-acceptance is "the integration
-//     tests cover R3/R5/R6/R8 end-to-end").
+//   - the meta-acceptance is that this integration suite covers the
+//     bootstrap/env-ref/array-replacement/audit invariants end-to-end.
 //
 // NOTE: This test mocks ONLY mcpClientManager.connect /
 // mcpClientManager.disconnect / mcpClientManager.getConnection because the
@@ -66,7 +66,7 @@ function makeMockManager() {
       connections.set(cfg.name, {
         name: cfg.name,
         config: cfg,
-        // R11 acceptance: toolCount === 20.
+        // Acceptance: toolCount === 20.
         tools: Array.from({ length: 20 }, (_, i) => ({ name: `tool${i}` })),
       });
       return {
@@ -201,7 +201,7 @@ afterEach(() => {
 // ───────────────────────────────────────────────────────────────────
 
 describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
-  it("R1+R5+R8: mcp.connect persists env-ref unresolved + emits config-audit JSONL record", async () => {
+  it("mcp.connect persists env-ref unresolved + emits config-audit JSONL record", async () => {
     const container = makeContainer(parseYaml(readFileSync(configPath, "utf-8")));
     const manager = makeMockManager();
     const handlers = createMcpHandlers({
@@ -222,7 +222,7 @@ describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
     expect(result.persistence).toBe("persisted");
     expect(result.warning).toBeUndefined();
 
-    // R1: YAML contains exactly one new entry under integrations.mcp.servers.
+    // YAML contains exactly one new entry under integrations.mcp.servers.
     const persistedYaml = parseYaml(readFileSync(configPath, "utf-8")) as {
       integrations?: { mcp?: { servers?: unknown[] } };
     };
@@ -241,11 +241,11 @@ describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
     expect(persistedEntry.args).toEqual(["yfinance-mcp-ts"]);
     expect(persistedEntry.enabled).toBe(true);
 
-    // R5: the literal `${KEY}` reference round-trips through real YAML
+    // The literal `${KEY}` reference round-trips through real YAML
     // stringify + YAML parse unchanged. Secret value never appears in YAML.
     expect(persistedEntry.env.PROXY).toBe("${YFINANCE_PROXY_LIST}");
 
-    // R8: one JSONL record with the SPEC-locked field shape.
+    // One JSONL record with the SPEC-locked field shape.
     const records = readAuditRecords();
     const mcpRecords = records.filter(
       (r) => (r as { callerSource?: string }).callerSource === "mcp.connect",
@@ -256,7 +256,7 @@ describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
       callerSource: "mcp.connect",
       result: "rename",
     });
-    // R8 hash-diff: previousHash and nextHash both present and DIFFERENT
+    // Hash-diff: previousHash and nextHash both present and DIFFERENT
     // (the file content changed).
     const record = mcpRecords[0] as {
       previousHash?: string;
@@ -267,7 +267,7 @@ describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
     expect(record.previousHash).not.toBe(record.nextHash);
   });
 
-  it("R6: re-calling connect with the same name overwrites the prior entry (deepMerge array-replacement)", async () => {
+  it("re-calling connect with the same name overwrites the prior entry (deepMerge array-replacement)", async () => {
     const container = makeContainer(parseYaml(readFileSync(configPath, "utf-8")));
     const manager = makeMockManager();
     const handlers = createMcpHandlers({
@@ -301,7 +301,7 @@ describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
     const finalYaml = parseYaml(readFileSync(configPath, "utf-8")) as {
       integrations?: { mcp?: { servers?: unknown[] } };
     };
-    // R6 invariant: exactly ONE entry where name === "yfinance".
+    // Invariant: exactly ONE entry where name === "yfinance".
     expect(finalYaml.integrations?.mcp?.servers).toHaveLength(1);
     const finalEntry = finalYaml.integrations!.mcp!.servers![0] as {
       name: string;
@@ -319,7 +319,7 @@ describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
     expect(mcpRecords).toHaveLength(2);
   });
 
-  it("R2+R8: mcp.disconnect removes the entry from YAML and emits a 'mcp.disconnect' audit record", async () => {
+  it("mcp.disconnect removes the entry from YAML and emits a 'mcp.disconnect' audit record", async () => {
     const container = makeContainer(parseYaml(readFileSync(configPath, "utf-8")));
     const manager = makeMockManager();
     const handlers = createMcpHandlers({
@@ -344,13 +344,13 @@ describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
     } as never) as { persistence: string };
     expect(result.persistence).toBe("persisted");
 
-    // R2: the array slot remains, but with empty array (NOT undefined).
+    // The array slot remains, but with empty array (NOT undefined).
     const finalYaml = parseYaml(readFileSync(configPath, "utf-8")) as {
       integrations?: { mcp?: { servers?: unknown[] } };
     };
     expect(finalYaml.integrations?.mcp?.servers).toEqual([]);
 
-    // R8: exactly one mcp.disconnect record (alongside the prior mcp.connect).
+    // Exactly one mcp.disconnect record (alongside the prior mcp.connect).
     const records = readAuditRecords();
     const disconnectRecords = records.filter(
       (r) => (r as { callerSource?: string }).callerSource === "mcp.disconnect",
@@ -363,7 +363,7 @@ describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
     });
   });
 
-  it("R3+R11: bootstrap round-trip — persist → fresh re-read → reconnect succeeds without override params", async () => {
+  it("bootstrap round-trip — persist → fresh re-read → reconnect succeeds without override params", async () => {
     // Step 1: original setup — connect + persist.
     const container1 = makeContainer(parseYaml(readFileSync(configPath, "utf-8")));
     const manager1 = makeMockManager();
@@ -387,7 +387,7 @@ describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
         mcp?: { servers?: Array<{ name: string; transport: string; command: string }> };
       };
     };
-    // R3 precondition: the persisted entry survived the on-disk round-trip.
+    // Precondition: the persisted entry survived the on-disk round-trip.
     expect(reloadedConfig.integrations?.mcp?.servers).toHaveLength(1);
 
     const container2 = makeContainer(reloadedConfig);
@@ -404,7 +404,7 @@ describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
       persistDeps: makePersistDeps(container2),
     } as never);
 
-    // R3 acceptance: reconnect with NO override params succeeds.
+    // Acceptance: reconnect with NO override params succeeds.
     const result = await handlers2["mcp.reconnect"]!({
       server_name: "yfinance",
     } as never) as { name: string; status: string; toolCount: number };
@@ -413,7 +413,7 @@ describe("MCP install persistence (real persistToConfig + audit JSONL)", () => {
       name: "yfinance",
       status: "connected",
     });
-    // R11 acceptance: toolCount === 20 from the deterministic mockManager.
+    // Acceptance: toolCount === 20 from the deterministic mockManager.
     expect(result.toolCount).toBe(20);
   });
 });

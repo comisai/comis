@@ -280,7 +280,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
   // queue.statusCounts() (pending + in_flight equivalents).
 
   // -----------------------------------------------------------------------
-  // enqueue eventBus emission (SPEC-R5)
+  // enqueue eventBus emission
   // -----------------------------------------------------------------------
 
   describe("enqueue eventBus emission", () => {
@@ -308,7 +308,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
   });
 
   // -----------------------------------------------------------------------
-  // enqueueInFlight (SPEC-R2 race safety)
+  // enqueueInFlight (race safety)
   // -----------------------------------------------------------------------
 
   describe("enqueueInFlight", () => {
@@ -336,7 +336,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
       });
     });
 
-    it("in_flight rows are NOT visible to pendingEntries (SPEC-R2 race safety)", async () => {
+    it("in_flight rows are NOT visible to pendingEntries (race safety)", async () => {
       await queue.enqueueInFlight(makeEntry());
       const pending = await queue.pendingEntries();
       expect(pending.ok).toBe(true);
@@ -392,7 +392,7 @@ describe("SqliteDeliveryQueueAdapter", () => {
   });
 
   // -----------------------------------------------------------------------
-  // recoverInFlight (SPEC-R3 startup sweep)
+  // recoverInFlight (startup sweep)
   // -----------------------------------------------------------------------
 
   describe("recoverInFlight", () => {

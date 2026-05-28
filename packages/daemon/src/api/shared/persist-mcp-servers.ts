@@ -18,12 +18,12 @@
  * computes a `nextServers: McpServerEntry[]` array; the install handler /
  * boot orchestrator pass it through THIS function. Raw writes to the
  * servers array (e.g. `deepMerge` patches at the config-handler layer) are
- * explicitly rejected at config-handlers.ts (R9).
+ * explicitly rejected at config-handlers.ts.
  *
  * Behavior is byte-identical to the pre-extraction body in mcp-handlers.ts.
  * The ONLY structural change is that the `actionType` parameter union has
- * been widened to also accept the two NEW literals Plans 04 and 05 will
- * pass (`"skills.bundle.install"` / `"skills.bundle.boot"`). Existing
+ * been widened to also accept two additional literals
+ * (`"skills.bundle.install"` / `"skills.bundle.boot"`). Existing
  * callers (`mcp.connect`, `mcp.disconnect`) are unaffected — the original
  * two literals remain in the union — and the helper does NOT branch on
  * actionType internally (it is threaded through to persistToConfig and the

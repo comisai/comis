@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Writable } from "node:stream";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createLogger, DEFAULT_REDACT_PATHS } from "./logger.js";
 import { isValidLogLevel } from "@comis/core";
 
@@ -784,5 +787,172 @@ describe("createLogger", () => {
         expect(result).toBe("SAFE-VALUE");
       });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// log redaction — multi-target transport and err serializer
+//
+// These tests write to a temp file via createLogger with a multi-target
+// transport mirroring the daemon's createFileTransport structure, then
+// assert that credential bodies are masked before hitting the file.
+// ---------------------------------------------------------------------------
+describe("log redaction — multi-target transport and err serializer", () => {
+  let tmpDir: string;
+  let logFile: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "comis-redact-test-"));
+    logFile = join(tmpDir, "test.log");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("multi-target file transport masks Bearer hf_<44+> in errorText, msg, and argsPreview fields; env-ref passes through", { timeout: 12000 }, async () => {
+    const HF_TOKEN = "hf_" + "A".repeat(44);
+    const ENV_REF = "${HF_TOKEN}"; // must NOT be masked
+
+    const logger = createLogger({
+      name: "redact-test",
+      // Mirror the daemon's createFileTransport structure:
+      // Each target is expressed as a pipeline (stage → destination), matching
+      // the correct pino API for chaining a Transform upstream of a Writable.
+      transport: {
+        targets: [
+          {
+            // File target with upstream redact stage
+            pipeline: [
+              { target: "@comis/infra/dist/logging/pipeline-redact-stage.js" },
+              { target: "pino/file", options: { destination: logFile } },
+            ],
+          },
+          // Stdout target for visual verification (no assertion on stdout content)
+          { target: "pino/file", options: { destination: 1 } },
+        ],
+      },
+    });
+
+    logger.error({ errorText: `auth failed: Bearer ${HF_TOKEN}` }, "redact errorText test");
+    logger.info({ msg: `token is ${HF_TOKEN}` }, "redact msg test");
+    // argsPreview is a must-mask field (exec/tool arg previews).
+    logger.info({ argsPreview: `run --auth Bearer ${HF_TOKEN}` }, "redact argsPreview test");
+    logger.info({ msg: `ref is ${ENV_REF}` }, "env-ref pass-through test");
+
+    // Allow transport worker thread(s) to flush.
+    // Pipeline transports spawn a chain of worker threads; they need more time
+    // than a simple single-target transport to flush to disk. Poll until the
+    // file is non-empty (or until the deadline) to avoid flakiness under load.
+    const deadline = Date.now() + 8000;
+    let content = "";
+    while (Date.now() < deadline) {
+      try {
+        content = await readFile(logFile, "utf8");
+        if (content.length > 0) break;
+      } catch {
+        // File not yet created by the pipeline worker — keep polling
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    expect(content).not.toContain(HF_TOKEN); // raw token must be masked (covers errorText, msg, AND argsPreview)
+    expect(content).toContain(ENV_REF); // env-ref must pass through
+    expect(content).toContain("argsPreview"); // the argsPreview line was written through the stage (field key survives; value masked above)
+  });
+
+  it("serializers.err scrubs hf_ token from err.message and err.stack", { timeout: 8000 }, async () => {
+    const HF_TOKEN = "hf_" + "B".repeat(44);
+    const err = new Error(`auth failed token=${HF_TOKEN}`);
+
+    const logger = createLogger({
+      name: "err-serializer-test",
+      transport: {
+        targets: [{ target: "pino/file", options: { destination: logFile } }],
+      },
+    });
+
+    logger.error({ err }, "err serializer test");
+
+    // Poll until the file exists and has content (worker thread may take time to start).
+    const deadline = Date.now() + 5000;
+    let content = "";
+    while (Date.now() < deadline) {
+      try {
+        content = await readFile(logFile, "utf8");
+        if (content.length > 0) break;
+      } catch {
+        // File not yet created — keep polling
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    expect(content).not.toContain(HF_TOKEN);
+  });
+});
+
+// ── regression: pipeline-redact-stage must preserve line delimiters ──
+
+describe("pipeline-redact-stage preserves newline-delimited JSON lines", () => {
+  let tmpDir: string;
+  let logFile: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "comis-redact-line-test-"));
+    logFile = join(tmpDir, "redact-line.log");
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("three log records produce three newline-terminated individually JSON-parseable lines", { timeout: 15000 }, async () => {
+    // Each yielded string gets "\n" appended so records are written as
+    // newline-delimited JSON rather than concatenated into one blob.
+
+    const logger = createLogger({
+      name: "redact-line-test",
+      transport: {
+        pipeline: [
+          { target: "@comis/infra/dist/logging/pipeline-redact-stage.js" },
+          { target: "pino/file", options: { destination: logFile } },
+        ],
+      },
+    });
+
+    logger.info({ step: "one" }, "redact-line one");
+    logger.info({ step: "two" }, "redact-line two");
+    logger.info({ step: "three" }, "redact-line three");
+
+    // Poll until all 3 records are flushed (worker threads need time to start and flush).
+    const deadline = Date.now() + 10000;
+    let content = "";
+    while (Date.now() < deadline) {
+      try {
+        content = await readFile(logFile, "utf8");
+        // Wait until at least 3 "redact-line" substrings appear so we know all records landed
+        if ((content.match(/redact-line/g) ?? []).length >= 3) break;
+      } catch {
+        // File not yet created — keep polling
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    // Split on \n to get lines (ignoring trailing empty string after final \n)
+    const rawLines = content.split("\n").filter((l) => l.trim().length > 0);
+
+    // ASSERT 1: exactly 3 lines
+    expect(rawLines.length, "expected 3 newline-delimited lines, got a concatenated blob").toBe(3);
+
+    // ASSERT 2: each line is individually JSON-parseable
+    for (const line of rawLines) {
+      expect(() => JSON.parse(line), `line is not valid JSON: ${line.substring(0, 80)}`).not.toThrow();
+    }
+
+    // ASSERT 3: each parsed record has the expected msg field
+    const parsed = rawLines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(parsed.map((r) => r["msg"])).toEqual(
+      expect.arrayContaining(["redact-line one", "redact-line two", "redact-line three"]),
+    );
   });
 });

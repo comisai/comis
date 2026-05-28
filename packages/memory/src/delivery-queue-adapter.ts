@@ -209,7 +209,7 @@ export function createSqliteDeliveryQueue(
           entry.expireAt,
           entry.traceId ?? null,
         );
-        // Same delivery:enqueued event as enqueue() -- universal observability (SPEC-R5).
+        // Same delivery:enqueued event as enqueue() -- universal observability.
         eventBus.emit("delivery:enqueued", {
           entryId: id,
           channelId: entry.channelId,

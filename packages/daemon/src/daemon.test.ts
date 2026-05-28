@@ -12,6 +12,9 @@ import type { MediaResult } from "./wiring/setup-media.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as nodePath from "node:path";
+import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { mkdtempSync, rmSync } from "node:fs";
 import { inspect } from "node:util";
 import { createMockLogger } from "../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../test/support/mock-event-bus.js";
@@ -460,7 +463,7 @@ describe("daemon main()", () => {
 
   it("uses default config paths when COMIS_CONFIG_PATHS is not set", async () => {
     delete process.env["COMIS_CONFIG_PATHS"];
-    // This test deliberately exercises the default-path branch. Fix A's
+    // This test deliberately exercises the default-path branch. The
     // VITEST guard (daemon.ts:~315) throws on that branch under
     // VITEST=true to stop accidental ~/.comis/ reads from real test code.
     // Here the test intent is the filtering behavior, not the guard, so
@@ -485,12 +488,12 @@ describe("daemon main()", () => {
     }
   });
 
-  it("Fix A: throws under VITEST=true when COMIS_CONFIG_PATHS is unset", async () => {
+  it("throws under VITEST=true when COMIS_CONFIG_PATHS is unset", async () => {
     delete process.env["COMIS_CONFIG_PATHS"];
     process.env["VITEST"] = "true";
     const { overrides } = buildOverrides();
 
-    // The Fix A guard hard-throws rather than silently reading
+    // The guard hard-throws rather than silently reading
     // ~/.comis/config.yaml from a test process. The message MUST mention
     // VITEST and the sandbox-path remediation so the failure is
     // self-diagnosing for a test author.
@@ -771,5 +774,153 @@ describe("applyInspectDefaultsForLogging", () => {
     expect(inspect.defaultOptions.depth).toBe(2);
     expect(inspect.defaultOptions.breakLength).toBe(80);
     expect(r2).toEqual({ depthChanged: false, breakLengthChanged: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// opt-out and same-boot init
+// ---------------------------------------------------------------------------
+
+describe("opt-out and same-boot init", () => {
+  const originalEnv = process.env;
+  const instances: DaemonInstance[] = [];
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(async () => {
+    delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
+    while (instances.length > 0) {
+      const inst = instances.shift()!;
+      try {
+        await inst.shutdownHandle.trigger("test-cleanup");
+      } catch {
+        // Best-effort
+      }
+      try {
+        inst.shutdownHandle.dispose();
+      } catch {
+        /* idempotent */
+      }
+    }
+    process.env = originalEnv;
+  });
+
+  it("emits WARN with hint about backup obligation when COMIS_DISABLE_ENCRYPTED_SECRETS=1", async () => {
+    // Set opt-out flag
+    process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"] = "1";
+    const { overrides, mocks } = buildOverrides();
+    const mockSetupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
+    overrides.setupSecrets = mockSetupSecrets;
+
+    const instance = await main(overrides);
+    instances.push(instance);
+
+    // daemonLogger (obtained from logLevelManager.getLogger) emits warn with
+    // backup-obligation message. Access pattern mirrors daemon.test.ts:437.
+    const daemonLogger = (mocks.logLevelManager.getLogger as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+    const warnCalls = (daemonLogger.warn as ReturnType<typeof vi.fn>).mock.calls;
+    // Must find a warn whose message (2nd arg) OR hint (in 1st arg object) contains
+    // "COMIS_DISABLE_ENCRYPTED_SECRETS" — specifically the opt-out WARN, not generic
+    // config warns (none of which mention this flag).
+    const optOutWarn = warnCalls.find((args: unknown[]) => {
+      const msg = String(args[1] ?? "");
+      const hint = typeof args[0] === "object" && args[0] !== null
+        ? String((args[0] as Record<string, unknown>)["hint"] ?? "")
+        : "";
+      return msg.includes("COMIS_DISABLE_ENCRYPTED_SECRETS") ||
+             hint.includes("COMIS_DISABLE_ENCRYPTED_SECRETS") ||
+             hint.includes("backup obligation");
+    });
+    expect(optOutWarn).toBeDefined();
+  });
+
+  // COMIS_DISABLE_ENCRYPTED_SECRETS=1 must make secretStore=undefined EVEN when
+  // SECRETS_MASTER_KEY already exists in the environment (the common post-first-boot case).
+  // When disableEncrypted=true, the store construction must be skipped entirely; otherwise
+  // bootstrapSecretsAndEnv would run unconditionally, find the env key, and build a live
+  // store. The WARN says "disabled" but a live store would be contradictory and dangerous.
+  //
+  // The test seeds a real SECRETS_MASTER_KEY into process.env and passes the REAL setupSecrets
+  // through a spy-wrapper so we can observe whether a live store was returned. We assert via the
+  // daemonLogger banner that secrets.encrypted === false.
+  it("COMIS_DISABLE_ENCRYPTED_SECRETS=1 with existing SECRETS_MASTER_KEY must yield secretStore=undefined", async () => {
+    const { randomBytes: cryptoRandomBytes } = await import("node:crypto");
+    const existingKeyHex = cryptoRandomBytes(32).toString("hex");
+
+    // Use a fresh tmpdir so there is no pre-existing secrets.db to collide with.
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-cr02-test-"));
+    process.env["COMIS_DATA_DIR"] = freshDataDir;
+    // Plant a real key in the test env BEFORE setting the opt-out flag (simulates
+    // the post-first-boot state where the key was already loaded from ~/.comis/.env)
+    process.env["SECRETS_MASTER_KEY"] = existingKeyHex;
+    process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"] = "1";
+
+    const { overrides, mocks } = buildOverrides();
+    // Use real setupSecrets via spy: do NOT mock it to null (that hides the bug).
+    // Track whether the real setupSecrets returned a live SecretsBootResult.
+    let setupSecretsReturnedStore = false;
+    const { setupSecrets: realSetupSecrets } = await import("@comis/memory");
+    overrides.setupSecrets = vi.fn((opts) => {
+      const result = realSetupSecrets(opts);
+      if (result.ok && result.value !== null) {
+        setupSecretsReturnedStore = true;
+      }
+      return result;
+    });
+
+    const instance = await main(overrides);
+    instances.push(instance);
+
+    // Access the daemonLogger (index 0 from logLevelManager.getLogger calls)
+    const daemonLogger = (mocks.logLevelManager.getLogger as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+    const infoCallArgs = (daemonLogger.info as ReturnType<typeof vi.fn>).mock.calls;
+    // Find the startup banner call — it logs { manifest: { secrets: { encrypted: bool } } }
+    const bannerCall = infoCallArgs.find((args: unknown[]) => {
+      if (typeof args[0] !== "object" || args[0] === null) return false;
+      const obj = args[0] as Record<string, unknown>;
+      const manifest = obj["manifest"] as Record<string, unknown> | undefined;
+      return manifest !== undefined && typeof (manifest["secrets"] as Record<string, unknown> | undefined)?.["encrypted"] === "boolean";
+    });
+
+    // With disableEncrypted=1, secrets.encrypted MUST be false even though a
+    // real SECRETS_MASTER_KEY was planted in the env. The expected state is
+    // setupSecretsCalled=false OR banner shows encrypted=false (store inactive).
+    if (bannerCall) {
+      const bannerManifest = (bannerCall[0] as Record<string, unknown>)["manifest"] as Record<string, unknown>;
+      const secretsEncrypted = (bannerManifest["secrets"] as Record<string, unknown>)["encrypted"];
+      expect(secretsEncrypted).toBe(false);
+    } else {
+      // Banner not found → check the spy: setupSecrets must not have returned a live store
+      expect(setupSecretsReturnedStore).toBe(false);
+    }
+
+    rmSync(freshDataDir, { recursive: true, force: true });
+  });
+
+  it("passes seedKeyHex to setupSecrets on first boot with a fresh data directory", async () => {
+    // Fresh tmpdir — no .env file present; use a subdirectory so writeMasterKeyIfAbsent
+    // writes there rather than the shared sandbox COMIS_DATA_DIR.
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-first-boot-test-"));
+    process.env["COMIS_DATA_DIR"] = freshDataDir;
+    // Ensure opt-out is NOT set so writeMasterKeyIfAbsent is called
+    delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
+    const { overrides } = buildOverrides();
+    const mockSetupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
+    overrides.setupSecrets = mockSetupSecrets;
+
+    const instance = await main(overrides);
+    instances.push(instance);
+
+    // Capture the call args to setupSecrets
+    const calls = mockSetupSecrets.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const firstCallOpts = calls[0]![0] as Record<string, unknown>;
+    // seedKeyHex must be a 64-char hex string on first boot.
+    expect(typeof firstCallOpts["seedKeyHex"]).toBe("string");
+    expect(String(firstCallOpts["seedKeyHex"])).toMatch(/^[0-9a-f]{64}$/);
+
+    rmSync(freshDataDir, { recursive: true, force: true });
   });
 });

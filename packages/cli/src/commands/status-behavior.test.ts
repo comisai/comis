@@ -39,8 +39,8 @@ const { withClient } = await import("../client/rpc-client.js");
 // ── Test data ────────────────────────────────────────────────────────────
 
 // GatewayStatusContract.response = { pid, uptime, memoryUsage, nodeVersion,
-// configPaths, sections }. The status CLI displays uptime/pid/nodeVersion;
-// memoryUsage/configPaths/sections are not displayed but are required by
+// configPaths, sections, secretsStoreAvailable }. The status CLI displays
+// uptime/pid/nodeVersion; the rest are not displayed but are required by
 // the contract so the always-on response.parse passes through.
 const PROCESS_DATA = {
   pid: 12345,
@@ -49,6 +49,7 @@ const PROCESS_DATA = {
   nodeVersion: "6.0.0",
   configPaths: [],
   sections: [],
+  secretsStoreAvailable: true,
 };
 const GATEWAY_CONFIG = { host: "localhost", port: 3100, connections: 5 };
 const CHANNELS_DATA = { telegram: { enabled: true }, discord: { enabled: false } };
@@ -433,6 +434,7 @@ describe("status handles individual RPC failures gracefully", () => {
           nodeVersion: "test",
           configPaths: [],
           sections: [],
+          secretsStoreAvailable: true,
         };
       }
       throw new Error("Method not found");

@@ -23,6 +23,7 @@
 
 import type { Result } from "@comis/shared";
 import { ok, err, suppressError, checkAborted } from "@comis/shared";
+import { scrubSecretsFromText } from "../security/secret-egress-guard.js";
 
 import type { HookRunner } from "../hooks/hook-runner.js";
 import type { TypedEventBus } from "../event-bus/bus.js";
@@ -192,6 +193,16 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         // runBeforeDelivery to return undefined (see
         // hooks/hook-runner.ts:runModifyingHook empty-registry short-circuit).
         let deliveryText = text;
+
+        // --- One-pass egress secret scan BEFORE hooks and chunking ---
+        // mightContainSecret pre-filter inside — secret-free messages pay near-zero cost.
+        // Scan is here (not inside the chunk loop) to satisfy the O(1) per-delivery
+        // perf contract: secret-free 10k-char messages complete in <5ms.
+        const egressScrub = scrubSecretsFromText(deliveryText);
+        if (egressScrub.redactions > 0) {
+          deliveryText = egressScrub.text;
+        }
+
         const hookRunner = deps.hookRunner;
         {
           const hookCtx = tryGetContext();

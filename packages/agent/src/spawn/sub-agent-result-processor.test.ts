@@ -352,7 +352,7 @@ describe("classifyErrorContext HTTP-5xx detection", () => {
   });
 
   it("does NOT misclassify benign messages containing '5' and '00' substrings", () => {
-    // These were false-positives under the pre-fix operator-precedence bug.
+    // These were false-positives under the prior operator-precedence bug.
     const falsePositiveCandidates = [
       "Step 5 failed at 12:00:00",
       "Took 5 attempts, total 0.0001 cost",
@@ -375,5 +375,48 @@ describe("classifyErrorContext HTTP-5xx detection", () => {
     // \b5\d{2}\b requires word boundaries — 5000 has 4 digits, not bounded.
     const result = classifyErrorContext("processed 5000 messages", "failed");
     expect(result.errorType).not.toBe("ProviderError");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// announcement scrub
+// ---------------------------------------------------------------------------
+
+describe("announcement scrub", () => {
+  it("scrubs token from announcement text before deliverAnnouncement passes it to sendToChannel", async () => {
+    const rawToken = "hf_" + "c".repeat(44);
+    const sendToChannel = vi.fn().mockResolvedValue(true);
+
+    // Build the announcement with a raw token in the result text
+    const { buildAnnouncementMessage, deliverAnnouncement } = await import("./sub-agent-result-processor.js");
+
+    const announcement = buildAnnouncementMessage({
+      task: "test task with token",
+      status: "completed",
+      response: `Task done. Access token: Bearer ${rawToken}`,
+      runtimeMs: 1234,
+      stepsExecuted: 5,
+      tokensUsed: 100,
+      cost: 0.001,
+      sessionKey: "default:test:test",
+    });
+
+    // Verify the raw token is in the built announcement (pre-scrub)
+    expect(announcement).toContain(rawToken);
+
+    await deliverAnnouncement(
+      {
+        announcementText: announcement,
+        announceChannelType: "telegram",
+        announceChannelId: "chat-123",
+        runId: "run-scrub-test",
+      },
+      { sendToChannel },
+    );
+
+    // The text delivered to the channel must NOT contain the raw token
+    expect(sendToChannel).toHaveBeenCalled();
+    const deliveredText = sendToChannel.mock.calls[0]![2] as string;
+    expect(deliveredText).not.toContain(rawToken);
   });
 });

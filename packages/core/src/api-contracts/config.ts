@@ -204,7 +204,7 @@ const EnvListEntrySchema = z.object({
 /**
  * `config.read` — read the full config OR a single named section.
  * Admin-only. Secrets are redacted before return via
- * `redactConfigSecrets(...)` (handler:464+467).
+ * `redactForDisplay(...)` (handler:53+64).
  *
  * Request: `{ section?: string }`. When `section` is absent, the
  * handler returns `{ config, sections }`. When present, it returns
@@ -470,9 +470,14 @@ export const ConfigGcContract = defineContract({
  * Request: `{}`.
  *
  * Response: `{ pid, uptime, memoryUsage, nodeVersion, configPaths[],
- * sections[] }` (handler:1156-1163). `pid` is the daemon process id;
- * `uptime` is `process.uptime()` seconds; `memoryUsage` is
+ * sections[], secretsStoreAvailable }` (handler). `pid` is the daemon
+ * process id; `uptime` is `process.uptime()` seconds; `memoryUsage` is
  * `process.memoryUsage().rss`; `nodeVersion` is `process.version`.
+ * `secretsStoreAvailable` is `true` when an encrypted SecretStorePort
+ * is wired into the daemon — used by the `env_set` preflight in
+ * gateway-tool.ts to distinguish "store ready" from "envfile-only mode"
+ * without relying on internal manifest fields. Dev-mode strict
+ * `response.parse(result)` ensures the handler MUST populate this field.
  */
 export const GatewayStatusContract = defineContract({
   method: "gateway.status",
@@ -484,6 +489,8 @@ export const GatewayStatusContract = defineContract({
     nodeVersion: z.string(),
     configPaths: z.array(z.string()),
     sections: z.array(z.string()),
+    /** True when the encrypted SecretStorePort is wired (store active). */
+    secretsStoreAvailable: z.boolean(),
   }),
   scopes: ["admin"] as const,
 });

@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { McpDeps } from "./setup-mcp.js";
+import type { OAuthCredentialStorePort } from "@comis/core";
 
 // ---------------------------------------------------------------------------
 // Hoisted mock factories
@@ -32,6 +33,9 @@ const mockCreateMcpClientManager = vi.hoisted(() => vi.fn(() => ({
 
 vi.mock("@comis/skills", () => ({
   createMcpClientManager: mockCreateMcpClientManager,
+  // resolveDiscovery is used by setup-mcp.ts in the oauthDeps seam.
+  // Provide a minimal mock so the module import succeeds.
+  resolveDiscovery: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -88,25 +92,22 @@ describe("setupMcp", () => {
     expect(result.mcpClientManager.getAllConnections()).toEqual([]);
   });
 
-  // The global reliability config (integrations.mcp.keepaliveIntervalMs /
-  // circuitBreakerThreshold / circuitBreakerCooldownMs) MUST be forwarded into
-  // createMcpClientManager. Without this, a daemon-wide override (e.g.
-  // keepaliveIntervalMs: 0 to disable keepalives) is silently ignored for all
-  // startup-connected servers — only per-server overrides via mcp.connect RPC
-  // would take effect.
-  it("forwards global keepaliveIntervalMs/circuitBreakerThreshold/circuitBreakerCooldownMs into createMcpClientManager", async () => {
+  // The global reliability config (circuitBreakerThreshold / circuitBreakerCooldownMs)
+  // MUST be forwarded into createMcpClientManager. Without this, a daemon-wide override
+  // is silently ignored for all startup-connected servers.
+  // Note: keepaliveIntervalMs is no longer forwarded — transport-aware default
+  // is resolved at call time via resolveDefaultKeepaliveIntervalMs (MCPX-02).
+  it("forwards global circuitBreakerThreshold/circuitBreakerCooldownMs into createMcpClientManager", async () => {
     mockGetAllConnections.mockReturnValue([]);
     await callSetupMcp({
       servers: [],
       logger,
-      keepaliveIntervalMs: 0,
       circuitBreakerThreshold: 7,
       circuitBreakerCooldownMs: 12_345,
     });
 
     expect(mockCreateMcpClientManager).toHaveBeenCalledWith(
       expect.objectContaining({
-        keepaliveIntervalMs: 0,
         circuitBreakerThreshold: 7,
         circuitBreakerCooldownMs: 12_345,
       }),
@@ -121,7 +122,6 @@ describe("setupMcp", () => {
     // Undefined-valued forwards are acceptable (createMcpClientManager applies
     // its own ?? defaults), but the keys must not carry a stale non-undefined
     // value when the operator did not set them.
-    expect(factoryArg.keepaliveIntervalMs).toBeUndefined();
     expect(factoryArg.circuitBreakerThreshold).toBeUndefined();
     expect(factoryArg.circuitBreakerCooldownMs).toBeUndefined();
   });
@@ -729,6 +729,84 @@ describe("setupMcp", () => {
     const callArg = mockConnect.mock.calls[0][0];
     expect(callArg).not.toHaveProperty("auth");
     expect(callArg).not.toHaveProperty("oauth");
+  });
+
+  // ---------------------------------------------------------------------------
+  // oauthDeps injection — McpDeps.oauthCredentialStore + dataDir
+  // Verifies setup-mcp.ts passes oauthDeps to createMcpClientManager when
+  // oauthCredentialStore + dataDir are provided.
+  // ---------------------------------------------------------------------------
+
+  describe("oauthDeps injection", () => {
+    /** Minimal OAuthCredentialStorePort mock for injection tests. */
+    function makePortMock(): OAuthCredentialStorePort {
+      return {
+        async get() { return { ok: true as const, value: undefined }; },
+        async set() { return { ok: true as const, value: undefined }; },
+        async delete() { return { ok: true as const, value: false }; },
+        async list() { return { ok: true as const, value: [] }; },
+        async has() { return { ok: true as const, value: false }; },
+      };
+    }
+
+    it("createMcpClientManager is called with oauthDeps.createTokenStore when oauthCredentialStore and dataDir are provided", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+      const oauthCredentialStore = makePortMock();
+
+      await callSetupMcp({
+        servers: [],
+        logger,
+        oauthCredentialStore,
+        dataDir: "/fake/data",
+      });
+
+      // The factory must have been called with an oauthDeps object containing
+      // a createTokenStore factory when oauthCredentialStore + dataDir are provided.
+      expect(mockCreateMcpClientManager).toHaveBeenCalledTimes(1);
+      const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
+      expect(factoryArg).toHaveProperty("oauthDeps");
+      const oauthDeps = factoryArg["oauthDeps"] as Record<string, unknown>;
+      expect(typeof oauthDeps["createTokenStore"]).toBe("function");
+    });
+
+    it("McpDeps accepts oauthCredentialStore and dataDir fields (structural TypeScript check)", () => {
+      // This is a compile-time structural check — TypeScript will error if the
+      // fields do not exist on McpDeps. The runtime assertion is a type-safe
+      // construction.
+      const deps: McpDeps = {
+        servers: [],
+        logger,
+        oauthCredentialStore: makePortMock(),
+        dataDir: "/fake/data",
+      };
+      // Must compile and have the fields accessible
+      expect(deps.oauthCredentialStore).toBeDefined();
+      expect(deps.dataDir).toBe("/fake/data");
+    });
+
+    it("createMcpClientManager is called WITHOUT oauthDeps when oauthCredentialStore is absent", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+
+      await callSetupMcp({ servers: [], logger });
+
+      const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
+      // No oauthDeps injected — the default resolution in createMcpClientManager applies
+      expect(factoryArg).not.toHaveProperty("oauthDeps");
+    });
+
+    it("createMcpClientManager is called WITHOUT oauthDeps when only oauthCredentialStore provided but no dataDir", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+
+      await callSetupMcp({
+        servers: [],
+        logger,
+        oauthCredentialStore: makePortMock(),
+        // dataDir intentionally omitted
+      });
+
+      const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
+      expect(factoryArg).not.toHaveProperty("oauthDeps");
+    });
   });
 
   it("logs tool names from connected servers", async () => {

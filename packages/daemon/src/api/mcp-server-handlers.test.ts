@@ -721,7 +721,7 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
   // TypeError; the SDK catches it and surfaces the raw TypeError message
   // verbatim to the external MCP client (information disclosure).
   //
-  // Post-fix invariants:
+  // Required invariants:
   //   - rpcResult === undefined produces a wrapped response (no throw, no
   //     isError) containing an empty/safe payload between the markers.
   //   - The output is still a non-empty string (markers + SECURITY NOTICE).
@@ -732,13 +732,13 @@ describe("buildMcpServerForClient -- live tools/call dispatcher", () => {
   // ------------------------------------------------------------------------
   // Raw daemon RPC error message leak guard
   //
-  // The pre-fix dispatcher returned `[dispatch_error] ${err.message}` --
+  // Previously the dispatcher returned `[dispatch_error] ${err.message}` --
   // exposing whatever the daemon RPC handler threw (session keys, user
   // IDs, internal hints, file paths). The WS RPC path emits a generic
   // "Internal error" message for uncaught errors (ws-handler.ts:384) --
   // mirror that posture on the MCP boundary.
   //
-  // Post-fix invariants:
+  // Required invariants:
   //   - Dispatch errors return isError:true with a GENERIC message
   //     including the toolName + clientId (a correlation handle the
   //     operator can grep against Pino logs).

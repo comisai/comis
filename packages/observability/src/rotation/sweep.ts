@@ -129,9 +129,28 @@ export async function sweepRotatedFiles(
     }
 
     // Collect rotated files: matches rotatedPattern and is not the active base.
-    const rotated = entries.filter(
+    let rotated = entries.filter(
       (n) => stream.rotatedPattern.test(n) && n !== activeBase,
     );
+
+    // When no base file is found (pino-roll's active file carries a numeric index),
+    // the most-recently-modified rotated file IS the live file. Exclude it from the
+    // sweep to prevent gzip+unlink of an open inode.
+    if (hasBase && !stream.label.startsWith("session-index") && activeBase === undefined && rotated.length > 0) {
+      const mtimes = await Promise.all(
+        rotated.map(async (name) => {
+          try {
+            const statPath = safePath(logsDir, name);
+            const st = await fs.stat(statPath);
+            return { name, mtimeMs: st.mtimeMs };
+          } catch {
+            return { name, mtimeMs: 0 };
+          }
+        }),
+      );
+      const newestName = mtimes.reduce((a, b) => (a.mtimeMs >= b.mtimeMs ? a : b)).name;
+      rotated = rotated.filter((n) => n !== newestName);
+    }
 
     if (rotated.length === 0) continue;
 

@@ -295,7 +295,7 @@ describe("idle eviction — startIdleTicker / evict", () => {
     // errorKind is required ONLY on ERROR/WARN logs; its presence on the INFO
     // eviction notification misleads observability tooling that filters on
     // errorKind into treating normal scheduled eviction as a degraded/broken
-    // condition. Pre-fix: the info() fields included `errorKind: "dependency"`.
+    // condition. Previously: the info() fields included `errorKind: "dependency"`.
     const info = vi.fn();
     const spyLogger: McpClientManagerDeps["logger"] = {
       info,
@@ -465,7 +465,7 @@ describe("idle eviction — lazy reconnect on missing connection", () => {
 // MUST be cleared + deleted on BOTH disconnect and idle-eviction (mirroring
 // callQueues) so it cannot leak across reconnect generations. These tests seed
 // the map entry directly (the shape after a concurrency>1 keepalive tick) and
-// assert teardown removes it. Pre-patch: nothing deletes it → the entry leaks.
+// assert teardown removes it (otherwise the entry leaks).
 
 /** Seed a dedicated keepalive queue entry, as a concurrency>1 tick would. */
 function wireKeepaliveQueue(state: McpClientManagerState, name: string): PQueue {
@@ -485,8 +485,8 @@ describe("keepalive queue teardown", () => {
 
     await disconnectServer(state, deps, "alpha");
 
-    // Pre-patch FAILS: disconnectServer tears down callQueues but leaves the
-    // keepaliveQueues entry dangling.
+    // disconnectServer must also tear down keepaliveQueues, not just callQueues
+    // (otherwise the keepaliveQueues entry would dangle).
     expect(state.keepaliveQueues.has("alpha")).toBe(false);
     // Sanity: the primary call queue is torn down too (existing behavior).
     expect(state.callQueues.has("alpha")).toBe(false);
@@ -505,8 +505,8 @@ describe("keepalive queue teardown", () => {
 
       await vi.advanceTimersByTimeAsync(60_000);
 
-      // Pre-patch FAILS: evictIdleServer mirrors disconnectServer's callQueues
-      // teardown but not the keepaliveQueues teardown → the entry leaks.
+      // evictIdleServer must mirror disconnectServer's callQueues AND
+      // keepaliveQueues teardown — otherwise the keepaliveQueues entry leaks.
       expect(state.connections.get("beta")).toBeUndefined();
       expect(state.keepaliveQueues.has("beta")).toBe(false);
       expect(state.callQueues.has("beta")).toBe(false);

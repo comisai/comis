@@ -80,6 +80,9 @@ export type {
 } from "./oauth/login.js";
 export { createTokenStore } from "./oauth/token-store.js";
 export type { TokenStore, TokenStoreDeps } from "./oauth/token-store.js";
+// Re-exported so the daemon port-backed adapter can supply it as the default
+// resolveDiscovery in oauthDeps without importing skills internals directly.
+export { resolveDiscovery } from "./oauth/discovery.js";
 
 // The 401 refresh-deduper. Re-exported so the full-cycle integration test
 // (test/integration/mcp-oauth-roundtrip.test.ts) can drive rotation +
@@ -167,7 +170,6 @@ export function createMcpClientManager(deps: McpClientManagerDeps): McpClientMan
       maxDelayMs: deps.reconnectOptions?.maxDelayMs ?? 30_000,
       growFactor: deps.reconnectOptions?.growFactor ?? 2,
     },
-    keepaliveIntervalMs: deps.keepaliveIntervalMs ?? 180_000,
     circuitBreakerThreshold: deps.circuitBreakerThreshold ?? 3,
     circuitBreakerCooldownMs: deps.circuitBreakerCooldownMs ?? 60_000,
   };

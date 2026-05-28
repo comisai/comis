@@ -1654,8 +1654,7 @@ describe("keepalive queue routing (concurrency-aware)", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     await flush();
 
-    // Pre-patch FAILS here: the old tick returns early when the queue is busy
-    // and never pings. The new dedicated-queue route must NOT ping yet either
+    // The dedicated-queue route must NOT ping while the queue is busy
     // (it awaits primary.onIdle()), but crucially must ping AFTER idle.
     expect(mockPing).toHaveBeenCalledTimes(0);
 

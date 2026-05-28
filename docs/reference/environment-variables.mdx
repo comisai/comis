@@ -151,18 +151,32 @@ export COMIS_OFFLINE=1
 |----------|-------|
 | **Used by** | Daemon, CLI |
 | **Format** | 64-character hex string or base64-encoded 32 bytes |
-| **Default** | (none -- loaded from `~/.comis/.env`) |
+| **Default** | Auto-generated on first boot and written to `~/.comis/.env` (mode 0600) |
 
-The AES-256-GCM master encryption key used to encrypt and decrypt secrets stored in `secrets.db`. Generate with `comis secrets init`. The daemon and CLI both resolve this key in the same order: first from the environment, then from `~/.comis/.env`.
+The AES-256-GCM master encryption key used to encrypt and decrypt secrets stored in `secrets.db`. Starting with v1.1, the key is auto-generated on first boot — you do not need to run `comis secrets init` for a fresh install. The daemon and CLI both resolve this key in the same order: first from the environment, then from `~/.comis/.env`.
 
-<Warning>This key protects all stored API keys and credentials. If lost, encrypted secrets cannot be recovered. Back up this key securely.</Warning>
+Providing this variable explicitly overrides the auto-generated value.
+
+<Warning>Back up `~/.comis/.env`. This file is the only copy of the auto-generated master key. Losing it makes `secrets.db` permanently unreadable — AES-256-GCM has no key escrow or recovery path.</Warning>
 
 ```bash
-# Generate and save to .env file (recommended)
-comis secrets init --write
-
-# Or set manually in environment
+# Auto-generated on first boot — back up ~/.comis/.env immediately
+# To override with a specific key:
 export SECRETS_MASTER_KEY="a1b2c3d4e5f6..."
+```
+
+### `COMIS_DISABLE_ENCRYPTED_SECRETS`
+
+| Property | Value |
+|----------|-------|
+| **Used by** | Daemon |
+| **Format** | `1`, `true`, or `on` to disable; unset to enable (default) |
+| **Default** | (unset — encrypted store is active) |
+
+Set to `1`, `true`, or `on` to disable auto-init of the encrypted secrets store and run in envfile-only mode. The daemon emits a startup WARN when this flag is active. Use only if you need to manage secrets manually in `.env` files and do not want the encrypted store.
+
+```bash
+export COMIS_DISABLE_ENCRYPTED_SECRETS=1
 ```
 
 ## OAuth Variables

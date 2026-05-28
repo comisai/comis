@@ -110,17 +110,18 @@ describe("createOutputGuard", () => {
   // Warning findings -- detect-only, NOT redacted
   // -------------------------------------------------------------------------
 
-  it("does NOT redact bearer token (warning severity), blocked=false", () => {
+  it("REDACTS bearer token (severity upgraded to critical), blocked=true", () => {
+    // bearer_token severity is "critical" — token is redacted in sanitized output.
     const response = "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9";
     const result = guard.scan(response);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.safe).toBe(false);
-      expect(result.value.blocked).toBe(false);
-      expect(result.value.sanitized).toBe(response);
+      expect(result.value.blocked).toBe(true);
+      expect(result.value.sanitized).not.toContain("eyJhbGciOiJIUzI1NiJ9");
       const finding = result.value.findings.find((f) => f.pattern === "bearer_token");
       expect(finding).toBeDefined();
-      expect(finding!.severity).toBe("warning");
+      expect(finding!.severity).toBe("critical");
     }
   });
 
@@ -236,6 +237,36 @@ describe("createOutputGuard", () => {
       // Warning findings are NOT redacted
       expect(result.value.sanitized).toContain("My system prompt says");
     }
+  });
+
+  // -------------------------------------------------------------------------
+  // redact behavior (bearer_token severity: critical; hf_token entry)
+  // -------------------------------------------------------------------------
+
+  describe("redact behavior", () => {
+    it("bearer_token rule REDACTS in sanitized output (not warn-only)", () => {
+      // severity is "critical" → token replaced in sanitized
+      const token = "hf_" + "a".repeat(44);
+      const response = `Authorization: Bearer ${token}`;
+      const result = guard.scan(response);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.blocked).toBe(true);
+        // sanitized must NOT contain the raw token (critical → replaced)
+        expect(result.value.sanitized).not.toContain(token);
+      }
+    });
+
+    it("bare hf_ token without Bearer prefix is caught and redacted", () => {
+      const token = "hf_" + "a".repeat(44);
+      const response = `Use this token: ${token}`;
+      const result = guard.scan(response);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.blocked).toBe(true);
+        expect(result.value.sanitized).not.toContain(token);
+      }
+    });
   });
 
   // -------------------------------------------------------------------------

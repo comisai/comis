@@ -1,6 +1,6 @@
 {
-  "totalMinified": 109257,
-  "totalGzipped": 10056,
+  "totalMinified": 109372,
+  "totalGzipped": 10078,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -73,7 +73,7 @@
     "env.list": 751,
     "env.set": 544,
     "gateway.restart": 375,
-    "gateway.status": 544,
+    "gateway.status": 611,
     "graph.cancel": 387,
     "graph.define": 1317,
     "graph.delete": 357,
@@ -174,7 +174,7 @@
     "session.run_status": 816,
     "session.search": 361,
     "session.send": 458,
-    "session.spawn": 801,
+    "session.spawn": 861,
     "session.status": 605,
     "skills.create": 573,
     "skills.delete": 430,

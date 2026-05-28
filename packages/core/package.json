@@ -39,6 +39,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@comis/observability": "workspace:*",
     "@types/proper-lockfile": "4.1.4",
     "safe-regex2": "5.1.1",
     "typescript": "5.9.3",

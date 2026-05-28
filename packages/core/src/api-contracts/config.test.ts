@@ -443,7 +443,7 @@ describe("config + env + gateway-infrastructure contracts", () => {
     expect(() => GatewayStatusContract.request.parse({})).not.toThrow();
   });
 
-  it("gateway.status: response requires all 6 fields (pid/uptime/memoryUsage/nodeVersion/configPaths/sections)", () => {
+  it("gateway.status: response requires all 7 fields (pid/uptime/memoryUsage/nodeVersion/configPaths/sections/secretsStoreAvailable)", () => {
     expect(() =>
       GatewayStatusContract.response.parse({
         pid: 12345,
@@ -452,8 +452,32 @@ describe("config + env + gateway-infrastructure contracts", () => {
         nodeVersion: "v22.4.1",
         configPaths: ["/home/u/.comis/config.yaml"],
         sections: ["agents", "logLevel"],
+        secretsStoreAvailable: true,
       }),
     ).not.toThrow();
+    // false also valid
+    expect(() =>
+      GatewayStatusContract.response.parse({
+        pid: 12345,
+        uptime: 3600.5,
+        memoryUsage: 100_000_000,
+        nodeVersion: "v22.4.1",
+        configPaths: [],
+        sections: [],
+        secretsStoreAvailable: false,
+      }),
+    ).not.toThrow();
+    // Missing secretsStoreAvailable must fail
+    expect(() =>
+      GatewayStatusContract.response.parse({
+        pid: 12345,
+        uptime: 3600.5,
+        memoryUsage: 100_000_000,
+        nodeVersion: "v22.4.1",
+        configPaths: [],
+        sections: [],
+      }),
+    ).toThrow();
   });
 
   it("gateway.status: response rejects missing required fields", () => {

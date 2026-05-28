@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { SUB_AGENT_TOOL_DENYLIST, MIN_SUB_AGENT_STEPS, resolveGraphCacheRetention } from "./index.js";
+import { MIN_SUB_AGENT_STEPS, resolveGraphCacheRetention } from "./index.js";
+import { SUB_AGENT_TOOL_DENYLIST } from "@comis/core";
 import { createMockLogger } from "../../../../../test/support/mock-logger.js";
 
 // ---------------------------------------------------------------------------

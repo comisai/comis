@@ -75,7 +75,7 @@ export { createMcpClientManager, qualifyToolName, parseQualifiedName } from "./i
 // OAuth login orchestrator + disk token-store factory.
 // Consumed by the daemon RPC handler (`mcp-oauth-handlers.ts`) so it can run
 // mcp.oauth_login / mcp.oauth_logout without a direct MCP SDK dependency.
-export { runOauthLogin, createTokenStore } from "./integrations/mcp-client/index.js";
+export { runOauthLogin, createTokenStore, resolveDiscovery } from "./integrations/mcp-client/index.js";
 export type {
   OAuthLoginResult,
   RunOauthLoginDeps,

@@ -385,6 +385,7 @@ export const SessionSpawnContract = defineContract({
     objective: z.string().optional(),
     domain_knowledge: z.array(z.string()).optional(),
     tool_groups: z.array(z.string()).optional(),
+    required_tools: z.array(z.string()).optional(),
     include_parent_history: z.string().optional(),
     announce_channel_type: z.string().optional(),
     announce_channel_id: z.string().optional(),
