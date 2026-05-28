@@ -46,6 +46,7 @@ import {
   deepMerge,
   AppConfigSchema,
   scanForSecrets,
+  isEnvRefString,
   type AppContainer,
   type ConfigGitManager,
   type GitCommitMetadata,
@@ -59,6 +60,48 @@ import { ok, err } from "@comis/shared";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { parse as parseYaml, stringify as yamlStringify } from "yaml";
+
+// ---------------------------------------------------------------------------
+// Env-ref masking for the plaintext-secret scan.
+//
+// The on-disk YAML stores credentials as `${VAR}` refs; the in-memory config
+// holds the substituted values. Scanning the in-memory tree for plaintext
+// (defensive layer for in-memory-only leaks the on-disk file wouldn't have)
+// then false-positives on every substituted secret.
+//
+// Walk the resolved tree in lock-step with the on-disk tree: at every path
+// where the on-disk value is an env-ref string (`${VAR}` / `$VAR` /
+// `$${VAR}`, with optional auth-scheme prefix), substitute the on-disk
+// literal back into the resolved view. scanForSecrets already exempts those
+// strings, so the false positive disappears while in-memory-only plaintext
+// (paths where the on-disk file has no ref) still surfaces.
+// ---------------------------------------------------------------------------
+
+function maskRefsFromOnDisk(resolved: unknown, onDisk: unknown): unknown {
+  if (typeof onDisk === "string" && isEnvRefString(onDisk)) {
+    return onDisk;
+  }
+  if (Array.isArray(resolved) && Array.isArray(onDisk)) {
+    return resolved.map((v, i) => maskRefsFromOnDisk(v, onDisk[i]));
+  }
+  if (
+    resolved !== null
+    && typeof resolved === "object"
+    && !Array.isArray(resolved)
+    && onDisk !== null
+    && typeof onDisk === "object"
+    && !Array.isArray(onDisk)
+  ) {
+    const out: Record<string, unknown> = {};
+    const r = resolved as Record<string, unknown>;
+    const d = onDisk as Record<string, unknown>;
+    for (const k of Object.keys(r)) {
+      out[k] = maskRefsFromOnDisk(r[k], d[k]);
+    }
+    return out;
+  }
+  return resolved;
+}
 
 // ---------------------------------------------------------------------------
 // Module-scoped debounce timer for SIGUSR2 coalescing.
@@ -242,7 +285,18 @@ export async function persistToConfig(
     // survive in updatedLocal via deepMerge(existingLocal, patch) yet be absent
     // from fullMerged = deepMerge(container.config, patch). Scanning both ensures
     // the write target is always covered regardless of loader normalization.
-    const secretFindings = [...scanForSecrets(fullMerged), ...scanForSecrets(updatedLocal)];
+    //
+    // BUT: `fullMerged` carries POST-substitution values (the in-memory config
+    // resolved every `${VAR}` ref at boot via SecretManager). A path that on
+    // disk is literally `${TELEGRAM_BOT_TOKEN}` shows up in fullMerged as the
+    // resolved token VALUE — which `looksLikeSecretValue` correctly flags as a
+    // plaintext secret, producing a false positive. The persist target
+    // (updatedLocal) was never plaintext at that path; only the in-memory
+    // shadow looked that way. Mask resolved values back to their `${VAR}`
+    // literal at every path where updatedLocal carries an env-ref, then scan.
+    // scanForSecrets's own env-ref exemption then drops the false positive.
+    const refMaskedFullMerged = maskRefsFromOnDisk(fullMerged, updatedLocal);
+    const secretFindings = [...scanForSecrets(refMaskedFullMerged), ...scanForSecrets(updatedLocal)];
     if (secretFindings.length > 0) {
       const firstPath = secretFindings[0]!.path;
       return err(
