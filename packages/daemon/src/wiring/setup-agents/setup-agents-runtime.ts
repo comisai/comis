@@ -595,5 +595,12 @@ export async function setupSingleAgent(
     skillWatcherHandle,
     skillRegistry,
     toolCapabilityPort,  // Exposed for AgentsResult.toolCapabilityPorts map
+    // WS-D Phase 78: surface the SHARED holder reference so the daemon can
+    // thread it into ChannelsDeps.executionPlanPort. SAME object as the one
+    // already threaded into PiExecutorDeps.executionPlanHolder and
+    // AcpServerDeps.executionPlanPort (createAcpWiring above). Pitfall 1
+    // mitigation: a parallel `createExecutionPlanHolder()` in the chat path
+    // would always read empty since SEP publishes into THIS one.
+    executionPlanPort: executionPlanHolder,
   };
 }

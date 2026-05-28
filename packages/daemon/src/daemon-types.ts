@@ -416,6 +416,11 @@ export interface BootContext {
   toolCapabilityPorts?: Awaited<ReturnType<typeof setupAgents>>["toolCapabilityPorts"];
   /** Session-scoped trajectory recorder registry. Drained on shutdown. */
   trajectoryRegistry?: Awaited<ReturnType<typeof setupAgents>>["trajectoryRegistry"];
+  /** Per-agent ExecutionPlanHolder reference map (typed as the read-only port). WS-D
+   * Phase 78: surfaces the per-agent holder so the daemon can thread the DEFAULT
+   * agent's reference into ChannelsDeps.executionPlanPort. Same object the
+   * createAcpWiring path already shares (Pitfall 1 single-shared-holder invariant). */
+  executionPlanPorts?: Awaited<ReturnType<typeof setupAgents>>["executionPlanPorts"];
   mcpClientManager?: Awaited<ReturnType<typeof setupMcp>>["mcpClientManager"];
   // Restart continuation tracker
   continuationTracker?: ReturnType<typeof createRestartContinuationTracker>;

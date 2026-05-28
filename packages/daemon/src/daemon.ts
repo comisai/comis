@@ -625,7 +625,7 @@ type PostAgentsBootContext = BootContext & Required<Pick<BootContext,
   | "audioConverter" | "mediaTempManager" | "mediaSemaphore" | "fileExtractor"
   | "rpcCall" | "continuationTracker" | "onSuspiciousContent"
   | "channelAdaptersRef" | "deliveryQueue" | "drainAndStartDeliveryPrune"
-  | "shutdownDeliveryQueue"
+  | "shutdownDeliveryQueue" | "executionPlanPorts"
 >>;
 
 /**
@@ -653,6 +653,7 @@ function buildChannelManagerDeps(deps: {
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
     onSuspiciousContent, dataDir, clock, timers, activityBreaker, activityStream, activityRendererFactoryOverride,
+    executionPlanPorts,
   } = agents;
   // Build exportSessionBundle DI closure for the /export-trajectory slash
   // command. Uses exportTrajectoryBundle from @comis/observability (same
@@ -679,6 +680,14 @@ function buildChannelManagerDeps(deps: {
     // injected into the inbound coordinatorFactory as its activityStreamPort.
     // WIRE-08: the process-singleton circuit breaker shared across every coordinator.
     activityStream, activityBreaker,
+    // WS-D Phase 78: the DEFAULT agent's shared ExecutionPlanHolder reference
+    // (Pitfall 1 lock — same reference as PiExecutorDeps.executionPlanHolder +
+    // AcpServerDeps.executionPlanPort, NOT a parallel createExecutionPlanHolder).
+    // Multi-agent note: only the default agent's plan-state reaches chat in this
+    // wave; non-default-agent plan updates are filtered out per-turn in the
+    // coordinator by the (agentId, sessionKey) guard. A future per-agent
+    // plan-stream Map plumbing lifts that single-agent limitation cleanly.
+    executionPlanPort: executionPlanPorts.get(defaultAgentId),
     // WIRE-06 test-only renderer-injection seam. Default-undefined in production
     // (the daemon override is never set); threaded into buildActivityRenderers so
     // an integration test can inject a spy renderer.
@@ -1955,6 +1964,10 @@ async function bootAgents(
     // getCapabilityPortForAgent into setupTools and mutates this map on
     // hot-add / hot-remove. trajectoryRegistry is drained by setupShutdown.
     toolCapabilityPorts, trajectoryRegistry,
+    // WS-D Phase 78: per-agent shared ExecutionPlanHolder reference map.
+    // Threaded through buildChannelManagerDeps so the chat plan-stream reads
+    // from the SAME object SEP publishes into (Pitfall 1).
+    executionPlanPorts,
   } = await setupAgents({
     container, memoryAdapter, sessionStore, agentLogger, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
@@ -2136,7 +2149,7 @@ async function bootAgents(
     transcriber, ssrfFetcher, fileExtractor,
     rpcCall, wireDispatch, approvalGate, interactiveCallbackWiring,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
-    cronWakeCallbackRef, trajectoryRegistry,
+    cronWakeCallbackRef, trajectoryRegistry, executionPlanPorts,
   });
 }
 
@@ -2192,6 +2205,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     | "mcpClientManager" | "singleAgentDeps" | "providerHealth"
     | "channelAdaptersRef" | "deliveryQueue" | "drainAndStartDeliveryPrune"
     | "shutdownDeliveryQueue" | "cronWakeCallbackRef" | "trajectoryRegistry"
+    | "executionPlanPorts"
   >>;
   // Names consumed by bootChannels body itself; helper functions
   // re-destructure from `handle` directly so closure deps are explicit.
