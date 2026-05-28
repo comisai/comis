@@ -413,8 +413,34 @@ function findFirstActionableArtifact(text: string): string | undefined {
  *    (even if they contain a URL — prevents surfacing "I'm going to fetch
  *    https://example.com/docs" as a user-visible auth hint).
  * 3. URL / short-code detection: skip blocks with no URL or code candidate.
- * 4. Absence check: skip candidates already present in the final response
- *    (avoids duplicating URLs the model included in its final turn).
+ * 4. Absence check (substring): skip candidates already present in the final
+ *    response. See "Substring-dedupe semantics" below.
+ *
+ * ## Substring-dedupe semantics (WR-05)
+ *
+ * The Guard-4 absence check is a `String.prototype.includes` substring match.
+ * If synthesis (in `recoverEmptyFinalResponse`) already added
+ * `https://x.ai/device?code=ABC` to the response and a different pre-tool
+ * block contains the shorter `https://x.ai/device` (no params), the shorter
+ * URL is treated as already present (because it IS a substring of the
+ * longer one) and NOT re-surfaced. This is the conservative direction:
+ *
+ * - SAFER on credentials: a query-param token (`?token=hf_…`) carried by
+ *   one URL must NEVER be surfaced twice — duplicate surfacing widens the
+ *   credential's exposure surface and can leak a token the user already
+ *   saw in the final turn.
+ * - LOSSIER on distinct-but-overlapping links: a prefix URL that happens
+ *   to share a base path with a longer URL in the response is suppressed
+ *   even though it carries different params. This is acceptable because
+ *   the longer URL almost always covers the user's action (it's the more
+ *   specific one).
+ *
+ * If a future change tightens this to a whole-token match (split on
+ * whitespace), it MUST add a regression test for the prefix-overlap case
+ * to prove no credential is double-surfaced. The current substring check
+ * errs toward suppression, which is the load-bearing safety property.
+ *
+ * ## Egress ordering
  *
  * The call site in output-escalation.ts:processSuccessPath MUST run BEFORE
  * the OutputGuard scan so the surfaced URL is part of the content the egress
