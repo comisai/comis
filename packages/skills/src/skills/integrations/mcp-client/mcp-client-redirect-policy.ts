@@ -42,6 +42,54 @@ export interface RedirectPolicyOptions {
 }
 
 /**
+ * Normalize a cross-realm Response into a native `globalThis.Response`.
+ *
+ * **Why this exists** — when a `Response` from a different module realm
+ * (typically `undici@8` loaded via a peer's `import { fetch } from "undici"`)
+ * reaches the MCP SDK's `parseErrorResponse` (`@modelcontextprotocol/sdk/dist/
+ * esm/client/auth.js:126`), the SDK's `input instanceof Response` check uses
+ * the SDK's `globalThis.Response` reference. The cross-realm Response is
+ * structurally identical but a DIFFERENT class — `instanceof` returns false.
+ * The SDK falls through to `body = input` (the object), `JSON.parse(input)`
+ * coerces it via `toString()` to `"[object Response]"`, and we get the
+ * production-observed error: *"Invalid OAuth error response: SyntaxError:
+ * Unexpected token 'o', '[object Response]' is not valid JSON. Raw body:
+ * [object Response]"* (daemon.1.log:181, 2026-05-28).
+ *
+ * The fix repackages a non-native Response as a native one by buffering its
+ * body. Feature-detects `arrayBuffer` so synthetic test fixtures (object
+ * literals lacking the method) pass through unchanged.
+ */
+async function ensureNativeResponse(response: Response): Promise<Response> {
+  if (response instanceof globalThis.Response) {
+    return response;
+  }
+  // Treat the response as a structural Response (cross-realm — passes our
+  // ducktype but fails `instanceof globalThis.Response`). TypeScript would
+  // narrow to `never` after the instanceof above, so reassert the surface
+  // here.
+  const r = response as unknown as {
+    readonly status: number;
+    readonly statusText?: string;
+    readonly headers?: { forEach?: (cb: (v: string, k: string) => void) => void };
+    readonly arrayBuffer?: () => Promise<ArrayBuffer>;
+  };
+  if (typeof r.arrayBuffer !== "function") {
+    return response;
+  }
+  const body = await r.arrayBuffer();
+  const headers = new Headers();
+  r.headers?.forEach?.((value, key) => {
+    headers.append(key, value);
+  });
+  return new globalThis.Response(body, {
+    status: r.status,
+    statusText: r.statusText ?? "",
+    headers,
+  });
+}
+
+/**
  * Create a FetchLike that manually follows redirects with cross-host
  * header scrub. See module JSDoc for policy details.
  */
@@ -66,7 +114,12 @@ export function createRedirectPolicyFetch(opts: RedirectPolicyOptions): FetchLik
         response.status < 400 &&
         response.headers.has("location");
       if (!isRedirect) {
-        return response;
+        // Normalize cross-realm Response BEFORE returning to the SDK so the
+        // SDK's `instanceof Response` check (parseErrorResponse / etc.)
+        // succeeds even if a peer module's named-import of `fetch` from
+        // undici@8 leaked a different Response class into our chain. See
+        // ensureNativeResponse JSDoc for the production failure mode.
+        return ensureNativeResponse(response);
       }
 
       if (hops >= opts.maxRedirections) {

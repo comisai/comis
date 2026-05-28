@@ -36,6 +36,66 @@ function makeOk(): Response {
   } as unknown as Response;
 }
 
+// Cross-realm Response simulation. Mirrors what `undici@8`'s Response (or any
+// non-globalThis Response class) looks like to the MCP SDK's `parseErrorResponse`
+// at `@modelcontextprotocol/sdk/dist/esm/client/auth.js:126`. The object is
+// Response-SHAPED but NOT `instanceof globalThis.Response`, has the canonical
+// `[Symbol.toStringTag] = "Response"` so `String(it)` produces `"[object
+// Response]"` (the exact substring observed in the production error log), and
+// exposes the `arrayBuffer()` + `headers` surface the normalizer reads.
+function makeCrossRealmResponse(status: number, bodyText: string): Response {
+  return {
+    status,
+    statusText: status === 400 ? "Bad Request" : "",
+    headers: new Headers({ "content-type": "application/json" }),
+    ok: status >= 200 && status < 300,
+    [Symbol.toStringTag]: "Response",
+    async arrayBuffer() {
+      return new TextEncoder().encode(bodyText).buffer;
+    },
+  } as unknown as Response;
+}
+
+describe("createRedirectPolicyFetch — cross-realm Response normalization (MCP-OAuth bug)", () => {
+  it("returns a native globalThis.Response when baseFetch yields a cross-realm Response (instanceof check fails upstream)", async () => {
+    const crossRealm = makeCrossRealmResponse(
+      400,
+      '{"error":"invalid_redirect_uri","error_description":"at least one redirect_uri is required"}',
+    );
+    // Sanity: the fixture must satisfy the production failure shape
+    // (instanceof globalThis.Response === false, String() === "[object Response]").
+    expect(crossRealm instanceof globalThis.Response).toBe(false);
+    expect(String(crossRealm)).toBe("[object Response]");
+
+    const baseFetch = vi.fn().mockResolvedValue(crossRealm);
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+
+    const response = await wrapped("https://mcp.higgsfield.ai/oauth2/register", {});
+
+    // The native globalThis.Response that the SDK's `instanceof Response`
+    // check expects.
+    expect(response instanceof globalThis.Response).toBe(true);
+    expect(response.status).toBe(400);
+    const body = await response.text();
+    expect(body).toContain("invalid_redirect_uri");
+  });
+
+  it("passes through a real globalThis.Response unchanged (no buffering cost on the hot path)", async () => {
+    const native = new globalThis.Response("ok", { status: 200 });
+    const baseFetch = vi.fn().mockResolvedValue(native);
+    const wrapped = createRedirectPolicyFetch({
+      maxRedirections: 20,
+      baseFetch: baseFetch as unknown as typeof fetch,
+    });
+
+    const response = await wrapped("https://example.com/", {});
+    expect(response).toBe(native);
+  });
+});
+
 describe("createRedirectPolicyFetch — cross-host header scrub", () => {
   it("returns a FetchLike-shaped function that accepts url and init and resolves to a Response", async () => {
     const baseFetch = vi.fn().mockResolvedValue(makeOk());
