@@ -335,7 +335,12 @@ function buildInstallDetourEventPayload(
 } {
   const ctx = tryGetContext();
   return {
-    agentId: ctx?.sessionKey ?? "unknown",
+    // RequestContext has no `agentId` field — `userId` carries the agent
+    // identity (matches the existing approval-gate precedent in this file
+    // at evaluateInstallDetourGate). sessionKey is a separate formatted key
+    // (e.g. "telegram:chan:user:tenant") that must NOT shadow agentId in
+    // event payloads consumed by per-agent rate-limit / billing aggregators.
+    agentId: ctx?.userId ?? "unknown",
     sessionKey: ctx?.sessionKey ?? "unknown",
     traceId: ctx?.traceId,
     packageManager: decision.packageManager,
