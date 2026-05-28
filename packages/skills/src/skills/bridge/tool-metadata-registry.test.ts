@@ -6,6 +6,7 @@ import { Type } from "typebox";
 import { registerAllToolMetadata } from "./tool-metadata-registry.js";
 import { wrapWithMetadataEnforcement } from "./tool-metadata-enforcement.js";
 import { wrapWithAudit } from "./tool-audit.js";
+import { validateToolEntry } from "./schema-validator.js";
 import { GATEWAY_ACTIONS } from "../../platform-tools/tools/gateway-tool.js";
 
 // ---------------------------------------------------------------------------
@@ -710,7 +711,7 @@ describe("tool-metadata-registry -- completeness", () => {
 
 describe("tool-metadata-registry -- tool-entry schema metadata", () => {
   it.each([
-    ["mcp_manage",       ["list", "status", "connect", "disconnect", "reconnect"], 7],
+    ["mcp_manage",       ["list", "status", "connect", "disconnect", "reconnect"], 8],
     ["agents_manage",    ["create", "get", "update", "delete", "suspend", "resume", "list"], 3],
     ["tokens_manage",    ["list", "create", "revoke", "rotate"], 3],
     ["providers_manage", ["list", "get", "create", "update", "delete", "enable", "disable"], 3],
@@ -739,6 +740,29 @@ describe("tool-metadata-registry -- tool-entry schema metadata", () => {
       disconnect: ["server_name"],
       reconnect: ["server_name"],
     });
+  });
+
+  // R11.1 follow-up — bridge-layer gate must accept the `auth` field that
+  // the Type.Optional schema in mcp-manage-tool.ts:62 advertises and that
+  // the tool-guide instructs agents to use for OAuth-required MCP servers
+  // (commit 907014f). Without "auth" in validKeys the schema-validator
+  // rejects every mcp_manage(auth:"oauth") call with `unknown key 'auth'`
+  // before execute() runs — observed 2026-05-28 in daemon.1.log:393.
+  it("mcp_manage validKeys includes 'auth' so OAuth-aware connects reach the daemon", () => {
+    const meta = getToolMetadata("mcp_manage");
+    expect(meta?.validKeys).toContain("auth");
+  });
+
+  it("validateToolEntry accepts mcp_manage(connect, auth:'oauth') against the live registry", () => {
+    const meta = getToolMetadata("mcp_manage");
+    const params = {
+      action: "connect",
+      server_name: "higgsfield",
+      transport: "http",
+      url: "https://mcp.higgsfield.ai/mcp",
+      auth: "oauth",
+    };
+    expect(validateToolEntry(params, meta)).toBeUndefined();
   });
 
   it("heartbeat_manage registers an empty requiredByAction (every action's params are optional)", () => {
