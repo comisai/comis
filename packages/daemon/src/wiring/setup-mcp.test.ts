@@ -31,11 +31,27 @@ const mockCreateMcpClientManager = vi.hoisted(() => vi.fn(() => ({
   callTool: mockCallTool,
 })));
 
+const mockCreatePortBackedMcpTokenStore = vi.hoisted(() => vi.fn(() => ({
+  tokens: vi.fn(),
+  saveTokens: vi.fn(),
+  saveClientInformation: vi.fn(),
+  clientInformation: vi.fn(),
+  saveDiscoveryState: vi.fn(),
+  discoveryState: vi.fn(),
+  deleteAll: vi.fn(),
+  startWatch: vi.fn(),
+  close: vi.fn(),
+})));
+
 vi.mock("@comis/skills", () => ({
   createMcpClientManager: mockCreateMcpClientManager,
   // resolveDiscovery is used by setup-mcp.ts in the oauthDeps seam.
   // Provide a minimal mock so the module import succeeds.
   resolveDiscovery: vi.fn(),
+}));
+
+vi.mock("./mcp-token-port-adapter.js", () => ({
+  createPortBackedMcpTokenStore: mockCreatePortBackedMcpTokenStore,
 }));
 
 // ---------------------------------------------------------------------------
@@ -792,6 +808,46 @@ describe("setupMcp", () => {
       const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
       // No oauthDeps injected — the default resolution in createMcpClientManager applies
       expect(factoryArg).not.toHaveProperty("oauthDeps");
+    });
+
+    // WR-02 wiring-level singleton test (R8.1/8.3):
+    // createPortBackedMcpTokenStore must be called exactly ONCE per setupMcp
+    // invocation, regardless of how many times createTokenStore() is called on
+    // the injected oauthDeps. On HEAD (before the singleton hoist), each
+    // createTokenStore() call rebuilds a new wrapper — this test documents that
+    // broken behavior (RED).
+    //
+    // Contrast with mcp-client-keepalive.test.ts WR-02 test at :962 which
+    // asserts "createTokenStore called exactly once per tick" at the
+    // McpClientManagerDeps unit level — that test is independent and
+    // unchanged here.
+    it("createPortBackedMcpTokenStore is called exactly once across multiple createTokenStore calls at wiring level", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+      const oauthCredentialStore = makePortMock();
+
+      await callSetupMcp({
+        servers: [],
+        logger,
+        oauthCredentialStore,
+        dataDir: "/fake/data",
+      });
+
+      // Retrieve the createTokenStore factory injected into createMcpClientManager
+      const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
+      const oauthDeps = factoryArg["oauthDeps"] as Record<string, unknown>;
+      const createTokenStore = oauthDeps["createTokenStore"] as () => unknown;
+
+      // Simulate N keepalive ticks calling createTokenStore each time
+      const N = 3;
+      for (let i = 0; i < N; i++) {
+        createTokenStore();
+      }
+
+      // The adapter factory should have been called exactly ONCE at setupMcp
+      // wiring time, not N times per createTokenStore call.
+      // On HEAD (pre-fix), this assertion FAILS because the lambda calls
+      // createPortBackedMcpTokenStore on each invocation (N times = 3).
+      expect(mockCreatePortBackedMcpTokenStore).toHaveBeenCalledTimes(1);
     });
 
     it("createMcpClientManager is called WITHOUT oauthDeps when only oauthCredentialStore provided but no dataDir", async () => {
