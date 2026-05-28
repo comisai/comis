@@ -17,9 +17,30 @@
  */
 import { describe, it, expect, expectTypeOf } from "vitest";
 import type { Result } from "@comis/shared";
-import type { ActivityEvent, ActivityRenderError, RichButton } from "@comis/core";
+import type {
+  ActivityEvent,
+  ActivityRenderError,
+  ActivityRenderFrame,
+  RichButton,
+} from "@comis/core";
 import { eventLabel, renderFrameText, failureLabel, successLabel, subagentLine } from "./render.js";
 import type { ActivityRenderActions } from "./actions.js";
+
+/**
+ * Build a render frame with sensible defaults. WS-D `renderFrameText(frame,
+ * markers?)` consumes the whole frame; tests construct one via this factory
+ * instead of passing a bare events array.
+ */
+function frame(partial: Partial<ActivityRenderFrame> = {}): ActivityRenderFrame {
+  return {
+    frameSeq: 0,
+    visibleEvents: [],
+    groupedActivityIds: {},
+    planSnapshot: undefined,
+    changeSet: { added: [], edited: [], removed: [] },
+    ...partial,
+  };
+}
 
 /** The ascii theme's markers (75-01): bracketed pure-ASCII tags, zero emoji. */
 const ASCII_MARKERS = { success: "[OK]", failure: "[ERR]", subagent: "[SUB]", running: "[..]" } as const;
@@ -53,10 +74,14 @@ describe("eventLabel", () => {
 
 describe("renderFrameText", () => {
   it("joins one label per event in display order", () => {
-    const out = renderFrameText([
-      event({ kind: "tool", defaultLabel: "a" }),
-      event({ kind: "tool", defaultLabel: "b" }),
-    ]);
+    const out = renderFrameText(
+      frame({
+        visibleEvents: [
+          event({ kind: "tool", defaultLabel: "a" }),
+          event({ kind: "tool", defaultLabel: "b" }),
+        ],
+      }),
+    );
     expect(out).toBe("a\nb");
   });
 
@@ -64,8 +89,104 @@ describe("renderFrameText", () => {
     // The projection sets `🤖`-prefixed defaultLabel (activity-stream T-73-07);
     // the text path renders it unchanged — Discord/Slack key the thread shell
     // off the 🤖 marker in the sent text.
-    const out = renderFrameText([event({ kind: "subagent", defaultLabel: "🤖 subagent: 3 steps" })]);
+    const out = renderFrameText(
+      frame({
+        visibleEvents: [event({ kind: "subagent", defaultLabel: "🤖 subagent: 3 steps" })],
+      }),
+    );
     expect(out).toBe("🤖 subagent: 3 steps");
+  });
+
+  // WS-D Phase 78 — SPEC §8.3 plan-state header + SPEC §8.5 (step N of M).
+  //
+  // The atomic signature migration (events array -> ActivityRenderFrame) is a
+  // combined RED+GREEN per AGENTS.md §2.10 escape: pre-patch test code would
+  // not compile against the new signature. The `frame()` factory above keeps
+  // every call-site uniform; the plan-aware render adds three above-the-event
+  // lines (`renderPlan` output + bounded counter + `───` separator).
+
+  it("with no plan snapshot returns only the joined event list (no header lines)", () => {
+    const out = renderFrameText(
+      frame({
+        planSnapshot: undefined,
+        visibleEvents: [
+          event({ kind: "tool", defaultLabel: "first" }),
+          event({ kind: "tool", defaultLabel: "second" }),
+        ],
+      }),
+    );
+    expect(out).toBe("first\nsecond");
+    expect(out).not.toContain("[x]");
+    expect(out).not.toContain("(step ");
+    expect(out).not.toContain("───");
+  });
+
+  it("with a plan snapshot prefixes renderPlan output + (step 2 of 3) + ─── separator above the events", () => {
+    // SPEC §8.3: checkbox header above events. SPEC §8.5 first half: a bounded
+    // `(step N of M)` line where N is the in_progress entry's 1-based index.
+    const out = renderFrameText(
+      frame({
+        planSnapshot: {
+          entries: [
+            { id: "0", label: "step a", status: "done" },
+            { id: "1", label: "step b", status: "in_progress" },
+            { id: "2", label: "step c", status: "pending" },
+          ],
+        },
+        visibleEvents: [
+          event({ kind: "tool", defaultLabel: "ev1" }),
+          event({ kind: "tool", defaultLabel: "ev2" }),
+        ],
+      }),
+    );
+    expect(out).toBe(
+      "[x] step a\n[~] step b\n[ ] step c\n(step 2 of 3)\n───\nev1\nev2",
+    );
+  });
+
+  it("computes the (step N of M) counter from the in_progress entry's 1-based index", () => {
+    const out = renderFrameText(
+      frame({
+        planSnapshot: {
+          entries: [
+            { id: "0", label: "a", status: "done" },
+            { id: "1", label: "b", status: "done" },
+            { id: "2", label: "c", status: "done" },
+            { id: "3", label: "d", status: "in_progress" },
+            { id: "4", label: "e", status: "pending" },
+          ],
+        },
+      }),
+    );
+    expect(out).toContain("(step 4 of 5)");
+  });
+
+  it("omits the (step N of M) line when no entry is in_progress (all done or all pending)", () => {
+    const allPending = renderFrameText(
+      frame({
+        planSnapshot: {
+          entries: [
+            { id: "0", label: "a", status: "pending" },
+            { id: "1", label: "b", status: "pending" },
+          ],
+        },
+      }),
+    );
+    expect(allPending).not.toContain("(step ");
+    expect(allPending).toContain("───");
+
+    const allDone = renderFrameText(
+      frame({
+        planSnapshot: {
+          entries: [
+            { id: "0", label: "a", status: "done" },
+            { id: "1", label: "b", status: "done" },
+          ],
+        },
+      }),
+    );
+    expect(allDone).not.toContain("(step ");
+    expect(allDone).toContain("───");
   });
 });
 

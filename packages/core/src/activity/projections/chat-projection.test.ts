@@ -8,7 +8,10 @@
  */
 import { describe, it, expect } from "vitest";
 import type { ActivityEvent } from "../activity-event.js";
-import type { ActivityRenderFrame } from "../channel-activity-renderer.js";
+import type {
+  ActivityRenderFrame,
+  PlanSnapshot,
+} from "../channel-activity-renderer.js";
 import { chatProjection } from "./chat-projection.js";
 
 let seq = 0;
@@ -150,5 +153,76 @@ describe("chatProjection applies the verbosity policy", () => {
     });
     expect(frame.visibleEvents).toHaveLength(0);
     expect(frame.groupedActivityIds).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS-D Phase 78 — plan-snapshot threading (4th arg, Pitfall 6 fix).
+//
+// SPEC-§8.3 needs the latest SEP `PlanSnapshot` on the rendered frame so the
+// chat surfaces can prefix `[x]/[~]/[ ]` lines above the event list. The
+// coordinator captures the latest snapshot from `planStream.subscribe` and
+// passes it as the projection's 4th arg; the projection writes
+// `planSnapshot: latestPlanSnapshot ?? prevFrame?.planSnapshot` (latest wins
+// per turn — silent-forward of prevFrame would mask a re-extracted plan).
+// ---------------------------------------------------------------------------
+
+describe("chatProjection threads the latest plan snapshot (Pitfall 6 fix)", () => {
+  it("writes latestPlanSnapshot when supplied as the 4th argument", () => {
+    const latestPlanSnapshot: PlanSnapshot = {
+      entries: [
+        { id: "0", label: "step a", status: "in_progress" },
+      ],
+    };
+    const frame = chatProjection(
+      [ev()],
+      { verbosity: "verbose" },
+      undefined,
+      latestPlanSnapshot,
+    );
+    expect(frame.planSnapshot).toBe(latestPlanSnapshot);
+  });
+
+  it("falls back to prevFrame.planSnapshot when the 4th argument is undefined", () => {
+    const prevSnapshot: PlanSnapshot = {
+      entries: [{ id: "0", label: "prev step", status: "done" }],
+    };
+    const prevFrame: ActivityRenderFrame = {
+      frameSeq: 0,
+      visibleEvents: [],
+      groupedActivityIds: {},
+      planSnapshot: prevSnapshot,
+      changeSet: { added: [], edited: [], removed: [] },
+    };
+    const frame = chatProjection(
+      [ev()],
+      { verbosity: "verbose" },
+      prevFrame,
+    );
+    expect(frame.planSnapshot).toBe(prevSnapshot);
+  });
+
+  it("uses the latestPlanSnapshot in preference to prevFrame.planSnapshot when both are supplied (latest wins)", () => {
+    const prevSnapshot: PlanSnapshot = {
+      entries: [{ id: "0", label: "old", status: "in_progress" }],
+    };
+    const latestPlanSnapshot: PlanSnapshot = {
+      entries: [{ id: "0", label: "new", status: "in_progress" }],
+    };
+    const prevFrame: ActivityRenderFrame = {
+      frameSeq: 0,
+      visibleEvents: [],
+      groupedActivityIds: {},
+      planSnapshot: prevSnapshot,
+      changeSet: { added: [], edited: [], removed: [] },
+    };
+    const frame = chatProjection(
+      [ev()],
+      { verbosity: "verbose" },
+      prevFrame,
+      latestPlanSnapshot,
+    );
+    expect(frame.planSnapshot).toBe(latestPlanSnapshot);
+    expect(frame.planSnapshot).not.toBe(prevSnapshot);
   });
 });
