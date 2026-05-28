@@ -289,16 +289,17 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         ...(persistedEntry?.enableResources !== undefined && { enableResources: persistedEntry.enableResources }),
         ...(persistedEntry?.enablePrompts !== undefined && { enablePrompts: persistedEntry.enablePrompts }),
         ...(persistedEntry?.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: persistedEntry.supportsParallelToolCalls }),
-        // Forward auth to the runtime config. Priority:
-        //   1. params.auth (explicit caller intent — wins on first install and
-        //      on overrides from "headers" → "oauth")
-        //   2. persistedEntry?.auth (carry-over on reconnect/re-add with no
-        //      explicit auth param — preserves the stored OAuth requirement)
-        // Without the explicit params.auth spread, first-install auth:"oauth"
-        // is silently dropped because persistedEntry is undefined at that point,
-        // and the OAuthClientProvider is never wired (silent downgrade to no-auth).
-        ...(params.auth !== undefined && { auth: params.auth }),
-        ...(params.auth === undefined && persistedEntry?.auth !== undefined && { auth: persistedEntry.auth }),
+        // Forward auth to the runtime config. The contract's auth field is
+        // `"headers" | "oauth"` (RPC-layer scheme); the persisted config's
+        // auth field is `"none" | "bearer" | "oauth"`. Mapping:
+        //   - contract "oauth" → config "oauth" (forces OAuth promotion even
+        //     on first install when persistedEntry is undefined; otherwise
+        //     OAuthClientProvider is never wired → silent downgrade to no-auth)
+        //   - contract "headers" (or undefined) → no-op override: fall back to
+        //     persistedEntry?.auth so a reconnect with the default "headers"
+        //     value does NOT strip a server's stored "oauth" requirement
+        ...(params.auth === "oauth" && { auth: "oauth" as const }),
+        ...(params.auth !== "oauth" && persistedEntry?.auth !== undefined && { auth: persistedEntry.auth }),
         ...(persistedEntry?.oauth !== undefined && { oauth: persistedEntry.oauth }),
       };
 
@@ -346,11 +347,12 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         resolvedKeepaliveIntervalMs,
         resolvedCircuitBreakerThreshold,
         resolvedCircuitBreakerCooldownMs,
-        // Pass params.auth explicitly so first-install auth:"oauth" is preserved
-        // even when persistedEntry is undefined. buildPersistedMcpEntry uses
-        // `input.auth ?? persistedEntry?.auth` (line 129) — so an explicit
-        // params.auth always wins over the carry-over from the persisted entry.
-        auth: params.auth,
+        // Pass auth:"oauth" explicitly so first-install OAuth is preserved
+        // even when persistedEntry is undefined. Contract "headers" maps to
+        // undefined here so buildPersistedMcpEntry's `input.auth ??
+        // persistedEntry?.auth` fallback (line 129) preserves any stored
+        // "oauth" — explicit "headers" must not strip a persisted requirement.
+        auth: params.auth === "oauth" ? ("oauth" as const) : undefined,
         persistedEntry,
       });
       const newServers: McpServerEntry[] = [

@@ -4439,6 +4439,13 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "integer",
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991
+        },
+        "auth": {
+          "type": "string",
+          "enum": [
+            "headers",
+            "oauth"
+          ]
         }
       },
       "required": [

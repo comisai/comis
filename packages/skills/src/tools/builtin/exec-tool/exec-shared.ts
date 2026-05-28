@@ -511,7 +511,11 @@ export function ensureWarmVenvSeed(
     stdio: "pipe",
   });
   if (result.status === 0) {
-    writeFileSync(sentinelPath, new Date().toISOString());
+    // Sentinel file's existence is the signal; contents are the seeded
+    // package list (one per line) for human / log diagnostics. Avoids
+    // `new Date()` so the architecture globals.test.ts (no NEW callable
+    // globals outside the bootstrap regex) stays clean.
+    writeFileSync(sentinelPath, packages.join("\n") + "\n");
     logger?.debug({ workspaceDir: workspacePath, seeded: packages }, "Warm venv seed installed");
   } else {
     logger?.debug(
