@@ -188,6 +188,66 @@ describe("MCP OAuth RPC handlers", () => {
       expect(deps.mcpClientManager.reconnect).not.toHaveBeenCalled();
     });
 
+    // Fix 8 (2026-05-28). After Fix 6 unblocked the headless background-
+    // completion path, the live Higgsfield install hit a final wall: the
+    // background task ran the second-pass code exchange + saveTokens
+    // successfully (daemon.1.log:246 "authorized — tokens persisted"), then
+    // fired onAuthorized → mcpClientManager.reconnect("higgsfield"), which
+    // threw `MCP server "higgsfield" has no stored config -- use connect()
+    // instead` (daemon.1.log:247). Fix 4 had short-circuited the initial
+    // manager.connect call, so state.serverConfigs was empty when reconnect
+    // tried to look up the config. Tokens were saved, but the MCP connection
+    // never came alive — the agent had no Higgsfield tools to surface.
+    //
+    // Fix: onAuthorized must call manager.connect with a McpServerConfig
+    // built from the persisted entry (Fix 4 wrote it to
+    // container.config.integrations.mcp.servers), NOT manager.reconnect.
+    it("headless onAuthorized → manager.connect (not reconnect) with config built from persisted entry", async () => {
+      let capturedOnAuthorized: ((name: string) => Promise<void>) | undefined;
+      const runOauthLogin = vi.fn().mockImplementation(
+        async (args: { onAuthorized?: (name: string) => Promise<void> }) => {
+          capturedOnAuthorized = args.onAuthorized;
+          return { status: "headless_hint", authUrl: "https://auth.example.com/x", portForwardHint: "ssh -L 61819:localhost:61819 <vps>" };
+        },
+      );
+      const deps = makeDeps("higgsfield", {
+        runOauthLogin,
+        entry: {
+          name: "higgsfield",
+          transport: "http",
+          url: "https://mcp.higgsfield.ai/mcp",
+          auth: "oauth",
+          oauth: { scope: "openid email offline_access" },
+        },
+      });
+      (deps.mcpClientManager.connect as ReturnType<typeof vi.fn>).mockResolvedValue(
+        ok({ name: "higgsfield", status: "connected", tools: [] }),
+      );
+
+      const handlers = createMcpOauthHandlers(deps);
+      await handlers[McpOauthLoginContract.method]({ server_name: "higgsfield" });
+
+      // Simulate the background task firing onAuthorized after the operator's
+      // redirect arrives + tokens persist.
+      expect(capturedOnAuthorized).toBeDefined();
+      await capturedOnAuthorized!("higgsfield");
+
+      // manager.connect was called with a config carrying the persisted-entry
+      // fields needed for the live transport + OAuth provider attachment.
+      expect(deps.mcpClientManager.connect).toHaveBeenCalledOnce();
+      const calledWith = (deps.mcpClientManager.connect as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      expect(calledWith).toMatchObject({
+        name: "higgsfield",
+        transport: "http",
+        url: "https://mcp.higgsfield.ai/mcp",
+        auth: "oauth",
+        enabled: true,
+      });
+      // reconnect MUST NOT have been called — Fix 4 left state.serverConfigs
+      // empty so reconnect would throw "no stored config".
+      expect(deps.mcpClientManager.reconnect).not.toHaveBeenCalled();
+    });
+
     it("authorized but reconnect fails → status failed (does not claim authorized)", async () => {
       const runOauthLogin = vi.fn().mockResolvedValue({ status: "authorized" });
       const deps = makeDeps("notion", { runOauthLogin });

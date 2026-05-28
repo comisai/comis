@@ -51,6 +51,7 @@ import {
   type OAuthLoginResult,
   type RunOauthLoginDeps,
   type TokenStore,
+  type McpServerConfig,
 } from "@comis/skills";
 
 import type { WorkspaceApiDeps, RpcHandler } from "./types.js";
@@ -158,6 +159,16 @@ export function createMcpOauthHandlers(
       // so the live connection upgrades to the new bearer without an
       // additional RPC. The non-headless path still returns "authorized"
       // synchronously and the post-call branch below handles the reconnect.
+      //
+      // Fix 8: the hook calls manager.connect (NOT reconnect). Fix 4 in
+      // mcp-handlers.ts short-circuits the initial manager.connect when
+      // params.auth==="oauth" AND no token exists yet, so state.serverConfigs
+      // is empty at the moment OAuth completes. manager.reconnect throws
+      // "no stored config -- use connect() instead" against an empty map;
+      // we build the McpServerConfig from the persisted entry (Fix 4
+      // wrote it to container.config.integrations.mcp.servers + disk) and
+      // hand it straight to manager.connect, which threads through
+      // prepareOAuthProvider and reads the now-valid tokens from the store.
       const result = await runOauthLogin({
         serverName: server_name,
         serverUrl: entry.url,
@@ -165,14 +176,61 @@ export function createMcpOauthHandlers(
         createTokenStore: makeTokenStore,
         openUrl,
         onAuthorized: async (name) => {
-          const reconnectResult = await deps.mcpClientManager.reconnect(name);
-          if (!reconnectResult.ok) {
-            // Tokens persisted but reconnect failed — surface a WARN so the
-            // operator knows to retry mcp.reconnect. Throwing here would
-            // propagate to runOauthLogin's background try/catch which
-            // already logs a fallback WARN; throwing communicates the same
-            // diagnostic upstream without duplicating the failure log.
-            throw new Error(reconnectResult.error.message);
+          const persistedServers =
+            (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
+          const persistedEntry = persistedServers.find((s) => s.name === name);
+          if (persistedEntry === undefined) {
+            throw new Error(
+              `Persisted entry for "${name}" not found after OAuth — config out of sync; ` +
+                `retry mcp_manage(action:"connect", server_name:"${name}").`,
+            );
+          }
+          const mcpConfigRoot = deps.container?.config?.integrations?.mcp as
+            | {
+                safetyAllowedEnvKeys?: readonly string[];
+                osvCheckEnabled?: boolean;
+                osvCacheTtlMs?: number;
+              }
+            | undefined;
+          // Map the persisted entry to an McpServerConfig. The shapes overlap
+          // by design (McpServerEntrySchema is the persistence projection of
+          // McpServerConfig minus runtime-only fields like `oauthProvider`),
+          // so this is a field-by-field copy. The integrations.mcp root
+          // settings (safety/OSV) are merged in last — they live above the
+          // per-entry shape and the manager reads them from the config root.
+          const reconnectConfig: McpServerConfig = {
+            name: persistedEntry.name,
+            transport: persistedEntry.transport,
+            enabled: true,
+            ...(persistedEntry.command !== undefined && { command: persistedEntry.command }),
+            ...(persistedEntry.args !== undefined && { args: persistedEntry.args }),
+            ...(persistedEntry.url !== undefined && { url: persistedEntry.url }),
+            ...(persistedEntry.env !== undefined && { env: persistedEntry.env }),
+            ...(persistedEntry.cwd !== undefined && { cwd: persistedEntry.cwd }),
+            ...(persistedEntry.headers !== undefined && { headers: persistedEntry.headers }),
+            ...(persistedEntry.maxConcurrency !== undefined && { maxConcurrency: persistedEntry.maxConcurrency }),
+            ...(persistedEntry.rlimits !== undefined && { rlimits: persistedEntry.rlimits }),
+            ...(persistedEntry.keepaliveIntervalMs !== undefined && { keepaliveIntervalMs: persistedEntry.keepaliveIntervalMs }),
+            ...(persistedEntry.circuitBreakerThreshold !== undefined && { circuitBreakerThreshold: persistedEntry.circuitBreakerThreshold }),
+            ...(persistedEntry.circuitBreakerCooldownMs !== undefined && { circuitBreakerCooldownMs: persistedEntry.circuitBreakerCooldownMs }),
+            ...(persistedEntry.toolAllowlist !== undefined && { toolAllowlist: persistedEntry.toolAllowlist }),
+            ...(persistedEntry.toolBlocklist !== undefined && { toolBlocklist: persistedEntry.toolBlocklist }),
+            ...(persistedEntry.idleTtlMs !== undefined && persistedEntry.idleTtlMs > 0 && { idleTtlMs: persistedEntry.idleTtlMs }),
+            ...(persistedEntry.enableResources !== undefined && { enableResources: persistedEntry.enableResources }),
+            ...(persistedEntry.enablePrompts !== undefined && { enablePrompts: persistedEntry.enablePrompts }),
+            ...(persistedEntry.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: persistedEntry.supportsParallelToolCalls }),
+            ...(persistedEntry.auth !== undefined && { auth: persistedEntry.auth }),
+            ...(persistedEntry.oauth !== undefined && { oauth: persistedEntry.oauth }),
+            ...(mcpConfigRoot?.safetyAllowedEnvKeys !== undefined && { safetyAllowedEnvKeys: mcpConfigRoot.safetyAllowedEnvKeys }),
+            ...(mcpConfigRoot?.osvCheckEnabled !== undefined && { osvCheckEnabled: mcpConfigRoot.osvCheckEnabled }),
+            ...(mcpConfigRoot?.osvCacheTtlMs !== undefined && { osvCacheTtlMs: mcpConfigRoot.osvCacheTtlMs }),
+          };
+          const connectResult = await deps.mcpClientManager.connect(reconnectConfig);
+          if (!connectResult.ok) {
+            // Tokens persisted but connect failed — surface a WARN so the
+            // operator knows to retry. Throwing propagates to runOauthLogin's
+            // background try/catch which logs a fallback WARN.
+            throw new Error(connectResult.error.message);
           }
         },
         logger: deps.logger,
