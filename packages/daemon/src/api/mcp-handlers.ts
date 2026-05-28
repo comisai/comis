@@ -325,6 +325,45 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         // block can surface the actionable "run comis mcp login" hint without
         // brittle string-matching on Error.message.
         if (isNeedsOAuthLoginError(result.error)) {
+          // R11 follow-up: when the operator explicitly opted in with
+          // params.auth==="oauth", persist the entry BEFORE throwing so the
+          // subsequent mcp_login (mcp-oauth-handlers.ts:135 reads
+          // container.config.integrations.mcp.servers) finds the server.
+          // Without this, the agent is stuck in: connect→needs_oauth_login
+          // hint→mcp_login→"MCP server not found" (observed 2026-05-28).
+          // No persist for non-opt-in connects: the hint is enough; the
+          // operator must retry with auth:"oauth" before we register.
+          if (params.auth === "oauth") {
+            const currentServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
+            const newEntry: McpServerEntry = buildPersistedMcpEntry({
+              serverName: params.server_name,
+              transport: params.transport,
+              command: params.command,
+              args: params.args,
+              url: params.url,
+              env: params.env,
+              headers: params.headers,
+              disablePlaintextSecretCheck: userParams.disablePlaintextSecretCheck === true,
+              resolvedRlimits,
+              resolvedKeepaliveIntervalMs,
+              resolvedCircuitBreakerThreshold,
+              resolvedCircuitBreakerCooldownMs,
+              auth: "oauth" as const,
+              persistedEntry,
+            });
+            const newServers: McpServerEntry[] = [
+              ...currentServers.filter((s) => s.name !== params.server_name),
+              newEntry,
+            ];
+            const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
+            await persistMcpServers(
+              deps,
+              newServers,
+              "mcp.connect",
+              params.server_name,
+              ctx,
+            );
+          }
           const structured = new Error(
             `[needs_oauth_login] MCP server "${params.server_name}" requires OAuth login`,
           );

@@ -1332,6 +1332,97 @@ describe("MCP RPC Handlers", () => {
       expect(mockPersistToConfig).not.toHaveBeenCalled();
     });
 
+    // R11 follow-up — closes the chicken-and-egg between mcp.connect's
+    // needs_oauth_login refusal and mcp.oauth_login's "server not found"
+    // lookup (mcp-oauth-handlers.ts:135-138 reads container.config). When the
+    // operator explicitly opts in with auth:"oauth" and connect fails with
+    // needs_oauth_login, the server entry MUST be persisted with auth:"oauth"
+    // BEFORE the structured throw so the next mcp_login finds it.
+    //
+    // Observed 2026-05-28 in daemon.1.log (L417/L440 sequence): connect →
+    // [needs_oauth_login] hint → mcp_login → "MCP server not found".
+    it("persists the entry with auth:'oauth' BEFORE throwing when params.auth==='oauth' and manager returns needs_oauth_login", async () => {
+      const needsOAuthErr = Object.assign(
+        new Error(`MCP server "higgsfield" requires OAuth login.`),
+        { code: "needs_oauth_login" as const },
+      );
+      (manager.connect as any).mockResolvedValue(err(needsOAuthErr));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      let thrownError: unknown;
+      try {
+        await handlers["mcp.connect"]({
+          server_name: "higgsfield",
+          transport: "http",
+          url: "https://mcp.higgsfield.ai/mcp",
+          auth: "oauth",
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      // The structured needs_oauth_login throw is preserved (R8.4').
+      expect((thrownError as { data?: unknown }).data).toMatchObject({
+        needs_oauth_login: true,
+        server_name: "higgsfield",
+      });
+
+      // The entry is persisted with auth:"oauth" so mcp.oauth_login can find it.
+      expect(mockPersistToConfig).toHaveBeenCalledOnce();
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.actionType).toBe("mcp.connect");
+      expect(callOpts.entityId).toBe("higgsfield");
+      expect(callOpts.patch.integrations.mcp.servers).toEqual([
+        expect.objectContaining({
+          name: "higgsfield",
+          transport: "http",
+          url: "https://mcp.higgsfield.ai/mcp",
+          auth: "oauth",
+        }),
+      ]);
+
+      // In-memory swap also visible so subsequent mcp.oauth_login finds the entry.
+      const servers = container.config.integrations.mcp.servers;
+      expect(servers).toHaveLength(1);
+      expect(servers[0]).toMatchObject({ name: "higgsfield", auth: "oauth" });
+    });
+
+    it("does NOT persist when manager returns needs_oauth_login WITHOUT params.auth==='oauth' (hint-only path)", async () => {
+      // Connect without opting in: the user just wanted to add a server;
+      // the daemon hands back the needs_oauth_login hint but does NOT
+      // pollute config with an unrequested registration.
+      const needsOAuthErr = Object.assign(
+        new Error(`MCP server "x" requires OAuth login.`),
+        { code: "needs_oauth_login" as const },
+      );
+      (manager.connect as any).mockResolvedValue(err(needsOAuthErr));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+      } as any);
+
+      await expect(
+        handlers["mcp.connect"]({
+          server_name: "x",
+          transport: "http",
+          url: "https://x/mcp",
+        }),
+      ).rejects.toMatchObject({
+        data: { needs_oauth_login: true },
+      });
+
+      expect(mockPersistToConfig).not.toHaveBeenCalled();
+    });
+
     it("returns persistence:'skipped' when persistDeps is not wired (existing-test invariant)", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("x", [])));
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
