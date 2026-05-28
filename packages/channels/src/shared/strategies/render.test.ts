@@ -188,6 +188,149 @@ describe("renderFrameText", () => {
     expect(allDone).not.toContain("(step ");
     expect(allDone).toContain("───");
   });
+
+  // --- Phase 78 WS-E: ×N / xN surrogate count (SPEC-§9) --------------------
+  //
+  // When a visible event represents a coalesced surrogate
+  // (`frame.groupedActivityIds[event.activityId].length > 1`), the rendered
+  // line is `${eventLabel(event)} ×${count}` under default markers and
+  // `${eventLabel(event)} x${count}` under ascii markers (the ascii theme
+  // strips ALL non-ASCII via `surrogateSeparator: "x"` — SPEC-§8.9).
+
+  it("appends ×N for surrogate event with constituent count > 1 (default theme — SPEC-§9)", () => {
+    const out = renderFrameText(
+      frame({
+        visibleEvents: [
+          event({ kind: "tool", activityId: "group:abc", defaultLabel: "reading config" }),
+        ],
+        groupedActivityIds: { "group:abc": ["id1", "id2", "id3"] },
+      }),
+    );
+    expect(out).toContain("reading config ×3");
+  });
+
+  it("does NOT append ×N for non-surrogate event (Open Question 4 — subagent collapse uses parentActivityId, not groupedActivityIds)", () => {
+    // length === 0 (key absent) — single non-coalesced event.
+    const outNoEntry = renderFrameText(
+      frame({
+        visibleEvents: [
+          event({ kind: "tool", activityId: "tool:xyz", defaultLabel: "reading config" }),
+        ],
+        groupedActivityIds: {},
+      }),
+    );
+    expect(outNoEntry).toBe("reading config");
+    expect(outNoEntry).not.toContain("×");
+
+    // length === 1 — a single-element grouped entry is NOT a coalesced surrogate.
+    const outSingleton = renderFrameText(
+      frame({
+        visibleEvents: [
+          event({ kind: "tool", activityId: "group:single", defaultLabel: "reading config" }),
+        ],
+        groupedActivityIds: { "group:single": ["id1"] },
+      }),
+    );
+    expect(outSingleton).toBe("reading config");
+    expect(outSingleton).not.toContain("×");
+  });
+
+  it("uses ascii separator x under ascii markers (SPEC-§8.9 ASCII-strict)", () => {
+    const out = renderFrameText(
+      frame({
+        visibleEvents: [
+          event({ kind: "tool", activityId: "group:abc", defaultLabel: "reading config" }),
+        ],
+        groupedActivityIds: { "group:abc": ["id1", "id2", "id3"] },
+      }),
+      // surrogateSeparator: "x" (lowercase) — ascii-strict; default theme uses "×" (U+00D7).
+      { ...ASCII_MARKERS, surrogateSeparator: "x" },
+    );
+    expect(out).toContain("reading config x3");
+    expect(out).not.toContain("×");
+  });
+
+  // --- Phase 78 WS-F: elapsed-time fallback (SPEC-§8.5 second half) --------
+  //
+  // When `frame.planSnapshot` is undefined AND the strategy supplies an
+  // elapsedMs value, the rendered text appends a `(running N s)` line where
+  // N is the elapsedMs floored to whole seconds.
+
+  it("emits elapsed-time fallback (running 12 s) when planSnapshot is undefined (SPEC-§8.5)", () => {
+    const out = renderFrameText(
+      frame({
+        planSnapshot: undefined,
+        visibleEvents: [event({ kind: "tool", defaultLabel: "ev1" })],
+      }),
+      undefined,
+      12_345,
+    );
+    expect(out).toContain("(running 12 s)");
+  });
+
+  it("does NOT emit elapsed fallback when planSnapshot is present (no double-display)", () => {
+    const out = renderFrameText(
+      frame({
+        planSnapshot: {
+          entries: [{ id: "0", label: "a", status: "in_progress" }],
+        },
+        visibleEvents: [event({ kind: "tool", defaultLabel: "ev1" })],
+      }),
+      undefined,
+      12_345,
+    );
+    expect(out).not.toContain("(running");
+  });
+
+  it("does NOT emit elapsed fallback when elapsedMs is undefined", () => {
+    const out = renderFrameText(
+      frame({
+        planSnapshot: undefined,
+        visibleEvents: [event({ kind: "tool", defaultLabel: "ev1" })],
+      }),
+    );
+    expect(out).toBe("ev1");
+    expect(out).not.toContain("(running");
+  });
+
+  it("emits (running 0 s) when elapsedMs is 0 (first tick of a SEP-less turn — load-bearing for Task 3)", () => {
+    // A freshly-captured `startedAtMs === clock.now()` produces elapsedMs=0
+    // on the first apply(); the renderer must treat 0 as a legitimate
+    // first-tick value, NOT as "no value". Task 3 strategy plumbing depends
+    // on this branch.
+    const out = renderFrameText(
+      frame({
+        planSnapshot: undefined,
+        visibleEvents: [event({ kind: "tool", defaultLabel: "ev1" })],
+      }),
+      undefined,
+      0,
+    );
+    expect(out).toContain("(running 0 s)");
+  });
+});
+
+// --- Phase 78 WS-F: successLabel(markers?, recoveredFailures?) ---------------
+//
+// SPEC-§8.6 — when a turn completes with `recoveredFailures > 0`, the closing
+// success line carries `(with N recovered failure[s])` after the base label.
+
+describe("successLabel recoveredFailures annotation (SPEC-§8.6)", () => {
+  it("without recoveredFailures arg returns the base check-done label", () => {
+    expect(successLabel(DEFAULT_THEME_MARKERS)).toBe("✓ done");
+  });
+
+  it("with recoveredFailures=1 appends (with 1 recovered failure) — singular", () => {
+    expect(successLabel(DEFAULT_THEME_MARKERS, 1)).toBe("✓ done (with 1 recovered failure)");
+  });
+
+  it("with recoveredFailures=2 uses plural failures", () => {
+    expect(successLabel(DEFAULT_THEME_MARKERS, 2)).toBe("✓ done (with 2 recovered failures)");
+  });
+
+  it("with recoveredFailures=0 returns the base label (no annotation)", () => {
+    expect(successLabel(DEFAULT_THEME_MARKERS, 0)).toBe("✓ done");
+  });
 });
 
 describe("subagentLine", () => {
