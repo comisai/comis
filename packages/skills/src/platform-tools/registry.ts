@@ -60,6 +60,7 @@ import { createTokensManageTool } from "./tools/tokens-manage-tool.js";
 import { createChannelsManageTool } from "./tools/channels-manage-tool.js";
 import { createSkillsManageTool } from "./tools/skills-manage-tool.js";
 import { createMcpManageTool } from "./tools/mcp-manage-tool.js";
+import { createMcpLoginTool } from "./tools/mcp-login-tool.js";
 import { createHeartbeatManageTool } from "./tools/heartbeat-manage-tool.js";
 import { createNotifyTool } from "./tools/notify-tool.js";
 import { createBackgroundTasksTool } from "./tools/background-tasks-tool.js";
@@ -332,6 +333,11 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
       name: "mcp_manage",
       category: "mcp",
       build: (ctx) => createMcpManageTool(ctx.rpcCall as never, ctx.approvalGate as never),
+    },
+    {
+      name: "mcp_login",
+      category: "mcp",
+      build: (ctx) => createMcpLoginTool(ctx.rpcCall as never),
     },
     // Capability-gated resources/prompts utility tools.
     // GLOBAL (server parameter) — exactly 4 descriptors regardless of how many
