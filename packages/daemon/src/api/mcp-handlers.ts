@@ -289,10 +289,16 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         ...(persistedEntry?.enableResources !== undefined && { enableResources: persistedEntry.enableResources }),
         ...(persistedEntry?.enablePrompts !== undefined && { enablePrompts: persistedEntry.enablePrompts }),
         ...(persistedEntry?.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: persistedEntry.supportsParallelToolCalls }),
-        // Forward auth/oauth from the persisted entry (no RPC param) so
-        // createTransport wires the OAuthClientProvider on reconnect — else
-        // the server downgrades to no-auth.
-        ...(persistedEntry?.auth !== undefined && { auth: persistedEntry.auth }),
+        // Forward auth to the runtime config. Priority:
+        //   1. params.auth (explicit caller intent — wins on first install and
+        //      on overrides from "headers" → "oauth")
+        //   2. persistedEntry?.auth (carry-over on reconnect/re-add with no
+        //      explicit auth param — preserves the stored OAuth requirement)
+        // Without the explicit params.auth spread, first-install auth:"oauth"
+        // is silently dropped because persistedEntry is undefined at that point,
+        // and the OAuthClientProvider is never wired (silent downgrade to no-auth).
+        ...(params.auth !== undefined && { auth: params.auth }),
+        ...(params.auth === undefined && persistedEntry?.auth !== undefined && { auth: persistedEntry.auth }),
         ...(persistedEntry?.oauth !== undefined && { oauth: persistedEntry.oauth }),
       };
 
@@ -340,9 +346,11 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         resolvedKeepaliveIntervalMs,
         resolvedCircuitBreakerThreshold,
         resolvedCircuitBreakerCooldownMs,
-        // auth/oauth have no RPC param — buildPersistedMcpEntry resolves them
-        // from persistedEntry so the persist keeps them. No explicit
-        // pass-through needed.
+        // Pass params.auth explicitly so first-install auth:"oauth" is preserved
+        // even when persistedEntry is undefined. buildPersistedMcpEntry uses
+        // `input.auth ?? persistedEntry?.auth` (line 129) — so an explicit
+        // params.auth always wins over the carry-over from the persisted entry.
+        auth: params.auth,
         persistedEntry,
       });
       const newServers: McpServerEntry[] = [
