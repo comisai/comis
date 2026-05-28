@@ -179,4 +179,44 @@ describe("port-backed adapter", () => {
       store.saveTokens("srv", { access_token: "at", expires_in: 60, token_type: "Bearer" }),
     ).resolves.toBeUndefined();
   });
+
+  it("saveTokens rejects server names containing characters outside /^[a-zA-Z0-9_-]+$/", async () => {
+    // CR-01 regression: an unvalidated server name with `:` corrupts the
+    // composed profileId "mcp-oauth:<server>" and could overwrite another
+    // server's port entry. The wrapper must reject malformed names BEFORE
+    // touching the disk store (filename) or the port (profileId key).
+    const store = createPortBackedMcpTokenStore(port, {
+      tokensDir: dir,
+      confinedBaseDir: dir,
+      now: () => 1_700_000_000_000,
+      logger,
+    });
+
+    // Each of these contains a character outside the schema's character class.
+    const malformedNames = [
+      "foo:bar",         // colon would split the profileId
+      "foo/bar",         // slash is a path traversal risk via filePath()
+      "foo bar",         // whitespace
+      "foo.bar",         // dot
+      "",                // empty string
+      "üñïcødé",         // non-ASCII
+    ];
+
+    for (const bad of malformedNames) {
+      await expect(
+        store.saveTokens(bad, {
+          access_token: "at",
+          expires_in: 60,
+          token_type: "Bearer",
+        }),
+      ).rejects.toThrow(/invalid_server_name/);
+    }
+
+    // Neither the disk store nor the port should have received any writes.
+    expect(port._setCallArgs).toHaveLength(0);
+    const { existsSync: exists, readdirSync } = await import("node:fs");
+    // Only the tokens dir itself may exist — no `*.json` files written.
+    const entries = exists(dir) ? readdirSync(dir) : [];
+    expect(entries.filter((e) => e.endsWith(".json"))).toHaveLength(0);
+  });
 });
