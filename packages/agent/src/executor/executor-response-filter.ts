@@ -74,14 +74,18 @@ export function scanWithOutputGuard(params: {
     const warnMsg = context === "success"
       ? "LLM response redacted"
       : "Error response redacted";
+    // Hint collapses error + exception into one message: both flow through
+    // the same OutputGuard redaction with no operator-actionable difference.
+    // If we ever need to distinguish them in dashboards, the metadata.context
+    // field on the audit:event emit below already carries the split
+    // ("error_response" vs "exception_response").
+    const hint = context === "success"
+      ? "OutputGuard blocked critical findings in LLM response"
+      : "OutputGuard blocked critical findings in error response";
     logger.warn(
       {
         findings: guardResult.value.findings.length,
-        hint: context === "success"
-          ? "OutputGuard blocked critical findings in LLM response"
-          : context === "error"
-            ? "OutputGuard blocked critical findings in error response"
-            : "OutputGuard blocked critical findings in error response",
+        hint,
         errorKind: "validation" as ErrorKind,
       },
       warnMsg,
