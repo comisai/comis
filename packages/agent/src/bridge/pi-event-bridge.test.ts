@@ -3887,6 +3887,56 @@ describe("createPiEventBridge", () => {
       expect(executionPlan.current).toBeDefined();
       expect(executionPlan.current!.steps.length).toBe(4);
     });
+
+    it("ignores message_end carrying a user prompt (no phantom plan from injected memory bullets)", () => {
+      // Bug observed in live daemon instance ccde383f at 12:48:08.968Z: a
+      // simple "Hello" turn extracted a 5-step plan because pi-agent-core emits
+      // message_end for EVERY message including the inbound user prompt
+      // (agent-loop.js:52,96 — not just assistants). The user prompt contains
+      // an injected `## Relevant Memories` block with `-` bullets that match
+      // Strategy 2 of the SEP extractor. The fix discriminates on
+      // message.role; this test pins the regression-lock.
+      const executionPlan = { current: undefined as ExecutionPlan | undefined };
+      const sepDeps = createMockDeps({
+        executionPlan,
+        sepConfig: { maxSteps: 15, minSteps: 3 },
+        sepMessageText: "Hello",
+        sepExecutionStartMs: Date.now(),
+      });
+      const { listener } = createPiEventBridge(sepDeps);
+
+      // A user prompt that includes bullet-shaped content in the injected
+      // system context — the actual shape pi-mono passes through message_end
+      // when the inbound message has memory recall, file attachments, etc.
+      const userPromptWithBullets = {
+        type: "message_end" as const,
+        message: {
+          role: "user" as const,
+          content: [
+            {
+              type: "text",
+              text:
+                "## Relevant Memories\n" +
+                "- [learned] memory entry one\n" +
+                "- [learned] memory entry two\n" +
+                "- [learned] memory entry three\n" +
+                "- [learned] memory entry four\n" +
+                "- [learned] memory entry five\n\n" +
+                "User: Hello",
+            },
+          ],
+        },
+      };
+
+      listener(userPromptWithBullets as any);
+
+      // No phantom plan extracted from the user's prompt.
+      expect(executionPlan.current).toBeUndefined();
+      const emitCalls = (sepDeps.eventBus.emit as any).mock.calls.filter(
+        (c: any[]) => c[0] === "sep:plan_extracted",
+      );
+      expect(emitCalls.length).toBe(0);
+    });
   });
 
   // ------------------------------------------------------------------
