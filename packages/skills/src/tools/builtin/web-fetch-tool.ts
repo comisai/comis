@@ -22,7 +22,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import { Impit } from "impit";
-import { EXTERNAL_CONTENT_WARNING, FileExtractionConfigSchema, systemNowDate, systemNowMs, type WrapExternalContentOptions, validateUrl, wrapWebContent } from "@comis/core";
+import { EXTERNAL_CONTENT_WARNING, FileExtractionConfigSchema, systemNowDate, systemNowMs, type WrapExternalContentOptions, validateUrl, wrapWebContent, registerActivityLabelSpec } from "@comis/core";
 import { createPdfExtractor } from "../integrations/document/pdf-extractor.js";
 import {
   detectErrorPagePattern,
@@ -45,6 +45,18 @@ import {
   resolveCacheTtlMs,
   resolveTimeoutSeconds,
 } from "./web-shared.js";
+
+// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). The EMITTED name
+// uses an UNDERSCORE — `web-fetch-tool.ts:614 → name: "web_fetch"` — while
+// the file basename is hyphenated (RESEARCH Pitfall 2). The `{url}`
+// placeholder is allowlisted via detailKeys; the LLM-supplied URL passes
+// through redactValue before substitution (an absolute path in the URL is
+// compacted to `~`).
+registerActivityLabelSpec("web_fetch", {
+  semanticPhase: "tool",
+  label: "fetching {url}",
+  detailKeys: ["url"],
+});
 
 // ---------------------------------------------------------------------------
 // Constants

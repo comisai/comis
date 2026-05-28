@@ -17,8 +17,8 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Type } from "typebox";
 import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
-import { safePath, systemNowMs, tryGetContext } from "@comis/core";
-import { redactSecretsInText } from "@comis/observability";
+import { safePath, systemNowMs, tryGetContext, registerActivityLabelSpec } from "@comis/core";
+import { redactSecretsInText, parseShellCommand } from "@comis/observability";
 import {
   jsonResult,
   throwToolError,
@@ -37,6 +37,31 @@ import {
 } from "./exec-shared.js";
 import { executeForeground } from "./exec-foreground.js";
 import { executeBackground } from "./exec-background.js";
+
+// Activity label spec (LBL-01 / SPEC-§6.3 / Phase 78 WS-A + WS-C). Descriptor
+// name == emitted name (exec-tool/index.ts:75 → `name: "exec"`). The
+// transform hook wires parseShellCommand (LBL-02 runtime completion); the
+// fallback `label` literal renders when the transform returns "" (empty
+// command).
+//
+// Security (Pitfall 4 — defense-in-depth):
+//   1) parseShellCommand self-redacts via redactValue at
+//      shell-label-parser.ts:53 — `grep sk-… /tmp/log` renders as
+//      `search for \`<redacted>\` in /tmp/log`.
+//   2) applyTemplate step 4 (template-engine.ts:155) re-runs the transform
+//      output through redactValue — a malicious or buggy transform still
+//      cannot leak a secret shape.
+// No detailKeys: the LLM-supplied command string is consumed by the
+// transform (which handles its own redaction) — there is no `{key}`
+// placeholder for the template-engine allowlist to police.
+registerActivityLabelSpec("exec", {
+  semanticPhase: "tool",
+  label: "running command",
+  transform: (params) => {
+    const cmd = typeof params.command === "string" ? params.command : "";
+    return cmd.length > 0 ? parseShellCommand(cmd) : "";
+  },
+});
 
 export type { ExecToolDeps } from "./exec-types.js";
 export { killTree, buildSpawnCommand, buildInstallDetourHint } from "./exec-shared.js";

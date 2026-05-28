@@ -17,7 +17,7 @@ import { ok, err } from "@comis/shared";
 import { Type } from "typebox";
 import * as fs from "node:fs/promises";
 import { extname } from "node:path";
-import { safePath, PathTraversalError } from "@comis/core";
+import { safePath, PathTraversalError, registerActivityLabelSpec } from "@comis/core";
 import type { FileStateTracker } from "../file/file-state-tracker.js";
 import { isDeviceFile } from "../file/file-state-tracker.js";
 import { suggestSimilarPaths } from "../file/path-suggest.js";
@@ -25,6 +25,16 @@ import { type LazyPaths, resolvePaths } from "../file/safe-path-wrapper.js";
 import { readStringParam, readNumberParam } from "../../../platform-tools/tool-helpers.js";
 import { readFileWithMetadata } from "./shared/file-encoding.js";
 import { parseNotebook, renderNotebookCells } from "./shared/notebook-utils.js";
+
+// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). Descriptor name ==
+// emitted name for builtins (see read-tool.ts:361 → `name: "read"`). The
+// `{path}` placeholder is substituted from the allowlisted `detailKeys`
+// (SEC-03 enforcement: only `path` survives the template-engine filter).
+registerActivityLabelSpec("read", {
+  semanticPhase: "tool",
+  label: "reading {path}",
+  detailKeys: ["path"],
+});
 
 // ---------------------------------------------------------------------------
 // Constants
