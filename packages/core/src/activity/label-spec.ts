@@ -198,8 +198,13 @@ export function _clearActivityLabelSpecsForTest(): void {
 
 /**
  * Resolve the effective {@link LabelSpec} for a tool (and optionally an action),
- * applying the precedence **theme-override > registered > semantic fallback**
- * (spec §6.2) as a deep, per-field merge.
+ * applying the precedence **theme-override > registered > pattern catch-all
+ * (L79) > semantic fallback** (spec §6.2) as a deep, per-field merge.
+ *
+ * The pattern catch-all (Layer 2.5; see {@link tryPatternSpec}) only fires when
+ * no spec is registered for the tool name, so an explicit
+ * {@link registerActivityLabelSpec} call (Layer 2) and a theme override
+ * (Layer 3) both still win above it.
  *
  * @param toolName - the tool name (used for the semantic fallback + lookups)
  * @param opts     - optional `action` selector and `theme` override layer
@@ -230,6 +235,18 @@ export function resolveLabelSpec(toolName: string, opts: ResolveLabelOptions = {
           actionSpec,
         ));
       }
+    }
+  } else {
+    // Layer 2.5 — pattern catch-all (L79). Only fires when no spec is
+    // explicitly registered, so Layer 2 still wins. Theme override (Layer 3)
+    // still deep-merges on top.
+    const pattern = tryPatternSpec(toolName);
+    if (pattern !== undefined) {
+      if (pattern.semanticPhase !== undefined) semanticPhase = pattern.semanticPhase;
+      ({ label, detail, detailKeys, transform } = mergeActionFields(
+        { label, detail, detailKeys, transform },
+        pattern,
+      ));
     }
   }
 
@@ -296,4 +313,31 @@ function lookup<T>(record: Readonly<Record<string, T>>, key: string): T | undefi
 function humanizeToolName(toolName: string): string {
   const humanized = toolName.replace(/_/g, " ").trim();
   return humanized.length > 0 ? humanized : "running tool";
+}
+
+/**
+ * L79 — Pattern catch-all for dynamically-discovered tool names that have no
+ * co-located source file to register a label spec on (e.g. MCP tools, which
+ * are discovered at runtime). Currently matches `^mcp__<server>--<method>$`
+ * and synthesizes a clean `using <server> · <method humanized>` label.
+ *
+ * Pure function; returns `undefined` when no pattern matches so the resolver
+ * falls through to the semantic-classifier humanize fallback. Invoked from
+ * {@link resolveLabelSpec} as Layer 2.5 — only when no spec is registered
+ * for the tool name, so explicit registrations (Layer 2) and theme overrides
+ * (Layer 3) still win.
+ *
+ * The server-name segment cannot contain `-` (the regex's `[^-]+` capture),
+ * so `--` is unambiguous as the method separator. The method segment is
+ * humanized via `_` → ` ` AND `-` → ` ` so `mcp__svc--foo-bar` cleanly
+ * yields `"using svc · foo bar"` rather than leaking the dash.
+ */
+function tryPatternSpec(toolName: string): RegisteredLabelSpec | undefined {
+  const mcp = /^mcp__([^-]+)--(.+)$/.exec(toolName);
+  if (mcp !== null) {
+    const server = mcp[1] ?? "";
+    const method = (mcp[2] ?? "").replace(/_/g, " ").replace(/-/g, " ").trim();
+    return { semanticPhase: "tool", label: `using ${server} · ${method}` };
+  }
+  return undefined;
 }
