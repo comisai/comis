@@ -27,6 +27,7 @@ import { join } from "node:path";
 import PQueue from "p-queue";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { connectServer, isNeedsOAuthLoginError } from "./mcp-client-connect.js";
 import { createTokenStore, type TokenStore } from "./oauth/token-store.js";
@@ -171,6 +172,29 @@ describe("connectServer — OAuth path", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected err");
     // The error is TAGGED so the daemon RPC layer can surface needs_oauth_login.
+    expect(isNeedsOAuthLoginError(result.error)).toBe(true);
+    // No browser was launched daemon-side.
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it("returns needs_oauth_login on StreamableHTTPError 401 (no provider attached, first-install)", async () => {
+    connectImpl = () =>
+      Promise.reject(
+        new StreamableHTTPError(401, 'Error POSTing to endpoint: {"error":"Unauthorized"}'),
+      );
+
+    const state = makeState();
+    const deps = makeDeps();
+    const result = await connectServer(state, deps, {
+      name: "higgsfield",
+      transport: "http",
+      url: "https://mcp.higgsfield.ai/mcp",
+      enabled: true,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected err");
+    // The error MUST be tagged so mcp-handlers.ts sees isNeedsOAuthLoginError.
     expect(isNeedsOAuthLoginError(result.error)).toBe(true);
     // No browser was launched daemon-side.
     expect(openUrl).not.toHaveBeenCalled();
