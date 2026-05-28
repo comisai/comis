@@ -85,6 +85,29 @@ export interface McpOauthHandlerDeps extends WorkspaceApiDeps {
    * can assert it is never a real `open` import.
    */
   readonly openUrl?: (url: string) => void;
+  /**
+   * Push a short completion message back to the operator's channel after a
+   * headless OAuth login successfully connects the MCP server (Fix 9). Fixes
+   * 4 + 6 + 8 land the connection asynchronously: the RPC returns
+   * `headless_hint` immediately, the operator authorizes in their browser,
+   * and the daemon-side background task completes the token exchange + the
+   * `manager.connect`. There is no path that wakes the agent at the moment
+   * of completion, so without this hook the agent stays silent until the
+   * operator explicitly asks "is it connected?" (observed 2026-05-28 against
+   * the live Higgsfield install — 27 tools discovered, agent silent).
+   *
+   * Wired by `rpc-dispatch.ts` to
+   * `deliveryService.deliverToChannel(adaptersByType[channelType], …)` —
+   * the same chokepoint `message.send` uses. The target is captured from
+   * the RPC's `_deliveryTarget` (`setup-tools.ts:289-303` injects this
+   * onto every agent-initiated call). Optional — undefined skips the
+   * notification cleanly (e.g., CLI-initiated logins where there is no
+   * channel to address; the operator sees the result in their terminal).
+   */
+  readonly notifyOperatorChannel?: (
+    target: { channelType: string; channelId: string; userId?: string; tenantId?: string },
+    text: string,
+  ) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +147,16 @@ export function createMcpOauthHandlers(
       // server_name" UX. The contract's `.min(1)` is defense-in-depth.
       const nameRaw = rawParams.server_name as string | undefined;
       if (!nameRaw) throw new Error("Missing required parameter: server_name");
+
+      // Capture the operator's channel target BEFORE stripping internals so
+      // the headless background completion (Fix 9) can push a notification
+      // back to the same chat that initiated this login. The dispatcher
+      // injects `_deliveryTarget` on every agent-initiated RPC at
+      // `setup-tools.ts:289-303`; CLI-initiated `comis mcp login` calls
+      // omit it (operator sees the result in their terminal).
+      const deliveryTarget = rawParams._deliveryTarget as
+        | { channelType: string; channelId: string; userId?: string; tenantId?: string }
+        | undefined;
 
       // Strip dispatcher-injected _X internals BEFORE contract parse.
       const userParams = stripInternalFields(rawParams);
@@ -231,6 +264,34 @@ export function createMcpOauthHandlers(
             // operator knows to retry. Throwing propagates to runOauthLogin's
             // background try/catch which logs a fallback WARN.
             throw new Error(connectResult.error.message);
+          }
+          // Fix 9: push a short completion message back to the operator's
+          // channel. Without this the agent stays silent until the operator
+          // asks "is X connected?" (observed 2026-05-28: 27 Higgsfield
+          // tools discovered, agent silent). Skip cleanly when the login
+          // came in without a channel target (CLI-initiated) OR when the
+          // notify hook is unwired (test harnesses). A notification failure
+          // does NOT roll back the persisted tokens or the live connection
+          // — it is purely a UX side-effect, logged at WARN if it throws.
+          if (deliveryTarget !== undefined && deps.notifyOperatorChannel !== undefined) {
+            const toolCount = connectResult.value.tools.length;
+            try {
+              await deps.notifyOperatorChannel(
+                deliveryTarget,
+                `✓ MCP server "${name}" connected — ${toolCount} tool${toolCount === 1 ? "" : "s"} available.`,
+              );
+            } catch (notifyErr) {
+              deps.logger.warn(
+                {
+                  method: "mcp.oauth_login",
+                  entityId: name,
+                  err: notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
+                  hint: "Headless OAuth + connect succeeded; only the operator notification failed. The connection is live; tools are registered.",
+                  errorKind: "platform" as const,
+                },
+                "Headless-OAuth completion notification failed",
+              );
+            }
           }
         },
         logger: deps.logger,

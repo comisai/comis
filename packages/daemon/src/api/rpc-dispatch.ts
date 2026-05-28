@@ -298,6 +298,34 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       ...deps,
       mcpClientManager: deps.mcpClientManager,
       logger: deps.logger,
+      // Fix 9: push a completion message back to the operator's chat after a
+      // headless OAuth + manager.connect succeeds. Same chokepoint
+      // message.send uses (deliveryService → resolveAdapter →
+      // adaptersByType[channelType]). Skips silently if the channel adapter
+      // for the operator's channelType isn't registered (e.g., the adapter
+      // was disabled between RPC entry and OAuth completion).
+      notifyOperatorChannel: async (target, text) => {
+        const adapter = deps.adaptersByType.get(target.channelType);
+        if (adapter === undefined) {
+          deps.logger.warn(
+            {
+              method: "mcp.oauth_login",
+              channelType: target.channelType,
+              hint: "Adapter not registered at OAuth-completion time; notification skipped",
+              errorKind: "platform" as const,
+            },
+            "Headless-OAuth completion notification skipped (no adapter)",
+          );
+          return;
+        }
+        const deliveryResult = await deps.deliveryService.deliverToChannel(
+          adapter,
+          target.channelId,
+          text,
+          { origin: "mcp.oauth_login.headless_completed" },
+        );
+        if (!deliveryResult.ok) throw deliveryResult.error;
+      },
     }),
     // daemon-handlers consumes DaemonApiDeps; spread `...deps` so the
     // cluster slice's required `logger` is present alongside the

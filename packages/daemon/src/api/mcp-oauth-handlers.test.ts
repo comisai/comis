@@ -248,6 +248,99 @@ describe("MCP OAuth RPC handlers", () => {
       expect(deps.mcpClientManager.reconnect).not.toHaveBeenCalled();
     });
 
+    // Fix 9 (2026-05-28). After Fix 6+8 the headless OAuth chain runs to
+    // completion (tokens persisted + manager.connect succeeds), but the
+    // agent stays silent — its turn ended when mcp_login returned
+    // headless_hint and there is no path that wakes the agent when the
+    // daemon-side background work finishes. The operator must ask "is X
+    // connected?" for the agent to verify via mcp_manage(list).
+    //
+    // Fix: after a successful headless background connect, push a short
+    // completion message to the operator's channel (captured from the
+    // mcp.oauth_login RPC's `_deliveryTarget`) via the injected
+    // `notifyOperatorChannel` hook. The hook is wired in rpc-dispatch.ts
+    // to deliveryService.deliverToChannel(adaptersByType[channelType], …).
+    it("headless onAuthorized → notifyOperatorChannel fires with the operator's _deliveryTarget after manager.connect succeeds", async () => {
+      let capturedOnAuthorized: ((name: string) => Promise<void>) | undefined;
+      const runOauthLogin = vi.fn().mockImplementation(
+        async (args: { onAuthorized?: (name: string) => Promise<void> }) => {
+          capturedOnAuthorized = args.onAuthorized;
+          return { status: "headless_hint", authUrl: "https://auth.example.com/x" };
+        },
+      );
+      const notifyOperatorChannel = vi.fn().mockResolvedValue(undefined);
+      const deps = makeDeps("higgsfield", {
+        runOauthLogin,
+        notifyOperatorChannel,
+        entry: {
+          name: "higgsfield",
+          transport: "http",
+          url: "https://mcp.higgsfield.ai/mcp",
+          auth: "oauth",
+        },
+      });
+      (deps.mcpClientManager.connect as ReturnType<typeof vi.fn>).mockResolvedValue(
+        ok({
+          name: "higgsfield",
+          status: "connected",
+          tools: new Array(27).fill(0).map((_, i) => ({ name: `tool_${i}` })),
+        }),
+      );
+
+      const handlers = createMcpOauthHandlers(deps);
+      // Inject the operator's channel target the same way setup-tools.ts wraps
+      // every agent RPC: as `_deliveryTarget` on the params bag.
+      const deliveryTarget = {
+        channelId: "678314278",
+        userId: "678314278",
+        tenantId: "default",
+        channelType: "telegram",
+      };
+      await handlers[McpOauthLoginContract.method]({
+        server_name: "higgsfield",
+        _deliveryTarget: deliveryTarget,
+      });
+
+      // Background task fires onAuthorized after the operator's redirect.
+      expect(capturedOnAuthorized).toBeDefined();
+      await capturedOnAuthorized!("higgsfield");
+
+      // The notification fired with the operator's channel target and a
+      // message naming the server + tool count. Connect succeeded first.
+      expect(notifyOperatorChannel).toHaveBeenCalledOnce();
+      const [calledTarget, calledText] = (notifyOperatorChannel as ReturnType<typeof vi.fn>).mock.calls[0] as [unknown, string];
+      expect(calledTarget).toMatchObject(deliveryTarget);
+      expect(calledText).toContain("higgsfield");
+      expect(calledText).toContain("27");
+    });
+
+    it("headless onAuthorized without an injected _deliveryTarget → notification is skipped (no throw)", async () => {
+      let capturedOnAuthorized: ((name: string) => Promise<void>) | undefined;
+      const runOauthLogin = vi.fn().mockImplementation(
+        async (args: { onAuthorized?: (name: string) => Promise<void> }) => {
+          capturedOnAuthorized = args.onAuthorized;
+          return { status: "headless_hint", authUrl: "https://auth.example.com/x" };
+        },
+      );
+      const notifyOperatorChannel = vi.fn();
+      const deps = makeDeps("higgsfield", {
+        runOauthLogin,
+        notifyOperatorChannel,
+        entry: { name: "higgsfield", transport: "http", url: "https://x", auth: "oauth" },
+      });
+      (deps.mcpClientManager.connect as ReturnType<typeof vi.fn>).mockResolvedValue(
+        ok({ name: "higgsfield", status: "connected", tools: [] }),
+      );
+
+      const handlers = createMcpOauthHandlers(deps);
+      // No `_deliveryTarget` — e.g., CLI-initiated `comis mcp login`.
+      await handlers[McpOauthLoginContract.method]({ server_name: "higgsfield" });
+      await capturedOnAuthorized!("higgsfield");
+
+      // No channel to message → skip cleanly, never throw.
+      expect(notifyOperatorChannel).not.toHaveBeenCalled();
+    });
+
     it("authorized but reconnect fails → status failed (does not claim authorized)", async () => {
       const runOauthLogin = vi.fn().mockResolvedValue({ status: "authorized" });
       const deps = makeDeps("notion", { runOauthLogin });
