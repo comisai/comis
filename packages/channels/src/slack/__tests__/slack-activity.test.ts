@@ -305,7 +305,11 @@ async function runScenario(
   const timer = createFakeTimers();
   const clock = createFakeClock(0);
   const fake = createFakeSlackAdapter();
-  const r = createSlackActivityRenderer(fake, "chat-1", { timer, clock });
+  // Phase 78 reconciliation (option ii — plan §530): omit `clock` so the §8.5
+  // "(running N s)" elapsed fallback is skipped and committed fixtures stay
+  // byte-stable. Strategy-level tests in edit-place.test.ts inject a clock and
+  // assert the elapsed text — that is the live-production wiring contract.
+  const r = createSlackActivityRenderer(fake, "chat-1", { timer });
 
   for (const f of frames) {
     await r.apply(f);

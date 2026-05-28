@@ -99,9 +99,10 @@ describe("Discord approval components (signed native callback_data — APV-02)",
 
   it("renders the approval prompt text alongside the buttons", async () => {
     const timer = createFakeTimers();
-    const clock = createFakeClock(0);
     const fake = createFakeDiscordAdapter();
-    const r = createDiscordActivityRenderer(fake, "chat-1", { timer, clock, signCallbackData: sign });
+    // Phase 78 (plan §530, option ii): drop clock so the §8.5 elapsed fallback
+    // is skipped — the test asserts the approval-prompt text byte-stably.
+    const r = createDiscordActivityRenderer(fake, "chat-1", { timer, signCallbackData: sign });
 
     await r.apply(approvalFrame());
 

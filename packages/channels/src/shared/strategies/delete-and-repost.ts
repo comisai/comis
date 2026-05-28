@@ -61,6 +61,10 @@ export function createDeleteAndRepostRenderer(
 
   let lastActivityId: string | undefined;
   let pendingDelete: TimerHandle | undefined;
+  /** WS-F Phase 78 / SPEC-§8.5: first-apply clock snapshot; feeds elapsedMs
+   *  into renderFrameText on EVERY repost so each delete+repost carries the
+   *  live "(running N s)" fallback. Undefined → no clock → graceful-degrade. */
+  let startedAtMs: number | undefined;
 
   async function deleteLast(): Promise<Result<void, ActivityRenderError>> {
     if (lastActivityId === undefined) return ok(undefined);
@@ -78,7 +82,16 @@ export function createDeleteAndRepostRenderer(
       // Delete the previous activity message before reposting the transition.
       const deleted = await deleteLast();
       if (!deleted.ok) return deleted;
-      const text = appendPrompt(renderFrameText(frame.visibleEvents), buildPrompt?.(frame.visibleEvents));
+      // WS-F: capture startedAtMs once + compute elapsedMs at every apply()
+      // so each repost carries the live "(running N s)" fallback (when no plan
+      // is active). No clock injected → graceful-degrade (fallback skipped).
+      if (startedAtMs === undefined && clock !== undefined) startedAtMs = clock.now();
+      const elapsedMs =
+        clock !== undefined && startedAtMs !== undefined ? clock.now() - startedAtMs : undefined;
+      const text = appendPrompt(
+        renderFrameText(frame, markers, elapsedMs),
+        buildPrompt?.(frame.visibleEvents),
+      );
       const sent = await actions.send(text);
       if (!sent.ok) return sent;
       lastActivityId = sent.value;

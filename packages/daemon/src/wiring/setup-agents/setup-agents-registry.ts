@@ -130,6 +130,15 @@ export interface AgentsResult {
    * call `closeAll()` to flush every open per-session recorder.
    */
   trajectoryRegistry: import("@comis/observability").SessionTrajectoryHandleRegistry;
+  /**
+   * Per-agent ExecutionPlanHolder reference (typed as the read-only port).
+   * WS-D Phase 78: surfaced so daemon.ts can thread the DEFAULT agent's
+   * holder into ChannelsDeps.executionPlanPort. Same reference flows into
+   * PiExecutorDeps.executionPlanHolder + AcpServerDeps.executionPlanPort
+   * (Pitfall 1: a parallel holder constructed at the chat path would always
+   * read empty since SEP publishes into THIS one).
+   */
+  executionPlanPorts: Map<string, import("@comis/core").ExecutionPlanPort>;
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +299,11 @@ export async function setupAgents(deps: {
   // Per-agent live ToolCapabilityPort adapters, parallel to skillRegistries;
   // mutated in lockstep by hot-add/hot-remove.
   const toolCapabilityPorts = new Map<string, ToolCapabilityPort>();
+  // Per-agent ExecutionPlanHolder reference map (typed as the read-only port).
+  // WS-D Phase 78: surfaced so daemon.ts can thread the DEFAULT agent's holder
+  // into ChannelsDeps.executionPlanPort. Same reference across ACP + chat
+  // (Pitfall 1 single-shared-holder invariant).
+  const executionPlanPorts = new Map<string, import("@comis/core").ExecutionPlanPort>();
 
   // Resolve sub-agent tool names from config for delegation awareness
   const subAgentToolGroups = container.config.security?.agentToAgent?.subAgentToolGroups ?? [];
@@ -425,6 +439,7 @@ export async function setupAgents(deps: {
     if (result.skillWatcherHandle) skillWatcherHandles.set(agentId, result.skillWatcherHandle);
     skillRegistries.set(agentId, result.skillRegistry);
     toolCapabilityPorts.set(agentId, result.toolCapabilityPort);
+    executionPlanPorts.set(agentId, result.executionPlanPort);
   }
 
   const defaultAgentId = routingConfig.defaultAgentId;
@@ -486,6 +501,10 @@ export async function setupAgents(deps: {
     // `closeAll()` on this in the shutdown chain — see the trajectory
     // sidecar drain step in daemon shutdown wiring.
     trajectoryRegistry,
+    // WS-D Phase 78: per-agent shared ExecutionPlanHolder reference. The
+    // daemon threads the DEFAULT agent's holder into ChannelsDeps so the
+    // chat plan-stream reads from the SAME object SEP publishes into.
+    executionPlanPorts,
   };
 }
 

@@ -47,9 +47,10 @@ function subagentFrame(label: string): ActivityRenderFrame {
 describe("Telegram subagent parent line (inline expand — APV-03)", () => {
   it("renders the subagent parent line inline (text carries the agentId), no thread", async () => {
     const timer = createFakeTimers();
-    const clock = createFakeClock(0);
     const fake = createFakeTelegramAdapter();
-    const r = createTelegramActivityRenderer(fake, "chat-1", { timer, clock, signCallbackData: sign });
+    // Phase 78 (plan §530, option ii): drop clock so the §8.5 elapsed fallback
+    // is skipped — the test asserts send.text byte-stably.
+    const r = createTelegramActivityRenderer(fake, "chat-1", { timer, signCallbackData: sign });
 
     await r.apply(subagentFrame("🤖 researcher: 3 steps"));
 

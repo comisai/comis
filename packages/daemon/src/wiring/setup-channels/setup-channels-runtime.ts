@@ -8,8 +8,9 @@
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";
-import type { Attachment, ChannelPort, ChannelPluginPort, DeliveryService, NormalizedMessage, SessionKey, ClockPort, TimerPort, ActivityStreamPort, TurnActivityContext } from "@comis/core";
+import type { Attachment, ChannelPort, ChannelPluginPort, DeliveryService, ExecutionPlanPort, NormalizedMessage, SessionKey, ClockPort, TimerPort, ActivityStreamPort, TurnActivityContext } from "@comis/core";
 import { formatSessionKey, safePath, systemNowDate, themeForName, chatProjection } from "@comis/core";
+import { createPlanStream } from "@comis/observability";
 import type { AppContainer } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -69,6 +70,10 @@ export interface ChannelManagerBuildDeps {
   activityStream?: ActivityStreamPort;
   /** WIRE-08: process-singleton circuit breaker (daemon.ts D2), shared across coordinators. */
   activityBreaker?: ActivityBreakerGate;
+  /** WS-D Phase 78: SHARED ExecutionPlanHolder (DEFAULT agent) from createAcpWiring().holder — SAME ref as
+   *  PiExecutorDeps.executionPlanHolder + AcpServerDeps.executionPlanPort (Pitfall 1: a parallel holder reads empty).
+   *  Absent → no chat plan-stream built (frame.planSnapshot undefined; elapsed fallback per Plan 78-05 WS-F). */
+  executionPlanPort?: ExecutionPlanPort;
   signCallbackData?: import("@comis/channels").SignCallbackData;
   mintApprovalLink?: import("@comis/channels").MintApprovalLink;
   // CR-01: server-side interactive-callback router (verifier) — inbound-gate.ts verifies
@@ -195,25 +200,22 @@ export async function buildAndStartChannelManager(
   // coordinatorFactory can close over it (UX-01 markers from the default agent activity.theme).
   const activityMarkers = themeForName(agents[defaultAgentId]?.activity?.theme ?? "default").markers;
   const activityRenderers = buildActivityRenderers(adaptersByType, channelPlugins, channelsLogger, { timer: deps.timers, clock: deps.clock, signCallbackData: deps.signCallbackData, mintApprovalLink: deps.mintApprovalLink, markers: activityMarkers });
-  // WIRE-06 seam (WR-01): the SOLE renderer-injection point is the per-turn fallback in the
-  // coordinatorFactory below (`deps.activityRendererFactory?.(ctx.channelType)`) — it fires for
-  // any channelType the live map does not serve (the activation test's post-boot `echo`). No
-  // boot-time map-swap loop (it would only override an already-mapped adapter; test-only seam).
-
-  // WIRE-03+07+08: the per-turn coordinatorFactory the inbound pipeline gate
-  // (execution-pipeline.ts:395) needs — over the renderers map + redacted ActivityStream +
-  // breaker + a live kill-switch. Built ONLY when the stream is injected (absent → gate
-  // false, fail-closed §22.2). The closure lives in the daemon (the root importing both
-  // @comis/orchestrator and the observability impl via deps.activityStream — Pitfall 1).
+  // WIRE-06 seam (WR-01): SOLE renderer-injection point is the per-turn `deps.activityRendererFactory?.(ctx.channelType)`
+  // fallback in the coordinatorFactory below — fires for any channelType the live map does not serve (test-only seam).
+  // WIRE-03+07+08: per-turn coordinatorFactory the inbound pipeline gate (execution-pipeline.ts:395) needs — over
+  // renderers + redacted ActivityStream + breaker + live kill-switch. Built ONLY when stream is injected (absent → gate
+  // false, fail-closed §22.2). Closure lives in the daemon (root importing @comis/orchestrator + observability — Pitfall 1).
   const activityStream = deps.activityStream;
+  // WS-D Phase 78: build the SEP plan-stream ONCE outside the per-turn closure. SHARED across turns;
+  // per-turn (agentId, sessionKey) filter inside the coordinator prevents cross-turn snapshot leaks.
+  const planStream = deps.executionPlanPort !== undefined
+    ? createPlanStream({ eventBus: container.eventBus, executionPlanPort: deps.executionPlanPort, logger: channelsLogger })
+    : undefined;
   const coordinatorFactory = activityStream
     ? (ctx: TurnActivityContext): ActivityTurnCoordinator => {
-        // D1: renderer from the live map; an unmapped channelType (post-boot test adapter)
-        // consults the WIRE-06 seam, then falls back to a no-op createTestSink().
-        // WR-04: resolve the theme markers PER-TURN from THIS agent's activity.theme
-        // (not the default agent's, baked once at boot) and thread them into the
-        // renderer so a non-default agent renders with its own theme. verbosity is
-        // already per-agent (config below); markers now match.
+        // D1: renderer from live map; unmapped channelType consults WIRE-06 seam then falls back to createTestSink().
+        // WR-04: resolve theme markers PER-TURN from THIS agent's activity.theme (not the default agent's, baked
+        // once at boot); verbosity is already per-agent (config below); markers now match.
         const turnMarkers = themeForName(agents[ctx.agentId]?.activity?.theme ?? "default").markers;
         const make = activityRenderers.get(ctx.channelType);
         const renderer = make?.(ctx.channelKey, turnMarkers) ?? deps.activityRendererFactory?.(ctx.channelType) ?? createTestSink();
@@ -225,13 +227,12 @@ export async function buildAndStartChannelManager(
           clock: deps.clock,
           logger: channelsLogger,
           config: { verbosity: agents[ctx.agentId]?.activity?.verbosity ?? "normal" },
-          // WIRE-07: the getter RE-READS the live config FRESH per flushApply — it must NOT
-          // capture an `agentActivity` const. The per-agent object is REPLACED wholesale on
-          // hot-reload (setup-agents-runtime.ts:99); re-reading `agents[ctx.agentId]?.activity`
-          // through the stable top-level `agents` ref observes the new object.
-          // CR-01: delegate to the fail-CLOSED resolver — NEVER returns undefined (see module).
+          // WIRE-07: live getter RE-READS config FRESH per flushApply — never capture an `agentActivity` const (per-agent
+          // object is REPLACED wholesale on hot-reload, setup-agents-runtime.ts:99). CR-01: fail-CLOSED resolver, never
+          // returns undefined (see module).
           killSwitch: () => resolveActivityKillSwitchSlice(agents, ctx.agentId),
           breaker: deps.activityBreaker, // WIRE-08: process-singleton (shared across coordinators)
+          planStream, // WS-D Phase 78: shared SEP plan-stream (built ONCE outside the closure)
         });
       }
     : undefined;
@@ -591,8 +592,7 @@ export async function buildAndStartChannelManager(
     }
   }
 
-  // activityRenderers + coordinatorFactory were built BEFORE the manager (above);
-  // return the map for the registry's ChannelsResult (activity counters scrape).
+  // activityRenderers + coordinatorFactory built BEFORE the manager (above); map returned for the registry's ChannelsResult activity-counters scrape.
   return { channelManager, lifecycleReactors, commandQueue, activityRenderers };
 }
 // Re-export Attachment + ChannelPluginPort (silences lint; public-surface boundary).

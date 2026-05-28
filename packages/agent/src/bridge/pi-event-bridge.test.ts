@@ -3748,6 +3748,197 @@ describe("createPiEventBridge", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // SEP eager extraction on message_end (lh5)
+  //
+  // pi-mono emits `message_end` when the assistant message stream resolves —
+  // BEFORE any `tool_execution_start` for tool_calls in that message. The
+  // bridge should extract the SEP plan at message_end so the channel-side
+  // activity scaffold paints the plan-checkbox header DURING the turn rather
+  // than ~3 ms before scaffold deletion at turn_end. The pre-existing
+  // turn_end SEP-extract block is preserved as a defensive fallback for
+  // pi-mono shape variants where text appears only at turn_end (Test 3).
+  // -------------------------------------------------------------------------
+
+  describe("SEP eager extraction on message_end (lh5)", () => {
+    const PLAN_TEXT =
+      "I'll help you set up the project. Here's my plan:\n1. Read the configuration file\n2. Install dependencies\n3. Run the build\n4. Verify the output";
+
+    /** Build a turn_end event with both tool calls and plan text in assistant content. */
+    function makeTurnEndWithPlan(planText: string, hasToolCalls = true) {
+      const content: unknown[] = [
+        { type: "text", text: planText },
+      ];
+      if (hasToolCalls) {
+        content.push({ type: "toolCall", toolCallId: "tc-plan", toolName: "read_file", args: {} });
+      }
+      return {
+        type: "turn_end" as const,
+        message: {
+          role: "assistant" as const,
+          content,
+          usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, totalTokens: 150, cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 } },
+          stopReason: "tool_use",
+        },
+        toolResults: [],
+      };
+    }
+
+    /**
+     * Build a message_end event with the same `message` shape that turn_end
+     * uses (per pi-agent-core types.d.ts — both carry the full AssistantMessage
+     * in `.message`). Unlike turn_end, message_end has no `toolResults` field.
+     */
+    function makeMessageEndWithPlan(planText: string, hasToolCalls = true) {
+      const content: unknown[] = [
+        { type: "text", text: planText },
+      ];
+      if (hasToolCalls) {
+        content.push({ type: "toolCall", toolCallId: "tc-plan", toolName: "read_file", args: {} });
+      }
+      return {
+        type: "message_end" as const,
+        message: {
+          role: "assistant" as const,
+          content,
+          usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, totalTokens: 150, cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 } },
+          stopReason: "tool_use",
+        },
+      };
+    }
+
+    it("emits sep:plan_extracted on message_end BEFORE any tool fires (regression: scaffold-deletion bug)", () => {
+      const executionPlan = { current: undefined as ExecutionPlan | undefined };
+      const sepDeps = createMockDeps({
+        executionPlan,
+        sepConfig: { maxSteps: 15, minSteps: 3 },
+        sepMessageText: "Please set up the project",
+        sepExecutionStartMs: Date.now(),
+      });
+      const { listener } = createPiEventBridge(sepDeps);
+
+      // message_end fires BEFORE tool_execution_start in the pi-mono event order
+      // (agent-loop.js:214,227 emit message_end, then executeToolCalls runs).
+      listener(makeMessageEndWithPlan(PLAN_TEXT) as any);
+
+      expect(executionPlan.current).toBeDefined();
+      expect(executionPlan.current!.active).toBe(true);
+      expect(executionPlan.current!.steps.length).toBe(4);
+      expect(executionPlan.current!.steps[0].description).toBe("Read the configuration file");
+      expect(executionPlan.current!.request).toBe("Please set up the project");
+      expect(sepDeps.eventBus.emit).toHaveBeenCalledWith(
+        "sep:plan_extracted",
+        expect.objectContaining({ agentId: "test-agent", stepCount: 4 }),
+      );
+    });
+
+    it("does not re-extract or re-emit when turn_end follows message_end with the same plan (guard idempotency)", () => {
+      const executionPlan = { current: undefined as ExecutionPlan | undefined };
+      const sepDeps = createMockDeps({
+        executionPlan,
+        sepConfig: { maxSteps: 15, minSteps: 3 },
+        sepMessageText: "Please set up the project",
+        sepExecutionStartMs: Date.now(),
+      });
+      const { listener } = createPiEventBridge(sepDeps);
+
+      listener(makeMessageEndWithPlan(PLAN_TEXT) as any);
+      const emitCallsAfterMsgEnd = (sepDeps.eventBus.emit as any).mock.calls
+        .filter((c: any[]) => c[0] === "sep:plan_extracted").length;
+      expect(emitCallsAfterMsgEnd).toBe(1);
+
+      // turn_end with the same plan text should NOT re-emit — the existing
+      // `!deps.executionPlan.current` guard makes the turn_end SEP-extract
+      // block a self-disabling no-op once message_end populated `current`.
+      listener(makeTurnEndWithPlan(PLAN_TEXT) as any);
+      const emitCallsAfterTurnEnd = (sepDeps.eventBus.emit as any).mock.calls
+        .filter((c: any[]) => c[0] === "sep:plan_extracted").length;
+      expect(emitCallsAfterTurnEnd).toBe(1); // still 1 — turn_end was a no-op
+    });
+
+    it("falls back to turn_end extraction when message_end carries no text content (defensive — pi-mono shape variants)", () => {
+      // Regression guard: if a future pi-mono version emits message_end without
+      // text content but text appears at turn_end, the existing turn_end path
+      // must still extract. This pins the defensive-fallback contract.
+      const executionPlan = { current: undefined as ExecutionPlan | undefined };
+      const sepDeps = createMockDeps({
+        executionPlan,
+        sepConfig: { maxSteps: 15, minSteps: 3 },
+        sepMessageText: "Please set up the project",
+        sepExecutionStartMs: Date.now(),
+      });
+      const { listener } = createPiEventBridge(sepDeps);
+
+      // message_end with only toolCall (no text) → no extract attempt
+      const msgEndNoText = {
+        type: "message_end" as const,
+        message: {
+          role: "assistant" as const,
+          content: [{ type: "toolCall", toolCallId: "tc-1", toolName: "read_file", args: {} }],
+          usage: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, totalTokens: 150, cost: { input: 0.001, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.003 } },
+          stopReason: "tool_use",
+        },
+      };
+      listener(msgEndNoText as any);
+      expect(executionPlan.current).toBeUndefined();
+
+      // turn_end with text → extract (legacy fallback path still works)
+      listener(makeTurnEndWithPlan(PLAN_TEXT) as any);
+      expect(executionPlan.current).toBeDefined();
+      expect(executionPlan.current!.steps.length).toBe(4);
+    });
+
+    it("ignores message_end carrying a user prompt (no phantom plan from injected memory bullets)", () => {
+      // Bug observed in live daemon instance ccde383f at 12:48:08.968Z: a
+      // simple "Hello" turn extracted a 5-step plan because pi-agent-core emits
+      // message_end for EVERY message including the inbound user prompt
+      // (agent-loop.js:52,96 — not just assistants). The user prompt contains
+      // an injected `## Relevant Memories` block with `-` bullets that match
+      // Strategy 2 of the SEP extractor. The fix discriminates on
+      // message.role; this test pins the regression-lock.
+      const executionPlan = { current: undefined as ExecutionPlan | undefined };
+      const sepDeps = createMockDeps({
+        executionPlan,
+        sepConfig: { maxSteps: 15, minSteps: 3 },
+        sepMessageText: "Hello",
+        sepExecutionStartMs: Date.now(),
+      });
+      const { listener } = createPiEventBridge(sepDeps);
+
+      // A user prompt that includes bullet-shaped content in the injected
+      // system context — the actual shape pi-mono passes through message_end
+      // when the inbound message has memory recall, file attachments, etc.
+      const userPromptWithBullets = {
+        type: "message_end" as const,
+        message: {
+          role: "user" as const,
+          content: [
+            {
+              type: "text",
+              text:
+                "## Relevant Memories\n" +
+                "- [learned] memory entry one\n" +
+                "- [learned] memory entry two\n" +
+                "- [learned] memory entry three\n" +
+                "- [learned] memory entry four\n" +
+                "- [learned] memory entry five\n\n" +
+                "User: Hello",
+            },
+          ],
+        },
+      };
+
+      listener(userPromptWithBullets as any);
+
+      // No phantom plan extracted from the user's prompt.
+      expect(executionPlan.current).toBeUndefined();
+      const emitCalls = (sepDeps.eventBus.emit as any).mock.calls.filter(
+        (c: any[]) => c[0] === "sep:plan_extracted",
+      );
+      expect(emitCalls.length).toBe(0);
+    });
+  });
+
   // ------------------------------------------------------------------
   // stream-close canonical capture + turn_start pre-call hook
   // + lockstep FIFO eviction across hash and canonical stores.

@@ -26,6 +26,7 @@ import type {
   TurnOutcome,
   ProjectionConfig,
   FinalDeliveryReceipt,
+  PlanSnapshot,
 } from "@comis/core";
 import { chatProjection } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
@@ -34,7 +35,11 @@ import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 
-import { createActivityTurnCoordinator } from "./activity-turn-coordinator.js";
+import {
+  createActivityTurnCoordinator,
+  type PlanStream,
+  type PlanUpdate,
+} from "./activity-turn-coordinator.js";
 
 // ---------------------------------------------------------------------------
 // Doubles
@@ -783,6 +788,227 @@ describe("createActivityTurnCoordinator — WIRE-08 circuit-breaker gate", () =>
 
     expect(renderer.applyFrames.length).toBe(1);
     expect(coord.counters().circuitBreakerTripped).toBe(0);
+    coord.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS-D Phase 78 — planStream subscription + PlanUpdate→PlanSnapshot adapter
+// with Security V9 description redaction (Pitfall 3 lock).
+//
+// The coordinator subscribes the injected `planStream` inside start(ctx) and
+// caches the most recent PlanSnapshot. The adapter maps the observability
+// PlanUpdate shape `{index, description, status}` to the core PlanSnapshot
+// shape `{id, label, status}` (Pitfall 3: silent shape mismatch). The
+// description is LLM-extracted SEP text and could echo a user message
+// verbatim — the adapter MUST run `redactValue(description)` and use the
+// redacted string as the snapshot label (Security V9).
+//
+// The cached snapshot reaches the renderer as the projection's 4th argument
+// on the next flushApply (Pitfall 6 — the projection's `latestPlanSnapshot`
+// arg supersedes the silent `prev.planSnapshot` forward). Cross-turn leakage
+// is prevented by an in-handler `(agentId, sessionKey)` filter and the per-
+// turn `planUnsubscribe` cleanup in releaseSubscription.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a fake `PlanStream` whose `subscribe` returns a tracked unsubscribe.
+ * The captured handler is invoked synchronously by `emit(update)` so the test
+ * can drive PlanUpdates without a real event bus.
+ */
+function makePlanStream(): {
+  stream: PlanStream;
+  emit: (update: PlanUpdate) => void;
+  subscribeCalls: () => number;
+  unsubscribeCalls: () => number;
+} {
+  let handler: ((u: PlanUpdate) => void) | undefined;
+  let subscribeCalls = 0;
+  let unsubscribeCalls = 0;
+  const stream: PlanStream = {
+    subscribe(onPlanUpdate): () => void {
+      subscribeCalls++;
+      handler = onPlanUpdate;
+      return () => {
+        unsubscribeCalls++;
+      };
+    },
+  };
+  return {
+    stream,
+    emit: (u) => handler?.(u),
+    subscribeCalls: () => subscribeCalls,
+    unsubscribeCalls: () => unsubscribeCalls,
+  };
+}
+
+describe("createActivityTurnCoordinator — WS-D planStream subscription", () => {
+  it("subscribes to planStream on start(ctx) and unsubscribes on releaseSubscription via dispose", () => {
+    const planStream = makePlanStream();
+    const { deps } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator({ ...deps, planStream: planStream.stream });
+
+    coord.start(makeCtx());
+    expect(planStream.subscribeCalls()).toBe(1);
+    expect(planStream.unsubscribeCalls()).toBe(0);
+
+    coord.dispose();
+    expect(planStream.unsubscribeCalls()).toBe(1);
+  });
+
+  it("threads a PlanSnapshot via the projection's 4th arg after a PlanUpdate is delivered (Pitfall 3 shape adapter)", () => {
+    const planStream = makePlanStream();
+    const projection = vi.fn(
+      (
+        _events: readonly ActivityEvent[],
+        _config: ProjectionConfig,
+        _prev?: ActivityRenderFrame,
+        _latestPlanSnapshot?: PlanSnapshot,
+      ): ActivityRenderFrame => ({
+        frameSeq: 0,
+        visibleEvents: [],
+        groupedActivityIds: {},
+        planSnapshot: _latestPlanSnapshot,
+        changeSet: { added: [], edited: [], removed: [] },
+      }),
+    );
+    const { deps, timer, stream } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator({
+      ...deps,
+      projection,
+      planStream: planStream.stream,
+    });
+    coord.start(makeCtx());
+
+    // Deliver a PlanUpdate matching the turn ctx + drive a flushApply tick.
+    planStream.emit({
+      agentId: "agent-1",
+      sessionKey: "default:user-1:chat-1",
+      stepCount: 2,
+      completedCount: 0,
+      entries: [
+        { index: 0, description: "step a", status: "pending", completed: false },
+        { index: 1, description: "step b", status: "in_progress", completed: false },
+      ],
+    });
+    stream.emit(makeEvent());
+    timer.advance(800);
+
+    // The projection received the adapted snapshot as its 4th arg.
+    expect(projection).toHaveBeenCalled();
+    const lastCall = projection.mock.calls.at(-1);
+    const snapshotArg = lastCall?.[3] as PlanSnapshot | undefined;
+    expect(snapshotArg).toBeDefined();
+    expect(snapshotArg!.entries).toHaveLength(2);
+    // Adapter maps {index, description, status} -> {id, label, status}.
+    expect(snapshotArg!.entries[0]).toMatchObject({
+      id: "0",
+      label: "step a",
+      status: "pending",
+    });
+    expect(snapshotArg!.entries[1]).toMatchObject({
+      id: "1",
+      label: "step b",
+      status: "in_progress",
+    });
+
+    coord.dispose();
+  });
+
+  it("ignores a PlanUpdate whose agentId does not match the turn ctx (cross-turn leak guard)", () => {
+    const planStream = makePlanStream();
+    const projection = vi.fn(
+      (
+        _events: readonly ActivityEvent[],
+        _config: ProjectionConfig,
+        _prev?: ActivityRenderFrame,
+        _latestPlanSnapshot?: PlanSnapshot,
+      ): ActivityRenderFrame => ({
+        frameSeq: 0,
+        visibleEvents: [],
+        groupedActivityIds: {},
+        planSnapshot: _latestPlanSnapshot,
+        changeSet: { added: [], edited: [], removed: [] },
+      }),
+    );
+    const { deps, timer, stream } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator({
+      ...deps,
+      projection,
+      planStream: planStream.stream,
+    });
+    coord.start(makeCtx({ agentId: "agent-1" }));
+
+    // Wrong agentId — filter must drop this update before assigning latestPlanSnapshot.
+    planStream.emit({
+      agentId: "agent-OTHER",
+      sessionKey: "default:user-1:chat-1",
+      stepCount: 1,
+      completedCount: 0,
+      entries: [
+        { index: 0, description: "leaked step", status: "pending", completed: false },
+      ],
+    });
+    stream.emit(makeEvent());
+    timer.advance(800);
+
+    const snapshotArg = projection.mock.calls.at(-1)?.[3] as PlanSnapshot | undefined;
+    expect(snapshotArg).toBeUndefined();
+    coord.dispose();
+  });
+
+  it("REGRESSION LOCK (Pitfall 3 + Security V9): runs redactValue on each description before exposing it as PlanSnapshot.label", () => {
+    // The SEP extractor reads the LLM's response and pulls step descriptions
+    // verbatim — the LLM could echo a user message including a secret. The
+    // adapter MUST redact each description before the renderer sees it; this
+    // test pins a real sk-test-* literal and asserts it never reaches the
+    // label. Without the redactValue call, the literal would render verbatim
+    // on every chat surface (Security V9).
+    const planStream = makePlanStream();
+    const projection = vi.fn(
+      (
+        _events: readonly ActivityEvent[],
+        _config: ProjectionConfig,
+        _prev?: ActivityRenderFrame,
+        _latestPlanSnapshot?: PlanSnapshot,
+      ): ActivityRenderFrame => ({
+        frameSeq: 0,
+        visibleEvents: [],
+        groupedActivityIds: {},
+        planSnapshot: _latestPlanSnapshot,
+        changeSet: { added: [], edited: [], removed: [] },
+      }),
+    );
+    const { deps, timer, stream } = makeCoordinatorDeps();
+    const coord = createActivityTurnCoordinator({
+      ...deps,
+      projection,
+      planStream: planStream.stream,
+    });
+    coord.start(makeCtx());
+
+    planStream.emit({
+      agentId: "agent-1",
+      sessionKey: "default:user-1:chat-1",
+      stepCount: 1,
+      completedCount: 0,
+      entries: [
+        {
+          index: 0,
+          description: "sk-test-1234567890ABCDEF1234567890ABCDEF",
+          status: "pending",
+          completed: false,
+        },
+      ],
+    });
+    stream.emit(makeEvent());
+    timer.advance(800);
+
+    const snapshotArg = projection.mock.calls.at(-1)?.[3] as PlanSnapshot | undefined;
+    expect(snapshotArg).toBeDefined();
+    const label = snapshotArg!.entries[0].label;
+    expect(label).toContain("<redacted>");
+    expect(label).not.toContain("sk-test-1234567890ABCDEF");
     coord.dispose();
   });
 });

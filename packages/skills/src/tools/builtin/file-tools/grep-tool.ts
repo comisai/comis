@@ -14,11 +14,21 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { safePath, PathTraversalError } from "@comis/core";
+import { safePath, PathTraversalError, registerActivityLabelSpec } from "@comis/core";
 import { type LazyPaths, resolvePaths } from "../file/safe-path-wrapper.js";
 import { readStringParam, readNumberParam, readBooleanParam } from "../../../platform-tools/tool-helpers.js";
 import { truncateLine, GREP_MAX_LINE_WIDTH } from "../truncate.js";
 import { ensureTool } from "../tool-provisioner.js";
+
+// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). Descriptor name ==
+// emitted name for builtins (grep-tool.ts:402 → `name: "grep"`). Two
+// detailKeys (`pattern` + `path`) — the multi-key shape mirrors
+// platform-tools/mcp-manage-tool.ts:23-33.
+registerActivityLabelSpec("grep", {
+  semanticPhase: "tool",
+  label: "searching for {pattern}",
+  detailKeys: ["pattern", "path"],
+});
 
 // ---------------------------------------------------------------------------
 // Types

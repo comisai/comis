@@ -11,6 +11,7 @@
 
 import type {
   AppContainer,
+  ExecutionPlanPort,
   FileLockPort,
   InjectionRateLimiter,
   OAuthCredentialStorePort,
@@ -158,4 +159,13 @@ export interface SingleAgentResult {
    * daemon-global mcpClientManager.
    */
   toolCapabilityPort: ToolCapabilityPort;
+  /**
+   * Per-agent ExecutionPlanHolder (typed as the read-only port surface). This
+   * is the SAME reference threaded into PiExecutorDeps.executionPlanHolder
+   * AND AcpServerDeps.executionPlanPort via createAcpWiring (T-74-33). WS-D
+   * Phase 78 exposes it here so the daemon can also thread it into
+   * ChannelsDeps.executionPlanPort — keeping the single-shared-holder
+   * invariant (Pitfall 1: a parallel holder would always read empty).
+   */
+  executionPlanPort: ExecutionPlanPort;
 }

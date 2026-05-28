@@ -580,10 +580,7 @@ export async function setupSingleAgent(
     observabilityStore: deps.obsStore,
   });
 
-  agentLogger.debug(
-    { agentId, name: effectiveConfig.name, model: effectiveConfig.model },
-    "Agent executor initialized",
-  );
+  agentLogger.debug({ agentId, name: effectiveConfig.name, model: effectiveConfig.model }, "Agent executor initialized");
 
   return {
     executor,
@@ -594,6 +591,7 @@ export async function setupSingleAgent(
     piSessionAdapter: sessionAdapter,
     skillWatcherHandle,
     skillRegistry,
-    toolCapabilityPort,  // Exposed for AgentsResult.toolCapabilityPorts map
+    toolCapabilityPort,
+    executionPlanPort: executionPlanHolder, // 78-04 WS-D: SAME ref as PiExecutorDeps + AcpServerDeps (Pitfall 1).
   };
 }

@@ -16,7 +16,7 @@ import { Type } from "typebox";
 import * as fs from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { fromPromise } from "@comis/shared";
-import { safePath, PathTraversalError, scrubSecretsFromText } from "@comis/core";
+import { safePath, PathTraversalError, scrubSecretsFromText, registerActivityLabelSpec } from "@comis/core";
 import type { FileStateTracker } from "../file/file-state-tracker.js";
 import { isDeviceFile } from "../file/file-state-tracker.js";
 import { suggestSimilarPaths } from "../file/path-suggest.js";
@@ -40,6 +40,14 @@ import {
 } from "./shared/edit-diff.js";
 import { getGitDiffStat } from "./shared/git-diff.js";
 import { withFileMutationQueue } from "./shared/file-mutation-queue.js";
+
+// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). Descriptor name ==
+// emitted name for builtins (edit-tool.ts:196 → `name: "edit"`).
+registerActivityLabelSpec("edit", {
+  semanticPhase: "tool",
+  label: "editing {path}",
+  detailKeys: ["path"],
+});
 
 // ---------------------------------------------------------------------------
 // Constants

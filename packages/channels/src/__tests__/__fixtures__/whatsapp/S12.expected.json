@@ -1,6 +1,6 @@
 {
   "calls": [
-    { "op": "send", "id": "wa-msg-0", "text": "thinking", "silent": false, "buttons": false },
+    { "op": "send", "id": "wa-msg-0", "text": "🔧 thinking", "silent": false, "buttons": false },
     { "op": "delete", "id": "wa-msg-0" }
   ]
 }

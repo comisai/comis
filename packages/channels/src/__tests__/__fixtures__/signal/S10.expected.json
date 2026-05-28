@@ -1,10 +1,10 @@
 {
   "calls": [
-    { "op": "send", "id": "sig-msg-0", "text": "verbose 1" },
+    { "op": "send", "id": "sig-msg-0", "text": "🔧 verbose 1" },
     { "op": "delete", "id": "sig-msg-0" },
-    { "op": "send", "id": "sig-msg-1", "text": "verbose 2" },
+    { "op": "send", "id": "sig-msg-1", "text": "🔧 verbose 2" },
     { "op": "delete", "id": "sig-msg-1" },
-    { "op": "send", "id": "sig-msg-2", "text": "verbose 3" },
+    { "op": "send", "id": "sig-msg-2", "text": "🔧 verbose 3" },
     { "op": "delete", "id": "sig-msg-2" }
   ]
 }

@@ -253,7 +253,11 @@ async function runScenario(
   const timer = createFakeTimers();
   const clock = createFakeClock(0);
   const fake = createFakeSignalAdapter();
-  const r = createSignalActivityRenderer(fake, "chat-1", { timer, clock });
+  // Phase 78 reconciliation (option ii — plan §530): omit `clock` so the §8.5
+  // "(running N s)" elapsed fallback is skipped and committed fixtures stay
+  // byte-stable. Strategy-level tests in delete-and-repost.test.ts inject a
+  // clock and assert the elapsed text — that is the live-production contract.
+  const r = createSignalActivityRenderer(fake, "chat-1", { timer });
 
   for (const f of frames) {
     await r.apply(f);

@@ -14,10 +14,18 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import * as fsp from "node:fs/promises";
 import * as nodePath from "node:path";
-import { safePath, PathTraversalError } from "@comis/core";
+import { safePath, PathTraversalError, registerActivityLabelSpec } from "@comis/core";
 import { type LazyPaths, resolvePaths } from "../file/safe-path-wrapper.js";
 import { readStringParam, readNumberParam, readBooleanParam } from "../../../platform-tools/tool-helpers.js";
 import ignore from "ignore";
+
+// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). Descriptor name ==
+// emitted name for builtins (find-tool.ts:295 → `name: "find"`).
+registerActivityLabelSpec("find", {
+  semanticPhase: "tool",
+  label: "finding {pattern}",
+  detailKeys: ["pattern"],
+});
 
 // ---------------------------------------------------------------------------
 // Types

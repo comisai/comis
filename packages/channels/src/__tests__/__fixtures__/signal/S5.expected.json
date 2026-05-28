@@ -1,10 +1,10 @@
 {
   "calls": [
-    { "op": "send", "id": "sig-msg-0", "text": "attempt 1" },
+    { "op": "send", "id": "sig-msg-0", "text": "🔧 attempt 1" },
     { "op": "delete", "id": "sig-msg-0" },
-    { "op": "send", "id": "sig-msg-1", "text": "attempt 1 failed" },
+    { "op": "send", "id": "sig-msg-1", "text": "🔧 attempt 1 failed" },
     { "op": "delete", "id": "sig-msg-1" },
-    { "op": "send", "id": "sig-msg-2", "text": "attempt 2 ok" },
+    { "op": "send", "id": "sig-msg-2", "text": "🔧 attempt 2 ok" },
     { "op": "delete", "id": "sig-msg-2" }
   ]
 }

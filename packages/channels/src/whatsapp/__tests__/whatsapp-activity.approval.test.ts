@@ -110,9 +110,11 @@ describe("WhatsApp plain-text approval prompt (buttons:none, shortId when ambigu
 
   it("a non-approval frame appends no prompt (byte-stable placeholder, buttons:none)", async () => {
     const timer = createFakeTimers();
-    const clock = createFakeClock(0);
     const fake = createFakeWhatsAppAdapter();
-    const r = createWhatsAppActivityRenderer(fake, "chat-1", { timer, clock });
+    // Phase 78 (plan §530, option ii): drop clock so the §8.5 elapsed fallback
+    // is skipped — the test asserts the bare "running tool" placeholder
+    // byte-stably (no `(running 0 s)` suffix).
+    const r = createWhatsAppActivityRenderer(fake, "chat-1", { timer });
 
     const plain: ActivityRenderFrame = {
       frameSeq: 0,
@@ -138,7 +140,10 @@ describe("WhatsApp plain-text approval prompt (buttons:none, shortId when ambigu
     await r.apply(plain);
 
     const send = firstSend(fake);
-    expect(send?.text).toBe("running tool");
+    // [Rule 1 — bug fix, quick-260528-nsv] Non-approval tool event renders
+    // with the per-step running 🔧 marker; the byte-stable-placeholder /
+    // no-buttons invariant (this test's load-bearing point) is unchanged.
+    expect(send?.text).toBe("🔧 running tool");
     expect(send?.buttons).toBe(false);
   });
 });

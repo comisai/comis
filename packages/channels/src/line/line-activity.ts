@@ -124,30 +124,38 @@ export function makeLineRenderActions(
 /**
  * Create the LINE AppendOnly activity renderer — wires the Phase-70
  * {@link createAppendOnlyRenderer} with the per-channel render-actions adapter.
- * AppendOnly has no delete to sequence, so there is NO TimerPort / ClockPort
- * (Pitfall 5). The daemon composition root constructs this with the chat id
- * (WIRE-02) and the optional `signCallbackData` injected in 73-10.
  *
- * `signCallbackData` is the secret-bound signer (73-06 seam): the renderer
- * CONSUMES it to build the signed Quick-Reply approval chips and never imports the
- * orchestrator package (Pitfall 5 / T-73-16). When omitted, an approval frame
- * degrades to a send-only status (the signer is wired in a later plan; the rest of
- * the renderer is unaffected).
+ * AppendOnly has no delete to sequence, so there is NO TimerPort — Pitfall 5
+ * was originally about the delete-sequencing TimerPort, NOT a read-only clock
+ * for elapsed display. The optional `deps.clock` (now FORWARDED Phase 78 /
+ * WS-F / SPEC-§8.5; pre-78 it was destructured-but-unused) feeds the
+ * strategy's elapsed-time fallback "(running N s)" when no SEP plan is
+ * active; `clock.now()` is consulted ONLY for read-only display arithmetic
+ * (no scheduling, no I/O). `timer` is still accepted-but-unused to stay
+ * structurally assignable to the daemon's uniform `RendererFactory` deps.
  *
- * `timer`/`clock` are accepted (optional) only to stay structurally assignable to
- * the daemon's uniform `RendererFactory` deps (it passes `{ timer, clock }` to
- * every factory) — AppendOnly schedules nothing, so this renderer reads only
- * `signCallbackData` and ignores them (the daemon-doc "reads only the fields it
- * needs" contract; Pitfall 5).
+ * The daemon composition root constructs this with the chat id (WIRE-02) and
+ * the optional `signCallbackData` injected in 73-10. `signCallbackData` is the
+ * secret-bound signer (73-06 seam): the renderer CONSUMES it to build the
+ * signed Quick-Reply approval chips and never imports the orchestrator package
+ * (Pitfall 5 / T-73-16). When omitted, an approval frame degrades to a
+ * send-only status (the signer is wired in a later plan; the rest of the
+ * renderer is unaffected).
  */
 export function createLineActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
   deps: { timer?: TimerPort; clock?: ClockPort; signCallbackData?: SignCallbackData; markers?: ActivityStatusMarkers } = {},
 ): ChannelActivityRenderer {
-  const { signCallbackData } = deps;
+  const { signCallbackData, clock } = deps;
   return createAppendOnlyRenderer({
     actions: makeLineRenderActions(adapter, channelId),
+    // Phase 78 / SPEC-§8.5 elapsed-fallback wiring (plan-checker iter-1 fix):
+    // forward the daemon-injected ClockPort into AppendOnly so the strategy can
+    // capture startedAtMs on the first apply() and compute elapsedMs for
+    // renderFrameText's "(running N s)" fallback. Pre-78 this `clock` was
+    // declared on the deps shape but destructured-but-unused — silent inert.
+    clock,
     markers: deps.markers,
     // Approval frame → signed Quick-Reply chips. The signer is the only path to
     // `callback_data`; without it, no chips are painted.

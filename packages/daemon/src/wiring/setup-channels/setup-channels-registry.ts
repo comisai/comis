@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -103,6 +103,27 @@ export interface ChannelsDeps {
    *  storm on one (agentId, channelKey) pair auto-quiesces it across turns.
    *  Optional: absent → no breaker gating (the un-wired path is unaffected). */
   activityBreaker?: ActivityBreakerGate;
+  /**
+   * WS-D Phase 78: the SHARED ExecutionPlanHolder reference for the DEFAULT
+   * agent (the same object createAcpWiring already shares with the gateway).
+   * Threaded into buildAndStartChannelManager → createPlanStream so the chat
+   * coordinator reads the SAME SEP plan SEP publishes into.
+   *
+   * Pitfall 1 lock: this MUST NOT be a fresh `createExecutionPlanHolder()` —
+   * a parallel holder would always read empty since SEP publishes into the one
+   * threaded into PiExecutorDeps.executionPlanHolder. The composition test in
+   * setup-channels-plan-stream.composition.test.ts asserts the identity
+   * relationship `acpWiring.holder === channelsDeps.executionPlanPort`.
+   *
+   * Multi-agent limitation: this carries the DEFAULT agent's holder only; per-
+   * turn cross-agent updates are filtered out by the coordinator's (agentId,
+   * sessionKey) guard so non-default-agent turns simply omit the plan header.
+   * A per-agent plan-stream Map is a clean follow-up.
+   *
+   * Optional: absent → no plan-stream is built (frame.planSnapshot stays
+   * undefined; the elapsed-time fallback applies — Plan 78-05 WS-F).
+   */
+  executionPlanPort?: ExecutionPlanPort;
   /** WIRE-06 test-only renderer-injection seam (daemon-types.ts
    *  DaemonOverrides.activityRendererFactory). When set, replaces the renderer
    *  produced by buildActivityRenderers for a given channelType so an integration
@@ -325,6 +346,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       timers: deps.timers,
       activityStream: deps.activityStream, // WIRE-03: ActivityStreamPort for the inbound coordinatorFactory
       activityBreaker: deps.activityBreaker, // WIRE-08: process-singleton breaker (shared)
+      executionPlanPort: deps.executionPlanPort, // WS-D Phase 78: shared ExecutionPlanHolder for the chat plan-stream
       activityRendererFactory: deps.activityRendererFactory, // WIRE-06 test seam
       signCallbackData: deps.signCallbackData,
       mintApprovalLink: deps.mintApprovalLink,

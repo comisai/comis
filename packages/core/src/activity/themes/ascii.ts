@@ -21,5 +21,9 @@ export const asciiTheme: ActivityTheme = {
     failure: "[ERR]",
     subagent: "[SUB]",
     running: "[..]",
+    // WS-E Phase 78 / SPEC-§9 + §8.9: lowercase Latin `x` so a coalesced surrogate
+    // renders `reading config x3` instead of `×3` (the default U+00D7 fails the
+    // strict ASCII-parity test in ascii-parity.test.ts).
+    surrogateSeparator: "x",
   },
 };

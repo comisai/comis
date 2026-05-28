@@ -1,8 +1,8 @@
 {
   "calls": [
-    { "op": "send", "id": "sl-msg-0", "text": "verbose 1", "silent": false },
-    { "op": "edit", "id": "sl-msg-0", "text": "verbose 2" },
-    { "op": "edit", "id": "sl-msg-0", "text": "verbose 3" },
+    { "op": "send", "id": "sl-msg-0", "text": "🔧 verbose 1", "silent": false },
+    { "op": "edit", "id": "sl-msg-0", "text": "🔧 verbose 2" },
+    { "op": "edit", "id": "sl-msg-0", "text": "🔧 verbose 3" },
     { "op": "edit", "id": "sl-msg-0", "text": "✓ done" },
     { "op": "delete", "id": "sl-msg-0" }
   ]

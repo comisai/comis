@@ -9,7 +9,10 @@
  * Pure: no I/O, no logger, never mutates its input.
  */
 import type { ActivityEvent } from "../activity-event.js";
-import type { ActivityRenderFrame } from "../channel-activity-renderer.js";
+import type {
+  ActivityRenderFrame,
+  PlanSnapshot,
+} from "../channel-activity-renderer.js";
 import {
   coalesce,
   CHAT_COALESCE_RULES,
@@ -28,12 +31,16 @@ function isQuietVisible(e: ActivityEvent): boolean {
 /**
  * Project a canonical event stream to a chat render frame under the configured
  * verbosity. `prevFrame` (if supplied) seeds the `changeSet` diff and advances
- * `frameSeq`.
+ * `frameSeq`. `latestPlanSnapshot` (WS-D Phase 78 / SPEC §8.3) is the SEP
+ * snapshot most recently cached by the coordinator; when present it wins over
+ * `prevFrame?.planSnapshot` (Pitfall 6 — silent forward of prev would mask a
+ * re-extracted plan within the same turn).
  */
 export function chatProjection(
   events: readonly ActivityEvent[],
   config: ProjectionConfig,
   prevFrame?: ActivityRenderFrame,
+  latestPlanSnapshot?: PlanSnapshot,
 ): ActivityRenderFrame {
   const { verbosity } = config;
 
@@ -79,7 +86,9 @@ export function chatProjection(
     frameSeq: prevFrame ? prevFrame.frameSeq + 1 : 0,
     visibleEvents,
     groupedActivityIds,
-    planSnapshot: prevFrame?.planSnapshot,
+    // WS-D Phase 78 (Pitfall 6 fix): latest-wins precedence so a re-extracted
+    // plan within the turn supersedes the prevFrame's stale snapshot.
+    planSnapshot: latestPlanSnapshot ?? prevFrame?.planSnapshot,
     changeSet,
   };
 }

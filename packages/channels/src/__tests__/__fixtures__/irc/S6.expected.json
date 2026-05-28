@@ -1,7 +1,7 @@
 {
   "calls": [
-    { "op": "send", "id": "irc-msg-0", "text": "planning" },
-    { "op": "send", "id": "irc-msg-1", "text": "executing" },
+    { "op": "send", "id": "irc-msg-0", "text": "🔧 planning" },
+    { "op": "send", "id": "irc-msg-1", "text": "🔧 executing" },
     { "op": "send", "id": "irc-msg-2", "text": "✓ done · 2 steps · 2.0s" }
   ]
 }

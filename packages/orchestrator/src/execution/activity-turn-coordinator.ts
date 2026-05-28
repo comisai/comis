@@ -41,12 +41,14 @@ import type {
   TurnActivityContext,
   TurnOutcome,
   ProjectionConfig,
+  PlanSnapshot,
   ClockPort,
   TimerPort,
   TimerHandle,
   ComisLogger,
   ErrorKind,
 } from "@comis/core";
+import { redactValue } from "@comis/core";
 import type { Result } from "@comis/shared";
 import { suppressError } from "@comis/shared";
 import { randomUUID } from "node:crypto";
@@ -64,15 +66,61 @@ const APPLY_DEBOUNCE_MS = 800;
 
 /**
  * Projection function the coordinator drives per render tick. Unifies the chat
- * (`chatProjection(events, config, prev?)`) and ACP (`acpProjection(events,
- * prev?)`) shapes from `@comis/core` — 70-10 adapts the ACP projection (which
- * ignores `config`) to this signature when wiring the coordinator factory.
+ * (`chatProjection(events, config, prev?, latestPlanSnapshot?)`) and ACP
+ * (`acpProjection(events, prev?)`) shapes from `@comis/core` — 70-10 adapts
+ * the ACP projection (which ignores `config` and `latestPlanSnapshot`) to this
+ * signature when wiring the coordinator factory. WS-D Phase 78 widened the
+ * signature with the optional 4th arg so the chat projection threads the
+ * latest SEP plan snapshot into `ActivityRenderFrame.planSnapshot`.
  */
 export type ActivityProjection = (
   events: readonly ActivityEvent[],
   config: ProjectionConfig,
   prev?: ActivityRenderFrame,
+  latestPlanSnapshot?: PlanSnapshot,
 ) => ActivityRenderFrame;
+
+/**
+ * Minimal PlanUpdate shape the coordinator's PlanStream subscription expects.
+ *
+ * Structural type defined LOCALLY here (NOT imported from `@comis/observability`)
+ * so the orchestrator preserves its TURN-03 / §4.7 boundary: imports ONLY
+ * `@comis/core` and never `@comis/observability` (see src/index.ts:36 and
+ * execution-pipeline.ts:131). The observability `createPlanStream(...)` returns
+ * a `PlanStream` whose `PlanUpdate` payload structurally satisfies THIS shape;
+ * the daemon composition root (which IS allowed to import both packages) hands
+ * the instance through `ChannelManagerBuildDeps.executionPlanPort` → the chat
+ * coordinator factory.
+ *
+ * Mirrors `packages/observability/src/activity/plan-stream.ts:47-56`. Any change
+ * MUST stay byte-compatible with the observability shape or the daemon-side
+ * structural assignment fails to compile (the regression-lock test in
+ * `packages/daemon/src/__tests__/setup-channels-plan-stream.composition.test.ts`
+ * exercises the real createPlanStream against this type).
+ */
+export interface PlanUpdate {
+  readonly agentId: string;
+  readonly sessionKey: string;
+  readonly stepCount: number;
+  readonly completedCount: number;
+  readonly entries: readonly {
+    readonly index: number;
+    readonly description: string;
+    readonly status: "pending" | "in_progress" | "done" | "skipped";
+    readonly completed: boolean;
+  }[];
+}
+
+/**
+ * Minimal PlanStream port the coordinator subscribes to in start(ctx).
+ *
+ * Structural type defined locally for the same TURN-03 reason as PlanUpdate
+ * above. The single `subscribe` method matches the observability shape; the
+ * returned `unsubscribe()` is walked from `releaseSubscription`.
+ */
+export interface PlanStream {
+  subscribe(onPlanUpdate: (update: PlanUpdate) => void): () => void;
+}
 
 /**
  * Live read of the operator kill switches for the agent owning this turn
@@ -140,6 +188,16 @@ export interface ActivityTurnCoordinatorDeps {
    * every apply result so the breaker can count toward / recover from a trip.
    */
   breaker?: ActivityBreakerGate;
+  /**
+   * WS-D Phase 78: optional SEP plan-stream the coordinator subscribes to in
+   * start(ctx). Absent → no plan-state wiring; the renderer's `frame.planSnapshot`
+   * stays undefined (the elapsed-time fallback at render.ts handles this —
+   * Plan 78-05 WS-F elapsed line). Built ONCE per agent runtime at the
+   * composition root via `createPlanStream({eventBus, executionPlanPort})` and
+   * threaded into the per-turn coordinator. The subscription is detached in
+   * `releaseSubscription` (cleanup runs even on aborted turns via try/finally).
+   */
+  planStream?: PlanStream;
 }
 
 /**
@@ -228,6 +286,12 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
   let turnCtx: TurnActivityContext | undefined;
   let prevFrame: ActivityRenderFrame | undefined;
   let debounceHandle: TimerHandle | undefined;
+  // WS-D Phase 78: the live PlanStream subscription cleanup + the latest SEP
+  // snapshot captured by the in-handler adapter. The cleanup runs in
+  // releaseSubscription (the SAME finally-guarded path as the activity-stream
+  // subscription) so an aborted turn never leaks a plan handler.
+  let planUnsubscribe: (() => void) | undefined;
+  let latestPlanSnapshot: PlanSnapshot | undefined;
   // SEC-04 success-path delivery gate timer; captured so it can be unref'd (so
   // it never keeps the event loop alive during shutdown) and cancelled on an
   // aborted turn (WR-01).
@@ -338,7 +402,10 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     const key = breakerKey();
     if (key !== undefined && deps.breaker?.isTripped(key) === true) return;
 
-    const frame = deps.projection(events, deps.config, prevFrame);
+    // WS-D Phase 78: pass the cached `latestPlanSnapshot` as the projection's
+    // 4th arg so chatProjection threads it onto frame.planSnapshot (Pitfall 6
+    // — supersedes silent forward of prevFrame's stale snapshot).
+    const frame = deps.projection(events, deps.config, prevFrame, latestPlanSnapshot);
     prevFrame = frame;
     const result: Result<void, ActivityRenderError> = await deps.renderer.apply(frame);
 
@@ -426,6 +493,11 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
     // timer holding the event loop open (WR-01). cancel() is idempotent.
     pendingGate?.cancel();
     subscription?.unsubscribe();
+    // WS-D Phase 78: detach the SEP plan-stream subscription so a re-extracted
+    // plan after this turn's dispose never fires the (now-stale) handler.
+    planUnsubscribe?.();
+    planUnsubscribe = undefined;
+    latestPlanSnapshot = undefined;
   }
 
   /**
@@ -487,6 +559,39 @@ export function createActivityTurnCoordinator(deps: ActivityTurnCoordinatorDeps)
       // event observed during this turn (APV-01).
       turnRootActivityId = randomUUID();
       subscription = deps.activityStreamPort.subscribeForTurn(ctx, onEvent);
+
+      // WS-D Phase 78: subscribe to the injected SEP plan-stream and cache
+      // the most recent snapshot per turn. The plan-stream is shared per agent
+      // runtime; the per-turn (agentId, sessionKey) filter prevents a snapshot
+      // from session A reaching a render of session B. The adapter maps the
+      // observability PlanUpdate shape to the core PlanSnapshot shape AND
+      // runs redactValue on each description before exposing it as `label`
+      // (Security V9 — SEP descriptions are LLM-extracted from the model
+      // response and could echo a user message including a secret). On a new
+      // snapshot, schedule a debounced apply so the renderer paints the
+      // updated checkbox header within one tick.
+      if (deps.planStream !== undefined) {
+        planUnsubscribe = deps.planStream.subscribe((update: PlanUpdate) => {
+          if (update.agentId !== ctx.agentId || update.sessionKey !== ctx.sessionKey) return;
+          latestPlanSnapshot = {
+            entries: update.entries.map((e) => {
+              // redactValue on a string returns the redacted string in `.value`
+              // (pure, non-throwing). The defensive type-guard preserves the
+              // raw description ONLY if redactValue's value is not a string —
+              // which never happens for a string input but keeps the type sound.
+              const redactedDesc = redactValue(e.description);
+              const label =
+                typeof redactedDesc.value === "string" ? redactedDesc.value : e.description;
+              return {
+                id: String(e.index),
+                label,
+                status: e.status,
+              };
+            }),
+          };
+          scheduleApply();
+        });
+      }
     },
 
     async finalize(outcome: TurnOutcome): Promise<void> {

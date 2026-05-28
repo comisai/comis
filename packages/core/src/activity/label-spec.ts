@@ -41,6 +41,14 @@ export interface LabelSpec {
    * empty → the template references no params (a static label).
    */
   readonly detailKeys?: readonly string[];
+  /**
+   * Optional override hook. Receives RAW params — the transform is responsible
+   * for its own redaction (e.g. parseShellCommand at shell-label-parser.ts:40
+   * self-redacts via redactValue at line 53). Returned string MUST be safe to
+   * render. applyTemplate runs redactValue on the output defense-in-depth
+   * (Pitfall 4 / Phase 78 WS-C).
+   */
+  readonly transform?: (params: Readonly<Record<string, unknown>>) => string;
 }
 
 /**
@@ -54,6 +62,14 @@ export interface ActionLabelSpec {
   readonly detail?: string;
   /** Param-key allowlist for this action's templates. */
   readonly detailKeys?: readonly string[];
+  /**
+   * Optional override hook. Receives RAW params — the transform is responsible
+   * for its own redaction (e.g. parseShellCommand at shell-label-parser.ts:40
+   * self-redacts via redactValue at line 53). Returned string MUST be safe to
+   * render. applyTemplate runs redactValue on the output defense-in-depth
+   * (Pitfall 4 / Phase 78 WS-C).
+   */
+  readonly transform?: (params: Readonly<Record<string, unknown>>) => string;
 }
 
 /**
@@ -91,6 +107,16 @@ export interface ActivityStatusMarkers {
   readonly subagent: string;
   /** Marker for an in-flight/running event (default theme: e.g. a wrench). */
   readonly running: string;
+  /**
+   * WS-E Phase 78 / SPEC-§9 — separator between an event label and its
+   * coalesced-group count (e.g. `reading config ×3`). Defaults to `"×"` U+00D7
+   * for the default/playful/terminal-minimal themes; the ascii theme overrides
+   * to `"x"` (lowercase Latin) so the strict ASCII-parity test
+   * (`packages/channels/src/shared/strategies/ascii-parity.test.ts`,
+   * `/[^\x00-\x7F]/`) passes — SPEC-§8.9. Optional for forward-compatibility:
+   * a custom theme that omits this field falls back to the default `"×"`.
+   */
+  readonly surrogateSeparator?: string;
 }
 
 /**
@@ -172,8 +198,13 @@ export function _clearActivityLabelSpecsForTest(): void {
 
 /**
  * Resolve the effective {@link LabelSpec} for a tool (and optionally an action),
- * applying the precedence **theme-override > registered > semantic fallback**
- * (spec §6.2) as a deep, per-field merge.
+ * applying the precedence **theme-override > registered > pattern catch-all
+ * (L79) > semantic fallback** (spec §6.2) as a deep, per-field merge.
+ *
+ * The pattern catch-all (Layer 2.5; see {@link tryPatternSpec}) only fires when
+ * no spec is registered for the tool name, so an explicit
+ * {@link registerActivityLabelSpec} call (Layer 2) and a theme override
+ * (Layer 3) both still win above it.
  *
  * @param toolName - the tool name (used for the semantic fallback + lookups)
  * @param opts     - optional `action` selector and `theme` override layer
@@ -185,24 +216,37 @@ export function resolveLabelSpec(toolName: string, opts: ResolveLabelOptions = {
   let label: string = humanizeToolName(toolName);
   let detail: string | undefined;
   let detailKeys: readonly string[] | undefined;
+  let transform: ((params: Readonly<Record<string, unknown>>) => string) | undefined;
 
   // Layer 2 — registered spec (tool-level first, then the per-action override).
   const registered = registry.get(toolName);
   if (registered !== undefined) {
     if (registered.semanticPhase !== undefined) semanticPhase = registered.semanticPhase;
-    ({ label, detail, detailKeys } = mergeActionFields(
-      { label, detail, detailKeys },
+    ({ label, detail, detailKeys, transform } = mergeActionFields(
+      { label, detail, detailKeys, transform },
       registered,
     ));
     const action = opts.action;
     if (action !== undefined && registered.actions !== undefined) {
       const actionSpec = lookup(registered.actions, action);
       if (actionSpec !== undefined) {
-        ({ label, detail, detailKeys } = mergeActionFields(
-          { label, detail, detailKeys },
+        ({ label, detail, detailKeys, transform } = mergeActionFields(
+          { label, detail, detailKeys, transform },
           actionSpec,
         ));
       }
+    }
+  } else {
+    // Layer 2.5 — pattern catch-all (L79). Only fires when no spec is
+    // explicitly registered, so Layer 2 still wins. Theme override (Layer 3)
+    // still deep-merges on top.
+    const pattern = tryPatternSpec(toolName);
+    if (pattern !== undefined) {
+      if (pattern.semanticPhase !== undefined) semanticPhase = pattern.semanticPhase;
+      ({ label, detail, detailKeys, transform } = mergeActionFields(
+        { label, detail, detailKeys, transform },
+        pattern,
+      ));
     }
   }
 
@@ -211,8 +255,8 @@ export function resolveLabelSpec(toolName: string, opts: ResolveLabelOptions = {
     opts.theme?.tools !== undefined ? lookup(opts.theme.tools, toolName) : undefined;
   if (themeOverride !== undefined) {
     if (themeOverride.semanticPhase !== undefined) semanticPhase = themeOverride.semanticPhase;
-    ({ label, detail, detailKeys } = mergeActionFields(
-      { label, detail, detailKeys },
+    ({ label, detail, detailKeys, transform } = mergeActionFields(
+      { label, detail, detailKeys, transform },
       themeOverride,
     ));
   }
@@ -222,6 +266,7 @@ export function resolveLabelSpec(toolName: string, opts: ResolveLabelOptions = {
     label,
     ...(detail !== undefined ? { detail } : {}),
     ...(detailKeys !== undefined ? { detailKeys } : {}),
+    ...(transform !== undefined ? { transform } : {}),
   };
 }
 
@@ -233,6 +278,7 @@ interface ResolvedFields {
   label: string;
   detail: string | undefined;
   detailKeys: readonly string[] | undefined;
+  transform: ((params: Readonly<Record<string, unknown>>) => string) | undefined;
 }
 
 /**
@@ -245,6 +291,7 @@ function mergeActionFields(base: ResolvedFields, next: ActionLabelSpec): Resolve
     label: next.label ?? base.label,
     detail: next.detail ?? base.detail,
     detailKeys: next.detailKeys ?? base.detailKeys,
+    transform: next.transform ?? base.transform,
   };
 }
 
@@ -266,4 +313,31 @@ function lookup<T>(record: Readonly<Record<string, T>>, key: string): T | undefi
 function humanizeToolName(toolName: string): string {
   const humanized = toolName.replace(/_/g, " ").trim();
   return humanized.length > 0 ? humanized : "running tool";
+}
+
+/**
+ * L79 — Pattern catch-all for dynamically-discovered tool names that have no
+ * co-located source file to register a label spec on (e.g. MCP tools, which
+ * are discovered at runtime). Currently matches `^mcp__<server>--<method>$`
+ * and synthesizes a clean `using <server> · <method humanized>` label.
+ *
+ * Pure function; returns `undefined` when no pattern matches so the resolver
+ * falls through to the semantic-classifier humanize fallback. Invoked from
+ * {@link resolveLabelSpec} as Layer 2.5 — only when no spec is registered
+ * for the tool name, so explicit registrations (Layer 2) and theme overrides
+ * (Layer 3) still win.
+ *
+ * The server-name segment cannot contain `-` (the regex's `[^-]+` capture),
+ * so `--` is unambiguous as the method separator. The method segment is
+ * humanized via `_` → ` ` AND `-` → ` ` so `mcp__svc--foo-bar` cleanly
+ * yields `"using svc · foo bar"` rather than leaking the dash.
+ */
+function tryPatternSpec(toolName: string): RegisteredLabelSpec | undefined {
+  const mcp = /^mcp__([^-]+)--(.+)$/.exec(toolName);
+  if (mcp !== null) {
+    const server = mcp[1] ?? "";
+    const method = (mcp[2] ?? "").replace(/_/g, " ").replace(/-/g, " ").trim();
+    return { semanticPhase: "tool", label: `using ${server} · ${method}` };
+  }
+  return undefined;
 }

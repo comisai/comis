@@ -147,4 +147,107 @@ describe("coalesce applies the chat coalescing rules", () => {
     expect(visible.map((e) => e.activityId)).toContain(failure.activityId);
     expect(visible.length).toBeLessThanOrEqual(5);
   });
+
+  // ---------------------------------------------------------------------------
+  // Quick fix 260528-mch — three render-side activity scaffold bugs.
+  //
+  // RED tests for Bug A (phase-pair dedup by activityId) and Bug B (surrogate
+  // count counts distinct activityIds). Surfaced by a live IBM-info turn
+  // (instance 0bf2104a, trace 5d1cf3e1) where a slow-success start+end pair
+  // rendered as two lines and surrogate ×N counts inflated to 2× the true
+  // call count.
+  // ---------------------------------------------------------------------------
+
+  it("dedupes start+end pairs by activityId, preferring the end event (Bug A — slow-success duplicates)", () => {
+    // Live-evidence reconstruction: a single slow tool call ("managing MCP
+    // servers", 2300ms) emits two events sharing the same activityId — a
+    // start/running with the running marker baked into defaultLabel by
+    // activity-stream (Pitfall 7 emit-site behavior), and an end/completed
+    // with a BARE defaultLabel (no marker). Pre-patch coalesce passes both
+    // through Step 1's "drop fast successes" filter (the end has
+    // durationMs:2300 > 1500ms, so it's kept; the start has no durationMs
+    // so the `(e.durationMs ?? 0) < FAST_SUCCESS_MS` clause keeps it too) →
+    // two visible events render as "🔧 managing MCP servers\nmanaging MCP
+    // servers" — the duplicate the user saw. Post-patch: phase-pair dedup
+    // collapses to ONE event, preferring the end (terminal state, drives
+    // Bug C's failure-marker prefix downstream).
+    const sharedActivityId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+    const startEvt = ev({
+      activityId: sharedActivityId,
+      ts: new Date(1_700_003_000_000).toISOString(),
+      phase: "start",
+      status: "running",
+      toolName: "mcp_manage",
+      action: "list_servers",
+      defaultLabel: "🔧 managing MCP servers",
+      durationMs: undefined,
+    });
+    const endEvt = ev({
+      activityId: sharedActivityId,
+      ts: new Date(1_700_003_002_300).toISOString(),
+      phase: "end",
+      status: "completed",
+      toolName: "mcp_manage",
+      action: "list_servers",
+      defaultLabel: "managing MCP servers",
+      durationMs: 2300,
+    });
+    const { visible } = coalesce([startEvt, endEvt], "normal");
+    expect(visible).toHaveLength(1);
+    const survivor = visible[0]!;
+    expect(survivor.phase).toBe("end");
+    expect(survivor.status).toBe("completed");
+    expect(survivor.defaultLabel).toBe("managing MCP servers");
+    // The activityId of the survivor is the shared id (not a surrogate prefix).
+    expect(survivor.activityId).toBe(sharedActivityId);
+  });
+
+  it("surrogate count counts distinct activityIds, not raw constituent length (Bug B — defense-in-depth)", () => {
+    // Defense-in-depth: a future change that re-introduces same-activityId
+    // events into a coalesced run (e.g. a Bug-A regression) must not inflate
+    // the ×N count. Construction: 4 events with two distinct activityIds,
+    // each id appearing twice in the input array. Step 1 (fast-success drop)
+    // keeps all 4 because they are end/completed with durationMs:3000 > 1500.
+    // Step 1.5 (phase-pair dedup) collapses identical activityId duplicates
+    // to one each (kept-first behavior for non-end-vs-start duplicates) →
+    // post-Fix-A there are 2 events in the grouped run, count is 2. But this
+    // test directly exercises the surrogate-count map's distinct-id logic by
+    // feeding 4 events with 2 distinct ids — even if a future regression
+    // re-introduced same-id events into the grouped run, `new Set(...)`
+    // dedup MUST keep the count at 2.
+    const base = 1_700_004_000_000;
+    const idA = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+    const idB = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+    const mk = (
+      activityId: string,
+      offsetMs: number,
+    ): ActivityEvent =>
+      ev({
+        activityId,
+        ts: new Date(base + offsetMs).toISOString(),
+        phase: "end",
+        status: "completed",
+        toolName: "read",
+        action: "file",
+        durationMs: 3000,
+      });
+    // Input: [a, a, b, b] — same toolName/action, all <800ms apart, two
+    // duplicate pairs. Both copies of idA collapse to one in Step 1.5;
+    // both copies of idB collapse to one. Resulting run length is 2,
+    // grouped into ONE surrogate with constituents = [idA, idB] (distinct).
+    const eventsIn: ActivityEvent[] = [
+      mk(idA, 0),
+      mk(idA, 100),
+      mk(idB, 200),
+      mk(idB, 300),
+    ];
+    const { visible, grouped } = coalesce(eventsIn, "normal");
+    expect(visible).toHaveLength(1);
+    const surrogateId = visible[0]!.activityId;
+    // The surrogate carries the count of DISTINCT activityIds (2), not the
+    // raw constituent count from the post-dedup slice (which is also 2
+    // post-Fix-A, but the assertion pins the `new Set(...)` invariant).
+    expect(grouped[surrogateId]).toHaveLength(2);
+    expect(new Set(grouped[surrogateId])).toEqual(new Set([idA, idB]));
+  });
 });

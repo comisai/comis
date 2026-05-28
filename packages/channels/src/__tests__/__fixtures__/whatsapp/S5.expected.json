@@ -1,8 +1,8 @@
 {
   "calls": [
-    { "op": "send", "id": "wa-msg-0", "text": "step 1", "silent": false, "buttons": false },
-    { "op": "edit", "id": "wa-msg-0", "text": "step failed" },
-    { "op": "edit", "id": "wa-msg-0", "text": "recovered" },
+    { "op": "send", "id": "wa-msg-0", "text": "🔧 step 1", "silent": false, "buttons": false },
+    { "op": "edit", "id": "wa-msg-0", "text": "❌ step failed" },
+    { "op": "edit", "id": "wa-msg-0", "text": "🔧 recovered" },
     { "op": "edit", "id": "wa-msg-0", "text": "✓ done" },
     { "op": "delete", "id": "wa-msg-0" }
   ]

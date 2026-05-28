@@ -208,8 +208,15 @@ const MAC_RE = /\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b/g;
 // e.g. `db-primary.internal.example.com`. Requiring ≥ 3 labels avoids matching
 // two-segment filenames like `config.yaml` / `bar.ts` (those are paths/leaves,
 // not hosts). Run AFTER email/IP so those more-specific shapes win first.
+//
+// nsv-hotfix: `(?<!\/\/)` negative-lookbehind exempts URL hosts (preceded by
+// the scheme's two slashes) from this mask. Per SPEC §8.4, public URL hosts are
+// information the user expects to see — `tavily.com/search` renders verbatim —
+// not internal infrastructure leakage. Standalone hostnames not inside a URL
+// (e.g. an internal `db-primary.internal.example.com` reference in a log line)
+// remain masked as defense-in-depth.
 const HOSTNAME_RE =
-  /\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.){2,}[a-zA-Z]{2,}\b/g;
+  /(?<!\/\/)\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.){2,}[a-zA-Z]{2,}\b/g;
 
 /** Length guard mirroring `log-sanitizer.ts` `MAX_SANITIZE_LENGTH` — ReDoS protection. */
 const MAX_SANITIZE_LENGTH = 1_048_576;
@@ -256,7 +263,17 @@ function compactPaths(s: string, homeDir: string | undefined, sink: RedactionRec
 
   // 2. Remaining system-absolute paths → last 2 segments.
   //    Match a leading-slash path of ≥ 2 segments; keep only the final two.
-  const ABS_PATH_RE = /\/(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+/g;
+  //    SEC-02 URL-scheme guard (quick-260528-nsv): the leading `/` must not be
+  //    preceded by `:` or `/`. The `:` half is obvious (first slash of `://`);
+  //    the `/` half blocks the SECOND slash of `://` — without it, the matcher
+  //    would still anchor at the second slash and treat `//host/path/...` as a
+  //    `/host/path/...` filesystem path. URL hosts are public info per SPEC
+  //    §8.4 (tavily.com/search renders verbatim), not filesystem paths. A
+  //    two-character negative-lookbehind keeps the rest of the matcher identical
+  //    so the existing filesystem-path compaction tests stay green (no leading
+  //    `/` of a real FS path like `/var/folders/...` or `/Users/alice/...` is
+  //    preceded by `:` or `/`).
+  const ABS_PATH_RE = /(?<![:/])\/(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+/g;
   out = out.replace(ABS_PATH_RE, (match) => {
     const segments = match.split("/").filter((seg) => seg.length > 0);
     if (segments.length <= 2) return match;
@@ -269,14 +286,55 @@ function compactPaths(s: string, homeDir: string | undefined, sink: RedactionRec
 }
 
 /**
+ * URL-aware extract-and-restore guard. Stashes every `https?://` URL behind a
+ * null-byte placeholder, runs `fn` on the placeholder-substituted string, then
+ * restores the URLs verbatim. The null-byte sentinels (`\x00URL{i}\x00`) never
+ * appear in legitimate input — the `MAX_SANITIZE_LENGTH` guard above already
+ * bounds the input size, and no matcher's character class includes `\x00`.
+ *
+ * Used to wrap the network-identifier and PII matcher passes so URL paths
+ * (including numeric IDs that look like phone numbers or credit-card runs) and
+ * URL hosts are NOT masked. Per SPEC §8.4, public URL hosts AND paths are
+ * user-facing context, not infrastructure leakage.
+ *
+ * Defense-in-depth: this runs AFTER the secret-shape pass, so URL_PASSWORD
+ * still strips embedded credentials in `https://user:pw@host/...` before the
+ * URL is ever stashed (CR-01).
+ *
+ * Idempotent: running twice on the same input yields the same output (the
+ * restored URL exactly equals the stashed URL, and the placeholders aren't
+ * matched by any pattern in `fn`).
+ */
+function withUrlsProtected(input: string, fn: (s: string) => string): string {
+  // Conservative URL match: `https?://` scheme, terminate at whitespace or
+  // typical free-text URL boundaries (`<`, `>`, `"`, `'`).
+  const URL_RE = /https?:\/\/[^\s<>"']+/g;
+  const urls: string[] = [];
+  const stashed = input.replace(URL_RE, (match) => {
+    urls.push(match);
+    return `\x00URL${urls.length - 1}\x00`;
+  });
+  if (urls.length === 0) return fn(input); // hot-path: no URLs, no wrapping cost
+  const processed = fn(stashed);
+  return processed.replace(/\x00URL(\d+)\x00/g, (_, i) => urls[Number(i)] ?? "");
+}
+
+/**
  * Redact a single string leaf. Order per §10.1, refined so that more-specific
- * shapes always win over the greedy phone matcher:
- *   (1) secret-shape pass (sk_*, ghp_*, AKIA*, JWT, provider tokens),
- *   (2) absolute-path compaction,
- *   (3) network masks (IP → MAC → hostname) — IPs are dotted digit runs that
- *       the phone matcher would otherwise eat,
- *   (4) email + structured PII (CC → SSN),
- *   (5) phone LAST (the broadest digit shape).
+ * shapes always win over the greedy phone matcher AND so that public URLs
+ * (hosts + paths) survive verbatim per SPEC §8.4:
+ *   (1) secret-shape pass (sk_*, ghp_*, AKIA*, JWT, provider tokens). Runs
+ *       FIRST so URL-embedded credentials (`https://user:pw@host`) are
+ *       URL_PASSWORD-masked BEFORE the URL guard stashes the URL — CR-01
+ *       defense-in-depth is preserved.
+ *   (2) absolute-path compaction. Has its own URL-scheme `(?<![:/])` guard.
+ *   (3)+(4)+(5) URL-aware pre-pass wraps the remaining network + PII matcher
+ *       passes (IPV4/MAC/HOSTNAME + EMAIL/CC/SSN/PHONE). URL hosts AND URL
+ *       paths are stashed behind null-byte placeholders, the matchers run on
+ *       the placeholder-substituted string, then URLs are restored verbatim.
+ *       Standalone shapes outside any URL (e.g. a phone number in free text,
+ *       or an internal `db-primary.internal.example.com` reference) are still
+ *       masked exactly as before — the URL exemption is span-precise.
  *
  * Oversized strings short-circuit (ReDoS guard) and are returned untouched.
  */
@@ -290,27 +348,37 @@ function redactString(
   let out = input;
 
   // (1) Secret shapes — defense-in-depth even under a benign key.
+  //     URL-embedded credentials (`https://user:pw@host`) get URL_PASSWORD-masked
+  //     HERE, BEFORE the URL guard below stashes the URL — so the credential
+  //     never survives the URL guard's extract-and-restore.
   for (const pattern of SECRET_SHAPE_PATTERNS) {
     out = applyShape(out, pattern, "secret_shape", sink);
   }
 
-  // (2) Absolute-path compaction.
+  // (2) Absolute-path compaction. Has its own URL-scheme `(?<![:/])` guard.
   out = compactPaths(out, homeDir, sink);
 
-  // (3) Network identifiers. IP/MAC are precise digit/hex shapes the greedy
-  //     phone matcher would otherwise consume; hostname requires ≥ 3 labels.
-  out = applyShape(out, IPV4_RE, "network_identifier", sink);
-  out = applyShape(out, MAC_RE, "network_identifier", sink);
-  out = applyShape(out, HOSTNAME_RE, "network_identifier", sink);
-
-  // (4) Email + structured PII. Credit-card and SSN are specific digit shapes
-  //     that must be caught before the broad phone pass.
-  out = applyShape(out, EMAIL_RE, "pii_email", sink);
-  out = applyShape(out, CREDIT_CARD_RE, "pii_credit_card", sink);
-  out = applyShape(out, SSN_RE, "pii_ssn", sink);
-
-  // (5) Phone LAST — broadest digit-with-separators shape.
-  out = applyShape(out, PHONE_RE, "pii_phone", sink);
+  // (3)+(4)+(5) URL-aware pre-pass wraps all remaining network + PII matchers.
+  //     URL hosts AND URL paths are public, user-facing context (SPEC §8.4) —
+  //     numeric IDs in URL paths must not false-positive as phone/CC/SSN, and
+  //     URL hosts must not be masked as network identifiers. Standalone
+  //     hostnames / IPs / MACs / phones / CCs / SSNs / emails OUTSIDE any URL
+  //     stay masked exactly as before.
+  out = withUrlsProtected(out, (s) => {
+    // (3) Network identifiers. IP/MAC are precise digit/hex shapes the greedy
+    //     phone matcher would otherwise consume; hostname requires ≥ 3 labels.
+    s = applyShape(s, IPV4_RE, "network_identifier", sink);
+    s = applyShape(s, MAC_RE, "network_identifier", sink);
+    s = applyShape(s, HOSTNAME_RE, "network_identifier", sink);
+    // (4) Email + structured PII. Credit-card and SSN are specific digit shapes
+    //     that must be caught before the broad phone pass.
+    s = applyShape(s, EMAIL_RE, "pii_email", sink);
+    s = applyShape(s, CREDIT_CARD_RE, "pii_credit_card", sink);
+    s = applyShape(s, SSN_RE, "pii_ssn", sink);
+    // (5) Phone LAST — broadest digit-with-separators shape.
+    s = applyShape(s, PHONE_RE, "pii_phone", sink);
+    return s;
+  });
 
   return out;
 }

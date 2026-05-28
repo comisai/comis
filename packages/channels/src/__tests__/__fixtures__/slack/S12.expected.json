@@ -1,6 +1,6 @@
 {
   "calls": [
-    { "op": "send", "id": "sl-msg-0", "text": "suppressed reply", "silent": false },
+    { "op": "send", "id": "sl-msg-0", "text": "🔧 suppressed reply", "silent": false },
     { "op": "delete", "id": "sl-msg-0" }
   ]
 }

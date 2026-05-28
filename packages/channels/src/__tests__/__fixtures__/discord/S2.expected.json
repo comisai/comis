@@ -1,6 +1,6 @@
 {
   "calls": [
-    { "op": "send", "id": "dc-msg-0", "text": "running tool", "silent": false },
+    { "op": "send", "id": "dc-msg-0", "text": "🔧 running tool", "silent": false },
     { "op": "delete", "id": "dc-msg-0" }
   ]
 }

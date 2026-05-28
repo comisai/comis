@@ -17,6 +17,7 @@ import type {
   FinalDeliveryReceipt,
   ActivityRenderError,
 } from "@comis/core";
+import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createAppendOnlyRenderer } from "./append-only.js";
 import type { ActivityRenderActions } from "./actions.js";
 
@@ -161,5 +162,66 @@ describe("createAppendOnlyRenderer", () => {
     const trivial: TurnOutcome = { kind: "success", trivial: true, delivery: RECEIPT };
     await r.finalize(trivial);
     expect(calls).toHaveLength(0);
+  });
+
+  // --- Phase 78 / SPEC-§8.5 production wiring (Task 3 — elapsedMs threading) ---
+  //
+  // AppendOnly accepts an optional `clock?: ClockPort` (new in 78-05) and
+  // captures `startedAtMs` on first apply(). Because AppendOnly posts
+  // ONCE — later apply() calls are no-ops — the elapsed fallback only ever
+  // fires on the FIRST visible frame. That is acceptable because the first
+  // frame is exactly the moment when no plan has yet arrived from SEP (the
+  // plan stream lands after the first model tick). The (running 0 s) on the
+  // first send is the visible §8.5 fallback for iMessage AND LINE.
+
+  it("AppendOnly accepts a clock dep and threads elapsedMs into renderFrameText — opening send carries (running 0 s)", async () => {
+    const clock = createFakeClock(1000);
+    const { actions, calls } = makeRecordingActions();
+    const r = createAppendOnlyRenderer({ actions, clock });
+
+    await r.apply(makeFrame(0, "step 1"));
+
+    const sends = calls.filter((c): c is Extract<Call, { op: "send" }> => c.op === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0].text).toContain("(running 0 s)");
+  });
+
+  it("AppendOnly WITHOUT clock dep skips the elapsed fallback (graceful degrade)", async () => {
+    const { actions, calls } = makeRecordingActions();
+    const r = createAppendOnlyRenderer({ actions });
+
+    await r.apply(makeFrame(0, "step 1"));
+
+    const sends = calls.filter((c): c is Extract<Call, { op: "send" }> => c.op === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0].text).not.toContain("(running");
+  });
+
+  it("AppendOnly with clock + frame.planSnapshot present: skips fallback (no double-display)", async () => {
+    const clock = createFakeClock(1000);
+    const { actions, calls } = makeRecordingActions();
+    const r = createAppendOnlyRenderer({ actions, clock });
+
+    const frameWithPlan: ActivityRenderFrame = {
+      frameSeq: 0,
+      visibleEvents: [{
+        schemaVersion: 1,
+        activityId: "11111111-1111-1111-1111-111111111111",
+        sessionKey: "s", agentId: "main", traceId: "t",
+        ts: "2026-05-26T00:00:00.000Z",
+        phase: "start", status: "running", kind: "tool", semanticPhase: "tool",
+        defaultLabel: "step 1",
+      } as ActivityEvent],
+      groupedActivityIds: {},
+      planSnapshot: {
+        entries: [{ id: "0", label: "a", status: "in_progress" }],
+      },
+      changeSet: { added: [], edited: [], removed: [] },
+    };
+    await r.apply(frameWithPlan);
+
+    const sends = calls.filter((c): c is Extract<Call, { op: "send" }> => c.op === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0].text).not.toContain("(running");
   });
 });

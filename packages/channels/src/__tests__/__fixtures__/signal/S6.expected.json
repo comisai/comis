@@ -1,8 +1,8 @@
 {
   "calls": [
-    { "op": "send", "id": "sig-msg-0", "text": "planning" },
+    { "op": "send", "id": "sig-msg-0", "text": "[x] step one\n[~] step two\n(step 2 of 2)\n───\n🔧 planning" },
     { "op": "delete", "id": "sig-msg-0" },
-    { "op": "send", "id": "sig-msg-1", "text": "executing" },
+    { "op": "send", "id": "sig-msg-1", "text": "[x] step one\n[~] step two\n(step 2 of 2)\n───\n🔧 executing" },
     { "op": "delete", "id": "sig-msg-1" }
   ]
 }

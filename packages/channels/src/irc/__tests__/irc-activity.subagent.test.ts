@@ -70,7 +70,11 @@ describe("IRC subagent inline line (↳ depth prefix — APV-03)", () => {
 
     const send = fake.recorded.calls.find((c) => c.op === "send");
     if (send?.op === "send") {
-      expect(send.text).toBe("running tool");
+      // [Rule 1 — bug fix, quick-260528-nsv] Non-subagent tool event renders
+      // with the per-step running 🔧 marker; the no-`↳ ` invariant (this
+      // test's load-bearing point — IRC depth prefix only on subagent kind)
+      // is unchanged.
+      expect(send.text).toBe("🔧 running tool");
       expect(send.text.startsWith("↳ ")).toBe(false);
     }
   });

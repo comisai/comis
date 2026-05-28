@@ -150,7 +150,10 @@ describe("createIrcActivityRenderer (LinePerEvent wiring, clock-only deps)", () 
       changeSet: { added: ["a-1"], edited: [], removed: [] },
     });
 
-    expect(fake.recorded.calls).toEqual([{ op: "send", id: "irc-msg-0", text: "step one" }]);
+    // [Rule 1 — bug fix, quick-260528-nsv] Tool-event line carries the running
+    // 🔧 marker (per-step glyph re-derived by eventLabel post-patch); the
+    // one-send-per-added-event invariant is unchanged.
+    expect(fake.recorded.calls).toEqual([{ op: "send", id: "irc-msg-0", text: "🔧 step one" }]);
   });
 });
 

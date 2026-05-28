@@ -1,6 +1,6 @@
 {
   "calls": [
-    { "op": "send", "id": "irc-msg-0", "text": "running tool" },
+    { "op": "send", "id": "irc-msg-0", "text": "🔧 running tool" },
     { "op": "send", "id": "irc-msg-1", "text": "✓ done · 1 steps · 2.0s" }
   ]
 }

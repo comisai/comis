@@ -24,10 +24,22 @@ import {
 } from "../../platform-tools/tool-helpers.js";
 import type { ProcessRegistry } from "./process-registry.js";
 import type { ToolCapabilityPort } from "@comis/core";
+import { registerActivityLabelSpec } from "@comis/core";
 import { buildInstallDetourHint } from "./exec-tool/index.js";
 // `InstallDetourDecision` is imported transitively via
 // ProcessSession.installDetourDecision (process-registry.ts type-only import);
 // no direct import here — never re-derive at status-query time.
+
+// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). Descriptor name ==
+// emitted name (process-tool.ts:111 → `name: "process"`). No detailKeys: the
+// process tool is action-discriminated (start/stop/status/...) and the
+// per-action labels can be added later via the `actions` map — the static
+// fallback keeps the channel render from showing the bare `"process"`
+// humanized form.
+registerActivityLabelSpec("process", {
+  semanticPhase: "tool",
+  label: "managing process",
+});
 
 // ---------------------------------------------------------------------------
 // Parameter schema

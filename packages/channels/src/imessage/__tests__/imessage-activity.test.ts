@@ -147,7 +147,10 @@ describe("createIMessageActivityRenderer (AppendOnly wiring)", () => {
 
     const sends = fake.recorded.calls.filter((c) => c.op === "send");
     expect(sends).toHaveLength(1);
-    expect(sends[0]).toEqual({ op: "send", id: "imsg-msg-0", text: "step 1" });
+    // [Rule 1 — bug fix, quick-260528-nsv] First frame's event line carries
+    // the running 🔧 marker; the post-once / no-spam invariant is the
+    // load-bearing assertion (`sends.length === 1`).
+    expect(sends[0]).toEqual({ op: "send", id: "imsg-msg-0", text: "🔧 step 1" });
   });
 
   it("SUPPRESSES the closing follow-up on success (the assistant reply is the signal)", async () => {

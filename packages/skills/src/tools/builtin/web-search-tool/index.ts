@@ -14,6 +14,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import { registerActivityLabelSpec } from "@comis/core";
 import {
   DEFAULT_TIMEOUT_SECONDS,
   DEFAULT_CACHE_TTL_MINUTES,
@@ -62,6 +63,18 @@ import {
   WebSearchParams,
   type WebSearchParamsType,
 } from "./web-search-formatting.js";
+
+// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). The EMITTED name
+// uses an UNDERSCORE — `web-search-tool/index.ts:114 → name: "web_search"` —
+// while the file basename is hyphenated (RESEARCH Pitfall 2). The `{query}`
+// placeholder is allowlisted via detailKeys; LLM-supplied search queries
+// pass through redactValue (a query containing a secret-shape token renders
+// as `<redacted>`).
+registerActivityLabelSpec("web_search", {
+  semanticPhase: "tool",
+  label: "searching the web for {query}",
+  detailKeys: ["query"],
+});
 
 // ---------------------------------------------------------------------------
 // Public re-exports

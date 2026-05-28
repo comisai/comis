@@ -1,6 +1,6 @@
 {
   "calls": [
-    { "op": "send", "id": "imsg-msg-0", "text": "running tool" },
+    { "op": "send", "id": "imsg-msg-0", "text": "🔧 running tool" },
     { "op": "send", "id": "imsg-msg-1", "text": "❌ dependency" }
   ]
 }

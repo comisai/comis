@@ -14,13 +14,23 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { safePath, PathTraversalError } from "@comis/core";
+import { safePath, PathTraversalError, registerActivityLabelSpec } from "@comis/core";
 import { throwToolError } from "../../../platform-tools/tool-helpers.js";
 import { parsePatch } from "./apply-patch-parser.js";
 import { similarity, normalizeLine } from "./apply-patch-similarity.js";
 import type { PatchHunk, PatchOperation } from "./apply-patch-parser.js";
 import { PROTECTED_WORKSPACE_FILES, resolvePaths, type LazyPaths, type SafePathLogger } from "./safe-path-wrapper.js";
 import { withFileMutationQueue } from "../file-tools/shared/file-mutation-queue.js";
+
+// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). The EMITTED name
+// uses an UNDERSCORE — `apply-patch-tool.ts:475 → name: "apply_patch"` —
+// while the file basename is hyphenated (RESEARCH Pitfall 2). No detailKeys:
+// the patch body is the only param and is NEVER safe to substitute (it can
+// contain entire files including secret material), so the label is static.
+registerActivityLabelSpec("apply_patch", {
+  semanticPhase: "tool",
+  label: "applying patch",
+});
 
 const ApplyPatchParams = Type.Object({
   patch: Type.String({

@@ -439,3 +439,22 @@ export type {
 // redactValue — it shortens URLs, ISO timestamps, and long mcp_ tool names
 // only, never re-redacting or re-compacting paths.
 export { compressLabel } from "./activity/label-compressor.js";
+
+// Deterministic OpenClaw-style shell command summarizer (STRAT-09, spec §6.3 /
+// §13.1). Pure, self-redacting (redactValue at shell-label-parser.ts:53),
+// length-capped at 120. Consumed by the exec/process builtin tools' transform
+// hook (Phase 78 WS-A) — the top-level barrel re-export keeps the import path
+// flat: `import { parseShellCommand } from "@comis/observability"`.
+export { parseShellCommand } from "./activity/shell-label-parser.js";
+
+// SEP plan-stream — derives PlanUpdate events from sep:plan_extracted + the
+// live ExecutionPlanPort (STRAT-11, spec §16.7). Consumed by the daemon
+// composition root (Phase 78 WS-D / setup-channels-runtime.ts) to wire the
+// chat ActivityTurnCoordinator with a per-agent plan-state subscription.
+export { createPlanStream } from "./activity/plan-stream.js";
+export type {
+  CreatePlanStreamDeps,
+  PlanEntry,
+  PlanStream,
+  PlanUpdate,
+} from "./activity/plan-stream.js";
