@@ -45,7 +45,13 @@
  * so no diagnostics primitive is reachable here.
  */
 import { ok, err, type Result } from "@comis/shared";
-import type { ChannelActivityRenderer, ActivityRenderError, ChannelPort, ActivityStatusMarkers } from "@comis/core";
+import type {
+  ChannelActivityRenderer,
+  ActivityRenderError,
+  ChannelPort,
+  ActivityStatusMarkers,
+  ClockPort,
+} from "@comis/core";
 import type { ActivityRenderActions } from "../shared/strategies/actions.js";
 import { createAppendOnlyRenderer } from "../shared/strategies/append-only.js";
 import { buildApprovalPrompt } from "../shared/strategies/approval-render.js";
@@ -102,19 +108,29 @@ export function makeIMessageRenderActions(
 /**
  * Create the iMessage AppendOnly activity renderer — wires the Phase-70
  * {@link createAppendOnlyRenderer} with the per-channel render-actions adapter.
- * AppendOnly has no delete to sequence, so there is NO TimerPort / ClockPort
- * (Pitfall 5); the optional `deps.markers` (UX-01) is the only field this
- * renderer reads from the uniform daemon deps and forwards to the strategy's
- * themed closing line. The daemon composition root constructs this with the chat
- * id (WIRE-02). This is the signature the 72-05 wiring builds.
+ *
+ * AppendOnly has no delete to sequence — NO TimerPort. Pitfall 5 was about
+ * the delete-sequencing TimerPort, NOT a read-only clock for elapsed display.
+ * The optional `deps.clock` (Phase 78 / WS-F / SPEC-§8.5) is forwarded into
+ * the strategy so the "(running N s)" fallback lights up when no SEP plan is
+ * active; `clock.now()` is read-only display arithmetic (no scheduling, no
+ * I/O). The optional `deps.markers` (UX-01) is forwarded to the strategy's
+ * themed closing line. The daemon constructs this with the chat id (WIRE-02)
+ * and threads `clock` via the uniform `ActivityRendererDeps` spread (at
+ * `setup-channels-activity-renderers.ts:189-197`).
  */
 export function createIMessageActivityRenderer(
   adapter: ChannelPort,
   channelId: string,
-  deps: { markers?: ActivityStatusMarkers } = {},
+  deps: { clock?: ClockPort; markers?: ActivityStatusMarkers } = {},
 ): ChannelActivityRenderer {
   return createAppendOnlyRenderer({
     actions: makeIMessageRenderActions(adapter, channelId),
+    // Phase 78 / SPEC-§8.5 wiring (plan-checker iter-1 fix): forward the
+    // daemon-injected ClockPort so AppendOnly's first-apply startedAtMs
+    // capture + elapsedMs feeds renderFrameText's "(running N s)" fallback.
+    // Without this forward, §8.5 would be silently inert in iMessage.
+    clock: deps.clock,
     markers: deps.markers,
     // iMessage has no button surface, so an approval frame appends the plain-text
     // prompt ("Reply approve or deny …", with shortIds when >1 pending) to the
