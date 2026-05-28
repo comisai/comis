@@ -78,10 +78,11 @@ function surrogateIdFor(head: ActivityEvent): string {
 /**
  * Apply the chat coalescing rules to a canonical event stream.
  *
- * Order: (1) drop fast successes (preserved events exempt), (2) group adjacent
- * same-tool/same-action runs <800ms apart into a single surrogate line,
- * (3) cap the visible set to `maxLines[verbosity]` while always retaining
- * preserved events.
+ * Order: (1) drop fast successes (preserved events exempt), (1.5) phase-pair
+ * dedup by activityId preferring the `end` event (terminal state), (2) group
+ * adjacent same-tool/same-action runs <800ms apart into a single surrogate
+ * line, (3) cap the visible set to `maxLines[verbosity]` while always
+ * retaining preserved events.
  */
 export function coalesce(
   events: readonly ActivityEvent[],
@@ -92,23 +93,60 @@ export function coalesce(
     (e) => isPreserved(e) || !isDroppableFastSuccess(e, verbosity),
   );
 
+  // 1.5) Phase-pair dedup — for each activityId, keep ONE event. Prefer the
+  //      `phase === "end"` event (terminal state, carries the final status +
+  //      durationMs) so coalesced lines render with the call's terminal
+  //      classification. This removes the live-evidence Bug A: a slow-success
+  //      start+end pair produced "🔧 doing thing\ndoing thing" — the marked
+  //      start AND the bare end both survived Step 1 (start has no
+  //      durationMs; end has durationMs ≥ 1500ms). Replacing the start at the
+  //      same display position keeps original ordering intact and also feeds
+  //      the renderer's failure-marker prefix (status:"failed" → ❌ in
+  //      render.ts/eventLabel).
+  const dedupedByActivityId: ActivityEvent[] = [];
+  const seenIdx = new Map<string, number>();
+  for (const e of kept) {
+    const existingIdx = seenIdx.get(e.activityId);
+    if (existingIdx === undefined) {
+      seenIdx.set(e.activityId, dedupedByActivityId.length);
+      dedupedByActivityId.push(e);
+    } else if (e.phase === "end") {
+      // Replace the prior event (typically the start) with the end at the
+      // same display position. existingIdx came from `seenIdx.set` above
+      // (this module's own Map, never attacker input) — the lint waiver
+      // cites that provenance.
+      // eslint-disable-next-line security/detect-object-injection -- existingIdx is from this module's seenIdx.set call above, not attacker input
+      dedupedByActivityId[existingIdx] = e;
+    }
+    // else: the new event is not an end (start or progress) and we already
+    // have an entry for this activityId — keep the first (the existing entry
+    // is either an end, which we don't overwrite, or an earlier start/progress
+    // we prefer to stable order).
+  }
+
   // 2) Group consecutive same-tool/same-action runs. A Map avoids
   //    attacker-keyed computed-index sinks (security/detect-object-injection).
   const grouped = new Map<string, readonly string[]>();
   const visible: ActivityEvent[] = [];
   let i = 0;
-  while (i < kept.length) {
-    const head = kept[i]!;
+  while (i < dedupedByActivityId.length) {
+    const head = dedupedByActivityId[i]!;
     let j = i + 1;
     // Extend the run while each next event groups with the run head.
-    while (j < kept.length && sameGroup(head, kept[j]!)) {
+    while (j < dedupedByActivityId.length && sameGroup(head, dedupedByActivityId[j]!)) {
       j += 1;
     }
     const runLength = j - i;
     if (runLength > 1) {
-      const constituents = kept.slice(i, j);
+      const constituents = dedupedByActivityId.slice(i, j);
       const surrogateId = surrogateIdFor(head);
-      grouped.set(surrogateId, constituents.map((e) => e.activityId));
+      // Bug B defense-in-depth: count DISTINCT activityIds, not raw
+      // constituent length. Step 1.5 above already collapses same-id pairs,
+      // so the production-path constituents array carries distinct ids; the
+      // `new Set(...)` dedup here protects against a future regression that
+      // re-introduces same-id events into the grouped run (e.g. a Step-1.5
+      // tweak that allows start AND end to survive for some kind).
+      grouped.set(surrogateId, [...new Set(constituents.map((e) => e.activityId))]);
       // Surrogate carries the head's classification with the surrogate id.
       visible.push({ ...head, activityId: surrogateId });
     } else {

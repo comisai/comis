@@ -1,5 +1,5 @@
 {
   "calls": [
-    { "op": "send", "id": "email-msg-0", "text": "[FAILED] dependency\n  • fetch data\n  • transform" }
+    { "op": "send", "id": "email-msg-0", "text": "[FAILED] dependency\n  • fetch data\n  • ❌ transform" }
   ]
 }

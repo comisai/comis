@@ -37,9 +37,25 @@ const DEFAULT_MARKERS: Pick<ActivityStatusMarkers, "success" | "failure"> = {
   failure: "❌",
 };
 
-/** Best-effort short label for one event, drawn from already-redacted hints. */
-export function eventLabel(event: ActivityEvent): string {
-  return event.defaultLabel ?? event.toolName ?? event.kind;
+/**
+ * Best-effort short label for one event, drawn from already-redacted hints.
+ *
+ * When the event is in a terminal-failure state (`status === "failed"`),
+ * prefixes the themed failure marker — the kept end event of a failed call
+ * arrives bare (the running 🔧 is only baked into start events at the
+ * activity-stream emit site, by design per Pitfall 7), so the renderer is
+ * the right place to surface the final status. `completed` end events render
+ * bare (no per-step ✓ — keeps the visual flow calm; closing line carries the
+ * single ✓ done, §3.1). Default-theme parity: a markerless call falls back
+ * to {@link DEFAULT_MARKERS}.failure (`❌`), byte-identical to `failureLabel`'s
+ * pattern.
+ */
+export function eventLabel(event: ActivityEvent, markers?: ActivityStatusMarkers): string {
+  const base = event.defaultLabel ?? event.toolName ?? event.kind;
+  if (event.status === "failed") {
+    return `${markers?.failure ?? DEFAULT_MARKERS.failure} ${base}`;
+  }
+  return base;
 }
 
 /**
@@ -98,7 +114,11 @@ export function renderFrameText(
   // map, so this only protects the pre-existing test surface.
   const grouped = frame.groupedActivityIds ?? {};
   for (const event of frame.visibleEvents) {
-    const base = eventLabel(event);
+    // Thread `markers` so a failed event picks up the themed failure glyph
+    // (default: ❌, ascii: [ERR]) — see eventLabel's docstring for the
+    // rationale (kept end events of failed calls arrive bare; emit-site
+    // marker only conveys in-flight status, Pitfall 7).
+    const base = eventLabel(event, markers);
     const constituents = grouped[event.activityId];
     const groupCount = constituents !== undefined ? constituents.length : 0;
     if (groupCount > 1) {
