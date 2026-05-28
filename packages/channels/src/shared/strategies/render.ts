@@ -38,24 +38,88 @@ const DEFAULT_MARKERS: Pick<ActivityStatusMarkers, "success" | "failure"> = {
 };
 
 /**
+ * Default running glyph mirrors {@link DEFAULT_MARKERS}'s pattern (parity with
+ * the failure branch). Kept here — not exported — so a markerless `eventLabel`
+ * call stays byte-identical to the `default` theme's `🔧` (75-01).
+ *
+ * Pre-quick-260528-nsv: the running marker was baked into START events at the
+ * activity-stream emit site only (Phase 78-02, by design per Pitfall 7).
+ * Post-quick-260528-mch: coalesce.ts Step 1.5 prefers `phase:"end"` events (so
+ * failed end events get the ❌ prefix via Bug C). Slow-completed end events
+ * (>=1500ms, exempt from isDroppableFastSuccess) survive Step 1 AND are kept
+ * by Step 1.5 → their bare defaultLabel reached `eventLabel` with no baked-in
+ * marker → asymmetric render (fast tool calls show 🔧 because the marked start
+ * survives; slow tool calls render bare). The kept-end re-derivation branch
+ * below restores SPEC §3.1 / §3.11 per-step running-glyph symmetry regardless
+ * of duration. Idempotent on already-marked start events.
+ */
+const DEFAULT_RUNNING_MARKER = "🔧";
+
+/**
+ * Boundary / depth-prefix markers that downstream projections or renderers may
+ * have already baked into `defaultLabel`. When the label starts with one of
+ * these (followed by a space), the running glyph is omitted — that line is NOT
+ * an in-flight tool step:
+ *   - `🤖 ` — subagent boundary marker (projection-baked at activity-stream
+ *     emit, per activity-stream.ts:602/621). Pairs with the `kind:"subagent"`
+ *     exemption in {@link eventLabel}; the label-level guard catches the test
+ *     shorthand where a `kind:"tool"` event carries a `🤖 …` label.
+ *   - `↳ ` — IRC depth prefix (applied by `subagentLine` in the IRC renderer
+ *     for nested subagent lines, §18.3). Catches the same test shorthand.
+ *
+ * Match the `"${marker} "` prefix INCLUDING the trailing space — the running
+ * marker is baked space-delimited at the activity-stream START emit
+ * (`"🔧 …"`, Phase 78-02); a defaultLabel that happens to start with the same
+ * glyph glued to text (no space) is NOT already-marked and should still get
+ * the prefix.
+ */
+const BOUNDARY_LABEL_PREFIXES = ["🤖 ", "↳ "] as const;
+
+function withRunningMarker(base: string, runningMarker: string): string {
+  if (base.startsWith(`${runningMarker} `)) return base;
+  for (const p of BOUNDARY_LABEL_PREFIXES) if (base.startsWith(p)) return base;
+  return `${runningMarker} ${base}`;
+}
+
+/**
  * Best-effort short label for one event, drawn from already-redacted hints.
  *
- * When the event is in a terminal-failure state (`status === "failed"`),
- * prefixes the themed failure marker — the kept end event of a failed call
- * arrives bare (the running 🔧 is only baked into start events at the
- * activity-stream emit site, by design per Pitfall 7), so the renderer is
- * the right place to surface the final status. `completed` end events render
- * bare (no per-step ✓ — keeps the visual flow calm; closing line carries the
- * single ✓ done, §3.1). Default-theme parity: a markerless call falls back
- * to {@link DEFAULT_MARKERS}.failure (`❌`), byte-identical to `failureLabel`'s
- * pattern.
+ * Three branches, in priority order:
+ *   1. `status === "failed"` — prefix the themed failure marker (default: ❌,
+ *      ascii: [ERR]). The kept end event of a failed call arrives bare (the
+ *      running 🔧 is only baked into start events at the activity-stream emit
+ *      site, by design per Pitfall 7), so the renderer is the right place to
+ *      surface the final status. Bug C from quick-260528-mch.
+ *   2. Boundary / structural-ask kinds (`subagent`, `approval`, `clarify`) —
+ *      return the label verbatim. These are NOT in-flight tool steps (§3.1):
+ *      - subagent: the projection bakes the `🤖` boundary marker; that glyph
+ *        is the semantic signal (render.ts:14-17 docblock — Discord/Slack key
+ *        thread shells off it).
+ *      - approval / clarify: structural asks ("approval required: bash" /
+ *        "needs clarification") — they invite a user response, they do not
+ *        represent an in-flight tool step. Both are preserved by coalesce.ts
+ *        Step 1 (isPreserved branch at line 51); the running 🔧 glyph would
+ *        misrepresent them as work-in-progress.
+ *   3. Otherwise — prepend the themed running marker (default: 🔧, ascii: [..])
+ *      via {@link withRunningMarker}. Idempotent on labels that already carry
+ *      the same marker (Phase 78-02 baked-in START events pass through
+ *      unchanged). Fixes Bug 2 from quick-260528-nsv: kept slow-completed end
+ *      events (>=1500ms) arrived bare; now they get the per-step glyph for
+ *      symmetry with fast-completed calls.
+ *
+ * Default-theme parity: markerless call falls back to {@link DEFAULT_MARKERS}
+ * for failure and {@link DEFAULT_RUNNING_MARKER} for running, byte-identical
+ * to `failureLabel`'s / the `default` theme's markers (75-01).
  */
 export function eventLabel(event: ActivityEvent, markers?: ActivityStatusMarkers): string {
   const base = event.defaultLabel ?? event.toolName ?? event.kind;
   if (event.status === "failed") {
     return `${markers?.failure ?? DEFAULT_MARKERS.failure} ${base}`;
   }
-  return base;
+  if (event.kind === "subagent" || event.kind === "approval" || event.kind === "clarify") {
+    return base;
+  }
+  return withRunningMarker(base, markers?.running ?? DEFAULT_RUNNING_MARKER);
 }
 
 /**

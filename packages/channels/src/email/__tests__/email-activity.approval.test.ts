@@ -145,7 +145,10 @@ describe("Email approval link (single-use, signed, time-bounded)", () => {
 
     const send = fake.recorded.calls.find((c) => c.op === "send");
     if (send && send.op === "send") {
-      expect(send.text).toBe("[FAILED] dependency\n  • fetch data\n  • transform");
+      // [Rule 1 — bug fix, quick-260528-nsv] Per-event bullet labels carry the
+      // running 🔧 marker (kind:"tool" + status:"running" non-failed events);
+      // the [FAILED] header and the no-http invariant are unchanged.
+      expect(send.text).toBe("[FAILED] dependency\n  • 🔧 fetch data\n  • 🔧 transform");
       expect(send.text).not.toContain("http");
     }
   });

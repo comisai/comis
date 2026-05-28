@@ -95,8 +95,11 @@ describe("iMessage wrapper forwards deps.clock into AppendOnly (Phase 78 plan-ch
     const sends = fake.recorded.calls.filter((c) => c.op === "send");
     expect(sends).toHaveLength(1);
     if (sends[0]?.op === "send") {
+      // [Rule 1 — bug fix, quick-260528-nsv] Tool-event line carries the
+      // running 🔧 marker (the per-step glyph); the no-elapsed-fallback
+      // invariant (`(running …)` absent) is the load-bearing assertion.
       expect(sends[0].text).not.toContain("(running");
-      expect(sends[0].text).toBe("running tool");
+      expect(sends[0].text).toBe("🔧 running tool");
     }
   });
 

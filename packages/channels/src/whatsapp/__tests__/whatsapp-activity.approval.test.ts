@@ -140,7 +140,10 @@ describe("WhatsApp plain-text approval prompt (buttons:none, shortId when ambigu
     await r.apply(plain);
 
     const send = firstSend(fake);
-    expect(send?.text).toBe("running tool");
+    // [Rule 1 — bug fix, quick-260528-nsv] Non-approval tool event renders
+    // with the per-step running 🔧 marker; the byte-stable-placeholder /
+    // no-buttons invariant (this test's load-bearing point) is unchanged.
+    expect(send?.text).toBe("🔧 running tool");
     expect(send?.buttons).toBe(false);
   });
 });

@@ -129,7 +129,11 @@ describe("LINE Quick-Reply approval chips (signed callback data — APV-02)", ()
     await r.apply(plain);
 
     const send = firstSend(fake);
-    expect(send?.text).toBe("running tool");
+    // [Rule 1 — bug fix, quick-260528-nsv] Non-approval tool event renders
+    // with the per-step running 🔧 marker; the no-chips invariant (this
+    // test's load-bearing point — no Quick Reply chips on non-approval
+    // frames) is unchanged.
+    expect(send?.text).toBe("🔧 running tool");
     expect(send?.buttons).toBeUndefined();
   });
 

@@ -63,17 +63,25 @@ function event(partial: Partial<ActivityEvent> & Pick<ActivityEvent, "kind">): A
 }
 
 describe("eventLabel", () => {
-  it("prefers defaultLabel, then toolName, then kind", () => {
+  it("prefers defaultLabel, then toolName, then kind (with running 🔧 marker on non-failed events)", () => {
+    // [Rule 1 — bug fix, quick-260528-nsv] Post-patch eventLabel prepends the
+    // themed running marker on non-failed non-subagent events; the precedence
+    // contract (defaultLabel → toolName → kind) rides UNCHANGED inside the
+    // marker prefix. The bare-base assertions from pre-patch update to the
+    // marker-prepended form.
     expect(eventLabel(event({ kind: "tool", defaultLabel: "searching", toolName: "search" }))).toBe(
-      "searching",
+      "🔧 searching",
     );
-    expect(eventLabel(event({ kind: "tool", toolName: "search" }))).toBe("search");
-    expect(eventLabel(event({ kind: "model" }))).toBe("model");
+    expect(eventLabel(event({ kind: "tool", toolName: "search" }))).toBe("🔧 search");
+    expect(eventLabel(event({ kind: "model" }))).toBe("🔧 model");
   });
 });
 
 describe("renderFrameText", () => {
   it("joins one label per event in display order", () => {
+    // [Rule 1 — bug fix, quick-260528-nsv] Each non-failed non-subagent event
+    // line now carries the running 🔧 marker (eventLabel re-derives it for
+    // events that arrive bare); ordering contract is unchanged.
     const out = renderFrameText(
       frame({
         visibleEvents: [
@@ -82,7 +90,7 @@ describe("renderFrameText", () => {
         ],
       }),
     );
-    expect(out).toBe("a\nb");
+    expect(out).toBe("🔧 a\n🔧 b");
   });
 
   it("paints a subagent event's 🤖-marked defaultLabel verbatim", () => {
@@ -106,6 +114,9 @@ describe("renderFrameText", () => {
   // lines (`renderPlan` output + bounded counter + `───` separator).
 
   it("with no plan snapshot returns only the joined event list (no header lines)", () => {
+    // [Rule 1 — bug fix, quick-260528-nsv] No SEP header → event lines only.
+    // Each non-failed event line carries the running 🔧 (per-step marker
+    // re-derived by eventLabel post-patch); the no-header contract is unchanged.
     const out = renderFrameText(
       frame({
         planSnapshot: undefined,
@@ -115,7 +126,7 @@ describe("renderFrameText", () => {
         ],
       }),
     );
-    expect(out).toBe("first\nsecond");
+    expect(out).toBe("🔧 first\n🔧 second");
     expect(out).not.toContain("[x]");
     expect(out).not.toContain("(step ");
     expect(out).not.toContain("───");
@@ -140,7 +151,10 @@ describe("renderFrameText", () => {
       }),
     );
     expect(out).toBe(
-      "[x] step a\n[~] step b\n[ ] step c\n(step 2 of 3)\n───\nev1\nev2",
+      // [Rule 1 — bug fix, quick-260528-nsv] Per-event lines carry the running
+      // 🔧 marker post-patch; SEP header + (step N of M) + ─── separator are
+      // unchanged.
+      "[x] step a\n[~] step b\n[ ] step c\n(step 2 of 3)\n───\n🔧 ev1\n🔧 ev2",
     );
   });
 
@@ -210,6 +224,10 @@ describe("renderFrameText", () => {
   });
 
   it("does NOT append ×N for non-surrogate event (Open Question 4 — subagent collapse uses parentActivityId, not groupedActivityIds)", () => {
+    // [Rule 1 — bug fix, quick-260528-nsv] Per-event running 🔧 prepended on
+    // the bare base label post-patch; the no-×N contract (the load-bearing
+    // invariant of this test) is unchanged — the `not.toContain("×")`
+    // assertions still hold.
     // length === 0 (key absent) — single non-coalesced event.
     const outNoEntry = renderFrameText(
       frame({
@@ -219,7 +237,7 @@ describe("renderFrameText", () => {
         groupedActivityIds: {},
       }),
     );
-    expect(outNoEntry).toBe("reading config");
+    expect(outNoEntry).toBe("🔧 reading config");
     expect(outNoEntry).not.toContain("×");
 
     // length === 1 — a single-element grouped entry is NOT a coalesced surrogate.
@@ -231,7 +249,7 @@ describe("renderFrameText", () => {
         groupedActivityIds: { "group:single": ["id1"] },
       }),
     );
-    expect(outSingleton).toBe("reading config");
+    expect(outSingleton).toBe("🔧 reading config");
     expect(outSingleton).not.toContain("×");
   });
 
@@ -286,13 +304,18 @@ describe("renderFrameText", () => {
     );
   });
 
-  // Contract-pin: a kept COMPLETED end event renders bare (no per-step ✓).
+  // Contract-pin: a kept COMPLETED end event does NOT carry the per-step ✓.
   // §3.1 — the closing line carries the single ✓ done; per-step ✓ would
-  // clutter the running flow. This test PASSES pre-patch (current
-  // eventLabel returns bare for everything) and PASSES post-patch — it
-  // locks the chosen behavior so a future "✓ on completed" change can't
-  // sneak in without an updated assertion.
-  it("does NOT prefix any marker on a kept completed end event (no per-step ✓ during running phase)", () => {
+  // clutter the running flow.
+  //
+  // [Rule 1 — bug fix, quick-260528-nsv] Post-patch the kept end event now
+  // carries the per-step running marker (🔧 / [..]) — Bug 2 fix restores
+  // §3.1/§3.11 symmetry between fast and slow tool calls. The original
+  // load-bearing invariant of this test was about ✓-absence on completed end
+  // events (so the running flow stays calm and the closing ✓ done is the only
+  // success marker); the running-marker presence is the NEW correct contract.
+  // The ✓-absence assertion is preserved below.
+  it("does NOT prefix the success ✓ on a kept completed end event (no per-step ✓ during running phase)", () => {
     const completedFrame = frame({
       visibleEvents: [
         event({
@@ -304,9 +327,14 @@ describe("renderFrameText", () => {
         }),
       ],
     });
-    expect(renderFrameText(completedFrame)).toBe("doing the thing");
-    expect(renderFrameText(completedFrame, DEFAULT_THEME_MARKERS)).toBe("doing the thing");
-    expect(renderFrameText(completedFrame, ASCII_MARKERS)).toBe("doing the thing");
+    expect(renderFrameText(completedFrame)).toBe("🔧 doing the thing");
+    expect(renderFrameText(completedFrame, DEFAULT_THEME_MARKERS)).toBe("🔧 doing the thing");
+    expect(renderFrameText(completedFrame, ASCII_MARKERS)).toBe("[..] doing the thing");
+    // The no-per-step-✓ invariant (the original load-bearing point) holds:
+    // neither the default ✓ nor the ascii [OK] appears on a kept end event.
+    expect(renderFrameText(completedFrame)).not.toContain("✓");
+    expect(renderFrameText(completedFrame, DEFAULT_THEME_MARKERS)).not.toContain("✓");
+    expect(renderFrameText(completedFrame, ASCII_MARKERS)).not.toContain("[OK]");
   });
 
   // --- Quick fix 260528-nsv — Bug 2 (running marker symmetry on kept end events) ---
@@ -410,13 +438,16 @@ describe("renderFrameText", () => {
   });
 
   it("does NOT emit elapsed fallback when elapsedMs is undefined", () => {
+    // [Rule 1 — bug fix, quick-260528-nsv] Event line carries the running
+    // 🔧 marker post-patch; the no-elapsed-fallback contract (no `(running …)`
+    // suffix) is the load-bearing invariant and is preserved.
     const out = renderFrameText(
       frame({
         planSnapshot: undefined,
         visibleEvents: [event({ kind: "tool", defaultLabel: "ev1" })],
       }),
     );
-    expect(out).toBe("ev1");
+    expect(out).toBe("🔧 ev1");
     expect(out).not.toContain("(running");
   });
 

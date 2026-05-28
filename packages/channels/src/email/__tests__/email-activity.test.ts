@@ -199,7 +199,10 @@ describe("createEmailActivityRenderer (DigestOnly wiring)", () => {
     const send = sends[0];
     if (send && send.op === "send") {
       // Body is `[FAILED] {errorKind}` then one `• <label>` per trailed event.
-      expect(send.text).toBe("[FAILED] dependency\n  • fetch data\n  • transform");
+      // [Rule 1 — bug fix, quick-260528-nsv] Per-event bullet labels carry the
+      // running 🔧 marker (kind:"tool" + status:"running" non-failed events);
+      // the header text and no-stack-trace invariants are unchanged.
+      expect(send.text).toBe("[FAILED] dependency\n  • 🔧 fetch data\n  • 🔧 transform");
       // The raw SMTP error body is NEVER rendered; only the errorKind + labels.
       expect(send.text).not.toContain("ECONNREFUSED");
       // No `Re:` is injected into the body — that is the adapter's transport subject.

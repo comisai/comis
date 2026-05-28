@@ -1,7 +1,7 @@
 {
   "calls": [
-    { "op": "send", "id": "irc-msg-0", "text": "running tool" },
-    { "op": "send", "id": "irc-msg-1", "text": "tool failed" },
+    { "op": "send", "id": "irc-msg-0", "text": "🔧 running tool" },
+    { "op": "send", "id": "irc-msg-1", "text": "🔧 tool failed" },
     { "op": "send", "id": "irc-msg-2", "text": "[ERR] dependency" }
   ]
 }

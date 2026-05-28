@@ -97,12 +97,16 @@ describe("createDeleteAndRepostRenderer", () => {
     await r.apply(makeFrame(1, "step 2")); // delete prev (msg-0) + send msg-1
     await r.apply(makeFrame(2, "step 3")); // delete prev (msg-1) + send msg-2
 
+    // [Rule 1 — bug fix, quick-260528-nsv] Per-transition send text now
+    // carries the running 🔧 marker (eventLabel re-derives it on the
+    // tool-kind running events post-patch); the delete-prev + send-next
+    // state-machine invariant is unchanged.
     expect(calls).toEqual([
-      { op: "send", text: "step 1", id: "msg-0" },
+      { op: "send", text: "🔧 step 1", id: "msg-0" },
       { op: "delete", id: "msg-0" },
-      { op: "send", text: "step 2", id: "msg-1" },
+      { op: "send", text: "🔧 step 2", id: "msg-1" },
       { op: "delete", id: "msg-1" },
-      { op: "send", text: "step 3", id: "msg-2" },
+      { op: "send", text: "🔧 step 3", id: "msg-2" },
     ]);
   });
 

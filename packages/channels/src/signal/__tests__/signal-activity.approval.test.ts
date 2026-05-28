@@ -144,6 +144,9 @@ describe("Signal plain-text approval prompt (no buttons, shortId when ambiguous 
     await r.apply(plain);
 
     const send = fake.recorded.calls.find((c) => c.op === "send");
-    if (send?.op === "send") expect(send.text).toBe("running tool");
+    // [Rule 1 — bug fix, quick-260528-nsv] Non-approval tool event renders
+    // with the per-step running 🔧 marker; the no-prompt invariant (this
+    // test's load-bearing point) is unchanged.
+    if (send?.op === "send") expect(send.text).toBe("🔧 running tool");
   });
 });

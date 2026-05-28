@@ -256,7 +256,17 @@ function compactPaths(s: string, homeDir: string | undefined, sink: RedactionRec
 
   // 2. Remaining system-absolute paths → last 2 segments.
   //    Match a leading-slash path of ≥ 2 segments; keep only the final two.
-  const ABS_PATH_RE = /\/(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+/g;
+  //    SEC-02 URL-scheme guard (quick-260528-nsv): the leading `/` must not be
+  //    preceded by `:` or `/`. The `:` half is obvious (first slash of `://`);
+  //    the `/` half blocks the SECOND slash of `://` — without it, the matcher
+  //    would still anchor at the second slash and treat `//host/path/...` as a
+  //    `/host/path/...` filesystem path. URL hosts are public info per SPEC
+  //    §8.4 (tavily.com/search renders verbatim), not filesystem paths. A
+  //    two-character negative-lookbehind keeps the rest of the matcher identical
+  //    so the existing filesystem-path compaction tests stay green (no leading
+  //    `/` of a real FS path like `/var/folders/...` or `/Users/alice/...` is
+  //    preceded by `:` or `/`).
+  const ABS_PATH_RE = /(?<![:/])\/(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+/g;
   out = out.replace(ABS_PATH_RE, (match) => {
     const segments = match.split("/").filter((seg) => seg.length > 0);
     if (segments.length <= 2) return match;

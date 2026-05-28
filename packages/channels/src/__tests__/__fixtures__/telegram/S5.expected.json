@@ -1,8 +1,8 @@
 {
   "calls": [
-    { "op": "send", "id": "tg-msg-0", "text": "attempt 1", "silent": true },
-    { "op": "edit", "id": "tg-msg-0", "text": "attempt 1 failed" },
-    { "op": "edit", "id": "tg-msg-0", "text": "attempt 2 ok" },
+    { "op": "send", "id": "tg-msg-0", "text": "🔧 attempt 1", "silent": true },
+    { "op": "edit", "id": "tg-msg-0", "text": "🔧 attempt 1 failed" },
+    { "op": "edit", "id": "tg-msg-0", "text": "🔧 attempt 2 ok" },
     { "op": "edit", "id": "tg-msg-0", "text": "✓ done" },
     { "op": "delete", "id": "tg-msg-0" }
   ]

@@ -1,5 +1,5 @@
 {
   "calls": [
-    { "op": "send", "id": "imsg-msg-0", "text": "suppressed reply" }
+    { "op": "send", "id": "imsg-msg-0", "text": "🔧 suppressed reply" }
   ]
 }

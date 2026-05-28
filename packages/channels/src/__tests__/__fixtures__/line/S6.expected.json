@@ -1,5 +1,5 @@
 {
   "calls": [
-    { "op": "send", "id": "line-msg-0", "text": "[x] step one\n[~] step two\n(step 2 of 2)\n───\nplanning" }
+    { "op": "send", "id": "line-msg-0", "text": "[x] step one\n[~] step two\n(step 2 of 2)\n───\n🔧 planning" }
   ]
 }
