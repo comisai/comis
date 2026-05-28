@@ -55,6 +55,7 @@ import type {
   AuthResult,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import { auth as sdkAuth } from "@modelcontextprotocol/sdk/client/auth.js";
+import type { OAuthClientMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 import { createTokenStore, type TokenStore } from "./token-store.js";
@@ -208,6 +209,20 @@ export async function runOauthLogin(
     ...provider,
     get redirectUrl(): string | URL | undefined {
       return redirectUrl;
+    },
+    // CRITICAL: `clientMetadata` MUST stay a live getter that delegates to
+    // the adapter on every access. The spread above evaluates `provider.
+    // clientMetadata` exactly once at spread time (when `redirectUrl` is
+    // still undefined) and FREEZES the resulting `{ redirect_uris: [] }`
+    // object as a plain property. Without this override the SDK calls DCR
+    // with `redirect_uris: []` and every RFC 7591-compliant authorization
+    // server returns 400 `invalid_redirect_uri` ("at least one redirect_uri
+    // is required" — observed 2026-05-28 against Higgsfield in
+    // daemon.1.log:865). Re-reading the adapter's getter on each access
+    // pulls the live loopback URL from the `getRedirectUrl` closure that
+    // is populated at line ~256 after `runBrowserCallback` binds.
+    get clientMetadata(): OAuthClientMetadata {
+      return provider.clientMetadata;
     },
     redirectToAuthorization(authorizationUrl: URL): void | Promise<void> {
       capturedAuthUrl = authorizationUrl.toString();

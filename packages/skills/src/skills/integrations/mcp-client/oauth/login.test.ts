@@ -332,6 +332,49 @@ describe("runOauthLogin — full orchestration flow", () => {
     expect(warn?.[1]).toContain("did not authorize");
   });
 
+  // Bug discovered 2026-05-28 in daemon.1.log:865 against Higgsfield: the
+  // wrappedProvider at login.ts:207 used `{...provider, ...}` to override
+  // `redirectToAuthorization` for URL capture. That spread evaluated the
+  // provider's `clientMetadata` getter ONCE at spread time — BEFORE
+  // `redirectUrl` was set (line 256, after the loopback server binds) —
+  // and froze the resulting `{ redirect_uris: [] }` object as a regular
+  // property. The SDK then called DCR with `redirect_uris: []`, which
+  // every spec-compliant authorization server (RFC 7591) rejects with
+  // 400 `invalid_redirect_uri` ("at least one redirect_uri is required"
+  // from Higgsfield). The fix is to override `clientMetadata` on
+  // wrappedProvider as a LIVE getter that re-reads `provider.clientMetadata`
+  // on each access so the loopback URL flows through to DCR.
+  it("wrappedProvider.clientMetadata.redirect_uris carries the loopback URL when the SDK reads it during DCR", async () => {
+    const handle = makeHandle({ headless: true, redirectUri: "http://127.0.0.1:60938/callback" });
+    let capturedClientMetadata: { redirect_uris: string[] } | undefined;
+
+    // The SDK reads `provider.clientMetadata` synchronously when it calls
+    // registerClient (DCR). Mirror that read here so we capture exactly
+    // what the SDK would see at DCR time.
+    const auth = vi.fn(async (provider: OAuthClientProvider) => {
+      capturedClientMetadata = provider.clientMetadata as { redirect_uris: string[] };
+      await provider.redirectToAuthorization(new URL("https://idp.example/authorize?state=x"));
+      return "REDIRECT" as const;
+    });
+
+    await runOauthLogin({
+      serverName: "srv-redirect-bug",
+      serverUrl: "https://mcp.example",
+      oauthConfig: {},
+      createTokenStore: () => store,
+      openUrl: () => undefined,
+      auth: auth as never,
+      runBrowserCallback: vi.fn(async () => handle) as never,
+      resolveDiscovery: vi.fn(async () => ({}) as never),
+      logger,
+    });
+
+    expect(capturedClientMetadata).toBeDefined();
+    // Pre-fix: redirect_uris was [] because spread froze the getter.
+    // Post-fix: re-reading the live getter returns the loopback URL.
+    expect(capturedClientMetadata!.redirect_uris).toEqual(["http://127.0.0.1:60938/callback"]);
+  });
+
   it("skips pre-flight discovery when a discovery state already exists", async () => {
     // Seed the store with discovery state so the orchestrator skips the cold load.
     await store.saveDiscoveryState("srv-warm", {
