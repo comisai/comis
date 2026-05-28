@@ -1,17 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Value } from "typebox/value";
 import { createMcpManageTool } from "./mcp-manage-tool.js";
 import { runWithContext } from "@comis/core";
 import type { RequestContext, ApprovalGate } from "@comis/core";
 
-// Mock @comis/core: preserve real implementations, override safePath
-vi.mock("@comis/core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@comis/core")>();
-  return {
-    ...actual,
-    safePath: (base: string, ...segments: string[]) => base + "/" + segments.join("/"),
-  };
-});
+// Note: mcp-manage-tool.ts does not call safePath, so no @comis/core mock is needed.
+// The real @comis/core implementations (runWithContext, registerActivityLabelSpec, etc.)
+// are used directly.
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -644,6 +640,125 @@ describe("mcp_manage tool", () => {
           tool.execute("call-e1", { action: "list" } as never),
         ),
       ).rejects.toThrow("MCP service unavailable");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // auth field schema acceptance (R11-01) — RED: fails on HEAD, passes after patch
+  // -----------------------------------------------------------------------
+
+  describe("auth field schema acceptance (R11-01)", () => {
+    it("schema accepts auth:oauth on connect params (will pass after patch)", () => {
+      // RED: Value.Check returns false on HEAD because auth is not yet in the schema.
+      // GREEN: returns true after McpManageToolParams gains the auth field.
+      const tool = createMcpManageTool(mockRpcCall);
+      const ok = Value.Check(tool.parameters, {
+        action: "connect",
+        server_name: "x",
+        url: "https://mcp.higgsfield.ai/mcp",
+        transport: "http",
+        auth: "oauth",
+      });
+      expect(ok).toBe(true);
+    });
+
+    it("schema accepts auth:headers on connect params (will pass after patch)", () => {
+      // RED: Value.Check returns false on HEAD because auth is not yet in the schema.
+      // GREEN: returns true after McpManageToolParams gains the auth field.
+      const tool = createMcpManageTool(mockRpcCall);
+      const ok = Value.Check(tool.parameters, {
+        action: "connect",
+        server_name: "x",
+        url: "https://mcp.higgsfield.ai/mcp",
+        transport: "http",
+        auth: "headers",
+      });
+      expect(ok).toBe(true);
+    });
+
+    it("coerceAuth accepts oauth and returns it (will pass after patch)", async () => {
+      // RED: rpcCall is expected to receive auth:"oauth" after coerceAuth processes it.
+      // On HEAD the auth field does not exist in connect params, so rpcCall
+      // receives no auth field — this assertion fails on HEAD.
+      mockRpcCall.mockResolvedValue({ name: "x", status: "connected", toolCount: 0, tools: [] });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-auth-oauth", {
+          action: "connect",
+          server_name: "x",
+          url: "https://mcp.higgsfield.ai/mcp",
+          transport: "http",
+          auth: "oauth",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith(
+        "mcp.connect",
+        expect.objectContaining({ auth: "oauth" }),
+      );
+    });
+
+    it("coerceAuth accepts headers and returns it (will pass after patch)", async () => {
+      // RED: same as above — auth field not forwarded on HEAD.
+      mockRpcCall.mockResolvedValue({ name: "x", status: "connected", toolCount: 0, tools: [] });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-auth-headers", {
+          action: "connect",
+          server_name: "x",
+          url: "https://mcp.higgsfield.ai/mcp",
+          transport: "http",
+          auth: "headers",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith(
+        "mcp.connect",
+        expect.objectContaining({ auth: "headers" }),
+      );
+    });
+
+    it("coerceAuth rejects invalid auth value (will pass after patch)", async () => {
+      // RED: on HEAD the auth field is ignored (not in schema/coerce),
+      // so this test FAILS because rpcCall IS called (no validation error thrown).
+      // GREEN: coerceAuth throws [invalid_value] for bad enum values, so rpcCall is NOT called.
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-auth-bad", {
+            action: "connect",
+            server_name: "x",
+            url: "https://mcp.higgsfield.ai/mcp",
+            transport: "http",
+            auth: "bad-value",
+          } as never),
+        ),
+      ).rejects.toThrow(/\[invalid_value\]/);
+
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
+    it("connect succeeds without auth field (no regression)", async () => {
+      // Ensure omitting auth still works correctly after the patch.
+      mockRpcCall.mockResolvedValue({ name: "x", status: "connected", toolCount: 0, tools: [] });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-no-auth", {
+          action: "connect",
+          server_name: "x",
+          url: "https://mcp.higgsfield.ai/mcp",
+          transport: "http",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith(
+        "mcp.connect",
+        expect.not.objectContaining({ auth: expect.anything() }),
+      );
     });
   });
 });
