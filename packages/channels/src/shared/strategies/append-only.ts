@@ -64,7 +64,7 @@ export function createAppendOnlyRenderer(deps: AppendOnlyDeps): ChannelActivityR
 
     async apply(frame: ActivityRenderFrame): Promise<Result<void, ActivityRenderError>> {
       if (opened) return ok(undefined);
-      const text = appendPrompt(renderFrameText(frame.visibleEvents), buildPrompt?.(frame.visibleEvents));
+      const text = appendPrompt(renderFrameText(frame, markers), buildPrompt?.(frame.visibleEvents));
       if (text.length === 0) return ok(undefined);
       // A button-capable channel (LINE) carries the signed Quick-Reply chips; a
       // non-approval frame yields `[]` → omit `buttons` so the send stays

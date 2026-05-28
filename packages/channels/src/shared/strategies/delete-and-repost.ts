@@ -78,7 +78,7 @@ export function createDeleteAndRepostRenderer(
       // Delete the previous activity message before reposting the transition.
       const deleted = await deleteLast();
       if (!deleted.ok) return deleted;
-      const text = appendPrompt(renderFrameText(frame.visibleEvents), buildPrompt?.(frame.visibleEvents));
+      const text = appendPrompt(renderFrameText(frame, markers), buildPrompt?.(frame.visibleEvents));
       const sent = await actions.send(text);
       if (!sent.ok) return sent;
       lastActivityId = sent.value;

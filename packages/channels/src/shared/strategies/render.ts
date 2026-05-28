@@ -15,7 +15,13 @@
  * plain-text, depth-aware renderer (IRC, §18.3) prepend a `↳ ` depth prefix;
  * the prefix is a renderer concern, not data baked into the event here.
  */
-import type { ActivityEvent, TurnOutcome, ActivityStatusMarkers } from "@comis/core";
+import type {
+  ActivityEvent,
+  ActivityRenderFrame,
+  ActivityStatusMarkers,
+  TurnOutcome,
+} from "@comis/core";
+import { renderPlan } from "../plan-renderer.js";
 
 /**
  * Closing-line glyphs when no theme markers are injected (default-theme parity).
@@ -36,9 +42,48 @@ export function eventLabel(event: ActivityEvent): string {
   return event.defaultLabel ?? event.toolName ?? event.kind;
 }
 
-/** One status line per event in display order. */
-export function renderFrameText(events: readonly ActivityEvent[]): string {
-  return events.map(eventLabel).join("\n");
+/**
+ * Render a frame to text: SPEC §8.3 plan-state header (when SEP is active) +
+ * SPEC §8.5 bounded `(step N of M)` counter + a `───` separator + one status
+ * line per visible event.
+ *
+ * WS-D Phase 78 — the signature migrated from `(events)` to `(frame, markers?)`
+ * in one atomic commit covering the 3 strategy call sites + this test file
+ * (AGENTS.md §2.10 escape: combined RED+GREEN because the old call shape would
+ * not compile against the new signature; the commit message cites this). The
+ * elapsed-time fallback (when `planSnapshot === undefined`) lands in Plan
+ * 78-05's WS-F.
+ */
+export function renderFrameText(
+  frame: ActivityRenderFrame,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- WS-D Phase 78: markers parameter reserved for Plan 78-05 (WS-E `×N` surrogate count + WS-F elapsed line themed prefix). Threading it through every strategy NOW keeps the migration atomic.
+  markers?: ActivityStatusMarkers,
+): string {
+  const lines: string[] = [];
+
+  // SPEC §8.3: plan-state checkbox header above the event list when SEP is
+  // active. renderPlan emits ALL entries regardless of visibility filter —
+  // by-design (the plan is meta-context, not an event); descriptions are
+  // redacted upstream at the adapter site (Security V9 mitigation).
+  if (frame.planSnapshot !== undefined && frame.planSnapshot.entries.length > 0) {
+    lines.push(renderPlan(frame.planSnapshot));
+    // SPEC §8.5 (first half): bounded `(step N of M)` counter from the
+    // in_progress entry's 1-based index. When no entry is in_progress (all
+    // done or all pending), the counter is omitted (the header + separator
+    // still render).
+    const total = frame.planSnapshot.entries.length;
+    const inProgressIdx = frame.planSnapshot.entries.findIndex((e) => e.status === "in_progress");
+    if (inProgressIdx >= 0) {
+      lines.push(`(step ${inProgressIdx + 1} of ${total})`);
+    }
+    lines.push("───");
+  }
+
+  for (const event of frame.visibleEvents) {
+    lines.push(eventLabel(event));
+  }
+
+  return lines.join("\n");
 }
 
 /**

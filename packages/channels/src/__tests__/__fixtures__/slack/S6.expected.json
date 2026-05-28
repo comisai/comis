@@ -1,7 +1,7 @@
 {
   "calls": [
-    { "op": "send", "id": "sl-msg-0", "text": "planning", "silent": false },
-    { "op": "edit", "id": "sl-msg-0", "text": "executing" },
+    { "op": "send", "id": "sl-msg-0", "text": "[x] step one\n[~] step two\n(step 2 of 2)\n───\nplanning", "silent": false },
+    { "op": "edit", "id": "sl-msg-0", "text": "[x] step one\n[~] step two\n(step 2 of 2)\n───\nexecuting" },
     { "op": "edit", "id": "sl-msg-0", "text": "✓ done" },
     { "op": "delete", "id": "sl-msg-0" }
   ]

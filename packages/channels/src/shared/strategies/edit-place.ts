@@ -122,7 +122,7 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
     canDelete: true,
 
     async apply(frame: ActivityRenderFrame): Promise<Result<void, ActivityRenderError>> {
-      latestText = renderFrameText(frame.visibleEvents);
+      latestText = renderFrameText(frame, markers);
 
       // First frame posts the placeholder; later frames only debounce an edit.
       if (messageId === undefined) {
