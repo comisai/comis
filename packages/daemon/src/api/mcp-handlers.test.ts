@@ -284,6 +284,69 @@ describe("MCP RPC Handlers", () => {
         handlers["mcp.connect"]({ server_name: "bad", transport: "stdio", command: "nope" }),
       ).rejects.toThrow("Failed to connect");
     });
+
+    // -------------------------------------------------------------------------
+    // R8.4'-01: Structured throw with .data.needs_oauth_login at RPC boundary.
+    //
+    // When manager.connect returns a NeedsOAuthLoginError, the RPC handler must
+    // throw an Error with .data.needs_oauth_login === true so Plan 06's
+    // mcp_manage catch block can surface the actionable "run mcp login" hint.
+    // -------------------------------------------------------------------------
+    it("throws structured error with data.needs_oauth_login when manager returns NeedsOAuthLoginError", async () => {
+      // Arrange: simulate first-install 401 — construct a NeedsOAuthLoginError
+      // with code === "needs_oauth_login" (same shape as tagNeedsOAuthLogin).
+      // Importing tagNeedsOAuthLogin from @comis/skills is not possible here
+      // because vi.mock("@comis/skills") only re-exports `isNeedsOAuthLoginError`
+      // (tagNeedsOAuthLogin is intentionally not in the barrel export).
+      const needsOAuthErr = Object.assign(
+        new Error(`MCP server "oauth-srv" requires OAuth login.`),
+        { code: "needs_oauth_login" as const },
+      );
+      (manager.connect as any).mockResolvedValue(err(needsOAuthErr));
+
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+
+      let thrownError: unknown;
+      try {
+        await handlers["mcp.connect"]({
+          server_name: "oauth-srv",
+          transport: "http",
+          url: "https://example.com/mcp",
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(Error);
+      // R8.4'-01: structured .data must carry needs_oauth_login flag + guidance.
+      expect((thrownError as { data?: unknown }).data).toMatchObject({
+        needs_oauth_login: true,
+        server_name: "oauth-srv",
+        action: "comis mcp login oauth-srv",
+      });
+    });
+
+    it("throws plain Error (no .data field) when manager returns non-oauth error", async () => {
+      // Non-oauth errors must NOT get .data — only NeedsOAuthLoginErrors do.
+      (manager.connect as any).mockResolvedValue(err(new Error("network timeout")));
+
+      const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
+
+      let thrownError: unknown;
+      try {
+        await handlers["mcp.connect"]({
+          server_name: "plain-srv",
+          transport: "http",
+          url: "https://example.com/mcp",
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      expect(thrownError).toBeInstanceOf(Error);
+      expect((thrownError as { data?: unknown }).data).toBeUndefined();
+      expect((thrownError as Error).message).toContain('Failed to connect MCP server "plain-srv"');
+    });
   });
 
   // -------------------------------------------------------------------------
