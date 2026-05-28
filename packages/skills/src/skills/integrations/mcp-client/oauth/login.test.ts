@@ -474,4 +474,257 @@ describe("runOauthLogin — full orchestration flow", () => {
     // Flow still proceeds (REDIRECT path) — non-headless → opens + awaits code.
     expect(result.authUrl).toContain("idp.example/authorize");
   });
+
+  // DEVAUTH-03 regression guard from the PKCE side: the 3 device-flow-only
+  // optional fields stay undefined on every PKCE-path return so contract
+  // mirroring (mcp-oauth.ts) stays clean.
+  it("PKCE path leaves verificationUri userCode and expiresIn undefined on returned result", async () => {
+    const handle = makeHandle({ headless: false });
+    const auth = vi.fn(
+      async (provider: OAuthClientProvider, opts: { authorizationCode?: string }) => {
+        if (opts.authorizationCode === undefined) {
+          await provider.redirectToAuthorization(new URL("https://idp.example/authorize?state=pkce"));
+          return "REDIRECT" as const;
+        }
+        return "AUTHORIZED" as const;
+      },
+    );
+
+    const result = await runOauthLogin({
+      serverName: "srv-pkce-clean",
+      serverUrl: "https://mcp.example",
+      oauthConfig: {},
+      createTokenStore: () => store,
+      openUrl: () => undefined,
+      auth: auth as never,
+      runBrowserCallback: vi.fn(async () => handle) as never,
+      resolveDiscovery: vi.fn(async () => ({}) as never),
+      logger,
+    });
+
+    expect(result.status).toBe("authorized");
+    expect(result.verificationUri).toBeUndefined();
+    expect(result.userCode).toBeUndefined();
+    expect(result.expiresIn).toBeUndefined();
+  });
+});
+
+// ===========================================================================
+// DEVAUTH-02 selection heuristic (plan 09-02).
+//
+// Five behavior-named cases pinning the dispatcher's selection matrix:
+//   1. headless + device-code advertised      → device-flow
+//   2. headless + device-code NOT advertised  → PKCE
+//   3. operator override "auth_code" beats heuristic toward PKCE
+//   4. operator override "device_code" beats heuristic toward device-flow
+//   5. non-headless + device-code advertised  → PKCE (simpler UX)
+//
+// `runDeviceFlow` is injected as a `vi.fn()`; SDK `auth()` is NOT called on
+// the device-flow path (the loopback handle.close() runs first).
+// ===========================================================================
+describe("runOauthLogin device-flow selection heuristic (DEVAUTH-02)", () => {
+  let dir: string;
+  let store: TokenStore;
+  let logger: ReturnType<typeof makeLogger>;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "comis-oauth-select-"));
+    logger = makeLogger();
+    store = createTokenStore({
+      tokensDir: dir,
+      confinedBaseDir: dir,
+      logger,
+      watchPersistent: false,
+    });
+  });
+
+  afterEach(async () => {
+    await store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Fake discovery with the device_authorization_endpoint field populated. */
+  function discoveryAdvertisingDeviceFlow() {
+    return vi.fn(async () => ({
+      authorizationServerMetadata: {
+        device_authorization_endpoint: "https://idp.example/device_authorization",
+        token_endpoint: "https://idp.example/token",
+        grant_types_supported: [
+          "authorization_code",
+          "urn:ietf:params:oauth:grant-type:device_code",
+        ],
+      },
+    }) as never);
+  }
+
+  /** Fake discovery WITHOUT device-flow support. */
+  function discoveryWithoutDeviceFlow() {
+    return vi.fn(async () => ({
+      authorizationServerMetadata: {
+        token_endpoint: "https://idp.example/token",
+        grant_types_supported: ["authorization_code", "refresh_token"],
+      },
+    }) as never);
+  }
+
+  it("headless plus device-code advertised dispatches device-flow path", async () => {
+    const handle = makeHandle({ headless: true, portForwardHint: "ssh -L 60000:localhost:60000 vps" });
+    const auth = vi.fn(async () => "REDIRECT" as const);
+    const runDeviceFlow = vi.fn(async () => ({
+      status: "device_code_pending" as const,
+      verificationUri: "https://example.com/device",
+      userCode: "WDJB-MJHT",
+      expiresIn: 600,
+    }));
+
+    const result = await runOauthLogin({
+      serverName: "srv-heuristic-headless-dev",
+      serverUrl: "https://mcp.example",
+      oauthConfig: {},
+      createTokenStore: () => store,
+      openUrl: () => undefined,
+      auth: auth as never,
+      runBrowserCallback: vi.fn(async () => handle) as never,
+      resolveDiscovery: discoveryAdvertisingDeviceFlow() as never,
+      runDeviceFlow,
+      logger,
+    });
+
+    expect(runDeviceFlow).toHaveBeenCalledTimes(1);
+    // SDK auth() first pass MUST NOT run on the device-flow path.
+    expect(auth).not.toHaveBeenCalled();
+    expect(result.status).toBe("device_code_pending");
+    expect(result.verificationUri).toBe("https://example.com/device");
+    expect(result.userCode).toBe("WDJB-MJHT");
+    expect(result.expiresIn).toBe(600);
+    // The loopback handle was released (device-flow needs no callback).
+    expect(handle.close).toHaveBeenCalled();
+  });
+
+  it("headless without device-code stays on PKCE loopback path", async () => {
+    const handle = makeHandle({ headless: true, portForwardHint: "ssh -L 60001:localhost:60001 vps" });
+    let observedRedirectFromAuth = false;
+    const auth = vi.fn(async (provider: OAuthClientProvider) => {
+      observedRedirectFromAuth = true;
+      await provider.redirectToAuthorization(new URL("https://idp.example/authorize?state=hp"));
+      return "REDIRECT" as const;
+    });
+    const runDeviceFlow = vi.fn(async () => ({ status: "device_code_pending" as const }));
+
+    const result = await runOauthLogin({
+      serverName: "srv-heuristic-headless-nodev",
+      serverUrl: "https://mcp.example",
+      oauthConfig: {},
+      createTokenStore: () => store,
+      openUrl: () => undefined,
+      auth: auth as never,
+      runBrowserCallback: vi.fn(async () => handle) as never,
+      resolveDiscovery: discoveryWithoutDeviceFlow() as never,
+      runDeviceFlow,
+      logger,
+    });
+
+    expect(runDeviceFlow).not.toHaveBeenCalled();
+    expect(observedRedirectFromAuth).toBe(true);
+    expect(result.status).toBe("headless_hint");
+    expect(result.authUrl).toContain("idp.example/authorize");
+  });
+
+  it("operator override oauth.flow auth_code beats heuristic toward PKCE", async () => {
+    const handle = makeHandle({ headless: true, portForwardHint: "ssh -L 60002:localhost:60002 vps" });
+    let observedRedirectFromAuth = false;
+    const auth = vi.fn(async (provider: OAuthClientProvider) => {
+      observedRedirectFromAuth = true;
+      await provider.redirectToAuthorization(new URL("https://idp.example/authorize?state=ov-pkce"));
+      return "REDIRECT" as const;
+    });
+    const runDeviceFlow = vi.fn(async () => ({ status: "device_code_pending" as const }));
+
+    const result = await runOauthLogin({
+      serverName: "srv-override-auth-code",
+      serverUrl: "https://mcp.example",
+      // Heuristic would dispatch device-flow (headless + advertised);
+      // operator forces PKCE.
+      oauthConfig: { flow: "auth_code" },
+      createTokenStore: () => store,
+      openUrl: () => undefined,
+      auth: auth as never,
+      runBrowserCallback: vi.fn(async () => handle) as never,
+      resolveDiscovery: discoveryAdvertisingDeviceFlow() as never,
+      runDeviceFlow,
+      logger,
+    });
+
+    expect(runDeviceFlow).not.toHaveBeenCalled();
+    expect(observedRedirectFromAuth).toBe(true);
+    expect(result.status).toBe("headless_hint");
+  });
+
+  it("operator override oauth.flow device_code beats heuristic toward device-flow on non-headless host", async () => {
+    const handle = makeHandle({ headless: false });
+    const auth = vi.fn(async () => "REDIRECT" as const);
+    const runDeviceFlow = vi.fn(async () => ({
+      status: "device_code_pending" as const,
+      verificationUri: "https://operator.example/device",
+      userCode: "ABCD-1234",
+      expiresIn: 300,
+    }));
+
+    const result = await runOauthLogin({
+      serverName: "srv-override-device-code",
+      serverUrl: "https://mcp.example",
+      oauthConfig: {
+        flow: "device_code",
+        deviceAuthorizationEndpoint: "https://operator.example/device",
+      },
+      createTokenStore: () => store,
+      openUrl: () => undefined,
+      auth: auth as never,
+      runBrowserCallback: vi.fn(async () => handle) as never,
+      // Discovery does NOT advertise device-flow — heuristic alone would skip;
+      // operator override forces dispatch.
+      resolveDiscovery: discoveryWithoutDeviceFlow() as never,
+      runDeviceFlow,
+      logger,
+    });
+
+    expect(runDeviceFlow).toHaveBeenCalledTimes(1);
+    expect(auth).not.toHaveBeenCalled();
+    expect(result.status).toBe("device_code_pending");
+    expect(result.verificationUri).toBe("https://operator.example/device");
+    expect(result.userCode).toBe("ABCD-1234");
+  });
+
+  it("non-headless host with device-code advertised prefers PKCE for simpler UX", async () => {
+    const handle = makeHandle({ headless: false });
+    const openUrl = vi.fn();
+    const auth = vi.fn(
+      async (provider: OAuthClientProvider, opts: { authorizationCode?: string }) => {
+        if (opts.authorizationCode === undefined) {
+          await provider.redirectToAuthorization(new URL("https://idp.example/authorize?state=nh-pkce"));
+          return "REDIRECT" as const;
+        }
+        return "AUTHORIZED" as const;
+      },
+    );
+    const runDeviceFlow = vi.fn(async () => ({ status: "device_code_pending" as const }));
+
+    const result = await runOauthLogin({
+      serverName: "srv-nonheadless-pkce",
+      serverUrl: "https://mcp.example",
+      oauthConfig: {},
+      createTokenStore: () => store,
+      openUrl,
+      auth: auth as never,
+      runBrowserCallback: vi.fn(async () => handle) as never,
+      resolveDiscovery: discoveryAdvertisingDeviceFlow() as never,
+      runDeviceFlow,
+      logger,
+    });
+
+    expect(runDeviceFlow).not.toHaveBeenCalled();
+    expect(openUrl).toHaveBeenCalledTimes(1);
+    expect(openUrl.mock.calls[0]?.[0]).toContain("idp.example/authorize");
+    expect(result.status).toBe("authorized");
+  });
 });
