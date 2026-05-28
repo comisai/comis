@@ -45,19 +45,21 @@ export function eventLabel(event: ActivityEvent): string {
 /**
  * Render a frame to text: SPEC §8.3 plan-state header (when SEP is active) +
  * SPEC §8.5 bounded `(step N of M)` counter + a `───` separator + one status
- * line per visible event.
+ * line per visible event. WS-E Phase 78 / SPEC-§9 appends `×N` (default) /
+ * `xN` (ascii) to any visible event that represents a coalesced surrogate
+ * (`frame.groupedActivityIds[event.activityId].length > 1`). WS-F Phase 78 /
+ * SPEC-§8.5 (second half) appends `(running N s)` as an elapsed-time fallback
+ * when no plan is active AND the caller supplies `elapsedMs`.
  *
- * WS-D Phase 78 — the signature migrated from `(events)` to `(frame, markers?)`
- * in one atomic commit covering the 3 strategy call sites + this test file
- * (AGENTS.md §2.10 escape: combined RED+GREEN because the old call shape would
- * not compile against the new signature; the commit message cites this). The
- * elapsed-time fallback (when `planSnapshot === undefined`) lands in Plan
- * 78-05's WS-F.
+ * The 3 in-scope strategies (EditPlace, AppendOnly, DeleteAndRepost) capture
+ * `startedAtMs` on first apply() and pass `elapsedMs = clock.now() - startedAtMs`
+ * here. LinePerEvent and DigestOnly do NOT call this function — they use
+ * `eventLabel(event)` per-event and own their own elapsed display.
  */
 export function renderFrameText(
   frame: ActivityRenderFrame,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- WS-D Phase 78: markers parameter reserved for Plan 78-05 (WS-E `×N` surrogate count + WS-F elapsed line themed prefix). Threading it through every strategy NOW keeps the migration atomic.
   markers?: ActivityStatusMarkers,
+  elapsedMs?: number,
 ): string {
   const lines: string[] = [];
 
@@ -79,8 +81,46 @@ export function renderFrameText(
     lines.push("───");
   }
 
+  // WS-E Phase 78 / SPEC-§9: per-event line + coalescing surrogate count.
+  // `frame.groupedActivityIds[event.activityId]` is the constituents array;
+  // a length > 1 marks this event as a coalesced surrogate (the head id is
+  // the surrogate's activityId, the array carries the underlying ids the
+  // surrogate stands in for). Single-element entries (length === 1) are NOT
+  // surrogates — they're a degenerate 1-of-1 group and render bare. Subagent
+  // collapse uses parentActivityId (a separate mechanism), NOT
+  // groupedActivityIds — so subagent events are never decorated with ×N.
+  //
+  // The contract declares `groupedActivityIds` as a non-optional
+  // `Readonly<Record<string, readonly string[]>>` (channel-activity-renderer.ts:40),
+  // but some pre-Phase-78 test fixtures construct frames via `as` casts that
+  // omit it. Guarding against `undefined` here keeps those frames rendering
+  // bare (no ×N decoration) — the production projection always supplies the
+  // map, so this only protects the pre-existing test surface.
+  const grouped = frame.groupedActivityIds ?? {};
   for (const event of frame.visibleEvents) {
-    lines.push(eventLabel(event));
+    const base = eventLabel(event);
+    const constituents = grouped[event.activityId];
+    const groupCount = constituents !== undefined ? constituents.length : 0;
+    if (groupCount > 1) {
+      // Defense-in-depth fallback chain: theme-supplied separator → hard-coded
+      // `"×"` literal (the default theme also supplies `"×"`, so a markerless
+      // call stays byte-identical to the themed default). A custom theme that
+      // omits surrogateSeparator inherits the multiplication sign — graceful.
+      const sep = markers?.surrogateSeparator ?? "×";
+      lines.push(`${base} ${sep}${groupCount}`);
+    } else {
+      lines.push(base);
+    }
+  }
+
+  // WS-F Phase 78 / SPEC-§8.5 (second half): elapsed-time fallback when no
+  // SEP plan is active. Fires when `elapsedMs` is supplied (`!== undefined`,
+  // so `elapsedMs === 0` legitimately produces `(running 0 s)` on the first
+  // apply()) AND `frame.planSnapshot === undefined` (the plan header above
+  // would otherwise satisfy SPEC-§8.5's first half — no double-display).
+  if (frame.planSnapshot === undefined && elapsedMs !== undefined) {
+    const seconds = Math.floor(elapsedMs / 1000);
+    lines.push(`(running ${seconds} s)`);
   }
 
   return lines.join("\n");
@@ -134,7 +174,20 @@ export function failureLabel(
  * output is byte-identical to the pre-75-06 check-prefixed `"<marker> done"`; the
  * ascii theme yields `"[OK] done"` with no emoji (UX-01). The success line carries
  * no errorKind, so `successLabel` takes no outcome.
+ *
+ * WS-F Phase 78 / SPEC-§8.6 — the optional 2nd arg `recoveredFailures` (the
+ * count from `TurnOutcome.success_with_recovered_failures.recoveredFailures.length`)
+ * appends `(with N recovered failure[s])` after the base label when N > 0,
+ * with English singular/plural agreement. 0 or undefined → base label only.
  */
-export function successLabel(markers?: Pick<ActivityStatusMarkers, "success">): string {
-  return `${markers?.success ?? DEFAULT_MARKERS.success} done`;
+export function successLabel(
+  markers?: Pick<ActivityStatusMarkers, "success">,
+  recoveredFailures?: number,
+): string {
+  const base = `${markers?.success ?? DEFAULT_MARKERS.success} done`;
+  if (recoveredFailures !== undefined && recoveredFailures > 0) {
+    const noun = recoveredFailures === 1 ? "failure" : "failures";
+    return `${base} (with ${recoveredFailures} recovered ${noun})`;
+  }
+  return base;
 }

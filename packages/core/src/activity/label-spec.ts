@@ -107,6 +107,16 @@ export interface ActivityStatusMarkers {
   readonly subagent: string;
   /** Marker for an in-flight/running event (default theme: e.g. a wrench). */
   readonly running: string;
+  /**
+   * WS-E Phase 78 / SPEC-§9 — separator between an event label and its
+   * coalesced-group count (e.g. `reading config ×3`). Defaults to `"×"` U+00D7
+   * for the default/playful/terminal-minimal themes; the ascii theme overrides
+   * to `"x"` (lowercase Latin) so the strict ASCII-parity test
+   * (`packages/channels/src/shared/strategies/ascii-parity.test.ts`,
+   * `/[^\x00-\x7F]/`) passes — SPEC-§8.9. Optional for forward-compatibility:
+   * a custom theme that omits this field falls back to the default `"×"`.
+   */
+  readonly surrogateSeparator?: string;
 }
 
 /**

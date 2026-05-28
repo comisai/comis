@@ -18,5 +18,8 @@ export const defaultTheme: ActivityTheme = {
     failure: "❌",
     subagent: "🤖",
     running: "🔧",
+    // WS-E Phase 78 / SPEC-§9: surrogate-count separator (e.g. `reading config ×3`).
+    // The default theme uses the multiplication sign U+00D7 — humane glyph.
+    surrogateSeparator: "×",
   },
 };
