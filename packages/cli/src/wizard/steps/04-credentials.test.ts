@@ -631,11 +631,11 @@ describe("credentialsStep", () => {
     expect(match, "PROVIDER_VALIDATION_PATHS block must exist").not.toBeNull();
     const block = match![1];
 
-    // Pre-fix bug shapes that produced doubled paths -- must NOT appear as
+    // Prior bug shapes that produced doubled paths -- must NOT appear as
     // path values. (Anthropic/mistral/deepseek legitimately keep "/v1/models"
     // because their catalog baseUrl is host-only. The doubled-shape patterns
     // we guard against are /openai/v1/models and /api/v1/models, which were
-    // groq's and openrouter's pre-fix values and would always be wrong now
+    // groq's and openrouter's prior values and would always be wrong now
     // since their baseUrls already include the /openai/v1 and /api/v1
     // prefixes respectively.)
     expect(block).not.toMatch(/"\/openai\/v1\/models"/);

@@ -17,6 +17,7 @@ import {
   SessionSpawnContract,
   SessionCompactContract,
   stripInternalFields,
+  computeReachableToolNames,
 } from "@comis/core";
 import type { RpcHandler } from "../types.js";
 import { IS_DEV, type SessionHandlerDeps } from "./session-helpers.js";
@@ -118,7 +119,21 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       const objective = params.objective;
       const domainKnowledge = params.domain_knowledge;
       const toolGroups = params.tool_groups;
+      const requiredTools = params.required_tools;
       const includeParentHistory = (params.include_parent_history === "summary" ? "summary" : "none") as "none" | "summary";
+
+      // Compute the effective reachable tool set for the spawn gate.
+      // Apply the config default tool_groups when the caller omitted tool_groups (the common case),
+      // then expand both TOOL_PROFILES and TOOL_GROUPS — same logic as setup-tools.ts:588-607.
+      // This gives the spawn gate a single source of truth (no duplication of runtime logic).
+      const configToolGroups = deps.securityConfig.agentToAgent?.subAgentToolGroups ?? ["coding"];
+      const effectiveToolGroups = (toolGroups && toolGroups.length > 0) ? toolGroups : configToolGroups;
+      // computeReachableToolNames returns null for "full" (unconstrained — gate skips ceiling check)
+      const reachableToolNamesSet = computeReachableToolNames(effectiveToolGroups);
+      // null ("full") → pass ReadonlySet<never> sentinel so gate still checks denylist;
+      // non-null → pass the computed set for membership checks.
+      const reachableToolNames: ReadonlySet<string> | undefined =
+        reachableToolNamesSet !== null ? reachableToolNamesSet : undefined;
 
       // Async (only path): non-blocking spawn.
       const runId = deps.subAgentRunner.spawn({
@@ -138,7 +153,9 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
         objective,
         domainKnowledge,
         toolGroups,
+        requiredTools,
         includeParentHistory,
+        reachableToolNames,
       });
       // Capture dedup signal from this spawn so the response carries
       // structured `deduped`/`existingRunId`/`dedupAgeMs` if the runner

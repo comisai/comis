@@ -814,7 +814,24 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "resolveSecretRef",
       "ResolveSecretRefDeps",
       "ResolveSecretRefOptions",
-      "SECRET_FIELD_PATTERN",
+      // Secret detection keystone — primitives exported from
+      // core/security/secret-detection.ts. isSecretFieldName + scanForSecrets
+      // are used within core itself (relative imports) rather than via
+      // @comis/core, so no in-package-external consumer exists yet.
+      // isEnvRefString is the single-source-of-truth env-ref predicate;
+      // exported so credential-classify.ts and future consumers share
+      // the authoritative scheme/quote-stripping implementation instead of a
+      // weaker trim-only copy.
+      // classifyHeaderCredential + CredentialKind + HeaderCredentialClassification
+      // are header-credential primitives — consumers land downstream.
+      // SecretFinding is used only in core's own test files (excluded from scan).
+      "isSecretFieldName",
+      "isEnvRefString",
+      "scanForSecrets",
+      "SecretFinding",
+      "classifyHeaderCredential",
+      "CredentialKind",
+      "HeaderCredentialClassification",
       "scanConfigForSecrets",
       "scanEnvForSecrets",
       "AuditSeverity",
@@ -1407,6 +1424,24 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // consumer-scan does not flag. Documented public-contract surface;
       // not a baseline orphan.
       "MCP_OAUTH_CONTRACTS",
+      // Sub-agent tool governance symbols.
+      // SUB_AGENT_TOOL_PROFILES is a static data copy (drift-guard tested in
+      // tool-policy.test.ts — excluded from consumer scan). Its primary
+      // production consumer is the spawn-time required_tools gate in
+      // sub-agent-runner.ts. RequiredToolsUnreachableError +
+      // UnreachableToolEntry are the error class + entry type thrown by that
+      // gate. SUB_AGENT_TOOL_DENYLIST / toolReachableGroups have live in-repo
+      // consumers (daemon + agent pi-event-bridge) and are NOT policy-listed.
+      // SUB_AGENT_TOOL_GROUPS mirrors TOOL_GROUPS for gate
+      // expansion; consumed by drift-guard test (excluded from scan)
+      // and by computeReachableToolNames. computeReachableToolNames has a live
+      // consumer in session-mutate.ts but the AST walker may miss daemon imports
+      // that go through indirect re-exports — policy-listed for safety.
+      "SUB_AGENT_TOOL_PROFILES",
+      "SUB_AGENT_TOOL_GROUPS",
+      "computeReachableToolNames",
+      "RequiredToolsUnreachableError",
+      "UnreachableToolEntry",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
@@ -1471,14 +1506,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // AST walker excludes test/** so this is the canonical place to record
       // the planned consumer.
       "_resetConfigMutatedCoalescer",
-      // plaintext-secret heuristic helper re-exported so the
-      // architecture-tier negative + positive control table at
-      // test/architecture/mcp-plaintext-secret-false-positives.test.ts can
-      // assert the heuristic shape against real-world token samples
-      // without duplicating the prefix list. The public-export-consumers
-      // AST walker only scans packages/*/src/** (NOT test/), mirroring the
-      // precedent set by MCP_STDIO_BUILTIN_ENV_ALLOWLIST / scrubStdioEnv.
-      "looksLikePlaintextSecret",
       // Residency-test harness consumers (dynamic require).
       "createTracingLogger",
       "TracingLoggerOptions",

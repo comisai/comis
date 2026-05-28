@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Encrypted secrets store — behavior break (v1.1)
+
+#### Breaking Changes
+
+- **Encrypted secrets store is now opt-out (was opt-in)** — On first boot with no
+  `SECRETS_MASTER_KEY` set, Comis auto-generates a master key and writes it to
+  `~/.comis/.env` (mode 0600). The encrypted store is usable immediately on the same
+  boot with no restart required. **Action required for existing installs:** Back up
+  `~/.comis/.env` — losing `SECRETS_MASTER_KEY` makes `secrets.db` permanently
+  unreadable. To keep the prior behavior (no encrypted store), set
+  `COMIS_DISABLE_ENCRYPTED_SECRETS=1`. This is a deliberate behavior break; see
+  [Secrets management](/operations/docker#secrets-management) for the full posture change.
+
+#### Added
+
+- `COMIS_DISABLE_ENCRYPTED_SECRETS=1` env flag — opts out of auto-init; daemon boots in
+  envfile-only mode with a startup WARN.
+- `env_set` now returns an immediate `secrets_store_unavailable` error (with actionable
+  hint) when the encrypted store is not configured — no confirmation dance, no rate-limit
+  consumption.
+
+---
+
 ### Memory + Core port/schema deletions — Schema Tier
 
 This sub-release closes the Schema Tier: 7 dead SQLite columns

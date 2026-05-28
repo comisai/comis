@@ -58,8 +58,8 @@ function makeEvent(runId: string, success = true): { runId: string; success: boo
 describe("graph-concurrency", () => {
   describe("globalCompletionHandler", () => {
     it("bails immediately on non-graph runId without warn log or slot release", () => {
-      // Pre-fix: the handler ran releaseAndDrainQueue unconditionally and emitted
-      // an "Orphaned graph sub-agent completion" warn. Post-fix: non-graph runIds
+      // Previously: the handler ran releaseAndDrainQueue unconditionally and emitted
+      // an "Orphaned graph sub-agent completion" warn. Now: non-graph runIds
       // return silently without touching counters, queue, or the log stream.
       const state = makeState({ globalActiveSubAgents: 5 });
       const config = makeConfig();

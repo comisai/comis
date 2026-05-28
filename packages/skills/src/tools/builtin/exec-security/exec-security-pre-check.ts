@@ -110,6 +110,40 @@ const DANGEROUS_PIPE_TARGETS = new Set([
 ]);
 
 /**
+ * curl/wget as pipe targets are allowed ONLY when no upload/data flag is present.
+ * All other DANGEROUS_PIPE_TARGETS remain unconditionally blocked.
+ */
+const READ_ONLY_PIPE_TARGETS = new Set(["curl", "wget"]);
+
+/**
+ * Flags that transform a curl/wget pipe target into a data-exfiltration risk.
+ * Conservative: any flag that sends data to a remote server.
+ *
+ * Detection strategy:
+ *   1. Short-flag cluster containing an upload letter (d/F/T), caught ANYWHERE in the cluster —
+ *      e.g. `-sd`, `-fsSd`, `-kT`, `-sF`, and attached-value forms `-Fs=@-`/`-ds=@-`/`-Ts=@-`.
+ *      curl lets the first value-taking letter consume the cluster remainder as its argument
+ *      (`-Fs=@-` ≡ `-F s=@-`, a multipart upload of stdin — verified vs curl 8.7.1), so there is
+ *      NO trailing `\b`: `(?:^|\s)-[A-Za-z]*[dFT]` matches the letter mid-cluster; the leading
+ *      `(?:^|\s)-` still avoids `-`-prefixed filenames. Case-sensitive (lowercase d, uppercase
+ *      F/T). NOT matched: `-o`/`-O`/`-s`/`-S`/`-k`/`-L`/`-f`/`-G`/`-I`/`-D` (read-only/benign).
+ *   2. Long-form upload flags: `--upload-file`, `--data*`, `--form`, `--post-data`,
+ *      `--post-file`, `--body-data`, `--body-file` (wget-specific).
+ *   3. `-X POST`/`-X PUT` with optional space (covers both `-X POST` and `-XPOST`).
+ *   4. `--method=POST`/`--method=PUT`.
+ *
+ * Residual known gap (accepted design): `-H "…"` header injection is allowed because
+ * `-H` is required for legitimate read-only API calls (Accept, Authorization).
+ * The egress allowlist (exec-security-allowlist.ts) is the backstop for that vector.
+ */
+const CURL_UPLOAD_FLAGS =
+  // 1. Bundled short-flag cluster with upload letter d (data), F (form), or T (upload-file),
+  //    caught ANYWHERE in the cluster — including before an attached value (`-Fs=@-`). No trailing
+  //    `\b`: requiring the letter at cluster end missed attached-value forms (verified vs curl 8.7.1).
+  //    Case-sensitive: uppercase D is --dump-header, not data; uppercase O/I/L/G stay read-only.
+  /(?:^|\s)-[A-Za-z]*[dFT]|(?:^|\s)(?:--upload-file|--data(?:-raw|-binary|-urlencode)?|--form|--post-data|--post-file|--body-(?:data|file))\b|(?:^|\s)-X\s*(?:POST|PUT)\b|--method=(?:POST|PUT)\b/;
+
+/**
  * Detect pipes to dangerous targets (shell interpreters, network tools).
  * Runs on the FULL command before compound splitting, because splitCommandSegments
  * splits on | and removes the pipe context from individual segments.
@@ -128,6 +162,11 @@ export function detectDangerousPipeTargets(command: string): string | null {
       ? firstWord.split("/").pop()!
       : firstWord;
     if (DANGEROUS_PIPE_TARGETS.has(basename)) {
+      // curl/wget: allow ONLY when no upload/data flag is present in the segment.
+      // nc/ncat/socat/telnet/sh/bash/...: unconditionally blocked (not in READ_ONLY_PIPE_TARGETS).
+      if (READ_ONLY_PIPE_TARGETS.has(basename) && !CURL_UPLOAD_FLAGS.test(segment)) {
+        continue; // read-only pipe target — no upload/data flag found
+      }
       return `Pipe to '${basename}' detected (potential data exfiltration or remote code execution). Piping data to shell interpreters or network tools is blocked.`;
     }
   }
@@ -177,22 +216,46 @@ const FILE_WRITE_HEURISTIC =
   /^\s*(?:cat|tee|echo|printf)\b|>\s*["']?[^|<&\s]+\s*(?:<<|$)/;
 
 export function sanitizeCommandInput(command: string): string | null {
-  const match = INVISIBLE_CHAR_REGEX.exec(command);
-  if (match) {
-    const cp = match[0].codePointAt(0)!;
-    const hex = cp.toString(16).toUpperCase().padStart(4, "0");
-    let msg = `Command contains invisible/ambiguous character U+${hex} at position ${match.index}. This can bypass security validation. Remove the character and retry.`;
-    if (cp === 0x0a) {
-      // Disambiguate: is the LLM writing a file (use `write` tool) or
-      // running a multi-line script (use python3/node/bash with stdin)?
-      // The heuristic fires on the line the newline was rejected on, so
-      // the hint matches the LLM's actual intent.
-      const looksLikeFileWrite = FILE_WRITE_HEURISTIC.test(command);
-      msg += looksLikeFileWrite
-        ? ` To write files, use the 'write' tool (or 'edit' for targeted changes) instead of a shell heredoc in exec.`
-        : ` For multi-line scripts, use command='python3 -' (or 'node -', 'bash -') with the 'input' parameter for the script body.`;
+  const tracker = new ShellQuoteTracker();
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+
+    // CRITICAL: capture quote state BEFORE feeding — tracker.feed() mutates state
+    // immediately on quote chars, so checking state AFTER feed would incorrectly
+    // treat the opening quote character itself as "inside a quote" (check-before-feed
+    // mirrors validateRedirectTargets:288 pattern).
+    //
+    // A pending backslash escape (tracker.escaped) is NOT a quoted context. In bash,
+    // `\` + newline is a line continuation that joins the next physical line as
+    // executable code — exactly the injection vector Gate 0 must block. Only suppress
+    // newline rejection when genuinely inside single/double quotes (state !== "NORMAL").
+    const inQuote = tracker.state !== "NORMAL";
+
+    if (ch === "\n") {
+      // U+000A: only reject when NOT inside a quoted context.
+      // A newline inside single/double quotes is legitimate (multi-line script body).
+      if (!inQuote) {
+        const looksLikeFileWrite = FILE_WRITE_HEURISTIC.test(command);
+        let msg = `Command contains invisible/ambiguous character U+000A at position ${i}. This can bypass security validation. Remove the character and retry.`;
+        msg += looksLikeFileWrite
+          ? ` To write files, use the 'write' tool (or 'edit' for targeted changes) instead of a shell heredoc in exec.`
+          : ` For multi-line scripts, use command='python3 -' (or 'node -', 'bash -') with the 'input' parameter for the script body.`;
+        return msg;
+      }
+      // In a quoted context: allow and continue.
+    } else {
+      // For all non-newline chars: apply the full INVISIBLE_CHAR_REGEX without quote context.
+      // These characters (zero-width spaces, BOM, soft hyphen, etc.) have no legitimate use
+      // even inside quoted strings, so quote context is irrelevant for them.
+      const singleMatch = INVISIBLE_CHAR_REGEX.exec(ch);
+      if (singleMatch) {
+        const cp = ch.codePointAt(0)!;
+        const hex = cp.toString(16).toUpperCase().padStart(4, "0");
+        return `Command contains invisible/ambiguous character U+${hex} at position ${i}. This can bypass security validation. Remove the character and retry.`;
+      }
     }
-    return msg;
+
+    tracker.feed(ch);
   }
   return null;
 }

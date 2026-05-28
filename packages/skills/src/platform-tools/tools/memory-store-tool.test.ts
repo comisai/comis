@@ -69,7 +69,10 @@ describe("memory_store tool", () => {
     });
   });
 
-  it("warns when content contains a Google API key", async () => {
+  it("passes content with Google API key directly to rpcCall (in-tool detection retired, daemon-side validateMemoryWrite handles it)", async () => {
+    // The private SECRET_PATTERNS / contentLooksLikeSecret check is retired.
+    // Secret detection now lives daemon-side in validateMemoryWrite (memory-write-validator.ts).
+    // The tool itself no longer intercepts or warns — it passes content through to the RPC.
     const rpcCall = vi.fn(async () => ({ stored: true, id: "mem-006" }));
     const tool = createMemoryStoreTool(rpcCall);
 
@@ -77,17 +80,14 @@ describe("memory_store tool", () => {
       content: "Here is my Gemini API key AIzaFAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_X",
     });
 
-    // Should still store it
+    // Should store it (tool-level warning is retired; daemon validates)
     expect(rpcCall).toHaveBeenCalledOnce();
-    // But should include a warning
-    expect(result.details).toEqual(
-      expect.objectContaining({
-        warning: expect.stringContaining("API key"),
-      }),
-    );
+    // No in-tool warning — secret check is now daemon-side only.
+    expect(result.details).not.toHaveProperty("warning");
   });
 
-  it("warns when content contains an OpenAI API key", async () => {
+  it("passes content with OpenAI API key directly to rpcCall (in-tool detection retired, daemon-side validateMemoryWrite handles it)", async () => {
+    // Same as above — tool passes content through, daemon validates.
     const rpcCall = vi.fn(async () => ({ stored: true }));
     const tool = createMemoryStoreTool(rpcCall);
 
@@ -96,11 +96,8 @@ describe("memory_store tool", () => {
     });
 
     expect(rpcCall).toHaveBeenCalledOnce();
-    expect(result.details).toEqual(
-      expect.objectContaining({
-        warning: expect.stringContaining("API key"),
-      }),
-    );
+    // No in-tool warning after retirement of in-tool secret detection.
+    expect(result.details).not.toHaveProperty("warning");
   });
 
   it("does not warn for normal content", async () => {
@@ -115,5 +112,21 @@ describe("memory_store tool", () => {
       expect.objectContaining({ stored: true, id: "mem-008" }),
     );
     expect(result.details).not.toHaveProperty("warning");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// memory-store-tool SECRET_PATTERNS retirement
+// ---------------------------------------------------------------------------
+
+describe("private SECRET_PATTERNS retired", () => {
+  it("does NOT have a private SECRET_PATTERNS constant (retired in favor of validateMemoryWrite)", async () => {
+    // Read the actual source file and assert SECRET_PATTERNS is gone
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const { dirname, join } = await import("node:path");
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const sourceText = readFileSync(join(__dirname, "memory-store-tool.ts"), "utf-8");
+    expect(sourceText).not.toContain("SECRET_PATTERNS");
   });
 });

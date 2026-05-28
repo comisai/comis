@@ -120,12 +120,17 @@ export interface McpServerConfig {
     readonly cpu?: number;
   };
   /**
-   * Per-server override of mcp.keepaliveIntervalMs (ms). `0` disables the
-   * keepalive ticker for this server (use for chatty servers that already
-   * receive frequent tool calls). Undefined ⇒ global
-   * `state.options.keepaliveIntervalMs` default applies.
-   * Resolution: `config.keepaliveIntervalMs ?? state.options.keepaliveIntervalMs`
-   * — use `??` (nullish coalescing), NOT `||`, so `0` is preserved.
+   * Per-server keepalive ping interval (ms). `0` disables the keepalive
+   * ticker for this server (use for chatty servers that already receive
+   * frequent tool calls).
+   *
+   * Resolution chain (outermost wins):
+   *   `config.keepaliveIntervalMs` (per-server RPC param or persisted entry)
+   *   ?? `globalKeepaliveIntervalMs` (integrations.mcp.keepaliveIntervalMs)
+   *   ?? `resolveDefaultKeepaliveIntervalMs(transport)` (30 000 ms http/sse,
+   *      180 000 ms stdio).
+   *
+   * Use `??` (nullish coalescing), NOT `||`, so `0` is preserved as "disabled".
    */
   readonly keepaliveIntervalMs?: number;
   /**
@@ -210,7 +215,7 @@ export type McpConnectionStatus = "connected" | "disconnected" | "connecting" | 
  */
 export type CircuitState =
   | { readonly status: "closed"; readonly failureCount: number }
-  | { readonly status: "open"; readonly failureCount: number; readonly openedAtMs: number }
+  | { readonly status: "open"; readonly failureCount: number; readonly openedAtMs: number; readonly reason?: "auth" }
   | { readonly status: "half-open"; readonly failureCount: number };
 
 /** Configuration for automatic reconnection behavior. */
@@ -322,8 +327,6 @@ export interface McpClientManagerDeps {
   readonly stdioDefaultConcurrency?: number;
   /** Default max concurrent tool calls for HTTP/SSE servers (default: 4). */
   readonly httpDefaultConcurrency?: number;
-  /** Default keepalive interval (ms). 0 disables. Resolved at factory construction. */
-  readonly keepaliveIntervalMs?: number;
   /** Default circuit breaker failure threshold. Resolved at factory construction. */
   readonly circuitBreakerThreshold?: number;
   /** Default circuit breaker cooldown (ms). Resolved at factory construction. */
@@ -410,8 +413,6 @@ export interface McpClientManagerOptions {
   readonly stdioDefaultConcurrency: number;
   readonly httpDefaultConcurrency: number;
   readonly reconnectOpts: McpReconnectOptions;
-  /** Global default keepalive interval (ms). 0 = disabled. Per-server override on McpServerConfig. */
-  readonly keepaliveIntervalMs: number;
   /** Global default consecutive failure threshold before breaker opens. Per-server override on McpServerConfig. */
   readonly circuitBreakerThreshold: number;
   /** Global default cooldown (ms) between open → half-open transitions. Per-server override on McpServerConfig. */

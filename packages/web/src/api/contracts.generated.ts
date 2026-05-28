@@ -3347,6 +3347,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "items": {
             "type": "string"
           }
+        },
+        "secretsStoreAvailable": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -3355,7 +3358,8 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         "memoryUsage",
         "nodeVersion",
         "configPaths",
-        "sections"
+        "sections",
+        "secretsStoreAvailable"
       ],
       "additionalProperties": false
     },
@@ -8637,6 +8641,12 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           }
         },
         "tool_groups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required_tools": {
           "type": "array",
           "items": {
             "type": "string"

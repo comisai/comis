@@ -67,7 +67,7 @@ vi.mock("@comis/skills", async (importOriginal) => {
 });
 
 // ---------------------------------------------------------------------------
-// Imports — applyBundleInstall is the symbol under test (RED: module missing)
+// Imports — applyBundleInstall is the symbol under test
 // ---------------------------------------------------------------------------
 
 import { applyBundleInstall } from "./bundle-install-helper.js";
@@ -424,12 +424,12 @@ describe("applyBundleInstall — atomic two-phase install hook", () => {
   // -------------------------------------------------------------------------
   // -------------------------------------------------------------------------
   // 8. Bundle entry with explicit `cwd` MUST forward to manager.connect.
-  //    Pre-fix `buildRuntimeConfig` omitted `cwd`, so a bundle declaring
-  //    `cwd: "/specific/dir"` connected with the default workspace cwd at
+  //    If `buildRuntimeConfig` omits `cwd`, a bundle declaring
+  //    `cwd: "/specific/dir"` connects with the default workspace cwd at
   //    install-time, silently mis-rooting the MCP child until the next daemon
-  //    restart. The next-restart setupMcp path read cwd correctly so the
-  //    persisted entry was always correct — the bug was the install-time
-  //    connect's runtime config projection.
+  //    restart. The next-restart setupMcp path reads cwd correctly so the
+  //    persisted entry is always correct — the regression risk is the
+  //    install-time connect's runtime config projection.
   // -------------------------------------------------------------------------
   it("bundle entry with explicit cwd forwards to manager.connect at install time", async () => {
     writeSkillManifest(
@@ -460,8 +460,8 @@ describe("applyBundleInstall — atomic two-phase install hook", () => {
     expect(result.persistence).toBe("persisted");
     expect(connectSpy.mock.calls.length).toBe(1);
     const connectArg = connectSpy.mock.calls[0]![0] as { cwd?: string };
-    // The cwd field reaches manager.connect — the bug was omitting it
-    // from buildRuntimeConfig's field projection.
+    // The cwd field must reach manager.connect — omitting it from
+    // buildRuntimeConfig's field projection would mis-root the MCP child.
     expect(connectArg.cwd).toBe("/opt/skill-roots/rooted");
   });
 

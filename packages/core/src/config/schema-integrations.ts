@@ -111,7 +111,7 @@ export const McpServerEntrySchema = z.preprocess(
       /** RLIMIT_CPU — wall CPU seconds before SIGXCPU (module default: 300). */
       cpu: z.number().int().positive().optional(),
     }).optional(),
-    /** Per-server override of mcp.keepaliveIntervalMs. 0 disables for this server. Undefined ⇒ global default applies. */
+    /** Per-server keepalive ping interval (ms). 0 disables for this server. Undefined ⇒ transport-aware default (30 000 ms http/sse, 180 000 ms stdio). The global integrations.mcp.keepaliveIntervalMs override is the middle tier: per-server ?? global ?? transport-aware default. */
     keepaliveIntervalMs: z.number().int().nonnegative().optional(),
     /** Per-server override of mcp.circuitBreakerThreshold. */
     circuitBreakerThreshold: z.number().int().positive().optional(),
@@ -204,8 +204,8 @@ export const McpConfigSchema = z.strictObject({
     osvCheckEnabled: z.boolean().default(true),
     /** OSV cache TTL in milliseconds (default: 24h = 86_400_000). */
     osvCacheTtlMs: z.number().int().positive().default(86_400_000),
-    /** Per-server keepalive ping interval (ms). Default 180000 (3 min). 0 disables for chatty servers (e.g., servers already receiving frequent tool calls). */
-    keepaliveIntervalMs: z.number().int().nonnegative().default(180_000),
+    /** Global keepalive ping interval override (ms). When omitted, transport-aware default applies (30 000 ms http/sse, 180 000 ms stdio). 0 disables for chatty servers. */
+    keepaliveIntervalMs: z.number().int().nonnegative().optional(),
     /** Consecutive failed tool calls before circuit breaker opens. Default 3. Setting 1 effectively trips the breaker on every failure. */
     circuitBreakerThreshold: z.number().int().positive().default(3),
     /** Circuit breaker cooldown in ms before transitioning open → half-open. Default 60000 (1 min). */

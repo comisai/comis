@@ -21,6 +21,10 @@ import {
   type DeliveryOrigin,
   type ClockPort,
   type TimerPort,
+  SUB_AGENT_TOOL_DENYLIST,
+  toolReachableGroups,
+  RequiredToolsUnreachableError,
+  type UnreachableToolEntry,
 } from "@comis/core";
 import { suppressError } from "@comis/shared";
 import { sanitizeAssistantResponse } from "../provider/response/sanitize-pipeline.js";
@@ -316,6 +320,26 @@ export interface SpawnParams {
   domainKnowledge?: string[];
   /** Tool group names for sub-agent tool filtering. */
   toolGroups?: string[];
+  /** Optional list of tool names that must be reachable by the sub-agent.
+   *  Validated at spawn time against the daemon-provided reachableToolNames set.
+   *  If any tool is unreachable, spawn() throws RequiredToolsUnreachableError
+   *  before creating the runId or session.
+   *  On both the immediate and queued spawn paths, the gate fires before any runId is created. */
+  requiredTools?: string[];
+  /**
+   * Effective reachable tool set computed by the daemon caller (spawn-gate parity).
+   *
+   * The daemon's session-mutate.ts computes this set by expanding the effective tool groups
+   * (config default already applied) through both SUB_AGENT_TOOL_PROFILES and TOOL_GROUPS —
+   * the same logic as setup-tools.ts:588-607. Passing this set here gives the spawn gate
+   * true parity with the runtime ceiling, avoiding both:
+   *   (a) false-passes: a tool that looks valid but is stripped at runtime
+   *   (b) false-denies: a tool reachable via TOOL_GROUPS but not in profiles
+   *
+   * When absent (e.g. older callers), the gate fails-open to runtime enforcement.
+   * The daemon path MUST provide this field for gate correctness.
+   */
+  reachableToolNames?: ReadonlySet<string>;
   /** Parent context inclusion mode. */
   includeParentHistory?: "none" | "summary";
   /** Shared directory path for graph pipeline inter-node data sharing */
@@ -342,6 +366,36 @@ export interface SpawnParams {
 }
 
 // ---------------------------------------------------------------------------
+// Spawn-time required_tools gate helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Classify a single required tool as "outside_profile" or "denylist".
+ * Uses toolReachableGroups from @comis/core — no @comis/skills import needed.
+ */
+function classifyRequiredTool(
+  toolName: string,
+  activeGroups: string[],
+): UnreachableToolEntry {
+  if (SUB_AGENT_TOOL_DENYLIST.has(toolName)) {
+    return {
+      toolName,
+      reason: "denylist",
+      hint: `Tool '${toolName}' is denied to ALL sub-agents — the parent must perform this step.`,
+    };
+  }
+  const broader = toolReachableGroups(toolName).filter((p) => !activeGroups.includes(p));
+  // When no profile contains the tool, suggest only 'full' — 'supervisor' does not
+  // contain generic tools like web_fetch/browser/sessions_spawn, so it would fail again.
+  const suggestion = broader.length > 0 ? broader.join("' | '") : "full";
+  return {
+    toolName,
+    reason: "outside_profile",
+    hint: `Tool '${toolName}' is outside this sub-agent's profile. Re-spawn with tool_groups:['${suggestion}'].`,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
@@ -351,7 +405,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const activePromises = new Set<Promise<void>>();
 
   // ---------------------------------------------------------------------
-  // In-flight spawn dedup (Task wkj):
+  // In-flight spawn dedup:
   //   Maps `(callerSessionKey + agentId + task)` triples to in-flight runIds.
   //   Populated when a non-graph session-spawn starts (running OR queued)
   //   and removed at terminal status transitions. A spawn() call whose
@@ -708,7 +762,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       );
     }
 
-    // In-flight dedup check (Task wkj). A duplicate same-caller-same-task spawn
+    // In-flight dedup check. A duplicate same-caller-same-task spawn
     // returns the existing runId rather than starting a parallel run. Placed
     // AFTER the depth throw (depth violations must always reject) but BEFORE
     // the children-limit / queue / allowlist logic — a deduped spawn does NOT
@@ -736,6 +790,45 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         // Stale entry — the prior run reached terminal status without cleanup.
         // Drop it so we don't keep returning a dead runId.
         inFlightByDedupKey.delete(dedupKey);
+      }
+    }
+
+    // Spawn-time required_tools gate.
+    // Validates that each declared required tool is reachable by the sub-agent
+    // BEFORE creating a runId or session — fires on BOTH the immediate and queued paths.
+    //
+    // Uses the daemon-provided reachableToolNames set (params.reachableToolNames), which the
+    // daemon's session-mutate.ts computes via computeReachableToolNames() after applying the
+    // config default tool groups and expanding both TOOL_PROFILES and TOOL_GROUPS. This gives
+    // TRUE parity with the runtime ceiling (setup-tools.ts:588-607).
+    //
+    // When reachableToolNames is absent (older callers), the gate fails-open so the runtime
+    // denylist+ceiling enforcement still applies. The daemon path MUST provide this field.
+    if (params.requiredTools && params.requiredTools.length > 0) {
+      const reachableSet = params.reachableToolNames;
+      const effectiveGroups = params.toolGroups ?? [];
+      const unreachable: UnreachableToolEntry[] = [];
+      for (const tool of params.requiredTools) {
+        // Denylisted tools are unreachable regardless of profile or reachableToolNames (check first)
+        if (SUB_AGENT_TOOL_DENYLIST.has(tool)) {
+          unreachable.push(classifyRequiredTool(tool, effectiveGroups));
+        } else if (reachableSet !== undefined && !reachableSet.has(tool)) {
+          // reachableSet is provided → use it for membership check (profile/group parity)
+          unreachable.push(classifyRequiredTool(tool, effectiveGroups));
+          // reachableSet is undefined → fail-open (runtime boundary still enforces)
+        }
+      }
+      if (unreachable.length > 0) {
+        deps.logger?.warn({
+          agentId: params.agentId,
+          requiredTools: params.requiredTools,
+          toolGroups: params.toolGroups,
+          unreachableTools: unreachable.map((e) => ({ toolName: e.toolName, reason: e.reason })),
+          hint: "Spawn rejected: required_tools unreachable in sub-agent profile; see unreachableTools for re-spawn guidance",
+          errorKind: "validation" as const,
+        }, "Sub-agent spawn rejected: required tools unreachable");
+        // @allow-throw: spawn() consumed exclusively by daemon RPC handlers.
+        throw new RequiredToolsUnreachableError(unreachable);
       }
     }
 

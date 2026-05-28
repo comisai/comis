@@ -25,7 +25,7 @@
 
 import { generateSummary, truncateHead, truncateTail } from "@earendil-works/pi-coding-agent";
 import { type SubagentResult, SubagentResultSchema, type CondensedResult } from "@comis/core";
-import { safePath, systemNowMs, systemNowDate } from "@comis/core";
+import { safePath, systemNowMs, systemNowDate, scrubSecretsFromText } from "@comis/core";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { CHARS_PER_TOKEN } from "../safety/token-estimator.js";
@@ -68,7 +68,7 @@ export interface CondenseParams {
   /** API key for the model's provider (optional; no Level 2 if absent). */
   apiKey?: string;
 
-  // --- Finding 20: Parent trace correlation ---
+  // --- Parent trace correlation ---
   /** Parent execution traceId for cross-session correlation. */
   parentTraceId?: string;
   /** Execution graph ID if spawned from a pipeline. */
@@ -76,7 +76,7 @@ export interface CondenseParams {
   /** Graph node ID if applicable. */
   nodeId?: string;
 
-  // --- Finding 17: Tool metadata for offline analysis ---
+  // --- Tool metadata for offline analysis ---
   /** Tool names available to the sub-agent. */
   activeToolNames?: string[];
   /** Count of deferred tools. */
@@ -86,7 +86,7 @@ export interface CondenseParams {
   /** Guide keys delivered during execution. */
   guidesDelivered?: string[];
 
-  // --- Finding 20: Token/cost usage breakdown ---
+  // --- Token/cost usage breakdown ---
   /** Token and cost usage from execution result. */
   usage?: {
     inputTokens?: number;
@@ -174,7 +174,35 @@ export function createResultCondenser(deps: ResultCondenserDeps) {
 // ---------------------------------------------------------------------------
 
 async function condenseInternal(params: CondenseParams, deps: ResultCondenserDeps): Promise<CondensedResult> {
-  const { fullResult, task, runId, sessionKey, agentId } = params;
+  const { task, runId, sessionKey, agentId } = params;
+
+  // Scrub before condense, relay, and persist — one pass, pre-filter inside.
+  // This single reassignment ensures wrapAsSubagentResult, persistFullResult,
+  // and all downstream uses receive scrubbed text.
+  const relayScrub = scrubSecretsFromText(params.fullResult);
+  let fullResult = params.fullResult;
+  if (relayScrub.redactions > 0) {
+    deps.logger.warn(
+      { runId, agentId, redactions: relayScrub.redactions,
+        hint: "Secret found in sub-agent full result — redacted before relay and persist",
+        errorKind: "internal" as const },
+      "egress guard: sub-agent result scrubbed",
+    );
+    fullResult = relayScrub.text;
+    // Secure handoff: signal to the parent agent that a credential was
+    // redacted and is now in the secure credential store — instruct it NOT to
+    // re-use the raw token from this result.
+    //
+    // NOTE: The MCP server name is NOT available at condenseInternal (CondenseParams
+    // has no serverName field). An actionable `mcp-oauth:<serverName>` ${ref} is
+    // therefore deferred — threading serverName here requires invasive cross-package
+    // CondenseParams API changes. Generic advisory only.
+    fullResult +=
+      "\n\n[Credential redacted and stored in the secure credential store. " +
+      "Retrieve via the OAuth store profileId or use `comis auth profile get` — " +
+      "do NOT attempt to re-use the raw token from this result.]";
+  }
+
   const originalTokens = estimateTokens(fullResult);
 
   // Compute disk path eagerly.
@@ -255,7 +283,7 @@ async function condenseInternal(params: CondenseParams, deps: ResultCondenserDep
   }
 
   // Persist full result to disk -- always, regardless of level.
-  // Thread metadata for offline analysis (Findings 17, 20).
+  // Thread metadata for offline analysis.
   const persistMetadata = {
     parentTraceId: params.parentTraceId,
     graphId: params.graphId,
@@ -539,13 +567,13 @@ async function persistFullResult(
         fullResult: cappedResult,
         condensationLevel: level,
         persistedAt: systemNowDate().toISOString(),
-        // Finding 20: Parent trace correlation
+        // Parent trace correlation
         ...(metadata?.parentTraceId ? { parentTraceId: metadata.parentTraceId } : {}),
         ...(metadata?.graphId ? { graphId: metadata.graphId } : {}),
         ...(metadata?.nodeId ? { nodeId: metadata.nodeId } : {}),
-        // Finding 17: Tool metadata for offline analysis
+        // Tool metadata for offline analysis
         ...(metadata?.toolMetadata ? { toolMetadata: metadata.toolMetadata } : {}),
-        // Finding 20: Token/cost usage breakdown
+        // Token/cost usage breakdown
         ...(metadata?.usage ? { usage: metadata.usage } : {}),
         // Error context for non-successful executions
         ...(metadata?.errorContext ? { errorContext: metadata.errorContext } : {}),

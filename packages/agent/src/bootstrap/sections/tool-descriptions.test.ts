@@ -48,10 +48,10 @@ describe("TOOL_SUMMARIES", () => {
 // ---------------------------------------------------------------------------
 
 describe("TOOL_GUIDES", () => {
-  it("has entries for all 13 guided tools", () => {
+  it("has entries for all 14 guided tools", () => {
     const expected = [
       "agents_manage", "apply_patch", "channels_manage", "edit", "exec",
-      "gateway", "grep", "message", "pipeline", "providers_manage", "read",
+      "gateway", "grep", "mcp_manage", "message", "pipeline", "providers_manage", "read",
       "sessions_spawn", "write",
     ].sort();
     expect(Object.keys(TOOL_GUIDES).sort()).toEqual(expected);
@@ -108,6 +108,22 @@ describe("TOOL_GUIDES", () => {
     expect(TOOL_GUIDES.gateway).toMatch(/mcp_manage/);
     expect(TOOL_GUIDES.gateway).toMatch(/## Installing an MCP server/);
     expect(TOOL_GUIDES.gateway).toMatch(/transport/);
+  });
+
+  // -------------------------------------------------------------------------
+  // R10a — gateway guide prohibition: remove fallback clause permitting
+  // gateway.patch for MCP installs; replace with explicit NEVER prohibition.
+  // -------------------------------------------------------------------------
+  it("R10a — gateway guide must NOT contain fallback clause permitting gateway.patch for MCP installs", () => {
+    expect(TOOL_GUIDES.gateway).not.toMatch(/Only fall back to gateway.*integrations\.mcp\.servers/);
+  });
+
+  it("R10a — gateway guide prohibits gateway.patch against integrations.mcp.servers", () => {
+    expect(TOOL_GUIDES.gateway).toMatch(/NEVER use gateway.*integrations\.mcp\.servers/);
+  });
+
+  it("R10a — mcp_manage JIT guide states Validation failed means fix args not abandon tool", () => {
+    expect(TOOL_GUIDES.mcp_manage).toMatch(/[Vv]alidation.*fix the arguments|fix the arguments.*validation/i);
   });
 
   // Sandbox-forbidden-paths hint -- preventive JIT guide that teaches the agent

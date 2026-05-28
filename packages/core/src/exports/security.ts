@@ -24,7 +24,10 @@ export { matchesSecretPattern, isSecretAccessible } from "../security/index.js";
 export { createScopedSecretManager } from "../security/index.js";
 export type { ScopedSecretManagerOptions } from "../security/index.js";
 export { generateStrongToken, generateRotationId } from "../security/index.js";
-export { redactConfigSecrets } from "../security/index.js";
+export { looksLikeSecretValue, isSecretFieldName, isEnvRefString, scanForSecrets, redactForDisplay } from "../security/index.js";
+export type { SecretFinding } from "../security/index.js";
+export { classifyHeaderCredential } from "../security/index.js";
+export type { CredentialKind, HeaderCredentialClassification } from "../security/index.js";
 export { createAuditAggregator } from "../security/index.js";
 export type { AuditAggregator, AuditAggregatorOptions, SecurityEventPayload } from "../security/index.js";
 export { validateInput } from "../security/index.js";
@@ -37,9 +40,10 @@ export { createInjectionRateLimiter } from "../security/index.js";
 export type { InjectionRateLimiter, InjectionRateLimiterConfig, RateLimitResult } from "../security/index.js";
 export { resolveSecretRef, resolveConfigSecretRefs } from "../security/index.js";
 export type { ResolveSecretRefDeps, ResolveSecretRefOptions } from "../security/index.js";
-export { SECRET_FIELD_PATTERN } from "../security/index.js";
 export { scanConfigForSecrets, scanEnvForSecrets, auditSecrets } from "../security/index.js";
 export type { AuditFinding, AuditSeverity, AuditOptions } from "../security/index.js";
+// Secret egress guard — R4 shared text scrubber (wave 2 wiring sites: write-tool, edit-tool, result-condenser, sub-agent-result-processor)
+export { scrubSecretsFromText } from "../security/index.js";
 export {
   ZERO_WIDTH_REGEX,
   TAG_BLOCK_REGEX,

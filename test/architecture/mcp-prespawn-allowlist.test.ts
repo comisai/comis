@@ -67,3 +67,43 @@ describe("MCP stdio env allowlist — required membership invariant", () => {
     expect(leaked, `Dangerous keys must NOT be in the allowlist: ${leaked.join(", ")}`).toEqual([]);
   });
 });
+
+// =============================================================================
+// Interpreter-control vars absent from scrubStdioEnv output
+// =============================================================================
+// These tests assert that scrubStdioEnv with interpreter-control vars in the
+// input produces an output that does NOT contain those keys.
+// The allowlist-only design means these are already absent — the tests lock
+// the invariant so an accidental addition to the allowlist would be caught.
+
+describe("interpreter-control vars absent from scrubStdioEnv output", () => {
+  it("scrubStdioEnv does not pass PYTHONSTARTUP through to child env", () => {
+    const result = scrubStdioEnv({ PYTHONSTARTUP: "/evil.py", HOME: "/home/user" });
+    expect(Object.prototype.hasOwnProperty.call(result, "PYTHONSTARTUP")).toBe(false);
+  });
+
+  it("scrubStdioEnv does not pass RUBYOPT through to child env", () => {
+    const result = scrubStdioEnv({ RUBYOPT: "-e require 'evil'", HOME: "/home/user" });
+    expect(Object.prototype.hasOwnProperty.call(result, "RUBYOPT")).toBe(false);
+  });
+
+  it("scrubStdioEnv does not pass BASH_ENV through to child env", () => {
+    const result = scrubStdioEnv({ BASH_ENV: "/evil-startup.sh", HOME: "/home/user" });
+    expect(Object.prototype.hasOwnProperty.call(result, "BASH_ENV")).toBe(false);
+  });
+
+  it("scrubStdioEnv does not pass JAVA_TOOL_OPTIONS through to child env", () => {
+    const result = scrubStdioEnv({ JAVA_TOOL_OPTIONS: "-agentlib:jdwp", HOME: "/home/user" });
+    expect(Object.prototype.hasOwnProperty.call(result, "JAVA_TOOL_OPTIONS")).toBe(false);
+  });
+
+  it("scrubStdioEnv does not pass PERL5OPT through to child env", () => {
+    const result = scrubStdioEnv({ PERL5OPT: "-Mevil", HOME: "/home/user" });
+    expect(Object.prototype.hasOwnProperty.call(result, "PERL5OPT")).toBe(false);
+  });
+
+  it("scrubStdioEnv does not pass NODE_OPTIONS through to child env", () => {
+    const result = scrubStdioEnv({ NODE_OPTIONS: "--require /evil.js", HOME: "/home/user" });
+    expect(Object.prototype.hasOwnProperty.call(result, "NODE_OPTIONS")).toBe(false);
+  });
+});

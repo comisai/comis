@@ -46,7 +46,6 @@
       "maximum": 9007199254740991
     },
     "keepaliveIntervalMs": {
-      "default": 180000,
       "type": "integer",
       "minimum": 0,
       "maximum": 9007199254740991
@@ -72,7 +71,6 @@
     "safetyAllowedEnvKeys",
     "osvCheckEnabled",
     "osvCacheTtlMs",
-    "keepaliveIntervalMs",
     "circuitBreakerThreshold",
     "circuitBreakerCooldownMs"
   ],

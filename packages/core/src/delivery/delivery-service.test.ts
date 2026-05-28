@@ -26,6 +26,7 @@ import {
   type DeliveryServiceDeps,
   type DeliveryService,
 } from "./delivery-service.js";
+import * as secretEgressGuard from "../security/secret-egress-guard.js";
 import { createNoOpDeliveryQueue } from "./no-op-delivery-queue.js";
 import type { HookRunner } from "../hooks/hook-runner.js";
 import { runWithContext } from "../context/context.js";
@@ -1513,5 +1514,68 @@ describe("DeliveryService — full pipeline behavior", () => {
       expect(_service).toBeDefined();
     });
   });
+});
 
+// =============================================================================
+// Delivery egress scan
+// =============================================================================
+// These tests assert that deliverToChannel performs one-pass secret scrubbing
+// on the assembled deliveryText BEFORE hooks and chunking.
+
+describe("delivery egress scan", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("redacts bearer token before Telegram channel adapter receives text", async () => {
+    const sendMessage = vi.fn().mockResolvedValue(ok("msg-telegram-1"));
+    const adapter = makeAdapter(sendMessage, "telegram");
+    const service = createDeliveryService(makeDeps());
+    const rawToken = "Bearer hf_" + "a".repeat(44);
+    await service.deliverToChannel(adapter, "chat-tg", `Here is your token: ${rawToken}`);
+    expect(sendMessage).toHaveBeenCalled();
+    const sentText: string = sendMessage.mock.calls[0]![1] as string;
+    expect(sentText).not.toContain(rawToken);
+    expect(sentText).toContain("[REDACTED]");
+  });
+
+  it("redacts bearer token before Discord channel adapter receives text", async () => {
+    const sendMessage = vi.fn().mockResolvedValue(ok("msg-discord-1"));
+    const adapter = makeAdapter(sendMessage, "discord");
+    const service = createDeliveryService(makeDeps());
+    const rawToken = "Bearer hf_" + "b".repeat(44);
+    await service.deliverToChannel(adapter, "chat-dc", `Token value: ${rawToken} end`);
+    expect(sendMessage).toHaveBeenCalled();
+    const sentText: string = sendMessage.mock.calls[0]![1] as string;
+    expect(sentText).not.toContain(rawToken);
+    expect(sentText).toContain("[REDACTED]");
+  });
+
+  it("scan is executed ONCE before the chunk loop, not per-chunk on a large message", async () => {
+    // Spy on the module-level scrubSecretsFromText — must be called exactly once
+    // (before the chunk loop), not per-chunk.
+    const spy = vi.spyOn(secretEgressGuard, "scrubSecretsFromText");
+    const service = createDeliveryService(
+      makeDeps({ maxCharsOverride: 500 }),
+    );
+    const adapter = makeAdapter(vi.fn().mockResolvedValue(ok("msg-chunk")), "telegram");
+    // 10k chars triggers multiple chunks; scrub must be called only once.
+    const longText = "a".repeat(10_000);
+    await service.deliverToChannel(adapter, "chat-chunk", longText);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("large message (10k chars, no secrets) scrub completes under 5ms (pre-filter path)", async () => {
+    // Verifies the cheap mightContainSecret pre-filter path.
+    // Measures ONLY the scrubSecretsFromText call itself (not the whole
+    // delivery pipeline) — the scrub must be near-zero on secret-free text.
+    const longText = "x".repeat(10_000);
+    const before = performance.now();
+    const result = secretEgressGuard.scrubSecretsFromText(longText);
+    const elapsed = performance.now() - before;
+    // Secret-free text hits the mightContainSecret pre-filter and returns
+    // immediately — must complete in under 5ms even at 10k chars.
+    expect(result.redactions).toBe(0);
+    expect(elapsed).toBeLessThan(5);
+  });
 });

@@ -1217,7 +1217,7 @@ describe("install-hook wiring", () => {
   // -------------------------------------------------------------------------
   // 4b. skills.update ALSO invokes runBundleInstallHook.
   //
-  //     Pre-fix, only skills.upload / skills.import / skills.create called the
+  //     Previously, only skills.upload / skills.import / skills.create called the
   //     hook. An operator who used skills.update to change a skill's mcpServers
   //     block (add/remove/modify entries) saw NO change in the persisted MCP
   //     config until the next daemon restart — particularly confusing because

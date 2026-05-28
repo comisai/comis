@@ -18,20 +18,20 @@ const SUSPICIOUS_LITERAL_PATTERNS: Array<{ pattern: RegExp; hint: string }> = [
  * Pattern for environment variable references: ${VAR_NAME}
  * Matches uppercase letters, digits, and underscores (must start with letter or underscore).
  */
-const ENV_VAR_PATTERN = /\$\{(?<varName>[A-Z_][A-Z0-9_]*)\}/g;
+export const ENV_VAR_PATTERN = /\$\{(?<varName>[A-Z_][A-Z0-9_]*)\}/g;
 
 /**
  * Pattern for escaped variable references: $${VAR_NAME}
  * The double-$ prefix means "produce literal ${VAR_NAME} without substitution".
  */
-const ESCAPED_VAR_PATTERN = /\$\$\{([A-Z_][A-Z0-9_]*)\}/g;
+export const ESCAPED_VAR_PATTERN = /\$\$\{([A-Z_][A-Z0-9_]*)\}/g;
 
 /**
  * Pattern for bare variable references: $VAR_NAME (without braces).
  * Only matches when the entire string is a single bare reference (no mixed content).
  * This catches the common agent mistake of writing `$GEMINI_API_KEY` instead of `${GEMINI_API_KEY}`.
  */
-const BARE_VAR_PATTERN = /^\$(?<varName>[A-Z_][A-Z0-9_]*)$/;
+export const BARE_VAR_PATTERN = /^\$(?<varName>[A-Z_][A-Z0-9_]*)$/;
 
 /**
  * Substitute `${VAR_NAME}` references in all string values of an object tree.

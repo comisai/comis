@@ -67,7 +67,17 @@ function createMockRpcCall() {
       return { restarted: true };
     }
     if (method === "gateway.status") {
-      return { status: "running", uptime: 3600, connections: 5 };
+      // Real GatewayStatusContract shape — no manifest field.
+      // secretsStoreAvailable=true so env_set preflight passes through.
+      return {
+        pid: 12345,
+        uptime: 3600,
+        memoryUsage: 50_000_000,
+        nodeVersion: "v22.0.0",
+        configPaths: ["/home/user/.comis/config.yaml"],
+        sections: ["agents", "channels"],
+        secretsStoreAvailable: true,
+      };
     }
     if (method === "config.history") {
       return {
@@ -312,8 +322,9 @@ describe("gateway tool", () => {
       const result = await tool.execute("call-5", { action: "status" });
 
       expect(rpcCall).toHaveBeenCalledWith("gateway.status", { _trustLevel: "guest" });
+      // Real GatewayStatusContract shape — no status/connections fields.
       expect(result.details).toEqual(
-        expect.objectContaining({ status: "running" }),
+        expect.objectContaining({ pid: 12345, uptime: 3600, nodeVersion: "v22.0.0" }),
       );
     });
   });
@@ -527,7 +538,7 @@ describe("gateway tool", () => {
       expect(details.actionType).toBe("env.set");
       expect(details.hint).toContain("MY_KEY");
       expect(details.hint).toContain("_confirmed");
-      expect(rpcCall).not.toHaveBeenCalled();
+      expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
     });
 
     it("delegates to env.set RPC when confirmed", async () => {
@@ -553,9 +564,17 @@ describe("gateway tool", () => {
     });
 
     it("strips value from result even if RPC returns it", async () => {
-      const rpcCall = vi.fn(async () => ({
-        set: true, key: "MY_KEY", storage: "encrypted", value: "leaked-secret",
-      }));
+      const rpcCall = vi.fn(async (method: string) => {
+        if (method === "gateway.status") {
+          // Real GatewayStatusContract shape — secretsStoreAvailable=true so preflight passes.
+          return {
+            pid: 12345, uptime: 3600, memoryUsage: 50_000_000,
+            nodeVersion: "v22.0.0", configPaths: [], sections: [],
+            secretsStoreAvailable: true,
+          };
+        }
+        return { set: true, key: "MY_KEY", storage: "encrypted", value: "leaked-secret" };
+      });
       const tool = createGatewayTool(rpcCall, mockLogger);
 
       const result = await tool.execute("call-e3", {
@@ -976,6 +995,167 @@ describe("gateway tool", () => {
       // No managed-section redirect = no Tool actions line.
       expect(msg).not.toContain("Tool actions:");
       expect(msg).not.toContain("Required fields for");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // env_set store-unavailable pre-flight tests
+  //
+  // The mock responses use the REAL gateway.status contract shape:
+  //   { pid, uptime, memoryUsage, nodeVersion, configPaths, sections, secretsStoreAvailable }
+  // NOT the fabricated { manifest: { secrets: { encrypted: ... } } } shape.
+  // ---------------------------------------------------------------------------
+
+  /** Real gateway.status shape with secretsStoreAvailable=false (store absent). */
+  function createUnavailableStoreMockRpcCall() {
+    return vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (method === "gateway.status") {
+        // Real contract shape — no manifest field. secretsStoreAvailable=false.
+        return {
+          pid: 12345,
+          uptime: 3600,
+          memoryUsage: 50_000_000,
+          nodeVersion: "v22.0.0",
+          configPaths: ["/home/user/.comis/config.yaml"],
+          sections: ["agents", "channels"],
+          secretsStoreAvailable: false,
+        };
+      }
+      // env.set should never be reached — but return a value if it is (for diagnostics)
+      if (method === "env.set") {
+        return { set: true, key: params.key, storage: "encrypted", restarting: true };
+      }
+      return { stub: true, method, params };
+    });
+  }
+
+  /** Real gateway.status shape with secretsStoreAvailable=true (store present). */
+  function createAvailableStoreMockRpcCall() {
+    return vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (method === "gateway.status") {
+        // Real contract shape — secretsStoreAvailable=true means store is wired.
+        return {
+          pid: 12345,
+          uptime: 3600,
+          memoryUsage: 50_000_000,
+          nodeVersion: "v22.0.0",
+          configPaths: ["/home/user/.comis/config.yaml"],
+          sections: ["agents", "channels"],
+          secretsStoreAvailable: true,
+        };
+      }
+      if (method === "env.set") {
+        return { set: true, key: params.key, storage: "encrypted", restarting: true };
+      }
+      return { stub: true, method, params };
+    });
+  }
+
+  describe("env_set store-unavailable pre-flight", () => {
+    it("returns secrets_store_unavailable error before confirmation when encrypted store is unavailable", async () => {
+      const rpcCall = createUnavailableStoreMockRpcCall();
+      const tool = createGatewayTool(rpcCall, mockLogger);
+
+      const result = await tool.execute("call-store-01", {
+        action: "env_set" as "read",
+        env_key: "MY_SECRET",
+        env_value: "secret-value-here",
+        _confirmed: true,
+      } as any);
+
+      const details = result.details as Record<string, unknown>;
+      // Reads secretsStoreAvailable=false → correctly blocks.
+      expect(details.error).toBe("secrets_store_unavailable");
+      expect(typeof details.hint).toBe("string");
+      expect(String(details.hint).length).toBeGreaterThan(20);
+      // env.set RPC must NOT have been called (no rate-limit consumed)
+      expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
+    });
+
+    it("does not consume write rate-limit on repeated env_set calls when store is unavailable", async () => {
+      const rpcCall = createUnavailableStoreMockRpcCall();
+      const tool = createGatewayTool(rpcCall, mockLogger);
+
+      const call1 = await tool.execute("call-store-02a", {
+        action: "env_set" as "read",
+        env_key: "KEY_A",
+        env_value: "value-a",
+        _confirmed: true,
+      } as any);
+      const call2 = await tool.execute("call-store-02b", {
+        action: "env_set" as "read",
+        env_key: "KEY_B",
+        env_value: "value-b",
+        _confirmed: true,
+      } as any);
+
+      // Both calls must return secrets_store_unavailable (no rate-limit exhaustion)
+      expect((call1.details as Record<string, unknown>).error).toBe("secrets_store_unavailable");
+      expect((call2.details as Record<string, unknown>).error).toBe("secrets_store_unavailable");
+      // env.set must never have been called
+      expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
+    });
+
+    // When gateway.status returns the REAL contract shape with secretsStoreAvailable=true,
+    // the preflight MUST allow the call through.
+    // Reads secretsStoreAvailable=true → passes through to confirmation gate.
+    it("allows env_set through when real gateway.status field secretsStoreAvailable=true", async () => {
+      const rpcCall = createAvailableStoreMockRpcCall();
+      const tool = createGatewayTool(rpcCall, mockLogger);
+
+      // First call (without _confirmed) must NOT get secrets_store_unavailable.
+      // It should reach the confirmation gate and return requiresConfirmation.
+      const result = await tool.execute("call-store-03", {
+        action: "env_set" as "read",
+        env_key: "MY_SECRET",
+        env_value: "secret-value-here",
+      } as any);
+
+      const details = result.details as Record<string, unknown>;
+      // Reaches confirmation gate → requiresConfirmation: true
+      expect(details.error).toBeUndefined();
+      expect(details.requiresConfirmation).toBe(true);
+      // env.set must not have been called (first pass is confirmation gate)
+      expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
+    });
+
+    // If gateway.status throws (e.g. non-admin caller), preflight must NOT
+    // make env_set unusable — it must fall through to the downstream handler guard
+    // rather than propagating a raw thrown error.
+    it("falls through gracefully when gateway.status throws (non-admin caller)", async () => {
+      const rpcCall = vi.fn(async (method: string, params: Record<string, unknown>) => {
+        if (method === "gateway.status") {
+          throw new Error("Admin access required for gateway status");
+        }
+        if (method === "env.set") {
+          return { set: true, key: params.key, storage: "encrypted", restarting: true };
+        }
+        return { stub: true, method, params };
+      });
+      const tool = createGatewayTool(rpcCall, mockLogger);
+
+      // Must not throw — must return a structured tool result
+      let result: unknown;
+      await expect(
+        (async () => {
+          result = await tool.execute("call-w3", {
+            action: "env_set" as "read",
+            env_key: "MY_KEY",
+            env_value: "my-value",
+          } as any);
+        })(),
+      ).resolves.not.toThrow();
+
+      // After a thrown preflight, the tool should return some structured result
+      // (either a confirmation gate or a graceful error — NOT an unhandled throw).
+      expect(result).toBeDefined();
+      const details = (result as { details?: Record<string, unknown> }).details ?? {};
+      // The result must NOT be an unhandled error propagation from gateway.status
+      // (i.e. it must not throw, and the error must be structured, not "Admin access required")
+      // Fall through to downstream guard → requiresConfirmation (no secretStore)
+      // or secrets_store_unavailable from the downstream env.set path.
+      // The key invariant: no raw thrown error propagated to the caller.
+      expect(typeof details).toBe("object");
     });
   });
 });

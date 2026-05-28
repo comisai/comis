@@ -6,7 +6,7 @@
  * Produces structured findings with code, severity, file, jsonPath, and
  * message fields suitable for CLI table display and JSON output.
  *
- * Config field scanning using SECRET_FIELD_PATTERN
+ * Config field scanning using isSecretFieldName
  * .env scanning using KNOWN_PROVIDER_PATTERNS
  * SecretRef detection (properly configured refs are not flagged)
  * Convenience wrapper with file loading
@@ -16,7 +16,7 @@
 
 import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
-import { SECRET_FIELD_PATTERN } from "./config-redaction.js";
+import { isSecretFieldName } from "./secret-detection.js";
 import { isSecretRef } from "../domain/secret-ref.js";
 
 // ── Finding types ──────────────────────────────────────────────────
@@ -100,7 +100,7 @@ function shouldSkipEnvKey(key: string): boolean {
  * Scan a parsed config object for plaintext secrets.
  *
  * Walks the raw parsed config recursively. For each leaf string value whose
- * field name matches SECRET_FIELD_PATTERN, emits a PLAINTEXT_SECRET finding
+ * field name matches isSecretFieldName, emits a PLAINTEXT_SECRET finding
  * unless the value is a SecretRef object or empty.
  *
  * @param filePath - Path to the config file (for finding metadata)
@@ -143,7 +143,7 @@ function walkConfig(
     const value = record[key];
     const currentPath = [...pathParts, key];
 
-    if (SECRET_FIELD_PATTERN.test(key)) {
+    if (isSecretFieldName(key)) {
       // Check if value is a SecretRef (properly configured -- skip)
       if (isSecretRef(value)) {
         continue;

@@ -21,6 +21,7 @@ import {
   systemNowDate,
   systemScheduleTimeout,
   systemSleep,
+  scrubSecretsFromText,
 } from "@comis/core";
 import { withTimeout } from "@comis/shared";
 import { mkdir, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
@@ -473,7 +474,19 @@ export async function deliverAnnouncement(params: {
   batcher?: AnnouncementBatcher;
   deadLetterQueue?: AnnouncementDeadLetterQueue;
 }): Promise<void> {
-  const { announcementText, announceChannelType, announceChannelId, callerAgentId, callerSessionKey, runId } = params;
+  const { announceChannelType, announceChannelId, callerAgentId, callerSessionKey, runId } = params;
+
+  // Scrub announcement text before any delivery path (batcher, parent, or direct channel).
+  const announceScrub = scrubSecretsFromText(params.announcementText);
+  if (announceScrub.redactions > 0) {
+    deps.logger?.warn(
+      { runId, redactions: announceScrub.redactions,
+        hint: "Secret found in sub-agent announcement — redacted before relay",
+        errorKind: "internal" as const },
+      "Egress guard: announcement scrubbed",
+    );
+  }
+  const announcementText = announceScrub.redactions > 0 ? announceScrub.text : params.announcementText;
 
   // Route through batcher for coalesced delivery when available
   if (deps.batcher && callerAgentId && callerSessionKey) {

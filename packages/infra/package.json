@@ -29,6 +29,11 @@
       "types": "./dist/logging/redact-transport.d.ts",
       "import": "./dist/logging/redact-transport.js",
       "default": "./dist/logging/redact-transport.js"
+    },
+    "./dist/logging/pipeline-redact-stage.js": {
+      "types": "./dist/logging/pipeline-redact-stage.d.ts",
+      "import": "./dist/logging/pipeline-redact-stage.js",
+      "default": "./dist/logging/pipeline-redact-stage.js"
     }
   },
   "scripts": {
@@ -39,7 +44,8 @@
     "@comis/core": "workspace:*",
     "@comis/observability": "workspace:*",
     "@comis/shared": "workspace:*",
-    "pino": "10.3.1"
+    "pino": "10.3.1",
+    "pino-abstract-transport": "3.0.0"
   },
   "devDependencies": {
     "pino-pretty": "13.1.3",

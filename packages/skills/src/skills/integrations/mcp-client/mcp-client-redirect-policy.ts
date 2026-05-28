@@ -19,9 +19,21 @@
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 const SENSITIVE_HEADERS_TO_STRIP_ON_CROSS_HOST: readonly string[] = [
+  // Standard auth headers
   "authorization",
   "cookie",
   "proxy-authorization",
+  // Extended auth headers (OpenClaw 13-header set — cross-origin exfil vectors)
+  "x-auth-token",
+  "x-api-key",
+  "x-authorization",
+  "authorization-token",
+  "x-forwarded-authorization",
+  "x-access-token",
+  "x-amz-security-token",
+  "x-goog-api-key",
+  "x-client-id",
+  "x-client-secret",
 ];
 
 export interface RedirectPolicyOptions {
@@ -88,11 +100,11 @@ export function createRedirectPolicyFetch(opts: RedirectPolicyOptions): FetchLik
 
       // RFC 7231 §6.4.3 (302) / §6.4.4 (303): on 302/303 a
       // POST is rewritten to GET and the body is DROPPED. RFC 7538
-      // (307/308) PRESERVES both method and body. Pre-fix the policy
-      // carried `body` and `method` forward unchanged across all 3xx,
-      // which would silently re-POST a body (potentially containing
-      // sensitive request data — the MCP SDK uses POST for tools/list
-      // and tool calls) to an attacker-controlled redirect target.
+      // (307/308) PRESERVES both method and body. A naive policy that
+      // carries `body` and `method` forward unchanged across all 3xx
+      // would silently re-POST a body (potentially containing sensitive
+      // request data — the MCP SDK uses POST for tools/list and tool
+      // calls) to an attacker-controlled redirect target.
       // Differentiate by status code:
       //   - 302 / 303 -> method := GET, body := undefined
       //   - 307 / 308 -> method + body preserved (the existing

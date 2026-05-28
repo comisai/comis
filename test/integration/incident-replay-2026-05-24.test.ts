@@ -128,7 +128,7 @@ describe("2026-05-24 duplicate-adapter incident replay — Layer 1 (boot WARN)",
         expire: vi.fn(),
       } as any,
       createExecutor: vi.fn(() => undefined) as any,
-      // Pre-fix wiring: adapter in both adapters list AND channelRegistry
+      // Prior wiring: adapter in both adapters list AND channelRegistry
       adapters: [adapter],
       channelRegistry: channelRegistryStub as any,
       logger,

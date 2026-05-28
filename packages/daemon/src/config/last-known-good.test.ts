@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { stringify as yamlStringify } from "yaml";
+import type { ComisLogger } from "@comis/core";
 import {
   lastKnownGoodPath,
   saveLastKnownGood,
@@ -10,6 +12,22 @@ import {
   buildRollbackSuggestion,
   handleRestoreFlag,
 } from "./last-known-good.js";
+
+// ---------------------------------------------------------------------------
+// Test helper — minimal ComisLogger mock
+// ---------------------------------------------------------------------------
+
+function makeLogger(): ComisLogger {
+  return {
+    warn: vi.fn(),
+    info: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    child: vi.fn(),
+    trace: vi.fn(),
+    fatal: vi.fn(),
+  } as unknown as ComisLogger;
+}
 
 describe("last-known-good config", () => {
   let tmpDir: string;
@@ -273,6 +291,157 @@ describe("last-known-good config", () => {
       expect(existsSync(auditLogPath)).toBe(true);
       const log = readFileSync(auditLogPath, "utf-8").trim().split("\n");
       expect(log.length).toBe(1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // LKG snapshot guard — never capture a plaintext secret.
+  //
+  // saveLastKnownGood scans the source config before copying:
+  //   - A plaintext secret in the source file causes { saved: false } (no copy)
+  //   - A ${VAR} env-ref in the source file passes through (no false-positive)
+  //   - Malformed YAML returns { saved: false } (fail-safe)
+  // ---------------------------------------------------------------------------
+  describe("LKG secret guard", () => {
+    it("returns { saved: false } when source config contains plaintext Authorization header secret", () => {
+      const configWithSecret = yamlStringify({
+        integrations: {
+          mcp: {
+            servers: [
+              {
+                name: "test-server",
+                transport: "stdio",
+                command: "npx",
+                args: [],
+                enabled: true,
+                headers: {
+                  Authorization: "Bearer ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                },
+              },
+            ],
+          },
+        },
+      });
+      writeFileSync(configPath, configWithSecret);
+
+      const result = saveLastKnownGood(configPath);
+
+      expect(result.saved).toBe(false);
+      // The LKG file must NOT have been created.
+      expect(existsSync(result.path)).toBe(false);
+    });
+
+    it("returns { saved: true } when source config contains only ${VAR} env refs (no false-positive)", () => {
+      const configWithEnvRef = yamlStringify({
+        integrations: {
+          mcp: {
+            servers: [
+              {
+                name: "test-server",
+                transport: "stdio",
+                command: "npx",
+                args: [],
+                enabled: true,
+                headers: {
+                  Authorization: "Bearer ${MY_TOKEN}",
+                },
+              },
+            ],
+          },
+        },
+      });
+      writeFileSync(configPath, configWithEnvRef);
+
+      const result = saveLastKnownGood(configPath);
+
+      expect(result.saved).toBe(true);
+      expect(existsSync(result.path)).toBe(true);
+    });
+
+    it("returns { saved: false } when source config has malformed YAML (fail-safe)", () => {
+      writeFileSync(configPath, "{unclosed: yaml: [broken");
+
+      const result = saveLastKnownGood(configPath);
+
+      expect(result.saved).toBe(false);
+      // No LKG file should have been created for unverifiable content.
+      expect(existsSync(result.path)).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // saveLastKnownGood must emit a loud WARN when it skips the snapshot, so the
+  // skip is observable rather than silent.
+  // ---------------------------------------------------------------------------
+  describe("LKG skip emits actionable WARN (no silent failure)", () => {
+    it("emits logger.warn with errorKind:'config' and hint when secret found in source config", () => {
+      const logger = makeLogger();
+      const configWithSecret = yamlStringify({
+        integrations: {
+          mcp: {
+            servers: [
+              {
+                name: "test-server",
+                transport: "stdio",
+                command: "npx",
+                args: [],
+                enabled: true,
+                headers: {
+                  Authorization: "Bearer ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                },
+              },
+            ],
+          },
+        },
+      });
+      writeFileSync(configPath, configWithSecret);
+
+      const result = saveLastKnownGood(configPath, true, logger);
+
+      expect(result.saved).toBe(false);
+      // WARN must have been emitted
+      expect(logger.warn).toHaveBeenCalledOnce();
+      const [fields, msg] = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0] as [Record<string, unknown>, string];
+      // Must include errorKind: "config" per the WARN contract
+      expect(fields).toMatchObject({ errorKind: "config" });
+      // Must include an actionable hint — no raw secret value
+      expect(typeof fields["hint"]).toBe("string");
+      expect((fields["hint"] as string).length).toBeGreaterThan(0);
+      // The warning message must not contain the raw secret value
+      expect(msg).not.toContain("ghp_");
+      expect(JSON.stringify(fields)).not.toContain("ghp_");
+    });
+
+    it("emits logger.warn with errorKind:'config' and hint when source YAML is malformed", () => {
+      const logger = makeLogger();
+      writeFileSync(configPath, "{unclosed: yaml: [broken");
+
+      const result = saveLastKnownGood(configPath, true, logger);
+
+      expect(result.saved).toBe(false);
+      expect(logger.warn).toHaveBeenCalledOnce();
+      const [fields] = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0] as [Record<string, unknown>];
+      expect(fields).toMatchObject({ errorKind: "config" });
+    });
+
+    it("does NOT emit logger.warn when config file is missing (normal first-run case)", () => {
+      const logger = makeLogger();
+      // Config file does not exist — missing file is the expected first-run state
+      const result = saveLastKnownGood(join(tmpDir, "nonexistent.yaml"), true, logger);
+
+      expect(result.saved).toBe(false);
+      // Missing file is NOT a WARN condition — it's normal on first run
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it("does NOT emit logger.warn when logger is not provided (backward-compat: no logger = silent)", () => {
+      const configWithSecret = yamlStringify({
+        secret_field: "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-AAAAAAA",
+      });
+      writeFileSync(configPath, configWithSecret);
+
+      // No logger provided — must not throw, just silently skip
+      expect(() => saveLastKnownGood(configPath)).not.toThrow();
     });
   });
 });

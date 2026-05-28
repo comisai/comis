@@ -36,7 +36,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // returns { verdict: "safe", advisoryIds: [] }; specific tests override the
 // mock via mockImplementation BEFORE invoking resolveBundle.
 //
-// looksLikePlaintextSecret is the REAL implementation from @comis/daemon —
+// looksLikeSecretValue is the REAL implementation from @comis/core —
 // a pure function that the resolver delegates to. We exercise the real
 // heuristic so the test matrix doubles as a contract check for the
 // integration between resolver and the plaintext-secret check primitive.
@@ -164,7 +164,7 @@ describe("bundle-mcp-resolver — pure function", () => {
   // -------------------------------------------------------------------------
   // 2. Plaintext-secret reject:
   //    bundled entry's env carries a value that matches the
-  //    looksLikePlaintextSecret heuristic → reject with
+  //    looksLikeSecretValue heuristic → reject with
   //    kind:"plaintext_secret", serverName, envKey set. The OSV check
   //    MUST NOT be called for that entry (short-circuits).
   // -------------------------------------------------------------------------

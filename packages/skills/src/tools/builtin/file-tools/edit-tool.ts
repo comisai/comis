@@ -16,7 +16,7 @@ import { Type } from "typebox";
 import * as fs from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { fromPromise } from "@comis/shared";
-import { safePath, PathTraversalError } from "@comis/core";
+import { safePath, PathTraversalError, scrubSecretsFromText } from "@comis/core";
 import type { FileStateTracker } from "../file/file-state-tracker.js";
 import { isDeviceFile } from "../file/file-state-tracker.js";
 import { suggestSimilarPaths } from "../file/path-suggest.js";
@@ -56,6 +56,13 @@ const MAX_FILE_SIZE = 1024 * 1024 * 1024;
 interface ToolLogger {
   warn(obj: Record<string, unknown>, msg: string): void;
   debug(obj: Record<string, unknown>, msg: string): void;
+}
+
+/** Minimal config shape for the edit tool guard knob (avoids importing full SecurityConfig). */
+interface EditToolConfig {
+  security?: {
+    writeSecretGuard?: "warn" | "block" | "off";
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -168,12 +175,14 @@ function resolveEditPath(
  * @param logger - Optional pino-compatible logger
  * @param tracker - Optional FileStateTracker for read-before-edit and staleness
  * @param sharedPaths - Optional shared paths (lazily resolved) accessible by all tools
+ * @param config - Optional config for secret egress guard (security.writeSecretGuard)
  */
 export function createComisEditTool(
   workspacePath: string,
   logger?: ToolLogger,
   tracker?: FileStateTracker,
   sharedPaths?: LazyPaths,
+  config?: EditToolConfig,
 ): AgentTool<typeof EditParams> {
   // Comis extension: promptGuidelines (not part of AgentTool type, spread to bypass excess property check)
   const ext = { promptGuidelines: [
@@ -231,6 +240,33 @@ export function createComisEditTool(
         if (oldText === newText) {
           throw new Error(
             `[noop_edit] edits[${i}] is a no-op (oldText === newText). Remove it or provide different replacement text.`,
+          );
+        }
+      }
+
+      // --- Secret egress guard on newText content — default "warn" + redirect hint.
+      const editGuardMode = (config?.security?.writeSecretGuard ?? "warn") as "warn" | "block" | "off";
+      let editWarnRedactions = 0;
+      if (editGuardMode !== "off") {
+        for (let i = 0; i < edits.length; i++) {
+          const newText = String(edits[i].newText);
+          const scrub = scrubSecretsFromText(newText);
+          if (scrub.redactions > 0) {
+            if (editGuardMode === "block") {
+              throw new Error(
+                `[write_secret_blocked] File edit blocked: edits[${i}].newText contains ${scrub.redactions} secret-shaped value(s). ` +
+                  `Store credentials using the secure credential store instead of writing plaintext files.`,
+              );
+            }
+            // warn (default): replace newText with scrubbed version, track redaction count.
+            (edits[i] as { oldText: unknown; newText: unknown; replaceAll?: boolean }).newText = scrub.text;
+            editWarnRedactions += scrub.redactions;
+          }
+        }
+        if (editWarnRedactions > 0) {
+          logger?.warn(
+            { hint: "Secret-shaped value redacted from file edit; use secure credential store", errorKind: "internal" as const, redactions: editWarnRedactions },
+            "Egress guard: edit-tool newText scrubbed",
           );
         }
       }
@@ -400,6 +436,9 @@ export function createComisEditTool(
       let resultText = `Successfully replaced ${editResult.editsApplied} block(s) in ${filePath}.\n\n${editResult.diff}`;
       if (editResult.configWarning) {
         resultText += `\n\n[invalid_config] Warning: ${editResult.configWarning}`;
+      }
+      if (editWarnRedactions > 0) {
+        resultText += `\n\n[warn] ${editWarnRedactions} secret-shaped value(s) were redacted from the edit. Use the secure credential store for sensitive values.`;
       }
 
       const gitStat = await getGitDiffStat(resolvedPath, workspacePath);

@@ -17,6 +17,9 @@ import {
   readFileSync,
   appendFileSync,
   chmodSync,
+  openSync,
+  writeSync,
+  closeSync,
 } from "node:fs";
 
 import { safePath } from "./safe-path.js";
@@ -24,6 +27,13 @@ import { safePath } from "./safe-path.js";
 export interface MasterKeyWriteResult {
   readonly written: boolean;
   readonly path: string;
+  /**
+   * The freshly-generated master key in 64-char hex encoding.
+   * Defined iff `written === true` (first-time write only).
+   * Absent (undefined) when `written === false` (key already present).
+   * NEVER log this value.
+   */
+  readonly keyHex?: string;
 }
 
 /**
@@ -59,7 +69,22 @@ export function writeMasterKeyIfAbsent(dataDir: string): MasterKeyWriteResult {
 
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const keyHex = generateMasterKey();
-  appendFileSync(envPath, `\nSECRETS_MASTER_KEY=${keyHex}\n`);
+  // W5: create the file with mode 0o600 atomically. openSync with flag "a"
+  // only applies the mode on file CREATION (O_CREAT path) — if the file already
+  // exists (append mode), the mode argument is ignored and the existing
+  // permissions are preserved. This eliminates the brief window where a newly
+  // created file is visible at umask-default permissions before chmodSync narrows it.
+  if (!existsSync(envPath)) {
+    const fd = openSync(envPath, "a", 0o600);
+    try {
+      writeSync(fd, `\nSECRETS_MASTER_KEY=${keyHex}\n`);
+    } finally {
+      closeSync(fd);
+    }
+  } else {
+    appendFileSync(envPath, `\nSECRETS_MASTER_KEY=${keyHex}\n`);
+  }
+  // Defensive chmod: narrows any pre-existing file that was created at broader mode.
   chmodSync(envPath, 0o600);
-  return { written: true, path: envPath };
+  return { written: true, path: envPath, keyHex };
 }

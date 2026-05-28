@@ -401,9 +401,9 @@ describe("normalizeToolSchemasForProvider", () => {
     });
   });
 
-  describe("Trace logging (Fix B — log-review demotion)", () => {
-    // Pre-fix this log was debug-level, firing per-tool-per-request and
-    // dominating debug logs. Post-fix it's trace-level — recoverable when
+  describe("Trace logging — log-review demotion", () => {
+    // Previously this log was debug-level, firing per-tool-per-request and
+    // dominating debug logs. It's now trace-level — recoverable when
     // an operator needs it, silent during routine debug-mode operation.
 
     it("calls logger.trace (NOT .debug) when keywords are stripped", () => {

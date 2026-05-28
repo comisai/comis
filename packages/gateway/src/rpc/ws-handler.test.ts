@@ -464,9 +464,9 @@ describe("createWsHandler", () => {
     );
   });
 
-  it("Fix B (log-review): onClose with normal close (1000) logs at TRACE level (not debug)", () => {
-    // Pre-fix this was DEBUG, firing on every CLI tick (75s) and
-    // dominating debug-mode logs. Post-fix it's TRACE — recoverable
+  it("log-review: onClose with normal close (1000) logs at TRACE level (not debug)", () => {
+    // Previously this was DEBUG, firing on every CLI tick (75s) and
+    // dominating debug-mode logs. It is now TRACE — recoverable
     // when an operator opts in, silent during routine debug runs.
     const deps = createHandlerDeps();
     const events = createWsHandler(deps, TEST_CTX);

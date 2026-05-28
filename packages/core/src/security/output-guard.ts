@@ -24,7 +24,8 @@ import {
 /** Common secret patterns to detect in LLM output. */
 const SECRET_PATTERNS: ReadonlyArray<{ name: string; regex: RegExp; severity: "critical" | "warning" }> = [
   { name: "aws_key", regex: AWS_KEY_ID, severity: "critical" },
-  { name: "bearer_token", regex: BEARER_TOKEN, severity: "warning" },
+  { name: "bearer_token", regex: BEARER_TOKEN, severity: "critical" },   // REDACTS
+  { name: "hf_token", regex: /\bhf_[A-Za-z0-9_]{18,}\b/g, severity: "critical" },  // bare hf_ (keystone PREFIX_MIN_BODY_LENGTHS["hf_"] = 18)
   { name: "hex_secret_32", regex: HEX_SECRET_32, severity: "critical" },
   { name: "base64_secret", regex: BASE64_SECRET, severity: "critical" },
   { name: "private_key_header", regex: PRIVATE_KEY_HEADER, severity: "critical" },

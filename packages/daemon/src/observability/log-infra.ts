@@ -109,8 +109,8 @@ export function isPm2Managed(): boolean {
  * @param logRotation - Optional cross-stream rotation policy from
  *   AppConfig.observability.logRotation. When provided, overrides
  *   config.maxSize + config.maxFiles for the pino-roll transport.
- *   IMPORTANT (RESEARCH Pitfall 1): pino-roll `size` treats bare numbers as
- *   MB, NOT bytes. Always convert maxSizeBytes → "${Math.round(maxSizeBytes / (1024 * 1024))}m".
+ *   IMPORTANT: pino-roll `size` treats bare numbers as MB, NOT bytes. Always
+ *   convert maxSizeBytes → "${Math.round(maxSizeBytes / (1024 * 1024))}m".
  * @returns Transport config to pass as LoggerOptions.transport
  */
 export function createFileTransport(
@@ -124,35 +124,57 @@ export function createFileTransport(
   // Compute size string and file count from logRotation policy when present.
   // pino-roll `size` semantics: bare numbers = MB (NOT bytes). Always use string form.
   const sizeStr = logRotation
-    ? `${Math.round(logRotation.maxSizeBytes / (1024 * 1024))}m`  // RESEARCH Pitfall 1
+    ? `${Math.round(logRotation.maxSizeBytes / (1024 * 1024))}m`  // pino-roll treats bare numbers as MB, NOT bytes
     : config.maxSize;
   const countLimit = logRotation ? logRotation.maxFiles : config.maxFiles;
 
-  const targets: pino.TransportTargetOptions[] = [];
+  // Each destination is expressed as a TransportPipelineOptions entry:
+  //   pipeline[0] = upstream redact stage (Transform)
+  //   pipeline[1] = final destination (Writable)
+  //
+  // This is the correct pino pattern for chaining a transform before a writable:
+  // targets[] may contain TransportPipelineOptions (pipeline array, no `target` property)
+  // OR TransportTargetOptions (target string, no `pipeline` property) — pino's worker
+  // routes them differently. A pipeline entry runs as a chain:
+  //   source → redact-stage → file-destination
+  //
+  // IMPORTANT: `target + pipeline` on the same object is NOT supported — pino's transport.js
+  // adds such entries to BOTH `options.targets` (raw write) AND `options.pipelines` (stage-only,
+  // no final dest). Using TransportPipelineOptions (pipeline-only, no target) is the correct API.
+  const targets: pino.TransportPipelineOptions[] = [];
 
   // File transport: always active -- ~/.comis/logs/ is the canonical log location
+  // The redact stage runs upstream of pino-roll so every line is scrubbed before disk write
   targets.push({
-    target: "pino-roll",
-    options: {
-      file: expandedPath,
-      size: sizeStr,
-      mkdir: true,
-      limit: {
-        count: countLimit,
-        removeOtherLogFiles: true,
+    pipeline: [
+      { target: "@comis/infra/dist/logging/pipeline-redact-stage.js" },
+      {
+        target: "pino-roll",
+        options: {
+          file: expandedPath,
+          size: sizeStr,
+          mkdir: true,
+          limit: {
+            count: countLimit,
+            removeOtherLogFiles: true,
+          },
+        },
       },
-    },
+    ],
     ...(level ? { level } : {}),
   });
 
   // Stdout: skip under pm2 (pm2 captures stdout to ~/.pm2/logs/, so it would be a duplicate)
+  // The redact stage runs upstream of pino/file so every line is scrubbed before stdout write
   if (!pm2Detected) {
     targets.push({
-      target: "pino/file",
-      options: { destination: 1 }, // stdout
+      pipeline: [
+        { target: "@comis/infra/dist/logging/pipeline-redact-stage.js" },
+        { target: "pino/file", options: { destination: 1 } }, // stdout
+      ],
       ...(level ? { level } : {}),
     });
   }
 
-  return { targets };
+  return { targets: targets as unknown as pino.TransportTargetOptions[] };
 }

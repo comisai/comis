@@ -2508,8 +2508,8 @@ describe("discover_tools -- BM25 normalization + active-tool awareness", () => {
   });
 
   it("BM25-only mode returns mcp_manage for 'install MCP'", async () => {
-    // Pre-fix: raw BM25 for mcp_manage against "install MCP" was ~0.74, below the
-    // 0.8 raw-score floor, filtered out. Post-fix: normalization brings top to 1.0,
+    // Previously: raw BM25 for mcp_manage against "install MCP" was ~0.74, below the
+    // 0.8 raw-score floor, filtered out. Now: normalization brings top to 1.0,
     // always clears the floor.
     const deferred = [
       makeEntry("mcp_manage", "Manage MCP servers: list, status, connect, disconnect, reconnect."),
@@ -2530,7 +2530,7 @@ describe("discover_tools -- BM25 normalization + active-tool awareness", () => {
 
   it("active-tool match: query for already-active MCP server returns 'already active' guide", async () => {
     // Regression: query="yfinance" when all mcp__yfinance--* tools are
-    // ACTIVE (not deferred). Pre-fix: "no matches".
+    // ACTIVE (not deferred). Previously: "no matches".
     const deferred = [makeEntry("other_tool", "unrelated")];
     const active = new Set([
       "mcp__yfinance--get_stock_price",
@@ -2621,7 +2621,7 @@ describe("discover_tools -- BM25 normalization + active-tool awareness", () => {
     const r1 = await (tool.execute as unknown as DiscoverFn)("t-prod-1", { query: "yfinance get_stock" });
     const r2 = await (tool.execute as unknown as DiscoverFn)("t-prod-2", { query: "yfinance" });
 
-    // Pre-fix: both returned "No matching tools found". Post-fix: both return "already active".
+    // Previously: both returned "No matching tools found". Now: both return "already active".
     expect(r1.content[0].text).toContain("already active");
     expect(r1.content[0].text).toContain("mcp__yfinance--get_stock_price");
     expect(r2.content[0].text).toContain("already active");

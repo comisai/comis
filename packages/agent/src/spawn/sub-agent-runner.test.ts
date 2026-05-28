@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { RequiredToolsUnreachableError } from "@comis/core";
 import { mkdtemp, writeFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -2133,7 +2134,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Hash-dedup at spawn entry (Task wkj — duplicate spawn protection)
+  // Hash-dedup at spawn entry (duplicate spawn protection)
   // -----------------------------------------------------------------------
   describe("hash-dedup against in-flight runs", () => {
     it("dedups same caller and task while first run is still in flight", () => {
@@ -3518,6 +3519,243 @@ describe("persistent session reuse", () => {
     const run = runner.getRunStatus(runId);
     expect(run).toBeDefined();
     expect(run!.sessionKey).toContain("default:sub-agent-");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// spawn required_tools gate
+// ---------------------------------------------------------------------------
+
+describe("spawn required_tools gate", () => {
+  let deps: ReturnType<typeof createMockDeps>;
+
+  beforeEach(() => {
+    deps = createMockDeps();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("spawn with requiredTools=['mcp_manage'] and toolGroups=['coding'] throws RequiredToolsUnreachableError before runId", () => {
+    // 'mcp_manage' is in the 'supervisor' profile only — not in 'coding'.
+    // The daemon provides reachableToolNames (coding set); gate detects mcp_manage is absent.
+    const runner = createSubAgentRunner(deps);
+    const codingSet = new Set(["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"]);
+
+    let caughtErr: unknown;
+    try {
+      runner.spawn({
+        task: "test",
+        agentId: "default",
+        toolGroups: ["coding"],
+        requiredTools: ["mcp_manage"],
+        reachableToolNames: codingSet,
+      });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    expect(caughtErr).toBeInstanceOf(RequiredToolsUnreachableError);
+    const err = caughtErr as RequiredToolsUnreachableError;
+    expect(err.unreachableTools).toHaveLength(1);
+    expect(err.unreachableTools[0]!.toolName).toBe("mcp_manage");
+    expect(err.unreachableTools[0]!.reason).toBe("outside_profile");
+    expect(err.unreachableTools[0]!.hint).toContain("supervisor");
+
+    // No run must have been created (gate fired BEFORE runId)
+    expect(runner.listRuns(60)).toHaveLength(0);
+  });
+
+  it("spawn with requiredTools=['gateway'] throws RequiredToolsUnreachableError with denylist reason", () => {
+    // 'gateway' is in SUB_AGENT_TOOL_DENYLIST — denied to ALL sub-agents.
+    const runner = createSubAgentRunner(deps);
+
+    let caughtErr: unknown;
+    try {
+      runner.spawn({ task: "test", agentId: "default", toolGroups: ["full"], requiredTools: ["gateway"] });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    expect(caughtErr).toBeInstanceOf(RequiredToolsUnreachableError);
+    const err = caughtErr as RequiredToolsUnreachableError;
+    expect(err.unreachableTools).toHaveLength(1);
+    expect(err.unreachableTools[0]!.toolName).toBe("gateway");
+    expect(err.unreachableTools[0]!.reason).toBe("denylist");
+    expect(err.unreachableTools[0]!.hint).toMatch(/denied to ALL sub-agents/i);
+
+    // No run must have been created
+    expect(runner.listRuns(60)).toHaveLength(0);
+  });
+
+  it("spawn with requiredTools=['read'] and toolGroups=['coding'] succeeds and returns runId", () => {
+    // 'read' is in the coding reachable set → gate passes.
+    const runner = createSubAgentRunner(deps);
+    const codingSet = new Set(["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"]);
+    const runId = runner.spawn({
+      task: "test",
+      agentId: "default",
+      toolGroups: ["coding"],
+      requiredTools: ["read"],
+      reachableToolNames: codingSet,
+    });
+    expect(runId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(runner.listRuns(60)).toHaveLength(1);
+  });
+
+  it("spawn with no requiredTools field ignores validation and starts normally (backward compatible)", () => {
+    const runner = createSubAgentRunner(deps);
+    const runId = runner.spawn({ task: "test", agentId: "default" });
+    expect(typeof runId).toBe("string");
+    expect(runId.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gate parity fixes:
+//   - gate validates against daemon-provided reachableToolNames (default groups)
+//   - gate validates against daemon-provided reachableToolNames (TOOL_GROUPS expansion)
+//   - queued spawn path also runs the gate before runId
+//   - supervisor hint wording
+// ---------------------------------------------------------------------------
+
+describe("spawn required_tools gate parity fixes", () => {
+  let deps: ReturnType<typeof createMockDeps>;
+
+  beforeEach(() => {
+    deps = createMockDeps();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Spawn with required_tools containing a non-coding tool, no explicit tool_groups,
+  // and reachableToolNames provided (coding set) must throw RequiredToolsUnreachableError.
+  it("spawn with requiredTools=['mcp_manage'] and no toolGroups but reachableToolNames=coding-set throws RequiredToolsUnreachableError", () => {
+    const runner = createSubAgentRunner(deps);
+    // reachableToolNames mimics daemon computing effective coding ceiling
+    const codingSet = new Set(["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"]);
+
+    let caughtErr: unknown;
+    try {
+      runner.spawn({
+        task: "test",
+        agentId: "default",
+        // no toolGroups — LLM omitted it (the common case)
+        requiredTools: ["mcp_manage"],
+        reachableToolNames: codingSet,
+      });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    expect(caughtErr).toBeInstanceOf(RequiredToolsUnreachableError);
+    const err = caughtErr as RequiredToolsUnreachableError;
+    expect(err.unreachableTools[0]?.toolName).toBe("mcp_manage");
+    // No run created — gate fires before runId
+    expect(runner.listRuns(60)).toHaveLength(0);
+  });
+
+  // Spawn with tool_groups=["web"], required_tools=["web_fetch"], and
+  // reachableToolNames containing "web_fetch" (TOOL_GROUPS expansion) must PASS.
+  it("spawn with toolGroups=['web'] and requiredTools=['web_fetch'] with reachableToolNames containing web_fetch succeeds", () => {
+    const runner = createSubAgentRunner(deps);
+    // reachableToolNames mimics daemon expanding TOOL_GROUPS["group:web"]
+    const webSet = new Set(["web_fetch", "web_search", "browser"]);
+
+    const runId = runner.spawn({
+      task: "test",
+      agentId: "default",
+      toolGroups: ["web"],
+      requiredTools: ["web_fetch"],
+      reachableToolNames: webSet,
+    });
+
+    expect(runId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(runner.listRuns(60)).toHaveLength(1);
+  });
+
+  // False-deny regression: without reachableToolNames, gate currently
+  // false-denies web_fetch because SUB_AGENT_TOOL_PROFILES["web"] is undefined.
+  // With reachableToolNames, this works.
+  it("spawn without reachableToolNames but toolGroups=['web'] and requiredTools=['web_fetch'] — gate fails open (no crash) when reachableToolNames absent", () => {
+    const runner = createSubAgentRunner(deps);
+    // No reachableToolNames provided — gate must fail-open (not crash, not false-deny)
+    let threw = false;
+    try {
+      runner.spawn({
+        task: "test",
+        agentId: "default",
+        toolGroups: ["web"],
+        requiredTools: ["web_fetch"],
+        // no reachableToolNames
+      });
+    } catch (e) {
+      threw = true;
+    }
+    // Without the daemon-computed set, gate fails-open: no throw
+    // (runtime boundary still enforces; gate just can't validate without the set)
+    expect(threw).toBe(false);
+  });
+
+  // Queued spawn with unreachable required_tools must throw BEFORE the queued runId is created.
+  it("queued spawn with unreachable requiredTools throws RequiredToolsUnreachableError before runId (no run created)", () => {
+    const runner = createSubAgentRunner(deps);
+    // Fill children to force queue path
+    const maxChildren = 5;
+    for (let i = 0; i < maxChildren; i++) {
+      runner.spawn({ task: `task-${i}`, agentId: "default", callerSessionKey: "caller:1" });
+    }
+    // Now at capacity — next spawn would be queued
+    const codingSet = new Set(["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"]);
+    let caughtErr: unknown;
+    try {
+      runner.spawn({
+        task: "bad-queued",
+        agentId: "default",
+        callerSessionKey: "caller:1",
+        requiredTools: ["mcp_manage"],
+        reachableToolNames: codingSet,
+      });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    expect(caughtErr).toBeInstanceOf(RequiredToolsUnreachableError);
+    // The "bad-queued" run must NOT have been created
+    const badRun = runner.listRuns(60).find((r) => r.task === "bad-queued");
+    expect(badRun).toBeUndefined();
+  });
+
+  // The "no-match" fallback hint must suggest only 'full', not "supervisor' or 'full"
+  it("classifyRequiredTool fallback hint for a tool in no profile suggests only 'full' (not supervisor)", () => {
+    const runner = createSubAgentRunner(deps);
+    const noProfileSet = new Set(["read", "write"]); // "web_fetch" is not in this set
+
+    let caughtErr: unknown;
+    try {
+      runner.spawn({
+        task: "test",
+        agentId: "default",
+        toolGroups: ["minimal"],
+        requiredTools: ["web_fetch"], // web_fetch is NOT in any SUB_AGENT_TOOL_PROFILES entry
+        reachableToolNames: noProfileSet,
+      });
+    } catch (e) {
+      caughtErr = e;
+    }
+
+    expect(caughtErr).toBeInstanceOf(RequiredToolsUnreachableError);
+    const err = caughtErr as RequiredToolsUnreachableError;
+    const hint = err.unreachableTools[0]?.hint ?? "";
+    // Must NOT suggest supervisor (web_fetch is not in supervisor profile)
+    expect(hint).not.toContain("supervisor' or 'full");
+    // Must suggest 'full'
+    expect(hint).toContain("full");
   });
 });
 

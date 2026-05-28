@@ -259,10 +259,10 @@ describe("config.patch", () => {
     });
 
     it("rejected audit record carries the validator's errorMessage", async () => {
-      // Pre-fix the `rejected` outcome swallowed the rejection reason — the
+      // Previously the `rejected` outcome swallowed the rejection reason — the
       // persisted JSONL line only had `result: "rejected"` with no
       // errorMessage, so operators had to grep daemon logs to find why a
-      // config.patch failed. Post-fix the validator text rides through to
+      // config.patch failed. Now the validator text rides through to
       // the JSONL record's errorMessage field.
       vi.useRealTimers();
 
@@ -2424,5 +2424,140 @@ describe("config.patch single-writer guard (integrations.mcp.servers)", () => {
         _trustLevel: "user", // non-admin
       }),
     ).rejects.toThrow(/Admin access required for config modification/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// config.read never echoes MCP server headers credentials
+//
+// Regression guard: config.read calls redactForDisplay(deps.container.config)
+// at config-read.ts:64, which deep-walks the object and replaces any string
+// value whose parent key matches isSecretFieldName() with "[REDACTED]".
+// isSecretFieldName covers: "authorization", "cookie", "x-api-key" (and more).
+//
+// These tests pin the correct behavior so that removing redactForDisplay from
+// config-read.ts:53/64 would flip them failing and CI would catch the regression.
+// ---------------------------------------------------------------------------
+
+describe("config.read never echoes MCP server headers credentials", () => {
+  let tempConfig: ReturnType<typeof createTempConfig>;
+
+  beforeEach(() => {
+    tempConfig = createTempConfig();
+  });
+
+  afterEach(() => {
+    tempConfig.cleanup();
+  });
+
+  /**
+   * Inject a single MCP server entry with plaintext credential headers
+   * directly into the bootstrapped container's config. This bypasses the
+   * write path so we can test the read-side masking in isolation.
+   */
+  function makeDepsWithMcpHeaders(headers: Record<string, string>) {
+    const deps = makeDeps(tempConfig.configPath);
+    // Direct mutation of the live config object to inject the MCP server.
+    // The handler reads deps.container.config, so this controls what
+    // redactForDisplay receives.
+    const config = deps.container.config as Record<string, unknown>;
+    config["integrations"] = {
+      mcp: {
+        servers: [
+          {
+            name: "myserver",
+            transport: "stdio",
+            command: "some-command",
+            headers,
+          },
+        ],
+      },
+    };
+    return deps;
+  }
+
+  it("masks Authorization header value in full config.read response", async () => {
+    // Regression guard: removing redactForDisplay from config-read.ts:64 would flip this failing.
+    const deps = makeDepsWithMcpHeaders({
+      Authorization: "Bearer ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "Content-Type": "application/json",
+    });
+    const handlers = createConfigHandlers(deps);
+
+    const result = (await handlers["config.read"]!({
+      _trustLevel: "admin",
+    })) as {
+      config: {
+        integrations: { mcp: { servers: Array<{ headers: Record<string, string> }> } };
+      };
+    };
+
+    const headers = result.config.integrations.mcp.servers[0]!.headers;
+    expect(headers.Authorization).toBe("[REDACTED]");
+    // Non-secret header passes through unmasked
+    expect(headers["Content-Type"]).toBe("application/json");
+  });
+
+  it("masks Cookie header value in section read ('integrations')", async () => {
+    // Regression guard: removing redactForDisplay from config-read.ts:53 would flip this failing.
+    const deps = makeDepsWithMcpHeaders({
+      Cookie: "session=abc123",
+      "X-Request-Id": "trace-1234",
+    });
+    const handlers = createConfigHandlers(deps);
+
+    const result = (await handlers["config.read"]!({
+      section: "integrations",
+      _trustLevel: "admin",
+    })) as {
+      mcp: { servers: Array<{ headers: Record<string, string> }> };
+    };
+
+    const headers = result.mcp.servers[0]!.headers;
+    expect(headers.Cookie).toBe("[REDACTED]");
+    // Non-secret header passes through unmasked
+    expect(headers["X-Request-Id"]).toBe("trace-1234");
+  });
+
+  it("masks X-Api-Key header value in full config.read response", async () => {
+    // Regression guard: removing redactForDisplay from config-read.ts:64 would flip this failing.
+    const deps = makeDepsWithMcpHeaders({
+      "X-Api-Key": "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    });
+    const handlers = createConfigHandlers(deps);
+
+    const result = (await handlers["config.read"]!({
+      _trustLevel: "admin",
+    })) as {
+      config: {
+        integrations: { mcp: { servers: Array<{ headers: Record<string, string> }> } };
+      };
+    };
+
+    const headers = result.config.integrations.mcp.servers[0]!.headers;
+    expect(headers["X-Api-Key"]).toBe("[REDACTED]");
+  });
+
+  it("masks ${VAR}-form Authorization header value (ref form is still field-name-redacted)", async () => {
+    // redactForDisplay is field-name-based, not value-based.
+    // Even a ${VAR} reference under the Authorization key is masked in config.read output.
+    // The operator uses secrets_manage to list variable names — config.read need not reveal them.
+    // Regression guard: removing redactForDisplay from config-read.ts:64 would flip this failing.
+    const deps = makeDepsWithMcpHeaders({
+      Authorization: "Bearer ${MCP_MYSERVER__AUTHORIZATION}",
+    });
+    const handlers = createConfigHandlers(deps);
+
+    const result = (await handlers["config.read"]!({
+      _trustLevel: "admin",
+    })) as {
+      config: {
+        integrations: { mcp: { servers: Array<{ headers: Record<string, string> }> } };
+      };
+    };
+
+    const headers = result.config.integrations.mcp.servers[0]!.headers;
+    // Field-name based masking: the Authorization key causes [REDACTED] regardless of value form.
+    expect(headers.Authorization).toBe("[REDACTED]");
   });
 });

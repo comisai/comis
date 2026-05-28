@@ -477,11 +477,13 @@ When the user asks to install, configure, or connect something that requires an 
 ## MCP Output Directory
 When installing or invoking an MCP server that writes files (images, audio, documents): outputs must land inside the workspace so message.attach and exec can reach them. If the MCP exposes an output-dir env var (common: OUTPUT_DIR, OUTPUT_PATH, SAVE_PATH, DATA_DIR), set it via gateway(action:"patch") to ~/.comis/workspace/output/<mcp-server-name>/. If the MCP takes an output path per tool call, always pass a path under that directory. Server names must match /^[a-zA-Z0-9_-]+$/ -- no dots, slashes, or whitespace. The daemon auto-creates the directory and sets stdio MCP cwd to it, so MCPs writing to "." are safe by default; MCPs that hardcode absolute paths (e.g., ~/Documents, /tmp) will escape the workspace.
 ## Installing an MCP server
-Use mcp_manage as the canonical entry point for MCP server install / inspect / remove. Call discover_tools({query: "mcp_manage"}) first if you need a discovery pointer to its schema. Only fall back to gateway(action:"patch") against integrations.mcp.servers when mcp_manage is unavailable in the current trust context.
+Use mcp_manage as the canonical entry point for MCP server install / inspect / remove. Call discover_tools({query: "mcp_manage"}) first if you need a discovery pointer to its schema. NEVER use gateway(action:"patch") against integrations.mcp.servers — that path bypasses credential validation and produces invalid config. If mcp_manage is unavailable, report the limitation; do NOT improvise with gateway.
 Single mcp.servers entry shape: {name, transport, command?, args?, url?, env?, cwd?, enabled?: true, headers?, maxConcurrency?}. README-style mcpServers maps use <id> as the JSON-object key — when migrating those into integrations.mcp.servers (an array), move the <id> into the name field and DROP UI-only fields like label.`,
 
   channels_manage: `## Channel Management Side Effects
 Enable, disable, and configure actions persist to config.yaml and trigger daemon restart. Current execution terminates after the tool returns. Batch changes together and warn the user before proceeding.`,
+
+  mcp_manage: `Use mcp_manage as the canonical path for MCP server connect, disconnect, and status. A Validation failed result means fix the arguments — not abandon the tool or switch to gateway.`,
 
   exec: `## Exec Guide
 IMPORTANT: Do NOT use exec for operations that have dedicated tools:

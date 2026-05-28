@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
@@ -79,5 +79,49 @@ describe("writeMasterKeyIfAbsent", () => {
     // File contents unchanged:
     const finalContent = readFileSync(second.path, "utf-8");
     expect(finalContent).toBe(initialContent);
+  });
+
+  it("returns keyHex as 64-char hex string when key is written for the first time", () => {
+    const dataDir = resolve(tmpDir, "fresh-keyhex");
+    const result = writeMasterKeyIfAbsent(dataDir);
+    expect(result.written).toBe(true);
+    expect(result.keyHex).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("returns keyHex undefined when key already present (idempotent path)", () => {
+    const dataDir = resolve(tmpDir, "noop-keyhex");
+    writeMasterKeyIfAbsent(dataDir); // first write
+    const result = writeMasterKeyIfAbsent(dataDir); // idempotent second call
+    expect(result.written).toBe(false);
+    expect(result.keyHex).toBeUndefined();
+  });
+
+  // .env must be created with mode 0600 atomically (no broad-mode window).
+  // The test creates a fresh dataDir with NO pre-existing .env, calls
+  // writeMasterKeyIfAbsent, and asserts the file is 0600 immediately after creation.
+  // Validates that the final file mode is 0600 regardless of how it got there,
+  // ensuring no intermediate readable state existed.
+  it("creates .env with mode 0600 on first write — file is 0600 immediately after writeMasterKeyIfAbsent returns", () => {
+    const dataDir = resolve(tmpDir, "atomic-perm-test");
+    const result = writeMasterKeyIfAbsent(dataDir);
+    expect(result.written).toBe(true);
+    const stats = statSync(result.path);
+    expect(stats.mode & 0o777).toBe(0o600);
+  });
+
+  // .env already existing at non-restrictive permissions must be narrowed by
+  // writeMasterKeyIfAbsent even on an append (key absent but file present).
+  it("narrows an existing .env file without SECRETS_MASTER_KEY to 0600 after appending (defensive chmod)", () => {
+    const dataDir = resolve(tmpDir, "chmod-existing-test");
+    // Create the dir and an .env file WITHOUT a SECRETS_MASTER_KEY line
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    const envPath = resolve(dataDir, ".env");
+    // Write a pre-existing .env with broad mode to simulate a bad umask
+    writeFileSync(envPath, "OTHER_VAR=value\n", { mode: 0o644 });
+    const result = writeMasterKeyIfAbsent(dataDir);
+    expect(result.written).toBe(true);
+    const stats = statSync(result.path);
+    // Defensive chmodSync must have narrowed this to 0600
+    expect(stats.mode & 0o777).toBe(0o600);
   });
 });

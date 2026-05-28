@@ -81,7 +81,7 @@ export interface SessionsApiDeps {
   };
   crossSessionSender: ReturnType<typeof createCrossSessionSender>;
   subAgentRunner: ReturnType<typeof createSubAgentRunner>;
-  securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number } };
+  securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[] } };
   tenantId: string;
   /** Structured logger threaded through every cluster slice (DaemonApiDeps
    *  is required; SessionsApiDeps mirrors required for multi-extends parity). */
@@ -241,7 +241,7 @@ export interface OrchestratorApiDeps {
   /** heartbeat-handlers reads deps.persistDeps for YAML writes. */
   persistDeps?: PersistToConfigDeps;
   /** graph-handlers reads deps.securityConfig.agentToAgent.enabled. */
-  securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number } };
+  securityConfig: { agentToAgent?: { enabled?: boolean; waitTimeoutMs: number; subAgentToolGroups?: string[] } };
   /** graph / subagent handlers read deps.logger.info/warn. Required
    *  (matches other slices for multi-extends parity; DaemonApiDeps.logger is required). */
   logger: ComisLogger;
@@ -296,6 +296,12 @@ export interface WorkspaceApiDeps {
   eventBus?: AppContainer["eventBus"];
   /** mcp-handlers reads deps.secretManager?.has for env-ref validation. */
   secretManager?: import("@comis/core").SecretManager;
+  /** mcp-handlers reads deps.secretStore for static-secret header extraction.
+   *  Optional — undefined when COMIS_DISABLE_ENCRYPTED_SECRETS=1 (opt-out);
+   *  extraction will fail-safe (throw [plaintext_secret_in_headers]) rather than
+   *  persist plaintext. Same shape as AuthApiDeps.secretStore / ConfigApiDeps.secretStore
+   *  so the ApiDispatchDeps multi-extends remains well-formed. */
+  secretStore?: SecretStorePort;
   /** mcp-handlers reads deps.persistDeps for YAML writes via persistMcpServers.
    *  Same shape as ChannelsApiDeps.persistDeps / AgentsApiDeps.persistDeps /
    *  OrchestratorApiDeps.persistDeps so the ApiDispatchDeps multi-extends

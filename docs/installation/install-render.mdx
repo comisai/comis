@@ -107,12 +107,11 @@ can't respond to channel events. **Use the $7/mo Starter plan or higher.**
     <SecretWarning />
 
     <Tip>
-    Skip `SECRETS_MASTER_KEY` for a default deployment. Comis runs in legacy
-    mode (credentials read directly from these env vars), which is the
-    recommended setup for Render. Only add `SECRETS_MASTER_KEY` if you
-    specifically need the encrypted-secrets-DB feature for `SecretRef` config
-    pointers — see [Secrets management](/operations/docker#secrets-management)
-    for the trade-off.
+    The encrypted secrets store is **enabled by default**. On first boot, Comis
+    auto-generates a master key and writes it to `~/.comis/.env` (mode 0600).
+    **Back up this file** — losing `SECRETS_MASTER_KEY` makes `secrets.db`
+    permanently unreadable. To disable the encrypted store (envfile-only mode),
+    set `COMIS_DISABLE_ENCRYPTED_SECRETS=1`.
     </Tip>
   </Step>
 

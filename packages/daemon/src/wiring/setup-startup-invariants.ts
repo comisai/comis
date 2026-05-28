@@ -70,12 +70,12 @@ export interface StartupInvariantsDeps {
   agentsConfig: Record<string, unknown>;
   /**
    * Dep slot consistency flags — passed explicitly by the daemon composition root
-   * (the only site that knows which slots were used). Post-fix wiring:
+   * (the only site that knows which slots were used). Required wiring:
    * { adaptersList: false, channelRegistry: true }.
    */
   depSlotConsistency: {
-    adaptersList:    boolean;   // expected false post-fix
-    channelRegistry: boolean;   // expected true post-fix
+    adaptersList:    boolean;   // expected false
+    channelRegistry: boolean;   // expected true
   };
   /**
    * Optional cross-stream log rotation policy.

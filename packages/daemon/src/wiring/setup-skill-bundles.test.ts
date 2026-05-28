@@ -73,7 +73,7 @@ vi.mock("@comis/skills", async (importOriginal) => {
 });
 
 // ---------------------------------------------------------------------------
-// Imports — setupSkillBundles is the symbol under test (RED: module missing)
+// Imports — setupSkillBundles is the symbol under test
 // ---------------------------------------------------------------------------
 
 import { setupSkillBundles } from "./setup-skill-bundles.js";
@@ -407,7 +407,7 @@ describe("setupSkillBundles — boot orchestrator", () => {
       args: ["alpha-pkg"],
       enabled: true,
       idleTtlMs: 0,
-      _bundleSource: "wr01-skill",
+      _bundleSource: "sort-idempotence-skill",
     } as McpServerEntry;
     const zEntry: McpServerEntry = {
       name: "zulu-mcp",
@@ -416,13 +416,13 @@ describe("setupSkillBundles — boot orchestrator", () => {
       args: ["zulu-pkg"],
       enabled: true,
       idleTtlMs: 0,
-      _bundleSource: "wr01-skill",
+      _bundleSource: "sort-idempotence-skill",
     } as McpServerEntry;
 
     const md = writeSkill(
       tmpRoot,
-      "wr01-skill",
-      manifestWithBundle("wr01-skill", [
+      "sort-idempotence-skill",
+      manifestWithBundle("sort-idempotence-skill", [
         { name: "alpha-mcp", transport: "stdio", command: "npx", args: ["alpha-pkg"] },
         { name: "zulu-mcp", transport: "stdio", command: "npx", args: ["zulu-pkg"] },
       ]),
@@ -449,7 +449,7 @@ describe("setupSkillBundles — boot orchestrator", () => {
     writeFileSync(
       join(tmpRoot, "installed-bundles.json"),
       JSON.stringify({
-        "wr01-skill": { "alpha-mcp": "fp", "zulu-mcp": "fp" },
+        "sort-idempotence-skill": { "alpha-mcp": "fp", "zulu-mcp": "fp" },
       }),
       "utf-8",
     );

@@ -37,7 +37,7 @@ import {
   wireStderrCapture,
 } from "./mcp-client-discover.js";
 import { qualifyToolName } from "./mcp-client-types.js";
-import { wireClientLifecycleCallbacks } from "./mcp-client-reconnect.js";
+import { wireClientLifecycleCallbacks, handleDisconnection } from "./mcp-client-reconnect.js";
 import { startKeepaliveTicker, stopKeepaliveTicker } from "./mcp-client-keepalive.js";
 import { startIdleTicker, stopIdleTicker } from "./mcp-client-idle-eviction.js";
 import {
@@ -277,8 +277,10 @@ export async function connectServer(
 
     // Per-server keepalive ticker. NO-OP when keepaliveIntervalMs === 0
     // (disabled). Routes ping through the same PQueue as tool calls so stdio
-    // single-pipe serialization is preserved.
-    startKeepaliveTicker(state, deps, config);
+    // single-pipe serialization is preserved. The onFailure callback threads
+    // handleDisconnection so mcp-client-keepalive.ts need not import it directly
+    // (which would create a keepalive ↔ reconnect source cycle).
+    startKeepaliveTicker(state, deps, config, (srvName) => handleDisconnection(state, deps, srvName, "keepalive_failed"));
 
     // Per-server idle eviction ticker. NO-OP when idleTtlMs === 0/undefined
     // (opt-in). Disconnects the transport after idle without setting

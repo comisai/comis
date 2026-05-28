@@ -8,7 +8,7 @@ const packagesRoot = resolve(here, "../../packages");
 
 export default defineConfig({
   // Scoped alias: `@comis/core` + `@comis/observability` + `@comis/skills`
-  // + `@comis/skills/platform-tools` + `@comis/daemon`.
+  // + `@comis/skills/platform-tools`.
   // The contract-registry architecture tests (api-contracts-bidirectional,
   // api-contracts-allowlist, contract-internal-fields) need the COMPILED
   // runtime values — the actual API_CONTRACTS Map, the frozen
@@ -18,17 +18,12 @@ export default defineConfig({
   // reason — the bridge mapping is the runtime closed set. `@comis/skills`
   // is included for the same reason: the mcp-prespawn-allowlist test pins
   // the runtime MCP_STDIO_BUILTIN_ENV_ALLOWLIST constant value, not its AST.
-  // `@comis/daemon` is included for the negative-control test
-  // (mcp-plaintext-secret-false-positives.test.ts) which pins the runtime
-  // behavior of the looksLikePlaintextSecret heuristic against real-world
-  // token samples — the test invokes the compiled function, not the AST.
   //
   // Vite's resolve.alias matches by string prefix when the key is a
   // string, so `@comis/skills/platform-tools` would resolve to
   // `skills/dist/skills/index.js/platform-tools` (ENOTDIR) unless we
-  // register the subpath explicitly. Daemon's dist transitively imports
-  // `@comis/skills/platform-tools` via setup-* wiring; the alias array
-  // form below uses regex `find:` patterns to match each subpath exactly.
+  // register the subpath explicitly. The alias array form below uses regex
+  // `find:` patterns to match each subpath exactly.
   //
   // Routing these specific packages to dist/ leaves every other
   // architecture test reading packages/*/src/ via source-grep +
@@ -41,7 +36,6 @@ export default defineConfig({
       { find: /^@comis\/skills$/, replacement: resolve(packagesRoot, "skills/dist/skills/index.js") },
       { find: /^@comis\/core$/, replacement: resolve(packagesRoot, "core/dist/index.js") },
       { find: /^@comis\/observability$/, replacement: resolve(packagesRoot, "observability/dist/index.js") },
-      { find: /^@comis\/daemon$/, replacement: resolve(packagesRoot, "daemon/dist/index.js") },
     ],
   },
   test: {
