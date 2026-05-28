@@ -77,6 +77,15 @@ const McpManageToolParams = Type.Object({
       description: "Custom HTTP headers for remote transports (e.g. Authorization). Keys are header names, values are header values.",
     }),
   ),
+  auth: Type.Optional(
+    Type.Union(
+      [Type.Literal("headers"), Type.Literal("oauth")],
+      {
+        description:
+          'Auth scheme for remote transports. "oauth" triggers PKCE flow via mcp_login. Default: "headers" (credential injection via the headers field). Only relevant for sse/http transports.',
+      },
+    ),
+  ),
 });
 
 const VALID_ACTIONS = ["list", "status", "connect", "disconnect", "reconnect"] as const;
@@ -180,6 +189,35 @@ function coerceHeaders(p: Record<string, unknown>): unknown {
 }
 
 /**
+ * Coerce and validate the `auth` field.
+ *
+ * Mirrors the `coerceHeaders` pattern above, adapted for the auth enum
+ * constraint (must be "headers" or "oauth" when present).
+ *
+ * Threat T-01-01-01: rejects any value not in ["headers","oauth"] via
+ * `throwToolError("invalid_value",...)` before any handler logic runs.
+ *
+ * - `raw === undefined`: return `undefined` (field was not supplied; caller
+ *   should apply a default of `"headers"` at the rpcCall call site).
+ * - `raw === "headers"` or `raw === "oauth"`: return the value as-is.
+ * - Any other value: throw `[invalid_value]` with an operator-actionable hint.
+ */
+function coerceAuth(p: Record<string, unknown>): "headers" | "oauth" | undefined {
+  const raw = p.auth;
+  if (raw === undefined) return undefined;
+  if (raw === "headers" || raw === "oauth") return raw;
+  throwToolError(
+    "invalid_value",
+    `mcp_manage auth must be "headers" or "oauth".`,
+    {
+      param: "auth",
+      validValues: ["headers", "oauth"],
+      hint: 'Pass auth:"oauth" to trigger PKCE OAuth flow via mcp_login, or omit for header-auth servers.',
+    },
+  );
+}
+
+/**
  * Up-front multi-field validator for `connect`: reports ALL missing required
  * fields in a single `[missing_param]` error rather than surfacing them
  * one-at-a-time across multiple LLM retries (the defect this task fixes).
@@ -273,6 +311,7 @@ export function createMcpManageTool(
           const hasUrl = typeof p.url === "string" && p.url.length > 0;
           const inferredTransport =
             explicitTransport ?? (hasCommand ? "stdio" : hasUrl ? "http" : undefined);
+          const coercedAuth = coerceAuth(p);
           validateConnectParams(serverName, inferredTransport, p.command, p.url);
           // validateConnectParams threw if any field was missing — past this
           // point both serverName and inferredTransport are non-empty strings.
@@ -283,6 +322,7 @@ export function createMcpManageTool(
             args: coercedArgs,
             url: p.url,
             headers: coerceHeaders(p) as Record<string, string> | undefined,
+            ...(coercedAuth !== undefined && { auth: coercedAuth }),
             _trustLevel: ctx.trustLevel,
           });
         },
