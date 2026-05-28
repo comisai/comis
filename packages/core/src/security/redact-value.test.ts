@@ -345,6 +345,88 @@ describe("redactValue — quick-260528-nsv: URL host not stripped by absolute-pa
   });
 });
 
+// ---------------------------------------------------------------------------
+// quick-260528-ox2 (Bug 2 follow-on): URL PATHS protected from PII matchers.
+//
+// After nsv-hotfix exempted URL HOSTS from HOSTNAME_RE via a `(?<!\/\/)`
+// lookbehind, URL PATHS still flow through every PII matcher unguarded. Live
+// evidence (daemon d103580b, trace 8830d06d): the press-release URL
+// `https://www.prnewswire.com/news-releases/...-302781634.html` is rendered
+// with the 9-digit ID falsely masked by PHONE_RE. Per SPEC §8.4, public URL
+// hosts AND paths are user-facing context, not infrastructure leakage. A
+// single URL-aware extract-and-restore pre-pass wraps the network + PII
+// matcher passes so numeric IDs in URL paths are not false-positive-masked.
+//
+// RED contract: tests 1 & 2 (9-digit ID, CC-shaped path) MUST fail on
+// pre-patch code — PHONE_RE / CREDIT_CARD_RE match the URL path span and the
+// URL renders with `<redacted>` instead of verbatim. Tests 3, 4, 5 are
+// regression guards that pass pre- AND post-patch (span-precision and
+// defense-in-depth invariants).
+// ---------------------------------------------------------------------------
+
+describe("redactValue — quick-260528-ox2: URL paths protected from PII matchers (PHONE/CC/SSN/EMAIL)", () => {
+  it("preserves a 9-digit press-release ID in a URL path (no PHONE_RE false positive)", () => {
+    const url =
+      "https://www.prnewswire.com/news-releases/ituran-presents-first-quarter-2026-results-302781634.html";
+    const out = redactValue({ url });
+    const value = out.value as Record<string, unknown>;
+    // The URL must render verbatim — `302781634` is a press-release ID in the
+    // path, NOT a phone number. Pre-patch: PHONE_RE matches the digit run and
+    // replaces it with `<redacted>` → URL contains `<redacted>` → FAIL.
+    expect(value.url).toBe(url);
+    expect(out.redactionsApplied.find((r) => r.reason === "pii_phone")).toBeUndefined();
+  });
+
+  it("preserves a CC-shaped digit run in a URL path (no CREDIT_CARD_RE false positive)", () => {
+    const url = "https://example.com/account/4111-1111-1111-1111";
+    const out = redactValue({ url });
+    const value = out.value as Record<string, unknown>;
+    // The URL must render verbatim — `4111-1111-1111-1111` is a path segment,
+    // NOT a credit card. Pre-patch: CREDIT_CARD_RE matches the 4-4-4-4 group
+    // and replaces it with `<redacted>` → URL contains `<redacted>` → FAIL.
+    expect(value.url).toBe(url);
+    expect(out.redactionsApplied.find((r) => r.reason === "pii_credit_card")).toBeUndefined();
+  });
+
+  it("still masks a standalone phone number outside any URL (regression guard)", () => {
+    // Span-precise: the URL exemption only protects URL spans, not the whole
+    // string. A standalone phone number is STILL masked.
+    const out = redactValue({ note: "call me at 555-123-4567 about my account" });
+    const value = out.value as Record<string, unknown>;
+    expect(String(value.note)).toContain("<redacted>");
+    expect(String(value.note)).not.toContain("555-123-4567");
+    expect(reasons(out)).toContain("pii_phone");
+  });
+
+  it("span-precision: URL intact AND standalone phone masked in the same string", () => {
+    // The URL guard must stash ONLY the URL span — the phone outside the URL
+    // is still masked. A buggy helper that protected the whole string would
+    // leak the phone; this guard catches that future regression.
+    const out = redactValue({
+      note: "see https://example.com/abc — but also call 555-999-8888",
+    });
+    const value = out.value as Record<string, unknown>;
+    const rendered = String(value.note);
+    expect(rendered).toContain("https://example.com/abc");
+    expect(rendered).not.toContain("555-999-8888");
+    expect(rendered).toContain("<redacted>");
+    expect(reasons(out)).toContain("pii_phone");
+  });
+
+  it("defense-in-depth: URL_PASSWORD still masks embedded credentials (secret-shape runs BEFORE URL guard)", () => {
+    // CR-01-style invariant: the URL guard MUST NOT bypass secret-shape masking.
+    // Secret-shape pass runs FIRST, so `://user:password@host` is masked before
+    // the URL is ever stashed by the new wrapper. Asserts with a vanilla
+    // `example.com` host (not the internal `db.internal.example.com` from the
+    // existing CR-01 block) to prove the new helper doesn't accidentally
+    // stash the URL BEFORE the secret-shape pass strips the credential.
+    const out = redactValue({ url: "https://user:hunter2secret@example.com/path" });
+    const value = out.value as Record<string, unknown>;
+    expect(String(value.url)).not.toContain("hunter2secret");
+    expect(reasons(out)).toContain("secret_shape");
+  });
+});
+
 describe("redactValue — SEC-02 network identifiers", () => {
   it("masks an IPv4 address", () => {
     const out = redactValue({ host: "connect to 10.0.0.5 please" });
