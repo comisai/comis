@@ -95,6 +95,7 @@ import {
   themeForName,
   BackgroundTasksConfigSchema,
   writeMasterKeyIfAbsent,
+  preReadSecretsEnabled,
   systemGetEnv,
   selectOAuthCredentialStore,
   createFileLock,
@@ -163,6 +164,8 @@ import {
   createImageGenProvider,
   createImageGenRateLimiter,
   detectSandboxProvider,
+  createTokenStore as defaultCreateMcpTokenStore,
+  type TokenStore as McpTokenStore,
 } from "@comis/skills";
 import { createChannelHealthMonitor } from "@comis/channels";
 // WIRE-08: the single process-singleton activity circuit breaker is constructed
@@ -1079,6 +1082,19 @@ function buildRpcDispatchDeps(deps: {
     const idx = g.runtimeTokens.findIndex((t) => t.id === id);
     if (idx >= 0) g.runtimeTokens.splice(idx, 1);
   };
+  // Singleton factory for the per-server MCP OAuth token store. Both
+  // mcp-handlers (Fix 4 — pre-check no-token before manager.connect) and
+  // mcp-oauth-handlers (existing — read/write tokens during login) call
+  // this; the per-store chokidar watcher + cache are per-instance, so a
+  // single shared store is required (TokenStoreDeps JSDoc explicitly:
+  // "implementations SHOULD return a process-wide singleton").
+  let cachedMcpTokenStore: McpTokenStore | undefined;
+  const createTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["createTokenStore"] = () => {
+    if (cachedMcpTokenStore === undefined) {
+      cachedMcpTokenStore = defaultCreateMcpTokenStore({ logger: c.skillsLogger });
+    }
+    return cachedMcpTokenStore;
+  };
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
@@ -1105,6 +1121,7 @@ function buildRpcDispatchDeps(deps: {
     modelCatalog: c.modelCatalog, channelConfig: c.channelConfig,
     tokenRegistry: g.tokenRegistry,
     addToTokenStore, removeFromTokenStore,
+    createTokenStore,
     memoryWriteValidator: validateMemoryWrite,
     // MemoryApiDeps.eventBus accepts the full AppContainer["eventBus"] type;
     // no down-cast to `{ emit }` is needed.
@@ -1391,27 +1408,38 @@ async function bootFoundation(
   const _createTokenTracker = overrides.createTokenTracker ?? createTokenTracker;
   const _createProcessMonitor = overrides.createProcessMonitor ?? createProcessMonitor;
 
-  // 0. Resolve data directory, then load secrets from <dataDir>/.env.
+  // 0. Resolve data directory + config paths, then load secrets from <dataDir>/.env.
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager is initialized
   const dataDir = process.env["COMIS_DATA_DIR"] ?? safePath(os.homedir(), ".comis");
   const envPath = safePath(dataDir, ".env");
 
-  // Opt-out flag pre-read — checked BEFORE writeMasterKeyIfAbsent to skip key
-  // auto-gen. Read from systemGetEnv (process.env) at this point; loadEnvFile hasn't run yet
-  // so a COMIS_DISABLE_ENCRYPTED_SECRETS entry in ~/.comis/.env is not visible here.
-  // We re-evaluate after loadEnvFile below to also honour the flag from .env.
+  // Resolve config paths up front so we can pre-read security.secrets.enabled
+  // before writeMasterKeyIfAbsent. The full bootstrap (which validates the
+  // whole config + does ${VAR} substitution) runs later — it depends on
+  // mergedEnv, which depends on whether the encrypted store opened.
+  // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution + VITEST guard
+  const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"]; if (process.env["VITEST"] === "true" && !rawConfigPaths) throw new Error("VITEST=true and COMIS_CONFIG_PATHS unset — refusing to read ~/.comis/config.yaml from a test process. Set COMIS_CONFIG_PATHS to a sandbox path in your test setup, or import test/support/vitest-process-listeners.ts.");
+  const requestedConfigPaths = rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS;
+
+  // Opt-out checks — TWO independent paths, either disables the store:
+  //   1. env: COMIS_DISABLE_ENCRYPTED_SECRETS=1|true|on
+  //   2. config: security.secrets.enabled: false (in any YAML config path)
+  // Both are evaluated BEFORE writeMasterKeyIfAbsent so an opt-out leaves
+  // ~/.comis/.env completely untouched (no SECRETS_MASTER_KEY line appended).
   const parseDisableFlag = (raw: string | undefined): boolean => {
     if (typeof raw !== "string") return false;
     const norm = raw.trim().toLowerCase();
     return norm === "1" || norm === "true" || norm === "on";
   };
   const disableEncryptedPreLoad = parseDisableFlag(systemGetEnv("COMIS_DISABLE_ENCRYPTED_SECRETS"));
+  const secretsEnabledByConfig = preReadSecretsEnabled(requestedConfigPaths);
+  const disableEncryptedAtStart = disableEncryptedPreLoad || !secretsEnabledByConfig;
 
   // Auto-generate master key on first boot (before loadEnvFile — key must be in
   // memory, not re-read from env, for same-boot usability).
   // NEVER log autoInitKeyHex — it is raw 32-byte key material.
   let autoInitKeyHex: string | undefined;
-  if (!disableEncryptedPreLoad) {
+  if (!disableEncryptedAtStart) {
     const writeResult = writeMasterKeyIfAbsent(dataDir);
     autoInitKeyHex = writeResult.keyHex; // defined iff written===true (first boot only)
   }
@@ -1420,8 +1448,11 @@ async function bootFoundation(
 
   // Re-evaluate opt-out after loadEnvFile so COMIS_DISABLE_ENCRYPTED_SECRETS in
   // ~/.comis/.env is honoured for the store-construction gate (not just key auto-gen).
+  // The config-driven opt-out (`secretsEnabledByConfig`) is fixed once at pre-read
+  // time — YAML is read directly off disk and is not affected by loadEnvFile.
   // eslint-disable-next-line no-restricted-syntax -- must re-read process.env after loadEnvFile
-  const disableEncrypted = disableEncryptedPreLoad || parseDisableFlag(process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"]);
+  const disableEncryptedByEnvAfterLoad = parseDisableFlag(process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"]);
+  const disableEncrypted = disableEncryptedAtStart || disableEncryptedByEnvAfterLoad;
 
   // 0.5. Decrypt secrets, merge with env, scrub process.env.
   const permissionCorrections = hardenDataDirPermissions(dataDir);
@@ -1460,10 +1491,9 @@ async function bootFoundation(
   // buildChannelManagerDeps → ChannelsDeps → buildAndStartChannelManager.
   const activityBreaker = createActivityCircuitBreaker(clock);
 
-  // 1. Bootstrap core container. Under VITEST=true, refuse to silently read ~/.comis/config.yaml when COMIS_CONFIG_PATHS is unset.
-  // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution + VITEST guard
-  const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"]; if (process.env["VITEST"] === "true" && !rawConfigPaths) throw new Error("VITEST=true and COMIS_CONFIG_PATHS unset — refusing to read ~/.comis/config.yaml from a test process. Set COMIS_CONFIG_PATHS to a sandbox path in your test setup, or import test/support/vitest-process-listeners.ts.");
-  const requestedConfigPaths = rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS;
+  // 1. Bootstrap core container. (Config paths were resolved + VITEST-guarded
+  // in step 0 so security.secrets.enabled could be pre-read before the
+  // encrypted-store bootstrap.)
   const { configPaths, bootResult } = await runConfigBootstrapAndEmitObserve({ requestedConfigPaths, mergedEnv, bootstrap: _bootstrap });
   if (!bootResult.ok) {
     throw new Error(`Bootstrap failed: ${bootResult.error.message}`);
@@ -1523,14 +1553,24 @@ async function bootFoundation(
     }
   }
 
-  // Deferred opt-out WARN (logger not available before setupLogging)
+  // Deferred opt-out WARN (logger not available before setupLogging).
+  // Two opt-out sources, surfaced separately so the hint matches the reason:
+  //   - env: COMIS_DISABLE_ENCRYPTED_SECRETS=1 (process.env or ~/.comis/.env)
+  //   - config: security.secrets.enabled: false (YAML, applied at boot)
   if (disableEncrypted) {
+    const envDisabled = disableEncryptedPreLoad || disableEncryptedByEnvAfterLoad;
+    const source = envDisabled ? "env" : "config";
     daemonLogger.warn(
       {
         errorKind: "config" as const,
-        hint: "Back up ~/.comis/.env immediately. Losing SECRETS_MASTER_KEY makes secrets.db permanently unreadable. To re-enable, unset COMIS_DISABLE_ENCRYPTED_SECRETS and restart.",
+        optOutSource: source,
+        hint: envDisabled
+          ? "Back up ~/.comis/.env immediately. Losing SECRETS_MASTER_KEY makes secrets.db permanently unreadable. To re-enable, unset COMIS_DISABLE_ENCRYPTED_SECRETS and restart."
+          : "Back up ~/.comis/.env immediately. Losing SECRETS_MASTER_KEY makes secrets.db permanently unreadable. To re-enable, set security.secrets.enabled: true (or remove the field) and restart.",
       },
-      "COMIS_DISABLE_ENCRYPTED_SECRETS=1: encrypted secrets store disabled. Daemon running in envfile-only mode. Backup obligation is on the operator.",
+      envDisabled
+        ? "COMIS_DISABLE_ENCRYPTED_SECRETS=1: encrypted secrets store disabled. Daemon running in envfile-only mode. Backup obligation is on the operator."
+        : "security.secrets.enabled=false: encrypted secrets store disabled by config. Daemon running in envfile-only mode. Backup obligation is on the operator.",
     );
   }
 

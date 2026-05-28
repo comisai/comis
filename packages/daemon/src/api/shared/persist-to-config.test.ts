@@ -450,6 +450,143 @@ describe("persistToConfig", () => {
       expect.any(String),
     );
   });
+
+  // --------------------------------------------------------------------------
+  // Plaintext-secret detector: cross-check fullMerged findings against
+  // the on-disk YAML so RESOLVED `${VAR}` substitutions don't fire false
+  // positives. Observed 2026-05-28 in daemon.1.log:568 — mcp.disconnect
+  // succeeded in-memory but persistToConfig aborted with
+  // `[plaintext_secret_blocked] Config contains a plaintext secret at
+  // "channels.telegram.botToken"` because the in-memory config carried the
+  // SUBSTITUTED token while the on-disk YAML had `${TELEGRAM_BOT_TOKEN}`.
+  // The persist target (updatedLocal) was never a plaintext secret; only
+  // the in-memory shadow (fullMerged) appeared so. Fix: mask resolved
+  // values back to their `${VAR}` literal where the on-disk file carries
+  // an env-ref, then scan.
+  // --------------------------------------------------------------------------
+
+  it("does NOT block when the in-memory config has a resolved ${VAR} value matching an env-ref in the on-disk YAML", async () => {
+    // On-disk YAML: env-ref literal — never a plaintext secret.
+    writeFileSync(
+      configPath,
+      yamlStringify({
+        logLevel: "info",
+        channels: {
+          telegram: {
+            enabled: true,
+            botToken: "${TELEGRAM_BOT_TOKEN}",
+            allowFrom: ["123"],
+          },
+        },
+      }),
+      "utf-8",
+    );
+
+    // In-memory container.config: the SAME path holds the resolved value
+    // (post-env-substitution at boot). The value is shaped like a real
+    // secret (hf_ prefix + 22-char body) so looksLikeSecretValue flags it.
+    const containerConfig = AppConfigSchema.parse({
+      logLevel: "info",
+      channels: {
+        telegram: {
+          enabled: true,
+          botToken: "hf_AbCdEfGhIjKlMnOpQrStUv",
+          allowFrom: ["123"],
+        },
+      },
+    });
+
+    const deps: PersistToConfigDeps = {
+      container: {
+        config: containerConfig,
+        eventBus: { emit: vi.fn() },
+      } as unknown as PersistToConfigDeps["container"],
+      configPaths: [configPath],
+      defaultConfigPaths: [],
+      logger: createMockLogger(),
+    };
+
+    // Patch: unrelated change (e.g. an mcp.disconnect persisting servers[]).
+    const opts = makeOpts({
+      patch: { integrations: { mcp: { servers: [] } } },
+      actionType: "mcp.disconnect",
+      entityId: "higgsfield",
+    });
+
+    const result = await persistToConfig(deps, opts);
+    expect(result.ok).toBe(true);
+  });
+
+  it("STILL blocks when an actual plaintext secret is in the in-memory config and the on-disk YAML has no matching env-ref", async () => {
+    // On-disk YAML: no telegram block at all (no env-ref to mask the finding).
+    writeFileSync(configPath, yamlStringify({ logLevel: "info" }), "utf-8");
+
+    const containerConfig = AppConfigSchema.parse({
+      logLevel: "info",
+      channels: {
+        telegram: {
+          enabled: true,
+          botToken: "hf_AbCdEfGhIjKlMnOpQrStUv",
+          allowFrom: ["123"],
+        },
+      },
+    });
+
+    const deps: PersistToConfigDeps = {
+      container: {
+        config: containerConfig,
+        eventBus: { emit: vi.fn() },
+      } as unknown as PersistToConfigDeps["container"],
+      configPaths: [configPath],
+      defaultConfigPaths: [],
+      logger: createMockLogger(),
+    };
+
+    const opts = makeOpts({
+      patch: { integrations: { mcp: { servers: [] } } },
+    });
+
+    const result = await persistToConfig(deps, opts);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("plaintext_secret_blocked");
+    }
+  });
+
+  it("STILL blocks when the PATCH itself adds a plaintext secret (in-memory path catches new writes)", async () => {
+    writeFileSync(configPath, yamlStringify({ logLevel: "info" }), "utf-8");
+
+    const containerConfig = AppConfigSchema.parse({});
+
+    const deps: PersistToConfigDeps = {
+      container: {
+        config: containerConfig,
+        eventBus: { emit: vi.fn() },
+      } as unknown as PersistToConfigDeps["container"],
+      configPaths: [configPath],
+      defaultConfigPaths: [],
+      logger: createMockLogger(),
+    };
+
+    // Patch tries to write a plaintext token.
+    const opts = makeOpts({
+      patch: {
+        channels: {
+          telegram: {
+            enabled: true,
+            botToken: "hf_AbCdEfGhIjKlMnOpQrStUv",
+            allowFrom: ["123"],
+          },
+        },
+      },
+    });
+
+    const result = await persistToConfig(deps, opts);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("plaintext_secret_blocked");
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

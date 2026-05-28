@@ -1,17 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { Value } from "typebox/value";
 import { createMcpManageTool } from "./mcp-manage-tool.js";
 import { runWithContext } from "@comis/core";
 import type { RequestContext, ApprovalGate } from "@comis/core";
 
-// Mock @comis/core: preserve real implementations, override safePath
-vi.mock("@comis/core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@comis/core")>();
-  return {
-    ...actual,
-    safePath: (base: string, ...segments: string[]) => base + "/" + segments.join("/"),
-  };
-});
+// Note: mcp-manage-tool.ts does not call safePath, so no @comis/core mock is needed.
+// The real @comis/core implementations (runWithContext, registerActivityLabelSpec, etc.)
+// are used directly.
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -644,6 +640,191 @@ describe("mcp_manage tool", () => {
           tool.execute("call-e1", { action: "list" } as never),
         ),
       ).rejects.toThrow("MCP service unavailable");
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // auth field schema acceptance (R11-01) — RED: fails on HEAD, passes after patch
+  // -----------------------------------------------------------------------
+
+  describe("auth field schema acceptance (R11-01)", () => {
+    it("schema accepts auth:oauth on connect params (will pass after patch)", () => {
+      // RED: Value.Check returns false on HEAD because auth is not yet in the schema.
+      // GREEN: returns true after McpManageToolParams gains the auth field.
+      const tool = createMcpManageTool(mockRpcCall);
+      const ok = Value.Check(tool.parameters, {
+        action: "connect",
+        server_name: "x",
+        url: "https://mcp.higgsfield.ai/mcp",
+        transport: "http",
+        auth: "oauth",
+      });
+      expect(ok).toBe(true);
+    });
+
+    it("schema accepts auth:headers on connect params (will pass after patch)", () => {
+      // RED: Value.Check returns false on HEAD because auth is not yet in the schema.
+      // GREEN: returns true after McpManageToolParams gains the auth field.
+      const tool = createMcpManageTool(mockRpcCall);
+      const ok = Value.Check(tool.parameters, {
+        action: "connect",
+        server_name: "x",
+        url: "https://mcp.higgsfield.ai/mcp",
+        transport: "http",
+        auth: "headers",
+      });
+      expect(ok).toBe(true);
+    });
+
+    it("coerceAuth accepts oauth and returns it (will pass after patch)", async () => {
+      // RED: rpcCall is expected to receive auth:"oauth" after coerceAuth processes it.
+      // On HEAD the auth field does not exist in connect params, so rpcCall
+      // receives no auth field — this assertion fails on HEAD.
+      mockRpcCall.mockResolvedValue({ name: "x", status: "connected", toolCount: 0, tools: [] });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-auth-oauth", {
+          action: "connect",
+          server_name: "x",
+          url: "https://mcp.higgsfield.ai/mcp",
+          transport: "http",
+          auth: "oauth",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith(
+        "mcp.connect",
+        expect.objectContaining({ auth: "oauth" }),
+      );
+    });
+
+    it("coerceAuth accepts headers and returns it (will pass after patch)", async () => {
+      // RED: same as above — auth field not forwarded on HEAD.
+      mockRpcCall.mockResolvedValue({ name: "x", status: "connected", toolCount: 0, tools: [] });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-auth-headers", {
+          action: "connect",
+          server_name: "x",
+          url: "https://mcp.higgsfield.ai/mcp",
+          transport: "http",
+          auth: "headers",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith(
+        "mcp.connect",
+        expect.objectContaining({ auth: "headers" }),
+      );
+    });
+
+    it("coerceAuth rejects invalid auth value (will pass after patch)", async () => {
+      // RED: on HEAD the auth field is ignored (not in schema/coerce),
+      // so this test FAILS because rpcCall IS called (no validation error thrown).
+      // GREEN: coerceAuth throws [invalid_value] for bad enum values, so rpcCall is NOT called.
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-auth-bad", {
+            action: "connect",
+            server_name: "x",
+            url: "https://mcp.higgsfield.ai/mcp",
+            transport: "http",
+            auth: "bad-value",
+          } as never),
+        ),
+      ).rejects.toThrow(/\[invalid_value\]/);
+
+      expect(mockRpcCall).not.toHaveBeenCalled();
+    });
+
+    it("connect succeeds without auth field (no regression)", async () => {
+      // Ensure omitting auth still works correctly after the patch.
+      mockRpcCall.mockResolvedValue({ name: "x", status: "connected", toolCount: 0, tools: [] });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-no-auth", {
+          action: "connect",
+          server_name: "x",
+          url: "https://mcp.higgsfield.ai/mcp",
+          transport: "http",
+        } as never),
+      );
+
+      expect(mockRpcCall).toHaveBeenCalledWith(
+        "mcp.connect",
+        expect.not.objectContaining({ auth: expect.anything() }),
+      );
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // connect action -- needs_oauth_login structured error (R8.4'-01 consumer)
+  // -----------------------------------------------------------------------
+
+  describe("connect action -- needs_oauth_login structured error (R8.4'-01)", () => {
+    it("mcp_manage connect returns actionable hint when daemon throws needs_oauth_login structured error", async () => {
+      // RED: mcp_manage currently re-throws the structured error from the daemon
+      // instead of catching it and returning an actionable content[0].text hint.
+      // This test FAILS on HEAD because there is no catch block for .data.needs_oauth_login
+      // in the connect actionOverride — the error propagates up as an exception.
+      //
+      // GREEN: after adding the catch block, tool.execute() returns a tool result
+      // with content[0].text starting with `Run \`mcp_login(`.
+      const structuredErr = Object.assign(
+        new Error("[needs_oauth_login] MCP server \"x\" requires OAuth login"),
+        {
+          data: {
+            needs_oauth_login: true,
+            server_name: "x",
+            action: "comis mcp login x",
+          },
+        },
+      );
+      mockRpcCall.mockImplementation(async (method: string) => {
+        if (method === "mcp.connect") throw structuredErr;
+        return { stub: true };
+      });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-oauth-hint", {
+          action: "connect",
+          server_name: "x",
+          url: "https://x.ai/mcp",
+          transport: "http",
+          auth: "oauth",
+        } as never),
+      );
+
+      expect(result.content[0].text).toMatch(/^Run `mcp_login\(/);
+      expect(result.content[0].text).toContain('"x"');
+    });
+
+    it("mcp_manage connect re-throws non-oauth errors unchanged", async () => {
+      // Non-oauth errors must NOT be swallowed — only needs_oauth_login is caught.
+      const plainErr = new Error("Network timeout");
+      mockRpcCall.mockImplementation(async (method: string) => {
+        if (method === "mcp.connect") throw plainErr;
+        return { stub: true };
+      });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-rethrow", {
+            action: "connect",
+            server_name: "x",
+            url: "https://x.ai/mcp",
+            transport: "http",
+            auth: "oauth",
+          } as never),
+        ),
+      ).rejects.toThrow("Network timeout");
     });
   });
 });

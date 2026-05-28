@@ -34,7 +34,7 @@ import type {
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi, SqliteMemoryAdapter, createEmbeddingQueue } from "@comis/memory";
 import type { CronScheduler, ExecutionTracker, WakeCoalescer, PerAgentHeartbeatRunner } from "@comis/scheduler";
-import type { BrowserService, LinkRunner, McpClientManager } from "@comis/skills";
+import type { BrowserService, LinkRunner, McpClientManager, TokenStore } from "@comis/skills";
 import type { createCostTracker, createStepCounter, createSubAgentRunner } from "@comis/agent";
 import type { ModelCatalog } from "@comis/core";
 import type { createCrossSessionSender } from "@comis/orchestrator";
@@ -307,6 +307,17 @@ export interface WorkspaceApiDeps {
    *  OrchestratorApiDeps.persistDeps so the ApiDispatchDeps multi-extends
    *  remains well-formed. */
   persistDeps?: PersistToConfigDeps;
+  /**
+   * Factory for the per-server MCP-OAuth token store. mcp-handlers reads
+   * this to check whether a token already exists for an `auth:"oauth"`
+   * server before attempting `manager.connect` — when no token is present
+   * yet, the daemon short-circuits to `needs_oauth_login` instead of
+   * driving the SDK's DCR with empty `redirect_uris`. Same shape as
+   * `McpOauthHandlerDeps.createTokenStore` so both handlers can share one
+   * process-wide token-store factory. Optional — undefined skips the
+   * pre-check (existing tests construct deps without it).
+   */
+  createTokenStore?: () => TokenStore;
 }
 
 /**

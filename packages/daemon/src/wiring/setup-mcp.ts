@@ -154,15 +154,22 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
   // on every saveTokens call. When either field is absent, oauthDeps is omitted
   // and createMcpClientManager applies its own default (disk token store at
   // ~/.comis/mcp-tokens/ + real resolveDiscovery cascade).
-  const oauthDepsArg =
+  //
+  // Constructed ONCE at setupMcp wiring time (singleton per setupMcp invocation).
+  // All keepalive ticks reuse the same wrapper instance — no per-tick allocation.
+  const portBackedStore =
     deps.oauthCredentialStore !== undefined && deps.dataDir !== undefined
+      ? createPortBackedMcpTokenStore(deps.oauthCredentialStore, {
+          tokensDir: safePath(deps.dataDir, "mcp-tokens"),
+          logger: deps.logger,
+        })
+      : undefined;
+
+  const oauthDepsArg =
+    portBackedStore !== undefined
       ? {
           oauthDeps: {
-            createTokenStore: () =>
-              createPortBackedMcpTokenStore(deps.oauthCredentialStore!, {
-                tokensDir: safePath(deps.dataDir!, "mcp-tokens"),
-                logger: deps.logger,
-              }),
+            createTokenStore: () => portBackedStore, // same instance every call
             // Use the real discovery cascade from skills (same as the default).
             // Passed explicitly so TypeScript sees a complete McpOAuthDeps.
             resolveDiscovery,

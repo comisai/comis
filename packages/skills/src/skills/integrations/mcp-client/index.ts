@@ -78,6 +78,16 @@ export type {
   OAuthLoginConfig,
   OAuthLoginLogger,
 } from "./oauth/login.js";
+// RFC 8628 device-authorization grant orchestrator (DEVAUTH-01). Companion to
+// runOauthLogin for headless / VPS deployments. Plan 09-02 dispatches into
+// runDeviceFlow from runOauthLogin when the selection heuristic (headless ∧
+// device-code advertised) or the oauth.flow operator override picks device-code.
+export { runDeviceFlow } from "./oauth/device-flow.js";
+export type {
+  RunDeviceFlowDeps,
+  DeviceFlowLogger,
+  DeviceFlowOAuthConfig,
+} from "./oauth/device-flow.js";
 export { createTokenStore } from "./oauth/token-store.js";
 export type { TokenStore, TokenStoreDeps } from "./oauth/token-store.js";
 // Re-exported so the daemon port-backed adapter can supply it as the default

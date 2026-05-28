@@ -270,6 +270,28 @@ describe("createOutputGuard", () => {
   });
 
   // -------------------------------------------------------------------------
+  // R4.6 regression: bearer_token severity lock
+  // -------------------------------------------------------------------------
+
+  it("bearer_token rule has severity critical and redacts Bearer hf_ tokens (R4.6 regression)", () => {
+    // R4.6: the bearer_token rule is severity:"critical" (REDACTS), NOT detect-only.
+    // This test locks that contract so future refactors cannot silently downgrade it.
+    const response = "auth: Bearer hf_aaaaaaaabbbbbbbbccccccccdddddddd";
+    const result = guard.scan(response);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // Must be blocked (critical finding present)
+      expect(result.value.blocked).toBe(true);
+      // sanitized MUST NOT contain the hf_ token (critical → redacted)
+      expect(result.value.sanitized).not.toContain("hf_");
+      // The bearer_token finding must report severity critical
+      const finding = result.value.findings.find((f) => f.pattern === "bearer_token");
+      expect(finding).toBeDefined();
+      expect(finding!.severity).toBe("critical");
+    }
+  });
+
+  // -------------------------------------------------------------------------
   // Regression: global regex lastIndex state
   // -------------------------------------------------------------------------
 

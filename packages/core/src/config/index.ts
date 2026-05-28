@@ -98,6 +98,7 @@ export {
   AgentSecretsConfigSchema,
   SecretsConfigSchema,
 } from "./schema-secrets.js";
+export { preReadSecretsEnabled } from "./pre-read-secrets-enabled.js";
 export { BackgroundTasksConfigSchema } from "./schema-background-tasks.js";
 export type { BackgroundTasksConfig } from "./schema-background-tasks.js";
 export { OutputRetentionConfigSchema } from "./schema-output-retention.js";

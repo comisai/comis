@@ -1364,6 +1364,19 @@
           },
           "type": "array"
         },
+        "auth": {
+          "anyOf": [
+            {
+              "const": "headers",
+              "type": "string"
+            },
+            {
+              "const": "oauth",
+              "type": "string"
+            }
+          ],
+          "description": "Auth scheme for remote transports. \"oauth\" triggers PKCE flow via mcp_login. Default: \"headers\" (credential injection via the headers field). Only relevant for sse/http transports."
+        },
         "command": {
           "description": "Command to execute for stdio transport (e.g. npx). Required for stdio connect.",
           "type": "string"
@@ -1392,6 +1405,23 @@
       },
       "required": [
         "action"
+      ],
+      "type": "object"
+    },
+    "conditional": false
+  },
+  {
+    "name": "mcp_login",
+    "category": "mcp",
+    "schema": {
+      "properties": {
+        "server_name": {
+          "description": "Name of the MCP server to start OAuth login for.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name"
       ],
       "type": "object"
     },

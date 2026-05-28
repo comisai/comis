@@ -115,6 +115,7 @@ export {
   findUnresolvedEnvRefs,
   formatMissingEnvRefError,
   loadConfigFile,
+  preReadSecretsEnabled,
   validateConfig,
   deepMerge,
   mergeLayered,

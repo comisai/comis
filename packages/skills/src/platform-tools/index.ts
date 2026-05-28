@@ -108,6 +108,7 @@ export { createTokensManageTool } from "./tools/tokens-manage-tool.js";
 export { createChannelsManageTool } from "./tools/channels-manage-tool.js";
 export { createSkillsManageTool } from "./tools/skills-manage-tool.js";
 export { createMcpManageTool } from "./tools/mcp-manage-tool.js";
+export { createMcpLoginTool } from "./tools/mcp-login-tool.js";
 
 // Background tasks
 export { createBackgroundTasksTool } from "./tools/background-tasks-tool.js";

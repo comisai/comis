@@ -33,7 +33,7 @@
  */
 
 import type { McpServerConfig } from "@comis/skills";
-import { createMcpClientManager } from "@comis/skills";
+import { createMcpClientManager, isNeedsOAuthLoginError } from "@comis/skills";
 import {
   findUnresolvedEnvRefs,
   formatMissingEnvRefError,
@@ -289,10 +289,17 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         ...(persistedEntry?.enableResources !== undefined && { enableResources: persistedEntry.enableResources }),
         ...(persistedEntry?.enablePrompts !== undefined && { enablePrompts: persistedEntry.enablePrompts }),
         ...(persistedEntry?.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: persistedEntry.supportsParallelToolCalls }),
-        // Forward auth/oauth from the persisted entry (no RPC param) so
-        // createTransport wires the OAuthClientProvider on reconnect — else
-        // the server downgrades to no-auth.
-        ...(persistedEntry?.auth !== undefined && { auth: persistedEntry.auth }),
+        // Forward auth to the runtime config. The contract's auth field is
+        // `"headers" | "oauth"` (RPC-layer scheme); the persisted config's
+        // auth field is `"none" | "bearer" | "oauth"`. Mapping:
+        //   - contract "oauth" → config "oauth" (forces OAuth promotion even
+        //     on first install when persistedEntry is undefined; otherwise
+        //     OAuthClientProvider is never wired → silent downgrade to no-auth)
+        //   - contract "headers" (or undefined) → no-op override: fall back to
+        //     persistedEntry?.auth so a reconnect with the default "headers"
+        //     value does NOT strip a server's stored "oauth" requirement
+        ...(params.auth === "oauth" && { auth: "oauth" as const }),
+        ...(params.auth !== "oauth" && persistedEntry?.auth !== undefined && { auth: persistedEntry.auth }),
         ...(persistedEntry?.oauth !== undefined && { oauth: persistedEntry.oauth }),
       };
 
@@ -310,8 +317,85 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         }
       }
 
+      // Build + persist the auth:"oauth" entry and throw the structured
+      // needs_oauth_login signal. Used by:
+      //   - Fix 4 pre-check  (token store has no tokens for this server yet)
+      //   - Fix 2 post-fail  (manager.connect surfaced a NeedsOAuthLoginError)
+      // Without persistence, the subsequent mcp.oauth_login at
+      // mcp-oauth-handlers.ts:135 cannot find the entry in
+      // container.config.integrations.mcp.servers.
+      const persistOAuthEntryAndThrowNeedsLogin = async (): Promise<never> => {
+        const currentServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
+        const newEntry: McpServerEntry = buildPersistedMcpEntry({
+          serverName: params.server_name,
+          transport: params.transport,
+          command: params.command,
+          args: params.args,
+          url: params.url,
+          env: params.env,
+          headers: params.headers,
+          disablePlaintextSecretCheck: userParams.disablePlaintextSecretCheck === true,
+          resolvedRlimits,
+          resolvedKeepaliveIntervalMs,
+          resolvedCircuitBreakerThreshold,
+          resolvedCircuitBreakerCooldownMs,
+          auth: "oauth" as const,
+          persistedEntry,
+        });
+        const newServers: McpServerEntry[] = [
+          ...currentServers.filter((s) => s.name !== params.server_name),
+          newEntry,
+        ];
+        const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
+        await persistMcpServers(deps, newServers, "mcp.connect", params.server_name, ctx);
+        const structured = new Error(
+          `[needs_oauth_login] MCP server "${params.server_name}" requires OAuth login`,
+        );
+        (structured as { data?: unknown }).data = {
+          needs_oauth_login: true,
+          server_name: params.server_name,
+          action: `comis mcp login ${params.server_name}`,
+        };
+        throw structured;
+      };
+
+      // Fix 4 (v1.2-plan R11.1 completion) — token-aware short-circuit.
+      // When the operator explicitly opts into OAuth (params.auth==="oauth")
+      // AND no token exists in the store yet, attempting manager.connect is
+      // doomed: the SDK's auth() drives a DCR with clientMetadata.redirect_uris=[]
+      // (the loopback redirect URI only exists during mcp.oauth_login), so a
+      // spec-compliant provider returns 400 invalid_redirect_uri, masking the
+      // real "user must run mcp_login" signal. createTokenStore is undefined in
+      // some test harnesses; the pre-check no-ops then and Fix 2 (below)
+      // handles the NeedsOAuthLoginError class instead.
+      if (params.auth === "oauth" && deps.createTokenStore !== undefined) {
+        const existingTokens = await deps.createTokenStore().tokens(params.server_name);
+        if (existingTokens === undefined) {
+          await persistOAuthEntryAndThrowNeedsLogin();
+        }
+      }
+
       const result = await manager.connect(config);
       if (!result.ok) {
+        // R8.4'-01 + Fix 2: when connectServer surfaced a NeedsOAuthLoginError
+        // (UnauthorizedError / StreamableHTTPError(401)) AND the operator
+        // opted in with auth:"oauth", persist the entry before throwing the
+        // structured signal so mcp_login finds it. mcp-handlers.ts.test.ts
+        // pins both branches.
+        if (isNeedsOAuthLoginError(result.error)) {
+          if (params.auth === "oauth") {
+            await persistOAuthEntryAndThrowNeedsLogin();
+          }
+          const structured = new Error(
+            `[needs_oauth_login] MCP server "${params.server_name}" requires OAuth login`,
+          );
+          (structured as { data?: unknown }).data = {
+            needs_oauth_login: true,
+            server_name: params.server_name,
+            action: `comis mcp login ${params.server_name}`,
+          };
+          throw structured;
+        }
         throw new Error(`Failed to connect MCP server "${params.server_name}": ${result.error.message}`);
       }
 
@@ -340,9 +424,12 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         resolvedKeepaliveIntervalMs,
         resolvedCircuitBreakerThreshold,
         resolvedCircuitBreakerCooldownMs,
-        // auth/oauth have no RPC param — buildPersistedMcpEntry resolves them
-        // from persistedEntry so the persist keeps them. No explicit
-        // pass-through needed.
+        // Pass auth:"oauth" explicitly so first-install OAuth is preserved
+        // even when persistedEntry is undefined. Contract "headers" maps to
+        // undefined here so buildPersistedMcpEntry's `input.auth ??
+        // persistedEntry?.auth` fallback (line 129) preserves any stored
+        // "oauth" — explicit "headers" must not strip a persisted requirement.
+        auth: params.auth === "oauth" ? ("oauth" as const) : undefined,
         persistedEntry,
       });
       const newServers: McpServerEntry[] = [

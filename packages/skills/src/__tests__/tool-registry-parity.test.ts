@@ -62,6 +62,7 @@ describe("platform-tool registry parity", () => {
       "image_generate",
       "list_prompts",
       "list_resources",
+      "mcp_login",
       "mcp_manage",
       "memory_get",
       "memory_manage",

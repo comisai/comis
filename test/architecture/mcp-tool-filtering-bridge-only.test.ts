@@ -79,6 +79,13 @@ const ALLOWED_SITES: readonly string[] = [
   // forward (no filter logic). The bridge still owns the actual
   // allowlist/blocklist comparison.
   "packages/daemon/src/skills/bundle-install-helper.ts",
+  // Fix 8: onAuthorized projects the persisted McpServerEntry into a
+  // McpServerConfig for manager.connect after a headless OAuth completes
+  // (Fix 4 short-circuited the initial connect, so state.serverConfigs is
+  // empty when tokens persist — reconnect would throw "no stored config").
+  // Same passive plumbing role as the other forwarding sites above; the
+  // bridge still owns the actual allowlist/blocklist comparison.
+  "packages/daemon/src/api/mcp-oauth-handlers.ts",
   // Schema snapshot fixture contains the literal strings (Pitfall 8).
   "test/architecture/__snapshots__/McpServerEntrySchema.json",
 ];

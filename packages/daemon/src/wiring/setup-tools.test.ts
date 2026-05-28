@@ -36,6 +36,7 @@ const mockCreateTokensManageTool = vi.hoisted(() => vi.fn(() => ({ name: "tokens
 const mockCreateChannelsManageTool = vi.hoisted(() => vi.fn(() => ({ name: "channels_manage" })));
 const mockCreateSkillsManageTool = vi.hoisted(() => vi.fn(() => ({ name: "skills_manage" })));
 const mockCreateMcpManageTool = vi.hoisted(() => vi.fn(() => ({ name: "mcp_manage" })));
+const mockCreateMcpLoginTool = vi.hoisted(() => vi.fn(() => ({ name: "mcp_login" })));
 const mockCreateExecTool = vi.hoisted(() => vi.fn(() => ({ name: "exec" })));
 const mockCreateProcessTool = vi.hoisted(() => vi.fn(() => ({ name: "process" })));
 const mockCreateApplyPatchTool = vi.hoisted(() => vi.fn(() => ({ name: "apply_patch" })));
@@ -141,6 +142,7 @@ vi.mock("@comis/skills/platform-tools", () => ({
     { name: "obs_query", category: "observability", build: (ctx: any) => mockCreateObsQueryTool(ctx.rpcCall) },
     { name: "heartbeat_manage", category: "heartbeat", build: (ctx: any) => mockCreateHeartbeatManageTool(ctx.rpcCall) },
     { name: "mcp_manage", category: "mcp", build: (ctx: any) => mockCreateMcpManageTool(ctx.rpcCall, ctx.approvalGate) },
+    { name: "mcp_login", category: "mcp", build: (ctx: any) => mockCreateMcpLoginTool(ctx.rpcCall) },
     { name: "describe_video", category: "media", build: (ctx: any) => mockCreateDescribeVideoTool(ctx.rpcCall) },
     { name: "extract_document", category: "media", build: (ctx: any) => mockCreateExtractDocumentTool(ctx.rpcCall) },
     { name: "image", category: "media", build: (ctx: any) => mockCreateImageTool(ctx.rpcCall) },

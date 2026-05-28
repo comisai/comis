@@ -126,6 +126,30 @@ describe("TOOL_GUIDES", () => {
     expect(TOOL_GUIDES.mcp_manage).toMatch(/[Vv]alidation.*fix the arguments|fix the arguments.*validation/i);
   });
 
+  // R11 — OAuth steering drift guard: assert the OAuth handoff block is present in the
+  // mcp_manage tool guide. If this fails, someone removed the OAuth steering text — the
+  // guard is the final layer of defense against the agent improvising curl/device-code flows.
+  it("mcp_manage guide steers OAuth flow through mcp_manage(auth:\"oauth\") + mcp_login", () => {
+    expect(TOOL_GUIDES.mcp_manage).toMatch(/mcp_manage.*action.*connect.*auth.*oauth/);
+    expect(TOOL_GUIDES.mcp_manage).toMatch(/mcp_login\(\{server_name\}\)/);
+  });
+
+  // DEVAUTH-04 drift-guard. Without this clause the agent receives a
+  // device_code_pending RPC result with userCode + verificationUri and
+  // silently keeps thinking — the operator never sees the code, the
+  // poll deadline expires, and the flow reports failed cleanly. The
+  // existing R11 OAuth steering pattern (line above) is the proven anchor.
+  it("mcp_manage guide instructs operator delivery of Verification URL plus userCode for device-flow", () => {
+    expect(TOOL_GUIDES.mcp_manage).toMatch(/Verification URL.*Code/);
+    // The instruction must come BEFORE the agent is told to wait — so it
+    // appears alongside or upstream of the existing "deliver it to the
+    // user via the message tool" anchor.
+    expect(TOOL_GUIDES.mcp_manage).toMatch(/userCode/);
+    // Anti-test: must not have been turned into a docs-only mention; the
+    // instruction is a directive to call the `message` tool with both fields.
+    expect(TOOL_GUIDES.mcp_manage).toMatch(/message tool/);
+  });
+
   // Sandbox-forbidden-paths hint -- preventive JIT guide that teaches the agent
   // the rule on first exec use, before sandbox-exec EPERMs trigger the
   // tool-retry-breaker redirect. Paired with the runtime redirect in

@@ -2314,6 +2314,47 @@ describe("install-detour mode: observe", () => {
         .sourceName,
     );
   }, 30_000);
+
+  it("install-detour event payload populates agentId from ctx.userId, not ctx.sessionKey", async () => {
+    // WR-03 regression: buildInstallDetourEventPayload previously set
+    // `agentId: ctx.sessionKey` — meaning downstream consumers (audit
+    // aggregators, per-agent install-detour rate limits) would see a
+    // formatted session key instead of an agent identifier. The two are
+    // distinct: sessionKey is e.g. "telegram:chan:user:tenant"; agentId is
+    // the agent's user-facing identifier (matches `ctx.userId` per the
+    // existing evaluateInstallDetourGate precedent at exec-shared.ts:448).
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const eventBus = makeMockEventBus(events);
+    const port = createCapabilityPortStub({
+      getInstallDetourMode: () => "observe",
+      getConnectedMcpServers: () => ["finance-data"],
+      getMcpServerHint: (s: string): McpServerHint | undefined =>
+        s === "finance-data"
+          ? { cluster: "x", description: "y", replacesPackages: ["market-data-lib"] }
+          : undefined,
+    });
+    registry = createProcessRegistry();
+    const tool = createExecTool({
+      workspacePath: tmpdir(),
+      registry,
+      secretManager: STUB_SM,
+      platformSecretNames: STUB_PLATFORM_NAMES,
+      toolCapabilityPort: port,
+      eventBus,
+    });
+
+    await runWithContext(makeApprovalContext(), () =>
+      tool.execute("tc-wr03", { command: "pip install market-data-lib" }),
+    );
+
+    const installEvents = events.filter((e) => e.type === "tool:install_detour_detected");
+    expect(installEvents).toHaveLength(1);
+    // ctx.userId === "test-user", ctx.sessionKey === "test-session"
+    // BEFORE WR-03: agentId would be "test-session" (the bug).
+    // AFTER WR-03: agentId is "test-user".
+    expect(installEvents[0]!.payload.agentId).toBe("test-user");
+    expect(installEvents[0]!.payload.sessionKey).toBe("test-session");
+  }, 30_000);
 });
 
 describe("install-detour mode: advise", () => {

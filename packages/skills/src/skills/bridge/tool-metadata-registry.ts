@@ -259,9 +259,11 @@ export function registerAllToolMetadata(): void {
 
   registerToolMetadata("mcp_manage", {
     validActions: ["list", "status", "connect", "disconnect", "reconnect"],
-    validKeys: ["action", "server_name", "transport", "command", "args", "url", "headers"],
+    validKeys: ["action", "server_name", "transport", "command", "args", "url", "headers", "auth"],
     // connect requires [server_name, transport]; command (stdio) / url (sse|http) are
-    // transport-conditional and validated downstream by the handler.
+    // transport-conditional and validated downstream by the handler. `auth`
+    // ("headers" | "oauth") is the R11.1 OAuth opt-in — must be in validKeys
+    // so the bridge schema-validator doesn't reject before execute() runs.
     requiredByAction: {
       status:     ["server_name"],
       connect:    ["server_name", "transport"],

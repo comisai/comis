@@ -392,6 +392,51 @@ describe("parseMarkdownToIR", () => {
       expect(spans[2]).toMatchObject({ type: "text", text: " and " });
       expect(spans[3]).toMatchObject({ type: "bold", text: "bold" });
     });
+
+    // Fix 7 (2026-05-28). Observed: an agent delivered a Higgsfield OAuth
+    // authorization URL through the message tool; Telegram received the
+    // URL with every `_` paired-underscore parsed as an italic span and
+    // dropped. The user's clicked target had `response_type` →
+    // `responsetype`, `code_challenge_method` → `codechallengemethod`,
+    // `redirect_uri` → `redirecturi`, scope `offline_access` →
+    // `offlineaccess`, and even the `_` inside the code_challenge VALUE
+    // was stripped. Higgsfield returned 400 `redirect_uri must be a valid
+    // absolute URL` because all the param names were unrecognized.
+    //
+    // Fix: detect bare http/https URLs in the inline parser BEFORE the
+    // italic alternatives match. Emit them as link spans pointing at
+    // themselves so the URL bytes pass through unmodified, including
+    // every `_`.
+    it("preserves bare URLs (no italic spans inside) — OAuth authorize URL survives intact", () => {
+      const url = "https://mcp.higgsfield.ai/oauth2/authorize?response_type=code&client_id=abc&code_challenge=mvfnuVcHnf_nLHjp&code_challenge_method=S256&redirect_uri=http%3A%2F%2F127.0.0.1%3A61587%2Fcallback&scope=openid+email+offline_access";
+      const spans = firstBlockSpans(`Authorize here: ${url}`);
+      // Two spans: leading text + URL link span.
+      expect(spans).toHaveLength(2);
+      expect(spans[0]).toMatchObject({ type: "text", text: "Authorize here: " });
+      expect(spans[1]).toMatchObject({ type: "link", text: url, url });
+      // None of the spans is an italic span (which would indicate the
+      // parser ate `_` chars from inside the URL).
+      expect(spans.some((s) => s.type === "italic")).toBe(false);
+    });
+
+    it("preserves bare URLs with multiple paired underscores (every `_` survives)", () => {
+      // `mvfnuVcHnf_nLHjp` carries a single `_` mid-value; the test above
+      // exercises that. This case stresses param names which are MOSTLY
+      // underscored tokens — historically the cluster the pre-fix parser
+      // mangled into `responsetype`/`codechallenge`/etc.
+      const url = "https://example.com/auth?a_b=1&c_d_e=2&f_g_h_i=3";
+      const spans = firstBlockSpans(url);
+      expect(spans).toHaveLength(1);
+      expect(spans[0]).toMatchObject({ type: "link", text: url, url });
+    });
+
+    it("does NOT eat italic emphasis OUTSIDE URLs that share text with bare URL detection", () => {
+      // The fix must not regress italic parsing for non-URL text. A URL
+      // followed by italicized prose should still tokenize correctly.
+      const spans = firstBlockSpans("See https://x.com/ and _read more_");
+      expect(spans.find((s) => s.type === "link" && s.url === "https://x.com/")).toBeDefined();
+      expect(spans.find((s) => s.type === "italic" && s.text === "read more")).toBeDefined();
+    });
   });
 
   // ---------------------------------------------------------------------------

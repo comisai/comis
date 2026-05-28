@@ -74,14 +74,18 @@ export function scanWithOutputGuard(params: {
     const warnMsg = context === "success"
       ? "LLM response redacted"
       : "Error response redacted";
+    // Hint collapses error + exception into one message: both flow through
+    // the same OutputGuard redaction with no operator-actionable difference.
+    // If we ever need to distinguish them in dashboards, the metadata.context
+    // field on the audit:event emit below already carries the split
+    // ("error_response" vs "exception_response").
+    const hint = context === "success"
+      ? "OutputGuard blocked critical findings in LLM response"
+      : "OutputGuard blocked critical findings in error response";
     logger.warn(
       {
         findings: guardResult.value.findings.length,
-        hint: context === "success"
-          ? "OutputGuard blocked critical findings in LLM response"
-          : context === "error"
-            ? "OutputGuard blocked critical findings in error response"
-            : "OutputGuard blocked critical findings in error response",
+        hint,
         errorKind: "validation" as ErrorKind,
       },
       warnMsg,
@@ -226,7 +230,11 @@ export function recoverEmptyFinalResponse(params: {
           },
           "Empty-turn recovery: synthesized from tool-call history",
         );
-        return synthesis; // tool-call-synthesis-gate — see comment above.
+        const artifacts = extractActionableArtifacts(messages, lowerBound);
+        const artifactSuffix = artifacts.length > 0
+          ? `\nUser actions: ${artifacts.join(" ")}`
+          : "";
+        return synthesis + artifactSuffix; // tool-call-synthesis-gate — see comment above.
       }
 
       // Standalone walk-backward (pure-conversational fallback): reachable
@@ -376,6 +384,26 @@ const SHORT_CODE_RE = /\b(?=[A-Za-z0-9]{6,20}\b)(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{6,
 const FRAMING_PROSE_RE = /^(I('m| will| am going to)[\s\S]|Let me|Step \d+\/\d+:)/i;
 
 /**
+ * Shared predicate for the URL/short-code surface helpers
+ * (`surfaceDiscardedPreToolUrl` and `extractActionableArtifacts`).
+ *
+ * Encodes the per-text-block predicate chain — framing-prose guard FIRST, then
+ * URL match, then short-code match — so the two call sites cannot drift apart.
+ * A future addition (new framing pattern, new URL scheme like `mcp://`) lands
+ * in one place and is automatically picked up by both consumers.
+ *
+ * Returns the matched candidate string, or `undefined` when the block is
+ * framing prose OR contains no actionable URL/short-code.
+ */
+function findFirstActionableArtifact(text: string): string | undefined {
+  if (FRAMING_PROSE_RE.test(text)) return undefined;
+  const urlMatch = URL_RE.exec(text);
+  if (urlMatch) return urlMatch[0];
+  const codeMatch = SHORT_CODE_RE.exec(text);
+  return codeMatch?.[0];
+}
+
+/**
  * Safety-net for discarded pre-tool auth links and one-time codes.
  *
  * When the LLM places a URL or short code in pre-tool text (e.g. "Visit
@@ -389,8 +417,34 @@ const FRAMING_PROSE_RE = /^(I('m| will| am going to)[\s\S]|Let me|Step \d+\/\d+:
  *    (even if they contain a URL — prevents surfacing "I'm going to fetch
  *    https://example.com/docs" as a user-visible auth hint).
  * 3. URL / short-code detection: skip blocks with no URL or code candidate.
- * 4. Absence check: skip candidates already present in the final response
- *    (avoids duplicating URLs the model included in its final turn).
+ * 4. Absence check (substring): skip candidates already present in the final
+ *    response. See "Substring-dedupe semantics" below.
+ *
+ * ## Substring-dedupe semantics (WR-05)
+ *
+ * The Guard-4 absence check is a `String.prototype.includes` substring match.
+ * If synthesis (in `recoverEmptyFinalResponse`) already added
+ * `https://x.ai/device?code=ABC` to the response and a different pre-tool
+ * block contains the shorter `https://x.ai/device` (no params), the shorter
+ * URL is treated as already present (because it IS a substring of the
+ * longer one) and NOT re-surfaced. This is the conservative direction:
+ *
+ * - SAFER on credentials: a query-param token (`?token=hf_…`) carried by
+ *   one URL must NEVER be surfaced twice — duplicate surfacing widens the
+ *   credential's exposure surface and can leak a token the user already
+ *   saw in the final turn.
+ * - LOSSIER on distinct-but-overlapping links: a prefix URL that happens
+ *   to share a base path with a longer URL in the response is suppressed
+ *   even though it carries different params. This is acceptable because
+ *   the longer URL almost always covers the user's action (it's the more
+ *   specific one).
+ *
+ * If a future change tightens this to a whole-token match (split on
+ * whitespace), it MUST add a regression test for the prefix-overlap case
+ * to prove no credential is double-surfaced. The current substring check
+ * errs toward suppression, which is the load-bearing safety property.
+ *
+ * ## Egress ordering
  *
  * The call site in output-escalation.ts:processSuccessPath MUST run BEFORE
  * the OutputGuard scan so the surfaced URL is part of the content the egress
@@ -420,12 +474,10 @@ export function surfaceDiscardedPreToolUrl(
       // Only look at text blocks
       if (b?.type !== "text" || typeof b.text !== "string") continue;
       const text = b.text as string;
-      // Guard 2: framing prose → skip (MUST check before URL predicate)
-      if (FRAMING_PROSE_RE.test(text)) continue;
-      // Guard 3: does this block contain a URL or short code?
-      const urlMatch = URL_RE.exec(text);
-      const codeMatch = !urlMatch ? SHORT_CODE_RE.exec(text) : null;
-      const candidate = urlMatch?.[0] ?? codeMatch?.[0];
+      // Guards 2+3 (framing-prose first, then URL/code): unified via the
+      // findFirstActionableArtifact helper so this site and
+      // extractActionableArtifacts cannot drift apart on regex/predicate edits.
+      const candidate = findFirstActionableArtifact(text);
       if (!candidate) continue;
       // Guard 4: is the candidate absent from the final response?
       if (response.includes(candidate)) continue;
@@ -438,6 +490,50 @@ export function surfaceDiscardedPreToolUrl(
     }
   }
   return response;
+}
+
+// ---------------------------------------------------------------------------
+// extractActionableArtifacts — URL/code extraction for synthesis branch
+// ---------------------------------------------------------------------------
+
+/**
+ * Scan assistant text blocks in the window [lowerBound, messages.length) for
+ * URLs or short codes that should be surfaced to the user via the synthesis
+ * branch of `recoverEmptyFinalResponse`.
+ *
+ * Predicate order (mirrors surfaceDiscardedPreToolUrl — do not reorder):
+ * 1. Only assistant text blocks are considered.
+ * 2. Framing prose (FRAMING_PROSE_RE) is skipped entirely — prevents
+ *    "I'm going to fetch https://example.com" from leaking.
+ * 3. URL_RE is tried first; SHORT_CODE_RE is tried only when no URL matches.
+ * 4. At most 3 distinct candidates are collected.
+ *
+ * Module-private — not exported. Called only from the synthesis branch of
+ * recoverEmptyFinalResponse, before the gate return.
+ */
+function extractActionableArtifacts(
+  messages: unknown[],
+  lowerBound: number,
+): string[] {
+  const hits: string[] = [];
+  if (!Array.isArray(messages)) return hits;
+  for (let i = lowerBound; i < messages.length; i++) {
+    const msg = messages[i] as Record<string, unknown>; // eslint-disable-line security/detect-object-injection
+    if (msg?.role !== "assistant" || !Array.isArray(msg.content)) continue;
+    for (const block of (msg.content as unknown[])) {
+      const b = block as Record<string, unknown>;
+      if (b?.type !== "text" || typeof b.text !== "string") continue;
+      const text = b.text as string;
+      // Framing-prose guard + URL/short-code match: unified with
+      // surfaceDiscardedPreToolUrl via findFirstActionableArtifact so the two
+      // sites cannot drift on regex/predicate edits.
+      const candidate = findFirstActionableArtifact(text);
+      if (candidate && hits.length < 3 && !hits.includes(candidate)) {
+        hits.push(candidate);
+      }
+    }
+  }
+  return hits;
 }
 
 // ---------------------------------------------------------------------------

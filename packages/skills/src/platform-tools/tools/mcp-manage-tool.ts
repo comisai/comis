@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: connect action re-throws non-OAuth RPC errors at line 352; caught by the
+// skill executor tool-result boundary which formats all thrown errors as tool error responses.
+// Only the needs_oauth_login branch is caught and converted — all other errors propagate
+// unchanged per T-01-06-02 non-swallow invariant (Plan 06, R8.4'-01).
 /**
  * MCP server management tool: multi-action tool for MCP server lifecycle.
  *
@@ -76,6 +80,15 @@ const McpManageToolParams = Type.Object({
     Type.Record(Type.String(), Type.String(), {
       description: "Custom HTTP headers for remote transports (e.g. Authorization). Keys are header names, values are header values.",
     }),
+  ),
+  auth: Type.Optional(
+    Type.Union(
+      [Type.Literal("headers"), Type.Literal("oauth")],
+      {
+        description:
+          'Auth scheme for remote transports. "oauth" triggers PKCE flow via mcp_login. Default: "headers" (credential injection via the headers field). Only relevant for sse/http transports.',
+      },
+    ),
   ),
 });
 
@@ -180,6 +193,35 @@ function coerceHeaders(p: Record<string, unknown>): unknown {
 }
 
 /**
+ * Coerce and validate the `auth` field.
+ *
+ * Mirrors the `coerceHeaders` pattern above, adapted for the auth enum
+ * constraint (must be "headers" or "oauth" when present).
+ *
+ * Threat T-01-01-01: rejects any value not in ["headers","oauth"] via
+ * `throwToolError("invalid_value",...)` before any handler logic runs.
+ *
+ * - `raw === undefined`: return `undefined` (field was not supplied; caller
+ *   should apply a default of `"headers"` at the rpcCall call site).
+ * - `raw === "headers"` or `raw === "oauth"`: return the value as-is.
+ * - Any other value: throw `[invalid_value]` with an operator-actionable hint.
+ */
+function coerceAuth(p: Record<string, unknown>): "headers" | "oauth" | undefined {
+  const raw = p.auth;
+  if (raw === undefined) return undefined;
+  if (raw === "headers" || raw === "oauth") return raw;
+  throwToolError(
+    "invalid_value",
+    `mcp_manage auth must be "headers" or "oauth".`,
+    {
+      param: "auth",
+      validValues: ["headers", "oauth"],
+      hint: 'Pass auth:"oauth" to trigger PKCE OAuth flow via mcp_login, or omit for header-auth servers.',
+    },
+  );
+}
+
+/**
  * Up-front multi-field validator for `connect`: reports ALL missing required
  * fields in a single `[missing_param]` error rather than surfacing them
  * one-at-a-time across multiple LLM retries (the defect this task fixes).
@@ -273,18 +315,46 @@ export function createMcpManageTool(
           const hasUrl = typeof p.url === "string" && p.url.length > 0;
           const inferredTransport =
             explicitTransport ?? (hasCommand ? "stdio" : hasUrl ? "http" : undefined);
+          const coercedAuth = coerceAuth(p);
           validateConnectParams(serverName, inferredTransport, p.command, p.url);
           // validateConnectParams threw if any field was missing — past this
           // point both serverName and inferredTransport are non-empty strings.
-          return rpcCall("mcp.connect", {
-            server_name: serverName,
-            transport: inferredTransport,
-            command: p.command,
-            args: coercedArgs,
-            url: p.url,
-            headers: coerceHeaders(p) as Record<string, string> | undefined,
-            _trustLevel: ctx.trustLevel,
-          });
+          try {
+            return await rpcCall("mcp.connect", {
+              server_name: serverName,
+              transport: inferredTransport,
+              command: p.command,
+              args: coercedArgs,
+              url: p.url,
+              headers: coerceHeaders(p) as Record<string, string> | undefined,
+              ...(coercedAuth !== undefined && { auth: coercedAuth }),
+              _trustLevel: ctx.trustLevel,
+            });
+          } catch (err: unknown) {
+            // R8.4'-01: catch structured needs_oauth_login error from mcp-handlers
+            // (Plan 05) and surface an actionable hint instead of re-throwing a
+            // generic error that the agent cannot act on. Only catches errors where
+            // .data.needs_oauth_login === true — all other errors are re-thrown
+            // unchanged (T-01-06-02 non-swallow invariant).
+            const errData =
+              err instanceof Error
+                ? (err as unknown as {
+                    data?: { needs_oauth_login?: boolean; server_name?: string; action?: string };
+                  }).data
+                : undefined;
+            if (errData?.needs_oauth_login === true) {
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `Run \`mcp_login({server_name: "${errData.server_name}"})\` to start the OAuth flow, then retry mcp_manage(action:"connect", auth:"oauth", url:..., transport:"http").`,
+                  },
+                ],
+                details: errData,
+              };
+            }
+            throw err;
+          }
         },
         async disconnect(p, rpcCall, ctx) {
           const name = readStringParam(p, "server_name");

@@ -478,6 +478,73 @@ describe("McpServerEntrySchema — OAuth opt-in fields", () => {
       }),
     ).toThrow();
   });
+
+  // DEVAUTH-06 — operator escape hatch for RFC 8628 device-flow when the
+  // device-authorization server has no RFC 8414 metadata (Higgsfield reality
+  // 2026-05-28: fnf-device-auth.higgsfield.ai returns 404 on every probed
+  // well-known path). Sibling of authorizationEndpoint; consumed by
+  // runDeviceFlow's discovery cascade in plan 09-02.
+  it("McpServerEntrySchema oauth strictObject accepts deviceAuthorizationEndpoint URL field", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "higgsfield",
+      url: "https://mcp.higgsfield.ai/mcp",
+      transport: "http",
+      auth: "oauth",
+      oauth: {
+        deviceAuthorizationEndpoint: "https://fnf-device-auth.higgsfield.ai/device",
+      },
+    });
+    expect(result.oauth?.deviceAuthorizationEndpoint).toBe(
+      "https://fnf-device-auth.higgsfield.ai/device",
+    );
+  });
+
+  it("McpServerEntrySchema oauth strictObject rejects malformed deviceAuthorizationEndpoint", () => {
+    const parsed = McpServerEntrySchema.safeParse({
+      name: "higgsfield",
+      url: "https://mcp.higgsfield.ai/mcp",
+      transport: "http",
+      auth: "oauth",
+      oauth: { deviceAuthorizationEndpoint: "not-a-url" },
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  // DEVAUTH-02 — per-server flow override. "device_code" forces RFC 8628;
+  // "auth_code" forces PKCE+loopback even when the heuristic would dispatch
+  // device-flow (headless ∧ device-code advertised). Absent ⇒ heuristic chooses.
+  it("McpServerEntrySchema oauth strictObject accepts flow override device_code", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "higgsfield",
+      url: "https://mcp.higgsfield.ai/mcp",
+      transport: "http",
+      auth: "oauth",
+      oauth: { flow: "device_code" },
+    });
+    expect(result.oauth?.flow).toBe("device_code");
+  });
+
+  it("McpServerEntrySchema oauth strictObject accepts flow override auth_code", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "notion",
+      url: "https://mcp.notion.so/mcp",
+      transport: "http",
+      auth: "oauth",
+      oauth: { flow: "auth_code" },
+    });
+    expect(result.oauth?.flow).toBe("auth_code");
+  });
+
+  it("McpServerEntrySchema oauth strictObject rejects unknown flow values", () => {
+    const parsed = McpServerEntrySchema.safeParse({
+      name: "notion",
+      url: "https://mcp.notion.so/mcp",
+      transport: "http",
+      auth: "oauth",
+      oauth: { flow: "implicit" },
+    });
+    expect(parsed.success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

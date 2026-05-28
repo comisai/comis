@@ -90,6 +90,12 @@ const ExecSandboxSchema = z.strictObject({
   enabled: z.enum(["always", "never"]).default("always"),
   /** Additional read-only paths to expose inside the sandbox (e.g., shared data dirs). */
   readOnlyAllowPaths: z.array(z.string()).default([]),
+  /** Packages to pip-install into workspace venv on first creation.
+   *  Default ["requests==2.32.3"]. Set [] to disable.
+   *  Values are passed verbatim to pip install — include version pins as needed
+   *  (e.g., "requests==2.32.3"). Only applies on non-Docker hosts; Docker
+   *  images seed the venv at build time (Dockerfile:349). */
+  warmVenvSeed: z.array(z.string()).default(["requests==2.32.3"]),
 });
 
 /**

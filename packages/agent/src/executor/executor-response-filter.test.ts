@@ -791,4 +791,99 @@ describe("surfaceDiscardedPreToolUrl", () => {
     expect(result).toMatch(/^A1B2C3/);
     expect(result).toContain("Done.");
   });
+
+  it("substring-dedupe suppresses re-surfacing a prefix URL already covered by a longer URL in the response (WR-05)", () => {
+    // WR-05 pins the substring-dedupe semantics documented on
+    // surfaceDiscardedPreToolUrl. A pre-tool block containing a shorter URL
+    // (https://x.ai/device) must NOT be surfaced when the response already
+    // carries a longer URL with the same prefix (https://x.ai/device?code=…).
+    // This is the conservative direction — duplicate surfacing of a URL that
+    // shares a prefix with a credential-bearing URL widens the exposure
+    // surface. The substring check is load-bearing safety, not an oversight.
+    const messages = [
+      { role: "user", content: "Authorize" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Open https://x.ai/device to start." },
+          { type: "tool_use", id: "tc1", name: "exec", input: {} },
+        ],
+      },
+    ];
+    // Final response already contains the longer, more-specific URL.
+    const finalResponse = "Visit https://x.ai/device?code=ABC123 to complete.";
+    const result = surfaceDiscardedPreToolUrl(finalResponse, messages, 0, mockLogger());
+    // The shorter URL is a substring of the longer one — must NOT be re-surfaced.
+    expect(result).toBe(finalResponse);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// recoverEmptyFinalResponse — synthesis branch URL/code preservation (R9-EDGE-01)
+// ---------------------------------------------------------------------------
+
+describe("recoverEmptyFinalResponse — synthesis branch URL/code preservation", () => {
+  it("recoverEmptyFinalResponse preserves URL from pre-tool assistant text in synthesis branch", () => {
+    // R9-EDGE-01 RED test: synthesis branch currently discards pre-tool URLs.
+    // This test asserts the URL is preserved in the synthesized recovery string.
+    // FAILS on HEAD because extractActionableArtifacts does not yet exist.
+    const result = recoverEmptyFinalResponse({
+      extractedResponse: "",
+      textEmitted: true,
+      messages: [
+        { role: "user", content: "Authorize the MCP server", timestamp: 1 },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Authorize at https://x.ai/device?code=ABCD-1234" },
+            { type: "tool_use", id: "tc1", name: "mcp_login", input: { server_name: "higgsfield" } },
+          ],
+          stopReason: "toolUse",
+          timestamp: 2,
+        },
+        {
+          role: "assistant",
+          content: [],
+          stopReason: "stop",
+          timestamp: 3,
+        },
+      ],
+      logger: mockLogger(),
+      userMessageIndex: 0,
+    });
+    // Synthesis branch fired (tool_use present) — URL must appear in result
+    expect(result).toContain("https://x.ai/device?code=ABCD-1234");
+  });
+
+  it("recoverEmptyFinalResponse does NOT include framing prose URL in synthesis branch", () => {
+    // Negative control: framing prose guard must fire before URL extraction.
+    // This test PASSES on HEAD (no URL extraction means no framing URLs either).
+    // After GREEN it must still pass — FRAMING_PROSE_RE blocks the leak.
+    const result = recoverEmptyFinalResponse({
+      extractedResponse: "",
+      textEmitted: true,
+      messages: [
+        { role: "user", content: "Fetch some data", timestamp: 1 },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "I'm going to fetch https://api.example.com/data" },
+            { type: "tool_use", id: "tc1", name: "exec", input: {} },
+          ],
+          stopReason: "toolUse",
+          timestamp: 2,
+        },
+        {
+          role: "assistant",
+          content: [],
+          stopReason: "stop",
+          timestamp: 3,
+        },
+      ],
+      logger: mockLogger(),
+      userMessageIndex: 0,
+    });
+    // Framing prose guard fires: URL must NOT appear in synthesis output
+    expect(result).not.toContain("https://api.example.com/data");
+  });
 });

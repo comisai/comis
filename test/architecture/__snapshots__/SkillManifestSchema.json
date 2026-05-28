@@ -337,6 +337,17 @@
               "type": "string",
               "format": "uri"
             },
+            "deviceAuthorizationEndpoint": {
+              "type": "string",
+              "format": "uri"
+            },
+            "flow": {
+              "type": "string",
+              "enum": [
+                "device_code",
+                "auth_code"
+              ]
+            },
             "scope": {
               "type": "string"
             },
