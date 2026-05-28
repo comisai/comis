@@ -13,7 +13,8 @@
  * @module
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import {
   PathTraversalError,
   safePath,
@@ -480,6 +481,46 @@ export async function evaluateInstallDetourGate(deps: {
   return { decision: installDetourDecision, mode: installDetourMode, errorMessage };
 }
 
+// ---------------------------------------------------------------------------
+// Warm venv seed
+// ---------------------------------------------------------------------------
+
+/** Sentinel file written inside venv/ once seed packages are installed. */
+const VENV_SEED_SENTINEL = ".seed-done";
+
+/**
+ * Install seed packages into the workspace venv on first creation.
+ *
+ * Idempotent: skips if `venv/.seed-done` sentinel already exists.
+ * No-op when `packages` is empty.
+ *
+ * T-01-09-01 (threat): packages come from operator config processed by Zod
+ * schema; spawned via explicit array args (no shell string injection).
+ */
+export function ensureWarmVenvSeed(
+  workspacePath: string,
+  packages: string[],
+  logger?: ToolLogger,
+): void {
+  if (packages.length === 0) return;
+  const sentinelPath = safePath(safePath(workspacePath, "venv"), VENV_SEED_SENTINEL);
+  if (existsSync(sentinelPath)) return;  // already seeded
+  const pip = safePath(safePath(workspacePath, "venv"), "bin", "pip");
+  const result = spawnSync(pip, ["install", "--quiet", ...packages], {
+    encoding: "utf8",
+    stdio: "pipe",
+  });
+  if (result.status === 0) {
+    writeFileSync(sentinelPath, new Date().toISOString());
+    logger?.debug({ workspaceDir: workspacePath, seeded: packages }, "Warm venv seed installed");
+  } else {
+    logger?.debug(
+      { workspaceDir: workspacePath, packages, exitCode: result.status, hint: "pip seed failed; venv will work but may lack default packages" },
+      "Warm venv seed skipped (pip error)",
+    );
+  }
+}
+
 /**
  * Build the final environment record for the subprocess by merging:
  *   baseEnv → dataEnv → userEnv → resolvedSecretEnv (last wins on collision).
@@ -504,6 +545,11 @@ export function buildExecEnv(deps: {
     );
     if (dataEnv.PATH && baseEnv.PATH) {
       dataEnv.PATH = `${dataEnv.PATH}:${baseEnv.PATH}`;
+    }
+    // Seed the venv on first use when warmVenvSeed packages are configured
+    const seedPackages = sandboxConfig?.warmVenvSeed;
+    if (seedPackages !== undefined && seedPackages.length > 0) {
+      ensureWarmVenvSeed(workspacePath, seedPackages, logger);
     }
   } else {
     delete dataEnv.PATH;

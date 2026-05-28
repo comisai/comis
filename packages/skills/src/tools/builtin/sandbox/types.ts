@@ -48,4 +48,7 @@ export interface ExecSandboxConfig {
   readOnlyPaths: string[];
   /** Read-only directories from operator config (execSandbox.readOnlyAllowPaths). */
   configReadOnlyPaths: string[];
+  /** Packages to pip-install into workspace venv on first creation (from execSandbox.warmVenvSeed config).
+   *  Undefined means the config field was absent (legacy); empty array means seeding is disabled. */
+  warmVenvSeed?: string[];
 }
