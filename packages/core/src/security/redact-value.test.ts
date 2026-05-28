@@ -314,6 +314,35 @@ describe("redactValue — quick-260528-nsv: URL host not stripped by absolute-pa
     // is for filesystem-path compaction only (SEC-02), not URL hosts.
     expect(out.redactionsApplied.find((r) => r.reason === "absolute_path")).toBeUndefined();
   });
+
+  // -------------------------------------------------------------------------
+  // nsv-hotfix: URL host is NOT masked by HOSTNAME_RE.
+  //
+  // After the nsv quick fixed compactPaths, the URL renders as
+  // "https://<redacted>/quote/MSFT/" because HOSTNAME_RE at redact-value.ts:211
+  // still matches finance.yahoo.com (≥3 labels ending in alpha TLD) and replaces
+  // it. URL hosts are public info per SPEC §8.4 — they should not be masked.
+  // Standalone hostnames (e.g. internal "db-primary.internal.example.com") DO
+  // stay masked (defense against infra leakage); only URL-context hosts are
+  // exempt. A `(?<!\/\/)` lookbehind on HOSTNAME_RE skips hosts preceded by `//`.
+  // -------------------------------------------------------------------------
+  it("preserves the URL host (does NOT mask it via HOSTNAME_RE) — SPEC §8.4", () => {
+    const out = redactValue({ url: "https://finance.yahoo.com/quote/MSFT/" });
+    const value = out.value as Record<string, unknown>;
+    // The URL host must be intact, not "<redacted>".
+    expect(value.url).toBe("https://finance.yahoo.com/quote/MSFT/");
+    // No network_identifier reason recorded for a URL input.
+    expect(out.redactionsApplied.find((r) => r.reason === "network_identifier")).toBeUndefined();
+  });
+
+  it("still masks standalone (non-URL) hostnames — defense-in-depth regression guard", () => {
+    // Internal infra hostname not inside a URL → STILL gets masked.
+    const out = redactValue({ host: "connect to db-primary.internal.example.com please" });
+    const value = out.value as Record<string, unknown>;
+    expect(String(value.host)).not.toContain("db-primary.internal.example.com");
+    expect(String(value.host)).toContain("<redacted>");
+    expect(out.redactionsApplied.find((r) => r.reason === "network_identifier")).toBeDefined();
+  });
 });
 
 describe("redactValue — SEC-02 network identifiers", () => {
