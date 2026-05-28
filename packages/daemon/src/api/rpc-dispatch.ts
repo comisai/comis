@@ -254,6 +254,16 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       ...deps,
       mcpClientManager: deps.mcpClientManager,
       logger: deps.logger,
+      // Thread the same token-store factory mcp-oauth-handlers uses, so
+      // mcp.connect can pre-check whether a token exists for an
+      // `auth:"oauth"` server and short-circuit to needs_oauth_login
+      // when not. Without this, the SDK's DCR call would run with
+      // `redirect_uris:[]` (the loopback is only started by
+      // mcp.oauth_login) and Higgsfield-class providers return 400
+      // `at least one redirect_uri is required`, masking the real
+      // "user must run mcp_login" signal. See mcp-handlers.ts for the
+      // gate.
+      createTokenStore: deps.createTokenStore,
       // Threaded for env-ref validation on mcp.connect. Same pattern as
       // agent/provider handlers above. When undefined the validator becomes
       // a no-op.

@@ -1393,6 +1393,126 @@ describe("MCP RPC Handlers", () => {
       expect(servers[0]).toMatchObject({ name: "higgsfield", auth: "oauth" });
     });
 
+    // R11.1 / v1.2-plan completion — Fix 4. The agent's mcp_manage(connect,
+    // auth:"oauth") on a fresh server SHOULD NOT call manager.connect at all
+    // (the SDK's DCR would fail with "at least one redirect_uri is required"
+    // because Comis only populates clientMetadata.redirect_uris when
+    // mcp.oauth_login starts the loopback callback server). Short-circuit
+    // when no token exists: persist the entry, throw structured
+    // needs_oauth_login so the agent calls mcp_login(server_name) which DOES
+    // start the loopback and provides a real redirect URI.
+    //
+    // Observed 2026-05-28 daemon.1.log:380 — Higgsfield install with the
+    // first three fixes deployed surfaced the readable DCR error but the
+    // entry never persisted (manager.connect threw a generic ServerError,
+    // not needs_oauth_login → Fix 2's persist branch skipped), so the
+    // subsequent mcp_login(higgsfield) at L425 returned "MCP server not found".
+    it("short-circuits manager.connect when params.auth==='oauth' AND no token exists yet (persists + throws needs_oauth_login)", async () => {
+      const fakeTokenStore = {
+        // Production tokens() reads ~/.comis/mcp-tokens/<server>.json and returns
+        // undefined when the file is missing. The token-store API is async; the
+        // handler awaits it.
+        tokens: vi.fn().mockResolvedValue(undefined),
+      };
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+        createTokenStore: () => fakeTokenStore,
+      } as any);
+
+      let thrownError: unknown;
+      try {
+        await handlers["mcp.connect"]({
+          server_name: "higgsfield",
+          transport: "http",
+          url: "https://mcp.higgsfield.ai/mcp",
+          auth: "oauth",
+        });
+      } catch (e) {
+        thrownError = e;
+      }
+
+      // 1. The doomed handshake is skipped entirely — no DCR-with-empty-
+      //    redirect_uris attempt.
+      expect(manager.connect).not.toHaveBeenCalled();
+
+      // 2. The structured needs_oauth_login is thrown so the agent's tool
+      //    catch can surface the actionable hint.
+      expect((thrownError as { data?: unknown }).data).toMatchObject({
+        needs_oauth_login: true,
+        server_name: "higgsfield",
+      });
+
+      // 3. The entry is persisted with auth:"oauth" so the next
+      //    mcp.oauth_login finds it (mcp-oauth-handlers.ts:135).
+      expect(mockPersistToConfig).toHaveBeenCalledOnce();
+      const [, callOpts] = mockPersistToConfig.mock.calls[0] as any;
+      expect(callOpts.patch.integrations.mcp.servers).toEqual([
+        expect.objectContaining({
+          name: "higgsfield",
+          auth: "oauth",
+        }),
+      ]);
+
+      // 4. tokenStore.tokens(server_name) was the gate.
+      expect(fakeTokenStore.tokens).toHaveBeenCalledWith("higgsfield");
+    });
+
+    it("does NOT short-circuit when params.auth==='oauth' AND a token already exists (refresh path proceeds normally)", async () => {
+      // Existing tokens → manager.connect SHOULD run (the SDK will use the
+      // refresh path; needs_oauth_login only fires if refresh fails).
+      const fakeTokenStore = {
+        tokens: vi.fn().mockResolvedValue({ access_token: "abc", token_type: "Bearer" }),
+      };
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("higgsfield", [makeTool("gen")])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+        createTokenStore: () => fakeTokenStore,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "higgsfield",
+        transport: "http",
+        url: "https://mcp.higgsfield.ai/mcp",
+        auth: "oauth",
+      });
+
+      expect(manager.connect).toHaveBeenCalled();
+      expect(fakeTokenStore.tokens).toHaveBeenCalledWith("higgsfield");
+    });
+
+    it("does NOT call tokenStore.tokens when params.auth is NOT 'oauth' (header-auth path unchanged)", async () => {
+      const fakeTokenStore = {
+        tokens: vi.fn().mockResolvedValue(undefined),
+      };
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [makeTool("read")])));
+      const { persistDeps, container } = makePersistDeps([]);
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        persistDeps,
+        container,
+        createTokenStore: () => fakeTokenStore,
+      } as any);
+
+      await handlers["mcp.connect"]({
+        server_name: "ctx7",
+        transport: "stdio",
+        command: "npx",
+        args: ["@upstash/context7-mcp"],
+      });
+
+      expect(fakeTokenStore.tokens).not.toHaveBeenCalled();
+      expect(manager.connect).toHaveBeenCalled();
+    });
+
     it("does NOT persist when manager returns needs_oauth_login WITHOUT params.auth==='oauth' (hint-only path)", async () => {
       // Connect without opting in: the user just wanted to add a server;
       // the daemon hands back the needs_oauth_login hint but does NOT

@@ -317,52 +317,74 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         }
       }
 
+      // Build + persist the auth:"oauth" entry and throw the structured
+      // needs_oauth_login signal. Used by:
+      //   - Fix 4 pre-check  (token store has no tokens for this server yet)
+      //   - Fix 2 post-fail  (manager.connect surfaced a NeedsOAuthLoginError)
+      // Without persistence, the subsequent mcp.oauth_login at
+      // mcp-oauth-handlers.ts:135 cannot find the entry in
+      // container.config.integrations.mcp.servers.
+      const persistOAuthEntryAndThrowNeedsLogin = async (): Promise<never> => {
+        const currentServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
+        const newEntry: McpServerEntry = buildPersistedMcpEntry({
+          serverName: params.server_name,
+          transport: params.transport,
+          command: params.command,
+          args: params.args,
+          url: params.url,
+          env: params.env,
+          headers: params.headers,
+          disablePlaintextSecretCheck: userParams.disablePlaintextSecretCheck === true,
+          resolvedRlimits,
+          resolvedKeepaliveIntervalMs,
+          resolvedCircuitBreakerThreshold,
+          resolvedCircuitBreakerCooldownMs,
+          auth: "oauth" as const,
+          persistedEntry,
+        });
+        const newServers: McpServerEntry[] = [
+          ...currentServers.filter((s) => s.name !== params.server_name),
+          newEntry,
+        ];
+        const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
+        await persistMcpServers(deps, newServers, "mcp.connect", params.server_name, ctx);
+        const structured = new Error(
+          `[needs_oauth_login] MCP server "${params.server_name}" requires OAuth login`,
+        );
+        (structured as { data?: unknown }).data = {
+          needs_oauth_login: true,
+          server_name: params.server_name,
+          action: `comis mcp login ${params.server_name}`,
+        };
+        throw structured;
+      };
+
+      // Fix 4 (v1.2-plan R11.1 completion) — token-aware short-circuit.
+      // When the operator explicitly opts into OAuth (params.auth==="oauth")
+      // AND no token exists in the store yet, attempting manager.connect is
+      // doomed: the SDK's auth() drives a DCR with clientMetadata.redirect_uris=[]
+      // (the loopback redirect URI only exists during mcp.oauth_login), so a
+      // spec-compliant provider returns 400 invalid_redirect_uri, masking the
+      // real "user must run mcp_login" signal. createTokenStore is undefined in
+      // some test harnesses; the pre-check no-ops then and Fix 2 (below)
+      // handles the NeedsOAuthLoginError class instead.
+      if (params.auth === "oauth" && deps.createTokenStore !== undefined) {
+        const existingTokens = await deps.createTokenStore().tokens(params.server_name);
+        if (existingTokens === undefined) {
+          await persistOAuthEntryAndThrowNeedsLogin();
+        }
+      }
+
       const result = await manager.connect(config);
       if (!result.ok) {
-        // R8.4'-01: Preserve needs_oauth_login tag at the JSON-RPC boundary.
-        // When the connect layer surfaces a NeedsOAuthLoginError (code ===
-        // "needs_oauth_login"), attach .data so Plan 06's mcp_manage catch
-        // block can surface the actionable "run comis mcp login" hint without
-        // brittle string-matching on Error.message.
+        // R8.4'-01 + Fix 2: when connectServer surfaced a NeedsOAuthLoginError
+        // (UnauthorizedError / StreamableHTTPError(401)) AND the operator
+        // opted in with auth:"oauth", persist the entry before throwing the
+        // structured signal so mcp_login finds it. mcp-handlers.ts.test.ts
+        // pins both branches.
         if (isNeedsOAuthLoginError(result.error)) {
-          // R11 follow-up: when the operator explicitly opted in with
-          // params.auth==="oauth", persist the entry BEFORE throwing so the
-          // subsequent mcp_login (mcp-oauth-handlers.ts:135 reads
-          // container.config.integrations.mcp.servers) finds the server.
-          // Without this, the agent is stuck in: connect→needs_oauth_login
-          // hint→mcp_login→"MCP server not found" (observed 2026-05-28).
-          // No persist for non-opt-in connects: the hint is enough; the
-          // operator must retry with auth:"oauth" before we register.
           if (params.auth === "oauth") {
-            const currentServers = (deps.container?.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
-            const newEntry: McpServerEntry = buildPersistedMcpEntry({
-              serverName: params.server_name,
-              transport: params.transport,
-              command: params.command,
-              args: params.args,
-              url: params.url,
-              env: params.env,
-              headers: params.headers,
-              disablePlaintextSecretCheck: userParams.disablePlaintextSecretCheck === true,
-              resolvedRlimits,
-              resolvedKeepaliveIntervalMs,
-              resolvedCircuitBreakerThreshold,
-              resolvedCircuitBreakerCooldownMs,
-              auth: "oauth" as const,
-              persistedEntry,
-            });
-            const newServers: McpServerEntry[] = [
-              ...currentServers.filter((s) => s.name !== params.server_name),
-              newEntry,
-            ];
-            const ctx = rawParams._context as { userId?: string; traceId?: string } | undefined;
-            await persistMcpServers(
-              deps,
-              newServers,
-              "mcp.connect",
-              params.server_name,
-              ctx,
-            );
+            await persistOAuthEntryAndThrowNeedsLogin();
           }
           const structured = new Error(
             `[needs_oauth_login] MCP server "${params.server_name}" requires OAuth login`,

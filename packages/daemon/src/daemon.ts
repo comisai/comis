@@ -164,6 +164,8 @@ import {
   createImageGenProvider,
   createImageGenRateLimiter,
   detectSandboxProvider,
+  createTokenStore as defaultCreateMcpTokenStore,
+  type TokenStore as McpTokenStore,
 } from "@comis/skills";
 import { createChannelHealthMonitor } from "@comis/channels";
 // WIRE-08: the single process-singleton activity circuit breaker is constructed
@@ -1080,6 +1082,19 @@ function buildRpcDispatchDeps(deps: {
     const idx = g.runtimeTokens.findIndex((t) => t.id === id);
     if (idx >= 0) g.runtimeTokens.splice(idx, 1);
   };
+  // Singleton factory for the per-server MCP OAuth token store. Both
+  // mcp-handlers (Fix 4 — pre-check no-token before manager.connect) and
+  // mcp-oauth-handlers (existing — read/write tokens during login) call
+  // this; the per-store chokidar watcher + cache are per-instance, so a
+  // single shared store is required (TokenStoreDeps JSDoc explicitly:
+  // "implementations SHOULD return a process-wide singleton").
+  let cachedMcpTokenStore: McpTokenStore | undefined;
+  const createTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["createTokenStore"] = () => {
+    if (cachedMcpTokenStore === undefined) {
+      cachedMcpTokenStore = defaultCreateMcpTokenStore({ logger: c.skillsLogger });
+    }
+    return cachedMcpTokenStore;
+  };
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
@@ -1106,6 +1121,7 @@ function buildRpcDispatchDeps(deps: {
     modelCatalog: c.modelCatalog, channelConfig: c.channelConfig,
     tokenRegistry: g.tokenRegistry,
     addToTokenStore, removeFromTokenStore,
+    createTokenStore,
     memoryWriteValidator: validateMemoryWrite,
     // MemoryApiDeps.eventBus accepts the full AppContainer["eventBus"] type;
     // no down-cast to `{ emit }` is needed.
