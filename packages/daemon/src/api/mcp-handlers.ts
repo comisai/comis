@@ -33,7 +33,7 @@
  */
 
 import type { McpServerConfig } from "@comis/skills";
-import { createMcpClientManager } from "@comis/skills";
+import { createMcpClientManager, isNeedsOAuthLoginError } from "@comis/skills";
 import {
   findUnresolvedEnvRefs,
   formatMissingEnvRefError,
@@ -319,6 +319,22 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       const result = await manager.connect(config);
       if (!result.ok) {
+        // R8.4'-01: Preserve needs_oauth_login tag at the JSON-RPC boundary.
+        // When the connect layer surfaces a NeedsOAuthLoginError (code ===
+        // "needs_oauth_login"), attach .data so Plan 06's mcp_manage catch
+        // block can surface the actionable "run comis mcp login" hint without
+        // brittle string-matching on Error.message.
+        if (isNeedsOAuthLoginError(result.error)) {
+          const structured = new Error(
+            `[needs_oauth_login] MCP server "${params.server_name}" requires OAuth login`,
+          );
+          (structured as { data?: unknown }).data = {
+            needs_oauth_login: true,
+            server_name: params.server_name,
+            action: `comis mcp login ${params.server_name}`,
+          };
+          throw structured;
+        }
         throw new Error(`Failed to connect MCP server "${params.server_name}": ${result.error.message}`);
       }
 
