@@ -483,7 +483,9 @@ Single mcp.servers entry shape: {name, transport, command?, args?, url?, env?, c
   channels_manage: `## Channel Management Side Effects
 Enable, disable, and configure actions persist to config.yaml and trigger daemon restart. Current execution terminates after the tool returns. Batch changes together and warn the user before proceeding.`,
 
-  mcp_manage: `Use mcp_manage as the canonical path for MCP server connect, disconnect, and status. A Validation failed result means fix the arguments — not abandon the tool or switch to gateway.`,
+  mcp_manage: `Use mcp_manage as the canonical path for MCP server connect, disconnect, and status. A Validation failed result means fix the arguments — not abandon the tool or switch to gateway.
+## OAuth-required MCP servers
+When mcp_manage(action:"connect", url:..., transport:"http") returns an Unauthorized error or a structured needs_oauth_login action hint, the server requires OAuth. Retry as: mcp_manage(action:"connect", auth:"oauth", url:..., transport:"http"). If the daemon then responds with a needs_oauth_login action, invoke mcp_login({server_name}) to start the PKCE flow. mcp_login returns a verification URL — deliver it to the user via the message tool BEFORE starting any background polling. Do NOT curl device-code endpoints. Do NOT write tokens to the workspace. Do NOT call gateway(action:"patch") against integrations.mcp.servers.`,
 
   exec: `## Exec Guide
 IMPORTANT: Do NOT use exec for operations that have dedicated tools:

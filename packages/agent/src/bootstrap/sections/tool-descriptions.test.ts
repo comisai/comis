@@ -126,6 +126,14 @@ describe("TOOL_GUIDES", () => {
     expect(TOOL_GUIDES.mcp_manage).toMatch(/[Vv]alidation.*fix the arguments|fix the arguments.*validation/i);
   });
 
+  // R11 — OAuth steering drift guard: assert the OAuth handoff block is present in the
+  // mcp_manage tool guide. If this fails, someone removed the OAuth steering text — the
+  // guard is the final layer of defense against the agent improvising curl/device-code flows.
+  it("mcp_manage guide steers OAuth flow through mcp_manage(auth:\"oauth\") + mcp_login", () => {
+    expect(TOOL_GUIDES.mcp_manage).toMatch(/mcp_manage.*action.*connect.*auth.*oauth/);
+    expect(TOOL_GUIDES.mcp_manage).toMatch(/mcp_login\(\{server_name\}\)/);
+  });
+
   // Sandbox-forbidden-paths hint -- preventive JIT guide that teaches the agent
   // the rule on first exec use, before sandbox-exec EPERMs trigger the
   // tool-retry-breaker redirect. Paired with the runtime redirect in
