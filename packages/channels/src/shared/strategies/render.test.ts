@@ -250,6 +250,65 @@ describe("renderFrameText", () => {
     expect(out).not.toContain("×");
   });
 
+  // --- Quick fix 260528-mch — Bug C (failure marker on kept failed end) ----
+  //
+  // Live IBM-info turn surfaced: a yfinance tool call failed and the kept
+  // end event arrived with `status:"failed"` + a bare `defaultLabel` (the
+  // running 🔧 is baked into START events only at the activity-stream emit
+  // site, by design per Pitfall 7 — the marker conveys in-flight status).
+  // Pre-patch `eventLabel(event)` returns the bare label → the failure
+  // renders as "using yfinance · get stock price" with NO marker. The user
+  // can't tell the call failed. Fix: when `event.status === "failed"`,
+  // prefix the themed failure marker (default: ❌, ascii: [ERR]).
+
+  it("prefixes ❌ on a kept failed end event (Bug C — failure marker on terminal failure state)", () => {
+    const failedFrame = frame({
+      visibleEvents: [
+        event({
+          kind: "tool",
+          phase: "end",
+          status: "failed",
+          defaultLabel: "using yfinance · get stock price",
+          errorKind: "dependency",
+        }),
+      ],
+    });
+    // Default-theme fallback (no markers arg) — must inject ❌ via the
+    // DEFAULT_MARKERS fallback in eventLabel (mirrors failureLabel's pattern).
+    expect(renderFrameText(failedFrame)).toBe("❌ using yfinance · get stock price");
+    // Explicitly-supplied default markers — same output, byte-identical.
+    expect(renderFrameText(failedFrame, DEFAULT_THEME_MARKERS)).toBe(
+      "❌ using yfinance · get stock price",
+    );
+    // Ascii theme — failure glyph becomes the bracketed [ERR] tag, no emoji.
+    expect(renderFrameText(failedFrame, ASCII_MARKERS)).toBe(
+      "[ERR] using yfinance · get stock price",
+    );
+  });
+
+  // Contract-pin: a kept COMPLETED end event renders bare (no per-step ✓).
+  // §3.1 — the closing line carries the single ✓ done; per-step ✓ would
+  // clutter the running flow. This test PASSES pre-patch (current
+  // eventLabel returns bare for everything) and PASSES post-patch — it
+  // locks the chosen behavior so a future "✓ on completed" change can't
+  // sneak in without an updated assertion.
+  it("does NOT prefix any marker on a kept completed end event (no per-step ✓ during running phase)", () => {
+    const completedFrame = frame({
+      visibleEvents: [
+        event({
+          kind: "tool",
+          phase: "end",
+          status: "completed",
+          defaultLabel: "doing the thing",
+          durationMs: 2300,
+        }),
+      ],
+    });
+    expect(renderFrameText(completedFrame)).toBe("doing the thing");
+    expect(renderFrameText(completedFrame, DEFAULT_THEME_MARKERS)).toBe("doing the thing");
+    expect(renderFrameText(completedFrame, ASCII_MARKERS)).toBe("doing the thing");
+  });
+
   // --- Phase 78 WS-F: elapsed-time fallback (SPEC-§8.5 second half) --------
   //
   // When `frame.planSnapshot` is undefined AND the strategy supplies an
