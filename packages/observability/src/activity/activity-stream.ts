@@ -449,7 +449,12 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       semanticPhase,
       toolName: p.toolName,
       ...(p.action !== undefined ? { action: p.action } : {}),
-      defaultLabel,
+      // WS-B Phase 78 / SPEC-§3.1: mirror subagent precedent at lines 602/621.
+      // The running marker is themed (default: 🔧, ascii: [..]) and resolved
+      // once at construction (line 198). DO NOT apply to onToolExecuted
+      // (phase:"end") — that violates Pitfall 7 (the running marker conveys
+      // in-flight status only).
+      defaultLabel: `${markers.running} ${defaultLabel}`,
     });
   }
 
@@ -517,7 +522,9 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       status: "running",
       kind: "model",
       semanticPhase: "thinking",
-      defaultLabel: "switching model provider",
+      // WS-B Phase 78 / SPEC-§3.1: themed running marker on the static label.
+      // Mirrors the subagent precedent at lines 602/621.
+      defaultLabel: `${markers.running} switching model provider`,
     });
   }
 
