@@ -2,47 +2,31 @@
 /**
  * Interactive OAuth login orchestrator.
  *
- * The server-side half of `mcp.oauth_login`. Owns the SDK `auth()` runtime call
- * + the loopback browser-callback + the disk token store so the daemon RPC
+ * Server-side half of `mcp.oauth_login`. Owns the SDK `auth()` runtime call +
+ * the loopback browser-callback + the disk token store so the daemon RPC
  * handler (`mcp-oauth-handlers.ts`) never imports the MCP SDK or `open`
  * directly (the daemon depends on `@comis/skills`, not the SDK).
  *
- * ── The flow ────────────────────────────────────────────────────────────────
- * The daemon may run on a remote host with no display, so the browser launch is
- * CLI-side. This orchestrator coordinates the server-side steps and RETURNS the
- * authorization URL for the CLI to open:
+ * Flow: (1) build token store + provider, (2) pre-flight discovery (cold
+ * load — surfaces cascade-fail before any browser step), (3) bind loopback
+ * with NO-OP `openUrl` to learn port + headless decision, (4) DEVAUTH-02
+ * selection branch: dispatch RFC 8628 device-flow when operator forces it
+ * or headless ∧ device-code-advertised, (5) PKCE: drive SDK `auth()` first
+ * pass → capture authorization URL → headless returns `headless_hint` +
+ * `authUrl` (background task awaits redirect + exchanges code) OR
+ * non-headless opens URL CLI-side + awaits code → second `auth()` pass →
+ * `AUTHORIZED` → `saveTokens` persists ABSOLUTE-expiresAt tokens.
  *
- *   1. Build the token store + refresh-deduper + the `OAuthClientProvider`
- *      adapter. The provider's `redirectUrl` + `state` are sourced from
- *      closures this orchestrator owns (ONE source of truth).
- *   2. Pre-flight discovery, cold-load only — surfaces the actionable
- *      cascade-fail error before any browser step.
- *   3. Bind the loopback callback server (`runBrowserCallback`) with a NO-OP
- *      `openUrl` to learn the kernel-assigned port + headless decision.
- *      The orchestrator opens the browser itself AFTER the SDK produces the URL,
- *      so the callback module's URL/open coupling does not force the order.
- *   4. Drive the SDK `auth()` orchestrator (first call, no code). It runs DCR +
- *      builds the authorization URL via `startAuthorization` against the
- *      provider's loopback `redirectUrl`, then calls the provider's
- *      `redirectToAuthorization(url)` — captured here into a closure.
- *   5. Headless host → return `headless_hint` + `portForwardHint` + `authUrl`
- *      (the operator forwards the port + opens the URL). Non-headless → call the
- *      injected `openUrl(authUrl)` (the CLI's `open`), still returning `authUrl`.
- *   6. Await the callback code (`waitForCode()`), then `auth({ authorizationCode })`
- *      (second call) → `'AUTHORIZED'` → the provider's `saveTokens` persists the
- *      ABSOLUTE-expiresAt tokens. Return `authorized`.
+ * No throw escapes: discovery cascade fail, callback timeout / CSRF,
+ * exchange error all return `{ status: "failed" }` with WARN + `errorKind`.
+ * Callback server is always closed (success / headless-handoff / failure)
+ * so no loopback port lingers.
  *
- * ── No throw escapes ────────────────────────────────────────────────────────
- * Every failure (discovery cascade fail, callback timeout / CSRF, exchange
- * error) is caught and returned as `{ status: "failed" }` with an `errorKind`
- * WARN — the caller surfaces it as an RPC response, never an exception. The
- * callback server is always closed (success / headless-return / failure) so no
- * loopback port lingers.
- *
- * SECURITY: tokens, the PKCE `code_verifier`, the CSRF `state`, and the
- * authorization `code` are NEVER logged at any level (Pino redaction is a safety
- * net, not a license). The authorization URL carries the `state` param, so it is
- * returned to the caller but never logged here.
+ * SECURITY: tokens, the PKCE `code_verifier`, the CSRF `state`, the
+ * authorization `code`, and the device-flow `device_code` are NEVER logged
+ * (Pino redaction is a safety net, not a license). The authorization URL
+ * carries `state` — returned to the caller but never logged. The device-flow
+ * `verificationUri` + `userCode` are non-secret per RFC 8628 §6.1.
  *
  * @module
  */
@@ -63,62 +47,25 @@ import { createRefreshDeduper, type RefreshResult } from "./refresh-deduper.js";
 import { createOAuthClientProvider } from "./provider.js";
 import { resolveDiscovery } from "./discovery.js";
 import { runBrowserCallback, type BrowserCallbackHandle } from "./browser-callback.js";
+import { runDeviceFlow as defaultRunDeviceFlow } from "./device-flow.js";
 import { createRedirectPolicyFetch } from "../mcp-client-redirect-policy.js";
+
+// Re-export the shared OAuth types from oauth-types.js (split out of this
+// file to break the source-level cycle introduced by login.ts ↔ device-flow.ts
+// when login.ts gained a value import of runDeviceFlow in plan 09-02).
+export type {
+  OAuthLoginConfig,
+  OAuthLoginLogger,
+  OAuthLoginResult,
+} from "./oauth-types.js";
+import type {
+  OAuthLoginConfig,
+  OAuthLoginLogger,
+  OAuthLoginResult,
+} from "./oauth-types.js";
 
 const SUBMODULE = "oauth-login";
 const MAX_REDIRECTIONS = 20;
-
-/** Structural logger — matches the token store / discovery / deduper contract. */
-export interface OAuthLoginLogger {
-  info(obj: Record<string, unknown>, msg: string): void;
-  warn(obj: Record<string, unknown>, msg: string): void;
-  error(obj: Record<string, unknown>, msg: string): void;
-  debug?(obj: Record<string, unknown>, msg: string): void;
-}
-
-/**
- * Per-server OAuth hints (a structural subset of `McpServerConfig["oauth"]`).
- * Kept local so this module does not depend on the manager types.
- */
-export interface OAuthLoginConfig {
-  /** Discovery-cascade fallback authorization-server URL. */
-  readonly authorizationEndpoint?: string;
-  /** RFC 8628 device-authorization endpoint operator override. Consumed by
-   *  `runDeviceFlow`'s discovery cascade when the resolved metadata lacks
-   *  `device_authorization_endpoint` (Higgsfield reality 2026-05-28). Wins
-   *  over the auto-resolved endpoint when both are present. See
-   *  `McpServerEntrySchema.oauth.deviceAuthorizationEndpoint` (plan 09-01). */
-  readonly deviceAuthorizationEndpoint?: string;
-  /** Requested OAuth scope (threaded into clientMetadata + DCR + auth()). */
-  readonly scope?: string;
-  /** Stripe Connect connected-account id. */
-  readonly stripeAccount?: string;
-}
-
-/** The login orchestration result returned to the RPC handler.
- *  `authorized` — code exchanged + tokens persisted (caller reconnects).
- *  `headless_hint` — PKCE: forward the port + open `authUrl` yourself.
- *  `device_code_pending` — RFC 8628: surface `verificationUri` + `userCode`
- *    to operator; daemon polls in background + fires `onAuthorized` on success.
- *  `failed` — discovery / callback / exchange / device-flow polling failed. */
-export interface OAuthLoginResult {
-  readonly status: "authorized" | "headless_hint" | "device_code_pending" | "failed";
-  /** Present on `headless_hint`: `ssh -L <port>:localhost:<port> <vps>`. */
-  readonly portForwardHint?: string;
-  /** Authorization URL for the CLI to open. Present on `headless_hint` and the
-   *  non-headless path. Pitfall 8: distinct from `verificationUri` (PKCE
-   *  loopback-redirect URL vs. RFC 8628 user-typed URL — do NOT collapse). */
-  readonly authUrl?: string;
-  /** RFC 8628 §3.3.1 operator-facing verification URL. Present on
-   *  `device_code_pending`. Non-secret. */
-  readonly verificationUri?: string;
-  /** RFC 8628 §3.2 short human-readable code (e.g. `"WDJB-MJHT"`). Present on
-   *  `device_code_pending`. Non-secret; surfaced via agent's `message` tool. */
-  readonly userCode?: string;
-  /** RFC 8628 §3.2 seconds until `device_code` expires. Present on
-   *  `device_code_pending`. Informational; deadline enforced in `runDeviceFlow`. */
-  readonly expiresIn?: number;
-}
 
 /** Injected dependencies for {@link runOauthLogin} (all side effects are DI'd). */
 export interface RunOauthLoginDeps {
@@ -143,6 +90,9 @@ export interface RunOauthLoginDeps {
   readonly auth?: typeof sdkAuth;
   /** The loopback callback runner. Defaults to the real one; tests inject a fake. */
   readonly runBrowserCallback?: typeof runBrowserCallback;
+  /** DEVAUTH-02: device-flow orchestrator (RFC 8628). Defaults to the real
+   *  `runDeviceFlow` from `./device-flow.js`; tests inject a fake. */
+  readonly runDeviceFlow?: typeof defaultRunDeviceFlow;
   /** Discovery resolver. Defaults to the real cascade; tests inject a fake. */
   readonly resolveDiscovery?: typeof resolveDiscovery;
   /** Redirect-safe fetch threaded into the SDK auth()/discovery requests. */
@@ -234,17 +184,11 @@ export async function runOauthLogin(
     get redirectUrl(): string | URL | undefined {
       return redirectUrl;
     },
-    // CRITICAL: `clientMetadata` MUST stay a live getter that delegates to
-    // the adapter on every access. The spread above evaluates `provider.
-    // clientMetadata` exactly once at spread time (when `redirectUrl` is
-    // still undefined) and FREEZES the resulting `{ redirect_uris: [] }`
-    // object as a plain property. Without this override the SDK calls DCR
-    // with `redirect_uris: []` and every RFC 7591-compliant authorization
-    // server returns 400 `invalid_redirect_uri` ("at least one redirect_uri
-    // is required" — observed 2026-05-28 against Higgsfield in
-    // daemon.1.log:865). Re-reading the adapter's getter on each access
-    // pulls the live loopback URL from the `getRedirectUrl` closure that
-    // is populated at line ~256 after `runBrowserCallback` binds.
+    // CRITICAL: live getter. The spread above evaluates provider.clientMetadata
+    // ONCE at spread time (when redirectUrl is undefined) and freezes
+    // `{ redirect_uris: [] }` — Higgsfield then 400s DCR with invalid_redirect_uri
+    // (RFC 7591). Re-reading on each access pulls the live loopback URL after
+    // runBrowserCallback binds (daemon.1.log:865, 2026-05-28).
     get clientMetadata(): OAuthClientMetadata {
       return provider.clientMetadata;
     },
@@ -262,10 +206,13 @@ export async function runOauthLogin(
   let keepHandleOpen = false;
   try {
     // Pre-flight discovery — cold-load only. Surfaces the actionable
-    // cascade-fail error before binding the callback server.
-    const existingDiscovery = await tokenStore.discoveryState(serverName);
-    if (!existingDiscovery) {
-      await discover({
+    // cascade-fail error before binding the callback server. Capture the
+    // resolved state so DEVAUTH-02 below can inspect it (advertised device-
+    // flow grant types) and runDeviceFlow can receive it as pre-resolved.
+    let discoveryState =
+      (await tokenStore.discoveryState(serverName)) ?? undefined;
+    if (discoveryState === undefined) {
+      discoveryState = await discover({
         serverName,
         serverUrl,
         ...(oauthConfig.authorizationEndpoint !== undefined
@@ -299,9 +246,49 @@ export async function runOauthLogin(
     });
     redirectUrl = handle.redirectUri;
 
-    // Drive the SDK auth() orchestrator (first pass, no code). It runs DCR +
-    // builds the authorization URL via startAuthorization against redirectUrl,
-    // then calls wrappedProvider.redirectToAuthorization(url) (captured above).
+    // ── DEVAUTH-02: Selection heuristic ─────────────────────────────────
+    // Operator override beats heuristic in both directions; heuristic
+    // prefers RFC 8628 device-flow when headless ∧ device-code advertised.
+    // Falls through to PKCE+loopback by default (existing Fix 6 path).
+    const meta = (discoveryState as { authorizationServerMetadata?: Record<string, unknown> } | undefined)
+      ?.authorizationServerMetadata;
+    const advertisesDeviceFlow =
+      typeof meta?.["device_authorization_endpoint"] === "string" ||
+      (Array.isArray(meta?.["grant_types_supported"]) &&
+        (meta!["grant_types_supported"] as readonly unknown[]).includes(
+          "urn:ietf:params:oauth:grant-type:device_code",
+        ));
+    const operatorFlow = oauthConfig.flow;
+    const dispatchDeviceFlow =
+      operatorFlow === "device_code" ||
+      (operatorFlow !== "auth_code" && handle.headless && advertisesDeviceFlow);
+    if (dispatchDeviceFlow) {
+      // Device-flow needs no loopback callback — release the port now.
+      handle.close();
+      keepHandleOpen = false;
+      logger.info(
+        {
+          submodule: SUBMODULE,
+          serverName,
+          dispatchReason: operatorFlow === "device_code" ? "operator-override" : "headless-advertised",
+        },
+        "OAuth login: dispatching RFC 8628 device-flow",
+      );
+      const dispatchRunDeviceFlow = deps.runDeviceFlow ?? defaultRunDeviceFlow;
+      return await dispatchRunDeviceFlow({
+        serverName,
+        serverUrl,
+        oauthConfig,
+        tokenStore,
+        discoveryState: discoveryState as never,
+        fetchFn,
+        logger,
+        ...(deps.onAuthorized !== undefined ? { onAuthorized: deps.onAuthorized } : {}),
+      });
+    }
+
+    // SDK auth() first pass: DCR + startAuthorization → wrappedProvider's
+    // redirectToAuthorization captures the URL into capturedAuthUrl.
     const first: AuthResult = await authFn(wrappedProvider, {
       serverUrl,
       ...(oauthConfig.scope !== undefined ? { scope: oauthConfig.scope } : {}),
@@ -329,28 +316,20 @@ export async function runOauthLogin(
 
     const authUrl = capturedAuthUrl;
 
-    // Headless host: do NOT open a browser that isn't there. The RPC returns
-    // immediately so the caller (agent / CLI) can surface the authUrl, but
-    // the loopback callback server STAYS UP so the operator's eventual
-    // redirect to http://127.0.0.1:<port>/callback?code=…&state=… can be
-    // delivered. The post-callback second-pass exchange (code → tokens →
-    // saveTokens → onAuthorized) runs as a background task; its own
-    // try/finally closes the handle on completion / failure / timeout.
-    //
-    // Pre-fix this branch called `handle.close()` BEFORE returning, tearing
-    // down the loopback ~700 ms after the agent posted the authUrl. Observed
-    // 2026-05-28 against Higgsfield: the operator clicked Allow, the browser
-    // got redirected to a dead socket ("This site can't be reached").
+    // Fix 6 (2026-05-28): Headless host — RPC returns immediately with
+    // headless_hint + authUrl; loopback STAYS UP so the operator's eventual
+    // redirect can be delivered. Background task handles second-pass exchange
+    // (code → tokens → saveTokens → onAuthorized) and closes the handle in
+    // its own finally. Pre-fix close() ran before return → dead socket against
+    // Higgsfield (daemon.1.log:865).
     if (handle.headless) {
       logger.info(
         { submodule: SUBMODULE, serverName, headless: true },
         "OAuth login: headless host — loopback stays open; background task awaits redirect",
       );
       keepHandleOpen = true;
-      // Background completion. The `void` discards the returned Promise
-      // intentionally: callers do not await it (the RPC has already
-      // returned). All failure modes are caught and logged inside the IIFE so
-      // nothing escapes as an unhandledRejection.
+      // void discards the returned Promise; all failures caught + logged
+      // inside the IIFE so nothing escapes as an unhandledRejection.
       const headlessHandle = handle;
       void (async () => {
         try {
@@ -449,15 +428,11 @@ export async function runOauthLogin(
     );
     return { status: "authorized", authUrl };
   } catch (err) {
-    // No throw escapes — discovery cascade fail / callback timeout /
-    // CSRF drop / exchange error all return failed. NEVER log token/verifier/code.
-    //
-    // Pass `err` as the OBJECT (Error or fallback wrapper), not its `.message`
-    // string. The Pino serializer reads the canonical `err` field and emits
-    // `type`/`message`/`stack` plus any custom properties together — logging
-    // `err.message` here would discard the stack trace and any attached error
-    // metadata (e.g. an `errorKind` on a discovery-cascade error). Mirrors
-    // refresh-deduper.ts:274 which already logs `{ ..., err }`.
+    // No throw escapes — all failures return failed. Pass `err` as the OBJECT
+    // (Error or wrapper), NOT its `.message` — the Pino serializer reads the
+    // canonical `err` field and emits type/message/stack + custom properties;
+    // err.message would drop the stack. Mirrors refresh-deduper.ts:274.
+    // NEVER log token/verifier/code/device_code.
     logger.warn(
       {
         submodule: SUBMODULE,

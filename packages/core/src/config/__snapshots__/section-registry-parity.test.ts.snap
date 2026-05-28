@@ -19154,6 +19154,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("int
               "format": "uri",
               "type": "string"
             },
+            "flow": {
+              "enum": [
+                "device_code",
+                "auth_code"
+              ],
+              "type": "string"
+            },
             "scope": {
               "type": "string"
             },
@@ -21829,6 +21836,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             },
             "deviceAuthorizationEndpoint": {
               "format": "uri",
+              "type": "string"
+            },
+            "flow": {
+              "enum": [
+                "device_code",
+                "auth_code"
+              ],
               "type": "string"
             },
             "scope": {

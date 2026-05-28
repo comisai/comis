@@ -509,6 +509,42 @@ describe("McpServerEntrySchema — OAuth opt-in fields", () => {
     });
     expect(parsed.success).toBe(false);
   });
+
+  // DEVAUTH-02 — per-server flow override. "device_code" forces RFC 8628;
+  // "auth_code" forces PKCE+loopback even when the heuristic would dispatch
+  // device-flow (headless ∧ device-code advertised). Absent ⇒ heuristic chooses.
+  it("McpServerEntrySchema oauth strictObject accepts flow override device_code", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "higgsfield",
+      url: "https://mcp.higgsfield.ai/mcp",
+      transport: "http",
+      auth: "oauth",
+      oauth: { flow: "device_code" },
+    });
+    expect(result.oauth?.flow).toBe("device_code");
+  });
+
+  it("McpServerEntrySchema oauth strictObject accepts flow override auth_code", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "notion",
+      url: "https://mcp.notion.so/mcp",
+      transport: "http",
+      auth: "oauth",
+      oauth: { flow: "auth_code" },
+    });
+    expect(result.oauth?.flow).toBe("auth_code");
+  });
+
+  it("McpServerEntrySchema oauth strictObject rejects unknown flow values", () => {
+    const parsed = McpServerEntrySchema.safeParse({
+      name: "notion",
+      url: "https://mcp.notion.so/mcp",
+      transport: "http",
+      auth: "oauth",
+      oauth: { flow: "implicit" },
+    });
+    expect(parsed.success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

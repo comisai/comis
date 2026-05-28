@@ -166,6 +166,11 @@ export const McpServerEntrySchema = z.preprocess(
          *  probed RFC 8414 / OIDC well-known path). Sibling of authorizationEndpoint;
          *  consumed by runDeviceFlow's discovery cascade in plan 09-02. */
         deviceAuthorizationEndpoint: z.url().optional(),
+        /** Per-server flow override that beats the headless-detection heuristic
+         *  (DEVAUTH-02, plan 09-02). "device_code" forces RFC 8628; "auth_code"
+         *  forces PKCE+loopback. Absent => runOauthLogin chooses by the
+         *  heuristic (headless ∧ device-code-advertised → device-flow). */
+        flow: z.enum(["device_code", "auth_code"]).optional(),
         /** OAuth scope string requested at authorization time. */
         scope: z.string().optional(),
         /** Stripe Connect `Stripe-Account` header value

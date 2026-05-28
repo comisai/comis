@@ -46,7 +46,7 @@ import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { systemNowMs, systemSleep } from "@comis/core";
 
 import type { TokenStore } from "./token-store.js";
-import type { OAuthLoginConfig, OAuthLoginLogger, OAuthLoginResult } from "./login.js";
+import type { OAuthLoginConfig, OAuthLoginLogger, OAuthLoginResult } from "./oauth-types.js";
 import { createRedirectPolicyFetch } from "../mcp-client-redirect-policy.js";
 
 const SUBMODULE = "oauth-device-flow";
