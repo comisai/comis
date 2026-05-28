@@ -16,6 +16,13 @@
  *                           callback — NO dynamic code execution of any form,
  *                           §19.4); a referenced placeholder absent from the
  *                           allowlist → unknown_key
+ *     → transform hook     (Phase 78 WS-C: spec.transform(params) consumes RAW
+ *                           params and produces the final label; non-empty
+ *                           return wins. The transform output is piped through
+ *                           redactValue defense-in-depth — Pitfall 4 — so a
+ *                           transform that returns a secret shape still
+ *                           renders as `<redacted>`. Skipped when spec has no
+ *                           transform.)
  *     → length cap (label ≤ 120, detail ≤ 280) → { …, truncated }
  *
  * It is PURE: no logger, no I/O, no dynamic code execution. It consumes the
@@ -132,9 +139,27 @@ export function applyTemplate(
     detailRendered = detailResult.value;
   }
 
-  // (4) Length cap (spec §10.1): label ≤ 120, detail ≤ 280; flag truncation.
+  // (4) Transform-hook override (Phase 78 WS-C). When the spec declares a
+  //     transform, invoke it with the RAW params and use its non-empty return
+  //     as the label text (an empty return falls through to the substituted
+  //     label). The transform output is piped through `redactValue` even when
+  //     the transform claims to self-redact (e.g. parseShellCommand at
+  //     shell-label-parser.ts:53) — defense-in-depth against the Pitfall 4
+  //     regression where a malicious or buggy transform leaks a secret shape.
+  //     The transform fires AFTER substitute() Result-checks above, so a
+  //     missing-placeholder error is still surfaced as err({kind:'unknown_key'}).
+  let labelText = labelResult.value;
+  if (spec.transform !== undefined) {
+    const transformed = spec.transform(params);
+    if (transformed.length > 0) {
+      const redacted = redactValue(transformed, opts);
+      labelText = typeof redacted.value === "string" ? redacted.value : transformed;
+    }
+  }
+
+  // (5) Length cap (spec §10.1): label ≤ 120, detail ≤ 280; flag truncation.
   let truncated = false;
-  let defaultLabel = labelResult.value;
+  let defaultLabel = labelText;
   if (defaultLabel.length > MAX_LABEL_LENGTH) {
     defaultLabel = defaultLabel.slice(0, MAX_LABEL_LENGTH);
     truncated = true;

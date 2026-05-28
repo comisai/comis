@@ -245,18 +245,25 @@ describe("applyTemplate — transform hook (Phase 78 WS-C)", () => {
 
   it("flows the transform output through the length cap (MAX_LABEL_LENGTH=120) and flags truncated", () => {
     // Step 5 (length cap) operates on whatever step 4 produced — a transform
-    // that returns 500 characters is truncated to 120 and the truncated flag
+    // that returns >120 characters is truncated to 120 and the truncated flag
     // is set. Mirrors the existing "caps an overlong substituted label" test
     // but routes through the transform branch.
+    //
+    // The payload is a non-secret-shape natural-language sentence repeated to
+    // ~500 chars — deliberately avoids hex-only strings (HEX_SECRET_LONG
+    // matches `\b[0-9a-f]{40,}\b/gi`, so "A".repeat(500) would be redacted
+    // wholesale by the defense-in-depth pipe and never reach the length cap).
+    const payload = "running long descriptive command with many readable words ".repeat(10);
     const spec: LabelSpec = {
       semanticPhase: "tool",
       label: "x",
-      transform: () => "A".repeat(500),
+      transform: () => payload,
     };
     const result = applyTemplate(spec, {});
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
+    expect(payload.length).toBeGreaterThan(120); // sanity-check the fixture
     expect(result.value.defaultLabel.length).toBe(120);
     expect(result.value.truncated).toBe(true);
   });
