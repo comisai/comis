@@ -4668,6 +4668,7 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "enum": [
             "authorized",
             "headless_hint",
+            "device_code_pending",
             "failed"
           ]
         },
@@ -4676,6 +4677,17 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "authUrl": {
           "type": "string"
+        },
+        "verificationUri": {
+          "type": "string"
+        },
+        "userCode": {
+          "type": "string"
+        },
+        "expiresIn": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [

@@ -18,14 +18,21 @@
  * daemon-side `mcp-oauth-handlers.ts` never imports `open`.
  *
  * ── Response status ─────────────────────────────────────────────────────────
- *   - `authorized`    — the callback resolved, the code was exchanged, tokens
- *     are persisted, and the server reconnected.
- *   - `headless_hint` — the daemon host has no local browser; `portForwardHint`
- *     (`ssh -L <port>:localhost:<port> <vps>`) + `authUrl` are returned so the
- *     operator forwards the port and opens the URL themselves.
- *   - `failed`        — discovery, the callback (timeout / CSRF), or the
- *     exchange failed. The handler logs with `errorKind` and returns this status
- *     rather than throwing; no exception escapes the dispatcher.
+ *   - `authorized`           — the callback resolved, the code was exchanged,
+ *     tokens are persisted, and the server reconnected.
+ *   - `headless_hint`        — the daemon host has no local browser;
+ *     `portForwardHint` (`ssh -L <port>:localhost:<port> <vps>`) + `authUrl`
+ *     are returned so the operator forwards the port and opens the URL
+ *     themselves (PKCE path).
+ *   - `device_code_pending`  — RFC 8628 device-authorization grant dispatched
+ *     (DEVAUTH-02 heuristic or `oauth.flow="device_code"` operator override);
+ *     `verificationUri` + `userCode` + `expiresIn` are returned for the agent
+ *     to surface to the operator via the `message` tool. The daemon polls in
+ *     a background task and reconnects via `onAuthorized` on success.
+ *   - `failed`               — discovery, the callback (timeout / CSRF), the
+ *     exchange, or the device-flow polling failed. The handler logs with
+ *     `errorKind` and returns this status rather than throwing; no exception
+ *     escapes the dispatcher.
  *
  * ── Scope ────────────────────────────────────────────────────────────────────
  * Both contracts are `scopes: ["admin"] as const` — login/logout create and
@@ -56,14 +63,23 @@ import { defineContract } from "./types.js";
  * Request: `{ server_name: string }`. The handler reads `server_name`
  * (literal) to key the token store + identify the server to reconnect.
  *
- * Response: `{ server_name, status, portForwardHint?, authUrl? }`.
+ * Response: `{ server_name, status, portForwardHint?, authUrl?, verificationUri?, userCode?, expiresIn? }`.
  *   - `server_name` — echoes the request.
- *   - `status` — `"authorized" | "headless_hint" | "failed"` (see module doc).
+ *   - `status` — `"authorized" | "headless_hint" | "device_code_pending" | "failed"`
+ *     (see module doc).
  *   - `portForwardHint` — present on `headless_hint`: the
  *     `ssh -L <port>:localhost:<port> <vps>` hint.
  *   - `authUrl` — present on `headless_hint` (and any flow where the CLI opens
- *     the browser): the authorization URL for the CLI to launch.
- *     NEVER opened daemon-side.
+ *     the browser): the authorization URL for the CLI to launch. NEVER opened
+ *     daemon-side.
+ *   - `verificationUri` — present on `device_code_pending`: RFC 8628 §3.3.1
+ *     operator-facing verification URL (the operator types this into a
+ *     browser; non-secret).
+ *   - `userCode` — present on `device_code_pending`: RFC 8628 §3.2 short
+ *     human-readable code (e.g. `"WDJB-MJHT"`; non-secret).
+ *   - `expiresIn` — present on `device_code_pending`: seconds until the
+ *     `device_code` expires (informational; the polling deadline is enforced
+ *     inside `runDeviceFlow`).
  */
 export const McpOauthLoginContract = defineContract({
   method: "mcp.oauth_login",
@@ -72,11 +88,17 @@ export const McpOauthLoginContract = defineContract({
   }),
   response: z.object({
     server_name: z.string(),
-    status: z.enum(["authorized", "headless_hint", "failed"]),
+    status: z.enum(["authorized", "headless_hint", "device_code_pending", "failed"]),
     // "ssh -L <port>:localhost:<port> <vps>" — present on headless_hint.
     portForwardHint: z.string().optional(),
     // The CLI opens this; the daemon NEVER calls open().
     authUrl: z.string().optional(),
+    // RFC 8628 device-flow path. Present on `device_code_pending`. Non-secret:
+    // verificationUri is the provider's public endpoint, userCode is one-shot
+    // + time-bound (≤300s typical per §6.1), expiresIn is informational.
+    verificationUri: z.string().optional(),
+    userCode: z.string().optional(),
+    expiresIn: z.number().int().positive().optional(),
   }),
   scopes: ["admin"] as const,
 });

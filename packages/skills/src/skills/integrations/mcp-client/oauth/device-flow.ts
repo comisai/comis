@@ -215,15 +215,17 @@ export async function runDeviceFlow(deps: RunDeviceFlowDeps): Promise<OAuthLogin
       }
     })();
 
-    // TODO(09-02): remove cast — plan 02 widens OAuthLoginResult to include
-    //   "device_code_pending" + verificationUri + userCode + expiresIn. Until
-    //   then this cast bridges the union gap (planned, not technical debt).
+    // Sync return: device_code_pending lives in OAuthLoginResult.status
+    // (plan 09-02 widened the union). The 3 new optional fields land here;
+    // the agent surfaces verificationUri + userCode to the operator via the
+    // `message` tool. The background polling task (above) drives saveTokens
+    // + onAuthorized on success — that path returns nothing (fire-and-forget).
     return {
       status: "device_code_pending" as const,
       verificationUri: deviceAuth.verificationUri,
       userCode: deviceAuth.userCode,
       expiresIn: deviceAuth.expiresIn,
-    } as unknown as OAuthLoginResult;
+    };
   } catch (err) {
     // No throw escapes — log the Error OBJECT so the Pino serializer can
     // emit type/message/stack/custom-fields together (matches login.ts:438).

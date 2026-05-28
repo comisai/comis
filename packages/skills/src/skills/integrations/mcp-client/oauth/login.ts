@@ -83,28 +83,41 @@ export interface OAuthLoginLogger {
 export interface OAuthLoginConfig {
   /** Discovery-cascade fallback authorization-server URL. */
   readonly authorizationEndpoint?: string;
+  /** RFC 8628 device-authorization endpoint operator override. Consumed by
+   *  `runDeviceFlow`'s discovery cascade when the resolved metadata lacks
+   *  `device_authorization_endpoint` (Higgsfield reality 2026-05-28). Wins
+   *  over the auto-resolved endpoint when both are present. See
+   *  `McpServerEntrySchema.oauth.deviceAuthorizationEndpoint` (plan 09-01). */
+  readonly deviceAuthorizationEndpoint?: string;
   /** Requested OAuth scope (threaded into clientMetadata + DCR + auth()). */
   readonly scope?: string;
   /** Stripe Connect connected-account id. */
   readonly stripeAccount?: string;
 }
 
-/** The login orchestration result returned to the RPC handler. */
+/** The login orchestration result returned to the RPC handler.
+ *  `authorized` — code exchanged + tokens persisted (caller reconnects).
+ *  `headless_hint` — PKCE: forward the port + open `authUrl` yourself.
+ *  `device_code_pending` — RFC 8628: surface `verificationUri` + `userCode`
+ *    to operator; daemon polls in background + fires `onAuthorized` on success.
+ *  `failed` — discovery / callback / exchange / device-flow polling failed. */
 export interface OAuthLoginResult {
-  /**
-   * `authorized` — code exchanged + tokens persisted (the caller reconnects).
-   * `headless_hint` — no local browser daemon-side; forward the port + open the
-   * URL (`authUrl`) yourself. `failed` — discovery / callback / exchange failed.
-   */
-  readonly status: "authorized" | "headless_hint" | "failed";
+  readonly status: "authorized" | "headless_hint" | "device_code_pending" | "failed";
   /** Present on `headless_hint`: `ssh -L <port>:localhost:<port> <vps>`. */
   readonly portForwardHint?: string;
-  /**
-   * The authorization URL for the CLI to open. Present on
-   * `headless_hint` and on the non-headless path (where the daemon already called
-   * the injected `openUrl`, the CLI may still surface it).
-   */
+  /** Authorization URL for the CLI to open. Present on `headless_hint` and the
+   *  non-headless path. Pitfall 8: distinct from `verificationUri` (PKCE
+   *  loopback-redirect URL vs. RFC 8628 user-typed URL — do NOT collapse). */
   readonly authUrl?: string;
+  /** RFC 8628 §3.3.1 operator-facing verification URL. Present on
+   *  `device_code_pending`. Non-secret. */
+  readonly verificationUri?: string;
+  /** RFC 8628 §3.2 short human-readable code (e.g. `"WDJB-MJHT"`). Present on
+   *  `device_code_pending`. Non-secret; surfaced via agent's `message` tool. */
+  readonly userCode?: string;
+  /** RFC 8628 §3.2 seconds until `device_code` expires. Present on
+   *  `device_code_pending`. Informational; deadline enforced in `runDeviceFlow`. */
+  readonly expiresIn?: number;
 }
 
 /** Injected dependencies for {@link runOauthLogin} (all side effects are DI'd). */
