@@ -592,8 +592,7 @@ export async function buildAndStartChannelManager(
     }
   }
 
-  // activityRenderers + coordinatorFactory were built BEFORE the manager (above);
-  // return the map for the registry's ChannelsResult (activity counters scrape).
+  // activityRenderers + coordinatorFactory built BEFORE the manager (above); map returned for the registry's ChannelsResult activity-counters scrape.
   return { channelManager, lifecycleReactors, commandQueue, activityRenderers };
 }
 // Re-export Attachment + ChannelPluginPort (silences lint; public-surface boundary).
