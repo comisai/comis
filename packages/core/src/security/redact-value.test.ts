@@ -283,6 +283,39 @@ describe("redactValue — SEC-02 absolute path COMPACTION (not stripping)", () =
   });
 });
 
+// ---------------------------------------------------------------------------
+// quick-260528-nsv (Bug 1): URL host NOT stripped by absolute-path matcher.
+//
+// The live IBM-info turn (instance d6d2a72b, trace 6f93aef3) rendered
+// `"fetching https:/quote/IBM/"` — `compactPaths`'s ABS_PATH_RE greedily
+// matched the `//finance.yahoo.com/quote/IBM/` span inside the URL as a
+// 4-segment absolute path and compacted to its last 2 segments, eating one
+// of the scheme's two slashes. URLs are public info per SPEC §8.4
+// (tavily.com/search renders verbatim); SEC-02 path compaction is for
+// filesystem paths only.
+//
+// RED contract: the patch adds a `(?<!:)` negative-lookbehind on the leading
+// `/` so URL scheme separators (`://`) survive. The two assertions below
+// (scheme starts with `https://` and no `absolute_path` reason recorded) FAIL
+// pre-patch and PASS post-patch. Asserting only the scheme survival keeps the
+// test decoupled from whether HOSTNAME_RE later masks `finance.yahoo.com` —
+// that's a separate, unrelated network-identifier mask that runs AFTER
+// compactPaths; the Bug 1 signature is the lost scheme slash.
+// ---------------------------------------------------------------------------
+
+describe("redactValue — quick-260528-nsv: URL host not stripped by absolute-path matcher", () => {
+  it("preserves the https:// scheme separator on a public URL (no compactPaths false positive)", () => {
+    const out = redactValue({ url: "https://finance.yahoo.com/quote/IBM/" });
+    const value = out.value as Record<string, unknown>;
+    // The scheme's two slashes MUST survive. Pre-patch returns "https:/quote/IBM/"
+    // (one slash, host eaten by ABS_PATH_RE compaction).
+    expect(String(value.url).startsWith("https://")).toBe(true);
+    // And no absolute_path reason is recorded for a URL input — that reason
+    // is for filesystem-path compaction only (SEC-02), not URL hosts.
+    expect(out.redactionsApplied.find((r) => r.reason === "absolute_path")).toBeUndefined();
+  });
+});
+
 describe("redactValue — SEC-02 network identifiers", () => {
   it("masks an IPv4 address", () => {
     const out = redactValue({ host: "connect to 10.0.0.5 please" });

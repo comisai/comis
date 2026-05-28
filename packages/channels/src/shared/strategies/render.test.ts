@@ -309,6 +309,74 @@ describe("renderFrameText", () => {
     expect(renderFrameText(completedFrame, ASCII_MARKERS)).toBe("doing the thing");
   });
 
+  // --- Quick fix 260528-nsv — Bug 2 (running marker symmetry on kept end events) ---
+  //
+  // Side effect of quick-260528-mch's coalesce.ts Step 1.5 prefer-end dedup:
+  // slow-completed events (>=1500ms, exempt from isDroppableFastSuccess)
+  // survive Step 1 with BOTH start and end events kept; Step 1.5 then keeps
+  // the END (whose defaultLabel has no 🔧 baked in — Phase 78-02 bakes the
+  // running marker on START events only). Result: the live IBM web_fetch
+  // (1676ms) rendered as "fetching <host>/<path>" with NO running glyph —
+  // asymmetric with sub-1500ms calls whose marked START survives Step 1 and
+  // shows 🔧. SPEC §3.1 / §3.11: every in-flight tool step shows the running
+  // glyph regardless of duration.
+  //
+  // Fix: eventLabel re-derives the running marker for non-failed events whose
+  // defaultLabel arrives bare (idempotent on already-marked start events;
+  // failed events still take the ❌ branch — Bug C from mch unchanged;
+  // kind:"subagent" events keep their projection-baked 🤖 marker verbatim).
+
+  it("prefixes 🔧 on a kept slow-completed end event with bare defaultLabel (Bug 2 — quick-260528-nsv asymmetric running marker)", () => {
+    const slowCompletedFrame = frame({
+      visibleEvents: [
+        event({
+          kind: "tool",
+          phase: "end",
+          status: "completed",
+          defaultLabel: "fetching finance.yahoo.com/IBM",
+          durationMs: 1676,
+        }),
+      ],
+    });
+    // Default-theme fallback (no markers arg) — the running glyph must be
+    // re-derived via the DEFAULT_RUNNING_MARKER fallback.
+    expect(renderFrameText(slowCompletedFrame)).toBe("🔧 fetching finance.yahoo.com/IBM");
+    // Explicitly-supplied default markers — byte-identical output.
+    expect(renderFrameText(slowCompletedFrame, DEFAULT_THEME_MARKERS)).toBe(
+      "🔧 fetching finance.yahoo.com/IBM",
+    );
+    // Ascii theme — running glyph becomes the bracketed [..] tag, no emoji.
+    expect(renderFrameText(slowCompletedFrame, ASCII_MARKERS)).toBe(
+      "[..] fetching finance.yahoo.com/IBM",
+    );
+  });
+
+  it("does NOT double-prepend the running marker on a start event whose defaultLabel already carries 🔧 (idempotency)", () => {
+    const startFrame = frame({
+      visibleEvents: [
+        event({
+          kind: "tool",
+          phase: "start",
+          status: "running",
+          defaultLabel: "🔧 searching the web for IBM stock price",
+        }),
+      ],
+    });
+    // Default-theme fallback — already-marked start event passes through
+    // unchanged (no leading "🔧 🔧 ").
+    expect(renderFrameText(startFrame)).toBe("🔧 searching the web for IBM stock price");
+    expect(renderFrameText(startFrame, DEFAULT_THEME_MARKERS)).toBe(
+      "🔧 searching the web for IBM stock price",
+    );
+    // Ascii theme: the baked-in 🔧 is NOT the ascii running marker ([..]),
+    // so the prefix check (`startsWith("[..] ")`) is false and [..] is
+    // prepended. Pinning this prevents an over-eager "strip baked emoji"
+    // fix — the baked emoji is data; the theme marker is presentation.
+    expect(renderFrameText(startFrame, ASCII_MARKERS)).toBe(
+      "[..] 🔧 searching the web for IBM stock price",
+    );
+  });
+
   // --- Phase 78 WS-F: elapsed-time fallback (SPEC-§8.5 second half) --------
   //
   // When `frame.planSnapshot` is undefined AND the strategy supplies an
