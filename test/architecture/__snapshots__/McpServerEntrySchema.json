@@ -143,6 +143,10 @@
           "type": "string",
           "format": "uri"
         },
+        "deviceAuthorizationEndpoint": {
+          "type": "string",
+          "format": "uri"
+        },
         "scope": {
           "type": "string"
         },
