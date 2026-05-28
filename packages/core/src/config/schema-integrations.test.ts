@@ -478,6 +478,37 @@ describe("McpServerEntrySchema — OAuth opt-in fields", () => {
       }),
     ).toThrow();
   });
+
+  // DEVAUTH-06 — operator escape hatch for RFC 8628 device-flow when the
+  // device-authorization server has no RFC 8414 metadata (Higgsfield reality
+  // 2026-05-28: fnf-device-auth.higgsfield.ai returns 404 on every probed
+  // well-known path). Sibling of authorizationEndpoint; consumed by
+  // runDeviceFlow's discovery cascade in plan 09-02.
+  it("McpServerEntrySchema oauth strictObject accepts deviceAuthorizationEndpoint URL field", () => {
+    const result = McpServerEntrySchema.parse({
+      name: "higgsfield",
+      url: "https://mcp.higgsfield.ai/mcp",
+      transport: "http",
+      auth: "oauth",
+      oauth: {
+        deviceAuthorizationEndpoint: "https://fnf-device-auth.higgsfield.ai/device",
+      },
+    });
+    expect(result.oauth?.deviceAuthorizationEndpoint).toBe(
+      "https://fnf-device-auth.higgsfield.ai/device",
+    );
+  });
+
+  it("McpServerEntrySchema oauth strictObject rejects malformed deviceAuthorizationEndpoint", () => {
+    const parsed = McpServerEntrySchema.safeParse({
+      name: "higgsfield",
+      url: "https://mcp.higgsfield.ai/mcp",
+      transport: "http",
+      auth: "oauth",
+      oauth: { deviceAuthorizationEndpoint: "not-a-url" },
+    });
+    expect(parsed.success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
