@@ -84,6 +84,10 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
   let latestText = "";
   /** Pending delete timer (deliveredAt wait); cancelled on shutdown paths. */
   let pendingDelete: TimerHandle | undefined;
+  /** WS-F Phase 78 / SPEC-§8.5: first-apply clock snapshot; feeds `elapsedMs`
+   *  into renderFrameText so the "(running N s)" fallback lights up when no
+   *  SEP plan is active. Undefined → no clock → graceful-degrade (skipped). */
+  let startedAtMs: number | undefined;
 
   function clearPendingEdit(): void {
     if (pendingEdit && !pendingEdit.cancelled) pendingEdit.cancel();
@@ -122,7 +126,13 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
     canDelete: true,
 
     async apply(frame: ActivityRenderFrame): Promise<Result<void, ActivityRenderError>> {
-      latestText = renderFrameText(frame, markers);
+      // WS-F: capture startedAtMs once per turn (per-instance) + compute
+      // elapsedMs at every apply() so the live "(running N s)" fallback rides
+      // into renderFrameText. No clock injected → graceful-degrade (skipped).
+      if (startedAtMs === undefined && clock !== undefined) startedAtMs = clock.now();
+      const elapsedMs =
+        clock !== undefined && startedAtMs !== undefined ? clock.now() - startedAtMs : undefined;
+      latestText = renderFrameText(frame, markers, elapsedMs);
 
       // First frame posts the placeholder; later frames only debounce an edit.
       if (messageId === undefined) {

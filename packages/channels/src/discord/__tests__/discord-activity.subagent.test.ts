@@ -51,9 +51,10 @@ function subagentFrame(label: string): ActivityRenderFrame {
 describe("Discord subagent parent line + thread-expand affordance (APV-03)", () => {
   it("renders the subagent parent line (text carries the agentId) and requests a thread", async () => {
     const timer = createFakeTimers();
-    const clock = createFakeClock(0);
     const fake = createFakeDiscordAdapter();
-    const r = createDiscordActivityRenderer(fake, "chat-1", { timer, clock, signCallbackData: sign });
+    // Phase 78 (plan §530, option ii): drop clock so the §8.5 elapsed fallback
+    // is skipped — the test asserts send.text byte-stably.
+    const r = createDiscordActivityRenderer(fake, "chat-1", { timer, signCallbackData: sign });
 
     await r.apply(subagentFrame("🤖 researcher: 3 steps"));
 

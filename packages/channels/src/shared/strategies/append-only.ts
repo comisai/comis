@@ -25,12 +25,17 @@ import type {
   TurnOutcome,
   RichButton,
   ActivityStatusMarkers,
+  ClockPort,
 } from "@comis/core";
 import type { ActivityRenderActions } from "./actions.js";
 import { renderFrameText, failureLabel, appendPrompt } from "./render.js";
 
 export interface AppendOnlyDeps {
   actions: ActivityRenderActions;
+  /** WS-F Phase 78 / SPEC-§8.5 — optional clock for "(running N s)" fallback.
+   *  Read-only display arithmetic (no scheduling, no I/O); omitted →
+   *  graceful-degrade. Pitfall 5 was about delete-sequencing TimerPort. */
+  clock?: ClockPort;
   /**
    * Build the plain-text approval prompt for a frame's visible events (APV-10,
    * §6.4.6). Wired by a button-less channel (iMessage) as a closure over
@@ -53,9 +58,12 @@ export interface AppendOnlyDeps {
 }
 
 export function createAppendOnlyRenderer(deps: AppendOnlyDeps): ChannelActivityRenderer {
-  const { actions, buildPrompt, buildButtons, markers } = deps;
+  const { actions, clock, buildPrompt, buildButtons, markers } = deps;
 
   let opened = false;
+  /** WS-F: first-apply clock snapshot. AppendOnly posts ONCE so the §8.5
+   *  fallback fires only on the FIRST frame — exactly the pre-SEP window. */
+  let startedAtMs: number | undefined;
 
   return {
     strategy: "AppendOnly",
@@ -64,7 +72,13 @@ export function createAppendOnlyRenderer(deps: AppendOnlyDeps): ChannelActivityR
 
     async apply(frame: ActivityRenderFrame): Promise<Result<void, ActivityRenderError>> {
       if (opened) return ok(undefined);
-      const text = appendPrompt(renderFrameText(frame, markers), buildPrompt?.(frame.visibleEvents));
+      if (startedAtMs === undefined && clock !== undefined) startedAtMs = clock.now();
+      const elapsedMs =
+        clock !== undefined && startedAtMs !== undefined ? clock.now() - startedAtMs : undefined;
+      const text = appendPrompt(
+        renderFrameText(frame, markers, elapsedMs),
+        buildPrompt?.(frame.visibleEvents),
+      );
       if (text.length === 0) return ok(undefined);
       // A button-capable channel (LINE) carries the signed Quick-Reply chips; a
       // non-approval frame yields `[]` → omit `buttons` so the send stays

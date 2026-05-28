@@ -96,9 +96,10 @@ describe("Signal plain-text approval prompt (no buttons, shortId when ambiguous 
 
   it("posts the prompt as TEXT only — the send carries no button surface (§6.4.6)", async () => {
     const timer = createFakeTimers();
-    const clock = createFakeClock(0);
     const fake = createFakeSignalAdapter();
-    const r = createSignalActivityRenderer(fake, "chat-1", { timer, clock });
+    // Phase 78 (plan §530, option ii): drop clock so the §8.5 elapsed fallback
+    // is skipped — the test asserts send.text byte-stably.
+    const r = createSignalActivityRenderer(fake, "chat-1", { timer });
 
     await r.apply(frame([approvalEvent("a-1")]));
 
@@ -114,9 +115,10 @@ describe("Signal plain-text approval prompt (no buttons, shortId when ambiguous 
 
   it("a non-approval frame appends no prompt (plain message only)", async () => {
     const timer = createFakeTimers();
-    const clock = createFakeClock(0);
     const fake = createFakeSignalAdapter();
-    const r = createSignalActivityRenderer(fake, "chat-1", { timer, clock });
+    // Phase 78 (plan §530, option ii): drop clock so the §8.5 elapsed fallback
+    // is skipped — the test asserts send.text byte-stably.
+    const r = createSignalActivityRenderer(fake, "chat-1", { timer });
 
     const plain: ActivityRenderFrame = {
       frameSeq: 0,

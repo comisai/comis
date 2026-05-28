@@ -264,9 +264,10 @@ describe("createDiscordActivityRenderer (EditPlace wiring + deliveredAt-gated de
 describe("Discord S7 subagent thread-expand affordance + signed approval UI (Phase 73)", () => {
   it("renders the parent line AND records a thread-create egress for a subagent placeholder", async () => {
     const timer = createFakeTimers();
-    const clock = createFakeClock(0);
     const fake = createFakeDiscordAdapter();
-    const r = createDiscordActivityRenderer(fake, "chat-1", { timer, clock });
+    // Phase 78: drop the clock dep so the §8.5 elapsed fallback is skipped and
+    // `send.text === "🤖 subagent: 3 steps"` byte-stably (option ii — plan §530).
+    const r = createDiscordActivityRenderer(fake, "chat-1", { timer });
 
     await r.apply(makeFrame(0, "🤖 subagent: 3 steps"));
 
@@ -321,7 +322,16 @@ async function runScenario(
   const timer = createFakeTimers();
   const clock = createFakeClock(0);
   const fake = createFakeDiscordAdapter();
-  const r = createDiscordActivityRenderer(fake, "chat-1", { timer, clock });
+  // Phase 78 reconciliation (option ii — plan §530): the golden fixtures were
+  // pinned BEFORE renderFrameText emitted the §8.5 "(running N s)" elapsed
+  // fallback. Omitting `clock` from the wrapper deps skips the strategy's
+  // first-apply startedAtMs capture (elapsedMs stays undefined → fallback
+  // skipped), keeping every committed fixture byte-stable. The strategy-level
+  // tests in edit-place.test.ts DO inject a clock and explicitly assert the
+  // (running N s) text — that is the live-production contract for the elapsed
+  // wiring; these wrapper fixtures check the placeholder/edit/delete state
+  // machine which is orthogonal to the elapsed suffix.
+  const r = createDiscordActivityRenderer(fake, "chat-1", { timer });
 
   for (const f of frames) {
     await r.apply(f);

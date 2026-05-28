@@ -280,7 +280,18 @@ async function runScenario(drive: ScenarioDriver): Promise<FakeWhatsAppCallLog> 
   const fake = createFakeWhatsAppAdapter(CHANNEL_ID);
   const timer = createFakeTimers();
   const clock = createFakeClock(0);
-  const renderer = createWhatsAppActivityRenderer(fake, CHANNEL_ID, { timer, clock });
+  // Phase 78 reconciliation (option ii — plan §530): the golden fixtures were
+  // pinned BEFORE renderFrameText emitted the §8.5 "(running N s)" elapsed
+  // fallback. Omitting `clock` from the wrapper deps here skips the strategy's
+  // first-apply startedAtMs capture (elapsedMs stays undefined → fallback
+  // skipped), keeping every committed fixture byte-stable. The strategy-level
+  // tests in edit-place.test.ts DO inject a clock and explicitly assert the
+  // (running N s) text — that is the live-production contract for the elapsed
+  // wiring; the fixture-level tests here check the wrapper-level state machine
+  // (placeholder/edit/delete sequencing) which is orthogonal to the elapsed
+  // suffix. `clock` is still threaded into `drive(...)` so individual `it(...)`
+  // scenarios that need it (none currently) can request it via the ctx arg.
+  const renderer = createWhatsAppActivityRenderer(fake, CHANNEL_ID, { timer });
   await drive(renderer, { timer, clock });
   return { calls: fake.recorded.calls };
 }

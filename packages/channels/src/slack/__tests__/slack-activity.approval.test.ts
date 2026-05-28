@@ -96,9 +96,10 @@ describe("Slack Block Kit approval actions (signed callback value — APV-02)", 
 
   it("renders the approval prompt text alongside the actions", async () => {
     const timer = createFakeTimers();
-    const clock = createFakeClock(0);
     const fake = createFakeSlackAdapter();
-    const r = createSlackActivityRenderer(fake, "chat-1", { timer, clock, signCallbackData: sign });
+    // Phase 78 (plan §530, option ii): drop clock so the §8.5 elapsed fallback
+    // is skipped — the test asserts send.text byte-stably.
+    const r = createSlackActivityRenderer(fake, "chat-1", { timer, signCallbackData: sign });
 
     await r.apply(approvalFrame());
 
