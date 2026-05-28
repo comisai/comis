@@ -56,9 +56,7 @@ const PROMPT_EXTRACTION_PATTERNS_LOCAL: ReadonlyArray<{ name: string; regex: Reg
  * 3. System prompt extraction attempts
  *
  * Critical findings (severity: "critical") are blocked and redacted in the
- * `sanitized` field using `[REDACTED:{pattern_name}]` format. Warning-level
- * findings (bearer_token, prompt_extraction) remain detect-only -- they are
- * reported in `findings` but the `sanitized` text is left unchanged.
+ * `sanitized` field using `[REDACTED:{pattern_name}]` format.
  *
  * Uses Result<T,E> pattern.
  */
