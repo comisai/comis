@@ -321,20 +321,20 @@ export interface SpawnParams {
   /** Tool group names for sub-agent tool filtering. */
   toolGroups?: string[];
   /** Optional list of tool names that must be reachable by the sub-agent.
-   *  Validated at spawn time against the daemon-provided reachableToolNames set (SUBA-01).
+   *  Validated at spawn time against the daemon-provided reachableToolNames set.
    *  If any tool is unreachable, spawn() throws RequiredToolsUnreachableError
    *  before creating the runId or session.
    *  On both the immediate and queued spawn paths, the gate fires before any runId is created. */
   requiredTools?: string[];
   /**
-   * Effective reachable tool set computed by the daemon caller (SUBA-01 gate parity).
+   * Effective reachable tool set computed by the daemon caller (spawn-gate parity).
    *
    * The daemon's session-mutate.ts computes this set by expanding the effective tool groups
    * (config default already applied) through both SUB_AGENT_TOOL_PROFILES and TOOL_GROUPS —
    * the same logic as setup-tools.ts:588-607. Passing this set here gives the spawn gate
    * true parity with the runtime ceiling, avoiding both:
-   *   (a) false-passes: a tool that looks valid but is stripped at runtime (WR-01)
-   *   (b) false-denies: a tool reachable via TOOL_GROUPS but not in profiles (WR-02)
+   *   (a) false-passes: a tool that looks valid but is stripped at runtime
+   *   (b) false-denies: a tool reachable via TOOL_GROUPS but not in profiles
    *
    * When absent (e.g. older callers), the gate fails-open to runtime enforcement.
    * The daemon path MUST provide this field for gate correctness.
@@ -366,7 +366,7 @@ export interface SpawnParams {
 }
 
 // ---------------------------------------------------------------------------
-// SUBA-01: Spawn-time required_tools gate helpers
+// Spawn-time required_tools gate helpers
 // ---------------------------------------------------------------------------
 
 /**
@@ -385,7 +385,7 @@ function classifyRequiredTool(
     };
   }
   const broader = toolReachableGroups(toolName).filter((p) => !activeGroups.includes(p));
-  // WR-05: when no profile contains the tool, suggest only 'full' — 'supervisor' does not
+  // When no profile contains the tool, suggest only 'full' — 'supervisor' does not
   // contain generic tools like web_fetch/browser/sessions_spawn, so it would fail again.
   const suggestion = broader.length > 0 ? broader.join("' | '") : "full";
   return {
@@ -405,7 +405,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
   const activePromises = new Set<Promise<void>>();
 
   // ---------------------------------------------------------------------
-  // In-flight spawn dedup (Task wkj):
+  // In-flight spawn dedup:
   //   Maps `(callerSessionKey + agentId + task)` triples to in-flight runIds.
   //   Populated when a non-graph session-spawn starts (running OR queued)
   //   and removed at terminal status transitions. A spawn() call whose
@@ -762,7 +762,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       );
     }
 
-    // In-flight dedup check (Task wkj). A duplicate same-caller-same-task spawn
+    // In-flight dedup check. A duplicate same-caller-same-task spawn
     // returns the existing runId rather than starting a parallel run. Placed
     // AFTER the depth throw (depth violations must always reject) but BEFORE
     // the children-limit / queue / allowlist logic — a deduped spawn does NOT
@@ -793,7 +793,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
       }
     }
 
-    // SUBA-01: Spawn-time required_tools gate.
+    // Spawn-time required_tools gate.
     // Validates that each declared required tool is reachable by the sub-agent
     // BEFORE creating a runId or session — fires on BOTH the immediate and queued paths.
     //
@@ -813,7 +813,7 @@ export function createSubAgentRunner(deps: SubAgentRunnerDeps) {
         if (SUB_AGENT_TOOL_DENYLIST.has(tool)) {
           unreachable.push(classifyRequiredTool(tool, effectiveGroups));
         } else if (reachableSet !== undefined && !reachableSet.has(tool)) {
-          // reachableSet is provided → use it for membership check (WR-01/02 parity)
+          // reachableSet is provided → use it for membership check (profile/group parity)
           unreachable.push(classifyRequiredTool(tool, effectiveGroups));
           // reachableSet is undefined → fail-open (runtime boundary still enforces)
         }

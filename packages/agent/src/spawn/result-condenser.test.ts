@@ -375,10 +375,10 @@ describe("ResultCondenser", () => {
   });
 
   // -------------------------------------------------------------------------
-  // R4 relay scrub tests
+  // relay scrub tests
   // -------------------------------------------------------------------------
 
-  describe("R4 relay scrub", () => {
+  describe("relay scrub", () => {
     it("scrubs token from fullResult before persistFullResult receives it", async () => {
       const deps = createTestDeps({ maxResultTokens: 1000 });
       const condenser = createResultCondenser(deps);
@@ -411,11 +411,11 @@ describe("ResultCondenser", () => {
   });
 
   // -------------------------------------------------------------------------
-  // R8 secure handoff advisory tests (Fix-b)
+  // secure handoff advisory tests
   // -------------------------------------------------------------------------
 
-  describe("R8 secure handoff advisory", () => {
-    it("appends secure-store advisory when fullResult contained a token (after redaction, fix-b)", async () => {
+  describe("secure handoff advisory", () => {
+    it("appends secure-store advisory when fullResult contained a token (after redaction)", async () => {
       const deps = createTestDeps({ maxResultTokens: 1000 });
       const condenser = createResultCondenser(deps);
 
@@ -429,9 +429,9 @@ describe("ResultCondenser", () => {
       const resultText = JSON.stringify(result.result);
       expect(resultText).not.toContain(rawToken);
 
-      // A generic secure-store advisory must be present in the summary
-      // (Fix-b: server name is NOT available at condenseInternal — generic advisory only;
-      //  threading serverName requires invasive cross-package CondenseParams API change, deferred per R8-handoff)
+      // A generic secure-store advisory must be present in the summary.
+      // Server name is NOT available at condenseInternal — generic advisory only;
+      // threading serverName requires invasive cross-package CondenseParams API change.
       expect(result.result.summary).toContain("stored in the secure credential store");
     });
 

@@ -83,7 +83,7 @@ export function resetIdleActivity(state: McpClientManagerState, name: string): v
  * `originalTtl` is the configured idleTtlMs and is threaded UNCHANGED
  * through every reschedule — the eviction always fires at last-activity +
  * idleTtlMs. `remainingMs` is only the timer delay for the NEXT fire
- * (defaults to `originalTtl` on the first call). Pre-fix the reschedule passed
+ * (defaults to `originalTtl` on the first call). A previous version passed
  * `ttl - idleFor` as the new `ttl`, which shrank the comparison threshold on
  * every activity bounce — bursty servers drifted toward premature eviction
  * (and ever-shorter poll intervals).

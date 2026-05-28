@@ -260,7 +260,7 @@ describe("MCP RPC Handlers", () => {
     it("passes headers to McpServerConfig", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("authed", [])));
 
-      // Use a ${VAR} reference form — the credential firewall (CRED-01) passes
+      // Use a ${VAR} reference form — the credential firewall passes
       // through already-substituted ${VAR} refs without touching them.
       const handlers = createMcpHandlers({ mcpClientManager: manager, logger: makeLogger() });
       await handlers["mcp.connect"]({
@@ -287,22 +287,21 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-01: global integrations.mcp.keepaliveIntervalMs override must reach
+  // Global integrations.mcp.keepaliveIntervalMs override must reach
   // the per-server McpServerConfig as the middle tier in the resolution chain:
   //   per-server params ?? per-server persisted ?? global config ?? (transport default in ticker)
   //
-  // RED tests (WR-01):
-  //   RED-KA-GBL-01: global keepaliveIntervalMs is forwarded to manager.connect
-  //                  when neither params nor persisted entry supply a per-server value
-  //   RED-KA-GBL-02 (invariant guard): per-server param wins over global
-  //   RED-KA-GBL-03 (invariant guard): per-server persisted entry wins over global when
-  //                  no caller param is supplied
+  // Cases:
+  //   KA-GBL-01: global keepaliveIntervalMs is forwarded to manager.connect
+  //              when neither params nor persisted entry supply a per-server value
+  //   KA-GBL-02 (invariant guard): per-server param wins over global
+  //   KA-GBL-03 (invariant guard): per-server persisted entry wins over global when
+  //              no caller param is supplied
   // -------------------------------------------------------------------------
-  describe("WR-01: mcp.connect global keepaliveIntervalMs override", () => {
-    it("RED-KA-GBL-01: forwards global integrations.mcp.keepaliveIntervalMs to McpServerConfig when no per-server override", async () => {
-      // RED: current code resolves `params.keepaliveIntervalMs ?? persistedEntry?.keepaliveIntervalMs`
-      // — the global tier is absent. This test FAILS on pre-fix code because manager.connect
-      // receives keepaliveIntervalMs: undefined, not 60_000.
+  describe("mcp.connect global keepaliveIntervalMs override", () => {
+    it("KA-GBL-01: forwards global integrations.mcp.keepaliveIntervalMs to McpServerConfig when no per-server override", async () => {
+      // When code resolves only `params.keepaliveIntervalMs ?? persistedEntry?.keepaliveIntervalMs`
+      // — the global tier is absent — manager.connect receives keepaliveIntervalMs: undefined, not 60_000.
       (manager.connect as any).mockResolvedValue(ok(makeConnection("ka-global", [])));
       const handlers = createMcpHandlers({
         mcpClientManager: manager,
@@ -326,15 +325,14 @@ describe("MCP RPC Handlers", () => {
         // no keepaliveIntervalMs in params
       });
 
-      // GREEN: resolvedKeepaliveIntervalMs = undefined ?? undefined ?? 60_000 = 60_000
+      // resolvedKeepaliveIntervalMs = undefined ?? undefined ?? 60_000 = 60_000
       expect(manager.connect).toHaveBeenCalledWith(
         expect.objectContaining({ keepaliveIntervalMs: 60_000 }),
       );
     });
 
-    it("RED-KA-GBL-02 (invariant guard): per-server param keeps priority over global keepaliveIntervalMs", async () => {
+    it("KA-GBL-02 (invariant guard): per-server param keeps priority over global keepaliveIntervalMs", async () => {
       // Invariant: per-server param must beat the global tier.
-      // Already-passing test — must stay green after the WR-01 fix.
       (manager.connect as any).mockResolvedValue(ok(makeConnection("ka-param-wins", [])));
       const handlers = createMcpHandlers({
         mcpClientManager: manager,
@@ -364,9 +362,8 @@ describe("MCP RPC Handlers", () => {
       );
     });
 
-    it("RED-KA-GBL-03 (invariant guard): per-server persisted entry wins over global keepaliveIntervalMs", async () => {
+    it("KA-GBL-03 (invariant guard): per-server persisted entry wins over global keepaliveIntervalMs", async () => {
       // Invariant: persisted per-server entry must beat the global tier.
-      // Already-passing test — must stay green after the WR-01 fix.
       (manager.connect as any).mockResolvedValue(ok(makeConnection("ka-persisted-wins", [])));
       const handlers = createMcpHandlers({
         mcpClientManager: manager,
@@ -782,7 +779,7 @@ describe("MCP RPC Handlers", () => {
     it("passes headers to temporary manager", async () => {
       mockTempConnect.mockResolvedValueOnce(ok(makeConnection("authed-test", [])));
 
-      // Use a ${VAR} reference form — the credential firewall (CRED-01) passes
+      // Use a ${VAR} reference form — the credential firewall passes
       // through already-substituted ${VAR} refs without touching them.
       const handlers = createMcpHandlers({ mcpClientManager: createMockManager(), logger: makeLogger() });
       await handlers["mcp.test"]({
@@ -800,9 +797,7 @@ describe("MCP RPC Handlers", () => {
     });
 
     // -------------------------------------------------------------------------
-    // mcp.test must apply the same pre-spawn safety controls as mcp.connect.
-    // Pre-fix the handler built McpServerConfig and called
-    // tempManager.connect(config) WITHOUT:
+    // mcp.test must apply the same pre-spawn safety controls as mcp.connect:
     //   - plaintext-secret guard (raw tokens could be passed in env and
     //     would reach the child process)
     //   - findUnresolvedEnvRefs validation (test would fail at spawn-time
@@ -810,11 +805,11 @@ describe("MCP RPC Handlers", () => {
     //   - safetyAllowedEnvKeys plumb-through (operator-extension keys
     //     are dropped for the test connect)
     //   - osvCheckEnabled / osvCacheTtlMs plumb-through (test connects
-    //     used hard-coded defaults, ignoring operator overrides)
-    //   - rlimits plumb-through (test spawns had no resource caps)
+    //     would use hard-coded defaults, ignoring operator overrides)
+    //   - rlimits plumb-through (test spawns would have no resource caps)
     //
     // mcp.test IS a pre-spawn surface (it actually spawns the child to
-    // probe it). The fix mirrors every guard from mcp.connect onto mcp.test.
+    // probe it). Every guard from mcp.connect must be mirrored onto mcp.test.
     // -------------------------------------------------------------------------
     describe("mcp.test safety parity", () => {
       it("rejects ghp_ plaintext secret with [plaintext_secret_in_env] same as mcp.connect", async () => {
@@ -1161,21 +1156,22 @@ describe("MCP RPC Handlers", () => {
   // These tests prove the wiring is correct.
   // -------------------------------------------------------------------------
 
-  // makePersistDeps used to return two DIFFERENT object literals for
-  // `persistDeps.container` and the outer `container` field. In production
-  // wiring (rpc-dispatch.ts:248-267) both refer to the SAME `deps.container`
-  // reference — a bug where the in-memory refresh wrote to the wrong
-  // container would pass tests but fail in production. The fix shares ONE
-  // container so the test fixture matches production semantics.
+  // makePersistDeps must return ONE shared object for `persistDeps.container`
+  // and the outer `container` field. In production wiring
+  // (rpc-dispatch.ts:248-267) both refer to the SAME `deps.container`
+  // reference — using two separate object literals would let a bug where the
+  // in-memory refresh writes to the wrong container pass tests but fail in
+  // production. Sharing one container keeps the fixture aligned with
+  // production semantics.
   function makePersistDeps(servers: Array<{ name: string; transport: string; command?: string; args?: string[]; enabled?: boolean }> = []) {
     const container = {
       config: { integrations: { mcp: { servers } } },
     } as any;
     return {
       persistDeps: {
-        // Share the SAME container reference — pre-fix `persistDeps.container`
-        // was a separate object literal, causing the in-memory refresh to
-        // write to a container that the outer assertion code never observed.
+        // Share the SAME container reference — separate object literals would
+        // cause the in-memory refresh to write to a container that the outer
+        // assertion code never observed.
         container: Object.assign(container, { eventBus: { emit: vi.fn() } }),
         configPaths: ["/tmp/test-config.yaml"],
         defaultConfigPaths: ["/tmp/default-config.yaml"],
@@ -1481,30 +1477,31 @@ describe("MCP RPC Handlers", () => {
   // rlimits accepted on mcp.connect AND persisted to the McpServerEntry, then
   // applied to the spawn-time wrap on this and subsequent connects.
   //
-  // Pre-fix the handler computed `rlimits: persistedEntry?.rlimits` from an
-  // already-persisted entry, so a fresh `mcp.connect` of a new server
-  // received `rlimits: undefined` (no prlimit wrap). The newEntry built at
-  // mcp-handlers.ts:511-523 did NOT carry rlimits either, so even a
-  // subsequent reconnect saw the same `undefined`. Combined with the
-  // single-writer guard (config.patch on integrations.mcp.servers is blocked),
-  // operators had NO supported path to apply rlimits to a new server via mcp_manage.
+  // Without these tests, the handler could compute `rlimits:
+  // persistedEntry?.rlimits` from an already-persisted entry only, so a fresh
+  // `mcp.connect` of a new server would receive `rlimits: undefined` (no
+  // prlimit wrap). If the newEntry built in mcp-handlers.ts did NOT carry
+  // rlimits either, then even a subsequent reconnect would see the same
+  // `undefined`. Combined with the single-writer guard (config.patch on
+  // integrations.mcp.servers is blocked), operators would have NO supported
+  // path to apply rlimits to a new server via mcp_manage.
   //
-  // Fix: add `rlimits` to McpConnectContract.request, forward to both the
-  // spawn-time McpServerConfig and the persisted McpServerEntry.
+  // Contract: McpConnectContract.request must accept `rlimits` and forward
+  // it to both the spawn-time McpServerConfig and the persisted McpServerEntry.
   // -------------------------------------------------------------------------
   // -------------------------------------------------------------------------
   // In-memory swap preserves sibling integrations subkeys.
   //
-  // Pre-fix the swap `(deps.container.config as ...).integrations = cloned`
-  // overwrote the entire integrations subtree. When the prior in-memory
-  // `container.config.integrations` had sibling subkeys (braveSearch,
-  // media, autoReply), the structuredClone of `integrations ?? {}` preserved
-  // them — so the post-persist value carried them through. BUT the
-  // documented edge case ("`integrations` is undefined") replaced the
+  // A naive swap `(deps.container.config as ...).integrations = cloned` would
+  // overwrite the entire integrations subtree. When the prior in-memory
+  // `container.config.integrations` has sibling subkeys (braveSearch,
+  // media, autoReply), the structuredClone of `integrations ?? {}` preserves
+  // them — so the post-persist value carries them through. BUT the
+  // documented edge case ("`integrations` is undefined") would replace the
   // subtree with an object that had ONLY `mcp` — silently dropping any
   // disk-state braveSearch/media/autoReply until the next daemon reload.
   //
-  // The fix preserves the sibling subkeys by cloning the existing
+  // The swap preserves the sibling subkeys by cloning the existing
   // `integrations` subtree (or starting from `{}` if it was undefined),
   // overwriting ONLY `.mcp.servers` (or assigning the whole .mcp if it
   // was undefined). Test pins this contract: a pre-state containing
@@ -1557,10 +1554,9 @@ describe("MCP RPC Handlers", () => {
     });
 
     it("does not crash when in-memory integrations is undefined; mcp.servers becomes the only key", async () => {
-      // Edge case (defense-in-depth path). The pre-fix behaviour kept this
-      // working but silently dropped any DISK-state siblings. The new
-      // behaviour matches that — there is nothing in memory to preserve,
-      // so the swap produces an integrations subtree with only `mcp`. Disk
+      // Edge case (defense-in-depth path). With no in-memory integrations to
+      // preserve, the swap produces an integrations subtree with only `mcp` —
+      // disk-state siblings are silently dropped from memory but disk
       // state on the next reload supplies the rest. We just need to
       // confirm the call doesn't crash and produces a usable result.
       (manager.connect as any).mockResolvedValue(ok(makeConnection("ctx7", [])));
@@ -1595,8 +1591,8 @@ describe("MCP RPC Handlers", () => {
   // (idleTtlMs, toolAllowlist, toolBlocklist, enableResources, enablePrompts)
   // into the runtime McpServerConfig handed to manager.connect.
   //
-  // Pre-fix the handler omitted all five from the constructed config, so a
-  // mcp.reconnect-after-disconnect (which routes through this handler) lost
+  // Omitting any of these from the constructed config means a
+  // mcp.reconnect-after-disconnect (which routes through this handler) loses
   // config-file-set idle eviction / tool filtering / resources-prompts
   // opt-outs. mcp.connect accepts no CLI params for these, so the source is
   // the persisted entry.
@@ -1925,16 +1921,14 @@ describe("MCP RPC Handlers", () => {
   // disablePlaintextSecretCheck:true must be persisted to the McpServerEntry
   // so the opt-out survives a daemon restart.
   //
-  // Pre-fix the handler read `userParams.disablePlaintextSecretCheck === true`
-  // at runtime (working correctly at connect-time) but the newEntry built
-  // at mcp-handlers.ts:511-523 did NOT carry the flag to YAML. After a
-  // restart the config was reloaded and the previously-OK env block would
-  // be re-evaluated; any downstream load-time guard or symmetric
-  // mcp.reconnect check would silently re-fire. The schema and the
-  // MutableIntegrations swap both supported the field — only the entry
-  // builder dropped it.
-  //
-  // Fix: persist disablePlaintextSecretCheck:true onto the McpServerEntry.
+  // The handler reads `userParams.disablePlaintextSecretCheck === true`
+  // at runtime (correct at connect-time), and the newEntry built in
+  // mcp-handlers.ts must carry the flag to YAML. Otherwise, after a
+  // restart the config is reloaded, the previously-OK env block is
+  // re-evaluated, and any downstream load-time guard or symmetric
+  // mcp.reconnect check silently re-fires. The schema and the
+  // MutableIntegrations swap both support the field — the entry
+  // builder must as well.
   // -------------------------------------------------------------------------
   describe("mcp.connect disablePlaintextSecretCheck persisted", () => {
     it("persists disablePlaintextSecretCheck:true onto the McpServerEntry", async () => {
@@ -2460,17 +2454,17 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // mcp.connect headers credential firewall (CRED-01, CRED-05, CRED-06)
+  // mcp.connect headers credential firewall
   //
   // The processHeaderCredentials helper (from mcp-header-credential.ts) must
   // be called in BOTH mcp.connect and mcp.test BEFORE McpConnectContract /
-  // McpTestContract parse. The canonical RED case is the Higgsfield incident:
+  // McpTestContract parse. The canonical case is the Higgsfield incident:
   // an inline OAuth bearer in Authorization must be refused with
-  // [use_oauth_login]. These tests FAIL before the GREEN production patch
-  // because the handler does not yet call processHeaderCredentials.
+  // [use_oauth_login]. Tests fail if the handler does not call
+  // processHeaderCredentials.
   // -------------------------------------------------------------------------
 
-  describe("mcp.connect headers credential firewall (CRED-01/05/06)", () => {
+  describe("mcp.connect headers credential firewall", () => {
     // High-entropy Hugging Face token format: hf_ + 45 mixed-case chars (entropy > 3.5).
     // looksLikeSecretValue detects this via the entropy backstop (length ≥ 44, entropy > 3.5).
     const OAUTH_BEARER_CONNECT = "hf_bGkSrzmNqJpVxWyDcAoFuIeHtKlPwCvnMsRgTjUQhZBo";
@@ -2489,9 +2483,8 @@ describe("MCP RPC Handlers", () => {
       mockSecretStoreConnect.set.mockReturnValue({ ok: true });
     });
 
-    // CRED-06: OAuth bearer in Authorization header — must throw [use_oauth_login]
-    // RED: before GREEN patch, handler passes through → no throw.
-    it("CRED-06 — rejects Authorization: Bearer hf_<44+> with [use_oauth_login]", async () => {
+    // OAuth bearer in Authorization header — must throw [use_oauth_login]
+    it("rejects Authorization: Bearer hf_<44+> with [use_oauth_login]", async () => {
       const handlers = createMcpHandlers({
         mcpClientManager: manager,
         logger: makeLogger(),
@@ -2508,9 +2501,8 @@ describe("MCP RPC Handlers", () => {
       expect(manager.connect).not.toHaveBeenCalled();
     });
 
-    // CRED-06: disablePlaintextSecretCheck:true must NOT bypass oauth-bearer refusal.
-    // RED: before GREEN patch, handler passes through → no throw.
-    it("CRED-06 — rejects oauth bearer even with disablePlaintextSecretCheck:true (no opt-out)", async () => {
+    // disablePlaintextSecretCheck:true must NOT bypass oauth-bearer refusal.
+    it("rejects oauth bearer even with disablePlaintextSecretCheck:true (no opt-out)", async () => {
       const handlers = createMcpHandlers({
         mcpClientManager: manager,
         logger: makeLogger(),
@@ -2528,9 +2520,9 @@ describe("MCP RPC Handlers", () => {
       expect(manager.connect).not.toHaveBeenCalled();
     });
 
-    // CRED-01: already-${VAR} Bearer form passes through without secretStore.set.
-    // This is an idempotency guard — must stay passing after GREEN patch.
-    it("CRED-01 — allows Authorization: Bearer \${HIGGSFIELD_TOKEN} without secretStore.set", async () => {
+    // already-${VAR} Bearer form passes through without secretStore.set.
+    // This is an idempotency guard.
+    it("allows Authorization: Bearer \${HIGGSFIELD_TOKEN} without secretStore.set", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("higgsfield", [])));
       const handlers = createMcpHandlers({
         mcpClientManager: manager,
@@ -2547,9 +2539,8 @@ describe("MCP RPC Handlers", () => {
       expect(mockSecretStoreConnect.set).not.toHaveBeenCalled();
     });
 
-    // CRED-05: static-secret header → secretStore.set called, header rewritten.
-    // RED: before GREEN patch, secretStore.set is never called.
-    it("CRED-05 — extracts X-Api-Key: sk-ant-… to secretStore.set and rewrites header", async () => {
+    // static-secret header → secretStore.set called, header rewritten.
+    it("extracts X-Api-Key: sk-ant-… to secretStore.set and rewrites header", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("myserver", [])));
       const handlers = createMcpHandlers({
         mcpClientManager: manager,
@@ -2563,7 +2554,7 @@ describe("MCP RPC Handlers", () => {
         headers: { "X-Api-Key": STATIC_SECRET_CONNECT },
       });
       expect(mockSecretStoreConnect.set).toHaveBeenCalledWith("MCP_MYSERVER__X_API_KEY", STATIC_SECRET_CONNECT);
-      // WR-01: manager.connect must receive the RAW value (the actual credential),
+      // manager.connect must receive the RAW value (the actual credential),
       // not the ${VAR} literal that would cause auth failure on the immediate connect.
       expect(manager.connect).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2572,9 +2563,8 @@ describe("MCP RPC Handlers", () => {
       );
     });
 
-    // CRED-05 fail-safe: no secretStore + static-secret → throw [plaintext_secret_in_headers].
-    // RED: before GREEN patch, no throw occurs.
-    it("CRED-05 — throws [plaintext_secret_in_headers] when secretStore is undefined", async () => {
+    // Fail-safe: no secretStore + static-secret → throw [plaintext_secret_in_headers].
+    it("throws [plaintext_secret_in_headers] when secretStore is undefined", async () => {
       const handlers = createMcpHandlers({
         mcpClientManager: manager,
         logger: makeLogger(),
@@ -2591,10 +2581,9 @@ describe("MCP RPC Handlers", () => {
       expect(manager.connect).not.toHaveBeenCalled();
     });
 
-    // CRED-01 opt-out: disablePlaintextSecretCheck:true + static-secret → WARN, no throw.
-    // RED: before GREEN patch the headers scan is absent entirely; test verifies
-    // that after GREEN the WARN fires for the headers block specifically.
-    it("CRED-01 — disablePlaintextSecretCheck:true + static-secret header emits WARN and allows", async () => {
+    // Opt-out: disablePlaintextSecretCheck:true + static-secret → WARN, no throw.
+    // Verifies that the WARN fires for the headers block specifically.
+    it("disablePlaintextSecretCheck:true + static-secret header emits WARN and allows", async () => {
       (manager.connect as any).mockResolvedValue(ok(makeConnection("myserver", [])));
       const logger = makeLogger();
       const handlers = createMcpHandlers({
@@ -2618,7 +2607,7 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
-  // mcp.test headers credential firewall (CRED-01, CRED-05, CRED-06)
+  // mcp.test headers credential firewall
   //
   // Mirror of the mcp.connect tests above. The headers scan must also be
   // present in mcp.test — the handler spawns a real child process and an
@@ -2627,7 +2616,7 @@ describe("MCP RPC Handlers", () => {
   // try/catch that wraps tempManager.connect), so rejects.toThrow is correct.
   // -------------------------------------------------------------------------
 
-  describe("mcp.test headers credential firewall (CRED-01/05/06)", () => {
+  describe("mcp.test headers credential firewall", () => {
     // High-entropy Hugging Face token format: hf_ + 45 mixed-case chars (entropy > 3.5).
     const OAUTH_BEARER_TEST = "hf_bGkSrzmNqJpVxWyDcAoFuIeHtKlPwCvnMsRgTjUQhZBo";
     const STATIC_SECRET_TEST = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -2646,10 +2635,10 @@ describe("MCP RPC Handlers", () => {
       mockTempDisconnectAll.mockResolvedValue(undefined);
     });
 
-    // CRED-06: OAuth bearer in Authorization header — must throw [use_oauth_login]
-    // RED: before GREEN patch, handler's inner try/catch wraps it and returns
-    // { success: false, error: "..." } instead of rethrowing → rejects.toThrow fails.
-    it("CRED-06 — rejects Authorization: Bearer hf_<44+> with [use_oauth_login]", async () => {
+    // OAuth bearer in Authorization header — must throw [use_oauth_login]
+    // If handler's inner try/catch wraps it and returns
+    // { success: false, error: "..." } instead of rethrowing, rejects.toThrow fails.
+    it("rejects Authorization: Bearer hf_<44+> with [use_oauth_login]", async () => {
       const handlers = createMcpHandlers({
         mcpClientManager: createMockManager(),
         logger: makeLogger(),
@@ -2666,9 +2655,8 @@ describe("MCP RPC Handlers", () => {
       expect(mockTempConnect).not.toHaveBeenCalled();
     });
 
-    // CRED-06: disablePlaintextSecretCheck:true must NOT bypass oauth-bearer.
-    // RED: before GREEN patch, no throw.
-    it("CRED-06 — rejects oauth bearer even with disablePlaintextSecretCheck:true (no opt-out)", async () => {
+    // disablePlaintextSecretCheck:true must NOT bypass oauth-bearer.
+    it("rejects oauth bearer even with disablePlaintextSecretCheck:true (no opt-out)", async () => {
       const handlers = createMcpHandlers({
         mcpClientManager: createMockManager(),
         logger: makeLogger(),
@@ -2686,8 +2674,8 @@ describe("MCP RPC Handlers", () => {
       expect(mockTempConnect).not.toHaveBeenCalled();
     });
 
-    // CRED-01: already-${VAR} Bearer form passes through without secretStore.set.
-    it("CRED-01 — allows Authorization: Bearer \${HIGGSFIELD_TOKEN} without secretStore.set", async () => {
+    // already-${VAR} Bearer form passes through without secretStore.set.
+    it("allows Authorization: Bearer \${HIGGSFIELD_TOKEN} without secretStore.set", async () => {
       mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__higgsfield", [])));
       const handlers = createMcpHandlers({
         mcpClientManager: createMockManager(),
@@ -2704,9 +2692,8 @@ describe("MCP RPC Handlers", () => {
       expect(mockSecretStoreTest.set).not.toHaveBeenCalled();
     });
 
-    // CRED-05: static-secret header → secretStore.set called.
-    // RED: before GREEN patch, secretStore.set is never called.
-    it("CRED-05 — extracts X-Api-Key: sk-ant-… to secretStore.set", async () => {
+    // static-secret header → secretStore.set called.
+    it("extracts X-Api-Key: sk-ant-… to secretStore.set", async () => {
       mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__myserver", [])));
       const handlers = createMcpHandlers({
         mcpClientManager: createMockManager(),
@@ -2722,10 +2709,10 @@ describe("MCP RPC Handlers", () => {
       expect(mockSecretStoreTest.set).toHaveBeenCalledWith("MCP_MYSERVER__X_API_KEY", STATIC_SECRET_TEST);
     });
 
-    // CRED-05 fail-safe: no secretStore + static-secret → throw [plaintext_secret_in_headers].
-    // RED: before GREEN patch, handler's inner try/catch wraps it → returns
+    // Fail-safe: no secretStore + static-secret → throw [plaintext_secret_in_headers].
+    // If handler's inner try/catch wraps it → returns
     // { success: false } instead of rejecting → rejects.toThrow fails.
-    it("CRED-05 — throws [plaintext_secret_in_headers] when secretStore is undefined", async () => {
+    it("throws [plaintext_secret_in_headers] when secretStore is undefined", async () => {
       const handlers = createMcpHandlers({
         mcpClientManager: createMockManager(),
         logger: makeLogger(),
@@ -2742,8 +2729,8 @@ describe("MCP RPC Handlers", () => {
       expect(mockTempConnect).not.toHaveBeenCalled();
     });
 
-    // CRED-01 opt-out: disablePlaintextSecretCheck:true + static-secret → WARN, no throw.
-    it("CRED-01 — disablePlaintextSecretCheck:true + static-secret header emits WARN and allows", async () => {
+    // Opt-out: disablePlaintextSecretCheck:true + static-secret → WARN, no throw.
+    it("disablePlaintextSecretCheck:true + static-secret header emits WARN and allows", async () => {
       mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__myserver", [])));
       const logger = makeLogger();
       const handlers = createMcpHandlers({

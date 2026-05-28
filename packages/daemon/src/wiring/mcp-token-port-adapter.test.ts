@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the R8 port-backed MCP token store adapter.
- *
- * RED phase: all tests in "R8 port-backed adapter" describe block fail because
- * packages/daemon/src/wiring/mcp-token-port-adapter.ts does not exist yet.
+ * Unit tests for the port-backed MCP token store adapter.
  *
  * Invariants verified:
  * - saveTokens syncs the token triple to OAuthCredentialStorePort
@@ -17,7 +14,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// This import will fail until mcp-token-port-adapter.ts is created (RED state).
 import { createPortBackedMcpTokenStore } from "./mcp-token-port-adapter.js";
 
 import type { OAuthCredentialStorePort, OAuthProfile } from "@comis/core";
@@ -66,7 +62,7 @@ function makePortMock(): OAuthCredentialStorePort & {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("R8 port-backed adapter", () => {
+describe("port-backed adapter", () => {
   let dir: string;
   let logger: ReturnType<typeof makeLogger>;
   let port: ReturnType<typeof makePortMock>;

@@ -383,13 +383,12 @@ describe("createRedirectPolicyFetch — cross-host header scrub", () => {
 });
 
 // =============================================================================
-// R4 expanded header stripping (02-03)
+// Expanded header stripping
 // =============================================================================
 // These tests assert that the expanded allowlist (12+ headers) strips
 // x-auth-token, x-api-key, and peers on cross-origin redirects.
-// They fail on the pre-patch codebase (only 3 headers in the list).
 
-describe("R4 expanded header stripping on cross-origin redirect", () => {
+describe("expanded header stripping on cross-origin redirect", () => {
   it("strips x-auth-token on cross-origin redirect to a different host", async () => {
     const baseFetch = vi
       .fn()

@@ -424,7 +424,7 @@ function scrubProcessEnv(): void {
 function bootstrapSecretsAndEnv(deps: {
   setupSecrets: typeof _setupSecretsImpl;
   dataDir: string;
-  /** STORE-01: undefined on normal boot; 64-char hex string on first-boot auto-init */
+  /** undefined on normal boot; 64-char hex string on first-boot auto-init */
   seedKeyHex?: string;
 }): {
   mergedEnv: Record<string, string | undefined>;
@@ -435,7 +435,7 @@ function bootstrapSecretsAndEnv(deps: {
   const secretsBootResult = deps.setupSecrets({
     env: process.env as Record<string, string | undefined>,
     dataDir: deps.dataDir,
-    seedKeyHex: deps.seedKeyHex, // STORE-01: thread first-boot key for same-boot usability
+    seedKeyHex: deps.seedKeyHex, // thread first-boot key for same-boot usability
   });
   if (!secretsBootResult.ok) {
     throw new Error(`Secrets bootstrap failed: ${secretsBootResult.error.message}`);
@@ -1372,10 +1372,10 @@ async function bootFoundation(
   const dataDir = process.env["COMIS_DATA_DIR"] ?? safePath(os.homedir(), ".comis");
   const envPath = safePath(dataDir, ".env");
 
-  // STORE-02: opt-out flag pre-read — checked BEFORE writeMasterKeyIfAbsent to skip key
+  // Opt-out flag pre-read — checked BEFORE writeMasterKeyIfAbsent to skip key
   // auto-gen. Read from systemGetEnv (process.env) at this point; loadEnvFile hasn't run yet
   // so a COMIS_DISABLE_ENCRYPTED_SECRETS entry in ~/.comis/.env is not visible here.
-  // W2: we re-evaluate after loadEnvFile below to also honour the flag from .env.
+  // We re-evaluate after loadEnvFile below to also honour the flag from .env.
   const parseDisableFlag = (raw: string | undefined): boolean => {
     if (typeof raw !== "string") return false;
     const norm = raw.trim().toLowerCase();
@@ -1383,7 +1383,7 @@ async function bootFoundation(
   };
   const disableEncryptedPreLoad = parseDisableFlag(systemGetEnv("COMIS_DISABLE_ENCRYPTED_SECRETS"));
 
-  // STORE-01: auto-generate master key on first boot (before loadEnvFile — key must be in
+  // Auto-generate master key on first boot (before loadEnvFile — key must be in
   // memory, not re-read from env, for same-boot usability).
   // NEVER log autoInitKeyHex — it is raw 32-byte key material.
   let autoInitKeyHex: string | undefined;
@@ -1394,17 +1394,18 @@ async function bootFoundation(
 
   loadEnvFile(envPath);
 
-  // W2: Re-evaluate opt-out after loadEnvFile so COMIS_DISABLE_ENCRYPTED_SECRETS in
+  // Re-evaluate opt-out after loadEnvFile so COMIS_DISABLE_ENCRYPTED_SECRETS in
   // ~/.comis/.env is honoured for the store-construction gate (not just key auto-gen).
   // eslint-disable-next-line no-restricted-syntax -- must re-read process.env after loadEnvFile
   const disableEncrypted = disableEncryptedPreLoad || parseDisableFlag(process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"]);
 
   // 0.5. Decrypt secrets, merge with env, scrub process.env.
   const permissionCorrections = hardenDataDirPermissions(dataDir);
-  // CR-02: gate the entire store bootstrap on disableEncrypted. Pre-fix, bootstrapSecretsAndEnv
-  // ran unconditionally — after loadEnvFile loaded SECRETS_MASTER_KEY from ~/.comis/.env,
-  // setupSecrets found it and built a live store even when the opt-out was set.
-  // Post-fix: when opt-out is true, skip store construction entirely (mergedEnv = process.env).
+  // Gate the entire store bootstrap on disableEncrypted: when opt-out is true,
+  // skip store construction entirely (mergedEnv = process.env). Otherwise
+  // bootstrapSecretsAndEnv would run unconditionally — after loadEnvFile loaded
+  // SECRETS_MASTER_KEY from ~/.comis/.env, setupSecrets would find it and build
+  // a live store even when the opt-out was set.
   let mergedEnv: Record<string, string | undefined>;
   let secretStore: import("@comis/core").SecretStorePort | undefined;
   let secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
@@ -1417,14 +1418,14 @@ async function bootFoundation(
     ({ mergedEnv, secretStore, secretsCrypto, secretsDb } = bootstrapSecretsAndEnv({
       setupSecrets: _setupSecrets,
       dataDir,
-      seedKeyHex: autoInitKeyHex, // STORE-01: undefined on normal boot; hex string on first boot
+      seedKeyHex: autoInitKeyHex, // undefined on normal boot; hex string on first boot
     }));
   }
 
   // 0.6. Runtime adapter construction (composition root). overrides.timers is opt-in for test fake-timers; never set in production.
   const clock = createSystemClock(); const env = createSystemEnv(mergedEnv); const timers = overrides.timers ?? createSystemTimers();
 
-  // 1. Bootstrap core container. Fix A (log-review): under VITEST=true, refuse to silently read ~/.comis/config.yaml when COMIS_CONFIG_PATHS is unset.
+  // 1. Bootstrap core container. Under VITEST=true, refuse to silently read ~/.comis/config.yaml when COMIS_CONFIG_PATHS is unset.
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution + VITEST guard
   const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"]; if (process.env["VITEST"] === "true" && !rawConfigPaths) throw new Error("VITEST=true and COMIS_CONFIG_PATHS unset — refusing to read ~/.comis/config.yaml from a test process. Set COMIS_CONFIG_PATHS to a sandbox path in your test setup, or import test/support/vitest-process-listeners.ts.");
   const requestedConfigPaths = rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS;
@@ -1487,7 +1488,7 @@ async function bootFoundation(
     }
   }
 
-  // STORE-02: deferred opt-out WARN (logger not available before setupLogging)
+  // Deferred opt-out WARN (logger not available before setupLogging)
   if (disableEncrypted) {
     daemonLogger.warn(
       {
@@ -1762,7 +1763,7 @@ async function bootAgents(
     logger: skillsLogger,
   });
 
-  // R8 gap-closure (02-06): hoist oauthCredentialStore construction to BEFORE
+  // Hoist oauthCredentialStore construction to BEFORE
   // setupMcp so MCP OAuth tokens are routed through the unified
   // OAuthCredentialStorePort (not the disk-default fallback).
   //
@@ -1800,7 +1801,7 @@ async function bootAgents(
 
   // Construct daemon-global MCP manager BEFORE setupAgents (ordering constraint
   // -- per-agent ToolCapabilityPort adapters close over mcpClientManager).
-  // R8: oauthCredentialStore + dataDir now threaded in so MCP OAuth tokens
+  // oauthCredentialStore + dataDir are threaded in so MCP OAuth tokens
   // go through the unified OAuthCredentialStorePort (not the disk default).
   // Inlined setupMcpManager — pure in-memory state holder construction.
   const { mcpClientManager } = await setupMcp({
@@ -1818,7 +1819,7 @@ async function bootAgents(
     globalKeepaliveIntervalMs: container.config.integrations.mcp.keepaliveIntervalMs,
     circuitBreakerThreshold: container.config.integrations.mcp.circuitBreakerThreshold,
     circuitBreakerCooldownMs: container.config.integrations.mcp.circuitBreakerCooldownMs,
-    // R8 (02-06): route MCP OAuth tokens through the unified credential port.
+    // Route MCP OAuth tokens through the unified credential port.
     oauthCredentialStore: oauthCredentialStoreForceMcp,
     dataDir: container.config.dataDir && container.config.dataDir.length > 0
       ? container.config.dataDir
@@ -1832,7 +1833,7 @@ async function bootAgents(
     // Daemon-level OAuth credential store from setupAgents — same port instance
     // threaded into ApiDispatchDeps so agents.update can validate oauthProfiles
     // patches via has(). setupAgents constructs its own store internally via
-    // selectOAuthCredentialStore; the R8-hoisted store above is a separate
+    // selectOAuthCredentialStore; the hoisted store above is a separate
     // instance used exclusively by setupMcp (the MCP OAuth token seam).
     oauthCredentialStore,
     // Per-agent live ToolCapabilityPort adapters; daemon.ts threads
@@ -2619,8 +2620,8 @@ async function bootShutdown(
   // "Comis daemon started" line in log streams, and BEFORE saveLastKnownGood /
   // DaemonInstance return so WARNs fire before the daemon accepts traffic.
   // depSlotConsistency is passed explicitly — the daemon composition root is the
-  // only site that knows which adapter slots were used (post-fix: channelRegistry
-  // only, adaptersList removed from setup-channels-runtime.ts).
+  // only site that knows which adapter slots were used (channelRegistry
+  // only; adaptersList was removed from setup-channels-runtime.ts).
   // Derive logsDir from daemon.logging.filePath for the startup sweep.
   const _loggingFilePath = container.config.daemon?.logging?.filePath;
   const _logsDir = _loggingFilePath

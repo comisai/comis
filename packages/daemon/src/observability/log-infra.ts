@@ -109,8 +109,8 @@ export function isPm2Managed(): boolean {
  * @param logRotation - Optional cross-stream rotation policy from
  *   AppConfig.observability.logRotation. When provided, overrides
  *   config.maxSize + config.maxFiles for the pino-roll transport.
- *   IMPORTANT (RESEARCH Pitfall 1): pino-roll `size` treats bare numbers as
- *   MB, NOT bytes. Always convert maxSizeBytes → "${Math.round(maxSizeBytes / (1024 * 1024))}m".
+ *   IMPORTANT: pino-roll `size` treats bare numbers as MB, NOT bytes. Always
+ *   convert maxSizeBytes → "${Math.round(maxSizeBytes / (1024 * 1024))}m".
  * @returns Transport config to pass as LoggerOptions.transport
  */
 export function createFileTransport(
@@ -124,7 +124,7 @@ export function createFileTransport(
   // Compute size string and file count from logRotation policy when present.
   // pino-roll `size` semantics: bare numbers = MB (NOT bytes). Always use string form.
   const sizeStr = logRotation
-    ? `${Math.round(logRotation.maxSizeBytes / (1024 * 1024))}m`  // RESEARCH Pitfall 1
+    ? `${Math.round(logRotation.maxSizeBytes / (1024 * 1024))}m`  // pino-roll treats bare numbers as MB, NOT bytes
     : config.maxSize;
   const countLimit = logRotation ? logRotation.maxFiles : config.maxFiles;
 
@@ -144,7 +144,7 @@ export function createFileTransport(
   const targets: pino.TransportPipelineOptions[] = [];
 
   // File transport: always active -- ~/.comis/logs/ is the canonical log location
-  // The redact stage runs upstream of pino-roll so every line is scrubbed before disk write (R1)
+  // The redact stage runs upstream of pino-roll so every line is scrubbed before disk write
   targets.push({
     pipeline: [
       { target: "@comis/infra/dist/logging/pipeline-redact-stage.js" },
@@ -165,7 +165,7 @@ export function createFileTransport(
   });
 
   // Stdout: skip under pm2 (pm2 captures stdout to ~/.pm2/logs/, so it would be a duplicate)
-  // The redact stage runs upstream of pino/file so every line is scrubbed before stdout write (R1)
+  // The redact stage runs upstream of pino/file so every line is scrubbed before stdout write
   if (!pm2Detected) {
     targets.push({
       pipeline: [

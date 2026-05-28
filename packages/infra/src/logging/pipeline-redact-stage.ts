@@ -40,7 +40,7 @@ export default function createPipelineRedactStage(_opts?: unknown): Transform {
           // in line-parse mode). The ternary fallback is a defensive no-op.
           const lineStr = line as string;
           try {
-            // CR-01 fix: re-append "\n" stripped by split2's line-parse mode.
+            // Re-append "\n" stripped by split2's line-parse mode.
             // Without this, every yielded value is written back-to-back with no
             // delimiter, producing one concatenated unparseable blob.
             yield redactSecretsInText(lineStr) + "\n";

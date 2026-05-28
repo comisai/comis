@@ -68,7 +68,7 @@ export interface CondenseParams {
   /** API key for the model's provider (optional; no Level 2 if absent). */
   apiKey?: string;
 
-  // --- Finding 20: Parent trace correlation ---
+  // --- Parent trace correlation ---
   /** Parent execution traceId for cross-session correlation. */
   parentTraceId?: string;
   /** Execution graph ID if spawned from a pipeline. */
@@ -76,7 +76,7 @@ export interface CondenseParams {
   /** Graph node ID if applicable. */
   nodeId?: string;
 
-  // --- Finding 17: Tool metadata for offline analysis ---
+  // --- Tool metadata for offline analysis ---
   /** Tool names available to the sub-agent. */
   activeToolNames?: string[];
   /** Count of deferred tools. */
@@ -86,7 +86,7 @@ export interface CondenseParams {
   /** Guide keys delivered during execution. */
   guidesDelivered?: string[];
 
-  // --- Finding 20: Token/cost usage breakdown ---
+  // --- Token/cost usage breakdown ---
   /** Token and cost usage from execution result. */
   usage?: {
     inputTokens?: number;
@@ -176,7 +176,7 @@ export function createResultCondenser(deps: ResultCondenserDeps) {
 async function condenseInternal(params: CondenseParams, deps: ResultCondenserDeps): Promise<CondensedResult> {
   const { task, runId, sessionKey, agentId } = params;
 
-  // R4: scrub before condense, relay, and persist — one pass, pre-filter inside.
+  // Scrub before condense, relay, and persist — one pass, pre-filter inside.
   // This single reassignment ensures wrapAsSubagentResult, persistFullResult,
   // and all downstream uses receive scrubbed text.
   const relayScrub = scrubSecretsFromText(params.fullResult);
@@ -186,17 +186,17 @@ async function condenseInternal(params: CondenseParams, deps: ResultCondenserDep
       { runId, agentId, redactions: relayScrub.redactions,
         hint: "Secret found in sub-agent full result — redacted before relay and persist",
         errorKind: "internal" as const },
-      "R4 egress guard: sub-agent result scrubbed",
+      "egress guard: sub-agent result scrubbed",
     );
     fullResult = relayScrub.text;
-    // R8 secure handoff (Fix-b): signal to the parent agent that a credential was
+    // Secure handoff: signal to the parent agent that a credential was
     // redacted and is now in the secure credential store — instruct it NOT to
     // re-use the raw token from this result.
     //
     // NOTE: The MCP server name is NOT available at condenseInternal (CondenseParams
     // has no serverName field). An actionable `mcp-oauth:<serverName>` ${ref} is
     // therefore deferred — threading serverName here requires invasive cross-package
-    // CondenseParams API changes (R8-handoff rationale). Generic advisory only.
+    // CondenseParams API changes. Generic advisory only.
     fullResult +=
       "\n\n[Credential redacted and stored in the secure credential store. " +
       "Retrieve via the OAuth store profileId or use `comis auth profile get` — " +
@@ -283,7 +283,7 @@ async function condenseInternal(params: CondenseParams, deps: ResultCondenserDep
   }
 
   // Persist full result to disk -- always, regardless of level.
-  // Thread metadata for offline analysis (Findings 17, 20).
+  // Thread metadata for offline analysis.
   const persistMetadata = {
     parentTraceId: params.parentTraceId,
     graphId: params.graphId,
@@ -567,13 +567,13 @@ async function persistFullResult(
         fullResult: cappedResult,
         condensationLevel: level,
         persistedAt: systemNowDate().toISOString(),
-        // Finding 20: Parent trace correlation
+        // Parent trace correlation
         ...(metadata?.parentTraceId ? { parentTraceId: metadata.parentTraceId } : {}),
         ...(metadata?.graphId ? { graphId: metadata.graphId } : {}),
         ...(metadata?.nodeId ? { nodeId: metadata.nodeId } : {}),
-        // Finding 17: Tool metadata for offline analysis
+        // Tool metadata for offline analysis
         ...(metadata?.toolMetadata ? { toolMetadata: metadata.toolMetadata } : {}),
-        // Finding 20: Token/cost usage breakdown
+        // Token/cost usage breakdown
         ...(metadata?.usage ? { usage: metadata.usage } : {}),
         // Error context for non-successful executions
         ...(metadata?.errorContext ? { errorContext: metadata.errorContext } : {}),

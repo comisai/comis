@@ -85,7 +85,6 @@ describe("writeMasterKeyIfAbsent", () => {
     const dataDir = resolve(tmpDir, "fresh-keyhex");
     const result = writeMasterKeyIfAbsent(dataDir);
     expect(result.written).toBe(true);
-    // This assertion FAILS on pre-patch code (keyHex is undefined):
     expect(result.keyHex).toMatch(/^[0-9a-f]{64}$/);
   });
 
@@ -97,16 +96,12 @@ describe("writeMasterKeyIfAbsent", () => {
     expect(result.keyHex).toBeUndefined();
   });
 
-  // W5: .env must be created with mode 0600 atomically (no broad-mode window).
+  // .env must be created with mode 0600 atomically (no broad-mode window).
   // The test creates a fresh dataDir with NO pre-existing .env, calls
   // writeMasterKeyIfAbsent, and asserts the file is 0600 immediately after creation.
-  // On pre-fix code the file is created by appendFileSync with umask-default mode
-  // (typically 0o644) and narrowed afterward — the assertion catches a timing window
-  // IF we read the mode before chmodSync runs, but more importantly it validates that
-  // the CREATION mode is 0600 (by checking the final file mode, which must be 0600
-  // regardless of how it got there, and asserting no intermediate readable state
-  // existed).
-  it("creates .env with mode 0600 on first write — file is 0600 immediately after writeMasterKeyIfAbsent returns (W5)", () => {
+  // Validates that the final file mode is 0600 regardless of how it got there,
+  // ensuring no intermediate readable state existed.
+  it("creates .env with mode 0600 on first write — file is 0600 immediately after writeMasterKeyIfAbsent returns", () => {
     const dataDir = resolve(tmpDir, "atomic-perm-test");
     const result = writeMasterKeyIfAbsent(dataDir);
     expect(result.written).toBe(true);
@@ -114,9 +109,9 @@ describe("writeMasterKeyIfAbsent", () => {
     expect(stats.mode & 0o777).toBe(0o600);
   });
 
-  // W5: .env already existing at non-restrictive permissions must be narrowed by
+  // .env already existing at non-restrictive permissions must be narrowed by
   // writeMasterKeyIfAbsent even on an append (key absent but file present).
-  it("narrows an existing .env file without SECRETS_MASTER_KEY to 0600 after appending (W5 defensive chmod)", () => {
+  it("narrows an existing .env file without SECRETS_MASTER_KEY to 0600 after appending (defensive chmod)", () => {
     const dataDir = resolve(tmpDir, "chmod-existing-test");
     // Create the dir and an .env file WITHOUT a SECRETS_MASTER_KEY line
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });

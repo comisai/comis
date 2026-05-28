@@ -2134,7 +2134,7 @@ describe("createSubAgentRunner", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Hash-dedup at spawn entry (Task wkj — duplicate spawn protection)
+  // Hash-dedup at spawn entry (duplicate spawn protection)
   // -----------------------------------------------------------------------
   describe("hash-dedup against in-flight runs", () => {
     it("dedups same caller and task while first run is still in flight", () => {
@@ -3523,10 +3523,10 @@ describe("persistent session reuse", () => {
 });
 
 // ---------------------------------------------------------------------------
-// spawn required_tools gate (SUBA-01)
+// spawn required_tools gate
 // ---------------------------------------------------------------------------
 
-describe("spawn required_tools gate (SUBA-01)", () => {
+describe("spawn required_tools gate", () => {
   let deps: ReturnType<typeof createMockDeps>;
 
   beforeEach(() => {
@@ -3570,7 +3570,6 @@ describe("spawn required_tools gate (SUBA-01)", () => {
 
   it("spawn with requiredTools=['gateway'] throws RequiredToolsUnreachableError with denylist reason", () => {
     // 'gateway' is in SUB_AGENT_TOOL_DENYLIST — denied to ALL sub-agents.
-    // Pre-patch: spawn() has no gate → spawn succeeds → this test is RED.
     const runner = createSubAgentRunner(deps);
 
     let caughtErr: unknown;
@@ -3615,13 +3614,14 @@ describe("spawn required_tools gate (SUBA-01)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-01: gate validates against daemon-provided reachableToolNames (default groups)
-// WR-02: gate validates against daemon-provided reachableToolNames (TOOL_GROUPS expansion)
-// WR-04: queued spawn path also runs the gate before runId
-// WR-05: supervisor hint wording
+// Gate parity fixes:
+//   - gate validates against daemon-provided reachableToolNames (default groups)
+//   - gate validates against daemon-provided reachableToolNames (TOOL_GROUPS expansion)
+//   - queued spawn path also runs the gate before runId
+//   - supervisor hint wording
 // ---------------------------------------------------------------------------
 
-describe("spawn required_tools gate parity fixes (WR-01/02/04/05)", () => {
+describe("spawn required_tools gate parity fixes", () => {
   let deps: ReturnType<typeof createMockDeps>;
 
   beforeEach(() => {
@@ -3633,9 +3633,9 @@ describe("spawn required_tools gate parity fixes (WR-01/02/04/05)", () => {
     vi.useRealTimers();
   });
 
-  // WR-01: spawn with required_tools containing a non-coding tool, no explicit tool_groups,
+  // Spawn with required_tools containing a non-coding tool, no explicit tool_groups,
   // and reachableToolNames provided (coding set) must throw RequiredToolsUnreachableError.
-  it("WR-01: spawn with requiredTools=['mcp_manage'] and no toolGroups but reachableToolNames=coding-set throws RequiredToolsUnreachableError", () => {
+  it("spawn with requiredTools=['mcp_manage'] and no toolGroups but reachableToolNames=coding-set throws RequiredToolsUnreachableError", () => {
     const runner = createSubAgentRunner(deps);
     // reachableToolNames mimics daemon computing effective coding ceiling
     const codingSet = new Set(["read", "edit", "write", "grep", "find", "ls", "apply_patch", "exec", "process"]);
@@ -3645,7 +3645,7 @@ describe("spawn required_tools gate parity fixes (WR-01/02/04/05)", () => {
       runner.spawn({
         task: "test",
         agentId: "default",
-        // no toolGroups — LLM omitted it (the common case per WR-01)
+        // no toolGroups — LLM omitted it (the common case)
         requiredTools: ["mcp_manage"],
         reachableToolNames: codingSet,
       });
@@ -3660,9 +3660,9 @@ describe("spawn required_tools gate parity fixes (WR-01/02/04/05)", () => {
     expect(runner.listRuns(60)).toHaveLength(0);
   });
 
-  // WR-02: spawn with tool_groups=["web"], required_tools=["web_fetch"], and
+  // Spawn with tool_groups=["web"], required_tools=["web_fetch"], and
   // reachableToolNames containing "web_fetch" (TOOL_GROUPS expansion) must PASS.
-  it("WR-02: spawn with toolGroups=['web'] and requiredTools=['web_fetch'] with reachableToolNames containing web_fetch succeeds", () => {
+  it("spawn with toolGroups=['web'] and requiredTools=['web_fetch'] with reachableToolNames containing web_fetch succeeds", () => {
     const runner = createSubAgentRunner(deps);
     // reachableToolNames mimics daemon expanding TOOL_GROUPS["group:web"]
     const webSet = new Set(["web_fetch", "web_search", "browser"]);
@@ -3679,10 +3679,10 @@ describe("spawn required_tools gate parity fixes (WR-01/02/04/05)", () => {
     expect(runner.listRuns(60)).toHaveLength(1);
   });
 
-  // WR-02 false-deny regression: without reachableToolNames, gate currently
+  // False-deny regression: without reachableToolNames, gate currently
   // false-denies web_fetch because SUB_AGENT_TOOL_PROFILES["web"] is undefined.
   // With reachableToolNames, this works.
-  it("WR-02: spawn without reachableToolNames but toolGroups=['web'] and requiredTools=['web_fetch'] — gate fails open (no crash) when reachableToolNames absent", () => {
+  it("spawn without reachableToolNames but toolGroups=['web'] and requiredTools=['web_fetch'] — gate fails open (no crash) when reachableToolNames absent", () => {
     const runner = createSubAgentRunner(deps);
     // No reachableToolNames provided — gate must fail-open (not crash, not false-deny)
     let threw = false;
@@ -3702,8 +3702,8 @@ describe("spawn required_tools gate parity fixes (WR-01/02/04/05)", () => {
     expect(threw).toBe(false);
   });
 
-  // WR-04: queued spawn with unreachable required_tools must throw BEFORE the queued runId is created.
-  it("WR-04: queued spawn with unreachable requiredTools throws RequiredToolsUnreachableError before runId (no run created)", () => {
+  // Queued spawn with unreachable required_tools must throw BEFORE the queued runId is created.
+  it("queued spawn with unreachable requiredTools throws RequiredToolsUnreachableError before runId (no run created)", () => {
     const runner = createSubAgentRunner(deps);
     // Fill children to force queue path
     const maxChildren = 5;
@@ -3731,8 +3731,8 @@ describe("spawn required_tools gate parity fixes (WR-01/02/04/05)", () => {
     expect(badRun).toBeUndefined();
   });
 
-  // WR-05: the "no-match" fallback hint must suggest only 'full', not "supervisor' or 'full"
-  it("WR-05: classifyRequiredTool fallback hint for a tool in no profile suggests only 'full' (not supervisor)", () => {
+  // The "no-match" fallback hint must suggest only 'full', not "supervisor' or 'full"
+  it("classifyRequiredTool fallback hint for a tool in no profile suggests only 'full' (not supervisor)", () => {
     const runner = createSubAgentRunner(deps);
     const noProfileSet = new Set(["read", "write"]); // "web_fetch" is not in this set
 

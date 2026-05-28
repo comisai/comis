@@ -7,9 +7,9 @@
  * architecture inward-only invariant).
  *
  * Coverage groups:
- *   1. File creation + permissions (SPEC R2)
- *   2. Restart-survives-write (SPEC R2 acceptance)
- *   3. Profile-ID validation (SPEC R5)
+ *   1. File creation + permissions
+ *   2. Restart-survives-write
+ *   3. Profile-ID validation
  *   4. Schema-version hard-fail
  *   5. CRUD operations
  *   6. Atomic-write durability
@@ -75,7 +75,7 @@ describe("createOAuthCredentialStoreFile", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Group 1 — File creation + permissions (SPEC R2)
+  // Group 1 — File creation + permissions
   // -------------------------------------------------------------------------
 
   describe("file creation and permissions", () => {
@@ -117,7 +117,7 @@ describe("createOAuthCredentialStoreFile", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Group 2 — Restart-survives-write (SPEC R2 acceptance)
+  // Group 2 — Restart-survives-write
   // -------------------------------------------------------------------------
 
   describe("restart-survives-write", () => {
@@ -139,7 +139,7 @@ describe("createOAuthCredentialStoreFile", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Group 3 — Profile-ID validation (SPEC R5)
+  // Group 3 — Profile-ID validation
   // -------------------------------------------------------------------------
 
   describe("profile-ID validation", () => {

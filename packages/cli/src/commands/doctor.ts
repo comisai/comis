@@ -195,10 +195,10 @@ export function registerDoctorCommand(program: Command): void {
           error(`FAILED: Workspace repair: ${workspaceResult.error.message}`);
         }
 
-        // Retroactive config-audit-log scrubber.
+        // Config-audit-log scrubber.
         // Opt-in only via --repair; safe to run even when no
-        // pre-existing findings flag the audit log because the
-        // scrubber is idempotent (same output on a clean file).
+        // findings flag the audit log because the scrubber is
+        // idempotent (same output on a clean file).
         const auditScrubResult = await repairConfigAudit();
         if (auditScrubResult.ok) {
           for (const action of auditScrubResult.value) {

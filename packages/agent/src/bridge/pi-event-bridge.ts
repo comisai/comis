@@ -25,7 +25,7 @@ import {
   type MemoryEntry,
   type ModelOperationType,
   type ErrorKind,
-  // SUBA-02: classification data for "Tool X not found" enrichment.
+  // Classification data for "Tool X not found" enrichment.
   // @comis/agent has no @comis/skills edge in the architecture graph
   // (agent = [shared, core, observability, scheduler]). Import ONLY from @comis/core.
   SUB_AGENT_TOOL_DENYLIST,
@@ -112,7 +112,7 @@ export function __resetSdkBreakdownNoticeForTest(): void {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// SUBA-02: Tool-not-found enrichment helpers
+// Tool-not-found enrichment helpers
 // ---------------------------------------------------------------------------
 
 /** Matches the SDK's exact "Tool not found" error format (agent-loop.js:356):
@@ -131,7 +131,7 @@ function classifyUnreachableTool(toolName: string, activeGroups: string[]): stri
     return `Tool '${toolName}' is denied to ALL sub-agents — the parent must perform this step.`;
   }
   const broader = toolReachableGroups(toolName).filter((p) => !activeGroups.includes(p));
-  // WR-05: when no profile contains the tool, suggest only 'full' — 'supervisor' does not
+  // When no profile contains the tool, suggest only 'full' — 'supervisor' does not
   // contain generic tools like web_fetch/browser/sessions_spawn, so it would fail again.
   const suggestion = broader.length > 0 ? broader.join("' | '") : "full";
   return (
@@ -261,7 +261,7 @@ export interface PiEventBridgeDeps {
    * turn so the latch lives there.
    *
    * When omitted (legacy/test callers), the bridge falls back to the
-   * pre-tlx unconditional emit so existing harnesses keep working.
+   * legacy unconditional emit so existing harnesses keep working.
    */
   trajectoryRegistry?: SessionTrajectoryHandleRegistry;
   /**
@@ -288,7 +288,7 @@ export interface PiEventBridgeDeps {
   dataDir?: string;
   /** Active tool group names for the sub-agent's profile ceiling.
    *  When provided, "Tool X not found" errors in tool_execution_end are
-   *  enriched with delegation routing hints (SUBA-02). Omit for top-level
+   *  enriched with delegation routing hints. Omit for top-level
    *  agents where all tools are reachable. */
   activeToolGroups?: string[];
 }
@@ -591,10 +591,10 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
                 toolErrorKind = classifyToolError(endEvent.toolName, errorText);
               }
             }
-            // SUBA-02: Enrich "Tool X not found" errors with delegation routing hints.
+            // Enrich "Tool X not found" errors with delegation routing hints.
             // Only applied when activeToolGroups is provided (sub-agent context).
             // NOT_FOUND_RE is anchored (^…$) — only the exact SDK format triggers.
-            // WR-07: Skip enrichment for MCP-namespaced tools (mcp__<server>--<tool>) —
+            // Skip enrichment for MCP-namespaced tools (mcp__<server>--<tool>) —
             // MCP tool reachability is governed by subAgentMcpTools policy, not by tool
             // profiles. Profile-widening hints are misleading for MCP tools. Preserve the
             // MCP-classified errorKind (dependency/timeout) rather than overwriting with "validation".
@@ -992,7 +992,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             deps.onTurnUsage?.(usage.input);
             m.totalOutputTokens += usage.output;
             m.totalTokens += usage.totalTokens;
-            // NOTE: m.totalCost accumulation deferred until after cost correction (see COST-FIX below)
+            // NOTE: m.totalCost accumulation deferred until after cost correction (see below)
             m.totalCacheReadTokens += usage.cacheRead ?? 0;
             m.totalCacheWriteTokens += usage.cacheWrite ?? 0;
 
@@ -1076,7 +1076,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
             // Record usage in budget guard (token-based, not cost-based -- stays before correction)
             deps.budgetGuard.recordUsage(usage.totalTokens);
 
-            // COST-FIX ordering: Normalize TTL split estimates BEFORE cost correction.
+            // Ordering: Normalize TTL split estimates BEFORE cost correction.
             // The injector provides raw per-TTL estimates; normalize so they sum to the
             // SDK-reported total (eliminates the 28% estimation error).
             // Mutate in-place so per-TTL cost and accumulation use normalized values.
@@ -1091,7 +1091,7 @@ export function createPiEventBridge(deps: PiEventBridgeDeps): PiEventBridgeResul
               }
             }
 
-            // COST-FIX: Compute cost correction for 1h tokens the SDK underpriced at the 5m rate.
+            // Compute cost correction for 1h tokens the SDK underpriced at the 5m rate.
             // The SDK prices ALL cacheWrite tokens at pricing.cacheWrite (5m rate).
             // When TTL split is available, 1h tokens should be priced at pricing.cacheWrite1h.
             // Delta = cacheWrite1hTokens * (cacheWrite1h - cacheWrite) -- the underpayment per 1h token.

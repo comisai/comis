@@ -353,13 +353,13 @@ function summarizeToolCall(call: any): string {
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 // ---------------------------------------------------------------------------
-// R9: surfaceDiscardedPreToolUrl — URL/short-code safety-net
+// surfaceDiscardedPreToolUrl — URL/short-code safety-net
 // ---------------------------------------------------------------------------
 
 /**
- * Regex constants for R9 pre-tool URL/short-code surfacing.
+ * Regex constants for pre-tool URL/short-code surfacing.
  *
- * ORDERING IS LOAD-BEARING (per RESEARCH.md Pitfall 3):
+ * ORDERING IS LOAD-BEARING:
  * FRAMING_PROSE_RE must be checked BEFORE URL_RE/SHORT_CODE_RE.
  * A framing-prose block that happens to contain a URL must NOT be surfaced.
  */
@@ -376,7 +376,7 @@ const SHORT_CODE_RE = /\b(?=[A-Za-z0-9]{6,20}\b)(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{6,
 const FRAMING_PROSE_RE = /^(I('m| will| am going to)[\s\S]|Let me|Step \d+\/\d+:)/i;
 
 /**
- * Safety-net for discarded pre-tool auth links and one-time codes (R9).
+ * Safety-net for discarded pre-tool auth links and one-time codes.
  *
  * When the LLM places a URL or short code in pre-tool text (e.g. "Visit
  * https://oauth.example.com/auth?code=XYZ to authorize") and that text is
@@ -394,7 +394,7 @@ const FRAMING_PROSE_RE = /^(I('m| will| am going to)[\s\S]|Let me|Step \d+\/\d+:
  *
  * The call site in output-escalation.ts:processSuccessPath MUST run BEFORE
  * the OutputGuard scan so the surfaced URL is part of the content the egress
- * firewall (Phase 2 R4) scans — any credential in a URL query parameter
+ * firewall scans — any credential in a URL query parameter
  * (e.g. `?token=hf_…`) is redacted before channel delivery. Placing this
  * call AFTER the OutputGuard scan would be an egress regression.
  *
@@ -420,7 +420,7 @@ export function surfaceDiscardedPreToolUrl(
       // Only look at text blocks
       if (b?.type !== "text" || typeof b.text !== "string") continue;
       const text = b.text as string;
-      // Guard 2: framing prose → skip (MUST check before URL predicate per Pitfall 3)
+      // Guard 2: framing prose → skip (MUST check before URL predicate)
       if (FRAMING_PROSE_RE.test(text)) continue;
       // Guard 3: does this block contain a URL or short code?
       const urlMatch = URL_RE.exec(text);

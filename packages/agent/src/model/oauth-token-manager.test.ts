@@ -447,7 +447,7 @@ let codexBypassActiveProfile: OAuthProfile | undefined;
 function makeStoredProfile(overrides: Partial<OAuthProfile> = {}): OAuthProfile {
   // Default to an EXPIRED profile so tests that mock the refresh wire path
   // observe that path. Tests that need a still-valid profile (no-refresh
-  // skip) override `expires` with a future value explicitly. Pre-fix the
+  // skip) override `expires` with a future value explicitly. Previously the
   // codex bypass always re-hit the wire, so a future-expires worked for
   // both shapes; with the buffered-skip in place, the fixture must default
   // to expired to keep the mocked refresh path reachable.

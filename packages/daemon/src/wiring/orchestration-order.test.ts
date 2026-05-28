@@ -94,7 +94,7 @@ describe("daemon orchestration order runtime check", () => {
     // === Arrange: minimal silent logger + empty skill registry ===
     const logger = makeStubLogger();
 
-    // === Act 1: real setupMcp first (mirrors daemon.ts post-Task-3a reorder) ===
+    // === Act 1: real setupMcp first (mirrors daemon.ts orchestration order) ===
     const mcpResult = await setupMcp({
       servers: [],   // no real MCP servers configured; manager is constructed without I/O
       logger,
@@ -237,8 +237,7 @@ describe("daemon orchestration order runtime check", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // R8 daemon-wiring gap: setupMcp must receive oauthCredentialStore + dataDir
-  // (02-06 gap-closure).
+  // Daemon-wiring: setupMcp must receive oauthCredentialStore + dataDir.
   //
   // Confirms that daemon.ts passes `oauthCredentialStore` and `dataDir` to
   // `setupMcp` so that MCP OAuth tokens are routed through the unified
@@ -250,11 +249,8 @@ describe("daemon orchestration order runtime check", () => {
   // deferred-coverage note in the second `it` block above); the structural
   // check is sufficient to prevent regression — any future edit to daemon.ts
   // that strips these fields is caught immediately.
-  //
-  // RED: daemon.ts currently does NOT pass oauthCredentialStore/dataDir to
-  // setupMcp — this test must fail before the fix and pass after.
   // ---------------------------------------------------------------------------
-  it("daemon.ts passes oauthCredentialStore and dataDir to setupMcp (R8 wiring gap closure 02-06)", () => {
+  it("daemon.ts passes oauthCredentialStore and dataDir to setupMcp", () => {
     const __dirname = dirname(fileURLToPath(import.meta.url));
     // daemon.ts lives two directories up from wiring/
     const daemonSrc = readFileSync(join(__dirname, "..", "daemon.ts"), "utf-8");
@@ -274,7 +270,7 @@ describe("daemon orchestration order runtime check", () => {
 
     // Both wiring fields MUST be present in the setupMcp call block.
     // These are the fields that route MCP OAuth tokens through the port
-    // instead of the disk-default fallback (R8 SC5 second clause).
+    // instead of the disk-default fallback.
     expect(setupMcpCallBlock).toContain("oauthCredentialStore");
     expect(setupMcpCallBlock).toContain("dataDir");
   });

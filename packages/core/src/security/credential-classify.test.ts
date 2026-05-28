@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Header-credential classifier tests (Phase 1 — SEC keystone).
+ * Header-credential classifier tests.
  *
- * RED anchor: the module does not exist pre-patch, so the import fails.
  * classifyHeaderCredential maps (name, value) → kind:
  *   - "ref"           — env-ref string (${VAR}/$VAR/$${VAR}) OR SecretRef object
  *   - "oauth-bearer"  — a Bearer-scheme value wrapping a secret-looking remainder
@@ -48,14 +47,12 @@ describe("classifyHeaderCredential", () => {
   });
 });
 
-// ── WR-02 regression tests (Phase 1 code-review) ────────────────────────────
-
-describe("classifyHeaderCredential — scheme/quote-wrapped env-refs (WR-02)", () => {
-  it("classifies Bearer ${VAR} as ref (pre-patch returns static-secret)", () => {
+describe("classifyHeaderCredential — scheme/quote-wrapped env-refs", () => {
+  it("classifies Bearer ${VAR} as ref", () => {
     expect(classifyHeaderCredential("Authorization", "Bearer ${VAR}")).toEqual({ kind: "ref" });
   });
 
-  it('classifies "${VAR}" (double-quoted env-ref) as ref (pre-patch returns static-secret)', () => {
+  it('classifies "${VAR}" (double-quoted env-ref) as ref', () => {
     expect(classifyHeaderCredential("Authorization", '"${VAR}"')).toEqual({ kind: "ref" });
   });
 

@@ -463,7 +463,7 @@ describe("daemon main()", () => {
 
   it("uses default config paths when COMIS_CONFIG_PATHS is not set", async () => {
     delete process.env["COMIS_CONFIG_PATHS"];
-    // This test deliberately exercises the default-path branch. Fix A's
+    // This test deliberately exercises the default-path branch. The
     // VITEST guard (daemon.ts:~315) throws on that branch under
     // VITEST=true to stop accidental ~/.comis/ reads from real test code.
     // Here the test intent is the filtering behavior, not the guard, so
@@ -488,12 +488,12 @@ describe("daemon main()", () => {
     }
   });
 
-  it("Fix A: throws under VITEST=true when COMIS_CONFIG_PATHS is unset", async () => {
+  it("throws under VITEST=true when COMIS_CONFIG_PATHS is unset", async () => {
     delete process.env["COMIS_CONFIG_PATHS"];
     process.env["VITEST"] = "true";
     const { overrides } = buildOverrides();
 
-    // The Fix A guard hard-throws rather than silently reading
+    // The guard hard-throws rather than silently reading
     // ~/.comis/config.yaml from a test process. The message MUST mention
     // VITEST and the sandbox-path remediation so the failure is
     // self-diagnosing for a test author.
@@ -778,10 +778,10 @@ describe("applyInspectDefaultsForLogging", () => {
 });
 
 // ---------------------------------------------------------------------------
-// STORE-02 opt-out and STORE-01c same-boot init
+// opt-out and same-boot init
 // ---------------------------------------------------------------------------
 
-describe("STORE-02 opt-out and STORE-01c same-boot init", () => {
+describe("opt-out and same-boot init", () => {
   const originalEnv = process.env;
   const instances: DaemonInstance[] = [];
 
@@ -817,14 +817,13 @@ describe("STORE-02 opt-out and STORE-01c same-boot init", () => {
     const instance = await main(overrides);
     instances.push(instance);
 
-    // Pre-patch: no WARN specifically about COMIS_DISABLE_ENCRYPTED_SECRETS is emitted.
-    // Post-patch: daemonLogger (obtained from logLevelManager.getLogger) emits warn with
+    // daemonLogger (obtained from logLevelManager.getLogger) emits warn with
     // backup-obligation message. Access pattern mirrors daemon.test.ts:437.
     const daemonLogger = (mocks.logLevelManager.getLogger as ReturnType<typeof vi.fn>).mock.results[0]?.value;
     const warnCalls = (daemonLogger.warn as ReturnType<typeof vi.fn>).mock.calls;
     // Must find a warn whose message (2nd arg) OR hint (in 1st arg object) contains
     // "COMIS_DISABLE_ENCRYPTED_SECRETS" — specifically the opt-out WARN, not generic
-    // config warns (those exist pre-patch too, but none mention this flag).
+    // config warns (none of which mention this flag).
     const optOutWarn = warnCalls.find((args: unknown[]) => {
       const msg = String(args[1] ?? "");
       const hint = typeof args[0] === "object" && args[0] !== null
@@ -834,30 +833,19 @@ describe("STORE-02 opt-out and STORE-01c same-boot init", () => {
              hint.includes("COMIS_DISABLE_ENCRYPTED_SECRETS") ||
              hint.includes("backup obligation");
     });
-    // This assertion FAILS pre-patch (no such WARN exists):
     expect(optOutWarn).toBeDefined();
   });
 
-  // CR-02 RED: COMIS_DISABLE_ENCRYPTED_SECRETS=1 must make secretStore=undefined EVEN when
+  // COMIS_DISABLE_ENCRYPTED_SECRETS=1 must make secretStore=undefined EVEN when
   // SECRETS_MASTER_KEY already exists in the environment (the common post-first-boot case).
-  // Pre-fix: bootstrapSecretsAndEnv runs unconditionally, finds the env key, builds a live
-  // store. The WARN says "disabled" but the store is active — contradictory and dangerous.
-  // Post-fix: when disableEncrypted=true, the store construction is skipped entirely.
-  //
-  // The test seeds a real SECRETS_MASTER_KEY into process.env and passes the REAL setupSecrets
-  // through a spy-wrapper so we can observe whether a live store was returned. We assert the
-  // spy was never called with a result that produced a non-null SecretsBootResult, OR we
-  // assert via the daemonLogger banner that secrets.encrypted === false.
-  // CR-02 RED: COMIS_DISABLE_ENCRYPTED_SECRETS=1 must make secretStore=undefined EVEN when
-  // SECRETS_MASTER_KEY already exists in the environment (the common post-first-boot case).
-  // Pre-fix: bootstrapSecretsAndEnv runs unconditionally, finds the env key, builds a live
-  // store. The WARN says "disabled" but the store is active — contradictory and dangerous.
-  // Post-fix: when disableEncrypted=true, the store construction is skipped entirely.
+  // When disableEncrypted=true, the store construction must be skipped entirely; otherwise
+  // bootstrapSecretsAndEnv would run unconditionally, find the env key, and build a live
+  // store. The WARN says "disabled" but a live store would be contradictory and dangerous.
   //
   // The test seeds a real SECRETS_MASTER_KEY into process.env and passes the REAL setupSecrets
   // through a spy-wrapper so we can observe whether a live store was returned. We assert via the
   // daemonLogger banner that secrets.encrypted === false.
-  it("CR-02: COMIS_DISABLE_ENCRYPTED_SECRETS=1 with existing SECRETS_MASTER_KEY must yield secretStore=undefined", async () => {
+  it("COMIS_DISABLE_ENCRYPTED_SECRETS=1 with existing SECRETS_MASTER_KEY must yield secretStore=undefined", async () => {
     const { randomBytes: cryptoRandomBytes } = await import("node:crypto");
     const existingKeyHex = cryptoRandomBytes(32).toString("hex");
 
@@ -896,14 +884,12 @@ describe("STORE-02 opt-out and STORE-01c same-boot init", () => {
       return manifest !== undefined && typeof (manifest["secrets"] as Record<string, unknown> | undefined)?.["encrypted"] === "boolean";
     });
 
-    // CR-02 RED assertion: with disableEncrypted=1, secrets.encrypted MUST be false
-    // even though a real SECRETS_MASTER_KEY was planted in the env.
-    // Pre-fix: setupSecretsReturnedStore=true AND banner shows encrypted=true (store active).
-    // Post-fix: setupSecretsCalled=false OR banner shows encrypted=false (store inactive).
+    // With disableEncrypted=1, secrets.encrypted MUST be false even though a
+    // real SECRETS_MASTER_KEY was planted in the env. The expected state is
+    // setupSecretsCalled=false OR banner shows encrypted=false (store inactive).
     if (bannerCall) {
       const bannerManifest = (bannerCall[0] as Record<string, unknown>)["manifest"] as Record<string, unknown>;
       const secretsEncrypted = (bannerManifest["secrets"] as Record<string, unknown>)["encrypted"];
-      // Pre-fix: this assertion FAILS (store was built despite opt-out)
       expect(secretsEncrypted).toBe(false);
     } else {
       // Banner not found → check the spy: setupSecrets must not have returned a live store
@@ -931,8 +917,7 @@ describe("STORE-02 opt-out and STORE-01c same-boot init", () => {
     const calls = mockSetupSecrets.mock.calls;
     expect(calls.length).toBeGreaterThan(0);
     const firstCallOpts = calls[0]![0] as Record<string, unknown>;
-    // Pre-patch: seedKeyHex is NOT passed (undefined or missing key).
-    // Post-patch: seedKeyHex is a 64-char hex string.
+    // seedKeyHex must be a 64-char hex string on first boot.
     expect(typeof firstCallOpts["seedKeyHex"]).toBe("string");
     expect(String(firstCallOpts["seedKeyHex"])).toMatch(/^[0-9a-f]{64}$/);
 

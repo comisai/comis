@@ -478,10 +478,10 @@ describe("mcp_manage tool", () => {
   });
 
   // -----------------------------------------------------------------------
-  // connect action -- headers coercion (R2)
+  // connect action -- headers coercion
   // -----------------------------------------------------------------------
 
-  describe("connect action -- headers coercion (R2)", () => {
+  describe("connect action -- headers coercion", () => {
     it("coerces JSON-string headers to object before rpcCall", async () => {
       mockRpcCall.mockResolvedValue({ connected: true });
       const tool = createMcpManageTool(mockRpcCall);
@@ -606,10 +606,10 @@ describe("mcp_manage tool", () => {
   });
 
   // -----------------------------------------------------------------------
-  // reconnect action -- headers coercion (R2)
+  // reconnect action -- headers coercion
   // -----------------------------------------------------------------------
 
-  describe("reconnect action -- headers coercion (R2)", () => {
+  describe("reconnect action -- headers coercion", () => {
     it("coerces JSON-string headers to object before rpcCall", async () => {
       mockRpcCall.mockResolvedValue({ reconnected: true });
       const tool = createMcpManageTool(mockRpcCall);

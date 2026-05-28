@@ -2290,7 +2290,7 @@ describe("createPiEventBridge", () => {
       expect(emitCall[1].savedVsUncached).toBeCloseTo(-0.03723, 5);
     });
 
-    // COST-FIX: Cost correction delta tests
+    // Cost correction delta tests
     it("cost correction delta applied when ttlSplit has 1h tokens", () => {
       // Sonnet: cacheWrite(5m) = 0.00000375, cacheWrite1h = 0.000006
       // delta per 1h token = 0.000006 - 0.00000375 = 0.00000225
@@ -4534,7 +4534,7 @@ describe("session and tool-timeout lifecycle events", () => {
   it("emits session:started on pi-mono agent_start with channelType from ALS context (legacy path: no trajectoryRegistry)", () => {
     // Legacy callers (tests, embedded harnesses) omit trajectoryRegistry
     // from PiEventBridgeDeps. The bridge falls through to the legacy
-    // unconditional emit so behavior matches the pre-tlx baseline.
+    // unconditional emit so behavior matches the legacy baseline.
     const deps = createMockDeps();
     const { listener } = createPiEventBridge(deps);
 
@@ -4607,7 +4607,7 @@ describe("session and tool-timeout lifecycle events", () => {
   });
 
   it("agent_start_falls_back_to_unconditional_emit_when_trajectoryRegistry_absent (legacy path)", () => {
-    // Legacy callers (tests, embedded use) get the pre-tlx behavior so
+    // Legacy callers (tests, embedded use) get the legacy behavior so
     // existing harnesses keep working. The registry-backed latch is the
     // production path; without it, every agent_start emits.
     const deps = createMockDeps(); // no trajectoryRegistry
@@ -4919,12 +4919,12 @@ describe("session-index emit sites", () => {
   });
 
   // -------------------------------------------------------------------------
-  // tool_execution_end 'Tool not found' enrichment (SUBA-02)
+  // tool_execution_end 'Tool not found' enrichment
   // -------------------------------------------------------------------------
 
-  describe("tool_execution_end 'Tool not found' enrichment (SUBA-02)", () => {
+  describe("tool_execution_end 'Tool not found' enrichment", () => {
     it("'Tool mcp_manage not found' with activeToolGroups=['coding'] enriches errorText with supervisor re-spawn hint", () => {
-      // activeToolGroups field does not yet exist on PiEventBridgeDeps — cast via unknown for RED
+      // Cast via unknown since activeToolGroups is an optional extension to PiEventBridgeDeps.
       const enrichedDeps = createMockDeps({
         activeToolGroups: ["coding"],
       } as unknown as Partial<PiEventBridgeDeps>);
@@ -4977,11 +4977,11 @@ describe("session-index emit sites", () => {
       expect(toolFailWarn![0].errorText).toBe("Tool mcp_manage not found");
     });
 
-    // WR-07: MCP-namespaced tool names (mcp__<server>--<tool>) must NOT be enriched
+    // MCP-namespaced tool names (mcp__<server>--<tool>) must NOT be enriched
     // with profile-widening hint — MCP reachability is governed by subAgentMcpTools policy,
     // not by tool profiles. The classified errorKind must also be preserved (not overwritten
     // with "validation").
-    it("WR-07: 'Tool mcp__context7--search not found' with activeToolGroups does NOT get profile-widening hint", () => {
+    it("'Tool mcp__context7--search not found' with activeToolGroups does NOT get profile-widening hint", () => {
       const enrichedDeps = createMockDeps({
         activeToolGroups: ["coding"],
       } as unknown as Partial<PiEventBridgeDeps>);
@@ -5001,7 +5001,7 @@ describe("session-index emit sites", () => {
       expect(toolFailWarn![0].errorText).not.toContain("Re-spawn with tool_groups");
     });
 
-    it("WR-07: 'Tool mcp__db--query not found' errorKind is NOT overwritten to 'validation' (MCP kind preserved)", () => {
+    it("'Tool mcp__db--query not found' errorKind is NOT overwritten to 'validation' (MCP kind preserved)", () => {
       const enrichedDeps = createMockDeps({
         activeToolGroups: ["coding"],
       } as unknown as Partial<PiEventBridgeDeps>);

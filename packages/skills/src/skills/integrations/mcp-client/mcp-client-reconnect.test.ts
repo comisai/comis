@@ -1,30 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED tests for the reconnection engine.
+ * Tests for the reconnection engine.
  *
- * Covers two requirement areas:
+ * Covers:
  *
- *   MCPX-01 — isSelfHealedTransientError predicate narrowness.
+ *   isSelfHealedTransientError predicate narrowness.
  *     The SDK's StreamableHTTPClientTransport emits `onerror` with the prefix
  *     "SSE stream disconnected:" during internal GET-stream self-heal churn.
- *     Today there is NO predicate — every error increments consecutiveErrors.
- *     Five consecutive "SSE stream disconnected: …" errors will trip the
- *     threshold (3) and call handleDisconnection unnecessarily.
- *     RED tests confirm:
- *       (a) those errors must be swallowed (counter stays 0, reconnect NOT triggered)
- *       (b) the predicate must NOT swallow "Maximum reconnection attempts (…) exceeded."
- *       (c) the predicate must NOT swallow generic McpError-shaped messages
+ *     The predicate must:
+ *       (a) swallow those errors (counter stays 0, reconnect NOT triggered)
+ *       (b) NOT swallow "Maximum reconnection attempts (…) exceeded."
+ *       (c) NOT swallow generic McpError-shaped messages
  *
- *   MCPX-03 — generation guard + close-ordering + log levels.
+ *   Generation guard + close-ordering + log levels.
  *     Stale callbacks from a superseded connection generation must be ignored.
  *     reconnectionLoop must await client.close() BEFORE createTransport.
  *     Per-attempt failure log must be WARN, not DEBUG.
  *     Reconnect start must be logged at INFO.
  *
- *   RED-08 — keepalive ticker active after auto-reconnect.
- *     reconnectionLoop's success block currently does NOT call startKeepaliveTicker.
+ *   Keepalive ticker active after auto-reconnect.
  *     After a successful auto-reconnect state.keepaliveTickers must contain the
- *     server entry. FAILS now; Plan 04-04's GREEN makes this pass.
+ *     server entry.
  *
  * ESM module note: wireClientLifecycleCallbacks calls handleDisconnection via the
  * module's own internal binding — the partial mock of mcp-client-reconnect.js
@@ -65,7 +61,7 @@ const { createClientStub } = vi.hoisted(() => ({
 // ---------------------------------------------------------------------------
 // Partial mock of mcp-client-discover.js:
 //   createTransport and createClient are replaced by configurable stubs.
-//   Used in reconnect-loop ordering tests (RED-05, RED-06, RED-07, RED-08).
+//   Used in reconnect-loop ordering tests.
 // ---------------------------------------------------------------------------
 vi.mock("./mcp-client-discover.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./mcp-client-discover.js")>();
@@ -192,10 +188,10 @@ function wireConnected(
 }
 
 // ---------------------------------------------------------------------------
-// Tests: MCPX-01 — predicate narrowness
+// Tests: self-heal predicate narrowness
 // ---------------------------------------------------------------------------
 
-describe("wireClientLifecycleCallbacks — MCPX-01 self-heal predicate narrowness", () => {
+describe("wireClientLifecycleCallbacks — self-heal predicate narrowness", () => {
   beforeEach(() => {
     createTransportStub.mockClear();
     createClientStub.mockClear();
@@ -206,11 +202,11 @@ describe("wireClientLifecycleCallbacks — MCPX-01 self-heal predicate narrownes
   });
 
   it("five consecutive 'SSE stream disconnected:' errors leave consecutiveErrors at zero and do not trigger reconnect", () => {
-    // RED: currently fails because the counter increments on every onerror call.
-    // After 3 errors it reaches MAX_ERRORS_BEFORE_RECONNECT (3) and calls
-    // handleDisconnection, flipping the connection status to "reconnecting".
-    // With GREEN, isSelfHealedTransientError returns true for this prefix and
-    // the handler early-returns without touching the counter.
+    // isSelfHealedTransientError returns true for this prefix and the handler
+    // early-returns without touching the counter. Otherwise the counter would
+    // increment on every onerror call and after 3 errors reach
+    // MAX_ERRORS_BEFORE_RECONNECT (3) and call handleDisconnection, flipping
+    // the connection status to "reconnecting".
     const state = makeState({ serverName: "srv" });
     const client = wireConnected(state, "srv");
 
@@ -230,8 +226,7 @@ describe("wireClientLifecycleCallbacks — MCPX-01 self-heal predicate narrownes
   });
 
   it("'Maximum reconnection attempts (2) exceeded.' error escalates: triggers reconnect after threshold", () => {
-    // Invariant guard — passes now (no predicate swallows this message);
-    // must remain passing after GREEN to prove narrowness.
+    // Invariant guard — the predicate must not swallow this message.
     // Observable side-effect: after threshold (3) errors, handleDisconnection
     // fires, which sets connection status to "reconnecting".
     const state = makeState({ serverName: "srv" });
@@ -250,7 +245,7 @@ describe("wireClientLifecycleCallbacks — MCPX-01 self-heal predicate narrownes
   });
 
   it("McpError-shaped message escalates: predicate does not match 'MCP error <code>: …'", () => {
-    // Invariant guard — passes now; proves narrowness post-GREEN.
+    // Invariant guard — proves predicate narrowness.
     // Uses new Error instead of McpError to avoid importing the SDK class.
     const state = makeState({ serverName: "srv" });
     const client = wireConnected(state, "srv");
@@ -267,10 +262,10 @@ describe("wireClientLifecycleCallbacks — MCPX-01 self-heal predicate narrownes
 });
 
 // ---------------------------------------------------------------------------
-// Tests: MCPX-03 — generation guard
+// Tests: generation guard
 // ---------------------------------------------------------------------------
 
-describe("wireClientLifecycleCallbacks — MCPX-03 generation guard", () => {
+describe("wireClientLifecycleCallbacks — generation guard", () => {
   beforeEach(() => {
     createTransportStub.mockClear();
     createClientStub.mockClear();
@@ -281,10 +276,9 @@ describe("wireClientLifecycleCallbacks — MCPX-03 generation guard", () => {
   });
 
   it("onerror from a superseded generation leaves the live connection's consecutiveErrors at zero", () => {
-    // RED: fails now because there is no generation guard in wireClientLifecycleCallbacks.
-    // A stale gen-0 onerror fires after the generation has been bumped to 1.
-    // With GREEN, wireClientLifecycleCallbacks captures wiredGeneration and returns
-    // early when state.generations.get(serverName) !== wiredGeneration.
+    // wireClientLifecycleCallbacks captures wiredGeneration and returns early
+    // when state.generations.get(serverName) !== wiredGeneration. A stale gen-0
+    // onerror fires after the generation has been bumped to 1.
     const state = makeState({ serverName: "srv" });
     const gen0Client = wireConnected(state, "srv"); // sets generation to 0
 
@@ -304,7 +298,7 @@ describe("wireClientLifecycleCallbacks — MCPX-03 generation guard", () => {
   });
 
   it("onclose from a superseded generation does not trigger reconnect on the live connection", () => {
-    // RED: fails now — no generation check in onclose.
+    // onclose must include the generation check too.
     const state = makeState({ serverName: "srv" });
     const gen0Client = wireConnected(state, "srv");
 
@@ -322,7 +316,7 @@ describe("wireClientLifecycleCallbacks — MCPX-03 generation guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: MCPX-03 — log levels (reconnectionLoop via the real handleDisconnection)
+// Tests: log levels (reconnectionLoop via the real handleDisconnection)
 //
 // These tests call handleDisconnection directly (imported from the module under
 // test). Because the vi.mock of mcp-client-discover.js replaces createTransport
@@ -330,7 +324,7 @@ describe("wireClientLifecycleCallbacks — MCPX-03 generation guard", () => {
 // attempts succeed or fail and observe log output.
 // ---------------------------------------------------------------------------
 
-describe("reconnectionLoop — MCPX-03 log levels", () => {
+describe("reconnectionLoop — log levels", () => {
   beforeEach(() => {
     createTransportStub.mockClear();
     createClientStub.mockClear();
@@ -341,8 +335,7 @@ describe("reconnectionLoop — MCPX-03 log levels", () => {
   });
 
   it("per-attempt reconnect failure is logged at WARN level, not DEBUG", async () => {
-    // RED: fails because mcp-client-reconnect.ts:301 uses logger.debug?.().
-    // With GREEN the line becomes logger.warn(..., "MCP reconnection attempt failed").
+    // Per-attempt reconnect failures must be logged at WARN, not DEBUG.
     const logger = makeLogger();
     const state = makeState({ serverName: "srv" });
 
@@ -379,8 +372,8 @@ describe("reconnectionLoop — MCPX-03 log levels", () => {
   });
 
   it("reconnect start is logged at INFO before the first attempt", async () => {
-    // RED: fails because there is no logger.info call at the start of reconnectionLoop.
-    // The existing logger.info at line 291 fires on SUCCESS only.
+    // reconnect start must be logged at INFO before any attempt; the success
+    // INFO log fires only on a successful reconnect.
     const logger = makeLogger();
     const state = makeState({ serverName: "srv" });
 
@@ -409,10 +402,10 @@ describe("reconnectionLoop — MCPX-03 log levels", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: MCPX-03 — close-before-create ordering
+// Tests: close-before-create ordering
 // ---------------------------------------------------------------------------
 
-describe("reconnectionLoop — MCPX-03 close-before-create ordering", () => {
+describe("reconnectionLoop — close-before-create ordering", () => {
   beforeEach(() => {
     createTransportStub.mockClear();
     createClientStub.mockClear();
@@ -423,9 +416,7 @@ describe("reconnectionLoop — MCPX-03 close-before-create ordering", () => {
   });
 
   it("closes the prior client before calling createTransport in a reconnect attempt", async () => {
-    // RED: fails because reconnectionLoop currently calls createTransport without
-    // first awaiting priorClient.close(). With GREEN, priorConn.client.close() is
-    // called (and awaited) before createTransport.
+    // priorConn.client.close() must be called (and awaited) before createTransport.
     const callOrder: string[] = [];
 
     const priorClose = vi.fn(async () => {
@@ -448,7 +439,6 @@ describe("reconnectionLoop — MCPX-03 close-before-create ordering", () => {
 
     await vi.runAllTimersAsync();
 
-    // RED assertion: currently closeIdx === -1 (close never called) → fails
     const closeIdx = callOrder.indexOf("close");
     const createIdx = callOrder.indexOf("createTransport");
 
@@ -458,10 +448,10 @@ describe("reconnectionLoop — MCPX-03 close-before-create ordering", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests: RED-08 — keepalive ticker active after successful auto-reconnect
+// Tests: keepalive ticker active after successful auto-reconnect
 // ---------------------------------------------------------------------------
 
-describe("reconnectionLoop — RED-08 keepalive ticker after auto-reconnect", () => {
+describe("reconnectionLoop — keepalive ticker after auto-reconnect", () => {
   beforeEach(() => {
     createTransportStub.mockClear();
     createClientStub.mockClear();
@@ -471,10 +461,9 @@ describe("reconnectionLoop — RED-08 keepalive ticker after auto-reconnect", ()
     vi.useRealTimers();
   });
 
-  it("state.keepaliveTickers.has(serverName) is true after a successful auto-reconnect (RED-08)", async () => {
-    // RED-08: fails on current code because reconnectionLoop's success block
-    // never calls startKeepaliveTicker. Plan 04-04's GREEN adds that call via
-    // dynamic import so the ticker is registered after auto-reconnect.
+  it("state.keepaliveTickers.has(serverName) is true after a successful auto-reconnect", async () => {
+    // reconnectionLoop's success block must call startKeepaliveTicker so the
+    // ticker is registered after auto-reconnect.
     //
     // Server config: transport "http" so resolveDefaultKeepaliveIntervalMs
     // returns 30_000 ms (> 0 → ticker actually starts, not a no-op).
@@ -511,7 +500,6 @@ describe("reconnectionLoop — RED-08 keepalive ticker after auto-reconnect", ()
     // the 30 000 ms keepalive interval (which would loop forever in runAllTimersAsync).
     await vi.advanceTimersByTimeAsync(100);
 
-    // RED assertion: currently false because reconnectionLoop never calls startKeepaliveTicker
     expect(state.keepaliveTickers.has("srv")).toBe(true);
   });
 });

@@ -94,7 +94,7 @@ const NPM_CONFIG_PREFIX = "npm_config_";
 const XDG_PREFIX = "XDG_";
 
 /**
- * Interpreter-control vars blocked from child env unconditionally (R4 — T-02-14).
+ * Interpreter-control vars blocked from child env unconditionally.
  * These instruct runtimes to load attacker-controlled code at startup.
  * Blocked even via operator config.env — NEVER remove without security review.
  */
@@ -136,7 +136,7 @@ export function scrubStdioEnv(
   const result: Record<string, string> = {};
   const snapshot = systemEnvSnapshot();
   for (const key of Object.keys(snapshot)) {
-    // R4: interpreter-control vars are blocked even if they appear in the
+    // Interpreter-control vars are blocked even if they appear in the
     // allowlist or a prefix-match — defense-in-depth against accidental addition.
     if (INTERPRETER_CONTROL_BLOCKLIST.has(key)) continue;
     const passes =
@@ -150,10 +150,10 @@ export function scrubStdioEnv(
     result[key] = v;
   }
   // Operator-named config.env passes through — EXCEPT interpreter-control vars
-  // (R4: these must never reach a child process even via explicit operator config).
+  // (these must never reach a child process even via explicit operator config).
   if (configEnv) {
     for (const [key, value] of Object.entries(configEnv)) {
-      if (INTERPRETER_CONTROL_BLOCKLIST.has(key)) continue; // R4 block
+      if (INTERPRETER_CONTROL_BLOCKLIST.has(key)) continue; // interpreter-control block
       result[key] = value;
     }
   }

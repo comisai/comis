@@ -274,7 +274,7 @@ describe("Execution-complete log — costCorrectionDeltaUsd", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R3 — tool-failure endReason and notice
+// tool-failure endReason and notice
 //
 // Contract:
 //   - When finishReason ∈ {stop, end_turn} AND failedTools is non-empty, the
@@ -287,7 +287,7 @@ describe("Execution-complete log — costCorrectionDeltaUsd", () => {
 //   - endReason="success" when finishReason="stop" and failedTools is empty
 //     (baseline unchanged).
 // ---------------------------------------------------------------------------
-describe("R3 — tool-failure endReason and notice", () => {
+describe("tool-failure endReason and notice", () => {
   const baseClock = { now: () => Date.now(), nowDate: () => new Date() };
 
   // -------------------------------------------------------------------------
@@ -379,11 +379,12 @@ describe("R3 — tool-failure endReason and notice", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-02 — modelAcknowledgedFailure must use word-boundary matching
+// modelAcknowledgedFailure must use word-boundary matching
 // ---------------------------------------------------------------------------
 // The helper is private inside executor-post-execution.ts, so we test its
-// behaviour via the source text (the same pattern used by the R3 suite above).
-describe("WR-02 — modelAcknowledgedFailure word-boundary regression", () => {
+// behaviour via the source text (the same pattern used by the tool-failure
+// suite above).
+describe("modelAcknowledgedFailure word-boundary regression", () => {
   function readPostExecSource(): string {
     return readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
   }

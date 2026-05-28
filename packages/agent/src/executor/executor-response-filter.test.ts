@@ -473,9 +473,9 @@ describe("recoverEmptyFinalResponse — tool-call synthesis", () => {
   it("disambiguates parallel gateway.patch calls with different keys in the same batch", () => {
     // Production repro from 2026-04-30 OpenRouter onboarding test: model fired
     // gateway.patch agents.default.model + gateway.patch agents.default.provider
-    // in the same turn. Pre-fix, both bullets rendered identically as
-    // `gateway({action: "patch", section: "agents"})`. Post-fix, key field
-    // disambiguates them.
+    // in the same turn. Without the key field, both bullets render identically
+    // as `gateway({action: "patch", section: "agents"})`; including the key
+    // field disambiguates them.
     const result = recoverEmptyFinalResponse({
       extractedResponse: "",
       textEmitted: true,
@@ -526,9 +526,9 @@ describe("recoverEmptyFinalResponse — tool-call synthesis", () => {
 describe("recoverEmptyFinalResponse — silent-token pass-through (cron heartbeat regression)", () => {
   it("cron heartbeat case: HEARTBEAT_OK after observation tools (web_search + get_stock_price) passes through unchanged", () => {
     // Production trace from May 2026: iran-war-monitor Telegram cron agent
-    // emitted HEARTBEAT_OK after observation-only tools. Pre-fix, recovery
+    // emitted HEARTBEAT_OK after observation-only tools. Previously, recovery
     // synthesized a fake "[comis: tool-call summary recovered ...]" message
-    // and delivered it hourly via Telegram. Post-fix, the silent token
+    // and delivered it hourly via Telegram. Now the silent token
     // passes through to the channel-layer filter for suppression.
     const result = recoverEmptyFinalResponse({
       extractedResponse: "HEARTBEAT_OK",
@@ -558,7 +558,7 @@ describe("recoverEmptyFinalResponse — silent-token pass-through (cron heartbea
 });
 
 // ---------------------------------------------------------------------------
-// R9: surfaceDiscardedPreToolUrl — URL/short-code safety-net
+// surfaceDiscardedPreToolUrl — URL/short-code safety-net
 // ---------------------------------------------------------------------------
 
 describe("surfaceDiscardedPreToolUrl", () => {
@@ -582,8 +582,9 @@ describe("surfaceDiscardedPreToolUrl", () => {
     expect(result).toContain("Tool completed.");
   });
 
-  it("Case B — pre-tool framing prose \"I'm going to...\" without URL is not surfaced (negative control: pi-executor.test.ts:4892)", () => {
-    // Mirrors the exact fixture from pi-executor.test.ts:4892 (stock-scanner scenario)
+  it("Case B — pre-tool framing prose \"I'm going to...\" without URL is not surfaced (negative control)", () => {
+    // Stock-scanner scenario: pre-tool prose that begins with "I'm going to..."
+    // must not be surfaced as a user-visible auth hint.
     const messages = [
       { role: "user", content: "Create a stock scanner skill", timestamp: 1 },
       {
@@ -611,8 +612,9 @@ describe("surfaceDiscardedPreToolUrl", () => {
     expect(result).not.toContain("Step 4/4");
   });
 
-  it("Case C — pre-tool framing prose \"Let me handle that for you.\" is not surfaced (negative control: pi-executor.test.ts:4966)", () => {
-    // Mirrors the exact fixture from pi-executor.test.ts:4966
+  it("Case C — pre-tool framing prose \"Let me handle that for you.\" is not surfaced (negative control)", () => {
+    // Negative control: pre-tool prose that begins with "Let me ..." must not
+    // be surfaced as a user-visible auth hint.
     const messages = [
       { role: "user", content: "Do something", timestamp: 1 },
       {
@@ -676,7 +678,7 @@ describe("surfaceDiscardedPreToolUrl", () => {
     expect(result).toBe("HEARTBEAT_OK");
   });
 
-  it("Case F — pre-tool framing prose containing URL is not surfaced (FRAMING_PROSE_RE wins over URL predicate, per Pitfall 3)", () => {
+  it("Case F — pre-tool framing prose containing URL is not surfaced (FRAMING_PROSE_RE wins over URL predicate)", () => {
     // FRAMING_PROSE_RE must fire BEFORE the URL predicate
     const messages = [
       { role: "user", content: "Fetch the docs." },
@@ -718,10 +720,10 @@ describe("surfaceDiscardedPreToolUrl", () => {
     );
   });
 
-  // WR-01 regression tests — SHORT_CODE_RE must NOT match plain English words.
+  // Regression tests — SHORT_CODE_RE must NOT match plain English words.
   it("Case G — benign non-framing pre-tool narration 'Checking the weather forecast now.' is NOT surfaced", () => {
-    // Reviewer repro: pre-tool text that doesn't start with FRAMING_PROSE_RE but
-    // contains only dictionary words must not get the first word prepended.
+    // Pre-tool text that doesn't start with FRAMING_PROSE_RE but contains only
+    // dictionary words must not get the first word prepended.
     const messages = [
       { role: "user", content: "What's the weather like?" },
       {
@@ -739,7 +741,7 @@ describe("surfaceDiscardedPreToolUrl", () => {
   });
 
   it("Case H — benign non-framing pre-tool narration 'Running the analysis pipeline.' is NOT surfaced", () => {
-    // Reviewer repro: "analysis" must not be prepended as a code candidate.
+    // "analysis" must not be prepended as a code candidate.
     const messages = [
       { role: "user", content: "Run the analysis." },
       {

@@ -110,9 +110,8 @@ describe("createOutputGuard", () => {
   // Warning findings -- detect-only, NOT redacted
   // -------------------------------------------------------------------------
 
-  it("REDACTS bearer token (R4: severity upgraded to critical), blocked=true", () => {
-    // R4: bearer_token severity is now "critical" — token is redacted in sanitized output.
-    // Pre-R4 this was "warning" (detect-only). Test updated to reflect the R4 change.
+  it("REDACTS bearer token (severity upgraded to critical), blocked=true", () => {
+    // bearer_token severity is "critical" — token is redacted in sanitized output.
     const response = "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9";
     const result = guard.scan(response);
     expect(result.ok).toBe(true);
@@ -241,12 +240,12 @@ describe("createOutputGuard", () => {
   });
 
   // -------------------------------------------------------------------------
-  // R4 redact behavior (bearer_token severity: critical; hf_token entry)
+  // redact behavior (bearer_token severity: critical; hf_token entry)
   // -------------------------------------------------------------------------
 
-  describe("R4 redact behavior", () => {
+  describe("redact behavior", () => {
     it("bearer_token rule REDACTS in sanitized output (not warn-only)", () => {
-      // After R4: severity is "critical" → token replaced in sanitized
+      // severity is "critical" → token replaced in sanitized
       const token = "hf_" + "a".repeat(44);
       const response = `Authorization: Bearer ${token}`;
       const result = guard.scan(response);

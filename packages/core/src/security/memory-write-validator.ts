@@ -49,7 +49,7 @@ const CRITICAL_PATTERN_SOURCES: ReadonlySet<string> = new Set(
  * @returns Validation result with severity classification and matched patterns
  */
 export function validateMemoryWrite(content: string): MemoryWriteValidationResult {
-  // R4: secret scan FIRST — pre-persist block using the shared keystone guard.
+  // secret scan FIRST — pre-persist block using the shared keystone guard.
   // scrubSecretsFromText uses the fast pre-filter; most content pays O(prefixes) only.
   const scrub = scrubSecretsFromText(content);
   if (scrub.redactions > 0) {

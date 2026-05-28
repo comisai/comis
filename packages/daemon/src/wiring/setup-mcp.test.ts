@@ -33,7 +33,7 @@ const mockCreateMcpClientManager = vi.hoisted(() => vi.fn(() => ({
 
 vi.mock("@comis/skills", () => ({
   createMcpClientManager: mockCreateMcpClientManager,
-  // resolveDiscovery is used by setup-mcp.ts in the oauthDeps seam (R8).
+  // resolveDiscovery is used by setup-mcp.ts in the oauthDeps seam.
   // Provide a minimal mock so the module import succeeds.
   resolveDiscovery: vi.fn(),
 }));
@@ -732,12 +732,12 @@ describe("setupMcp", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // R8: oauthDeps injection — McpDeps.oauthCredentialStore + dataDir
-  // These tests fail until setup-mcp.ts is patched to pass oauthDeps to
-  // createMcpClientManager when oauthCredentialStore + dataDir are provided.
+  // oauthDeps injection — McpDeps.oauthCredentialStore + dataDir
+  // Verifies setup-mcp.ts passes oauthDeps to createMcpClientManager when
+  // oauthCredentialStore + dataDir are provided.
   // ---------------------------------------------------------------------------
 
-  describe("R8 oauthDeps injection", () => {
+  describe("oauthDeps injection", () => {
     /** Minimal OAuthCredentialStorePort mock for injection tests. */
     function makePortMock(): OAuthCredentialStorePort {
       return {

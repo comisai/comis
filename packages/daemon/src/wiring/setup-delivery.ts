@@ -83,8 +83,8 @@ export async function setupDeliveryQueue(deps: {
   let drainInterval: ReturnType<typeof setInterval> | undefined;
   // Single-tick gate: in-flight Promise prevents overlapping ticks.
   let draining: Promise<void> | null = null;
-  // Fix B (log-review): transition-gate state for the empty-drain log.
-  // Pre-fix, every recurring tick on an empty queue emitted
+  // Transition-gate state for the empty-drain log.
+  // Previously, every recurring tick on an empty queue emitted
   // "Delivery queue drain: no pending entries" — dominated debug logs at
   // one line per drainIntervalMs (5–10s). The gate logs ONCE when the
   // queue transitions to empty; subsequent empty ticks are silent. Start

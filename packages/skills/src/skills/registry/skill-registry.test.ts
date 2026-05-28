@@ -859,7 +859,7 @@ describe("createSkillRegistry", () => {
 
   it("loadPromptSkill recovers from malformed comis.capability", async () => {
     // A typo'd `comis.capability` block must NEVER hide the skill -- not at
-    // discovery time and not at load time. Pre-fix, loadPromptSkill went
+    // discovery time and not at load time. Previously, loadPromptSkill went
     // through the strict SkillManifestSchema and rejected typo'd capability
     // blocks, leaving the skill discoverable but unusable. This regression
     // pins the load-path defensive strip.

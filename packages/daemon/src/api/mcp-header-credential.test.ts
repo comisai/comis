@@ -55,21 +55,21 @@ describe("buildVarName", () => {
     expect(buildVarName("my-mcp-1", "x-auth-token")).toBe("MCP_MY_MCP_1__X_AUTH_TOKEN");
   });
 
-  // WR-02: collision tests — distinct (serverId, headerName) pairs must produce distinct VARs.
-  it("WR-02: buildVarName('foo-bar', 'Key') and buildVarName('foo', 'Bar-Key') produce DIFFERENT var names (no silent collision)", () => {
+  // collision tests — distinct (serverId, headerName) pairs must produce distinct VARs.
+  it("buildVarName('foo-bar', 'Key') and buildVarName('foo', 'Bar-Key') produce DIFFERENT var names (no silent collision)", () => {
     const v1 = buildVarName("foo-bar", "Key");
     const v2 = buildVarName("foo", "Bar-Key");
     // With double-underscore separator: v1 = MCP_FOO_BAR__KEY, v2 = MCP_FOO__BAR_KEY — distinct.
     expect(v1).not.toBe(v2);
   });
 
-  it("WR-02: degenerate all-symbol server id falls back to 'SERVER' sentinel (no empty segment)", () => {
+  it("degenerate all-symbol server id falls back to 'SERVER' sentinel (no empty segment)", () => {
     const v = buildVarName("@@@", "Key");
     // Should be MCP_SERVER__KEY (sentinel), not MCP__KEY (empty server slug).
     expect(v).toBe("MCP_SERVER__KEY");
   });
 
-  it("WR-02: degenerate all-symbol header name falls back to 'HEADER' sentinel (no empty segment)", () => {
+  it("degenerate all-symbol header name falls back to 'HEADER' sentinel (no empty segment)", () => {
     const v = buildVarName("srv", "---");
     // Should be MCP_SRV__HEADER (sentinel), not MCP_SRV_ (empty header slug with trailing underscore).
     expect(v).toBe("MCP_SRV__HEADER");
@@ -132,7 +132,7 @@ describe("processHeaderCredentials — ref passthrough", () => {
 const HF_BEARER_TOKEN = "hf_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk01234567890";
 
 // ---------------------------------------------------------------------------
-// processHeaderCredentials — oauth-bearer refusal (CRED-06)
+// processHeaderCredentials — oauth-bearer refusal
 // ---------------------------------------------------------------------------
 
 describe("processHeaderCredentials — oauth-bearer unconditional refusal", () => {
@@ -186,7 +186,7 @@ describe("processHeaderCredentials — oauth-bearer unconditional refusal", () =
 });
 
 // ---------------------------------------------------------------------------
-// processHeaderCredentials — static-secret extraction (CRED-05)
+// processHeaderCredentials — static-secret extraction
 // ---------------------------------------------------------------------------
 
 describe("processHeaderCredentials — static-secret extraction", () => {
@@ -368,15 +368,11 @@ describe("processHeaderCredentials — idempotency", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WR-01: processHeaderCredentials — resolvedHeaders for immediate connect
+// processHeaderCredentials — resolvedHeaders for immediate connect
 // ---------------------------------------------------------------------------
-// RED proof: processHeaderCredentials currently returns void (no resolvedHeaders).
-// These tests require the function to return { resolvedHeaders } — a new return
-// type — which would not compile on pre-patch code. Combined RED+GREEN commit
-// per AGENTS.md §2.10 (test would not compile against pre-patch code).
 
-describe("processHeaderCredentials — resolvedHeaders for immediate connect (WR-01)", () => {
-  it("WR-01: returns resolvedHeaders with the RAW secret value (not ${VAR} string) for the live connect", () => {
+describe("processHeaderCredentials — resolvedHeaders for immediate connect", () => {
+  it("returns resolvedHeaders with the RAW secret value (not ${VAR} string) for the live connect", () => {
     const rawValue = "sk-ant-abc123defghijklmnopqrstuvwxyz";
     const secretStore = makeSecretStore();
     const headers: Record<string, string> = {
@@ -396,7 +392,7 @@ describe("processHeaderCredentials — resolvedHeaders for immediate connect (WR
     expect(headers["X-Api-Key"]).toBe("${MCP_CONTEXT7__X_API_KEY}");
   });
 
-  it("WR-01: resolvedHeaders for a ref header passes through the ${VAR} string unchanged", () => {
+  it("resolvedHeaders for a ref header passes through the ${VAR} string unchanged", () => {
     const secretStore = makeSecretStore();
     const headers: Record<string, string> = {
       Authorization: "Bearer ${MY_TOKEN}",
@@ -413,7 +409,7 @@ describe("processHeaderCredentials — resolvedHeaders for immediate connect (WR
     expect(result.resolvedHeaders["Authorization"]).toBe("Bearer ${MY_TOKEN}");
   });
 
-  it("WR-01: resolvedHeaders for a plaintextOptOut header passes through the original value", () => {
+  it("resolvedHeaders for a plaintextOptOut header passes through the original value", () => {
     const secretStore = makeSecretStore();
     const rawValue = "sk-ant-abc123defghijklmnopqrstuvwxyz";
     const headers: Record<string, string> = {

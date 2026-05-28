@@ -50,8 +50,8 @@ export function lastKnownGoodPath(configPath: string): string {
  *
  * `logger` is optional. When provided, a WARN is emitted if the snapshot
  * is intentionally skipped (secret found in source config, or malformed YAML),
- * so operators know the LKG was NOT updated and why (WR-03 fix). Without a
- * logger the skip is still correct (security behavior unchanged) but silent.
+ * so operators know the LKG was NOT updated and why. Without a logger the
+ * skip is still correct (security behavior unchanged) but silent.
  *
  * The audit-record `configPath` field reflects the WRITE TARGET (the
  * `.last-good.yaml` file), not the source `config.yaml` — the record
@@ -67,14 +67,14 @@ export function saveLastKnownGood(
     return { saved: false, path: lkgPath };
   }
 
-  // CRED-03: refuse to snapshot a config that contains a plaintext secret.
+  // Refuse to snapshot a config that contains a plaintext secret.
   // Parse the source file first; any scan finding means the LKG would
   // capture a credential that could be re-introduced via
   // `cp config.last-good.yaml config.yaml`.
   try {
     const sourceObj = parseYaml(readFileSync(configPath, "utf-8")) ?? {};
     if (scanForSecrets(sourceObj).length > 0) {
-      // WR-03: emit WARN so operators know the LKG snapshot was skipped and why.
+      // Emit WARN so operators know the LKG snapshot was skipped and why.
       // The secret path is included as context but the VALUE is never logged.
       logger?.warn(
         {
@@ -87,8 +87,8 @@ export function saveLastKnownGood(
       return { saved: false, path: lkgPath };
     }
   } catch {
-    // Unreadable / malformed YAML — fail-safe: skip the snapshot (Pitfall 5).
-    // WR-03: emit WARN so the operator knows the snapshot is stale.
+    // Unreadable / malformed YAML — fail-safe: skip the snapshot.
+    // Emit WARN so the operator knows the snapshot is stale.
     logger?.warn(
       {
         hint: "Fix the malformed config.yaml so the LKG snapshot can be updated; current snapshot (if any) is stale",

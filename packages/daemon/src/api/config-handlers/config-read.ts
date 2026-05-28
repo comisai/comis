@@ -183,7 +183,7 @@ export function bindConfigReadHandlers(deps: ConfigHandlerDeps): Record<string, 
         nodeVersion: process.version,
         configPaths: deps.configPaths,
         sections: getConfigSections(),
-        // CR-01: expose store availability via a REAL contract field so the
+        // Expose store availability via a REAL contract field so the
         // env_set preflight in gateway-tool.ts can read a truthful signal
         // instead of the non-existent manifest.secrets.encrypted field.
         secretsStoreAvailable: deps.secretStore !== undefined,

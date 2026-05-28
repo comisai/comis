@@ -21,7 +21,7 @@ import type { McpClientManagerDeps, McpClientManagerState, McpServerConfig } fro
 import { createRefreshDeduper, type RefreshDeduper } from "./oauth/refresh-deduper.js";
 
 // ---------------------------------------------------------------------------
-// Transport-aware keepalive defaults (MCPX-02 single source of truth)
+// Transport-aware keepalive defaults (single source of truth)
 // ---------------------------------------------------------------------------
 
 /** Default keepalive interval for http/sse/streamable-http transports (beats ~60s idle window). */
@@ -31,7 +31,7 @@ export const KEEPALIVE_INTERVAL_HTTP_SSE_MS = 30_000;
 export const KEEPALIVE_INTERVAL_STDIO_MS = 180_000;
 
 /**
- * Pre-expiry buffer for proactive OAuth token refresh (R6 #2).
+ * Pre-expiry buffer for proactive OAuth token refresh.
  * When a token's remaining lifetime (expires_in) is within this threshold,
  * the keepalive tick refreshes it proactively so the next tool call does not 401.
  * 5 minutes: ensures at least one keepalive tick fires within the window
@@ -45,7 +45,7 @@ const PRE_EXPIRY_BUFFER_SEC = PRE_EXPIRY_BUFFER_MS / 1000;
 /**
  * Resolve the default keepalive interval for a given transport type.
  *
- * This is the single source of truth for keepalive defaults (MCPX-02):
+ * This is the single source of truth for keepalive defaults:
  *   - stdio: 180 000 ms (no idle window; unchanged from previous global default)
  *   - http / sse / streamable-http: 30 000 ms (beats the ~60s server-side idle close)
  *
@@ -83,7 +83,7 @@ export function resolveDefaultKeepaliveIntervalMs(transport: McpServerConfig["tr
  * @returns void — `0` interval is a NO-OP (explicit semantics: zero disables keepalive).
  */
 export function startKeepaliveTicker(state: McpClientManagerState, deps: McpClientManagerDeps, config: McpServerConfig, onFailure?: (serverName: string) => void): void {
-  // Per-server override wins; fall back to transport-aware default (MCPX-02 single source).
+  // Per-server override wins; fall back to transport-aware default (single source).
   const intervalMs = config.keepaliveIntervalMs ?? resolveDefaultKeepaliveIntervalMs(config.transport);
   if (intervalMs === 0) return; // Disabled (interval=0 means no keepalive)
   const handle: SystemIntervalHandle = systemSetInterval(() => maybeEnqueueKeepalivePing(state, deps, config.name, onFailure), intervalMs);
@@ -112,7 +112,7 @@ export function startKeepaliveTicker(state: McpClientManagerState, deps: McpClie
  * undefined (test-only call sites that don't test the failure path) the
  * failure is a silent no-op.
  *
- * Deadlock-free proactive refresh (CR-01):
+ * Deadlock-free proactive refresh:
  * The near-expiry check and `await dedupedRefresh(...)` run inside
  * `primary.add(refreshAndPing)` but the deduper's internal critical section
  * uses a DEDICATED per-tick cc-1 queue (not the primary queue) so there is no
@@ -122,13 +122,13 @@ export function startKeepaliveTicker(state: McpClientManagerState, deps: McpClie
  * (shared across proactive + 401 paths); the per-tick queue merely prevents
  * two concurrent ticks from double-refreshing via the same accessToken key.
  *
- * @param deduper - TEST SEAM (D-TS-01, Option A). When provided (tests), the
+ * @param deduper - Optional test seam. When provided (tests), the
  *   proactive-refresh path uses the injected deduper's dedupedRefresh as the spy.
  *   When omitted (all production call sites — startKeepaliveTicker stays 4-arg),
  *   the deduper is reconstructed in-place from state.inflightRefreshes + a fresh
- *   per-tick cc-1 queue (D-02-revised: uses a dedicated queue, not primary, to
- *   prevent the concurrency-1 deadlock; inflightRefreshes still coalesces with the
- *   401 path). Do NOT thread this param through startKeepaliveTicker.
+ *   per-tick cc-1 queue (uses a dedicated queue, not primary, to prevent the
+ *   concurrency-1 deadlock; inflightRefreshes still coalesces with the 401 path).
+ *   Do NOT thread this param through startKeepaliveTicker.
  */
 export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: McpClientManagerDeps, serverName: string, onFailure?: (serverName: string) => void, deduper?: RefreshDeduper): void {
   const primary = state.callQueues.get(serverName);
@@ -146,7 +146,7 @@ export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: Mc
   // keepalive_failed reconnect.
   const capturedGeneration = conn.generation;
 
-  // WR-02: obtain the token store ONCE per tick at the top level (before doPing),
+  // Obtain the token store ONCE per tick at the top level (before doPing),
   // not inside the queue body — createTokenStore() is a singleton factory; calling it
   // per queue-execution would invoke per-tick ensureContainedDir syscalls and violate
   // the singleton contract. The result is closed over by doPing and doProactiveRefresh.
@@ -158,14 +158,14 @@ export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: Mc
       : undefined;
 
   /**
-   * R6 #2 — Proactive pre-expiry OAuth token refresh (CR-01 deadlock-free).
+   * Proactive pre-expiry OAuth token refresh (deadlock-free).
    *
    * MUST run inside the primary queue slot (or the keepalive queue slot) but
    * the deduper's internal critical-section queue MUST NOT be the same as the
    * primary queue — that would nest `primary.add(criticalSection)` inside a
    * running `primary.add(doPing)` body → deadlock on concurrency-1.
    *
-   * Fix: the deduper receives a fresh per-tick cc-1 queue (not primary).
+   * The deduper receives a fresh per-tick cc-1 queue (not primary).
    * The dedup guarantee is unchanged — `inflightRefreshes` (shared map on state)
    * still coalesces concurrent proactive + 401 refreshes for the same access
    * token. The cc-1 queue merely serializes the has()/get()/set() critical
@@ -178,7 +178,7 @@ export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: Mc
     if (tokenStore === undefined) return;
 
     const stored = await tokenStore.tokens(serverName);
-    // WR-03: tokens() always sets expires_in; the !== undefined guard is technically
+    // tokens() always sets expires_in; the !== undefined guard is technically
     // dead code but kept for TypeScript narrowing (SDK type is number | undefined).
     if (
       stored === undefined ||
@@ -196,8 +196,8 @@ export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: Mc
     ]);
     if (discovery === undefined || clientInfo === undefined) return;
 
-    // D-TS-01: injected deduper (tests) ?? in-place reconstruction (production, D-02-revised).
-    // CR-01 key: the production deduper uses a fresh per-tick cc-1 queue (NOT primary).
+    // Injected deduper (tests) ?? in-place reconstruction (production).
+    // The production deduper uses a fresh per-tick cc-1 queue (NOT primary).
     // inflightRefreshes is still shared so proactive + 401 refreshes coalesce on the
     // same map — the dedup guarantee is preserved regardless of the queue object used
     // for the map check+set critical section.
@@ -209,7 +209,7 @@ export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: Mc
       logger: deps.logger,
     });
 
-    // WR-01: Forward addClientAuthentication from the per-server oauth config
+    // Forward addClientAuthentication from the per-server oauth config
     // (stripeAccount → Stripe-Account header), mirroring what the on-401 path
     // (deduped-fetch.ts) already does so connected-account refreshes carry
     // the required header on the proactive path too.
@@ -245,7 +245,7 @@ export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: Mc
         },
         "MCP keepalive: proactive OAuth refresh failed",
       );
-      // Do not rethrow — keepalive must not crash on a refresh failure (T-04-02-01)
+      // Do not rethrow — keepalive must not crash on a refresh failure.
     }
   };
 
@@ -255,9 +255,9 @@ export function maybeEnqueueKeepalivePing(state: McpClientManagerState, deps: Mc
       return;
     }
 
-    // R6 #2 — Proactive refresh runs BEFORE the ping (still inside the same
+    // Proactive refresh runs BEFORE the ping (still inside the same
     // primary.add slot). The deduper uses a per-tick cc-1 queue (not primary)
-    // so there is no nested primary.add → no deadlock (CR-01).
+    // so there is no nested primary.add → no deadlock.
     await doProactiveRefreshIfNeeded();
 
     try {

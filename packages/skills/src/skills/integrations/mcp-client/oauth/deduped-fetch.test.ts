@@ -422,7 +422,7 @@ describe("createDedupedRefreshFetch", () => {
     expect(payload.err).toBe(refreshError);
   });
 
-  it("on-401 refresh: dedupedRefresh receives authorizationServerMetadata from discovery state (R6 #1)", async () => {
+  it("on-401 refresh: dedupedRefresh receives authorizationServerMetadata from discovery state", async () => {
     await store.saveDiscoveryState("notion", {
       authorizationServerUrl: "https://auth.example.test",
       authorizationServerMetadata: {
@@ -462,13 +462,12 @@ describe("createDedupedRefreshFetch", () => {
     });
     expect(res.status).toBe(200);
     expect(dedupedRefreshSpy).toHaveBeenCalledTimes(1);
-    // RED pre-fix: metadata is undefined because deduped-fetch.ts does not thread it.
-    // GREEN post-fix: metadata matches the stored authorizationServerMetadata.
+    // metadata must match the stored authorizationServerMetadata.
     const call = dedupedRefreshSpy.mock.calls[0]![0] as Record<string, unknown>;
     expect(call.metadata).toMatchObject({ token_endpoint: "https://auth.example.test/token" });
   });
 
-  it("on-401 refresh: metadata absent from dedupedRefresh args when discovery has no authorizationServerMetadata (R6 #1 fallback)", async () => {
+  it("on-401 refresh: metadata absent from dedupedRefresh args when discovery has no authorizationServerMetadata", async () => {
     // Discovery state WITHOUT authorizationServerMetadata (the minimal shape)
     await store.saveDiscoveryState("notion", {
       authorizationServerUrl: "https://auth.example.test",

@@ -12,8 +12,8 @@
  *     missed `authorization`/`cookie`/header field names.
  *
  * The keystone ships path-independent primitives only — consumers (the
- * write/persist path, last-good snapshot, mcp.connect firewall) are wired in
- * Phase 3 (CRED).
+ * write/persist path, last-good snapshot, mcp.connect firewall) are wired
+ * separately.
  *
  * Hardening of `looksLikeSecretValue` over `looksLikePlaintextSecret`: strip
  * surrounding quotes + a leading auth scheme (Bearer/Basic/Token/Digest,
@@ -58,14 +58,14 @@ export const PLAINTEXT_SECRET_PREFIXES: readonly string[] = [
   "sk-", // OpenAI API key
   "xoxb-", // Slack bot token
   "xoxp-", // Slack user token
-  "xapp-", // Slack app-level token (gap vs patterns.ts slack-app-token) — WR-02
+  "xapp-", // Slack app-level token (gap vs patterns.ts slack-app-token)
   "AKIA", // AWS access key ID (canonical prefix)
   "secret_", // Notion internal v1 (legacy)
   "ntn_", // Notion v2 (>= Sept 2024)
   "glpat-", // GitLab personal access token
   "sk_live_", // Stripe live secret key
   "sk_test_", // Stripe test secret key
-  // R0 additions — WR-02: complete the parity gap vs @comis/observability patterns.ts.
+  // additions: complete the parity gap vs @comis/observability patterns.ts.
   "hf_", // HuggingFace access token (Higgsfield + HuggingFace Hub)
   "hfr_", // HuggingFace OAuth refresh token
   "r8_", // Replicate token (gap vs patterns.ts:143)
@@ -89,8 +89,8 @@ export const PLAINTEXT_SECRET_PREFIXES: readonly string[] = [
  * `ghp_`, `github_pat_`, `sk-ant-`, `glpat-`, `sk_live_`, `sk_test_`,
  * `xoxb-`, `xoxp-`, `secret_`, `ntn_`, `AKIA`).
  *
- * WR-03 fix: short/ambiguous prefixes (hf_, r8_, gsk_, npm_, AKID, LTAI, …)
- * previously triggered on any value that started with the prefix, falsely
+ * Short/ambiguous prefixes (hf_, r8_, gsk_, npm_, AKID, LTAI, …) without a
+ * length gate would trigger on any value that starts with the prefix, falsely
  * flagging npm_config_cache, AKIDNEYBEAN, hf_model_config, etc. The gate
  * values below are derived from patterns.ts: each is the {N,} minimum from
  * the corresponding pattern's regex body.
@@ -173,7 +173,7 @@ function stripSurroundingQuotes(value: string): string {
  *   2. strip a leading case-insensitive auth scheme (Bearer/Basic/Token/Digest)
  *   3. skip unresolved env-ref placeholders on the remainder
  * then run the gated-prefix scan, then the entropy backstop:
- *   - curated-prefix scan with per-prefix minimum body length (WR-03 fix):
+ *   - curated-prefix scan with per-prefix minimum body length:
  *     short-ambiguous prefixes (hf_, gsk_, npm_, AKID, LTAI, …) require a
  *     minimum body length matching patterns.ts to avoid false-positives on
  *     config keys like npm_config_cache or words like AKIDNEYBEAN.
@@ -192,7 +192,7 @@ export function looksLikeSecretValue(value: string): boolean {
 
   for (const prefix of PLAINTEXT_SECRET_PREFIXES) {
     if (remainder.startsWith(prefix)) {
-      // WR-03 fix: apply minimum body-length gate for ambiguous/short prefixes.
+      // Apply minimum body-length gate for ambiguous/short prefixes.
       // High-specificity prefixes (ghp_, glpat-, sk-ant-, etc.) have no entry
       // in PREFIX_MIN_BODY_LENGTHS so minBody is 0 — they match unconditionally.
       const minBody = PREFIX_MIN_BODY_LENGTHS.get(prefix) ?? 0;
@@ -257,7 +257,7 @@ const WHOLE_ESCAPED_VAR_RE = new RegExp(`^${ESCAPED_VAR_PATTERN.source}$`);
  * the canonical env-substitution patterns — no re-authored ref regexes.
  *
  * Exported so that `credential-classify.ts` can share the single authoritative
- * implementation instead of maintaining a divergent trim-only copy (WR-02).
+ * implementation instead of maintaining a divergent trim-only copy.
  */
 export function isEnvRefString(value: string): boolean {
   const remainder = stripSurroundingQuotes(value).replace(AUTH_SCHEME_RE, "");
@@ -308,7 +308,7 @@ function walkScan(
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
       // Preserve fieldName so a secret-named array (e.g. headers.Authorization: [...])
-      // still triggers the secret-field rule on each element (WR-01 fix).
+      // still triggers the secret-field rule on each element.
       walkScan(value[i], `${path}[${i}]`, fieldName, findings);
     }
     return;
@@ -346,7 +346,7 @@ function walkRedact(obj: unknown): void {
     if (isSecretFieldName(key)) {
       // Redact every nested string regardless of depth (string, array-of-strings,
       // or nested objects) so arrays like Authorization: ["Bearer x", "Bearer y"]
-      // are fully redacted (IN-01 fix).
+      // are fully redacted.
       record[key] = redactSubtreeStrings(record[key]);
     } else {
       walkRedact(record[key]);

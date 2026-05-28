@@ -999,7 +999,7 @@ describe("gateway tool", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // STORE-03: env_set store-unavailable pre-flight tests (CR-01 corrected)
+  // env_set store-unavailable pre-flight tests
   //
   // The mock responses use the REAL gateway.status contract shape:
   //   { pid, uptime, memoryUsage, nodeVersion, configPaths, sections, secretsStoreAvailable }
@@ -1051,7 +1051,7 @@ describe("gateway tool", () => {
     });
   }
 
-  describe("env_set store-unavailable pre-flight (STORE-03)", () => {
+  describe("env_set store-unavailable pre-flight", () => {
     it("returns secrets_store_unavailable error before confirmation when encrypted store is unavailable", async () => {
       const rpcCall = createUnavailableStoreMockRpcCall();
       const tool = createGatewayTool(rpcCall, mockLogger);
@@ -1064,9 +1064,7 @@ describe("gateway tool", () => {
       } as any);
 
       const details = result.details as Record<string, unknown>;
-      // CR-01 RED: current code reads manifest.secrets.encrypted → undefined → always
-      // returns secrets_store_unavailable even when the real field says available.
-      // After CR-01 fix: reads secretsStoreAvailable=false → correctly blocks.
+      // Reads secretsStoreAvailable=false → correctly blocks.
       expect(details.error).toBe("secrets_store_unavailable");
       expect(typeof details.hint).toBe("string");
       expect(String(details.hint).length).toBeGreaterThan(20);
@@ -1098,12 +1096,10 @@ describe("gateway tool", () => {
       expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
     });
 
-    // CR-01 RED: The CORE failing test. When gateway.status returns the REAL contract shape
-    // with secretsStoreAvailable=true, the preflight MUST allow the call through.
-    // On current (buggy) code: manifest is undefined → secretsEncrypted=false → returns
-    // secrets_store_unavailable EVEN when secretsStoreAvailable=true. Fails.
-    // After CR-01 fix: reads secretsStoreAvailable=true → passes through to confirmation gate.
-    it("CR-01 RED: allows env_set through when real gateway.status field secretsStoreAvailable=true", async () => {
+    // When gateway.status returns the REAL contract shape with secretsStoreAvailable=true,
+    // the preflight MUST allow the call through.
+    // Reads secretsStoreAvailable=true → passes through to confirmation gate.
+    it("allows env_set through when real gateway.status field secretsStoreAvailable=true", async () => {
       const rpcCall = createAvailableStoreMockRpcCall();
       const tool = createGatewayTool(rpcCall, mockLogger);
 
@@ -1116,18 +1112,17 @@ describe("gateway tool", () => {
       } as any);
 
       const details = result.details as Record<string, unknown>;
-      // Pre-fix: details.error === "secrets_store_unavailable" (wrong — manifested bug)
-      // Post-fix: reaches confirmation gate → requiresConfirmation: true
+      // Reaches confirmation gate → requiresConfirmation: true
       expect(details.error).toBeUndefined();
       expect(details.requiresConfirmation).toBe(true);
       // env.set must not have been called (first pass is confirmation gate)
       expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
     });
 
-    // W3: if gateway.status throws (e.g. non-admin caller), preflight must NOT
+    // If gateway.status throws (e.g. non-admin caller), preflight must NOT
     // make env_set unusable — it must fall through to the downstream handler guard
     // rather than propagating a raw thrown error.
-    it("W3: falls through gracefully when gateway.status throws (non-admin caller)", async () => {
+    it("falls through gracefully when gateway.status throws (non-admin caller)", async () => {
       const rpcCall = vi.fn(async (method: string, params: Record<string, unknown>) => {
         if (method === "gateway.status") {
           throw new Error("Admin access required for gateway status");
@@ -1157,7 +1152,7 @@ describe("gateway tool", () => {
       const details = (result as { details?: Record<string, unknown> }).details ?? {};
       // The result must NOT be an unhandled error propagation from gateway.status
       // (i.e. it must not throw, and the error must be structured, not "Admin access required")
-      // Per W3 fix: fall through to downstream guard → requiresConfirmation (no secretStore)
+      // Fall through to downstream guard → requiresConfirmation (no secretStore)
       // or secrets_store_unavailable from the downstream env.set path.
       // The key invariant: no raw thrown error propagated to the caller.
       expect(typeof details).toBe("object");

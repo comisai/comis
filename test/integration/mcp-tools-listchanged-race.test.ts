@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * PROVING integration test (Option A, NO production change).
+ * PROVING integration test (NO production change).
  *
  * Pins the existing safety of a `tools/list_changed` notification that fires
  * DURING an in-flight `callTool`. Two invariants are locked against regression:
@@ -20,9 +20,9 @@
  *      does NOT fire, so the call returns `ok` (NOT "connection recycled").
  *
  * Why this is a genuine proving test (would FAIL if the safety broke):
- *   - If a future change bumped `state.generations` inside `onChanged` (the
- *     rejected Option B hardening), the in-flight call would trip the generation
- *     guard and return `err("... connection recycled ... Retry safely")` — the
+ *   - If a future change bumped `state.generations` inside `onChanged`, the
+ *     in-flight call would trip the generation guard and return
+ *     `err("... connection recycled ... Retry safely")` — the
  *     `result.ok === true` + `text === "alpha-result"` assertions would FAIL.
  *     (Contrast: mcp-client.test.ts:1102 proves a RECONNECT-bumped generation
  *     DOES make the in-flight call fail; this test proves list_changed does not.)
@@ -34,9 +34,8 @@
  *     assertion (`gamma` wins, `alpha`/`beta` gone) would be at risk.
  *
  * A proving/regression test for already-correct behavior may
- * land as a single commit — there is no pre-patch production change to make it
- * fail (Option A); this docblock + the commit message record that
- * rationale.
+ * land as a single commit — there is no production change to make it
+ * fail; this docblock + the commit message record that rationale.
  *
  * Integration tests import `@comis/skills` via `dist/` — run
  * `pnpm build` before vitest. The integration vitest config aliases
@@ -293,7 +292,8 @@ describe("tools/list_changed during in-flight callTool", () => {
     // INVARIANT 1: the in-flight call is UNAFFECTED by the mid-flight swap. It
     // completed against the tool it was dispatched with. Because onChanged does
     // NOT bump the generation, the post-call generation guard does not fire — so
-    // this is `ok`, not "connection recycled". (Would FAIL under Option B.)
+    // this is `ok`, not "connection recycled". (Would FAIL if onChanged bumped
+    // the generation.)
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.isError).toBe(false);

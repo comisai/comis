@@ -331,17 +331,14 @@ describe("McpServerEntrySchema — safety hardening additive fields", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Additive reliability fields (keepalive, circuit breaker). Combined
-// schema + tests because the new fields are not on the inferred type
-// pre-patch — `result.keepaliveIntervalMs` would be a TS error if tests
-// preceded the schema change.
+// Additive reliability fields (keepalive, circuit breaker).
 // ---------------------------------------------------------------------------
 
 describe("McpConfigSchema — reliability additive fields", () => {
   it("produces reliability defaults from an empty input object", () => {
     const result = McpConfigSchema.parse({});
-    // keepaliveIntervalMs is now optional (no Zod default); transport-aware default
-    // is resolved at runtime by resolveDefaultKeepaliveIntervalMs (MCPX-02).
+    // keepaliveIntervalMs is optional (no Zod default); transport-aware default
+    // is resolved at runtime by resolveDefaultKeepaliveIntervalMs.
     expect(result.keepaliveIntervalMs).toBeUndefined();
     expect(result.circuitBreakerThreshold).toBe(3);
     expect(result.circuitBreakerCooldownMs).toBe(60_000);
@@ -395,8 +392,6 @@ describe("McpServerEntrySchema — per-server reliability overrides", () => {
 // Per-server OAuth opt-in fields. Two additive optional fields land on
 // McpServerEntrySchema: `auth` (enum none/bearer/oauth) and an `oauth`
 // strictObject (authorizationEndpoint URL fallback, scope, Stripe-Account).
-// Combined schema + tests because the accept tests reference `result.auth` /
-// `result.oauth`, which would be TS errors on the pre-patch inferred type.
 // The reject tests pin strictObject + enum tampering defence.
 // ---------------------------------------------------------------------------
 
@@ -486,20 +481,13 @@ describe("McpServerEntrySchema — OAuth opt-in fields", () => {
 });
 
 // ---------------------------------------------------------------------------
-// MCPX-02: keepaliveIntervalMs Zod schema default removed.
-//
-// Currently McpConfigSchema.keepaliveIntervalMs has .default(180_000) at
-// schema-integrations.ts:208, so omitting the field returns 180000.
-// Plan 04-03 removes the .default() and makes the field .optional() so
-// startKeepaliveTicker can resolve a transport-aware default instead.
+// keepaliveIntervalMs has no Zod default — startKeepaliveTicker resolves a
+// transport-aware default at runtime instead.
 // ---------------------------------------------------------------------------
 
-describe("McpConfigSchema — MCPX-02 keepaliveIntervalMs default removed", () => {
+describe("McpConfigSchema — keepaliveIntervalMs has no Zod default", () => {
   it("keepaliveIntervalMs is undefined when omitted from config (no Zod default)", () => {
     const result = McpConfigSchema.parse({ servers: [] });
-    // RED: currently returns 180000 because of .default(180_000) at schema-integrations.ts:208.
-    // GREEN (Plan 04-03): returns undefined after .default() is removed and
-    // the field becomes .optional().
     expect(result.keepaliveIntervalMs).toBeUndefined();
   });
 });

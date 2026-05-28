@@ -175,7 +175,7 @@ function resolveEditPath(
  * @param logger - Optional pino-compatible logger
  * @param tracker - Optional FileStateTracker for read-before-edit and staleness
  * @param sharedPaths - Optional shared paths (lazily resolved) accessible by all tools
- * @param config - Optional config for R4 secret egress guard (security.writeSecretGuard)
+ * @param config - Optional config for secret egress guard (security.writeSecretGuard)
  */
 export function createComisEditTool(
   workspacePath: string,
@@ -244,7 +244,7 @@ export function createComisEditTool(
         }
       }
 
-      // --- R4: Secret egress guard on newText content — per D-01/R4, default "warn" + redirect hint.
+      // --- Secret egress guard on newText content — default "warn" + redirect hint.
       const editGuardMode = (config?.security?.writeSecretGuard ?? "warn") as "warn" | "block" | "off";
       let editWarnRedactions = 0;
       if (editGuardMode !== "off") {
@@ -266,7 +266,7 @@ export function createComisEditTool(
         if (editWarnRedactions > 0) {
           logger?.warn(
             { hint: "Secret-shaped value redacted from file edit; use secure credential store", errorKind: "internal" as const, redactions: editWarnRedactions },
-            "R4 egress guard: edit-tool newText scrubbed",
+            "Egress guard: edit-tool newText scrubbed",
           );
         }
       }

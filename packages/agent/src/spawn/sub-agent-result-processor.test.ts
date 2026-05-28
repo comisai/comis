@@ -352,7 +352,7 @@ describe("classifyErrorContext HTTP-5xx detection", () => {
   });
 
   it("does NOT misclassify benign messages containing '5' and '00' substrings", () => {
-    // These were false-positives under the pre-fix operator-precedence bug.
+    // These were false-positives under the prior operator-precedence bug.
     const falsePositiveCandidates = [
       "Step 5 failed at 12:00:00",
       "Took 5 attempts, total 0.0001 cost",
@@ -379,10 +379,10 @@ describe("classifyErrorContext HTTP-5xx detection", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R4 announcement scrub
+// announcement scrub
 // ---------------------------------------------------------------------------
 
-describe("R4 announcement scrub", () => {
+describe("announcement scrub", () => {
   it("scrubs token from announcement text before deliverAnnouncement passes it to sendToChannel", async () => {
     const rawToken = "hf_" + "c".repeat(44);
     const sendToChannel = vi.fn().mockResolvedValue(true);
@@ -409,7 +409,7 @@ describe("R4 announcement scrub", () => {
         announcementText: announcement,
         announceChannelType: "telegram",
         announceChannelId: "chat-123",
-        runId: "run-r4-test",
+        runId: "run-scrub-test",
       },
       { sendToChannel },
     );

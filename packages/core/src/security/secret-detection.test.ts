@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Keystone secret-detection tests (Phase 1 — SEC).
+ * Keystone secret-detection tests.
  *
- * RED anchors (fail on pre-patch code where the module does not exist, and
- * where the old `looksLikePlaintextSecret` returns the WRONG answer):
- *   - looksLikeSecretValue("Bearer hf_<44+>") === true  (old returns false — SEC-02)
- *   - isSecretFieldName("Authorization") === true        (old pattern misses it — SEC-03)
+ * Anchors (assert the WRONG-answer fixes vs the old `looksLikePlaintextSecret`):
+ *   - looksLikeSecretValue("Bearer hf_<44+>") === true  (SEC-02)
+ *   - isSecretFieldName("Authorization") === true        (SEC-03)
  *   - scanForSecrets({headers:{Authorization:"Bearer ${TOK}"}}) === []  (SEC-04 exemption)
  *
  * @module
  */
 import { describe, it, expect } from "vitest";
-// R0 parity guard: test-file cross-import of @comis/observability is allowed.
+// Parity guard: test-file cross-import of @comis/observability is allowed.
 // Production @comis/core must NOT import @comis/observability — forbidden edge.
 // This import lives in a test file only; devDependency in package.json.
 import { getDefaultRedactPatterns } from "@comis/observability";
@@ -28,7 +27,7 @@ import {
 const HF_BODY = "hf_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789AbCdEf";
 
 describe("looksLikeSecretValue — scheme strip (SEC-02 bug closure)", () => {
-  it("detects a Bearer-prefixed high-entropy token (pre-patch returned false)", () => {
+  it("detects a Bearer-prefixed high-entropy token", () => {
     expect(looksLikeSecretValue(`Bearer ${HF_BODY}`)).toBe(true);
   });
 
@@ -172,14 +171,14 @@ describe("redactForDisplay", () => {
   });
 });
 
-// ── WR-01 / IN-01 regression tests (Phase 1 code-review) ────────────────────
+// ── regression tests ────────────────────────────────────────────────────────
 
-describe("scanForSecrets — secret-named array elements (WR-01)", () => {
+describe("scanForSecrets — secret-named array elements", () => {
   // A value that does NOT trigger the value heuristic on its own (short, no
   // known prefix, no high entropy) but lives under a secret-named key.
   const PLAIN = "plainsecret_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcd";
 
-  it("flags each element of a secret-named array (pre-patch returns [])", () => {
+  it("flags each element of a secret-named array", () => {
     const findings = scanForSecrets({ authorization: [PLAIN] });
     // Must find a finding whose path is authorization[0]
     expect(findings.length).toBeGreaterThan(0);
@@ -215,8 +214,8 @@ describe("scanForSecrets — secret-named array elements (WR-01)", () => {
   });
 });
 
-describe("redactForDisplay — secret-named array values (IN-01)", () => {
-  it("redacts each string element under a secret-named key (pre-patch leaves them plain)", () => {
+describe("redactForDisplay — secret-named array values", () => {
+  it("redacts each string element under a secret-named key", () => {
     const out = redactForDisplay({
       authorization: ["Bearer hf_secret", "x"],
     });
@@ -237,34 +236,32 @@ describe("redactForDisplay — secret-named array values (IN-01)", () => {
   });
 });
 
-// ── R0: explicit prefix entries — vocabulary unification (Phase 1) ──────────
+// ── explicit prefix entries — vocabulary unification ────────────────────────
 
-describe("R0: explicit prefix entries — hf_/hfr_/r8_ (vocabulary unification)", () => {
+describe("explicit prefix entries — hf_/hfr_/r8_ (vocabulary unification)", () => {
   // Tokens that are above the minimum-body-length gate (patterns.ts requires 18+)
   // but below the 44-char entropy backstop floor, so they only match via the
-  // explicit prefix entry. Pre-patch: missing from PLAINTEXT_SECRET_PREFIXES so
-  // these 21-30 char tokens slipped the entropy backstop (length < 44).
-  // Post-patch: explicit prefix entry + length gate detects them.
+  // explicit prefix entry. Without explicit entries in PLAINTEXT_SECRET_PREFIXES,
+  // these 21-30 char tokens slip the entropy backstop (length < 44). The
+  // explicit prefix entry + length gate detects them.
   const SHORT_HF = "hf_" + "a".repeat(20); // 23 chars total — prefix + 20 body (> 18 gate, < 44 entropy floor)
   const SHORT_HFR = "hfr_" + "a".repeat(20); // 24 chars total
   const SHORT_R8 = "r8_" + "a".repeat(20); // 23 chars total
 
-  it("R0-a: looksLikeSecretValue returns true for hf_ token below entropy backstop length floor (fails pre-patch: no prefix entry)", () => {
-    // PRE-PATCH: returns false (no hf_ prefix entry; entropy backstop requires length >= 44)
-    // POST-PATCH: returns true (explicit prefix match with 20-char body >= 18-char gate)
+  it("looksLikeSecretValue returns true for hf_ token below entropy backstop length floor", () => {
+    // Explicit prefix match with 20-char body >= 18-char gate.
     expect(looksLikeSecretValue(SHORT_HF)).toBe(true);
   });
 
-  it("R0-b: scanForSecrets flags hfr_ value in a non-secret-named field (fails pre-patch: no prefix match, below entropy floor)", () => {
-    // PRE-PATCH: returns [] (no prefix match; field name "k" is not secret-named; short value below entropy floor)
-    // POST-PATCH: returns a non-empty findings array (hfr_ prefix is explicit, length-gated)
+  it("scanForSecrets flags hfr_ value in a non-secret-named field", () => {
+    // Returns a non-empty findings array (hfr_ prefix is explicit, length-gated).
     const findings = scanForSecrets({ k: SHORT_HFR });
     expect(findings.length).toBeGreaterThan(0);
   });
 
-  it("R0-c: PLAINTEXT_SECRET_PREFIXES covers every prefix-kind pattern in observability patterns.ts (drift guard)", () => {
-    // WR-01 fix: extract prefixes that include - and . characters (the old \b([A-Za-z0-9_]*)
-    // regex stopped at - and . so sk-, ya29., xapp-, pplx- were silently skipped).
+  it("PLAINTEXT_SECRET_PREFIXES covers every prefix-kind pattern in observability patterns.ts (drift guard)", () => {
+    // Extract prefixes that include - and . characters (a naive \b([A-Za-z0-9_]*)
+    // regex stops at - and . so sk-, ya29., xapp-, pplx- would be silently skipped).
     //
     // Strategy: for each prefix-kind pattern, extract the literal token sequence after \b
     // up to the first character-class [ or quantifier { or end-of-pattern.
@@ -310,7 +307,7 @@ describe("R0: explicit prefix entries — hf_/hfr_/r8_ (vocabulary unification)"
       expect(keystonePrefixes, `keystone missing "${prefix}" (from pattern "${p.name}")`).toContain(prefix);
     }
 
-    // Also verify the short tokens (the direct R0 regression) are explicitly covered:
+    // Also verify the short tokens are explicitly covered:
     expect(keystonePrefixes, 'keystone must contain "hf_" (Higgsfield/HuggingFace)').toContain("hf_");
     expect(keystonePrefixes, 'keystone must contain "hfr_" (HuggingFace refresh)').toContain("hfr_");
     expect(keystonePrefixes, 'keystone must contain "r8_" (Replicate)').toContain("r8_");
@@ -322,37 +319,38 @@ describe("R0: explicit prefix entries — hf_/hfr_/r8_ (vocabulary unification)"
   });
 });
 
-// ── WR-02: keystone false-negatives — common credential shapes slip the scanner ──
+// ── keystone false-negatives — common credential shapes slip the scanner ────
 
-describe("WR-02: looksLikeSecretValue correctly detects provider prefixes absent from keystone", () => {
-  // PRE-PATCH: these all return false because their prefixes are absent from
-  // PLAINTEXT_SECRET_PREFIXES and they are too short for the entropy backstop.
-  // POST-PATCH: returns true after adding missing prefixes to PLAINTEXT_SECRET_PREFIXES.
+describe("looksLikeSecretValue correctly detects provider prefixes absent from keystone", () => {
+  // Without these explicit entries in PLAINTEXT_SECRET_PREFIXES, these all
+  // return false because their prefixes are absent and the values are too
+  // short for the entropy backstop. Adding the missing prefixes to the keystone
+  // makes them return true.
 
-  it("WR-02-a: realistic Google API key (AIzaSy...) detected as secret (pre-patch returns false)", () => {
+  it("realistic Google API key (AIzaSy...) detected as secret", () => {
     // AIzaSy + 33 chars = 39 chars total — below the 44-char entropy backstop floor
     expect(looksLikeSecretValue("AIzaSyA1234567890abcdefghijklmnopqrstu")).toBe(true);
   });
 
-  it("WR-02-b: realistic Google OAuth bearer token (ya29....) detected as secret (pre-patch returns false)", () => {
+  it("realistic Google OAuth bearer token (ya29....) detected as secret", () => {
     // ya29.a0AfH6SMBxxxxxxxxxxxxxxxxx — 31 chars, well below entropy backstop
     expect(looksLikeSecretValue("ya29.a0AfH6SMBxxxxxxxxxxxxxxxxxxxxxxxxx")).toBe(true);
   });
 
-  it("WR-02-c: realistic Slack app token (xapp-...) detected as secret (pre-patch returns false)", () => {
+  it("realistic Slack app token (xapp-...) detected as secret", () => {
     // xapp-1-A0123456789-ABCDEF012345 — 31 chars
     expect(looksLikeSecretValue("xapp-1-A0123456789-ABCDEF012345")).toBe(true);
   });
 
-  it("WR-02-d: realistic Perplexity key (pplx-...) detected as secret (pre-patch returns false)", () => {
+  it("realistic Perplexity key (pplx-...) detected as secret", () => {
     expect(looksLikeSecretValue("pplx-abc123def456ghi789jkl012m")).toBe(true);
   });
 
-  it("WR-02-e: Comis platform token (comis_...) detected as secret (pre-patch returns false)", () => {
+  it("Comis platform token (comis_...) detected as secret", () => {
     expect(looksLikeSecretValue("comis_abc123def456ghi789")).toBe(true);
   });
 
-  it("WR-02-f: scanForSecrets flags AIza key inside MCP args array (pre-patch returns [])", () => {
+  it("scanForSecrets flags AIza key inside MCP args array", () => {
     // Confirmed end-to-end regression: plaintext Google API key in mcp args passes the firewall
     const findings = scanForSecrets({
       integrations: {
@@ -365,60 +363,60 @@ describe("WR-02: looksLikeSecretValue correctly detects provider prefixes absent
   });
 });
 
-// ── WR-03: keystone false-positives — short/ambiguous prefixes falsely flag legit config ──
+// ── keystone false-positives — short/ambiguous prefixes falsely flag legit config ──
 
-describe("WR-03: looksLikeSecretValue does NOT false-positive on legit config strings", () => {
-  // PRE-PATCH: bare startsWith() with no length gate returns true for all these.
-  // POST-PATCH: length/format gating (matching patterns.ts minimum body length)
-  // means these short/legit strings return false.
+describe("looksLikeSecretValue does NOT false-positive on legit config strings", () => {
+  // Bare startsWith() with no length gate would return true for all these.
+  // With length/format gating (matching patterns.ts minimum body length),
+  // these short/legit strings return false.
 
-  it("WR-03-a: npm_config_cache is NOT flagged as a secret (pre-patch returns true)", () => {
+  it("npm_config_cache is NOT flagged as a secret", () => {
     // npm_ prefix but this is a standard npm env var name — 16 chars total, benign
     expect(looksLikeSecretValue("npm_config_cache")).toBe(false);
   });
 
-  it("WR-03-b: AKIDNEYBEAN is NOT flagged as a secret (pre-patch returns true)", () => {
+  it("AKIDNEYBEAN is NOT flagged as a secret", () => {
     // AKID prefix but only 11 chars — not a real AWS key (needs 20 total: AKID + 16)
     expect(looksLikeSecretValue("AKIDNEYBEAN")).toBe(false);
   });
 
-  it("WR-03-c: LTAILGATE is NOT flagged as a secret (pre-patch returns true)", () => {
+  it("LTAILGATE is NOT flagged as a secret", () => {
     // LTAI prefix but only 9 chars — not a real Alibaba key (needs 20+ total)
     expect(looksLikeSecretValue("LTAILGATE")).toBe(false);
   });
 
-  it("WR-03-d: hf_model_config is NOT flagged as a secret (pre-patch returns true)", () => {
+  it("hf_model_config is NOT flagged as a secret", () => {
     // hf_ prefix but only 14 chars — real HuggingFace tokens are hf_ + 18+ alphanumerics
     expect(looksLikeSecretValue("hf_model_config")).toBe(false);
   });
 
-  it("WR-03-e: gsk_test is NOT flagged as a secret (pre-patch returns true)", () => {
+  it("gsk_test is NOT flagged as a secret", () => {
     // gsk_ prefix but only 8 chars — real Groq keys are gsk_ + 18+ alphanumerics
     expect(looksLikeSecretValue("gsk_test")).toBe(false);
   });
 
-  it("WR-03-f: r8_unit_tests is NOT flagged as a secret (pre-patch returns true)", () => {
+  it("r8_unit_tests is NOT flagged as a secret", () => {
     // r8_ prefix but only 13 chars — real Replicate tokens are r8_ + 18+ alphanumerics
     expect(looksLikeSecretValue("r8_unit_tests")).toBe(false);
   });
 
   // Positive controls: real long tokens with the same prefixes MUST still be detected.
-  it("WR-03-g: a real long npm token (npm_ + 40+ chars) IS still flagged", () => {
+  it("a real long npm token (npm_ + 40+ chars) IS still flagged", () => {
     // Real npm automation tokens are npm_ + 36-char UUID-like body
     expect(looksLikeSecretValue("npm_" + "a".repeat(40))).toBe(true);
   });
 
-  it("WR-03-h: a real AWS AKID key (AKID + 16 uppercase alphanumerics) IS still flagged", () => {
+  it("a real AWS AKID key (AKID + 16 uppercase alphanumerics) IS still flagged", () => {
     // AWS AKID prefix + 16 chars minimum per patterns.ts AKID[A-Z0-9]{14,}
     expect(looksLikeSecretValue("AKIDABCDEF1234567890")).toBe(true);
   });
 
-  it("WR-03-i: a real Alibaba LTAI key (LTAI + 16 alphanumerics) IS still flagged", () => {
+  it("a real Alibaba LTAI key (LTAI + 16 alphanumerics) IS still flagged", () => {
     // Alibaba LTAI prefix + 16 chars minimum per patterns.ts LTAI[A-Za-z0-9]{16,}
     expect(looksLikeSecretValue("LTAIabcdef123456789012")).toBe(true);
   });
 
-  it("WR-03-j: a real HuggingFace token (hf_ + 18+ chars) IS still flagged", () => {
+  it("a real HuggingFace token (hf_ + 18+ chars) IS still flagged", () => {
     expect(looksLikeSecretValue("hf_" + "A".repeat(18))).toBe(true);
   });
 });

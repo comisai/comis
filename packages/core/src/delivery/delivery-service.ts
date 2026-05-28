@@ -194,7 +194,7 @@ export function createDeliveryService(deps: DeliveryServiceDeps): DeliveryServic
         // hooks/hook-runner.ts:runModifyingHook empty-registry short-circuit).
         let deliveryText = text;
 
-        // --- R4: one-pass egress scan BEFORE hooks and chunking ---
+        // --- One-pass egress secret scan BEFORE hooks and chunking ---
         // mightContainSecret pre-filter inside — secret-free messages pay near-zero cost.
         // Scan is here (not inside the chunk loop) to satisfy the O(1) per-delivery
         // perf contract: secret-free 10k-char messages complete in <5ms.

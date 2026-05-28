@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Shared egress text scrubber for the secret egress firewall (R4).
+ * Shared egress text scrubber for the secret egress firewall.
  * Intra-core only — imports only from within @comis/core (no cross-package observability import
  * allowed here; that would invert the one-way core←observability dependency graph).
- * Uses PLAINTEXT_SECRET_PREFIXES + PREFIX_MIN_BODY_LENGTHS from the R0 keystone.
+ * Uses PLAINTEXT_SECRET_PREFIXES + PREFIX_MIN_BODY_LENGTHS from the secret-detection keystone.
  * @module
  */
 
@@ -17,7 +17,7 @@ export interface ScrubResult {
   readonly redactions: number;
 }
 
-// eslint-disable-next-line no-restricted-syntax -- R4 egress scrubber sentinel (intra-core, not the Pino censor literal)
+// eslint-disable-next-line no-restricted-syntax -- egress scrubber sentinel (intra-core, not the Pino censor literal)
 const REDACTED = "[REDACTED]";
 
 function escapeRegex(s: string): string {
@@ -41,8 +41,8 @@ export function mightContainSecret(text: string): boolean {
  * Self-contained intra-core loop — does NOT call redactSecretsInText from observability.
  * Called at delivery, sub-agent relay, memory write, and write-tool boundaries.
  *
- * Uses PREFIX_MIN_BODY_LENGTHS from the R0 keystone for the same length-gate as
- * looksLikeSecretValue, ensuring false-positive rate matches the observability scanner.
+ * Uses PREFIX_MIN_BODY_LENGTHS from the secret-detection keystone for the same length-gate
+ * as looksLikeSecretValue, ensuring false-positive rate matches the observability scanner.
  */
 export function scrubSecretsFromText(text: string): ScrubResult {
   if (!mightContainSecret(text)) return { text, redactions: 0 };

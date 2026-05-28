@@ -296,8 +296,8 @@ export interface WorkspaceApiDeps {
   eventBus?: AppContainer["eventBus"];
   /** mcp-handlers reads deps.secretManager?.has for env-ref validation. */
   secretManager?: import("@comis/core").SecretManager;
-  /** mcp-handlers reads deps.secretStore for static-secret header extraction (CRED-05).
-   *  Optional — undefined when COMIS_DISABLE_ENCRYPTED_SECRETS=1 (Phase 2 opt-out);
+  /** mcp-handlers reads deps.secretStore for static-secret header extraction.
+   *  Optional — undefined when COMIS_DISABLE_ENCRYPTED_SECRETS=1 (opt-out);
    *  extraction will fail-safe (throw [plaintext_secret_in_headers]) rather than
    *  persist plaintext. Same shape as AuthApiDeps.secretStore / ConfigApiDeps.secretStore
    *  so the ApiDispatchDeps multi-extends remains well-formed. */

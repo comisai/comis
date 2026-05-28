@@ -159,7 +159,7 @@ function resolveWritePath(
  * @param logger - Optional pino-compatible logger
  * @param tracker - Optional FileStateTracker for read-before-write and staleness
  * @param sharedPaths - Optional shared paths (lazily resolved) accessible by all tools
- * @param config - Optional config for R4 secret egress guard (security.writeSecretGuard)
+ * @param config - Optional config for secret egress guard (security.writeSecretGuard)
  */
 export function createComisWriteTool(
   workspacePath: string,
@@ -191,7 +191,7 @@ export function createComisWriteTool(
     ): Promise<AgentToolResult<unknown>> {
       // --- V1: Extract params ---
       const filePath = readStringParam(params, "path");
-      // `let` — may be reassigned by R4 secret egress guard (scrubbed content).
+      // `let` — may be reassigned by secret egress guard (scrubbed content).
       let content = readStringParam(params, "content", false) ?? "";
       const createDirs = readBooleanParam(params, "createDirectories", false) ?? true;
 
@@ -225,7 +225,7 @@ export function createComisWriteTool(
         );
       }
 
-      // --- R4: Secret egress guard — per D-01/R4, default "warn" + redirect hint (never hard-block by default).
+      // --- Secret egress guard — default "warn" + redirect hint (never hard-block by default).
       const writeGuardMode = (config?.security?.writeSecretGuard ?? "warn") as "warn" | "block" | "off";
       let warnRedactions = 0;
       if (writeGuardMode !== "off") {
@@ -242,7 +242,7 @@ export function createComisWriteTool(
           warnRedactions = scrub.redactions;
           logger?.warn?.(
             { hint: "Secret-shaped value redacted from file write; use secure credential store", errorKind: "internal" as const, redactions: scrub.redactions },
-            "R4 egress guard: write-tool content scrubbed",
+            "Egress guard: write-tool content scrubbed",
           );
         }
       }
@@ -329,7 +329,7 @@ export function createComisWriteTool(
           // --- V8: Overwrite: preserve encoding ---
           // CRITICAL: Pass LF-normalized content directly to writeFilePreserving.
           // Do NOT call restoreLineEndings separately -- writeFilePreserving handles it internally.
-          // Double-restoration corrupts CRLF files (see PITFALLS.md).
+          // Double-restoration corrupts CRLF files.
           const metadata = await readFileWithMetadata(absolutePath);
           await writeFilePreserving(
             absolutePath,

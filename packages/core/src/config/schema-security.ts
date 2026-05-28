@@ -76,7 +76,7 @@ export const SecurityConfigSchema = z.strictObject({
     /** Encrypted secrets store configuration */
     secrets: SecretsConfigSchema.default(() => SecretsConfigSchema.parse({})),
     /**
-     * R4: Secret egress guard behavior for file write/edit tools.
+     * Secret egress guard behavior for file write/edit tools.
      * - "warn"  (default): write proceeds with scrubbed content + redirect hint (safe for .env.example, test fixtures)
      * - "block": write is rejected when secret-shaped values are detected
      * - "off":   no write-time secret scan

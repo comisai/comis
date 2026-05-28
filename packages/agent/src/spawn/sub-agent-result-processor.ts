@@ -476,14 +476,14 @@ export async function deliverAnnouncement(params: {
 }): Promise<void> {
   const { announceChannelType, announceChannelId, callerAgentId, callerSessionKey, runId } = params;
 
-  // R4: scrub announcement text before any delivery path (batcher, parent, or direct channel).
+  // Scrub announcement text before any delivery path (batcher, parent, or direct channel).
   const announceScrub = scrubSecretsFromText(params.announcementText);
   if (announceScrub.redactions > 0) {
     deps.logger?.warn(
       { runId, redactions: announceScrub.redactions,
         hint: "Secret found in sub-agent announcement — redacted before relay",
         errorKind: "internal" as const },
-      "R4 egress guard: announcement scrubbed",
+      "Egress guard: announcement scrubbed",
     );
   }
   const announcementText = announceScrub.redactions > 0 ? announceScrub.text : params.announcementText;

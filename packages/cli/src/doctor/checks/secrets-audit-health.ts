@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Secrets audit health check for `comis doctor` (R4 — 02-03).
+ * Secrets audit health check for `comis doctor`.
  *
  * Wires the existing `auditSecrets()` from `@comis/core` into a DoctorCheck.
  * Mirrors the `oauth-health.ts` pattern: single-purpose check, never throws,

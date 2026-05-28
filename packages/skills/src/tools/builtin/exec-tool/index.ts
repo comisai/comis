@@ -44,7 +44,7 @@ export { killTree, buildSpawnCommand, buildInstallDetourHint } from "./exec-shar
 /**
  * Create an exec tool for shell command execution.
  *
- * Backward compat NOT preserved (memory `feedback_no_backward_compat`).
+ * Backward compat NOT preserved.
  *
  * @param deps - Dependencies bundle. See `ExecToolDeps` for field semantics.
  *   `toolCapabilityPort` is REQUIRED; `approvalGate` is optional but
@@ -106,8 +106,8 @@ export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams>
         if (validationError) {
           eventBus?.emit("command:blocked", {
             agentId: tryGetContext()?.sessionKey ?? "unknown",
-            // IN-01 fix: redact BEFORE slicing so a credential straddling the
-            // boundary char is fully masked in the event payload sent to SSE consumers.
+            // Redact BEFORE slicing so a credential straddling the boundary char
+            // is fully masked in the event payload sent to SSE consumers.
             commandPrefix: redactSecretsInText(command).slice(0, 200),
             reason: validationError.message,
             blocker: validationError.blocker as "sanitize" | "substitution" | "pipe" | "denylist" | "path" | "redirect" | "env",
@@ -125,7 +125,7 @@ export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams>
         const breakSystemWarning = command.includes("--break-system-packages")
           ? "⚠️ WARNING: --break-system-packages modifies the system Python. Use a virtualenv: the workspace's pre-warmed venv (venv/bin/pip install ...) or a per-project one (python3 -m venv projects/<name>/.venv).\n\n"
           : "";
-        // IN-01 fix: redact BEFORE slicing so a bare token straddling char 200 cannot
+        // Redact BEFORE slicing so a bare token straddling char 200 cannot
         // appear as a truncated-but-still-recognizable fragment in the log field.
         logger?.debug({ toolName: "exec", command: redactSecretsInText(command).slice(0, 200), background, pty, ...(description && { description }) }, "Exec command start");
         if (userEnv) logger?.debug({ toolName: "exec", envOverrides: Object.keys(userEnv) }, "Exec env override applied");
@@ -146,7 +146,7 @@ export function createExecTool(deps: ExecToolDeps): AgentTool<typeof ExecParams>
             for (const name of Object.keys(resolvedSecretEnv)) {
               eventBus?.emit("secret:accessed", { secretName: name, agentId, outcome: "success", timestamp: systemNowMs() });
             }
-            // IN-01 fix: redact BEFORE slicing to prevent boundary-straddle leaks.
+            // Redact BEFORE slicing to prevent boundary-straddle leaks.
             logger?.info({ toolName: "exec", secretRefs: Object.keys(resolvedSecretEnv), commandPrefix: redactSecretsInText(command).slice(0, 80) }, "Exec resolved secretRefs for subprocess");
           }
         }

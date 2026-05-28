@@ -590,7 +590,7 @@ describe("applyToolPolicy - operational opt-in behavior", () => {
 
 describe("gateway denylist invariant", () => {
   it("no profile or group exposes 'gateway' AND SUB_AGENT_TOOL_DENYLIST contains it", () => {
-    // Denylist membership — RED until Task 2 ships sub-agent-tool-denylist.ts in @comis/core
+    // Denylist membership — sub-agent-tool-denylist.ts in @comis/core must include 'gateway'.
     expect(SUB_AGENT_TOOL_DENYLIST.has("gateway")).toBe(true);
 
     // No named profile (except 'full' which means all-tools-allowed and is
@@ -629,10 +629,10 @@ describe("SUB_AGENT_TOOL_PROFILES drift-guard", () => {
     }
   });
 
-  // WR-03: bidirectional drift guard — catches when canonical adds a tool but core copy doesn't.
+  // Bidirectional drift guard — catches when canonical adds a tool but core copy doesn't.
   // Also asserts TOOL_GROUPS consistency for the groups that @comis/core mirrors via
-  // SUB_AGENT_TOOL_GROUPS (added in WR-02 fix).
-  it("WR-03: bidirectional — every canonical TOOL_PROFILES tool also exists in core copy (guards against over-rejection)", () => {
+  // SUB_AGENT_TOOL_GROUPS.
+  it("bidirectional — every canonical TOOL_PROFILES tool also exists in core copy (guards against over-rejection)", () => {
     // For every profile the core copy mirrors, require EXACT equality
     // so divergence in EITHER direction is caught.
     for (const profileName of Object.keys(SUB_AGENT_TOOL_PROFILES)) {
@@ -645,8 +645,8 @@ describe("SUB_AGENT_TOOL_PROFILES drift-guard", () => {
     }
   });
 
-  it("WR-03: SUB_AGENT_TOOL_GROUPS in @comis/core mirrors TOOL_GROUPS from @comis/skills (no drift)", () => {
-    // SUB_AGENT_TOOL_GROUPS is exported from @comis/core (added for WR-02 gate TOOL_GROUPS expansion).
+  it("SUB_AGENT_TOOL_GROUPS in @comis/core mirrors TOOL_GROUPS from @comis/skills (no drift)", () => {
+    // SUB_AGENT_TOOL_GROUPS is exported from @comis/core to gate TOOL_GROUPS expansion.
     // Assert the import is defined (not undefined/empty).
     expect(SUB_AGENT_TOOL_GROUPS, "SUB_AGENT_TOOL_GROUPS must be exported from @comis/core").toBeDefined();
     expect(Object.keys(SUB_AGENT_TOOL_GROUPS).length).toBeGreaterThan(0);

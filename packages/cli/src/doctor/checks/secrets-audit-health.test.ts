@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for secretsAuditHealthCheck (02-03 R4).
+ * Unit tests for secretsAuditHealthCheck.
  *
  * Covers:
  *   - fail finding when auditSecrets returns error-severity findings

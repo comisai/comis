@@ -50,7 +50,7 @@ export interface McpDeps {
    * is undefined (resolveDefaultKeepaliveIntervalMs in mcp-client-keepalive.ts). */
   readonly globalKeepaliveIntervalMs?: number;
   /**
-   * Port-backed OAuth credential store for unified MCP token home (R8).
+   * Port-backed OAuth credential store for unified MCP token home.
    * When provided together with `dataDir`, MCP OAuth tokens are synced to this
    * store on every saveTokens call. Closes the structural credential home gap.
    * Threaded from setup-agents-registry via daemon.ts.
@@ -181,7 +181,7 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
     // keepaliveIntervalMs removed — transport-aware default via resolveDefaultKeepaliveIntervalMs.
     circuitBreakerThreshold: deps.circuitBreakerThreshold,
     circuitBreakerCooldownMs: deps.circuitBreakerCooldownMs,
-    // R8: inject port-backed oauthDeps when both store + dataDir are provided.
+    // Inject port-backed oauthDeps when both store + dataDir are provided.
     // Omitted when not supplied so createMcpClientManager uses its default.
     ...oauthDepsArg,
   });
@@ -269,7 +269,7 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
           // PQueue concurrency derivation (mcp-client-connect.ts) sees it.
           ...(server.supportsParallelToolCalls !== undefined && { supportsParallelToolCalls: server.supportsParallelToolCalls }),
           // Forward keepalive interval: per-server entry wins over global default
-          // (WR-01 fix — middle tier in the resolution chain:
+          // (middle tier in the resolution chain:
           //   server.keepaliveIntervalMs ?? globalKeepaliveIntervalMs ?? transport-aware default).
           // Only set the field when a value is resolved so 0 ("disable") is preserved via ??.
           ...((server.keepaliveIntervalMs ?? deps.globalKeepaliveIntervalMs) !== undefined && {

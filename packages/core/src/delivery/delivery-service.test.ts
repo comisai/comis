@@ -1517,13 +1517,12 @@ describe("DeliveryService — full pipeline behavior", () => {
 });
 
 // =============================================================================
-// R4 delivery egress scan (02-03)
+// Delivery egress scan
 // =============================================================================
 // These tests assert that deliverToChannel performs one-pass secret scrubbing
-// on the assembled deliveryText BEFORE hooks and chunking. They fail on the
-// pre-patch codebase because no scrubbing exists in delivery-service.ts yet.
+// on the assembled deliveryText BEFORE hooks and chunking.
 
-describe("R4 delivery egress scan", () => {
+describe("delivery egress scan", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -1553,9 +1552,8 @@ describe("R4 delivery egress scan", () => {
   });
 
   it("scan is executed ONCE before the chunk loop, not per-chunk on a large message", async () => {
-    // Spy on the module-level scrubSecretsFromText.
-    // At RED time this spy is never called (0 calls) because delivery-service.ts
-    // does not import scrubSecretsFromText yet — assertion on toHaveBeenCalledTimes(1) fails.
+    // Spy on the module-level scrubSecretsFromText — must be called exactly once
+    // (before the chunk loop), not per-chunk.
     const spy = vi.spyOn(secretEgressGuard, "scrubSecretsFromText");
     const service = createDeliveryService(
       makeDeps({ maxCharsOverride: 500 }),

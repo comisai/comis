@@ -21,8 +21,9 @@
  * path, so a relative-path mismatch between mocker and importer does NOT
  * defeat the mock.
  *
- * CRED-02 tests (at the bottom) use `vi.importActual` to bypass the file-top
- * mock and exercise the REAL persistToConfig with a live filesystem spy.
+ * The persistToConfig secret-gate tests (at the bottom) use `vi.importActual`
+ * to bypass the file-top mock and exercise the REAL persistToConfig with a
+ * live filesystem spy.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -52,7 +53,7 @@ vi.mock("../mcp-config-mutated-coalescer.js", () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Static import of the extracted module — fails RED, passes GREEN.
+// Static import of the extracted module.
 // ---------------------------------------------------------------------------
 
 import { persistMcpServers } from "./persist-mcp-servers.js";
@@ -136,12 +137,12 @@ describe("persistMcpServers (extracted)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 1 — Barrel re-export PROOF. The daemon unit-test environment has no
+  // Barrel re-export proof. The daemon unit-test environment has no
   // self-alias for `@comis/daemon` (the integration tier owns the
   // dist-aliased import path). The equivalent and stronger structural proof
   // is to read the daemon barrel source and assert it re-exports the symbol.
   // -------------------------------------------------------------------------
-  it("Test 1 — @comis/daemon barrel re-exports `persistMcpServers` + `PersistMcpResult`", () => {
+  it("@comis/daemon barrel re-exports `persistMcpServers` + `PersistMcpResult`", () => {
     // Resolve the daemon barrel source relative to this test file's
     // location (api/shared/) → up two to packages/daemon/src/.
     const barrelPath = resolve(__dirname, "../../index.ts");
@@ -156,15 +157,16 @@ describe("persistMcpServers (extracted)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 2 — local-path resolution. The function exported from the new
-  // module IS the canonical persistMcpServers (the helper is reached by
-  // both `@comis/daemon` and the in-package importer through the SAME
-  // module). Verified by direct callability.
+  // Local-path resolution. The function exported from the new module IS the
+  // canonical persistMcpServers (the helper is reached by both
+  // `@comis/daemon` and the in-package importer through the SAME module).
+  // Verified by direct callability.
   // -------------------------------------------------------------------------
-  it("Test 2 — `./persist-mcp-servers.js` exports `persistMcpServers` as an async function", () => {
+  it("`./persist-mcp-servers.js` exports `persistMcpServers` as an async function", () => {
     expect(typeof persistMcpServers).toBe("function");
     // Async function: returns a Promise. Calling with throwaway args
-    // (deps.persistDeps absent) returns a resolved promise — see Test 4.
+    // (deps.persistDeps absent) returns a resolved promise — see the
+    // "skipped" branch test below.
     const result = persistMcpServers(
       { persistDeps: undefined } as never,
       [],
@@ -176,9 +178,9 @@ describe("persistMcpServers (extracted)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 3 — widened actionType union accepts the bundle literals.
+  // Widened actionType union accepts the bundle literals.
   // -------------------------------------------------------------------------
-  it("Test 3 — accepts `skills.bundle.install` actionType and returns persistence:'persisted' on persistToConfig ok", async () => {
+  it("accepts `skills.bundle.install` actionType and returns persistence:'persisted' on persistToConfig ok", async () => {
     const { deps } = makeDeps([]);
     const result: PersistMcpResult = await persistMcpServers(
       deps as never,
@@ -197,9 +199,9 @@ describe("persistMcpServers (extracted)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 4 — preserve the existing skipped branch.
+  // Preserve the existing skipped branch.
   // -------------------------------------------------------------------------
-  it("Test 4 — returns persistence:'skipped' when deps.persistDeps is undefined", async () => {
+  it("returns persistence:'skipped' when deps.persistDeps is undefined", async () => {
     const result = await persistMcpServers(
       { persistDeps: undefined } as never,
       [makeEntry("anything")],
@@ -213,9 +215,9 @@ describe("persistMcpServers (extracted)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 5 — preserve the existing runtime_only branch.
+  // Preserve the existing runtime_only branch.
   // -------------------------------------------------------------------------
-  it("Test 5 — on persistToConfig err, returns persistence:'runtime_only' with warning + logs WARN with errorKind:'config'", async () => {
+  it("on persistToConfig err, returns persistence:'runtime_only' with warning + logs WARN with errorKind:'config'", async () => {
     mockPersistToConfig.mockResolvedValueOnce({ ok: false, error: "disk full" } as never);
 
     const { deps } = makeDeps([]);
@@ -242,12 +244,12 @@ describe("persistMcpServers (extracted)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 6 — preserve the in-memory atomic swap. The helper
-  // structuredClone's container.config.integrations and replaces
-  // .mcp.servers with the new array. The outer container reference (shared
-  // with persistDeps.container) reflects the new state.
+  // Preserve the in-memory atomic swap. The helper structuredClone's
+  // container.config.integrations and replaces .mcp.servers with the new
+  // array. The outer container reference (shared with persistDeps.container)
+  // reflects the new state.
   // -------------------------------------------------------------------------
-  it("Test 6 — on persistToConfig ok, container.config.integrations.mcp.servers is updated with the new array (in-memory swap)", async () => {
+  it("on persistToConfig ok, container.config.integrations.mcp.servers is updated with the new array (in-memory swap)", async () => {
     const initial: McpServerEntry[] = [makeEntry("old", "old-cmd")];
     const { deps, container } = makeDeps(initial);
     const before = container.config.integrations.mcp.servers;
@@ -274,18 +276,14 @@ describe("persistMcpServers (extracted)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CRED-02: persistToConfig secret gate (uses REAL persistToConfig)
+// persistToConfig secret gate (uses REAL persistToConfig).
 //
 // These tests bypass the file-top vi.mock("./persist-to-config.js") by using
 // vi.importActual to obtain the real implementation. A spy on fs.writeFileSync
-// asserts the write is never reached when a secret is detected.
-//
-// RED expectation: pre-patch, persistToConfig does NOT scan for secrets, so
-// a plaintext-secret patch returns ok() and writeFileSync IS called. These
-// tests fail RED on the pre-patch codebase. After the production patch
-// (GREEN), scanForSecrets runs BEFORE writeFileSync and the tests pass.
+// asserts the write is never reached when a secret is detected. scanForSecrets
+// runs BEFORE writeFileSync so plaintext-secret patches are rejected.
 // ---------------------------------------------------------------------------
-describe("CRED-02 persistToConfig secret gate", () => {
+describe("persistToConfig secret gate", () => {
   // We need the real persistToConfig — not the file-top mock.
   // vi.importActual bypasses the hoisted vi.mock above for this describe block.
   let realPersistToConfig: typeof import("./persist-to-config.js")["persistToConfig"];
@@ -331,7 +329,7 @@ describe("CRED-02 persistToConfig secret gate", () => {
     };
   }
 
-  it("CRED-02-A: rejects plaintext secret in MCP server Authorization header — err([plaintext_secret_blocked]), no .tmp file written", async () => {
+  it("rejects plaintext secret in MCP server Authorization header — err([plaintext_secret_blocked]), no .tmp file written", async () => {
     const tmpFilePath = configPath + ".tmp";
 
     const deps = makePersistDeps({});
@@ -364,7 +362,7 @@ describe("CRED-02 persistToConfig secret gate", () => {
     expect(existsSync(tmpFilePath)).toBe(false);
   });
 
-  it("CRED-02-B: allows ${VAR} ref in MCP header — no false-positive block (returns ok)", async () => {
+  it("allows ${VAR} ref in MCP header — no false-positive block (returns ok)", async () => {
     const deps = makePersistDeps({});
     const result = await realPersistToConfig(deps, {
       patch: {
@@ -392,7 +390,7 @@ describe("CRED-02 persistToConfig secret gate", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("CRED-02-C: rejects plaintext secret in mcp.env — err([plaintext_secret_blocked]), no .tmp file written", async () => {
+  it("rejects plaintext secret in mcp.env — err([plaintext_secret_blocked]), no .tmp file written", async () => {
     const tmpFilePath = configPath + ".tmp";
 
     const deps = makePersistDeps({});
@@ -425,17 +423,14 @@ describe("CRED-02 persistToConfig secret gate", () => {
   });
 
   // -------------------------------------------------------------------------
-  // WR-04: persist gate must scan the WRITTEN content (updatedLocal), not only
+  // Persist gate must scan the WRITTEN content (updatedLocal), not only
   // the in-memory fullMerged. A secret present in the existing local file
   // (existingLocal) but NOT in container.config is in updatedLocal (it gets
   // re-written verbatim) yet would be absent from fullMerged (which merges
-  // container.config + patch, not the raw on-disk file).
-  //
-  // RED proof: pre-patch code only scans fullMerged, so this test returns ok()
-  // and the .tmp file IS created. After the GREEN patch (also scan updatedLocal),
-  // the gate fires and the test passes.
+  // container.config + patch, not the raw on-disk file). Scanning both
+  // covers loader-dropped / layer-divergence cases.
   // -------------------------------------------------------------------------
-  it("WR-04-A: rejects a plaintext secret that exists ONLY in the on-disk local file (not in container.config) — err([plaintext_secret_blocked]), no .tmp written", async () => {
+  it("rejects a plaintext secret that exists ONLY in the on-disk local file (not in container.config) — err([plaintext_secret_blocked]), no .tmp written", async () => {
     // The on-disk local file already has a plaintext secret — simulates a
     // pre-existing credential that the in-memory config loader may have
     // normalized away (key-layer divergence).
@@ -470,9 +465,8 @@ describe("CRED-02 persistToConfig secret gate", () => {
       // Empty patch: the plaintext secret lives ONLY in the on-disk local file
       // (existingLocal). deepMerge(existingLocal, {}) preserves the secret in
       // updatedLocal (the written file), but fullMerged = deepMerge({}, {}) = {}
-      // has no secret. Pre-patch code only scans fullMerged — so the gate
-      // misses the secret and writes it to disk (RED). Post-patch (GREEN),
-      // updatedLocal is also scanned and the write is blocked.
+      // has no secret. Scanning updatedLocal in addition to fullMerged is
+      // required so the gate fires and the write is blocked.
       patch: {},
       actionType: "config.update",
       entityId: "legacy-server",
@@ -484,7 +478,7 @@ describe("CRED-02 persistToConfig secret gate", () => {
     expect(existsSync(tmpFilePath)).toBe(false);
   });
 
-  it("WR-04-B: allows persist when the local file contains only ${VAR} refs (no false-positive from WR-04 scan)", async () => {
+  it("allows persist when the local file contains only ${VAR} refs (no false-positive from on-disk scan)", async () => {
     realWriteFileSync(
       configPath,
       yamlStringify({

@@ -19,7 +19,7 @@ import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { systemNowMs } from "@comis/core";
 
 /**
- * R8: Structured result tag for MCP tool-call 401 failures.
+ * Structured result tag for MCP tool-call 401 failures.
  * Mirrors the needs_oauth_login tag pattern from mcp-client-oauth-connect.ts.
  */
 export const NEEDS_REAUTH = "needs_reauth" as const;
@@ -48,14 +48,13 @@ import { resetIdleActivity } from "./mcp-client-idle-eviction.js";
  * Synchronous fast path: when the connection is already present this returns
  * `ok(conn)` WITHOUT awaiting (it is not async), so the overwhelmingly common
  * case introduces no extra microtask tick before the PQueue drain — preserving
- * the pre-patch timing the generation-counter fake-timer tests rely on. Only
- * the missing-connection path is async (reconnectLazily).
+ * the timing the generation-counter fake-timer tests rely on. Only the
+ * missing-connection path is async (reconnectLazily).
  *
  * Returns err("...not connected") for the two cases that must NOT reconnect:
  * no stored config, or an operator-initiated disconnect (flag set). On a
  * successful reconnect, re-fetches the connection from state so the caller
- * operates on the fresh generation (Pitfall 6 — never reuse a pre-reconnect
- * conn reference).
+ * operates on the fresh generation (never reuse a pre-reconnect conn reference).
  */
 function getOrReconnect(
   state: McpClientManagerState,
@@ -132,11 +131,11 @@ export async function callTool(
   }
 
   // Serialize through per-server concurrency queue.
-  // By this point getOrReconnect has returned a connected conn, so the common
-  // "never connected" framing of the old message was misleading on the
-  // lazy-reconnect path (the caller DID go through connect). A missing queue
-  // here means the queue was torn down concurrently (e.g. a racing
-  // disconnect/eviction) or PQueue setup failed during (re)connect — say so.
+  // By this point getOrReconnect has returned a connected conn, so "never
+  // connected" framing would be misleading on the lazy-reconnect path
+  // (the caller DID go through connect). A missing queue here means the queue
+  // was torn down concurrently (e.g. a racing disconnect/eviction) or PQueue
+  // setup failed during (re)connect — say so.
   const queue = state.callQueues.get(serverName);
   if (!queue) {
     return err(new Error(`MCP server "${serverName}" has no call queue — connection torn down or setup failed during (re)connect; retry`));
@@ -168,7 +167,7 @@ export async function callTool(
       // fall through -- half-open allows one probe
     } else {
       const remainingS = Math.ceil((breakerCooldownMs - elapsed) / 1000);
-      // R8: when breaker was tripped by an auth failure (reason="auth"), return
+      // When the breaker was tripped by an auth failure (reason="auth"), return
       // needs_reauth instead of server_unavailable so the agent gets an actionable stop signal.
       const text = breaker.reason === "auth"
         ? `[needs_reauth] MCP server "${serverName}" requires re-authentication (circuit open). ` +
@@ -236,7 +235,7 @@ export async function callTool(
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
 
-      // R8: Intercept 401/UnauthorizedError FIRST — return structured needs_reauth result,
+      // Intercept 401/UnauthorizedError FIRST — return structured needs_reauth result,
       // trip the circuit breaker IMMEDIATELY (bypass threshold), and record reason="auth" so
       // subsequent open-state calls return needs_reauth instead of server_unavailable.
       const isUnauthorized =

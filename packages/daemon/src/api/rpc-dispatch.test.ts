@@ -214,8 +214,8 @@ describe("classifyRpcError", () => {
     expect(result.hint).toBeTruthy();
   });
 
-  // WR-06: RequiredToolsUnreachableError must classify as validation/warn (not internal/error)
-  it("WR-06: classifies RequiredToolsUnreachableError as validation error at warn level", () => {
+  // RequiredToolsUnreachableError must classify as validation/warn (not internal/error)
+  it("classifies RequiredToolsUnreachableError as validation error at warn level", () => {
     const err = new RequiredToolsUnreachableError([
       { toolName: "mcp_manage", reason: "outside_profile", hint: "Re-spawn with tool_groups:['supervisor']." },
     ]);

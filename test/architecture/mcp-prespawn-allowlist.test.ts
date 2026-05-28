@@ -69,14 +69,14 @@ describe("MCP stdio env allowlist — required membership invariant", () => {
 });
 
 // =============================================================================
-// R4 interpreter-control vars absent from scrubStdioEnv output (02-03)
+// Interpreter-control vars absent from scrubStdioEnv output
 // =============================================================================
 // These tests assert that scrubStdioEnv with interpreter-control vars in the
 // input produces an output that does NOT contain those keys.
 // The allowlist-only design means these are already absent — the tests lock
 // the invariant so an accidental addition to the allowlist would be caught.
 
-describe("R4 interpreter-control vars absent from scrubStdioEnv output", () => {
+describe("interpreter-control vars absent from scrubStdioEnv output", () => {
   it("scrubStdioEnv does not pass PYTHONSTARTUP through to child env", () => {
     const result = scrubStdioEnv({ PYTHONSTARTUP: "/evil.py", HOME: "/home/user" });
     expect(Object.prototype.hasOwnProperty.call(result, "PYTHONSTARTUP")).toBe(false);

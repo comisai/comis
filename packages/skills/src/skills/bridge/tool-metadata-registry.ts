@@ -573,8 +573,8 @@ export function registerAllToolMetadata(): void {
   //
   // SECURITY GATE — these values are CONSERVATIVE DEFAULTS subject to a
   // HUMAN security-reviewer gate before the v2.4/v2.5 gateway endpoint
-  // flips live (see HUMAN-UAT.md). The CI gate enforces ANNOTATION
-  // PRESENCE only; the literal value here IS the security policy.
+  // flips live. The CI gate enforces ANNOTATION PRESENCE only; the
+  // literal value here IS the security policy.
   //
   // Categories:
   //   "safe"             — exposed to any mcp-client token (no allowlist required).
@@ -595,7 +595,7 @@ export function registerAllToolMetadata(): void {
   // Media tools (image_analyze, describe_video, extract_document, transcribe_audio)
   // default to `permission-gated` (safer default) — the registry comments do NOT
   // assert caller-supplied-only semantics. The security reviewer should
-  // re-confirm in HUMAN-UAT whether to upgrade any of these to `safe`.
+  // re-confirm whether to upgrade any of these to `safe`.
   // =========================================================================
 
   // --- safe (3) — public/caller-supplied input, no Comis state read ---
@@ -612,7 +612,7 @@ export function registerAllToolMetadata(): void {
   // Comis memory read (2) — allowlist by tenant.
   registerToolMetadata("memory_search", { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("memory_get",    { mcpExportPolicy: "permission-gated" });
-  // Read-only session views (4) — CONFIRMED-only filter enforced by Plan 05's resources adapter.
+  // Read-only session views (4) — CONFIRMED-only filter enforced by the resources adapter.
   registerToolMetadata("session_search",   { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("session_status",   { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("sessions_list",    { mcpExportPolicy: "permission-gated" });
@@ -626,11 +626,11 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("obs_query", { mcpExportPolicy: "permission-gated" });
   // Meta-tool (1) — reveals registered-tools attack surface; per-client allowlist required.
   registerToolMetadata("discover_tools", { mcpExportPolicy: "permission-gated" });
-  // Media analysis (4) — see Step-5 note above. Default permission-gated
+  // Media analysis (4) — see media-tools note above. Default permission-gated
   // because the registry does NOT assert caller-supplied-only semantics;
   // these tools MAY read Comis-stored media IDs in some code paths.
-  // TODO: security review — re-confirm in HUMAN-UAT whether any of these
-  // can safely be upgraded to "safe" (caller-supplied-only).
+  // TODO: security review — re-confirm whether any of these can safely
+  // be upgraded to "safe" (caller-supplied-only).
   registerToolMetadata("image_analyze",    { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("describe_video",   { mcpExportPolicy: "permission-gated" });
   registerToolMetadata("extract_document", { mcpExportPolicy: "permission-gated" });

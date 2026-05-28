@@ -478,7 +478,7 @@ describe("agents_manage tool", () => {
           tool.execute(c.callId, { action: c.action, agent_id: "bot-x" } as never),
         );
 
-        // Pre-fix shape: single JSON text block.
+        // Expected shape: single JSON text block.
         expect(result.content.length, `action ${c.action}: content length`).toBe(1);
         expect(result.content[0]!.type, `action ${c.action}: content[0].type`).toBe("text");
         const text = (result.content[0] as { type: "text"; text: string }).text;
@@ -1351,8 +1351,8 @@ describe("agents_manage tool", () => {
           workspace: { profile: "specialist" as const },
         },
       };
-      // Pre-fix this fails: structured-config branch rejects unknown `workspace`,
-      // string fallback also fails (it's an object).
+      // Without the schema update, structured-config branch would reject unknown
+      // `workspace`, and the string fallback would also fail (it's an object).
       expect(Value.Check(tool.parameters, args)).toBe(true);
 
       mockRpcCall.mockResolvedValue({ agentId: "spec-nested", created: true });
@@ -1417,12 +1417,13 @@ describe("agents_manage tool", () => {
           workspace: { profile: "unknown-mode" as unknown as "full" },
         },
       };
-      // After the fix: TypeBox declares the nested `workspace` shape and the
-      // profile enum (full|specialist), so invalid values are rejected at the
+      // TypeBox declares the nested `workspace` shape and the profile enum
+      // (full|specialist), so invalid values are rejected at the
       // tool-validation layer -- before they reach the downstream Zod parse.
-      // (Pre-fix: TypeBox passed unknown values through because the structured
-      // config object had no `workspace` field; downstream Zod was the only
-      // gate. The fix tightens validation so the LLM gets faster feedback.)
+      // (A looser schema would let TypeBox pass unknown values through
+      // because the structured config object had no `workspace` field;
+      // downstream Zod was the only gate. Tightening validation here gives
+      // the LLM faster feedback.)
       expect(Value.Check(tool.parameters, args)).toBe(false);
     });
 

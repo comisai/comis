@@ -6,8 +6,8 @@
  * Classifies each (headerName, headerValue) pair in the headers block using
  * `classifyHeaderCredential` from `@comis/core`, then:
  *   - "ref"           → pass through unchanged
- *   - "oauth-bearer"  → throw with [use_oauth_login] + actionable guidance (CRED-06)
- *   - "static-secret" → extract to secretStore, rewrite to ${VAR} ref (CRED-05)
+ *   - "oauth-bearer"  → throw with [use_oauth_login] + actionable guidance
+ *   - "static-secret" → extract to secretStore, rewrite to ${VAR} ref
  *                       or throw [plaintext_secret_in_headers] if no store
  *
  * Called from mcp.connect + mcp.test BEFORE contract parse so the mutated
@@ -16,7 +16,7 @@
  * the caller's pre-parse `userParams` copy sees the rewritten ${VAR} values
  * (for persistence). The returned `resolvedHeaders` map carries the original
  * RAW values so the immediate live connect uses the real credential — not the
- * unresolved `${VAR}` literal (WR-01 fix).
+ * unresolved `${VAR}` literal.
  *
  * When `plaintextOptOut` is true, oauth-bearer still throws unconditionally
  * (the token will expire; the PKCE flow is the correct answer), but
@@ -34,7 +34,7 @@ import type { SecretStorePort, ComisLogger } from "@comis/core";
  * Pattern: `MCP_<SERVERID_UPPER>__<HEADERNAME_UPPER_SLUG>`
  *
  * The DOUBLE-UNDERSCORE `__` separator prevents collisions between server
- * and header segments (WR-02 fix). With a single `_` separator,
+ * and header segments. With a single `_` separator,
  * ("foo-bar", "Key") and ("foo", "Bar-Key") both collapse to `MCP_FOO_BAR_KEY`.
  * The double underscore guarantees distinctness because neither segment ever
  * contains `__` after slugification (slugify replaces any non-[A-Z0-9] run
@@ -84,8 +84,7 @@ export interface ProcessHeaderCredentialsOpts {
  * `resolvedHeaders` carries the original RAW values for extracted static-secret
  * headers (and the unchanged value for ref/oauth/optout headers). Pass this map
  * to the live `manager.connect` so the immediate connection uses the actual
- * credential — not the `${VAR}` literal that is only resolved after daemon restart
- * (WR-01 fix).
+ * credential — not the `${VAR}` literal that is only resolved after daemon restart.
  *
  * The input `headers` map is mutated in place to hold `${VAR}` refs for
  * persistence / buildPersistedMcpEntry / config.yaml — plaintext never persisted.
@@ -115,7 +114,7 @@ export interface ProcessHeaderCredentialsResult {
  * Returns `{ resolvedHeaders }` — a map of header values for the LIVE connect,
  * where extracted static-secret entries carry the original raw value (not the
  * `${VAR}` ref written into `headers`). This ensures the immediate connect uses
- * the real credential rather than an unresolved `${VAR}` literal (WR-01 fix).
+ * the real credential rather than an unresolved `${VAR}` literal.
  *
  * @throws Error with [use_oauth_login] or [plaintext_secret_in_headers] marker
  */

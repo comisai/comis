@@ -5645,10 +5645,10 @@ describe("token-ceiling microcompact", () => {
 });
 
 // ---------------------------------------------------------------------------
-// TTL estimation cleanup
+// Microcompact token ceiling
 // ---------------------------------------------------------------------------
 
-describe("TTL estimation cleanup", () => {
+describe("microcompact token ceiling", () => {
   let logger: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
@@ -5758,10 +5758,10 @@ describe("TTL estimation cleanup", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Gap closure: single TTL estimation pass with text extraction
+// Single TTL estimation pass with text extraction
 // ---------------------------------------------------------------------------
 
-describe("gap closure: single TTL estimation pass with text extraction", () => {
+describe("single TTL estimation pass with text extraction", () => {
   let logger: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
@@ -5804,7 +5804,7 @@ describe("gap closure: single TTL estimation pass with text extraction", () => {
 
     await onPayload(payload, model);
 
-    // The 49-01 pre-kill-switch pass was deleted, so onTtlSplitEstimate
+    // The pre-kill-switch pass was deleted, so onTtlSplitEstimate
     // is called at most once (from the post-kill-switch pass only).
     expect(onTtlSplitEstimate).toHaveBeenCalledTimes(1);
 

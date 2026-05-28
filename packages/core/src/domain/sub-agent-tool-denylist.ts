@@ -96,7 +96,7 @@ export const SUB_AGENT_TOOL_PROFILES: Readonly<Record<string, ReadonlyArray<stri
  *
  * Used by computeReachableToolNames() to expand "group:xxx" and bare group
  * names exactly as setup-tools.ts:588-607 does — giving the spawn gate
- * true parity with the runtime ceiling (WR-02).
+ * true parity with the runtime ceiling.
  *
  * DRIFT GUARD: packages/skills/src/skills/policy/tool-policy.test.ts
  * asserts bidirectional consistency between this copy and the canonical TOOL_GROUPS.

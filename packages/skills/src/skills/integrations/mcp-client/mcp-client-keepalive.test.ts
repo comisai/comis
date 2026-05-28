@@ -275,34 +275,20 @@ describe("keepalive ticker — maybeEnqueueKeepalivePing", () => {
 });
 
 // ---------------------------------------------------------------------------
-// MCPX-02 RED tests: transport-aware interval resolution.
+// Transport-aware interval resolution.
 //
-// Plan 04-03 will:
-//   (a) export `resolveDefaultKeepaliveIntervalMs` from mcp-client-keepalive.ts
-//   (b) remove `state.options.keepaliveIntervalMs` as the fallback in
-//       startKeepaliveTicker, replacing it with resolveDefaultKeepaliveIntervalMs.
+// Tests verify:
+//   (a) `resolveDefaultKeepaliveIntervalMs` is exported from mcp-client-keepalive.ts
+//   (b) `state.options.keepaliveIntervalMs` is NOT the fallback in
+//       startKeepaliveTicker; resolveDefaultKeepaliveIntervalMs is.
 //
 // All tests in this describe block use dynamic import to avoid a compile-time
-// hard reference to the (not-yet-existing) export, which would turn the entire
-// file's passing tests RED today.  Instead, each test fails at assertion time
-// with a clear message — guaranteeing these are genuine RED failures, not
-// infrastructure failures.
-//
-// RED tests:
-//   RED-KA-01: resolveDefaultKeepaliveIntervalMs returns 30000 for "http"
-//   RED-KA-02: resolveDefaultKeepaliveIntervalMs returns 180000 for "stdio"
-//   RED-KA-03: resolveDefaultKeepaliveIntervalMs returns 30000 for "sse"
-//   RED-KA-04: startKeepaliveTicker starts a ticker for http when no per-server override
-//              (currently resolves to state.options.keepaliveIntervalMs which is 0 → no-op)
-//   RED-KA-05 (invariant guard): per-server keepaliveIntervalMs override wins over
-//              transport-aware default. Already passes; must survive GREEN.
+// hard reference to the export.
 // ---------------------------------------------------------------------------
 
-describe("mcp-client-keepalive — MCPX-02 transport-aware interval resolution", () => {
+describe("mcp-client-keepalive — transport-aware interval resolution", () => {
   it("resolveDefaultKeepaliveIntervalMs returns 30000 for 'http' transport", async () => {
     const mod = await import("./mcp-client-keepalive.js");
-    // RED: resolveDefaultKeepaliveIntervalMs does not exist yet → assertion fails.
-    // GREEN (Plan 04-03): the function is exported and returns 30_000 for http.
     const fn = (mod as Record<string, unknown>)["resolveDefaultKeepaliveIntervalMs"] as
       | ((t: string) => number)
       | undefined;
@@ -312,7 +298,6 @@ describe("mcp-client-keepalive — MCPX-02 transport-aware interval resolution",
 
   it("resolveDefaultKeepaliveIntervalMs returns 180000 for 'stdio' transport", async () => {
     const mod = await import("./mcp-client-keepalive.js");
-    // RED: function does not exist yet → assertion fails.
     const fn = (mod as Record<string, unknown>)["resolveDefaultKeepaliveIntervalMs"] as
       | ((t: string) => number)
       | undefined;
@@ -322,7 +307,6 @@ describe("mcp-client-keepalive — MCPX-02 transport-aware interval resolution",
 
   it("resolveDefaultKeepaliveIntervalMs returns 30000 for 'sse' transport", async () => {
     const mod = await import("./mcp-client-keepalive.js");
-    // RED: function does not exist yet → assertion fails.
     const fn = (mod as Record<string, unknown>)["resolveDefaultKeepaliveIntervalMs"] as
       | ((t: string) => number)
       | undefined;
@@ -330,8 +314,8 @@ describe("mcp-client-keepalive — MCPX-02 transport-aware interval resolution",
     expect(fn!("sse")).toBe(30_000);
   });
 
-  it("startKeepaliveTicker starts a ticker for http transport when no per-server override (RED-KA-04)", () => {
-    // GREEN (Plan 04-03): resolves via resolveDefaultKeepaliveIntervalMs("http") = 30_000
+  it("startKeepaliveTicker starts a ticker for http transport when no per-server override", () => {
+    // resolves via resolveDefaultKeepaliveIntervalMs("http") = 30_000
     // → ticker starts and state.keepaliveTickers.has("http-srv") is true.
     const state = makeState();
     const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
@@ -347,8 +331,8 @@ describe("mcp-client-keepalive — MCPX-02 transport-aware interval resolution",
   });
 
   it("per-server keepaliveIntervalMs override wins over transport-aware default (invariant guard)", () => {
-    // Invariant guard — already passes (per-server override always wins via ??).
-    // Must remain passing after GREEN so the priority chain is preserved.
+    // Invariant guard — per-server override always wins via ??.
+    // The priority chain must be preserved.
     const state = makeState();
     const deps: McpClientManagerDeps = { logger: NOOP_LOGGER };
     const config: McpServerConfig = {
@@ -364,29 +348,25 @@ describe("mcp-client-keepalive — MCPX-02 transport-aware interval resolution",
 });
 
 // ---------------------------------------------------------------------------
-// R6 #2: Proactive pre-expiry OAuth token refresh on keepalive tick.
+// Proactive pre-expiry OAuth token refresh on keepalive tick.
 //
 // When a server has `auth:"oauth"` and the token's remaining lifetime
 // (expires_in) is within PRE_EXPIRY_BUFFER_SEC (300s), the keepalive tick
 // MUST call dedupedRefresh before the ping so the token never sits expired
 // until the next tool call 401s.
 //
-// SEAM (D-TS-01, Option A): all three tests inject a `mockDeduper` via the
-// OPTIONAL 5th parameter of maybeEnqueueKeepalivePing, cast through a
-// loosely-typed reference (callKeepalive) so the call does NOT produce a
-// compile-time arity error on pre-patch code. Pre-patch JS ignores the extra
-// argument at runtime → test 1 fails at ASSERTION time (genuine RED). Tests
-// 2 and 3 assert the spy is NOT called — they are meaningful regression
-// fences post-patch (a missing expiry/auth guard would fire the spy there).
+// All three tests inject a `mockDeduper` via the OPTIONAL 5th parameter of
+// maybeEnqueueKeepalivePing, cast through a loosely-typed reference
+// (callKeepalive). Tests 2 and 3 assert the spy is NOT called — they are
+// meaningful regression fences (a missing expiry/auth guard would fire the
+// spy there).
 // ---------------------------------------------------------------------------
 
-describe("maybeEnqueueKeepalivePing — R6 #2 proactive pre-expiry OAuth refresh", () => {
+describe("maybeEnqueueKeepalivePing — proactive pre-expiry OAuth refresh", () => {
   const PRE_EXPIRY_BUFFER_SEC = 300; // 5 minutes in seconds (matches PRE_EXPIRY_BUFFER_MS / 1000)
 
-  // Loosely-typed call seam: tolerates the optional 5th `deduper` param across the
-  // RED (param absent) → GREEN (param present) transition without a compile-time arity
-  // error. Pre-patch JS ignores the extra arg at runtime → the test fails at the
-  // dedupedRefresh assertion (genuine RED), not at compile time.
+  // Loosely-typed call seam: tolerates the optional 5th `deduper` param without
+  // a compile-time arity error.
   type KeepaliveWithDeduper = (
     state: McpClientManagerState,
     deps: McpClientManagerDeps,
@@ -435,7 +415,7 @@ describe("maybeEnqueueKeepalivePing — R6 #2 proactive pre-expiry OAuth refresh
     return { mockDeduper, dedupedRefreshSpy };
   }
 
-  it("token within PRE_EXPIRY_BUFFER_SEC: injected deduper.dedupedRefresh fires before ping (R6 #2)", async () => {
+  it("token within PRE_EXPIRY_BUFFER_SEC: injected deduper.dedupedRefresh fires before ping", async () => {
     const state = makeStateWithRefreshes();
     const { ping } = wireConnected(state, "higgsfield", { concurrency: 1 });
 
@@ -459,13 +439,11 @@ describe("maybeEnqueueKeepalivePing — R6 #2 proactive pre-expiry OAuth refresh
       },
     };
 
-    // Inject the mockDeduper via the OPTIONAL 5th param (D-TS-01). Pre-patch: the param is
-    // ignored at runtime (no proactive-refresh logic) → dedupedRefreshSpy stays uncalled (RED).
-    // Post-patch: near-expiry triggers deduper.dedupedRefresh exactly once before the ping.
+    // Inject the mockDeduper via the OPTIONAL 5th param. Near-expiry triggers
+    // deduper.dedupedRefresh exactly once before the ping.
     callKeepalive(state, deps, "higgsfield", undefined, mockDeduper);
     await state.callQueues.get("higgsfield")!.onIdle();
 
-    // RED pre-patch (Expected: 1 / Received: 0); GREEN post-patch.
     expect(dedupedRefreshSpy).toHaveBeenCalledTimes(1);
     expect(dedupedRefreshSpy.mock.calls[0]![0]).toMatchObject({
       serverName: "higgsfield",
@@ -475,7 +453,7 @@ describe("maybeEnqueueKeepalivePing — R6 #2 proactive pre-expiry OAuth refresh
     expect(ping).toHaveBeenCalledTimes(1);
   });
 
-  it("token comfortably valid (expires_in > buffer): injected deduper NOT called, ping fires normally (R6 #2)", async () => {
+  it("token comfortably valid (expires_in > buffer): injected deduper NOT called, ping fires normally", async () => {
     const state = makeStateWithRefreshes();
     const { ping } = wireConnected(state, "higgsfield", { concurrency: 1 });
 
@@ -498,8 +476,8 @@ describe("maybeEnqueueKeepalivePing — R6 #2 proactive pre-expiry OAuth refresh
       },
     };
 
-    // Inject the mockDeduper so .not.toHaveBeenCalled() is MEANINGFUL: post-patch the refresh
-    // path exists, so a missing/incorrect expiry guard would make this spy fire and fail here.
+    // Inject the mockDeduper so .not.toHaveBeenCalled() is MEANINGFUL: a missing
+    // or incorrect expiry guard would make this spy fire and fail here.
     callKeepalive(state, deps, "higgsfield", undefined, mockDeduper);
     await state.callQueues.get("higgsfield")!.onIdle();
 
@@ -509,7 +487,7 @@ describe("maybeEnqueueKeepalivePing — R6 #2 proactive pre-expiry OAuth refresh
     expect(ping).toHaveBeenCalledTimes(1);
   });
 
-  it("non-oauth server: injected deduper NOT called, ping fires normally (R6 #2)", async () => {
+  it("non-oauth server: injected deduper NOT called, ping fires normally", async () => {
     const state = makeStateWithRefreshes();
     const { ping } = wireConnected(state, "plain-http", { concurrency: 1 });
 
@@ -533,7 +511,7 @@ describe("maybeEnqueueKeepalivePing — R6 #2 proactive pre-expiry OAuth refresh
       },
     };
 
-    // Inject the mockDeduper so .not.toHaveBeenCalled() is MEANINGFUL: post-patch a missing
+    // Inject the mockDeduper so .not.toHaveBeenCalled() is MEANINGFUL: a missing
     // auth==="oauth" guard would make the spy fire on this non-oauth server and fail here.
     callKeepalive(state, deps, "plain-http", undefined, mockDeduper);
     await state.callQueues.get("plain-http")!.onIdle();
@@ -548,39 +526,29 @@ describe("maybeEnqueueKeepalivePing — R6 #2 proactive pre-expiry OAuth refresh
 });
 
 // ---------------------------------------------------------------------------
-// CR-01: concurrency-1 deadlock — real createRefreshDeduper (via a FRESH
+// Concurrency-1 deadlock prevention — real createRefreshDeduper (via a FRESH
 // per-tick cc-1 queue, NOT the primary queue) must not deadlock.
 //
-// Pre-fix root cause: doProactiveRefreshIfNeeded ran INSIDE primary.add(doPing).
+// Without the fix: doProactiveRefreshIfNeeded ran INSIDE primary.add(doPing).
 //   The deduper's critical section called primaryQueue.add(criticalSection).
 //   With concurrency:1, the only slot was held by doPing → nested primaryQueue.add
 //   blocks permanently → deadlock. saveTokens never ran (doRefresh never started).
 //
-// Post-fix: doProactiveRefreshIfNeeded uses a fresh per-tick PQueue(concurrency:1)
+// With the fix: doProactiveRefreshIfNeeded uses a fresh per-tick PQueue(concurrency:1)
 //   for the deduper's critical section (not primary). No nesting → no deadlock.
 //   The dedup guarantee is preserved by the shared inflightRefreshes map.
 //
 // Test strategy:
-//   - Use the REAL createRefreshDeduper (WR-04 satisfied).
-//   - Build it with a FRESH cc-1 queue (tickQueue), mirroring post-fix production.
+//   - Use the REAL createRefreshDeduper.
+//   - Build it with a FRESH cc-1 queue (tickQueue), mirroring production.
 //   - Inject this real deduper into callKeepalive so the production doPing uses it.
-//   - Pre-fix: even if injected, the deduper was called INSIDE primary.add(doPing),
-//     where its tickQueue.add() call returned a pending promise that blocked on
-//     primary becoming idle — which it never did since doPing was holding it.
-//     POST-FIX: doPing calls doProactiveRefreshIfNeeded which uses tickQueue → fine.
 //
-// The genuine RED signal: pre-fix code ran dedupedRefresh INSIDE primary.add(doPing).
-//   Even an injected deduper that uses tickQueue (not primary) deadlocks pre-fix
-//   because the injected deduper's refreshFn needed to await, and the WHOLE
-//   doProactiveRefreshIfNeeded body was inside primary's slot — the slot wasn't
-//   released until doPing finished, but doPing awaited the refresh first → cycle.
-//
-// Post-fix: doProactiveRefreshIfNeeded runs INSIDE primary.add(doPing) BUT uses
-//   tickQueue (a separate cc-1 queue) for the deduper critical section. No nested
-//   primary.add → no deadlock. The refresh can run and complete. ping fires.
+// doProactiveRefreshIfNeeded runs INSIDE primary.add(doPing) BUT uses tickQueue
+// (a separate cc-1 queue) for the deduper critical section. No nested
+// primary.add → no deadlock. The refresh can run and complete. ping fires.
 // ---------------------------------------------------------------------------
 
-describe("CR-01: concurrency-1 real createRefreshDeduper no deadlock", () => {
+describe("concurrency-1 real createRefreshDeduper no deadlock", () => {
   it(
     "concurrency-1: near-expiry refresh with real createRefreshDeduper completes (no deadlock)",
     async () => {
@@ -595,8 +563,8 @@ describe("CR-01: concurrency-1 real createRefreshDeduper no deadlock", () => {
         "tokens" | "discoveryState" | "clientInformation" | "saveTokens"
       > = {
         tokens: vi.fn(async () => ({
-          access_token: "AT_EXPIRING_CR01",
-          refresh_token: "RT_CR01",
+          access_token: "AT_EXPIRING",
+          refresh_token: "RT_EXPIRING",
           token_type: "Bearer" as const,
           expires_in: 60, // well within 300s buffer
         })),
@@ -608,7 +576,7 @@ describe("CR-01: concurrency-1 real createRefreshDeduper no deadlock", () => {
           },
         } as OAuthDiscoveryState)),
         clientInformation: vi.fn(async () => ({
-          client_id: "cr01-client",
+          client_id: "test-client",
           redirect_uris: ["http://127.0.0.1:0/cb"],
         } as OAuthClientInformationFull)),
         saveTokens: vi.fn(async (_, t) => { savedTokens.push(t); }),
@@ -623,14 +591,13 @@ describe("CR-01: concurrency-1 real createRefreshDeduper no deadlock", () => {
       });
 
       // Build a REAL deduper backed by a FRESH cc-1 queue (not primary).
-      // This is the post-fix production shape: the deduper's critical section
-      // never nests inside the primary queue's running slot.
-      // WR-04: the REAL createRefreshDeduper is exercised here.
+      // This is the production shape: the deduper's critical section never
+      // nests inside the primary queue's running slot.
       const { createRefreshDeduper } = await import("./oauth/refresh-deduper.js");
       const freshTickQueue = new PQueue({ concurrency: 1 });
       const refreshFnSpy = vi.fn(async () => ({
-        access_token: "AT_NEW_CR01",
-        refresh_token: "RT_NEW_CR01",
+        access_token: "AT_NEW",
+        refresh_token: "RT_NEW",
         token_type: "Bearer" as const,
         expires_in: 3600,
       }));
@@ -661,30 +628,9 @@ describe("CR-01: concurrency-1 real createRefreshDeduper no deadlock", () => {
 
       const primaryQueue = state.callQueues.get("stripe-mcp")!;
 
-      // Inject the real deduper with freshTickQueue.
-      // Pre-fix: doPing called dedupedRefresh INSIDE primary.add — even with a
-      //   fresh tickQueue, the refreshFn was async and doPing awaited it while
-      //   holding the primary slot → deadlock (doPing never returned the slot
-      //   because it was waiting for the refresh, and the refresh's saveTokens
-      //   needed to run, but the test was waiting for primary.onIdle...).
-      //   Actually pre-fix: the deduper uses tickQueue, not primary, so the
-      //   critical section doesn't nest in primary. The deadlock was the
-      //   ORIGINAL pre-fix code using primaryQueue (not tickQueue) for the
-      //   critical section. With tickQueue injected, even pre-fix code wouldn't
-      //   deadlock on the queue level — BUT the pre-fix code doesn't even reach
-      //   the deduper call because it nested the WHOLE refresh await inside doPing
-      //   which was inside primary.add. The async refresh itself (refreshFnSpy)
-      //   runs fine regardless of which queue is used for the critical section.
-      //
-      //   The true pre-fix deadlock: the PRODUCTION code built the deduper with
-      //   primaryQueue as the critical section. The injected deduper param was
-      //   added AFTER the pre-fix code landed, so this specific test (injected
-      //   deduper with freshTickQueue) tests the fix pathway, not pre-fix.
-      //
-      //   RED contract: pre-fix code called dedupedRefresh with primaryQueue
-      //   → primaryQueue.add(criticalSection) inside running primaryQueue.add(doPing)
-      //   → blocked. The RED is proven by the concurrency-1 test at the end of this
-      //   describe block which uses NO injected deduper (full production path).
+      // Inject the real deduper with freshTickQueue. The injected deduper uses
+      // a separate tickQueue (not primary) for its critical section, so the
+      // primary slot held by doPing doesn't block the refresh's critical section.
       callKeepalive(state, deps, "stripe-mcp", undefined, realDeduper);
 
       await Promise.race([
@@ -692,8 +638,8 @@ describe("CR-01: concurrency-1 real createRefreshDeduper no deadlock", () => {
         new Promise<void>((resolve) => setTimeout(resolve, 500)),
       ]);
 
-      // Post-fix: refresh ran (refreshFnSpy called, saveTokens persisted), ping fired.
-      expect(refreshFnSpy).toHaveBeenCalledTimes(1); // real createRefreshDeduper exercised (WR-04)
+      // Refresh ran (refreshFnSpy called, saveTokens persisted), ping fired.
+      expect(refreshFnSpy).toHaveBeenCalledTimes(1); // real createRefreshDeduper exercised
       expect(savedTokens).toHaveLength(1); // tokens persisted via saveTokens
       expect(ping).toHaveBeenCalledTimes(1); // ping fires after refresh
     },
@@ -743,7 +689,7 @@ describe("CR-01: concurrency-1 real createRefreshDeduper no deadlock", () => {
       state.inflightRefreshes.set("AT_CACHE_HIT", Promise.resolve(cachedResult));
 
       const { createRefreshDeduper } = await import("./oauth/refresh-deduper.js");
-      // Fresh cc-1 queue for the deduper critical section (post-fix production shape).
+      // Fresh cc-1 queue for the deduper critical section (production shape).
       const freshTickQueue = new PQueue({ concurrency: 1 });
       const realDeduper = createRefreshDeduper({
         inflightRefreshes: state.inflightRefreshes,
@@ -798,19 +744,14 @@ describe("CR-01: concurrency-1 real createRefreshDeduper no deadlock", () => {
   it(
     "concurrency-1 production path: no injected deduper — tickQueue prevents deadlock, queue drains and ping fires",
     async () => {
-      // This test exercises the TRUE production code path (no deduper injected).
-      // Pre-fix: the production code built the deduper with primaryQueue as the
-      //   critical section queue → nested primaryQueue.add inside running primaryQueue.add
-      //   → concurrency-1 deadlock → queue never idles → ping never fires.
-      // Post-fix: production code uses a fresh per-tick PQueue(concurrency:1)
-      //   for the deduper → no nesting → no deadlock → queue idles → ping fires.
+      // This test exercises the production code path (no deduper injected).
+      // Production code uses a fresh per-tick PQueue(concurrency:1) for the
+      // deduper → no nesting → no deadlock → queue idles → ping fires.
       //
       // The refresh call itself will fail (the default SDK refreshAuthorization makes a
       // real HTTP request which fails in tests). That failure is caught + WARN-logged,
       // and the code continues to ping. So the observable for "no deadlock" is that
       // the queue drains and ping is called.
-      //
-      // RED observable: pre-fix → deadlock → queue never idles → ping not called.
       const state = makeState();
       const { ping } = wireConnected(state, "production-srv", { concurrency: 1 });
 
@@ -819,8 +760,8 @@ describe("CR-01: concurrency-1 real createRefreshDeduper no deadlock", () => {
         "tokens" | "discoveryState" | "clientInformation" | "saveTokens"
       > = {
         tokens: vi.fn(async () => ({
-          access_token: "AT_PROD_CR01",
-          refresh_token: "RT_PROD_CR01",
+          access_token: "AT_PROD",
+          refresh_token: "RT_PROD",
           token_type: "Bearer" as const,
           expires_in: 60,
         })),
@@ -857,10 +798,8 @@ describe("CR-01: concurrency-1 real createRefreshDeduper no deadlock", () => {
       const primaryQueue = state.callQueues.get("production-srv")!;
 
       // NO injected deduper — production code path.
-      // Pre-fix: builds deduper with primaryQueue → deadlock inside primary.add(doPing)
-      //   → queue never idles within the timeout → ping not called (RED).
-      // Post-fix: builds deduper with per-tick tickQueue → no deadlock
-      //   → queue idles quickly → ping called (GREEN).
+      // Production code builds the deduper with per-tick tickQueue → no
+      // deadlock → queue idles quickly → ping called.
       // The refresh itself fails (no real HTTP endpoint) but the error is caught;
       // the code continues to ping regardless of refresh success/failure.
       maybeEnqueueKeepalivePing(state, deps, "production-srv");
@@ -872,30 +811,28 @@ describe("CR-01: concurrency-1 real createRefreshDeduper no deadlock", () => {
         new Promise<void>((resolve) => setTimeout(resolve, 500)),
       ]);
 
-      // Post-fix: queue drained (no deadlock) → ping fired.
-      // Pre-fix: queue never drained (deadlock) → ping not fired.
-      expect(queueDrained).toBe(true); // RED pre-fix: deadlock prevents queue from draining
+      // Queue drained (no deadlock) → ping fired.
+      expect(queueDrained).toBe(true);
       expect(ping).toHaveBeenCalledTimes(1); // ping fires despite refresh failure
     },
   );
 });
 
 // ---------------------------------------------------------------------------
-// WR-01 RED: addClientAuthentication forwarded into the proactive refresh.
+// addClientAuthentication forwarded into the proactive refresh.
 //
-// Pre-fix: the proactive refresh call in doPing does NOT include
-//   addClientAuthentication — Stripe connected-account refreshes fail
-//   with a 401 because the Stripe-Account header is absent.
-// Post-fix: serverConfig.oauth.stripeAccount is resolved into an
-//   addClientAuthentication hook and forwarded into dedupedRefresh, mirroring
-//   what the on-401 path (deduped-fetch.ts) already does.
+// serverConfig.oauth.stripeAccount must be resolved into an
+// addClientAuthentication hook and forwarded into dedupedRefresh, mirroring
+// what the on-401 path (deduped-fetch.ts) already does — otherwise Stripe
+// connected-account refreshes fail with a 401 because the Stripe-Account
+// header is absent.
 //
 // Test strategy: inject a mockDeduper and assert that dedupedRefresh receives
 //   an addClientAuthentication function when serverConfig.oauth.stripeAccount
 //   is set, and does NOT receive one when it is absent.
 // ---------------------------------------------------------------------------
 
-describe("WR-01: addClientAuthentication forwarded into proactive refresh", () => {
+describe("addClientAuthentication forwarded into proactive refresh", () => {
   function makeStateWithRefreshes(): McpClientManagerState {
     return { ...makeState(), inflightRefreshes: new Map<string, Promise<RefreshResult>>() } as McpClientManagerState;
   }
@@ -913,8 +850,8 @@ describe("WR-01: addClientAuthentication forwarded into proactive refresh", () =
   function makeNearExpiryTokenStore(): Pick<TokenStore, "tokens" | "discoveryState" | "clientInformation"> {
     return {
       tokens: vi.fn(async () => ({
-        access_token: "AT_WR01",
-        refresh_token: "RT_WR01",
+        access_token: "AT_NEAR",
+        refresh_token: "RT_NEAR",
         token_type: "Bearer" as const,
         expires_in: 60,
       })),
@@ -926,7 +863,7 @@ describe("WR-01: addClientAuthentication forwarded into proactive refresh", () =
         },
       } as OAuthDiscoveryState)),
       clientInformation: vi.fn(async () => ({
-        client_id: "wr01-client",
+        client_id: "test-client",
         redirect_uris: ["http://127.0.0.1:0/cb"],
       } as OAuthClientInformationFull)),
     };
@@ -940,7 +877,7 @@ describe("WR-01: addClientAuthentication forwarded into proactive refresh", () =
     deduper?: RefreshDeduper,
   ) => void;
 
-  it("stripeAccount set: addClientAuthentication forwarded into dedupedRefresh (WR-01)", async () => {
+  it("stripeAccount set: addClientAuthentication forwarded into dedupedRefresh", async () => {
     const state = makeStateWithRefreshes();
     wireConnected(state, "stripe-srv", { concurrency: 1 });
 
@@ -969,13 +906,12 @@ describe("WR-01: addClientAuthentication forwarded into proactive refresh", () =
     await state.callQueues.get("stripe-srv")!.onIdle();
 
     expect(dedupedRefreshSpy).toHaveBeenCalledTimes(1);
-    // RED pre-fix: addClientAuthentication is absent from the call.
-    // POST-fix: addClientAuthentication is forwarded.
+    // addClientAuthentication must be forwarded into the call.
     const callArgs = dedupedRefreshSpy.mock.calls[0]![0] as Record<string, unknown>;
-    expect(typeof callArgs["addClientAuthentication"]).toBe("function"); // RED pre-fix (undefined)
+    expect(typeof callArgs["addClientAuthentication"]).toBe("function");
   });
 
-  it("no stripeAccount: addClientAuthentication absent in dedupedRefresh call (WR-01 negative)", async () => {
+  it("no stripeAccount: addClientAuthentication absent in dedupedRefresh call (negative)", async () => {
     const state = makeStateWithRefreshes();
     wireConnected(state, "plain-oauth", { concurrency: 1 });
 
@@ -1011,24 +947,18 @@ describe("WR-01: addClientAuthentication forwarded into proactive refresh", () =
 });
 
 // ---------------------------------------------------------------------------
-// WR-02 RED: token store obtained once, not per-tick.
+// Token store obtained once per tick (singleton contract).
 //
-// Pre-fix: deps.oauthDeps.createTokenStore() is called INSIDE doPing, meaning
-//   a new token store is created on every keepalive tick (per-tick syscall,
-//   violates singleton contract).
-// Post-fix: createTokenStore() is called ONCE per-tick invocation, OUTSIDE
-//   the doPing closure (hoisted before primary.add(doPing)).
+// deps.oauthDeps.createTokenStore() must be called ONCE per-tick invocation,
+// OUTSIDE the doPing closure (hoisted before primary.add(doPing)) — otherwise
+// a new token store is created on every keepalive tick, invoking per-tick
+// ensureContainedDir syscalls and violating the singleton contract.
 //
 // Test strategy: count createTokenStore() invocations across two tick calls.
-//   Pre-fix: each tick calls it inside doPing → count = 2 after two ticks.
-//   Post-fix: each tick calls it once at the top of maybeEnqueueKeepalivePing
-//   → count = 2 (same), but crucially it is NOT called again per-queue-execution.
-//   To detect the per-tick-call pattern precisely, we block the queue between the
-//   enqueue and the execution to distinguish "called at enqueue time" vs "called
-//   at execute time". Post-fix: called BEFORE queue.add; pre-fix: called inside.
+//   Each tick must call it once at the top of maybeEnqueueKeepalivePing.
 // ---------------------------------------------------------------------------
 
-describe("WR-02: token store obtained once per tick (singleton contract)", () => {
+describe("token store obtained once per tick (singleton contract)", () => {
   it("createTokenStore called exactly once per tick, not once per queue execution", async () => {
     const state = makeState();
     wireConnected(state, "once-srv", { concurrency: 1 });
@@ -1046,8 +976,8 @@ describe("WR-02: token store obtained once per tick (singleton contract)", () =>
     // Token with PLENTY of time remaining — no refresh needed
     const tokenStore: Pick<TokenStore, "tokens" | "discoveryState" | "clientInformation"> = {
       tokens: vi.fn(async () => ({
-        access_token: "AT_WR02",
-        refresh_token: "RT_WR02",
+        access_token: "AT_VALID",
+        refresh_token: "RT_VALID",
         token_type: "Bearer" as const,
         expires_in: 9999, // way above buffer — refresh path skipped
       })),
@@ -1075,12 +1005,9 @@ describe("WR-02: token store obtained once per tick (singleton contract)", () =>
     maybeEnqueueKeepalivePing(state, deps, "once-srv");
     await q.onIdle();
 
-    // Post-fix: createTokenStore called ONCE per tick invocation (2 ticks = 2 calls).
-    // Pre-fix AND post-fix: count will be 2 in either case when the queue is idle.
-    // The meaningful assertion is that it is called AT MOST once per tick call:
-    // the function must not be called 0 times (if auth check is entirely skipped)
-    // or more times (if re-called during queue execution).
-    // We drive this by asserting exactly 2 for 2 ticks.
+    // createTokenStore called ONCE per tick invocation (2 ticks = 2 calls).
+    // The function must not be called 0 times (auth check skipped) or more
+    // times (re-called during queue execution).
     expect(createTokenStoreCallCount).toBe(2); // one call per tick
   });
 });

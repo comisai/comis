@@ -305,9 +305,9 @@ async function processSuccessPath(
     await runBudgetContinuation(params, budgetTracker, budgetCapped, requestedBudget);
   }
 
-  // R9: surface discarded pre-tool URLs/short-codes absent from final response.
+  // Surface discarded pre-tool URLs/short-codes absent from final response.
   // MUST run BEFORE the OutputGuard scan below so the surfaced URL passes through
-  // the egress firewall (Phase 2 R4) and any embedded credential is redacted.
+  // the egress firewall and any embedded credential is redacted.
   result.response = surfaceDiscardedPreToolUrl(
     result.response,
     sessionMessages,

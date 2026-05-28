@@ -814,16 +814,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "resolveSecretRef",
       "ResolveSecretRefDeps",
       "ResolveSecretRefOptions",
-      // Secret detection keystone (Phase 1) — primitives exported from
+      // Secret detection keystone — primitives exported from
       // core/security/secret-detection.ts. isSecretFieldName + scanForSecrets
       // are used within core itself (relative imports) rather than via
       // @comis/core, so no in-package-external consumer exists yet.
-      // isEnvRefString is the single-source-of-truth env-ref predicate (WR-02 fix);
-      // exported so credential-classify.ts and future Phase 3 consumers share
+      // isEnvRefString is the single-source-of-truth env-ref predicate;
+      // exported so credential-classify.ts and future consumers share
       // the authoritative scheme/quote-stripping implementation instead of a
       // weaker trim-only copy.
       // classifyHeaderCredential + CredentialKind + HeaderCredentialClassification
-      // are Phase 3 (CRED) primitives — consumers land in Phase 3.
+      // are header-credential primitives — consumers land downstream.
       // SecretFinding is used only in core's own test files (excluded from scan).
       "isSecretFieldName",
       "isEnvRefString",
@@ -1424,17 +1424,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // consumer-scan does not flag. Documented public-contract surface;
       // not a baseline orphan.
       "MCP_OAUTH_CONTRACTS",
-      // SUBA-02/03: Sub-agent tool governance symbols added in Phase 5.
+      // Sub-agent tool governance symbols.
       // SUB_AGENT_TOOL_PROFILES is a static data copy (drift-guard tested in
       // tool-policy.test.ts — excluded from consumer scan). Its primary
-      // production consumer lands in Plan 05-03 (spawn-time required_tools
-      // gate in sub-agent-runner.ts). RequiredToolsUnreachableError +
+      // production consumer is the spawn-time required_tools gate in
+      // sub-agent-runner.ts. RequiredToolsUnreachableError +
       // UnreachableToolEntry are the error class + entry type thrown by that
-      // gate — same Plan 05-03 consumer. SUB_AGENT_TOOL_DENYLIST /
-      // toolReachableGroups have live in-repo consumers (daemon + agent
-      // pi-event-bridge) and are NOT policy-listed.
-      // SUBA-04 (Plan 05-04): SUB_AGENT_TOOL_GROUPS mirrors TOOL_GROUPS for gate
-      // expansion (WR-02 fix); consumed by drift-guard test (excluded from scan)
+      // gate. SUB_AGENT_TOOL_DENYLIST / toolReachableGroups have live in-repo
+      // consumers (daemon + agent pi-event-bridge) and are NOT policy-listed.
+      // SUB_AGENT_TOOL_GROUPS mirrors TOOL_GROUPS for gate
+      // expansion; consumed by drift-guard test (excluded from scan)
       // and by computeReachableToolNames. computeReachableToolNames has a live
       // consumer in session-mutate.ts but the AST walker may miss daemon imports
       // that go through indirect re-exports — policy-listed for safety.

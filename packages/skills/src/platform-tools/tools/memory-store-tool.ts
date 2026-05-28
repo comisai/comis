@@ -51,7 +51,7 @@ export function createMemoryStoreTool(rpcCall: RpcCall): AgentTool<typeof Memory
 
         const result = await rpcCall("memory.store", { content, tags });
 
-        // Secret check now handled by validateMemoryWrite in @comis/core (R4).
+        // Secret check now handled by validateMemoryWrite in @comis/core.
         // The daemon-side validator (memory-write-validator.ts) calls scrubSecretsFromText
         // as the FIRST check before any persistence — no redundant pattern match needed here.
 

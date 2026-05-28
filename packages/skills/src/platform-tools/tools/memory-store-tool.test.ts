@@ -69,8 +69,8 @@ describe("memory_store tool", () => {
     });
   });
 
-  it("passes content with Google API key directly to rpcCall (R4: in-tool detection retired, daemon-side validateMemoryWrite handles it)", async () => {
-    // R4: The private SECRET_PATTERNS / contentLooksLikeSecret check is retired.
+  it("passes content with Google API key directly to rpcCall (in-tool detection retired, daemon-side validateMemoryWrite handles it)", async () => {
+    // The private SECRET_PATTERNS / contentLooksLikeSecret check is retired.
     // Secret detection now lives daemon-side in validateMemoryWrite (memory-write-validator.ts).
     // The tool itself no longer intercepts or warns — it passes content through to the RPC.
     const rpcCall = vi.fn(async () => ({ stored: true, id: "mem-006" }));
@@ -82,12 +82,12 @@ describe("memory_store tool", () => {
 
     // Should store it (tool-level warning is retired; daemon validates)
     expect(rpcCall).toHaveBeenCalledOnce();
-    // No in-tool warning — secret check is now daemon-side only
+    // No in-tool warning — secret check is now daemon-side only.
     expect(result.details).not.toHaveProperty("warning");
   });
 
-  it("passes content with OpenAI API key directly to rpcCall (R4: in-tool detection retired, daemon-side validateMemoryWrite handles it)", async () => {
-    // R4: same as above — tool passes content through, daemon validates.
+  it("passes content with OpenAI API key directly to rpcCall (in-tool detection retired, daemon-side validateMemoryWrite handles it)", async () => {
+    // Same as above — tool passes content through, daemon validates.
     const rpcCall = vi.fn(async () => ({ stored: true }));
     const tool = createMemoryStoreTool(rpcCall);
 
@@ -96,7 +96,7 @@ describe("memory_store tool", () => {
     });
 
     expect(rpcCall).toHaveBeenCalledOnce();
-    // No in-tool warning after R4 retirement
+    // No in-tool warning after retirement of in-tool secret detection.
     expect(result.details).not.toHaveProperty("warning");
   });
 
@@ -116,10 +116,10 @@ describe("memory_store tool", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R4 retirement: memory-store-tool SECRET_PATTERNS
+// memory-store-tool SECRET_PATTERNS retirement
 // ---------------------------------------------------------------------------
 
-describe("R4 retirement: private SECRET_PATTERNS retired", () => {
+describe("private SECRET_PATTERNS retired", () => {
   it("does NOT have a private SECRET_PATTERNS constant (retired in favor of validateMemoryWrite)", async () => {
     // Read the actual source file and assert SECRET_PATTERNS is gone
     const { readFileSync } = await import("node:fs");

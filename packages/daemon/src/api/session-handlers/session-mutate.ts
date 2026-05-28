@@ -122,7 +122,7 @@ export function bindSessionMutateHandlers(deps: SessionHandlerDeps): Record<stri
       const requiredTools = params.required_tools;
       const includeParentHistory = (params.include_parent_history === "summary" ? "summary" : "none") as "none" | "summary";
 
-      // Compute the effective reachable tool set for the SUBA-01 gate (WR-01/02 parity).
+      // Compute the effective reachable tool set for the spawn gate.
       // Apply the config default tool_groups when the caller omitted tool_groups (the common case),
       // then expand both TOOL_PROFILES and TOOL_GROUPS — same logic as setup-tools.ts:588-607.
       // This gives the spawn gate a single source of truth (no duplication of runtime logic).

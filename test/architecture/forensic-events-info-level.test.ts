@@ -30,8 +30,7 @@ const REPO_ROOT = resolve(here, "../..");
  * Files are relative to REPO_ROOT.
  *
  * Three are ALREADY at INFO (trivially pass); four require promotion.
- * One ("Message dequeued") requires a NEW logger.info call that does
- * not exist until Task 2 adds it.
+ * One ("Message dequeued") requires a NEW logger.info call to be added.
  */
 interface ForensicSite {
   /** Human-readable event name for error messages. */
@@ -65,7 +64,7 @@ const FORENSIC_SITES: readonly ForensicSite[] = [
     mustExistAtInfo: true,
   },
 
-  // DEBUG → INFO flips required (RED until Task 2 / Task 3)
+  // DEBUG → INFO flips required
   {
     eventName: "Message enqueued",
     files: ["packages/orchestrator/src/queue/command-queue.ts"],
@@ -215,8 +214,8 @@ describe("forensic-events-info-level -- all 7 forensic events emit at INFO (INFO
               line: v.line,
               snippet: v.snippet,
             })),
-            suggestedFix: `Change logger?.debug(...) → logger?.info(...) at the reported site(s). Do NOT change the payload or message string — level change only. See .planning/phases/03-boot-invariants-info-dedup/03-02-PLAN.md Task 2/3.`,
-            designRef: ".planning/design/OBSERVABILITY_DESIGN.md §5 D11 (forensic events O(1)/turn at INFO)",
+            suggestedFix: `Change logger?.debug(...) → logger?.info(...) at the reported site(s). Do NOT change the payload or message string — level change only.`,
+            designRef: "OBSERVABILITY_DESIGN §5 D11 (forensic events O(1)/turn at INFO)",
           }),
         ).toEqual([]);
       });
@@ -237,7 +236,7 @@ describe("forensic-events-info-level -- all 7 forensic events emit at INFO (INFO
               description: `INFO-01: "${site.message}" (${site.eventName}) must exist as a logger.info call in the specified file(s). The log line is missing entirely.`,
               violations: site.files.map((f) => ({ file: f, line: 0, snippet: `Expected logger.info(..., "${site.message}")` })),
               suggestedFix: `Add a logger.info({...}, "${site.message}") call in the indicated file(s). For "Message dequeued": add it in executeLaneTask after the queue:dequeued bus emit in command-queue.ts.`,
-              designRef: ".planning/design/OBSERVABILITY_DESIGN.md §5 D11",
+              designRef: "OBSERVABILITY_DESIGN §5 D11",
             }),
           ).toBeGreaterThan(0);
         });

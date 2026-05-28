@@ -1814,7 +1814,7 @@ export const coverageWaiver: readonly CoverageWaiverEntry[] = [
   },
   {
     file: "packages/agent/src/executor/stream-wrappers/request-body/token-estimation.ts",
-    reason: "Single-function leaf from a split(estimateBlockTokens). Behavior covered by factory.test.ts (TTL estimation cleanup + gap closure: single TTL estimation pass).",
+    reason: "Single-function leaf from a split(estimateBlockTokens). Behavior covered by factory.test.ts (TTL estimation cleanup).",
   },
   {
     file: "packages/agent/src/executor/stream-wrappers/request-body/tool-cache.ts",
@@ -1850,7 +1850,7 @@ export const coverageWaiver: readonly CoverageWaiverEntry[] = [
   },
   {
     file: "packages/agent/src/executor/stream-wrappers/request-body/ttl-split-estimation.ts",
-    reason: "Factory phase from a split(estimateTtlSplit — per-TTL token attribution via onTtlSplitEstimate). Behavior covered by factory.test.ts (TTL estimation cleanup, gap closure: single TTL estimation pass).",
+    reason: "Factory phase from a split(estimateTtlSplit — per-TTL token attribution via onTtlSplitEstimate). Behavior covered by factory.test.ts (TTL estimation cleanup).",
   },
   {
     file: "packages/agent/src/executor/stream-wrappers/request-body/tool-deferral-injection.ts",

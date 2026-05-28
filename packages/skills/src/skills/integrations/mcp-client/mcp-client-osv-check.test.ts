@@ -475,11 +475,11 @@ describe("osvMalwareCheck — verdict resolution against OSV API", () => {
 // ---------------------------------------------------------------------------
 // Process-wide concurrency cap on OSV API calls.
 //
-// Pre-fix N parallel osvMalwareCheck calls fired N parallel fetches at
-// api.osv.dev. The fix serializes the NETWORK portion via a shared
-// promise chain, so the fetch calls are ordered strictly. Cache hits
-// (including post-wait re-reads for parallel callers of the same pkg)
-// short-circuit before reaching the network call.
+// N parallel osvMalwareCheck calls must NOT fire N parallel fetches at
+// api.osv.dev. The serialization route uses a shared promise chain so the
+// fetch calls are ordered strictly. Cache hits (including post-wait re-reads
+// for parallel callers of the same pkg) short-circuit before reaching the
+// network call.
 // ---------------------------------------------------------------------------
 describe("osvMalwareCheck — process-wide network serialization", () => {
   it("serializes 5 concurrent osvMalwareCheck calls onto the shared fetch chain", async () => {

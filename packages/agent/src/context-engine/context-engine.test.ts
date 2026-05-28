@@ -1873,11 +1873,11 @@ describe("token anchor estimation", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // R5: signature-replay-scrubber layer wiring (prevents Anthropic 400 on continuation)
+  // signature-replay-scrubber layer wiring (prevents Anthropic 400 on continuation)
   // ---------------------------------------------------------------------------
 
-  describe("R5: signature-replay-scrubber layer wiring (prevents Anthropic 400 on continuation)", () => {
-    it("R5-a: built pipeline contains 'signature-replay-scrubber' layer (fails pre-patch: layer absent)", () => {
+  describe("signature-replay-scrubber layer wiring (prevents Anthropic 400 on continuation)", () => {
+    it("built pipeline contains 'signature-replay-scrubber' layer", () => {
       const { deps, logger } = createMockDeps({ reasoning: true });
       const config: ContextEngineConfig = {
         enabled: true,
@@ -1895,7 +1895,7 @@ describe("token anchor estimation", () => {
       expect(names).toContain("signature-replay-scrubber");
     });
 
-    it("R5-b: signature-replay-scrubber is ordered after thinking-block-cleaner and before signature-surrogate-guard (fails pre-patch: layer absent, indexOf -1)", () => {
+    it("signature-replay-scrubber is ordered after thinking-block-cleaner and before signature-surrogate-guard", () => {
       const { deps, logger } = createMockDeps({ reasoning: true });
       createContextEngine(
         { enabled: true, thinkingKeepTurns: 3, historyTurns: 15 },
@@ -1915,7 +1915,7 @@ describe("token anchor estimation", () => {
       expect(scrubberIdx).toBeLessThan(surrogateIdx);   // before signature-surrogate-guard
     });
 
-    it("R5-c: transformContext strips signed thinking blocks from continuation history (fails pre-patch: scrubber absent, thinkingSignature survives)", async () => {
+    it("transformContext strips signed thinking blocks from continuation history", async () => {
       const { deps } = createMockDeps({ reasoning: true });
       const engine = createContextEngine(
         { enabled: true, thinkingKeepTurns: 3, historyTurns: 15 },

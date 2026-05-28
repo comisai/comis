@@ -74,10 +74,10 @@ describe("validateMemoryWrite", () => {
   });
 
   // -------------------------------------------------------------------------
-  // R4 secret scan branch
+  // secret scan branch
   // -------------------------------------------------------------------------
 
-  describe("R4 secret scan branch", () => {
+  describe("secret scan branch", () => {
     it("validateMemoryWrite returns critical when content contains a bearer token", () => {
       const token = "hf_" + "a".repeat(44);
       const result = validateMemoryWrite(`store this: Bearer ${token}`);

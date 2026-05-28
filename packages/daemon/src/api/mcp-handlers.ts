@@ -68,7 +68,7 @@ import { looksLikeSecretValue } from "@comis/core";
 // Persisted-entry construction extracted (single source of
 // truth for the config-only field set; see mcp-persisted-entry.ts docblock).
 import { buildPersistedMcpEntry } from "./mcp-persisted-entry.js";
-// Header-credential firewall (CRED-01/05/06): classifies and processes each
+// Header-credential firewall: classifies and processes each
 // (headerName, headerValue) pair before the Zod contract parse. Called in both
 // mcp.connect and mcp.test after the env-scan block. Mutates headers in place.
 import { processHeaderCredentials } from "./mcp-header-credential.js";
@@ -200,13 +200,13 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         );
       }
 
-      // Headers credential firewall (CRED-01/05/06). Runs AFTER the env-scan
+      // Headers credential firewall. Runs AFTER the env-scan
       // block and BEFORE the Zod parse so the mutated ${VAR} refs flow through
       // McpConnectContract.request.parse and into buildPersistedMcpEntry.
       // processHeaderCredentials mutates the headers map in place (${VAR} refs
       // for persistence) and returns resolvedHeaders with RAW values for the
-      // immediate live connect (WR-01 fix — the ${VAR} literal is not yet
-      // resolved in the in-memory SecretManager which is a frozen boot snapshot).
+      // immediate live connect — the ${VAR} literal is not yet
+      // resolved in the in-memory SecretManager which is a frozen boot snapshot.
       const headersBlock = userParams.headers as Record<string, string> | undefined;
       let resolvedConnectHeaders: Record<string, string> | undefined;
       if (headersBlock) {
@@ -248,7 +248,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       const persistedEntry = persistedServers.find((s) => s.name === params.server_name);
       const resolvedRlimits = params.rlimits ?? persistedEntry?.rlimits;
 
-      // Per-server reliability overrides. Resolution chain (WR-01 fix):
+      // Per-server reliability overrides. Resolution chain:
       //   caller param > persisted per-server entry > global config override > transport-aware default (in ticker)
       // Uses ?? so 0 is preserved (explicit "disable keepalive for this server").
       const resolvedKeepaliveIntervalMs =
@@ -263,7 +263,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         args: params.args,
         url: params.url,
         env: params.env,
-        // WR-01: use resolvedConnectHeaders (raw values) for the live connect so the
+        // Use resolvedConnectHeaders (raw values) for the live connect so the
         // immediate connection uses the actual credential, not the unresolved ${VAR}
         // literal that processHeaderCredentials wrote into params.headers for config
         // persistence. The in-memory SecretManager is a frozen boot snapshot that
@@ -476,13 +476,13 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         );
       }
 
-      // Headers credential firewall (CRED-01/05/06). Mirrors the mcp.connect
+      // Headers credential firewall. Mirrors the mcp.connect
       // insertion point: AFTER the env-scan block, BEFORE the Zod parse.
       // Throws on oauth-bearer (unconditionally) or static-secret with no store.
       // These throws propagate directly (outside the inner try/catch that wraps
       // tempManager.connect) so the caller sees a proper RPC error, not a
       // success:false response.
-      // WR-01 fix applied here too: resolvedTestHeaders carries raw values for
+      // resolvedTestHeaders carries raw values for
       // the live connect, headersBlockTest gets ${VAR} refs (not persisted but
       // consistent with the extraction flow).
       const headersBlockTest = userParams.headers as Record<string, string> | undefined;
@@ -531,7 +531,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         args: params.args,
         url: params.url,
         env: params.env,
-        // WR-01: use resolvedTestHeaders (raw values) for the live test connect
+        // Use resolvedTestHeaders (raw values) for the live test connect
         // so the probe uses the actual credential (same rationale as mcp.connect).
         headers: resolvedTestHeaders ?? params.headers,
         enabled: true,

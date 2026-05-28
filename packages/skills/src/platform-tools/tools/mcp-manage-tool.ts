@@ -125,7 +125,7 @@ function coerceArgs(p: Record<string, unknown>): unknown {
  * (`'{"Authorization":"Bearer tok"}'`), which silently reached the daemon
  * as a string, bypassing credential-shape expectations. Coercion must happen
  * before `rpcCall("mcp.connect")` so the daemon-side credential firewall
- * (Phase 2 R4/R8) sees the correct object shape.
+ * sees the correct object shape.
  *
  * - Non-string `raw` (object, undefined, anything else): pass through unchanged.
  * - String `raw` that parses to a non-null, non-array object: return the parsed object.

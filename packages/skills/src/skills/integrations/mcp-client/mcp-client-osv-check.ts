@@ -268,11 +268,10 @@ function resolveAndWriteCache(
  * For scoped names: split at the SECOND `@` (the first one is the scope
  * marker at position 0).
  *
- * Pre-fix code used the regex `/@[\d.^~><=*]+$/` which only matched
- * semver-shaped suffixes — dist-tags, pre-release, git URLs and file
- * specs slipped through unstripped, causing OSV queries to use the
- * literal `pkg@latest` package name (no match) and silently passing
- * malicious packages.
+ * A previous regex `/@[\d.^~><=*]+$/` only matched semver-shaped suffixes —
+ * dist-tags, pre-release, git URLs and file specs slipped through unstripped,
+ * causing OSV queries to use the literal `pkg@latest` package name (no match)
+ * and silently passing malicious packages.
  */
 function stripVersionSpec(pkg: string): string {
   // Scoped name: `@scope/pkg[@spec]` — preserve the leading `@scope/`.

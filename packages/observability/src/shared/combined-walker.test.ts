@@ -2,8 +2,7 @@
 /**
  * `combinedWalk` snapshot-parity corpus + cycle/ordering pins.
  *
- * RED test: drives the GREEN implementation of
- * `packages/observability/src/shared/combined-walker.ts`.
+ * Tests for `packages/observability/src/shared/combined-walker.ts`.
  *
  * Four parity configurations:
  *   1. {boundCheck: only}    ≡ pre-fusion `limitPayloadValue`
@@ -136,7 +135,7 @@ describe("combinedWalk — parity with redactSecrets (redactNode-only configurat
 
 // --- Configuration 4: all-three parity (the strongest gate) ----------------
 
-describe("sanitizeForPersistence — snapshot parity against pre-fusion 3-walk composition (combined-walker GREEN)", () => {
+describe("sanitizeForPersistence — snapshot parity against pre-fusion 3-walk composition", () => {
   // Each tuple is [name, payload, expectedOutput]. expectedOutput is the canonical
   // post-pipeline shape — committed values + computed values from pre-fusion semantics.
   const cases: Array<[string, unknown, unknown]> = [
@@ -165,7 +164,7 @@ describe("sanitizeForPersistence — snapshot parity against pre-fusion 3-walk c
       { name: "apiKey", value: "<redacted>" },
     ],
     // Free-text Authorization (sanitize + redact stages compose).
-    // Computed against pre-fusion semantics at TDD-RED time:
+    // Computed against pre-fusion semantics:
     [
       "free-text Authorization header is masked",
       { msg: "Authorization: Bearer sk-aaaaaaaaaaaaaaaaaaaa" },

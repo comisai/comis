@@ -163,7 +163,6 @@ describe("setupSecrets", () => {
     });
 
     it("returns ok({ crypto, dbPath }) when seedKeyHex provided and env has no SECRETS_MASTER_KEY", () => {
-      // RED on pre-patch: setupSecrets ignores seedKeyHex, returns ok(null)
       const result = setupSecrets({ env: {}, dataDir: tmpdir(), seedKeyHex: VALID_HEX_KEY });
       expect(result.ok).toBe(true);
       expect(result.ok && result.value).not.toBeNull();
@@ -173,18 +172,16 @@ describe("setupSecrets", () => {
       }
     });
 
-    // W1: empty-string SECRETS_MASTER_KEY must NOT shadow a valid seedKeyHex
-    it("treats SECRETS_MASTER_KEY=\"\" as absent and uses seedKeyHex to build the store (W1)", () => {
-      // RED on pre-patch: SECRETS_MASTER_KEY="" is not nullish → raw="" → Branch 1 → ok(null),
-      // seedKeyHex is silently discarded. After fix, empty-string env value is treated as absent
-      // and seedKeyHex produces a real crypto engine.
+    // Empty-string SECRETS_MASTER_KEY must NOT shadow a valid seedKeyHex
+    it("treats SECRETS_MASTER_KEY=\"\" as absent and uses seedKeyHex to build the store", () => {
+      // SECRETS_MASTER_KEY="" is not nullish — must still be treated as absent so
+      // seedKeyHex is honored and produces a real crypto engine.
       const result = setupSecrets({
         env: { SECRETS_MASTER_KEY: "" },
         dataDir: tmpdir(),
         seedKeyHex: VALID_HEX_KEY,
       });
       expect(result.ok).toBe(true);
-      // Pre-fix this would be null; post-fix must have crypto + dbPath.
       expect(result.ok && result.value).not.toBeNull();
       if (result.ok && result.value) {
         expect(result.value.crypto).toBeDefined();
@@ -192,8 +189,8 @@ describe("setupSecrets", () => {
       }
     });
 
-    // W1: whitespace-only SECRETS_MASTER_KEY must also be treated as absent
-    it("treats SECRETS_MASTER_KEY whitespace-only as absent and uses seedKeyHex (W1)", () => {
+    // Whitespace-only SECRETS_MASTER_KEY must also be treated as absent
+    it("treats SECRETS_MASTER_KEY whitespace-only as absent and uses seedKeyHex", () => {
       const result = setupSecrets({
         env: { SECRETS_MASTER_KEY: "   " },
         dataDir: tmpdir(),
@@ -207,7 +204,6 @@ describe("setupSecrets", () => {
     });
 
     it("returns ok({ crypto, dbPath }) when seedKeyHex is valid base64 and env has no key", () => {
-      // RED on pre-patch: same reason — seedKeyHex ignored
       const result = setupSecrets({ env: {}, dataDir: tmpdir(), seedKeyHex: VALID_BASE64_KEY });
       expect(result.ok).toBe(true);
       expect(result.ok && result.value).not.toBeNull();

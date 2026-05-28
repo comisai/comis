@@ -14,7 +14,7 @@ import {
 } from "./last-known-good.js";
 
 // ---------------------------------------------------------------------------
-// WR-03 test helper — minimal ComisLogger mock
+// Test helper — minimal ComisLogger mock
 // ---------------------------------------------------------------------------
 
 function makeLogger(): ComisLogger {
@@ -295,20 +295,15 @@ describe("last-known-good config", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // CRED-03: LKG snapshot guard — never capture a plaintext secret.
+  // LKG snapshot guard — never capture a plaintext secret.
   //
-  // RED expectation: pre-patch, saveLastKnownGood does NOT scan the source
-  // config before copying, so these tests fail RED on pre-patch code:
-  //   - Test A returns { saved: true } (should be { saved: false })
-  //   - Test C returns { saved: true } (should be { saved: false } for malformed YAML)
-  //
-  // After the production patch (GREEN):
+  // saveLastKnownGood scans the source config before copying:
   //   - A plaintext secret in the source file causes { saved: false } (no copy)
   //   - A ${VAR} env-ref in the source file passes through (no false-positive)
-  //   - Malformed YAML → { saved: false } (fail-safe, Pitfall 5)
+  //   - Malformed YAML returns { saved: false } (fail-safe)
   // ---------------------------------------------------------------------------
-  describe("CRED-03 LKG secret guard", () => {
-    it("CRED-03-A: returns { saved: false } when source config contains plaintext Authorization header secret", () => {
+  describe("LKG secret guard", () => {
+    it("returns { saved: false } when source config contains plaintext Authorization header secret", () => {
       const configWithSecret = yamlStringify({
         integrations: {
           mcp: {
@@ -336,7 +331,7 @@ describe("last-known-good config", () => {
       expect(existsSync(result.path)).toBe(false);
     });
 
-    it("CRED-03-B: returns { saved: true } when source config contains only ${VAR} env refs (no false-positive)", () => {
+    it("returns { saved: true } when source config contains only ${VAR} env refs (no false-positive)", () => {
       const configWithEnvRef = yamlStringify({
         integrations: {
           mcp: {
@@ -363,7 +358,7 @@ describe("last-known-good config", () => {
       expect(existsSync(result.path)).toBe(true);
     });
 
-    it("CRED-03-C: returns { saved: false } when source config has malformed YAML (fail-safe, Pitfall 5)", () => {
+    it("returns { saved: false } when source config has malformed YAML (fail-safe)", () => {
       writeFileSync(configPath, "{unclosed: yaml: [broken");
 
       const result = saveLastKnownGood(configPath);
@@ -375,15 +370,11 @@ describe("last-known-good config", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // WR-03: saveLastKnownGood must emit a loud WARN when it skips the snapshot
-  //
-  // RED proof: saveLastKnownGood currently has no logger parameter and emits
-  // no log on the skip branches. The tests below require a new optional `logger`
-  // parameter; they would not compile on pre-patch code. Combined RED+GREEN
-  // commit per AGENTS.md §2.10.
+  // saveLastKnownGood must emit a loud WARN when it skips the snapshot, so the
+  // skip is observable rather than silent.
   // ---------------------------------------------------------------------------
-  describe("WR-03: LKG skip emits actionable WARN (no silent failure)", () => {
-    it("WR-03-A: emits logger.warn with errorKind:'config' and hint when secret found in source config", () => {
+  describe("LKG skip emits actionable WARN (no silent failure)", () => {
+    it("emits logger.warn with errorKind:'config' and hint when secret found in source config", () => {
       const logger = makeLogger();
       const configWithSecret = yamlStringify({
         integrations: {
@@ -411,7 +402,7 @@ describe("last-known-good config", () => {
       // WARN must have been emitted
       expect(logger.warn).toHaveBeenCalledOnce();
       const [fields, msg] = (logger.warn as ReturnType<typeof vi.fn>).mock.calls[0] as [Record<string, unknown>, string];
-      // Must include errorKind: "config" per AGENTS.md §2.1 WARN contract
+      // Must include errorKind: "config" per the WARN contract
       expect(fields).toMatchObject({ errorKind: "config" });
       // Must include an actionable hint — no raw secret value
       expect(typeof fields["hint"]).toBe("string");
@@ -421,7 +412,7 @@ describe("last-known-good config", () => {
       expect(JSON.stringify(fields)).not.toContain("ghp_");
     });
 
-    it("WR-03-B: emits logger.warn with errorKind:'config' and hint when source YAML is malformed", () => {
+    it("emits logger.warn with errorKind:'config' and hint when source YAML is malformed", () => {
       const logger = makeLogger();
       writeFileSync(configPath, "{unclosed: yaml: [broken");
 
@@ -433,7 +424,7 @@ describe("last-known-good config", () => {
       expect(fields).toMatchObject({ errorKind: "config" });
     });
 
-    it("WR-03-C: does NOT emit logger.warn when config file is missing (normal first-run case)", () => {
+    it("does NOT emit logger.warn when config file is missing (normal first-run case)", () => {
       const logger = makeLogger();
       // Config file does not exist — missing file is the expected first-run state
       const result = saveLastKnownGood(join(tmpDir, "nonexistent.yaml"), true, logger);
@@ -443,7 +434,7 @@ describe("last-known-good config", () => {
       expect(logger.warn).not.toHaveBeenCalled();
     });
 
-    it("WR-03-D: does NOT emit logger.warn when logger is not provided (backward-compat: no logger = silent)", () => {
+    it("does NOT emit logger.warn when logger is not provided (backward-compat: no logger = silent)", () => {
       const configWithSecret = yamlStringify({
         secret_field: "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-AAAAAAA",
       });

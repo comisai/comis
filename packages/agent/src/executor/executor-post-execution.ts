@@ -392,7 +392,7 @@ function modelAcknowledgedFailure(response: string, failedTools: string[]): bool
     const name = t.toLowerCase();
     // Escape regex metacharacters in the tool name before inserting into a RegExp.
     // Word-boundary match (\b) prevents short tool names like "write" from matching
-    // substrings in unrelated words like "writer" or "writing" (WR-02).
+    // substrings in unrelated words like "writer" or "writing".
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const nameRe = new RegExp(`\\b${escaped}\\b`);
     if (!nameRe.test(lower)) return false;
@@ -683,7 +683,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     );
   }
 
-  // R3: derive effectiveFinishReason — override is UNCONDITIONAL when a tool
+  // Derive effectiveFinishReason — override is UNCONDITIONAL when a tool
   // failed on a stop/end_turn turn (modelAcknowledgedFailure does NOT gate this).
   const hasToolFailures = (bridgeResult.failedTools?.length ?? 0) > 0;
   const finishReasonStr = result.finishReason as string;

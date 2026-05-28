@@ -201,7 +201,7 @@ describe("createFileTransport", () => {
     }
   });
 
-  // After R1, each entry in targets[] is a TransportPipelineOptions:
+  // Each entry in targets[] is a TransportPipelineOptions:
   //   pipeline[0] = redact stage  (upstream Transform)
   //   pipeline[1] = destination   (Writable: pino-roll or pino/file)
   // Helper to extract the destination options from targets[i].pipeline[1].
@@ -341,7 +341,7 @@ describe("createFileTransport", () => {
     expect(rollOpts.size).toBe("10m");
   });
 
-  it("includes pipeline-redact-stage as upstream stage in each target (R1)", () => {
+  it("includes pipeline-redact-stage as upstream stage in each target", () => {
     const transport = createFileTransport(defaultConfig);
 
     for (const rawTarget of transport.targets) {

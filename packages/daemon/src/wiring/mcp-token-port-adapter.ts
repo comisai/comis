@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Port-backed MCP token store adapter (R8).
+ * Port-backed MCP token store adapter.
  *
  * Wraps the existing `createTokenStore` (chokidar watch + 0600 fs-safe substrate
  * preserved). Syncs the OAuth token triple (access/refresh/expires) to the
@@ -143,7 +143,7 @@ export function createPortBackedMcpTokenStore(
     // CRITICAL: startWatch and close MUST delegate to the inner store.
     // The chokidar disk-watch (atomic:100 debounce + cache-invalidation) lives
     // in the inner createTokenStore. Overriding these would break cross-process
-    // refresh rotation (T-02-18 mitigation).
+    // refresh rotation.
     startWatch() {
       return inner.startWatch();
     },

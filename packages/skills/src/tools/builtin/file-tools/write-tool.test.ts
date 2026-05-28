@@ -652,10 +652,10 @@ describe("error code format", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R4 secret egress guard tests
+// Secret egress guard tests
 // ---------------------------------------------------------------------------
 
-describe("R4 secret egress guard", () => {
+describe("secret egress guard", () => {
   it("warns and proceeds with scrubbed content when content contains Bearer hf_ token (default warn mode)", async () => {
     const tool = createComisWriteTool(
       workspaceDir,

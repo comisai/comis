@@ -339,16 +339,16 @@ export function createGatewayTool(
               };
             }
 
-            // STORE-03: fail-early — check store availability before confirmation or rpcCall.
+            // Fail-early — check store availability before confirmation or rpcCall.
             // Uses gateway.status (no rate limit) to read the secretsStoreAvailable field.
             // Returns structured error immediately if the encrypted store is not configured,
             // preventing both the confirmation dance and any write-rate-limit token consumption.
             //
-            // W3: gateway.status is admin-only and will throw for non-admin callers.
+            // gateway.status is admin-only and will throw for non-admin callers.
             // Wrap in try/catch: on error, fall through to the downstream env.set handler
             // (which has its own !deps.secretStore guard) rather than propagating a raw
             // admin-gate error to the agent as an opaque thrown failure.
-            // W3: catch all preflight errors — gateway.status is admin-only and throws
+            // Catch all preflight errors — gateway.status is admin-only and throws
             // for non-admin callers. On error, fall through optimistically: the downstream
             // env.set handler (!deps.secretStore guard) surfaces the correct structured error.
             const preflight = await rpcCall("gateway.status", { _trustLevel })
