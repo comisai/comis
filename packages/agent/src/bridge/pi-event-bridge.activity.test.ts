@@ -16,7 +16,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { ok } from "@comis/shared";
 import type { ModelOperationType, EventMap, TurnActivityContext, ActivityEvent } from "@comis/core";
-import { registerToolMetadata, TypedEventBus, formatSessionKey } from "@comis/core";
+import { registerToolMetadata, TypedEventBus, formatSessionKey, runWithContext } from "@comis/core";
 import { createActivityStream } from "@comis/observability";
 import { createPiEventBridge } from "./pi-event-bridge.js";
 import type { PiEventBridgeDeps } from "./pi-event-bridge.js";
@@ -387,5 +387,76 @@ describe("UX-03 end-to-end -- detector flip produces ActivityStream status:faile
       .mock.calls.find((c) => (c[0] as Record<string, unknown>)?.errorKind === "internal");
     expect(warnCall).toBeDefined();
     expect((warnCall![0] as Record<string, unknown>).hint).toBeDefined();
+  });
+});
+
+// ===========================================================================
+// FIX-TRACEID-01: pi-event-bridge must honor the ALS RequestContext.traceId at
+// every emit site, falling back to deps.executionId only when ALS is absent.
+// Pre-patch the bridge stamps deps.executionId unconditionally — that ID is a
+// per-pi-mono-run UUID, NOT the channel ingress traceId the activity stream's
+// 3-way filter (agentId + sessionKey + traceId) keys on. The two ALS-positive
+// tests below FAIL on pre-patch code; the ALS-absent regression-guard PASSES
+// both pre- and post-patch (the fallback was accidentally correct).
+// ===========================================================================
+
+describe("PiEventBridge traceId honors ALS RequestContext when present (FIX-TRACEID-01)", () => {
+  // The ingress traceId the channel adapter sets via runWithContext at the
+  // pipeline entry — distinct from deps.executionId so the bug is unambiguous.
+  const ALS_TRACE = "4efb2c13-946d-43bc-a87e-2fe26fe29fa1";
+
+  function withCtx<T>(fn: () => T): T {
+    return runWithContext(
+      {
+        tenantId: "default",
+        traceId: ALS_TRACE,
+        startedAt: Date.now(),
+        trustLevel: "admin",
+      },
+      fn,
+    );
+  }
+
+  it("tool:started uses ALS traceId (not deps.executionId) when called inside runWithContext", () => {
+    const deps = createMockDeps(); // executionId: "exec-001"
+    const { listener } = createPiEventBridge(deps);
+
+    withCtx(() => {
+      listener(startEvent("read", "tc-als-1") as any);
+    });
+
+    const started = emitPayload(deps, "tool:started");
+    expect(started).toBeDefined();
+    expect(started.traceId).toBe(ALS_TRACE);
+    expect(started.traceId).not.toBe("exec-001");
+  });
+
+  it("tool:executed uses ALS traceId (not deps.executionId) when called inside runWithContext", () => {
+    const deps = createMockDeps();
+    const { listener } = createPiEventBridge(deps);
+
+    withCtx(() => {
+      listener(startEvent("read", "tc-als-2") as any);
+      listener(endEvent("read", "tc-als-2", false) as any);
+    });
+
+    const executed = emitPayload(deps, "tool:executed");
+    expect(executed).toBeDefined();
+    expect(executed.traceId).toBe(ALS_TRACE);
+    expect(executed.traceId).not.toBe("exec-001");
+  });
+
+  it("tool:executed falls back to deps.executionId when called OUTSIDE any runWithContext scope", () => {
+    // Regression guard for the ALS-absent path (e.g. SDK async callbacks that
+    // may not propagate ALS). Pre- AND post-patch this MUST be exec-001.
+    const deps = createMockDeps();
+    const { listener } = createPiEventBridge(deps);
+
+    listener(startEvent("read", "tc-no-als") as any);
+    listener(endEvent("read", "tc-no-als", false) as any);
+
+    const executed = emitPayload(deps, "tool:executed");
+    expect(executed).toBeDefined();
+    expect(executed.traceId).toBe("exec-001");
   });
 });
