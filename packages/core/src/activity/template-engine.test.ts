@@ -185,3 +185,100 @@ describe("applyTemplate", () => {
     expect(result.value.defaultLabel).not.toContain("{name}");
   });
 });
+
+describe("applyTemplate — transform hook (Phase 78 WS-C)", () => {
+  it("invokes spec.transform AFTER substitution and uses the non-empty return as defaultLabel", () => {
+    // The transform consumes the RAW params (not the allowlist-filtered set)
+    // and its non-empty return wins over the substituted label. Step 4 of the
+    // pipeline lands between substitute() (step 3) and the length cap (step 5).
+    const spec: LabelSpec = {
+      semanticPhase: "tool",
+      label: "subst {key}",
+      detailKeys: ["key"],
+      transform: (params) => `from-transform:${String(params.key)}`,
+    };
+    const result = applyTemplate(spec, { key: "VALUE" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.defaultLabel).toBe("from-transform:VALUE");
+  });
+
+  it("falls back to the substituted label when the transform returns an empty string", () => {
+    // An empty-string return is the fallthrough sentinel — applyTemplate keeps
+    // the substituted label so callers can implement "only override when we
+    // have something useful to say" cheaply (no extra wrapper layer).
+    const spec: LabelSpec = {
+      semanticPhase: "tool",
+      label: "subst {key}",
+      detailKeys: ["key"],
+      transform: () => "",
+    };
+    const result = applyTemplate(spec, { key: "VALUE" });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.defaultLabel).toBe("subst VALUE");
+  });
+
+  it("redacts a malicious transform output via redactValue defense-in-depth (PITFALL 4 REGRESSION LOCK)", () => {
+    // A transform that returns a raw secret string MUST be caught by the
+    // post-hoc redactValue pipe inside applyTemplate. This is the Pitfall 4
+    // regression lock — even if a transform claims to self-redact (like
+    // parseShellCommand at shell-label-parser.ts:53), applyTemplate runs the
+    // output through redactValue again as belt-and-braces. The Anthropic
+    // sk- shape is one of the canonical secret patterns in
+    // injection-patterns.ts (SK_API_KEY); pre-patch the transform output flows
+    // verbatim into defaultLabel and this test fails.
+    const spec: LabelSpec = {
+      semanticPhase: "tool",
+      label: "x",
+      transform: () => "sk-test-1234567890ABCDEF1234567890ABCDEF",
+    };
+    const result = applyTemplate(spec, {});
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.defaultLabel.includes("<redacted>")).toBe(true);
+    expect(result.value.defaultLabel.includes("sk-test-1234567890ABCDEF")).toBe(false);
+  });
+
+  it("flows the transform output through the length cap (MAX_LABEL_LENGTH=120) and flags truncated", () => {
+    // Step 5 (length cap) operates on whatever step 4 produced — a transform
+    // that returns 500 characters is truncated to 120 and the truncated flag
+    // is set. Mirrors the existing "caps an overlong substituted label" test
+    // but routes through the transform branch.
+    const spec: LabelSpec = {
+      semanticPhase: "tool",
+      label: "x",
+      transform: () => "A".repeat(500),
+    };
+    const result = applyTemplate(spec, {});
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.defaultLabel.length).toBe(120);
+    expect(result.value.truncated).toBe(true);
+  });
+
+  it("still returns err({kind:'unknown_key'}) on substitution error — the transform does not bypass error-path", () => {
+    // The transform fires AFTER substitute() Result-checks. A label with an
+    // un-allowlisted placeholder errs at step 3 and applyTemplate returns
+    // err({kind:'unknown_key'}) immediately — the transform never runs and
+    // never masks the error. This proves the Result<TemplateOutput,
+    // TemplateError> shape is preserved.
+    const spec: LabelSpec = {
+      semanticPhase: "tool",
+      label: "{missing}",
+      transform: () => "x",
+    };
+    const result = applyTemplate(spec, {});
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe("unknown_key");
+    if (result.error.kind === "unknown_key") {
+      expect(result.error.key).toBe("missing");
+    }
+  });
+});
