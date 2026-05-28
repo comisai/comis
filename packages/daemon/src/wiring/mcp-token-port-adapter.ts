@@ -153,13 +153,40 @@ export function createPortBackedMcpTokenStore(
         version: 1,
       };
 
-      // Non-fatal: suppress port write errors. The disk store is authoritative.
-      // We do NOT use suppressError from @comis/shared to avoid a circular dep
-      // concern — a simple .then/catch is explicit and self-contained here.
-      await port.set(profileId, profile).then(
-        () => undefined,
-        () => undefined,
-      );
+      // Non-fatal: a port-set failure must NOT interrupt the disk write or
+      // throw to the SDK saveTokens caller. But silence is an observability
+      // regression (WR-02): without a log, a persistent port-side error (disk
+      // corruption on the credential partition, future schema mismatch, etc.)
+      // leaves the disk store and the unified credential port silently
+      // desynced. Surface both failure shapes (ok:false Result + thrown
+      // rejection) at WARN with the canonical Pino fields so an operator
+      // querying port.list({provider:"mcp-oauth"}) has a diagnostic trail.
+      let portSetResult: Awaited<ReturnType<typeof port.set>> | undefined;
+      let thrown: unknown;
+      try {
+        portSetResult = await port.set(profileId, profile);
+      } catch (err) {
+        thrown = err;
+      }
+      if (thrown !== undefined || (portSetResult !== undefined && !portSetResult.ok)) {
+        const errPayload =
+          thrown !== undefined
+            ? thrown instanceof Error
+              ? thrown.message
+              : String(thrown)
+            : (portSetResult as { ok: false; error: Error }).error.message;
+        deps.logger.warn(
+          {
+            serverName: server,
+            provider: MCP_OAUTH_PROVIDER,
+            err: errPayload,
+            hint: "OAuthCredentialStorePort.set failed; disk-backed MCP token store remains authoritative",
+            errorKind: "internal" as const,
+            submodule: "mcp-token-port-adapter",
+          },
+          "MCP OAuth credential-port sync failed (non-fatal)",
+        );
+      }
     },
 
     saveClientInformation(server: string, info) {
