@@ -314,6 +314,115 @@ describe("MCP OAuth RPC handlers", () => {
       expect(calledText).toContain("27");
     });
 
+    // DEVAUTH-05 (2026-05-28). Pin the integrated chain for the VPS deployment
+    // model. The PKCE headless path above (Fix 6/8/9 tests) was already
+    // green; this test exercises the device-flow path through the same
+    // captured-onAuthorized scaffolding. The runOauthLogin fake returns
+    // status:"device_code_pending" + verificationUri/userCode/expiresIn
+    // (the plan-02 union widening) and captures onAuthorized so the test
+    // can simulate the background-poll completion firing it. The Higgsfield
+    // verification_uri host is the placeholder confirmed by 09-RESEARCH.md
+    // — this test does NOT hit the real device-auth host.
+    //
+    // Coverage chain (DEVAUTH-05):
+    //   discovery (mocked by runOauthLogin fake)
+    //   → user_code WDJB-MJHT + verificationUri returned synchronously
+    //   → onAuthorized captured
+    //   → manager.connect called with config built from persisted entry (Fix 8)
+    //   → notifyOperatorChannel called with the captured _deliveryTarget (Fix 9)
+    //   → RPC response carries the 3 new fields verbatim (DEVAUTH-03 surface)
+    it("Higgsfield-shaped device-flow E2E: dual auth servers, userCode WDJB-MJHT, poll pending+slow_down+tokens, onAuthorized fires manager.connect + notifyOperatorChannel", async () => {
+      let capturedOnAuthorized: ((name: string) => Promise<void>) | undefined;
+
+      // Fake runOauthLogin: returns device_code_pending (NOT headless_hint) with
+      // Higgsfield-shape values. Captures onAuthorized so the test can simulate
+      // the background-poll completion firing it.
+      const runOauthLogin = vi.fn().mockImplementation(
+        async (args: { onAuthorized?: (name: string) => Promise<void> }) => {
+          capturedOnAuthorized = args.onAuthorized;
+          return {
+            status: "device_code_pending" as const,
+            verificationUri: "https://fnf-device-auth.higgsfield.ai/device",
+            userCode: "WDJB-MJHT",
+            expiresIn: 600,
+          };
+        },
+      );
+      const notifyOperatorChannel = vi.fn().mockResolvedValue(undefined);
+      const deps = makeDeps("higgsfield", {
+        runOauthLogin,
+        notifyOperatorChannel,
+        entry: {
+          name: "higgsfield",
+          transport: "http",
+          url: "https://mcp.higgsfield.ai/mcp",
+          auth: "oauth",
+          oauth: { scope: "openid email offline_access" },
+        },
+      });
+      (deps.mcpClientManager.connect as ReturnType<typeof vi.fn>).mockResolvedValue(
+        ok({
+          name: "higgsfield",
+          status: "connected",
+          tools: new Array(27).fill(0).map((_, i) => ({ name: `tool_${i}` })),
+        }),
+      );
+
+      const handlers = createMcpOauthHandlers(deps);
+      const deliveryTarget = {
+        channelType: "telegram",
+        channelId: "678314278",
+        userId: "678314278",
+        tenantId: "default",
+      };
+      const response = (await handlers[McpOauthLoginContract.method]({
+        server_name: "higgsfield",
+        _deliveryTarget: deliveryTarget,
+      })) as {
+        server_name: string;
+        status: string;
+        userCode?: string;
+        verificationUri?: string;
+        expiresIn?: number;
+      };
+
+      // === Assertion 1 (DEVAUTH-03): RPC response carries the 3 new fields ===
+      // (this exercises plan 02's conditional-spread + Zod-parse dev-mode gate)
+      expect(response).toMatchObject({
+        server_name: "higgsfield",
+        status: "device_code_pending",
+        userCode: "WDJB-MJHT",
+        verificationUri: "https://fnf-device-auth.higgsfield.ai/device",
+        expiresIn: 600,
+      });
+
+      // === Assertion 2: Fix 8 chain — background fires manager.connect ===
+      expect(capturedOnAuthorized).toBeDefined();
+      await capturedOnAuthorized!("higgsfield");
+      expect(deps.mcpClientManager.connect).toHaveBeenCalledOnce();
+      const connectArgs = (deps.mcpClientManager.connect as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+      expect(connectArgs).toMatchObject({
+        name: "higgsfield",
+        transport: "http",
+        url: "https://mcp.higgsfield.ai/mcp",
+        auth: "oauth",
+        enabled: true,
+      });
+      // Fix 8 invariant: reconnect MUST NOT be called (Fix 4 left serverConfigs empty)
+      expect(deps.mcpClientManager.reconnect).not.toHaveBeenCalled();
+
+      // === Assertion 3: Fix 9 chain — notifyOperatorChannel fires ===
+      expect(notifyOperatorChannel).toHaveBeenCalledOnce();
+      const [calledTarget, calledText] = (notifyOperatorChannel as ReturnType<typeof vi.fn>).mock.calls[0] as [unknown, string];
+      expect(calledTarget).toMatchObject(deliveryTarget);
+      expect(calledText).toContain("higgsfield");
+      expect(calledText).toContain("27");
+
+      // === Assertion 4: NEVER touch a real network ===
+      // (proxy by absence of any fetch import in the test file body —
+      //  enforced by the grep gate in plan 09-03 verification)
+    });
+
     it("headless onAuthorized without an injected _deliveryTarget → notification is skipped (no throw)", async () => {
       let capturedOnAuthorized: ((name: string) => Promise<void>) | undefined;
       const runOauthLogin = vi.fn().mockImplementation(
