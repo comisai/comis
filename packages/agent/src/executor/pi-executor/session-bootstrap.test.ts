@@ -22,6 +22,27 @@ import {
 import type { PiExecutorDeps } from "./pi-executor.js";
 import type { AdaptiveCacheRetention } from "../adaptive-cache-retention.js";
 import type { ExecutionOverrides } from "../types.js";
+import type { ExecutionPlan } from "../../planner/types.js";
+import type { ExecutionPlanHolder } from "./execution-plan-holder.js";
+
+/** Fake holder capturing the published ref so the test can assert identity. */
+function makeFakeHolder(): ExecutionPlanHolder & {
+  published: Array<{ current: ExecutionPlan | undefined }>;
+} {
+  const published: Array<{ current: ExecutionPlan | undefined }> = [];
+  let active: { current: ExecutionPlan | undefined } | undefined;
+  return {
+    published,
+    getCurrentPlan: () => active?.current,
+    publish: (ref) => {
+      active = ref;
+      published.push(ref);
+    },
+    clear: () => {
+      active = undefined;
+    },
+  };
+}
 
 function makeNoopLogger() {
   const logger: { [k: string]: unknown } = {
@@ -83,6 +104,114 @@ describe("bootstrapSession", () => {
     const result = await bootstrapSession({}, deps, { config: baseConfig, sessionKey, overrides });
 
     expect(result.sepEnabled).toBe(false);
+  });
+
+  it("publishes the per-turn executionPlanRef into the holder when SEP is enabled", async () => {
+    const deps = {
+      logger: makeNoopLogger(),
+      clock: { now: () => 1, nowDate: () => new Date(1) },
+      authStorage: { getApiKey: () => "k", getModelOverride: () => undefined } as unknown as PiExecutorDeps["authStorage"],
+    } as unknown as PiExecutorDeps;
+    const holder = makeFakeHolder();
+
+    const result = await bootstrapSession({}, deps, {
+      config: baseConfig,
+      sessionKey,
+      overrides: undefined,
+      executionPlanHolder: holder,
+    });
+
+    // The SAME ref object is published (live read, not a copy), and it is the
+    // ref the bootstrap returns — so holder.getCurrentPlan() tracks this turn.
+    expect(holder.published).toHaveLength(1);
+    expect(holder.published[0]).toBe(result.executionPlanRef);
+    expect(holder.getCurrentPlan()).toBeUndefined(); // ref.current starts undefined
+  });
+
+  it("does NOT publish into the holder when SEP is disabled (skipSep)", async () => {
+    const deps = {
+      logger: makeNoopLogger(),
+      clock: { now: () => 1, nowDate: () => new Date(1) },
+      authStorage: { getApiKey: () => "k", getModelOverride: () => undefined } as unknown as PiExecutorDeps["authStorage"],
+    } as unknown as PiExecutorDeps;
+    const holder = makeFakeHolder();
+    const overrides = { skipSep: true } as ExecutionOverrides;
+
+    await bootstrapSession({}, deps, {
+      config: baseConfig,
+      sessionKey,
+      overrides,
+      executionPlanHolder: holder,
+    });
+
+    expect(holder.published).toHaveLength(0);
+  });
+
+  it("clears the holder on a SEP-off turn so a prior SEP-on turn's plan does not leak (T-74-05)", async () => {
+    // T-74-05 stale-plan leak: a SEP-on turn publishes ref A into the holder
+    // (and SEP populates it). A LATER SEP-off turn on the SAME holder must
+    // de-publish — otherwise getCurrentPlan() still projects turn A's plan
+    // during the SEP-off turn. Pre-fix bootstrapSession only guards publish()
+    // and never clears, so the SEP-off branch is inert and ref A stays live.
+    const deps = {
+      logger: makeNoopLogger(),
+      clock: { now: () => 1, nowDate: () => new Date(1) },
+      authStorage: { getApiKey: () => "k", getModelOverride: () => undefined } as unknown as PiExecutorDeps["authStorage"],
+    } as unknown as PiExecutorDeps;
+    const holder = makeFakeHolder();
+
+    // Turn N: SEP enabled — publish ref A and let SEP populate it live.
+    const turnN = await bootstrapSession({}, deps, {
+      config: baseConfig,
+      sessionKey,
+      overrides: undefined,
+      executionPlanHolder: holder,
+    });
+    turnN.executionPlanRef.current = {
+      active: true,
+      request: "turn N plan",
+      completedCount: 0,
+      createdAtMs: 1,
+      steps: [{ index: 1, description: "step", status: "in_progress" }],
+    };
+    expect(holder.getCurrentPlan()?.request).toBe("turn N plan");
+
+    // Turn N+1: SEP disabled (skipSep) on the SAME holder.
+    await bootstrapSession({}, deps, {
+      config: baseConfig,
+      sessionKey,
+      overrides: { skipSep: true } as ExecutionOverrides,
+      executionPlanHolder: holder,
+    });
+
+    // The SEP-off turn must have de-published turn N's ref — no stale leak.
+    expect(holder.getCurrentPlan()).toBeUndefined();
+  });
+
+  it("holder reflects SEP mutations on the returned ref after publish", async () => {
+    const deps = {
+      logger: makeNoopLogger(),
+      clock: { now: () => 1, nowDate: () => new Date(1) },
+      authStorage: { getApiKey: () => "k", getModelOverride: () => undefined } as unknown as PiExecutorDeps["authStorage"],
+    } as unknown as PiExecutorDeps;
+    const holder = makeFakeHolder();
+
+    const result = await bootstrapSession({}, deps, {
+      config: baseConfig,
+      sessionKey,
+      overrides: undefined,
+      executionPlanHolder: holder,
+    });
+
+    // SEP later populates the live ref this turn.
+    result.executionPlanRef.current = {
+      active: true,
+      request: "r",
+      completedCount: 0,
+      createdAtMs: 1,
+      steps: [{ index: 1, description: "s", status: "in_progress" }],
+    };
+    expect(holder.getCurrentPlan()?.steps[0].status).toBe("in_progress");
   });
 });
 

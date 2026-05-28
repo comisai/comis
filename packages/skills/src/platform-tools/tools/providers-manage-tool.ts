@@ -13,9 +13,26 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { ApprovalGate } from "@comis/core";
+import { registerActivityLabelSpec } from "@comis/core";
 import { readStringParam } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
+
+// Activity label spec (LBL-01, §17.6). Descriptor name == emitted name.
+// Per-action overrides use the tool's REAL action enum.
+registerActivityLabelSpec("providers_manage", {
+  semanticPhase: "tool",
+  label: "managing providers",
+  actions: {
+    list: { label: "listing providers" },
+    get: { label: "reading provider config" },
+    create: { label: "creating provider" },
+    update: { label: "updating provider" },
+    delete: { label: "deleting provider" },
+    enable: { label: "enabling provider" },
+    disable: { label: "disabling provider" },
+  },
+});
 
 // ---------------------------------------------------------------------------
 // Parameter schema

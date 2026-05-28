@@ -95,6 +95,7 @@ describe("AgentEvents payload structure", () => {
       durationMs: 350,
       success: false,
       timestamp: Date.now(),
+      toolCallId: "tc-full",
       userId: "user-1",
       traceId: "trace-abc",
       agentId: "agent-1",
@@ -124,6 +125,7 @@ describe("AgentEvents payload structure", () => {
       durationMs: 5,
       success: true,
       timestamp: Date.now(),
+      toolCallId: "tc-min",
     };
     bus.emit("tool:executed", minPayload);
     expect(handler).toHaveBeenCalledTimes(2);
@@ -140,6 +142,7 @@ describe("AgentEvents payload structure", () => {
       durationMs: 150,
       success: true,
       timestamp: Date.now(),
+      toolCallId: "tc-trunc",
       truncated: true,
       fullChars: 500_000,
       returnedChars: 200_000,
@@ -159,6 +162,7 @@ describe("AgentEvents payload structure", () => {
       durationMs: 10,
       success: true,
       timestamp: Date.now(),
+      toolCallId: "tc-normal",
     };
     bus.emit("tool:executed", normalPayload);
     expect(handler).toHaveBeenCalledTimes(2);
@@ -612,6 +616,204 @@ describe("Trajectory observability events", () => {
     bus.emit("tool:timeout", noCallId);
     expect(handler).toHaveBeenCalledTimes(2);
     expect(handler.mock.calls[1]![0].toolCallId).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v2.5 Agent Transparency — EventBus payload contract widening (EVT-01..04)
+//
+// These cases pin the §16.11 amendment table for tool:* and model:* payloads.
+// Each fails to compile on the pre-patch event-bus types (RED proof):
+//   - tool:executed without toolCallId (now required) → tsc error
+//   - tool:executed with errorKind "badkind" (now closed ErrorKind union) → tsc error
+//   - tool:started with action/params → field does not exist on pre-patch type
+//   - model:* with agentId/sessionKey/traceId → fields do not exist on pre-patch type
+// ---------------------------------------------------------------------------
+
+describe("v2.5 tool:* payload widening (EVT-01/02/03)", () => {
+  it("tool:executed requires toolCallId and accepts a closed-union errorKind", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    // errorKind is now the closed ErrorKind union — "precondition" is a member.
+    const payload: EventMap["tool:executed"] = {
+      toolName: "mcp_manage",
+      durationMs: 12,
+      success: false,
+      timestamp: Date.now(),
+      toolCallId: "tc1",
+      errorKind: "precondition",
+    };
+
+    bus.on("tool:executed", handler);
+    bus.emit("tool:executed", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["tool:executed"];
+    expect(received.toolCallId).toBe("tc1");
+    expect(received.errorKind).toBe("precondition");
+  });
+
+  it("tool:executed rejects an out-of-union errorKind at the type level", () => {
+    const bus = new TypedEventBus();
+    const bad: EventMap["tool:executed"] = {
+      toolName: "bash",
+      durationMs: 1,
+      success: false,
+      timestamp: 1,
+      toolCallId: "tc-bad",
+      // @ts-expect-error - "badkind" is not a member of the closed ErrorKind union
+      errorKind: "badkind",
+    };
+    void bad;
+
+    // @ts-expect-error - toolCallId is now required on tool:executed
+    bus.emit("tool:executed", {
+      toolName: "bash",
+      durationMs: 1,
+      success: true,
+      timestamp: 1,
+    });
+  });
+
+  it("tool:started accepts action and sanitised params", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["tool:started"] = {
+      toolName: "mcp_manage",
+      toolCallId: "tc-start",
+      timestamp: Date.now(),
+      agentId: "agent-1",
+      action: "set",
+      params: { key: "feature.flag", value: "on" },
+    };
+
+    bus.on("tool:started", handler);
+    bus.emit("tool:started", payload);
+
+    const received = handler.mock.calls[0]![0] as EventMap["tool:started"];
+    expect(received.action).toBe("set");
+    expect(received.params).toEqual({ key: "feature.flag", value: "on" });
+  });
+
+  it("tool:policy_filtered entries carry an optional per-entry toolCallId", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["tool:policy_filtered"] = {
+      profile: "specialist",
+      agentId: "agent-1",
+      filtered: [
+        { toolName: "shell", reason: "denied by profile", toolCallId: "tc2" },
+        { toolName: "browser", reason: "denied by profile" },
+      ],
+      timestamp: Date.now(),
+    };
+
+    bus.on("tool:policy_filtered", handler);
+    bus.emit("tool:policy_filtered", payload);
+
+    const received = handler.mock.calls[0]![0] as EventMap["tool:policy_filtered"];
+    expect(received.filtered[0]?.toolCallId).toBe("tc2");
+    expect(received.filtered[1]?.toolCallId).toBeUndefined();
+  });
+
+  it("tool:timeout still accepts its existing shape (no-op widening)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["tool:timeout"] = {
+      agentId: "agent-1",
+      traceId: "trace-timeout",
+      toolName: "bash",
+      toolCallId: "tc-tmo",
+      timeoutMs: 30_000,
+      timestamp: Date.now(),
+    };
+
+    bus.on("tool:timeout", handler);
+    bus.emit("tool:timeout", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+  });
+});
+
+describe("v2.5 model:* turn-scoping (EVT-04)", () => {
+  it("model:fallback_attempt carries agentId, sessionKey, traceId", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["model:fallback_attempt"] = {
+      fromProvider: "anthropic",
+      fromModel: "claude-sonnet-4-20250514",
+      toProvider: "openai",
+      toModel: "gpt-4",
+      error: "Rate limit exceeded",
+      attemptNumber: 2,
+      timestamp: Date.now(),
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-fb",
+    };
+
+    bus.on("model:fallback_attempt", handler);
+    bus.emit("model:fallback_attempt", payload);
+
+    const r = handler.mock.calls[0]![0] as EventMap["model:fallback_attempt"];
+    expect(r.agentId).toBe("agent-1");
+    expect(r.sessionKey).toBe("t1:u1:c1");
+    expect(r.traceId).toBe("trace-fb");
+  });
+
+  it("model:fallback_exhausted accepts the turn-scoping ids", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["model:fallback_exhausted"] = {
+      provider: "anthropic",
+      model: "claude-sonnet-4-20250514",
+      totalAttempts: 3,
+      timestamp: Date.now(),
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-ex",
+    };
+
+    bus.on("model:fallback_exhausted", handler);
+    bus.emit("model:fallback_exhausted", payload);
+    expect(handler.mock.calls[0]![0].traceId).toBe("trace-ex");
+  });
+
+  it("model:lkw_fallback_attempt accepts the turn-scoping ids", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["model:lkw_fallback_attempt"] = {
+      fromProvider: "anthropic",
+      fromModel: "claude-opus-4",
+      toProvider: "anthropic",
+      toModel: "claude-sonnet-4",
+      timestamp: Date.now(),
+      agentId: "agent-1",
+      traceId: "trace-lkw",
+    };
+
+    bus.on("model:lkw_fallback_attempt", handler);
+    bus.emit("model:lkw_fallback_attempt", payload);
+    expect(handler.mock.calls[0]![0].agentId).toBe("agent-1");
+  });
+
+  it("model:auth_cooldown accepts the turn-scoping ids", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["model:auth_cooldown"] = {
+      keyName: "anthropic:default",
+      provider: "anthropic",
+      cooldownMs: 60_000,
+      failureCount: 3,
+      timestamp: Date.now(),
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-cd",
+    };
+
+    bus.on("model:auth_cooldown", handler);
+    bus.emit("model:auth_cooldown", payload);
+    expect(handler.mock.calls[0]![0].sessionKey).toBe("t1:u1:c1");
   });
 });
 

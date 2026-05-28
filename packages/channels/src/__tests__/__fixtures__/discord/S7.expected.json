@@ -1,0 +1,9 @@
+{
+  "calls": [
+    { "op": "send", "id": "dc-msg-0", "text": "🤖 subagent: 3 steps", "silent": false },
+    { "op": "threadCreate", "parentId": "dc-msg-0" },
+    { "op": "edit", "id": "dc-msg-0", "text": "🤖 subagent done" },
+    { "op": "edit", "id": "dc-msg-0", "text": "✓ done" },
+    { "op": "delete", "id": "dc-msg-0" }
+  ]
+}

@@ -4,7 +4,7 @@
  * setup-channels-adapters.ts), assembles the media pipeline (delegated to
  * setup-channels-media.ts), registers cron-delivery event listeners
  * (delegated to setup-channels-credentials.ts), and constructs the
- * ChannelManager + lifecycle reactors + approval notifier (delegated to
+ * ChannelManager + lifecycle reactors (delegated to
  * setup-channels-runtime.ts).
  *
  * Holds the `ChannelsDeps` / `ChannelsResult` interfaces and the
@@ -13,14 +13,14 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService, WrapExternalContentOptions } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
 import type { createSessionStore } from "@comis/memory";
 import type { CommandQueue } from "@comis/orchestrator";
-import type { VoiceResponsePipelineDeps, ApprovalNotifier, LifecycleReactor } from "@comis/channels";
-import type { ChannelManager } from "@comis/orchestrator";
+import type { VoiceResponsePipelineDeps, LifecycleReactor } from "@comis/channels";
+import type { ChannelManager, ActivityBreakerGate } from "@comis/orchestrator";
 import { initTelegramFileGuardConfig } from "@comis/core";
 import type { MediaResolverPort } from "@comis/core";
 import type { SsrfGuardedFetcher, LinkRunner, AudioConverter, MediaTempManager, MediaSemaphore } from "@comis/skills";
@@ -52,8 +52,6 @@ export interface ChannelsResult {
   resolveAttachment: (url: string) => Promise<Buffer | null>;
   /** Lifecycle reactors created per eligible adapter (for shutdown cleanup). */
   lifecycleReactors: LifecycleReactor[];
-  /** Approval notifier for forwarding approval events to chat channels (optional -- undefined when no adapters enabled). */
-  approvalNotifier?: ApprovalNotifier;
   /** Full plugin objects keyed by channel type. Consumers read
    *  `plugin.capabilities` for features.reactions (lifecycle reactor gate)
    *  and replyToMetaKey (the platform-native message id used by the inbound
@@ -88,6 +86,43 @@ export interface ChannelsDeps {
   logger: ComisLogger;
   /** Module-bound logger for channels subsystem. */
   channelsLogger: ComisLogger;
+  /** System clock (composition root). Threaded to buildActivityRenderers so the
+   *  EditPlace renderer gates its delete on outcome.delivery.deliveredAtMs. */
+  clock: ClockPort;
+  /** System timers (composition root). Threaded to buildActivityRenderers so the
+   *  EditPlace renderer debounces edits via TimerPort (no raw setTimeout). */
+  timers: TimerPort;
+  /** WIRE-03: the orchestrator-facing redacted activity stream port (the
+   *  setupObservability ActivityStream). Threaded into the inbound
+   *  coordinatorFactory built in buildAndStartChannelManager as its
+   *  activityStreamPort. Optional: absent → no inbound coordinatorFactory is built
+   *  (the pipeline gate stays false, fail-closed §22.2 Day-0). */
+  activityStream?: ActivityStreamPort;
+  /** WIRE-08: the process-singleton activity circuit breaker (constructed once in
+   *  daemon.ts, D2). Threaded into every per-turn coordinator so a permission/error
+   *  storm on one (agentId, channelKey) pair auto-quiesces it across turns.
+   *  Optional: absent → no breaker gating (the un-wired path is unaffected). */
+  activityBreaker?: ActivityBreakerGate;
+  /** WIRE-06 test-only renderer-injection seam (daemon-types.ts
+   *  DaemonOverrides.activityRendererFactory). When set, replaces the renderer
+   *  produced by buildActivityRenderers for a given channelType so an integration
+   *  test can inject a spy/TestSink and assert `apply` fired on a real inbound
+   *  turn. Optional + default-undefined; production never sets it. */
+  activityRendererFactory?: (channelType: string) => import("@comis/core").ChannelActivityRenderer | undefined;
+  /** Secret-bound callback signer (73-10). Threaded to buildActivityRenderers so
+   *  button-capable renderers (Telegram/Discord/Slack/LINE) paint signed
+   *  approval callback_data. Optional: absent → button-less approval prompts. */
+  signCallbackData?: import("@comis/channels").SignCallbackData;
+  /** Single-use approval-link minter (73-10). Threaded to the Email DigestOnly
+   *  renderer (it has no buttons). Optional: absent → no approval link in the
+   *  [FAILED] digest. */
+  mintApprovalLink?: import("@comis/channels").MintApprovalLink;
+  /** Server-side interactive-callback router (CR-01 / 73-04). Threaded through
+   *  buildAndStartChannelManager → createChannelManager → the inbound pipeline so
+   *  inbound-gate.ts intercepts a signed button callback and verifies it BEFORE
+   *  slash parsing (the signed payload must never reach the LLM). Optional: absent
+   *  → button callbacks fall through to the normal pipeline (degrade, not crash). */
+  interactiveCallbackRouter?: import("@comis/orchestrator").InteractiveCallbackRouter;
   /** Link understanding runner for message text enrichment. */
   linkRunner: LinkRunner;
   /** SSRF-guarded fetcher for media downloads. */
@@ -209,8 +244,8 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   // closure captures hookRunner + deliveryQueue + eventBus, so all production
   // callers below use the method form `deliveryService.deliverToChannel(...)`
   // instead of threading an optional 5th-arg deps record. The reference is
-  // also threaded through ChannelManagerDeps, ApprovalNotifierDeps,
-  // MessageHandlerDeps, and the cross-session-sender deps so every callsite
+  // also threaded through ChannelManagerDeps, MessageHandlerDeps, and the
+  // cross-session-sender deps so every callsite
   // sees the same closure-captured deps record. `deps.deliveryQueue` is
   // always defined in production (real SQLite queue when enabled,
   // createNoOpDeliveryQueue when disabled — see setup-delivery.ts); the
@@ -273,8 +308,8 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
   });
 
   // Build the ChannelManager (voice pipeline + command queue + slash handlers +
-  // lifecycle reactors + approval notifier).
-  const { channelManager, lifecycleReactors, approvalNotifier, commandQueue } =
+  // lifecycle reactors).
+  const { channelManager, lifecycleReactors, commandQueue } =
     await buildAndStartChannelManager({
       container,
       executors,
@@ -286,6 +321,14 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
       deliveryService,
       adaptersByType,
       channelPlugins,
+      clock: deps.clock,
+      timers: deps.timers,
+      activityStream: deps.activityStream, // WIRE-03: ActivityStreamPort for the inbound coordinatorFactory
+      activityBreaker: deps.activityBreaker, // WIRE-08: process-singleton breaker (shared)
+      activityRendererFactory: deps.activityRendererFactory, // WIRE-06 test seam
+      signCallbackData: deps.signCallbackData,
+      mintApprovalLink: deps.mintApprovalLink,
+      interactiveCallbackRouter: deps.interactiveCallbackRouter, // CR-01: verifier → inbound pipeline
       preprocessMessageCallback,
       preflightFn,
       assembleToolsForAgent: deps.assembleToolsForAgent,
@@ -318,7 +361,6 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     compositeResolver,
     resolveAttachment: resolveAttachmentByUrl,
     lifecycleReactors,
-    approvalNotifier,
     channelPlugins,
     commandQueue,
     deliveryService,

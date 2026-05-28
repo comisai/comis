@@ -57,9 +57,10 @@ export const PLATFORM_TYPING_DEFAULTS: Record<string, number> = {
 /**
  * Minimal deps for the setup-and-route phase.
  *
- * 21 unique fields: 4 shared between the former setup + route Pick<>s
+ * 23 unique fields: 4 shared between the former setup + route Pick<>s
  * (logger / eventBus / channelRegistry / streamingConfig), 1 unique to setup
- * (lifecycleReactionsEnabled), and 16 unique to route.
+ * (lifecycleReactionsEnabled), and 18 unique to route (the route set gained
+ * the WIRE-03 activityStreamPort + coordinatorFactory pass-through to execDeps).
  */
 export type SetupAndRouteDeps = Pick<
   InboundPipelineDeps,
@@ -69,7 +70,7 @@ export type SetupAndRouteDeps = Pick<
   | "channelRegistry"
   | "lifecycleReactionsEnabled"
   | "streamingConfig"
-  // From inbound-route.ts (20 fields; 4 shared with setup):
+  // From inbound-route.ts (22 fields; 4 shared with setup):
   | "commandQueue"
   | "queueConfig"
   | "activeRunRegistry"
@@ -86,6 +87,9 @@ export type SetupAndRouteDeps = Pick<
   | "responsePrefixConfig"
   | "buildTemplateContext"
   | "getEnforceFinalTag"
+  // WIRE-03: propagated onto execDeps for the pipeline gate (execution-pipeline.ts:395).
+  | "activityStreamPort"
+  | "coordinatorFactory"
 >;
 
 // ---------------------------------------------------------------------------
@@ -231,6 +235,8 @@ export async function setupAndRoute(
     responsePrefixConfig: deps.responsePrefixConfig,
     buildTemplateContext: deps.buildTemplateContext,
     enforceFinalTag: deps.getEnforceFinalTag?.(agentId),
+    activityStreamPort: deps.activityStreamPort,
+    coordinatorFactory: deps.coordinatorFactory,
   };
 
   // -------------------------------------------------------------------

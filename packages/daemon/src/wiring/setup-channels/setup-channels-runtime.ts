@@ -1,34 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Channel adapter lifecycle wiring. Hosts the ChannelManager construction
- * (with voice response pipeline, command queue, slash-command handler,
- * lifecycle reactors, approval notifier).
- *
- * The registry orchestrator invokes `buildAndStartChannelManager` after the
- * adapters and media pipeline have been bootstrapped; this helper returns
- * the manager handle + lifecycle reactors + approval notifier + command
- * queue so the registry can assemble the final ChannelsResult.
- *
+ * Channel adapter lifecycle wiring: ChannelManager construction (voice pipeline,
+ * command queue, slash-command handler, lifecycle reactors). The registry invokes
+ * `buildAndStartChannelManager` after adapters + media pipeline are bootstrapped and
+ * receives the manager handle + lifecycle reactors + command queue for ChannelsResult.
  * @module
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";
-import type { Attachment, ChannelPort, ChannelPluginPort, DeliveryService, NormalizedMessage, SessionKey } from "@comis/core";
-import { formatSessionKey, safePath, systemNowDate } from "@comis/core";
+import type { Attachment, ChannelPort, ChannelPluginPort, DeliveryService, NormalizedMessage, SessionKey, ClockPort, TimerPort, ActivityStreamPort, TurnActivityContext } from "@comis/core";
+import { formatSessionKey, safePath, systemNowDate, themeForName, chatProjection } from "@comis/core";
 import type { AppContainer } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
-import { createCommandHandler, parseSlashCommand, createMessageRouter, createCommandQueue, type CommandHandlerDeps, type CommandQueue } from "@comis/orchestrator";
+import { createCommandHandler, parseSlashCommand, createMessageRouter, createCommandQueue, createActivityTurnCoordinator, type CommandHandlerDeps, type CommandQueue, type ActivityTurnCoordinator, type ActivityBreakerGate } from "@comis/orchestrator";
 import {
-  createApprovalNotifier,
   type VoiceResponsePipelineDeps,
-  type ApprovalNotifier,
   createLifecycleReactor,
   reactWithFallback,
+  createTestSink,
   type LifecycleReactor,
   type ChannelRegistry,
 } from "@comis/channels";
 import { buildReadOnlyChannelRegistry } from "./setup-channels-registry-builder.js";
+import { buildActivityRenderers, type ActivityRendererFactory } from "./setup-channels-activity-renderers.js";
+import { resolveActivityKillSwitchSlice } from "./activity-kill-switch.js";
 import { createChannelManager, processInboundMessage, type ChannelManager } from "@comis/orchestrator";
 import { RetryConfigSchema, createRetryEngine } from "@comis/core";
 import {
@@ -45,9 +41,7 @@ import type { RpcCall } from "@comis/skills/platform-tools";
 import type { TTSPort, QueueConfig } from "@comis/core";
 import type { ExecutionLogEntry } from "@comis/scheduler";
 
-/**
- * Closure-captured deps for building and starting the ChannelManager.
- */
+/** Closure-captured deps for building and starting the ChannelManager. */
 // @optional-field-count: Inherits the optional-field surface of ChannelsDeps (allowlisted at optionalFieldAllowlist for setup-channels-registry.ts/ChannelsDeps, optionalCount: 26). The runtime leaf passes through the ChannelsDeps optionals (ttsAdapter, audioConverter, queueConfig, etc.) unchanged; tightening these to required would force the registry caller (and every downstream consumer of ChannelsDeps) to fabricate stub values at every call site. The split mirrors the ChannelsDeps optional surface so the rebuild matches the pre-split call shape byte-for-byte.
 export interface ChannelManagerBuildDeps {
   container: AppContainer;
@@ -62,10 +56,27 @@ export interface ChannelManagerBuildDeps {
   /** Per-channel plugin map; consumers read `plugin.capabilities` for
    *  features.reactions, replyToMetaKey, etc. */
   channelPlugins: Map<string, ChannelPluginPort>;
+  // Composition root → buildActivityRenderers: clock/timer (EditPlace debounce + deliveredAtMs gate); 73-10 signCallbackData (button channels) + mintApprovalLink (Email single-use link).
+  clock: ClockPort;
+  timers: TimerPort;
+  // WIRE-06 test-only renderer-injection seam (DaemonOverrides.activityRendererFactory).
+  // Applied AFTER buildActivityRenderers to swap a channelType's factory for the spy.
+  // Optional + default-undefined; production never sets it.
+  activityRendererFactory?: (channelType: string) => import("@comis/core").ChannelActivityRenderer | undefined;
+  /** WIRE-03: the redacted ActivityStream port. Present → coordinatorFactory is
+   *  assembled + injected onto createChannelManager (pipeline gate true). Absent →
+   *  no inbound coordinatorFactory (gate false, fail-closed §22.2). */
+  activityStream?: ActivityStreamPort;
+  /** WIRE-08: process-singleton circuit breaker (daemon.ts D2), shared across coordinators. */
+  activityBreaker?: ActivityBreakerGate;
+  signCallbackData?: import("@comis/channels").SignCallbackData;
+  mintApprovalLink?: import("@comis/channels").MintApprovalLink;
+  // CR-01: server-side interactive-callback router (verifier) — inbound-gate.ts verifies
+  // a signed button callback BEFORE slash parsing so the payload never reaches the LLM.
+  interactiveCallbackRouter?: import("@comis/orchestrator").InteractiveCallbackRouter;
   preprocessMessageCallback: (msg: NormalizedMessage) => Promise<NormalizedMessage>;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PreflightResult type from channels package is not re-exported; pass-through matches setup-channels-media.ts
   preflightFn?: (msg: NormalizedMessage) => Promise<any>;
-  // Optional deps drawn from ChannelsDeps:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires complex type parameters from pi-ai SDK
   assembleToolsForAgent?: (agentId: string, options?: { sessionKey?: SessionKey }) => Promise<any[]>;
   ttsAdapter?: TTSPort;
@@ -100,18 +111,15 @@ export interface ChannelManagerBuildDeps {
 export interface ChannelManagerBuildResult {
   channelManager?: ChannelManager;
   lifecycleReactors: LifecycleReactor[];
-  approvalNotifier?: ApprovalNotifier;
   commandQueue?: CommandQueue;
+  activityRenderers: Map<string, ActivityRendererFactory>; // WIRE-02; per-channelId factory, see buildActivityRenderers
 }
 
-
 /**
- * Construct and start the ChannelManager (voice response pipeline +
- * command queue + slash-command handler + retry engine), then wire the
- * lifecycle reactors and approval notifier for each registered adapter.
- *
- * Returns the four handles the registry needs to assemble ChannelsResult.
- * No-op when `adaptersByType.size === 0`.
+ * Construct + start the ChannelManager (voice pipeline + command queue + slash handler +
+ * retry engine) and wire lifecycle reactors. Builds the manager when adapters exist OR an
+ * ActivityStream is injected (the inbound activity path needs it). WIRE-03 assembles the
+ * coordinatorFactory here, where the activityRenderers map is in scope.
  */
 export async function buildAndStartChannelManager(
   deps: ChannelManagerBuildDeps,
@@ -136,16 +144,10 @@ export async function buildAndStartChannelManager(
   const messageRouter = createMessageRouter(routingConfig);
   let channelManager: ChannelManager | undefined;
 
-  // Build voice response pipeline deps
   let voiceResponsePipeline: VoiceResponsePipelineDeps | undefined;
   if (deps.ttsAdapter) {
     const ttsConfig = container.config.integrations.media.tts;
 
-    // Derive providerFormatKey from the configured TTS provider.
-    // This tells the pipeline which field of ResolvedOutputFormat to pass to synthesize().
-    // - "openai" -> "opus" (OpenAI understands "opus", "mp3", etc.)
-    // - "elevenlabs" -> "opus_48000_64" (ElevenLabs needs underscore-delimited format)
-    // - "edge" -> SSML format string
     const providerFormatKey: "openai" | "elevenlabs" | "edge" =
       ttsConfig.provider === "elevenlabs" ? "elevenlabs"
       : ttsConfig.provider === "edge" ? "edge"
@@ -175,7 +177,6 @@ export async function buildAndStartChannelManager(
     channelsLogger.debug({ autoMode: ttsConfig.autoMode, providerFormatKey }, "Voice response pipeline wired");
   }
 
-  // Create command queue when enabled in config
   let commandQueue: CommandQueue | undefined;
   if (deps.queueConfig?.enabled) {
     commandQueue = createCommandQueue({
@@ -186,20 +187,61 @@ export async function buildAndStartChannelManager(
     channelsLogger.info({ mode: deps.queueConfig.defaultMode }, "Command queue enabled");
   }
 
-  // Lifecycle reactions config
   const lifecycleReactionsConfig = container.config.lifecycleReactions;
   const lifecycleEnabled = lifecycleReactionsConfig.enabled;
   const lifecycleReactors: LifecycleReactor[] = [];
 
-  if (adaptersByType.size > 0) {
+  // WIRE-02/73-10/75-06: build the activity renderer map BEFORE the manager so the WIRE-03
+  // coordinatorFactory can close over it (UX-01 markers from the default agent activity.theme).
+  const activityMarkers = themeForName(agents[defaultAgentId]?.activity?.theme ?? "default").markers;
+  const activityRenderers = buildActivityRenderers(adaptersByType, channelPlugins, channelsLogger, { timer: deps.timers, clock: deps.clock, signCallbackData: deps.signCallbackData, mintApprovalLink: deps.mintApprovalLink, markers: activityMarkers });
+  // WIRE-06 seam (WR-01): the SOLE renderer-injection point is the per-turn fallback in the
+  // coordinatorFactory below (`deps.activityRendererFactory?.(ctx.channelType)`) — it fires for
+  // any channelType the live map does not serve (the activation test's post-boot `echo`). No
+  // boot-time map-swap loop (it would only override an already-mapped adapter; test-only seam).
+
+  // WIRE-03+07+08: the per-turn coordinatorFactory the inbound pipeline gate
+  // (execution-pipeline.ts:395) needs — over the renderers map + redacted ActivityStream +
+  // breaker + a live kill-switch. Built ONLY when the stream is injected (absent → gate
+  // false, fail-closed §22.2). The closure lives in the daemon (the root importing both
+  // @comis/orchestrator and the observability impl via deps.activityStream — Pitfall 1).
+  const activityStream = deps.activityStream;
+  const coordinatorFactory = activityStream
+    ? (ctx: TurnActivityContext): ActivityTurnCoordinator => {
+        // D1: renderer from the live map; an unmapped channelType (post-boot test adapter)
+        // consults the WIRE-06 seam, then falls back to a no-op createTestSink().
+        // WR-04: resolve the theme markers PER-TURN from THIS agent's activity.theme
+        // (not the default agent's, baked once at boot) and thread them into the
+        // renderer so a non-default agent renders with its own theme. verbosity is
+        // already per-agent (config below); markers now match.
+        const turnMarkers = themeForName(agents[ctx.agentId]?.activity?.theme ?? "default").markers;
+        const make = activityRenderers.get(ctx.channelType);
+        const renderer = make?.(ctx.channelKey, turnMarkers) ?? deps.activityRendererFactory?.(ctx.channelType) ?? createTestSink();
+        return createActivityTurnCoordinator({
+          activityStreamPort: activityStream,
+          renderer,
+          projection: chatProjection,
+          timer: deps.timers,
+          clock: deps.clock,
+          logger: channelsLogger,
+          config: { verbosity: agents[ctx.agentId]?.activity?.verbosity ?? "normal" },
+          // WIRE-07: the getter RE-READS the live config FRESH per flushApply — it must NOT
+          // capture an `agentActivity` const. The per-agent object is REPLACED wholesale on
+          // hot-reload (setup-agents-runtime.ts:99); re-reading `agents[ctx.agentId]?.activity`
+          // through the stable top-level `agents` ref observes the new object.
+          // CR-01: delegate to the fail-CLOSED resolver — NEVER returns undefined (see module).
+          killSwitch: () => resolveActivityKillSwitchSlice(agents, ctx.agentId),
+          breaker: deps.activityBreaker, // WIRE-08: process-singleton (shared across coordinators)
+        });
+      }
+    : undefined;
+
+  if (adaptersByType.size > 0 || activityStream) {
     // Create retry engine for resilient message delivery (rate limit retry + HTML parse fallback)
     const retryConfig = RetryConfigSchema.parse({});
     const retryEngine = createRetryEngine(retryConfig, container.eventBus, channelsLogger);
 
-    // Lightweight read-only ChannelRegistry over the bootstrapped
-    // channelPlugins Map. Orchestrator reads
-    // `getCapabilities(...).replyToMetaKey` (REPLY_TO_META_KEY Record was
-    // deleted). Channel lifecycle is owned by setup-channels-adapters.
+    // Read-only ChannelRegistry over channelPlugins (lifecycle owned by setup-channels-adapters).
     const channelRegistry: ChannelRegistry = buildReadOnlyChannelRegistry(channelPlugins);
 
     channelManager = createChannelManager({
@@ -211,9 +253,7 @@ export async function buildAndStartChannelManager(
       deliveryQueue: deps.deliveryQueue,
       deliveryService,
       channelRegistry,
-      // Required dep — orchestrator-side inbound pipeline entrypoint.
-      // Routed through ChannelManagerDeps so channels does not create a
-      // back-edge import of @comis/orchestrator.
+      // Required: orchestrator inbound entrypoint (channels avoids a back-edge import).
       processInboundMessage,
       createExecutor: (agentId: string) => executors.get(agentId) ?? executors.get(defaultAgentId),
       logger: channelsLogger,
@@ -240,6 +280,11 @@ export async function buildAndStartChannelManager(
         const agentConfig = agents[agentId];
         return agentConfig?.enforceFinalTag;
       },
+      // WIRE-03: the redacted stream port + per-turn coordinatorFactory (gate at :395).
+      activityStreamPort: deps.activityStream,
+      coordinatorFactory,
+      // Live boot adapter registry — injectMessage falls back to it for post-startAll adapters.
+      adapterRegistry: adaptersByType,
       getAllowFrom: (channelType: string) => {
         const cfg = container.config.channels?.[channelType as keyof typeof container.config.channels];
         if (!cfg || typeof cfg !== "object" || !("allowFrom" in cfg)) return [];
@@ -250,41 +295,34 @@ export async function buildAndStartChannelManager(
         if (!result.ok) return { ok: false as const, error: result.error };
         return { ok: true as const, value: { buffer: result.value.buffer, mimeType: result.value.mimeType } };
       },
-      // /config chat command handling via RPC dispatch
 
-      handleConfigCommand: deps.rpcCall ? async (args: string[], _channelType: string) => {
+      // WR-02: static refusals — channel-originated /config is never admin-trusted
+      // (admin is CLI/gateway-only). Body returns only string literals, so the old
+      // try/catch was dead and the old `deps.rpcCall ?` gate was misleading (rpcCall
+      // unused, yet its absence dropped /config to `undefined`). Always defined now.
+      handleConfigCommand: async (args: string[], _channelType: string) => {
         const subcommand = args[0] ?? "show";
-        try {
-          if (subcommand === "show" || subcommand === "history") {
-            // Channel-originated messages always have user trust
-            return "Config read requires admin trust. Use the CLI or gateway client with admin scope.";
-          }
-          if (subcommand === "set") {
-            // Channel-originated messages always have user trust
-            return "Config modification requires admin trust. Use the CLI or gateway client with admin scope.";
-          }
-          return `Unknown config subcommand: ${subcommand}. Available: show, set, history`;
-        } catch (err) {
-          return `Config command failed: ${err instanceof Error ? err.message : String(err)}`;
+        if (subcommand === "show" || subcommand === "history") {
+          return "Config read requires admin trust. Use the CLI or gateway client with admin scope.";
         }
-      } : undefined,
+        if (subcommand === "set") {
+          return "Config modification requires admin trust. Use the CLI or gateway client with admin scope.";
+        }
+        return `Unknown config subcommand: ${subcommand}. Available: show, set, history`;
+      },
       onMessageReceived: deps.onMessageReceived,
       onMessageProcessed: deps.onMessageProcessed,
       // Graph report button callback intercept: deliver full report as .md file attachment
       onGraphReportRequest: async (graphId, _channelType, channelId, adapter, threadId) => {
         const dataDir = container.config.dataDir || ".";
         try {
-          // Validate graphId format (alphanumeric + hyphens, UUID-like)
           if (!/^[a-f0-9-]{8,64}$/i.test(graphId)) {
             channelsLogger.warn({ graphId, hint: "Invalid graphId format in report request", errorKind: "validation" as const }, "Graph report request rejected");
             return;
           }
 
           let graphDir: string;
-          // Two-step safePath composition matches the canonical daemon-wiring
-          // pattern in setup-output-retention.ts. Both safePath calls throw on
-          // traversal; the surrounding catch handles either failure with a
-          // single operator-facing WARN.
+          // Two-step safePath (throws on traversal; the catch emits one operator WARN).
           try {
             const graphRunsDir = safePath(dataDir, "graph-runs");
             graphDir = safePath(graphRunsDir, graphId);
@@ -293,7 +331,6 @@ export async function buildAndStartChannelManager(
             return;
           }
 
-          // Check directory exists
           try {
             await stat(graphDir);
           } catch {
@@ -302,7 +339,6 @@ export async function buildAndStartChannelManager(
             return;
           }
 
-          // Find the leaf output file
           const files = await readdir(graphDir);
           const outputFiles = files.filter((f) => f.endsWith("-output.md"));
 
@@ -311,7 +347,6 @@ export async function buildAndStartChannelManager(
             return;
           }
 
-          // Try to identify leaf nodes from metadata
           let leafOutputFile: string | undefined;
           try {
             const metadataRaw = await readFile(safePath(graphDir, "_run-metadata.json"), "utf8");
@@ -322,7 +357,6 @@ export async function buildAndStartChannelManager(
               .filter(([, v]) => v.status === "completed")
               .map(([k]) => k);
 
-            // Match output files to completed nodes, pick largest
             let maxSize = 0;
             for (const f of outputFiles) {
               const nodeId = f.replace(/-output\.md$/, "");
@@ -339,7 +373,6 @@ export async function buildAndStartChannelManager(
           }
 
           if (!leafOutputFile) {
-            // Fallback: pick largest output file
             let maxSize = 0;
             for (const f of outputFiles) {
               const fileStat = await stat(safePath(graphDir, f));
@@ -359,9 +392,8 @@ export async function buildAndStartChannelManager(
           const nodeId = leafOutputFile.replace(/-output\.md$/, "");
           const caption = `Full report — ${nodeId} (graph ${graphId.slice(0, 8)})`;
 
-          // sendAttachment is now optional on ChannelPort. Adapters
-          // whose platform lacks attachments (e.g. IRC) omit the method; degrade
-          // gracefully by sending a text message that references the caption.
+          // sendAttachment is optional on ChannelPort; attachment-less platforms (IRC)
+          // omit it — degrade to a text message referencing the caption.
           if (typeof adapter.sendAttachment !== "function") {
             await adapter.sendMessage(
               channelId,
@@ -391,8 +423,9 @@ export async function buildAndStartChannelManager(
           );
         }
       },
-      // /approve and /deny chat command interception
       approvalGate: deps.approvalGate,
+      // CR-01: signed button-callback verifier (inbound-gate.ts), via pipelineDeps = deps.
+      interactiveCallbackRouter: deps.interactiveCallbackRouter,
       // General slash command handling via createCommandHandler
       handleSlashCommand: async (text: string, sessionKey: SessionKey, agentId: string) => {
         const parsed = parseSlashCommand(text);
@@ -429,7 +462,6 @@ export async function buildAndStartChannelManager(
               container.eventBus.emit("session:expired", { sessionKey: key, reason: "chat-reset" });
               return;
             }
-            // Fallback: expire via session manager
             sessionManager.expire(key);
             container.eventBus.emit("session:expired", { sessionKey: key, reason: "chat-reset" });
           },
@@ -470,9 +502,8 @@ export async function buildAndStartChannelManager(
         const handler = createCommandHandler(cmdDeps);
         const result = handler.handle(parsed, sessionKey);
 
-        // For /new and /reset, the static response from command handler is used.
-        // Greeting generation (LLM-powered) is available in the gateway; channels
-        // use the simpler "New session created." / "Session reset." responses.
+        // /new and /reset use the command handler's static response (LLM greeting
+        // generation is gateway-only; channels use the plain "New session created." text).
         return {
           handled: result.handled,
           response: result.response,
@@ -480,9 +511,7 @@ export async function buildAndStartChannelManager(
           cleanedText: parsed.cleanedText,
         };
       },
-      // Lifecycle reactions: skip ack reaction when lifecycle reactor handles queued/thinking
       lifecycleReactionsEnabled: lifecycleEnabled,
-      // Response prefix template engine
       responsePrefixConfig: container.config.responsePrefix,
       buildTemplateContext: (agentId: string, channelType: string, msg: NormalizedMessage) => {
         const agentConfig = agents[agentId] ?? agents[defaultAgentId];
@@ -515,13 +544,8 @@ export async function buildAndStartChannelManager(
     await channelManager.startAll();
     channelsLogger.info({ activeCount: channelManager.activeCount }, "ChannelManager started");
 
-    // -----------------------------------------------------------------------
-    // Lifecycle reactors
-    // Create one reactor per eligible adapter. Gated on:
-    // 1. Global lifecycleReactions.enabled
-    // 2. Per-channel capabilities (features.reactions must be true)
-    // 3. Per-channel override (lifecycleReactions.perChannel[type]?.enabled)
-    // -----------------------------------------------------------------------
+    // Lifecycle reactors: one per eligible adapter, gated on global enabled +
+    // per-channel features.reactions + per-channel perChannel[type].enabled.
     if (lifecycleEnabled) {
       for (const [channelType, adapter] of adaptersByType) {
         const plugin = channelPlugins.get(channelType);
@@ -531,17 +555,14 @@ export async function buildAndStartChannelManager(
           continue;
         }
 
-        // Check per-channel override
         const perChannelConfig = lifecycleReactionsConfig.perChannel[channelType];
         if (perChannelConfig?.enabled === false) {
           channelsLogger.debug({ channelType }, "Lifecycle reactor skipped: per-channel disabled");
           continue;
         }
 
-        // replyToMetaKey is required by the lifecycle reactor to translate
-        // the inbound message's platform id back into a reply target. Skip
-        // any channel whose plugin does not declare one (e.g. echo today —
-        // added defensively).
+        // replyToMetaKey lets the reactor map the inbound platform id to a reply target;
+        // skip channels whose plugin declares none (e.g. echo — defensive).
         if (!caps.replyToMetaKey) {
           channelsLogger.debug({ channelType }, "Lifecycle reactor skipped: replyToMetaKey not declared in plugin capabilities");
           continue;
@@ -554,7 +575,6 @@ export async function buildAndStartChannelManager(
           replyToMetaKey: caps.replyToMetaKey,
           config: lifecycleReactionsConfig,
           logger: channelsLogger,
-          // Telegram-specific emoji fallback for REACTION_INVALID errors
           reactWithFallback: channelType === "telegram" ? reactWithFallback : undefined,
         });
 
@@ -571,29 +591,9 @@ export async function buildAndStartChannelManager(
     }
   }
 
-  // -----------------------------------------------------------------------
-  // Approval notifier: forward approval:requested to chat channel
-  // -----------------------------------------------------------------------
-  let approvalNotifier: ApprovalNotifier | undefined;
-  if (adaptersByType.size > 0) {
-    approvalNotifier = createApprovalNotifier({
-      eventBus: container.eventBus,
-      getAdapter: (channelType) => adaptersByType.get(channelType),
-      logger: channelsLogger,
-      deliveryService,
-    });
-    approvalNotifier.start();
-    channelsLogger.debug("Approval notifier started");
-
-    // eventBus.on("system:shutdown", () => approvalNotifier?.stop())
-    // subscriber deleted. The notifier handle is already in the return shape;
-    // the composition root invokes its .stop() directly via
-    // ShutdownDeps.approvalNotifierStop.
-  }
-
-  return { channelManager, lifecycleReactors, approvalNotifier, commandQueue };
+  // activityRenderers + coordinatorFactory were built BEFORE the manager (above);
+  // return the map for the registry's ChannelsResult (activity counters scrape).
+  return { channelManager, lifecycleReactors, commandQueue, activityRenderers };
 }
-// Re-export the unused Attachment + ChannelPluginPort types to silence lint
-// and document the public-surface boundary: the registry consumes the same
-// node:fs/promises + core types here when assembling ChannelsResult.
+// Re-export Attachment + ChannelPluginPort (silences lint; public-surface boundary).
 export type { Attachment, ChannelPluginPort };

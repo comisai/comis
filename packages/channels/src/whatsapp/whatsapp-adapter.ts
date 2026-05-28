@@ -333,7 +333,12 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
         return ok(undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return err(new Error(`Failed to edit message: ${message}`));
+        // Preserve the typed baileys/Boom error as `cause` for structural
+        // classification (CHAN-04: a windowed edit-expiry surfaces as a Boom with
+        // a 4xx output.statusCode → not_supported, drop further edits).
+        // classifyWhatsAppError reads output.statusCode off `cause`, never this
+        // generic string.
+        return err(new Error(`Failed to edit message: ${message}`, { cause: error }));
       }
     },
 
@@ -395,7 +400,10 @@ export function createWhatsAppAdapter(deps: WhatsAppAdapterDeps): WhatsAppAdapte
         return ok(undefined);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return err(new Error(`Failed to delete message: ${message}`));
+        // Preserve the typed baileys/Boom error as `cause` for structural
+        // classification (CHAN-04). classifyWhatsAppError reads output.statusCode
+        // off `cause`, never this generic string.
+        return err(new Error(`Failed to delete message: ${message}`, { cause: error }));
       }
     },
 

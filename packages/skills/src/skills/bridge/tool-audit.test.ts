@@ -146,7 +146,7 @@ describe("wrapWithAudit", () => {
     expect(events[0]!.errorKind).toBe("timeout");
   });
 
-  it("reports success=false and errorKind nonzero-exit when tool returns non-zero exitCode", async () => {
+  it("reports success=false and a closed-union errorKind (dependency) when tool returns non-zero exitCode", async () => {
     const eventBus = new TypedEventBus();
     const events: EventMap["tool:executed"][] = [];
     eventBus.on("tool:executed", (payload) => events.push(payload));
@@ -164,7 +164,9 @@ describe("wrapWithAudit", () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]!.success).toBe(false);
-    expect(events[0]!.errorKind).toBe("nonzero-exit");
+    // EVT-06 / Pitfall 2 / T-70-06-03: "nonzero-exit" is NOT a closed ErrorKind.
+    // The emit must map it to "dependency" (matches pi-event-bridge.ts).
+    expect(events[0]!.errorKind).toBe("dependency");
   });
 
   it("reports success=true when tool returns exitCode 0", async () => {
@@ -212,5 +214,61 @@ describe("wrapWithAudit", () => {
     expect(wrapped.label).toBe(tool.label);
     expect(wrapped.description).toBe(tool.description);
     expect(wrapped.parameters).toBe(tool.parameters);
+  });
+
+  // -------------------------------------------------------------------
+  // EVT-06: the tool-audit.ts:77 leak close (Pitfall 2 / T-70-06-01)
+  // -------------------------------------------------------------------
+  it("redacts params before the tool:executed emit (apiKey -> <redacted>, no raw leak)", async () => {
+    const eventBus = new TypedEventBus();
+    const events: EventMap["tool:executed"][] = [];
+    eventBus.on("tool:executed", (payload) => events.push(payload));
+
+    const tool = createMockTool();
+    const wrapped = wrapWithAudit(tool, eventBus);
+
+    await wrapped.execute("call-redact", { apiKey: "sk-ant-supersecret0123456789", q: "weather" });
+
+    expect(events).toHaveLength(1);
+    const params = events[0]!.params as Record<string, unknown> | undefined;
+    expect(params).toBeDefined();
+    // The secret key value must be masked, NOT forwarded raw.
+    expect(params!.apiKey).toBe("<redacted>");
+    expect(JSON.stringify(params)).not.toContain("sk-ant-supersecret0123456789");
+    // Non-secret param survives.
+    expect(params!.q).toBe("weather");
+  });
+
+  it("compacts $HOME paths to ~ in the emitted params when homeDir is threaded (WR-05)", async () => {
+    const eventBus = new TypedEventBus();
+    const events: EventMap["tool:executed"][] = [];
+    eventBus.on("tool:executed", (payload) => events.push(payload));
+
+    const tool = createMockTool();
+    const HOME = "/home/operator";
+    const wrapped = wrapWithAudit(tool, eventBus, "agent-x", HOME);
+
+    await wrapped.execute("call-home", { path: `${HOME}/.comis/config.yaml` });
+
+    expect(events).toHaveLength(1);
+    const params = events[0]!.params as Record<string, unknown> | undefined;
+    expect(params).toBeDefined();
+    // $HOME compacts to ~; the home username never crosses the bus.
+    expect(params!.path).toContain("~/.comis/config.yaml");
+    expect(JSON.stringify(params)).not.toContain(HOME);
+  });
+
+  it("includes toolCallId on the tool:executed emit (was omitted at the leak site)", async () => {
+    const eventBus = new TypedEventBus();
+    const events: EventMap["tool:executed"][] = [];
+    eventBus.on("tool:executed", (payload) => events.push(payload));
+
+    const tool = createMockTool();
+    const wrapped = wrapWithAudit(tool, eventBus);
+
+    await wrapped.execute("call-xyz", { q: "ok" });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]!.toolCallId).toBe("call-xyz");
   });
 });

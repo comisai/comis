@@ -80,6 +80,13 @@ import { createBrowserTool } from "./tools/browser-tool.js";
 import { createListResourcesTool, createReadResourceTool } from "./tools/mcp-resources-tool.js";
 import { createListPromptsTool, createGetPromptTool } from "./tools/mcp-prompts-tool.js";
 
+// Side-effect import: registers `suppressActivity:true` metadata for the
+// non-§17.6 platform tools (LBL-03). Importing the tool factory modules above
+// already triggers each §17.6 tool's co-located `registerActivityLabelSpec`
+// call; this completes the other side of the coverage contract so every
+// emitted name is classified before any registry walk.
+import "./tools/suppressed-tools-metadata.js";
+
 // Capability-gate helpers + manager type for the resources/prompts descriptor
 // conditionals. Imported from the mcp-client barrel (the public surface of
 // that integration subtree).

@@ -21,6 +21,10 @@ const CAPABILITIES: ChannelCapability = {
     deleteMessages: false,
     fetchHistory: false,
     attachments: false,
+    // §17.2: Echo is the TestSink — no typing, no threads, no buttons.
+    typing: false,
+    threads: false,
+    buttons: "none",
   },
   limits: {
     maxMessageChars: 10000,

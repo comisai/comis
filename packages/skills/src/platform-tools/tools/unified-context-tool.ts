@@ -13,8 +13,23 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import { registerActivityLabelSpec } from "@comis/core";
 import { jsonResult, readStringParam, readNumberParam, readEnumParam } from "../tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";
+
+// Activity label spec (LBL-01, §17.6). Keyed on the EMITTED tool name
+// `context_tool` (NOT the `unified_context` descriptor name). Per-action
+// overrides use the tool's REAL action enum (search/recall/inspect/expand).
+registerActivityLabelSpec("context_tool", {
+  semanticPhase: "memory",
+  label: "searching context",
+  actions: {
+    search: { label: "searching context" },
+    recall: { label: "recalling context" },
+    inspect: { label: "inspecting context" },
+    expand: { label: "expanding context" },
+  },
+});
 
 // -- Parameter Schema --------------------------------------------------------
 

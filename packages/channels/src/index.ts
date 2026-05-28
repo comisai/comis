@@ -185,10 +185,6 @@ export type {
   WhatsAppPollData,
 } from "./shared/poll-normalizer.js";
 
-// Approval notifier
-export { createApprovalNotifier } from "./shared/approval-notifier.js";
-export type { ApprovalNotifier, ApprovalNotifierDeps } from "./shared/approval-notifier.js";
-
 // Shared infrastructure
 export { createTypingController } from "./shared/typing-controller.js";
 export type {
@@ -309,3 +305,45 @@ export type { GroupHistoryBuffer } from "./shared/group-history-buffer.js";
 // Telegram thread propagation metadata keys (consumed by orchestrator
 // execution-pipeline.test.ts for cross-set equivalence assertion)
 export { TELEGRAM_THREAD_META_KEYS } from "./telegram/thread-context.js";
+
+// Activity rendering strategies (§7.2; 70-07). The daemon composition root
+// (setup-channels-runtime.ts) selects a per-channel ChannelActivityRenderer via
+// `selectStrategy(caps, channelType)` from @comis/core, then constructs the
+// matching strategy here via buildActivityRenderers (WIRE-02). Echo→TestSink is
+// the zero-adapter terminus; the four EditPlace channels (Telegram/Discord/
+// Slack/WhatsApp, Phase 71-02/03/04) wrap createEditPlaceRenderer over a
+// per-channel render-actions adapter + injected TimerPort/ClockPort. The
+// DeleteAndRepost (Signal), AppendOnly (iMessage/LINE), LinePerEvent (IRC), and
+// DigestOnly (Email) factories wire their per-channel render-actions adapters
+// here too (Phase 72-01..04); buildActivityRenderers dispatches each from this
+// barrel (72-05), completing the §18.3 coverage matrix. Deps differ per
+// strategy: DeleteAndRepost takes {timer, clock}, LinePerEvent takes {clock},
+// and AppendOnly/DigestOnly take none. The EditPlace + Echo factories + the
+// createEditPlaceRenderer machine are re-exported here (71-05) so the daemon's
+// buildActivityRenderers can construct them from the @comis/channels barrel.
+export { createTestSink } from "./shared/strategies/test-sink.js";
+export { createEditPlaceRenderer } from "./shared/strategies/edit-place.js";
+export type { EditPlaceDeps } from "./shared/strategies/edit-place.js";
+export { createTelegramActivityRenderer } from "./telegram/telegram-activity.js";
+export { createDiscordActivityRenderer } from "./discord/discord-activity.js";
+export { createSlackActivityRenderer } from "./slack/slack-activity.js";
+export { createWhatsAppActivityRenderer } from "./whatsapp/whatsapp-activity.js";
+export { createEchoActivityRenderer } from "./echo/echo-activity.js";
+// Non-EditPlace strategy factories (Phase 72-01..04) — wired by
+// buildActivityRenderers (72-05). DeleteAndRepost→Signal, AppendOnly→{iMessage,
+// LINE}, LinePerEvent→IRC, DigestOnly→Email.
+export { createSignalActivityRenderer } from "./signal/signal-activity.js";
+export { createIMessageActivityRenderer } from "./imessage/imessage-activity.js";
+export { createLineActivityRenderer } from "./line/line-activity.js";
+export { createIrcActivityRenderer } from "./irc/irc-activity.js";
+export { createEmailActivityRenderer } from "./email/email-activity.js";
+// MintApprovalLink is consumed by the daemon composition root (73-10) to type the
+// single-use email approval-link minter. EmailActivityRendererDeps stays internal
+// (the factory's deps param is inferred at the call site).
+export type { MintApprovalLink } from "./email/email-activity.js";
+
+// The signing seam (73-06): the secret-bound signer the daemon composition root
+// (73-10) binds over `activity.interactiveCallbackSigningSecret` and injects into
+// the activity-renderer deps. The renderers reach `@comis/core`'s signCallbackData
+// through this closure and never import `@comis/orchestrator` (Pitfall 5).
+export type { SignCallbackData } from "./shared/strategies/approval-render.js";

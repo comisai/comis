@@ -5,6 +5,7 @@
  * Find events by prefix: skill:*, tool:*, model:*, audit:*, observability:*, graph:*
  */
 import type { NodeStatus, GraphStatus } from "../domain/execution-graph.js";
+import type { ErrorKind } from "../logging/log-fields.js";
 
 export interface AgentEvents {
   /** Skill loaded from disk and validated */
@@ -58,6 +59,13 @@ export interface AgentEvents {
     traceId?: string;
     /** Human-readable activity label for exec commands. */
     description?: string;
+    /** Action-discriminator for action-keyed tools (e.g. mcp_manage action="set").
+     *  Drives typed activity labels. Sanitised/derived at the emit site (§16.1). */
+    action?: string;
+    /** Sanitised tool params for activity rendering. MUST be redacted via
+     *  redactValue() at the emit site before emit (§10.1) — the type carries
+     *  no redaction guarantee; the EVT-06 emit redaction + CI grep gate enforce it. */
+    params?: Record<string, unknown>;
   };
 
   /** Tool invocation completed (builtin, platform, or skill-based) */
@@ -66,15 +74,20 @@ export interface AgentEvents {
     durationMs: number;
     success: boolean;
     timestamp: number;
+    /** Correlates start↔end for a stable activityId (EVT-01, §16.11). */
+    toolCallId: string;
     userId?: string;
     traceId?: string;
     agentId?: string;
     sessionKey?: string;
+    /** Sanitised tool params for activity rendering. MUST be redacted via
+     *  redactValue() at the emit site before emit (§10.1). */
     params?: Record<string, unknown>;
     /** Truncated error message when success=false (max 1500 chars). */
     errorMessage?: string;
-    /** Error classification: "timeout" for abort signal, "internal" for other failures. */
-    errorKind?: string;
+    /** Error classification (closed ErrorKind union, EVT-01). "timeout" for
+     *  abort signal, "internal" for other failures. */
+    errorKind?: ErrorKind;
     /** Human-readable activity label for exec commands. */
     description?: string;
     /** Whether the tool result was truncated by per-tool maxChars or per-turn budget. */
@@ -89,7 +102,9 @@ export interface AgentEvents {
   "tool:policy_filtered": {
     profile: string;
     agentId?: string;
-    filtered: Array<{ toolName: string; reason: string }>;
+    /** Per-entry `toolCallId` is optional — activity renders a policy-block
+     *  only when the filtered tool is correlatable to a call (EVT-03). */
+    filtered: Array<{ toolName: string; reason: string; toolCallId?: string }>;
     timestamp: number;
   };
 
@@ -259,7 +274,9 @@ export interface AgentEvents {
     effortValue?: string;
   };
 
-  /** Model failover: attempt to switch from one model to another */
+  /** Model failover: attempt to switch from one model to another.
+   *  Turn-scoping ids (agentId/sessionKey/traceId) are optional — emit sites
+   *  populate them so activity can attribute the event to a turn (EVT-04, §16.9). */
   "model:fallback_attempt": {
     fromProvider: string;
     fromModel: string;
@@ -268,6 +285,9 @@ export interface AgentEvents {
     error: string;
     attemptNumber: number;
     timestamp: number;
+    agentId?: string;
+    sessionKey?: string;
+    traceId?: string;
   };
 
   /** Model failover: all candidates exhausted */
@@ -276,6 +296,9 @@ export interface AgentEvents {
     model: string;
     totalAttempts: number;
     timestamp: number;
+    agentId?: string;
+    sessionKey?: string;
+    traceId?: string;
   };
 
   /** Last-known-working model fallback: attempt to use a recently successful model */
@@ -285,6 +308,9 @@ export interface AgentEvents {
     toProvider: string;
     toModel: string;
     timestamp: number;
+    agentId?: string;
+    sessionKey?: string;
+    traceId?: string;
   };
 
   /** Auth profile entered cooldown after failure */
@@ -294,6 +320,9 @@ export interface AgentEvents {
     cooldownMs: number;
     failureCount: number;
     timestamp: number;
+    agentId?: string;
+    sessionKey?: string;
+    traceId?: string;
   };
 
   /** Model catalog loaded from pi-ai static registry */

@@ -38,6 +38,16 @@ export type { AuditEvent, CreateAuditEventParams } from "./audit.js";
 // Log sanitizer
 export { sanitizeLogString } from "./log-sanitizer.js";
 
+// Bounded redaction primitive (activity transparency — SEC-01/02/03)
+export { redactValue, REDACT_LIMITS } from "./redact-value.js";
+export type {
+  RedactedValue,
+  RedactionReason,
+  RedactionRecord,
+  RedactOptions,
+  RedactLimits,
+} from "./redact-value.js";
+
 // External content security wrapping
 export { wrapExternalContent, wrapWebContent, detectSuspiciousPatterns, EXTERNAL_CONTENT_WARNING } from "./external-content.js";
 export type { ExternalContentSource, WrapExternalContentOptions } from "./external-content.js";
@@ -63,6 +73,15 @@ export type { MemoryWriteValidationResult } from "./memory-write-validator.js";
 
 // Canary tokens
 export { generateCanaryToken, detectCanaryLeakage } from "./canary-token.js";
+
+// Signed interactive-approval callbacks (APV-05 / SEC-06)
+export {
+  signCallbackData,
+  verifyCallbackData,
+  renderCallbackData,
+  parseCallbackData,
+} from "./callback-signing.js";
+export type { CallbackChoice, CallbackRenderError, ParsedCallback } from "./callback-signing.js";
 
 // Secret encryption engine
 export { createSecretsCrypto, parseMasterKey } from "./secret-crypto.js";

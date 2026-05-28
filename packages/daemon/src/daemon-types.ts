@@ -21,7 +21,9 @@
 
 import type { TimerPort } from "@comis/core";
 import type { AppContainer, ChannelPort, DeliveryQueuePort, DeliveryAdapter } from "@comis/core";
+import type { ChannelActivityRenderer } from "@comis/core";
 import type { ApprovalGate } from "@comis/core";
+import type { ChannelManager } from "@comis/orchestrator";
 import type { ChannelHealthMonitor } from "@comis/channels";
 import type { ComisLogger } from "@comis/infra";
 import type { SessionResetScheduler, BackgroundTaskManager } from "@comis/agent";
@@ -134,6 +136,16 @@ export interface DaemonInstance {
   readonly gatewayHandle?: GatewayServerHandle;
   readonly adapterRegistry: Map<string, ChannelPort>;
   /**
+   * The orchestrator ChannelManager (undefined when no channel adapters are
+   * configured at boot — `setup-channels-runtime.ts` only constructs it when
+   * `adaptersByType.size > 0`). Exposed so integration tests can drive a real
+   * inbound turn through the daemon's REAL pipeline deps via
+   * `channelManager.injectMessage(channelType, msg)` — the WIRE-06 activation
+   * test (`test/integration/activity-composition.test.ts`) registers a test
+   * adapter on `adapterRegistry` and drives `renderer.apply` end-to-end.
+   */
+  readonly channelManager?: ChannelManager;
+  /**
    * Delivery-queue-side adapter map. Adapters registered here are
    * used by the recurring delivery-queue drainer for crash-safe outbound
    * delivery. Distinct from `adapterRegistry` (which serves direct dispatch
@@ -213,6 +225,14 @@ export interface DaemonOverrides {
    * Production must never set this; the override is test-only.
    */
   timers?: TimerPort;
+  /**
+   * Override the per-channelType activity-renderer factory at the composition
+   * root (WIRE-06 test seam). When provided, replaces the renderer produced by
+   * `buildActivityRenderers` for a given channelType so an integration test can
+   * inject a spy/TestSink it retains a reference to and assert `apply` fired on
+   * a real inbound turn. Production must never set this; the override is test-only.
+   */
+  activityRendererFactory?: (channelType: string) => ChannelActivityRenderer | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +314,20 @@ export interface BootContext {
   clock: import("@comis/core").ClockPort;
   env: import("@comis/core").EnvPort;
   timers: import("@comis/core").TimerPort;
+  // WIRE-08: the single process-singleton ActivityCircuitBreaker, constructed once
+  // in bootFoundation (D2) and threaded to `buildChannelManagerDeps` → `ChannelsDeps`
+  // → the inbound coordinatorFactory, where it is shared across every per-turn
+  // coordinator. Structurally the `ActivityBreakerGate` slice the coordinator
+  // consumes (the concrete breaker's record/isTripped satisfy it).
+  activityBreaker: import("@comis/orchestrator").ActivityBreakerGate;
+  // WIRE-06 test-only renderer-injection seam, captured from the daemon override
+  // in bootFoundation and threaded to `buildChannelManagerDeps` → `ChannelsDeps`
+  // → `buildActivityRenderers`. Named distinctly from the DaemonOverrides field
+  // (which is the canonical test-only seam) so the seam declaration stays
+  // single-sourced. Optional + default-undefined; production never sets it
+  // (mirrors the `timers` test-only discipline). Inert on the inbound path until
+  // Plan 03 builds the inbound coordinatorFactory over the renderers map.
+  activityRendererFactoryOverride?: (channelType: string) => ChannelActivityRenderer | undefined;
   // Secrets (4 fields)
   secretStore: SecretStorePort | undefined;
   secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
@@ -313,13 +347,17 @@ export interface BootContext {
   skillsLogger: ReturnType<typeof setupLogging>["skillsLogger"];
   memoryLogger: ReturnType<typeof setupLogging>["memoryLogger"];
   daemonVersion: string;
-  // Observability (7 fields)
+  // Observability (9 fields)
   tokenTracker: ReturnType<typeof setupObservability>["tokenTracker"];
   sharedCostTracker: ReturnType<typeof setupObservability>["sharedCostTracker"];
   diagnosticCollector: ReturnType<typeof setupObservability>["diagnosticCollector"];
   billingEstimator: ReturnType<typeof setupObservability>["billingEstimator"];
   channelActivityTracker: ReturnType<typeof setupObservability>["channelActivityTracker"];
   deliveryTracer: ReturnType<typeof setupObservability>["deliveryTracer"];
+  // WIRE-01: the canonical ActivityStream (orchestrator-facing ActivityStreamPort)
+  // + its WIRE-05 drain hook, threaded from bootFoundation to bootShutdown.
+  activityStream: ReturnType<typeof setupObservability>["activityStream"];
+  disposeActivityStream: ReturnType<typeof setupObservability>["disposeActivityStream"];
   contextPipelineCollector: ReturnType<typeof createContextPipelineCollector>;
   // Process (1 field)
   processMonitor: ReturnType<typeof setupHealth>["processMonitor"];
@@ -410,6 +448,11 @@ export interface BootContext {
   wireDispatch?: ReturnType<typeof setupRpcBridge>["wireDispatch"];
   // Approval gate
   approvalGate?: ReturnType<typeof createApprovalGate>;
+  // Interactive-callback wiring (73-10): signer for renderers + single-use email
+  // link minter + gateway approval-token map/resolver + the InteractiveCallbackRouter.
+  // Built once in the agents phase; consumed by bootChannels (signer + minter) and
+  // bootGateway (token map + resolveApproval route mount).
+  interactiveCallbackWiring?: import("./wiring/setup-interactive-callback.js").InteractiveCallbackWiring;
   // Delivery queue (channelAdaptersRef is a forward ref — declared below)
   deliveryQueue?: Awaited<ReturnType<typeof setupDeliveryQueue>>["deliveryQueue"];
   drainAndStartDeliveryPrune?: Awaited<ReturnType<typeof setupDeliveryQueue>>["drainAndStart"];
@@ -468,8 +511,6 @@ export interface BootContext {
   shutdownBackgroundProcesses?: ReturnType<typeof setupTools>["shutdownBackgroundProcesses"];
   /** Cleanup proxy typing controllers + sweep timer (from registerProxyTypingListeners). */
   proxyTypingCleanup?: ReturnType<typeof setupCrossSession>["proxyTypingCleanup"];
-  /** Approval notifier handle (from setupChannels). Undefined when no channel adapters initialized. */
-  approvalNotifier?: Awaited<ReturnType<typeof setupChannels>>["approvalNotifier"];
   /** Output retention housekeeper handle (from setupOutputRetention). Undefined when defaultWorkspaceDir is empty. */
   outputRetentionHandle?: ReturnType<typeof setupOutputRetention>;
 

@@ -24,7 +24,13 @@ import type { SessionLifecycle } from "@comis/agent";
 // orchestrator package cannot import its own published name.
 import type { CommandQueue } from "./queue/command-queue.js";
 import type { ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
+import type { InteractiveCallbackRouter } from "./approval/index.js";
 import type { ChannelPort, DeliveryQueuePort, NormalizedMessage, SessionKey, TypedEventBus, DeliveryService } from "@comis/core";
+// WIRE-03: orchestrator imports ONLY the @comis/core activity port + ctx type
+// (never the observability impl — TURN-03 hexagonal boundary). The
+// ActivityTurnCoordinator is a local execution type.
+import type { ActivityStreamPort, TurnActivityContext } from "@comis/core";
+import type { ActivityTurnCoordinator } from "./execution/activity-turn-coordinator.js";
 import type { StreamingConfig } from "@comis/core";
 import type { AutoReplyEngineConfig, SendPolicyConfig, QueueConfig, ElevatedReplyConfig } from "@comis/core";
 import { formatSessionKey, runWithContext, getMessageTraceId, systemNowMs } from "@comis/core";
@@ -50,6 +56,21 @@ import type { VoiceResponsePipelineDeps } from "@comis/channels";
 // orchestrator only via the daemon composition root). channel-manager
 // receives `processInboundMessage` via an injected callback on
 // ChannelManagerDeps to preserve that direction.
+
+/**
+ * WR-05: best-effort seed of `msg.metadata.traceId` for downstream consumers.
+ * Context propagation does NOT depend on this — `runWithContext({ traceId })`
+ * already carries the canonical id. The metadata write is a convenience; if the
+ * caller passed a FROZEN/non-extensible metadata object, an in-place assignment
+ * would throw a TypeError (strict mode) and abort the whole turn. Guard the write
+ * so a frozen metadata is a silent no-op rather than a turn-killing throw. Only
+ * seeds when the field is absent (never overwrites a caller-provided traceId).
+ */
+function seedMetadataTraceId(msg: NormalizedMessage, traceId: string): void {
+  if (typeof msg.metadata.traceId === "string") return;
+  if (Object.isFrozen(msg.metadata) || !Object.isExtensible(msg.metadata)) return;
+  msg.metadata.traceId = traceId;
+}
 
 /**
  * Callback shape matching @comis/orchestrator.processInboundMessage.
@@ -151,9 +172,20 @@ export interface ChannelManagerDeps {
   /** Optional approval gate for /approve and /deny chat commands. When absent, approval commands pass through as plain text. */
   approvalGate?: {
     resolveApproval(requestId: string, approved: boolean, approvedBy: string, reason?: string): void;
-    pending(): Array<{ requestId: string; sessionKey: string; action: string; toolName: string }>;
+    pending(): Array<{ requestId: string; shortId: string; sessionKey: string; action: string; toolName: string }>;
     getRequest(requestId: string): { requestId: string; sessionKey: string } | undefined;
+    /** Resolve a minted 12-char shortId to its pending request (APV-04). Gate-internal; channels never call this. */
+    getRequestByShortId(shortId: string): { requestId: string; shortId: string; sessionKey: string; action: string; toolName: string } | undefined;
+    /** Pending requests scoped to a session (the plain-text/button resolution source). */
+    pendingForSession(sessionKey: string): Array<{ requestId: string; shortId: string; sessionKey: string; action: string; toolName: string }>;
   };
+  /**
+   * Optional server-side interactive-callback router (73-04). When present, an inbound
+   * button-callback (`metadata.isButtonCallback`) is forwarded to `router.route()` (the
+   * verifier) BEFORE slash-command handling. Injected by daemon wiring; when absent,
+   * button callbacks fall through to the normal pipeline.
+   */
+  interactiveCallbackRouter?: InteractiveCallbackRouter;
   /** Handle general slash commands via command handler. */
   handleSlashCommand?: (
     text: string,
@@ -170,6 +202,13 @@ export interface ChannelManagerDeps {
   >;
   /** Per-agent enforceFinalTag config lookup. */
   getEnforceFinalTag?: (agentId: string) => boolean | undefined;
+  /** WIRE-03: orchestrator-facing redacted activity stream port. Daemon injects
+   *  setupObservability's `activityStream`. Absent ⇒ activity pipe inert. */
+  activityStreamPort?: ActivityStreamPort;
+  /** WIRE-03: per-turn coordinator factory built at the daemon composition root
+   *  (setup-channels-runtime.ts). The pipeline calls it once both this and
+   *  `activityStreamPort` are present (execution-pipeline.ts:395). */
+  coordinatorFactory?: (ctx: TurnActivityContext) => ActivityTurnCoordinator;
   /**
    * REQUIRED. Inbound message processor — injected at composition root from
    * `@comis/orchestrator.processInboundMessage`. Lives on deps so the
@@ -187,6 +226,17 @@ export interface ChannelManagerDeps {
    * Injected by daemon wiring via ChannelManagerBuildDeps.
    */
   exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
+  /**
+   * The daemon's LIVE boot adapter registry (`adaptersByType`, exposed as
+   * `DaemonInstance.adapterRegistry`). `injectMessage` consults it as a fallback
+   * when an adapter for the requested channelType was not registered in
+   * `startAll()` — adapters added to this map AFTER boot (the WIRE-06 activation
+   * test registers a test Echo adapter post-boot via `adapterRegistry.set`) are
+   * reachable for a synthetic inbound turn. Absent ⇒ only `startAll()`-registered
+   * adapters drive `injectMessage` (production unaffected — the daemon registers
+   * every real adapter at boot).
+   */
+  adapterRegistry?: Map<string, ChannelPort>;
 }
 
 export interface ChannelManager {
@@ -301,9 +351,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
           // channel→queue→agent correlation is preserved even without the
           // adapter-level wrap).
           const traceId = getMessageTraceId(msg) ?? randomUUID();
-          if (typeof msg.metadata.traceId !== "string") {
-            msg.metadata.traceId = traceId;
-          }
+          seedMetadataTraceId(msg, traceId);
           await runWithContext(
             {
               traceId,
@@ -434,7 +482,9 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
     },
 
     async injectMessage(channelType: string, msg: NormalizedMessage): Promise<void> {
-      const adapter = adaptersByType.get(channelType);
+      // Prefer the startAll()-registered adapter; fall back to the daemon's live
+      // boot registry for adapters added after boot (WIRE-06 activation test).
+      const adapter = adaptersByType.get(channelType) ?? deps.adapterRegistry?.get(channelType);
       if (!adapter) {
         deps.logger.warn(
           { channelType, hint: "No adapter registered for this channel type; continuation skipped", errorKind: "config" as const },
@@ -465,7 +515,28 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       // intentionally bypass both callbacks because they represent control-plane
       // events, not real session activity.
       deps.onMessageReceived?.(msg, channelType);
-      await deps.processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
+      // Establish the per-turn request context (traceId) BEFORE processing, mirroring
+      // the normal onMessage path (above). Without this wrap the injected turn runs
+      // with no AsyncLocalStorage context, so the inbound activity coordinator
+      // subscribes with `traceId = formatSessionKey(sessionKey)` (the pipeline fallback)
+      // while the agent execution emits activity events under its OWN fresh traceId —
+      // the ActivityStream's {agentId,sessionKey,traceId} turn filter never matches and
+      // renderer.apply never fires (WIRE-06). Sharing one traceId across the pipeline +
+      // the agent run makes the coordinator's subscription observe the turn's tool:*/model:* events.
+      const traceId = getMessageTraceId(msg) ?? randomUUID();
+      seedMetadataTraceId(msg, traceId);
+      await runWithContext(
+        {
+          traceId,
+          startedAt: systemNowMs(),
+          channelType: adapter.channelType,
+          tenantId: "default",
+          trustLevel: "admin",
+        },
+        async () => {
+          await deps.processInboundMessage(pipelineDeps, adapter, msg, activePacers, sendOverrides);
+        },
+      );
       deps.onMessageProcessed?.(msg, channelType);
     },
 

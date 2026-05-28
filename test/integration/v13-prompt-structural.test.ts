@@ -116,11 +116,13 @@ describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
   // config.get returns reactionLevel for default agent
   // -------------------------------------------------------------------------
 
-  it("config.get returns reactionLevel for default agent", async () => {
+  it("agents.get returns reactionLevel for default agent", async () => {
+    // WR-03: agent config is read via agents.get rather than
+    // config.get({section:"agents"}), which no longer egresses agent configs.
     const response = (await sendJsonRpc(
       ws,
-      "config.get",
-      { section: "agents" },
+      "agents.get",
+      { agentId: "default" },
       msgId++,
       { timeoutMs: RPC_FAST_MS },
     )) as Record<string, unknown>;
@@ -128,13 +130,10 @@ describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
     expect(response).toHaveProperty("result");
 
     const result = response.result as Record<string, unknown>;
-    const agents = result.agents as Record<
-      string,
-      Record<string, unknown>
-    >;
-    expect(agents).toBeDefined();
-    expect(agents).toHaveProperty("default");
-    expect(agents.default.reactionLevel).toBe("minimal");
+    expect(result.agentId).toBe("default");
+    const config = result.config as Record<string, unknown>;
+    expect(config).toBeDefined();
+    expect(config.reactionLevel).toBe("minimal");
   });
 
   // -------------------------------------------------------------------------
@@ -142,10 +141,12 @@ describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
   // -------------------------------------------------------------------------
 
   it("agent config has expected v13.0 shape", async () => {
+    // WR-03: agent config is read via agents.get rather than
+    // config.get({section:"agents"}), which no longer egresses agent configs.
     const response = (await sendJsonRpc(
       ws,
-      "config.get",
-      { section: "agents" },
+      "agents.get",
+      { agentId: "default" },
       msgId++,
       { timeoutMs: RPC_FAST_MS },
     )) as Record<string, unknown>;
@@ -153,11 +154,7 @@ describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
     expect(response).toHaveProperty("result");
 
     const result = response.result as Record<string, unknown>;
-    const agents = result.agents as Record<
-      string,
-      Record<string, unknown>
-    >;
-    const defaultAgent = agents.default;
+    const defaultAgent = result.config as Record<string, unknown>;
 
     expect(defaultAgent.name).toBe("V13StructuralAgent");
     expect(defaultAgent.model).toBe("claude-opus-4-6");

@@ -218,24 +218,22 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
     return next();
   });
 
-  // GET /agents - Agent configuration
+  // GET /agents - Non-secret agent listing (id/name/provider/model/status).
+  //
+  // Sources from rpcAdapterDeps.listAgentSummaries, NOT getConfig: WR-03
+  // (§17.8) removed `agents` from getConfig's non-secret allowlist, so
+  // getConfig now returns the safe default with no `agents` key. The dedicated
+  // projection returns only non-secret identity/model fields, so this listing
+  // works without re-opening the secret-egress path getConfig closed.
   api.get("/agents", async (c) => {
     try {
-      const result = await rpcAdapterDeps.getConfig({ section: "agents" });
-      const agentsMap = (result as Record<string, unknown>)["agents"] as
-        | Record<string, Record<string, unknown>>
-        | undefined;
-
-      if (!agentsMap) {
-        return c.json({ agents: [] });
-      }
-
-      const agents = Object.entries(agentsMap).map(([id, cfg]) => ({
-        id,
-        name: (cfg.name as string) ?? "Comis",
-        provider: (cfg.provider as string) ?? "unknown",
-        model: (cfg.model as string) ?? "unknown",
-        status: deps.suspendedAgents?.has(id) ? "suspended" : "active",
+      const summaries = rpcAdapterDeps.listAgentSummaries?.() ?? [];
+      const agents = summaries.map((a) => ({
+        id: a.id,
+        name: a.name,
+        provider: a.provider,
+        model: a.model,
+        status: deps.suspendedAgents?.has(a.id) ? "suspended" : "active",
       }));
 
       return c.json({ agents });
@@ -245,25 +243,19 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
     }
   });
 
-  // GET /channels - Channel connection status
+  // GET /channels - Channel connection status (non-secret name/enabled only).
+  //
+  // Sources from rpcAdapterDeps.listChannelSummaries, NOT getConfig: WR-03
+  // removed `channels` from getConfig's allowlist (mirrors /agents). The
+  // projection already excludes the internal healthCheck block and every
+  // credential field; here we surface only the enabled adapters.
   api.get("/channels", async (c) => {
     try {
-      const result = await rpcAdapterDeps.getConfig({ section: "channels" });
-      const channelsCfg = (result as Record<string, unknown>)["channels"] as
-        | Record<string, unknown>
-        | undefined;
-
-      if (!channelsCfg) {
-        return c.json({ channels: [] });
-      }
-
-      // Convert channel config object to array, include only enabled channels
-      // Exclude healthCheck — it's an internal monitoring config, not a channel adapter
-      const channels = Object.entries(channelsCfg)
-        .filter(([name, cfg]) => name !== "healthCheck" && (cfg as Record<string, unknown>).enabled === true)
-        .map(([name]) => ({
-          type: name,
-          name,
+      const channels = (rpcAdapterDeps.listChannelSummaries?.() ?? [])
+        .filter((ch) => ch.enabled)
+        .map((ch) => ({
+          type: ch.name,
+          name: ch.name,
           enabled: true,
           status: "connected" as const,
         }));

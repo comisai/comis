@@ -87,6 +87,13 @@ let tmpDir: string;
 const tmpDirs: string[] = [];
 
 beforeEach(() => {
+  // Pin the clock so the date-rolled file path (session-index.2026-05-25.jsonl)
+  // is deterministic regardless of the wall-clock date the suite runs on. The
+  // writer derives the filename from systemNowMs(); without this the hardcoded
+  // dates only matched on the real 2026-05-25 and the suite broke on every
+  // later day. The date-roll test overrides setSystemTime to cross UTC midnight.
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-05-25T12:00:00Z"));
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "sidx-"));
   tmpDirs.push(tmpDir);
 });
@@ -109,7 +116,7 @@ describe("appendSessionIndexEntry — JSONL write", () => {
     appendSessionIndexEntry(tmpDir, event);
 
     // Await async flush via microtask
-    await new Promise((r) => setImmediate(r));
+    await vi.runAllTimersAsync();
 
     const expectedPath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
     expect(fs.existsSync(expectedPath)).toBe(true);
@@ -123,8 +130,7 @@ describe("appendSessionIndexEntry — JSONL write", () => {
   });
 
   it("creates a new file session-index.<nextDay>.jsonl when writing past midnight UTC", async () => {
-    // Use fake timers for this test to control the UTC date
-    vi.useFakeTimers();
+    // beforeEach already installed fake timers; set the pre-midnight time.
     vi.setSystemTime(new Date("2026-05-25T23:59:00Z"));
 
     const event1 = makeSessionStarted();
@@ -140,8 +146,6 @@ describe("appendSessionIndexEntry — JSONL write", () => {
     // and flushes microtasks so the QueuedFileWriter's async append completes.
     await vi.runAllTimersAsync();
 
-    vi.useRealTimers();
-
     const day1File = path.join(tmpDir, "logs", "session-index.2026-05-25.jsonl");
     const day2File = path.join(tmpDir, "logs", "session-index.2026-05-26.jsonl");
 
@@ -156,7 +160,7 @@ describe("appendSessionIndexEntry — JSONL write", () => {
       appendSessionIndexEntry(tmpDir, ev);
     }
 
-    await new Promise((r) => setImmediate(r));
+    await vi.runAllTimersAsync();
 
     const filePath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
     const lines = fs.readFileSync(filePath, "utf8").trim().split("\n");
@@ -172,7 +176,7 @@ describe("appendSessionIndexEntry — JSONL write", () => {
     const event = makeTurnCompleted();
     appendSessionIndexEntry(tmpDir, event);
 
-    await new Promise((r) => setImmediate(r));
+    await vi.runAllTimersAsync();
 
     const filePath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8").trim());
@@ -187,7 +191,7 @@ describe("appendSessionIndexEntry — JSONL write", () => {
     const event = makeSessionStarted();
     appendSessionIndexEntry(tmpDir, event);
 
-    await new Promise((r) => setImmediate(r));
+    await vi.runAllTimersAsync();
 
     const filePath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
     const stat = fs.statSync(filePath);
@@ -207,7 +211,7 @@ describe("appendSessionIndexEntry — JSONL write", () => {
       appendSessionIndexEntry(tmpDir, ev);
     }
 
-    await new Promise((r) => setImmediate(r));
+    await vi.runAllTimersAsync();
 
     const filePath = path.join(tmpDir, "logs", `session-index.${todayUtcDay()}.jsonl`);
     const lines = fs.readFileSync(filePath, "utf8").trim().split("\n");

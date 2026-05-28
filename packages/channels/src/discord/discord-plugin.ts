@@ -20,6 +20,10 @@ const CAPABILITIES: ChannelCapability = {
     deleteMessages: true,
     fetchHistory: true,
     attachments: true,
+    // §17.2: Discord EditPlace + Components — typing, threads, component buttons.
+    typing: true,
+    threads: true,
+    buttons: "components",
   },
   limits: {
     maxMessageChars: 2000,

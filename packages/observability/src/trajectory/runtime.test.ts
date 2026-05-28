@@ -431,6 +431,41 @@ describe("createTrajectoryRecorder -- pointer file", () => {
     );
     expect(existsSync(trajPathSibling)).toBe(false);
   });
+
+  it("does_not_create_pointer_when_sessionFile_is_empty_string", async () => {
+    // An empty-string sessionFile is semantically "no session file" — the
+    // runtime-file resolver already treats it as the dir/cwd-fallback case
+    // (paths.ts requires length > 0). The pointer write must agree;
+    // otherwise it anchors at `${cwd}/.trajectory-path.json`. Regression
+    // guard: integration tests run from the repo root, so an empty
+    // sessionFile leaked `.trajectory-path.json` into the working tree.
+    const cwdPointer = join(process.cwd(), ".trajectory-path.json");
+    const preexisting = existsSync(cwdPointer);
+
+    const recorder = createTrajectoryRecorder({
+      agentId: "agent-1",
+      sessionId: "sid-empty-ptr",
+      sessionFile: "",
+      trajectoryDir: tmpDir,
+    });
+    expect(recorder).not.toBeNull();
+    recorder!.recordEvent("session.started", {});
+    await recorder!.flush();
+
+    try {
+      // The runtime file still lands inside trajectoryDir, not at cwd.
+      expect(recorder!.filePath.startsWith(tmpDir)).toBe(true);
+      // No pointer file should have been dropped at the cwd.
+      if (!preexisting) {
+        expect(existsSync(cwdPointer)).toBe(false);
+      }
+    } finally {
+      // Defensive: never let a regression leave the artifact behind.
+      if (!preexisting && existsSync(cwdPointer)) {
+        rmSync(cwdPointer, { force: true });
+      }
+    }
+  });
 });
 
 describe("createTrajectoryRecorder -- envelope shape", () => {

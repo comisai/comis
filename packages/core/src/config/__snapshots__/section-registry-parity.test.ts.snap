@@ -3,6 +3,55 @@
 exports[`section-registry parity > field-metadata view > getFieldMetadata("agents") 1`] = `
 "[
   {
+    "default": {
+      "channels": {},
+      "defaultChannelEnabled": false,
+      "emergencyDisabled": false,
+      "onSuccess": "delete",
+      "theme": "default",
+      "verbosity": "normal"
+    },
+    "immutable": true,
+    "path": "agents.activity",
+    "type": "object"
+  },
+  {
+    "default": {},
+    "immutable": true,
+    "path": "agents.activity.channels",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.activity.defaultChannelEnabled",
+    "type": "boolean"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.activity.emergencyDisabled",
+    "type": "boolean"
+  },
+  {
+    "default": "delete",
+    "immutable": true,
+    "path": "agents.activity.onSuccess",
+    "type": "string"
+  },
+  {
+    "default": "default",
+    "immutable": true,
+    "path": "agents.activity.theme",
+    "type": "string"
+  },
+  {
+    "default": "normal",
+    "immutable": true,
+    "path": "agents.activity.verbosity",
+    "type": "string"
+  },
+  {
     "default": true,
     "immutable": true,
     "path": "agents.adaptiveCacheRetention",
@@ -523,6 +572,38 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.deferredTools.neverDefer",
     "type": "array"
+  },
+  {
+    "default": {
+      "visibleReplies": {
+        "direct": "automatic",
+        "group": "message_tool"
+      }
+    },
+    "immutable": true,
+    "path": "agents.delivery",
+    "type": "object"
+  },
+  {
+    "default": {
+      "direct": "automatic",
+      "group": "message_tool"
+    },
+    "immutable": true,
+    "path": "agents.delivery.visibleReplies",
+    "type": "object"
+  },
+  {
+    "default": "automatic",
+    "immutable": true,
+    "path": "agents.delivery.visibleReplies.direct",
+    "type": "string"
+  },
+  {
+    "default": "message_tool",
+    "immutable": true,
+    "path": "agents.delivery.visibleReplies.group",
+    "type": "string"
   },
   {
     "default": {
@@ -6467,6 +6548,14 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   {
     "default": {
       "default": {
+        "activity": {
+          "channels": {},
+          "defaultChannelEnabled": false,
+          "emergencyDisabled": false,
+          "onSuccess": "delete",
+          "theme": "default",
+          "verbosity": "normal"
+        },
         "adaptiveCacheRetention": true,
         "advancedCacheOptimization": {
           "enableRecentZonePromotion": true
@@ -6497,6 +6586,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "blockPercent": 95,
           "enabled": true,
           "warnPercent": 80
+        },
+        "delivery": {
+          "visibleReplies": {
+            "direct": "automatic",
+            "group": "message_tool"
+          }
         },
         "elevatedReply": {
           "defaultTrustLevel": "external",
@@ -13095,6 +13190,85 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "activity": {
+      "additionalProperties": false,
+      "default": {
+        "channels": {},
+        "defaultChannelEnabled": false,
+        "emergencyDisabled": false,
+        "onSuccess": "delete",
+        "theme": "default",
+        "verbosity": "normal"
+      },
+      "properties": {
+        "channels": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "default": false,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "enabled"
+            ],
+            "type": "object"
+          },
+          "default": {},
+          "propertyNames": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "defaultChannelEnabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "emergencyDisabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "onSuccess": {
+          "default": "delete",
+          "enum": [
+            "delete",
+            "keep",
+            "collapse"
+          ],
+          "type": "string"
+        },
+        "theme": {
+          "default": "default",
+          "enum": [
+            "default",
+            "terminal-minimal",
+            "playful",
+            "ascii"
+          ],
+          "type": "string"
+        },
+        "verbosity": {
+          "default": "normal",
+          "enum": [
+            "silent",
+            "quiet",
+            "normal",
+            "verbose"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "verbosity",
+        "onSuccess",
+        "theme",
+        "emergencyDisabled",
+        "channels",
+        "defaultChannelEnabled"
+      ],
+      "type": "object"
+    },
     "adaptiveCacheRetention": {
       "default": true,
       "type": "boolean"
@@ -13773,6 +13947,51 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "mode",
         "neverDefer",
         "alwaysDefer"
+      ],
+      "type": "object"
+    },
+    "delivery": {
+      "additionalProperties": false,
+      "default": {
+        "visibleReplies": {
+          "direct": "automatic",
+          "group": "message_tool"
+        }
+      },
+      "properties": {
+        "visibleReplies": {
+          "additionalProperties": false,
+          "default": {
+            "direct": "automatic",
+            "group": "message_tool"
+          },
+          "properties": {
+            "direct": {
+              "default": "automatic",
+              "enum": [
+                "automatic",
+                "message_tool"
+              ],
+              "type": "string"
+            },
+            "group": {
+              "default": "message_tool",
+              "enum": [
+                "automatic",
+                "message_tool"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "direct",
+            "group"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "visibleReplies"
       ],
       "type": "object"
     },
@@ -15466,7 +15685,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "elevatedReply",
     "tracing",
     "contextGuard",
-    "toolLifecycle"
+    "toolLifecycle",
+    "activity",
+    "delivery"
   ],
   "type": "object"
 }"
@@ -21658,6 +21879,85 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       "additionalProperties": {
         "additionalProperties": false,
         "properties": {
+          "activity": {
+            "additionalProperties": false,
+            "default": {
+              "channels": {},
+              "defaultChannelEnabled": false,
+              "emergencyDisabled": false,
+              "onSuccess": "delete",
+              "theme": "default",
+              "verbosity": "normal"
+            },
+            "properties": {
+              "channels": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "enabled"
+                  ],
+                  "type": "object"
+                },
+                "default": {},
+                "propertyNames": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "defaultChannelEnabled": {
+                "default": false,
+                "type": "boolean"
+              },
+              "emergencyDisabled": {
+                "default": false,
+                "type": "boolean"
+              },
+              "onSuccess": {
+                "default": "delete",
+                "enum": [
+                  "delete",
+                  "keep",
+                  "collapse"
+                ],
+                "type": "string"
+              },
+              "theme": {
+                "default": "default",
+                "enum": [
+                  "default",
+                  "terminal-minimal",
+                  "playful",
+                  "ascii"
+                ],
+                "type": "string"
+              },
+              "verbosity": {
+                "default": "normal",
+                "enum": [
+                  "silent",
+                  "quiet",
+                  "normal",
+                  "verbose"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "verbosity",
+              "onSuccess",
+              "theme",
+              "emergencyDisabled",
+              "channels",
+              "defaultChannelEnabled"
+            ],
+            "type": "object"
+          },
           "adaptiveCacheRetention": {
             "default": true,
             "type": "boolean"
@@ -22336,6 +22636,51 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "mode",
               "neverDefer",
               "alwaysDefer"
+            ],
+            "type": "object"
+          },
+          "delivery": {
+            "additionalProperties": false,
+            "default": {
+              "visibleReplies": {
+                "direct": "automatic",
+                "group": "message_tool"
+              }
+            },
+            "properties": {
+              "visibleReplies": {
+                "additionalProperties": false,
+                "default": {
+                  "direct": "automatic",
+                  "group": "message_tool"
+                },
+                "properties": {
+                  "direct": {
+                    "default": "automatic",
+                    "enum": [
+                      "automatic",
+                      "message_tool"
+                    ],
+                    "type": "string"
+                  },
+                  "group": {
+                    "default": "message_tool",
+                    "enum": [
+                      "automatic",
+                      "message_tool"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "direct",
+                  "group"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "visibleReplies"
             ],
             "type": "object"
           },
@@ -24029,12 +24374,22 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "elevatedReply",
           "tracing",
           "contextGuard",
-          "toolLifecycle"
+          "toolLifecycle",
+          "activity",
+          "delivery"
         ],
         "type": "object"
       },
       "default": {
         "default": {
+          "activity": {
+            "channels": {},
+            "defaultChannelEnabled": false,
+            "emergencyDisabled": false,
+            "onSuccess": "delete",
+            "theme": "default",
+            "verbosity": "normal"
+          },
           "adaptiveCacheRetention": true,
           "advancedCacheOptimization": {
             "enableRecentZonePromotion": true
@@ -24065,6 +24420,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "blockPercent": 95,
             "enabled": true,
             "warnPercent": 80
+          },
+          "delivery": {
+            "visibleReplies": {
+              "direct": "automatic",
+              "group": "message_tool"
+            }
           },
           "elevatedReply": {
             "defaultTrustLevel": "external",

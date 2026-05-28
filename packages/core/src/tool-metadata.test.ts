@@ -7,7 +7,7 @@ import {
   truncateContentBlocks,
   _clearRegistryForTest,
 } from "./tool-metadata.js";
-import type { ToolCapabilityMetadata } from "./tool-metadata.js";
+import type { ToolCapabilityMetadata, ComisToolMetadata } from "./tool-metadata.js";
 
 // ---------------------------------------------------------------------------
 // Registry tests
@@ -288,5 +288,71 @@ describe("truncateContentBlocks", () => {
     const result = truncateContentBlocks(content, 100);
     // Total chars is 0 (no text), 0 <= 100, returns original
     expect(result).toBe(content);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v2.5 Agent Transparency — ComisToolMetadata activity fields (EVT-09)
+//
+// §16.11: ComisToolMetadata gains `suppressActivity?: boolean` and
+// `failureDetector?: (result, isError) => boolean | { errorKind: ErrorKind }`.
+// These are type-contract additions; the literals below fail to compile on the
+// pre-patch interface (fields absent) — RED proof. Additive + optional, so
+// every existing metadata object still validates.
+// ---------------------------------------------------------------------------
+
+describe("ComisToolMetadata activity fields (EVT-09)", () => {
+  it("accepts suppressActivity flag", () => {
+    const meta: ComisToolMetadata = { suppressActivity: true };
+    expect(meta.suppressActivity).toBe(true);
+  });
+
+  it("accepts a boolean-returning failureDetector", () => {
+    const meta: ComisToolMetadata = {
+      failureDetector: (result, isError) => isError || result === null,
+    };
+    expect(meta.failureDetector?.({ ok: true }, false)).toBe(false);
+    expect(meta.failureDetector?.(null, false)).toBe(true);
+  });
+
+  it("accepts a failureDetector returning a closed-union errorKind", () => {
+    const meta: ComisToolMetadata = {
+      failureDetector: (result) =>
+        (result as { exitCode?: number }).exitCode === 0
+          ? false
+          : { errorKind: "dependency" },
+    };
+    const verdict = meta.failureDetector?.({ exitCode: 1 }, false);
+    expect(verdict).toEqual({ errorKind: "dependency" });
+  });
+
+  it("rejects a failureDetector errorKind outside the closed union", () => {
+    const meta: ComisToolMetadata = {
+      // @ts-expect-error - "boom" is not a member of the ErrorKind closed union
+      failureDetector: () => ({ errorKind: "boom" }),
+    };
+    void meta;
+  });
+
+  it("an unrelated existing metadata object still validates (additive/optional)", () => {
+    registerToolMetadata("evt09_additive", {
+      maxResultSizeChars: 4000,
+      isReadOnly: true,
+    });
+    const m = getToolMetadata("evt09_additive");
+    expect(m?.maxResultSizeChars).toBe(4000);
+    expect(m?.suppressActivity).toBeUndefined();
+    expect(m?.failureDetector).toBeUndefined();
+  });
+
+  it("registers and round-trips the activity fields through the registry", () => {
+    const detector = (_r: unknown, isError: boolean): boolean => isError;
+    registerToolMetadata("evt09_roundtrip", {
+      suppressActivity: true,
+      failureDetector: detector,
+    });
+    const m = getToolMetadata("evt09_roundtrip");
+    expect(m?.suppressActivity).toBe(true);
+    expect(m?.failureDetector).toBe(detector);
   });
 });

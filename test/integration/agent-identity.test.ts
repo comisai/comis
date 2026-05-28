@@ -172,8 +172,13 @@ describe("Agent Identity: REST API and RPC Config", () => {
 
   describe("RPC Agent Config (Non-LLM)", () => {
     it(
-      "config.get with section 'agents' returns full agent configs",
+      "config.get does not egress the agents section (WR-03)",
       async () => {
+        // WR-03: config.get({section:"agents"}) no longer returns agent configs;
+        // it returns only the safe default { tenantId, logLevel, gateway }. Agent
+        // names like "PrimaryIdentityAgent" were previously asserted here but are
+        // no longer RPC-observable via config.get post-WR-03 (use agents.get /
+        // agents.list / the REST /api/agents endpoint instead).
         let ws: WebSocket | undefined;
         try {
           ws = await openAuthenticatedWebSocket(
@@ -191,13 +196,15 @@ describe("Agent Identity: REST API and RPC Config", () => {
           expect(response).toHaveProperty("result");
 
           const result = response.result as Record<string, unknown>;
-          // config.get with section 'agents' returns { agents: { ... } }
-          const agents = result.agents as Record<string, Record<string, unknown>>;
-          expect(agents).toBeDefined();
-          expect(agents).toHaveProperty("primary");
-          expect(agents).toHaveProperty("secondary");
-          expect(agents.primary.name).toBe("PrimaryIdentityAgent");
-          expect(agents.secondary.name).toBe("SecondaryIdentityAgent");
+          // The requested section must be absent: only the safe default is returned.
+          expect(result.agents).toBeUndefined();
+          expect(result).toHaveProperty("tenantId");
+          expect(result).toHaveProperty("gateway");
+
+          // The agent names must not leak through any other field of the response.
+          const serialized = JSON.stringify(result);
+          expect(serialized).not.toContain("PrimaryIdentityAgent");
+          expect(serialized).not.toContain("SecondaryIdentityAgent");
         } finally {
           ws?.close();
         }

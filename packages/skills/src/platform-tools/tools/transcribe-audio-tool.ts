@@ -11,8 +11,15 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import { registerActivityLabelSpec } from "@comis/core";
 import { jsonResult, readStringParam } from "../tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";
+
+// Activity label spec (LBL-01, §17.6). Descriptor name == emitted name.
+registerActivityLabelSpec("transcribe_audio", {
+  semanticPhase: "media",
+  label: "transcribing audio",
+});
 
 // ── Parameter Schema ────────────────────────────────────────────────
 

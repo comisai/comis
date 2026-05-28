@@ -20,6 +20,10 @@ const CAPABILITIES: ChannelCapability = {
     deleteMessages: true,
     fetchHistory: true,
     attachments: true,
+    // §17.2: Slack EditPlace + Block Kit — threads + Block Kit buttons, no typing.
+    typing: false,
+    threads: true,
+    buttons: "blockkit",
   },
   limits: {
     maxMessageChars: 4000,

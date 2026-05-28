@@ -33,11 +33,24 @@ const mockChannelManager = {
   activeCount: 0,
 };
 const mockRetryEngine = { sendWithRetry: vi.fn() };
-const mockApprovalNotifier = { start: vi.fn(), stop: vi.fn() };
 vi.mock("@comis/channels", () => ({
   createLifecycleReactor: vi.fn(() => ({ destroy: vi.fn() })),
-  createApprovalNotifier: vi.fn(() => mockApprovalNotifier),
   reactWithFallback: vi.fn(),
+  // Activity-renderer factories consumed by buildActivityRenderers (WIRE-02).
+  // The *_RENDERER_FACTORIES consts in setup-channels-activity-renderers.ts
+  // reference every per-channel factory at MODULE LOAD (EditPlace + the four
+  // non-EditPlace strategy maps added in 72-05), so this explicit
+  // (non-importOriginal) mock must expose them all or import-time collection fails.
+  createTestSink: vi.fn(() => ({ strategy: "TestSink", apply: vi.fn(), finalize: vi.fn() })),
+  createTelegramActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
+  createDiscordActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
+  createSlackActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
+  createWhatsAppActivityRenderer: vi.fn(() => ({ strategy: "EditPlace", apply: vi.fn(), finalize: vi.fn() })),
+  createSignalActivityRenderer: vi.fn(() => ({ strategy: "DeleteAndRepost", apply: vi.fn(), finalize: vi.fn() })),
+  createIMessageActivityRenderer: vi.fn(() => ({ strategy: "AppendOnly", apply: vi.fn(), finalize: vi.fn() })),
+  createLineActivityRenderer: vi.fn(() => ({ strategy: "AppendOnly", apply: vi.fn(), finalize: vi.fn() })),
+  createIrcActivityRenderer: vi.fn(() => ({ strategy: "LinePerEvent", apply: vi.fn(), finalize: vi.fn() })),
+  createEmailActivityRenderer: vi.fn(() => ({ strategy: "DigestOnly", apply: vi.fn(), finalize: vi.fn() })),
   filterResponse: vi.fn((text: string) => {
     if (text === "NO_REPLY" || text === "HEARTBEAT_OK" || !text) {
       return { shouldDeliver: false, cleanedText: "", suppressedBy: text === "NO_REPLY" ? "no_reply" : text === "HEARTBEAT_OK" ? "heartbeat_ok" : "empty" };
@@ -111,6 +124,13 @@ vi.mock("@comis/core", async () => {
     createNoOpDeliveryQueue: vi.fn(() => ({})),
     systemNowMs: () => Date.now(),
     systemNowDate: () => new Date(),
+    // 75-06: setupChannels resolves the default agent's activity.theme →
+    // themeForName(name).markers for the activity renderers (UX-01). The fake
+    // returns the default-theme marker bundle so the resolved markers stay
+    // default-parity in these wiring tests.
+    themeForName: vi.fn(() => ({
+      markers: { success: "✓", failure: "❌", subagent: "🤖", running: "🔧" },
+    })),
   };
 });
 
@@ -1169,6 +1189,49 @@ describe("setupChannels", () => {
 
       expect(createChannelManager).not.toHaveBeenCalled();
       expect(result.channelManager).toBeUndefined();
+    });
+  });
+
+  // -- CR-01 / WR-01: interactive-callback router threaded to the inbound pipeline --
+  //
+  // The InteractiveCallbackRouter is constructed in the daemon wiring bundle
+  // (createInteractiveCallbackWiring → .router) but must reach the orchestrator's
+  // inbound pipeline (inbound-gate reads `deps.interactiveCallbackRouter`). The
+  // ONLY way it gets there is through the production composition path:
+  //   ChannelsDeps.interactiveCallbackRouter
+  //     → buildAndStartChannelManager (ChannelManagerBuildDeps.interactiveCallbackRouter)
+  //       → createChannelManager({ interactiveCallbackRouter })
+  //         → pipelineDeps = deps → inbound-gate.
+  //
+  // Because every layer types the slot OPTIONAL, a missing thread compiles and
+  // silently no-ops: at runtime `deps.interactiveCallbackRouter === undefined`,
+  // the button-callback intercept is dead, and a signed `v1.<choice>.<shortId>.<hmac>`
+  // payload falls through to the LLM. This is the exact blind spot that let CR-01
+  // ship — there was no assertion that the daemon POPULATES the slot. These tests
+  // pin the seam end-to-end at the real daemon composition layer.
+  describe("interactive-callback router wiring (CR-01)", () => {
+    it("threads the wiring router into createChannelManager so the inbound button-intercept is reachable", async () => {
+      mockAdaptersByType.set("telegram", mockAdapter);
+      const router = { route: vi.fn(), render: vi.fn() } as any;
+      const { container } = makeContainer();
+      const deps = makeDeps({ container, interactiveCallbackRouter: router });
+      await setupChannels(deps);
+
+      expect(createChannelManager).toHaveBeenCalledTimes(1);
+      const cmDeps = vi.mocked(createChannelManager).mock.calls[0]![0]!;
+      // The SAME router instance the daemon constructed must reach the pipeline
+      // deps — not undefined (the pre-fix state that severed the chain).
+      expect(cmDeps.interactiveCallbackRouter).toBe(router);
+    });
+
+    it("leaves the router slot undefined when the daemon supplies no wiring (button callbacks degrade, not crash)", async () => {
+      mockAdaptersByType.set("telegram", mockAdapter);
+      const { container } = makeContainer();
+      const deps = makeDeps({ container }); // no interactiveCallbackRouter
+      await setupChannels(deps);
+
+      const cmDeps = vi.mocked(createChannelManager).mock.calls[0]![0]!;
+      expect(cmDeps.interactiveCallbackRouter).toBeUndefined();
     });
   });
 });

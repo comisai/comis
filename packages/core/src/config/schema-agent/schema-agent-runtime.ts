@@ -163,6 +163,69 @@ export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 export type RoutingBinding = z.infer<typeof RoutingBindingSchema>;
 export type RoutingConfig = z.infer<typeof RoutingConfigSchema>;
 
+/**
+ * Per-agent activity-presentation config (v2.5 Agent Transparency, §16.3).
+ *
+ * Controls how much work-in-progress UI the agent renders. Distinct from the
+ * top-level `verbosity` (response-style `VerbosityConfigSchema`) — they share
+ * only the word "verbosity". This plan defines the SCHEMA only; kill-switch
+ * ENFORCEMENT (`channels.<key>.enabled` / `emergencyDisabled`) is Phase 76
+ * (WIRE-07) — not wired here.
+ */
+export const ActivityConfigSchema = z.strictObject({
+    /** How much work-in-progress UI to render. */
+    verbosity: z.enum(["silent", "quiet", "normal", "verbose"]).default("normal"),
+    /** What to do with activity messages once the turn succeeds.
+     *  (onFailure is hardcoded to "keep"; not exposed — §7.3.) */
+    onSuccess: z.enum(["delete", "keep", "collapse"]).default("delete"),
+    /** Visual theme for activity rendering. */
+    theme: z.enum(["default", "terminal-minimal", "playful", "ascii"]).default("default"),
+    /** Agent-scoped emergency kill switch (§22.2). When true, no activity
+     *  messages are produced for this agent on any channel; lifecycle reactions
+     *  and final-message delivery are unaffected. Enforcement is Phase 76. */
+    emergencyDisabled: z.boolean().default(false),
+    /** Renderer-scoped enable map (§22.2), keyed by TurnActivityContext.rendererKey.
+     *  A missing entry follows `defaultChannelEnabled` (default false → disabled),
+     *  the rollout barrier inside the one-milestone ship. An explicit `enabled`
+     *  always wins: `true` renders, `false` opts that renderer out even under
+     *  default-on (kill-switch safety). */
+    channels: z
+      .record(z.string(), z.strictObject({ enabled: z.boolean().default(false) }))
+      .default({}),
+    /** Operator opt-in to DEFAULT-ON (§22.2): when true, any renderer for this
+     *  agent that has no explicit `channels[rendererKey]` entry renders, and the
+     *  operator opts a specific renderer OUT via `channels[rendererKey].enabled:
+     *  false`. Defaults false so the shipped Day-0 posture stays fail-closed
+     *  (every renderer off until enabled) — this is an additive per-agent control
+     *  an operator sets, not a change to the global default. `emergencyDisabled`
+     *  overrides it; an agent absent from the config map stays fail-closed. */
+    defaultChannelEnabled: z.boolean().default(false),
+  });
+
+/**
+ * Per-agent delivery config (v2.5 Agent Transparency, §16.3).
+ *
+ * `visibleReplies` decides what becomes a room-visible assistant reply. It is
+ * intentionally separate from `activity` (presentation): "automatic" delivers
+ * the assistant's final text; "message_tool" suppresses it unless the model
+ * explicitly called the `message` tool. Approval UIs and activity messages
+ * still render regardless. Enforcement point is `execution-deliver.ts` (TURN-09,
+ * later phase); this plan defines the schema only.
+ */
+const VisibleRepliesSchema = z.strictObject({
+    /** DM default: assistant final text auto-delivers. */
+    direct: z.enum(["automatic", "message_tool"]).default("automatic"),
+    /** Group default: final text suppressed unless the `message` tool was called. */
+    group: z.enum(["automatic", "message_tool"]).default("message_tool"),
+  });
+
+export const DeliveryConfigSchema = z.strictObject({
+    visibleReplies: VisibleRepliesSchema.default(() => VisibleRepliesSchema.parse({})),
+  });
+
+export type ActivityConfig = z.infer<typeof ActivityConfigSchema>;
+export type DeliveryConfig = z.infer<typeof DeliveryConfigSchema>;
+
 /** Per-agent cron configuration (enabled defaults to true). */
 export const PerAgentCronConfigSchema = z.strictObject({
     /** Enable cron job scheduling for this agent */
@@ -282,8 +345,13 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   sep: SepConfigSchema.optional(),
   /** Proactive notification configuration (rate limits, primary channel, dedup) */
   notification: NotificationConfigSchema.optional(),
-  /** Channel-aware verbosity hints configuration */
+  /** Channel-aware response-style verbosity hints (KEPT unchanged — distinct
+   *  from `activity.verbosity`, which is the work-in-progress UI level). */
   verbosity: VerbosityConfigSchema.optional(),
+  /** Per-agent activity-presentation config (v2.5 Agent Transparency, §16.3). */
+  activity: ActivityConfigSchema.default(() => ActivityConfigSchema.parse({})),
+  /** Per-agent delivery config: final-assistant-reply visibility (§16.3). */
+  delivery: DeliveryConfigSchema.default(() => DeliveryConfigSchema.parse({})),
   /** Deferred tools configuration (deferral mode + force-load/force-defer lists) */
   deferredTools: DeferredToolsConfigSchema.optional(),
   /** Background tasks configuration (auto-promotion of long tool calls) */

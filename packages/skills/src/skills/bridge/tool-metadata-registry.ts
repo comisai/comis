@@ -19,8 +19,24 @@ import {
   getManagedSectionRedirect,
   formatRedirectHint,
 } from "@comis/core";
+import type { ErrorKind } from "@comis/core";
 import { validateExecCommand } from "../../tools/builtin/exec-security/index.js";
 import { GATEWAY_ACTIONS } from "../../platform-tools/tools/gateway-tool.js";
+
+/**
+ * Coerce an arbitrary tool result into a string for failure-signal matching.
+ * Pure and total: a string passes through; everything else is JSON-stringified
+ * inside a try/catch so a non-serializable (circular) value yields "" rather
+ * than throwing — failureDetector bodies MUST NOT throw (T-75-03-04).
+ */
+function resultToText(result: unknown): string {
+  if (typeof result === "string") return result;
+  try {
+    return JSON.stringify(result) ?? "";
+  } catch {
+    return "";
+  }
+}
 
 export function registerAllToolMetadata(): void {
   // =========================================================================
@@ -673,4 +689,50 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("slack_action",    { mcpExportPolicy: "never-export" });
   // Cost-bearing synthesis (1).
   registerToolMetadata("tts_synthesize", { mcpExportPolicy: "never-export" });
+
+  // =========================================================================
+  // Failure Detectors (UX-03, §16.10/§16.11)
+  //
+  // Pure, synchronous predicates consulted in pi-event-bridge.ts BEFORE the
+  // tool:executed emit, over the RAW result (the only site that sees it).
+  // They flag a logically-failed result the SDK reported as success
+  // (isError:false) — e.g. web_search/web_fetch returning a rate-limit or
+  // "blocked" payload with a 200. MUST NOT throw (resultToText guards
+  // JSON.stringify) and MUST return a canonical ErrorKind member
+  // (resource/timeout/dependency/…). The internal heuristic kinds used
+  // elsewhere in the bridge are NOT valid here — only the closed 10-member
+  // ErrorKind union. When isError is already set the SDK flagged it, so the detector
+  // defers (returns false — no double-flag). exec's non-zero exitCode is
+  // already handled upstream in the bridge, so there is no exec detector here.
+  // Spread-merge attaches these to the EXISTING web_search/web_fetch entries —
+  // the 51-tool unique count is unchanged.
+  // =========================================================================
+
+  registerToolMetadata("web_search", {
+    failureDetector: (result, isError) => {
+      if (isError) return false; // SDK already flagged it — defer.
+      const text = resultToText(result);
+      if (/rate limit|quota exceeded|too many requests/i.test(text)) {
+        return { errorKind: "resource" satisfies ErrorKind };
+      }
+      if (/blocked|forbidden|provider error/i.test(text)) {
+        return { errorKind: "dependency" satisfies ErrorKind };
+      }
+      return false;
+    },
+  });
+
+  registerToolMetadata("web_fetch", {
+    failureDetector: (result, isError) => {
+      if (isError) return false; // SDK already flagged it — defer.
+      const text = resultToText(result);
+      if (/timed out|timeout/i.test(text)) {
+        return { errorKind: "timeout" satisfies ErrorKind };
+      }
+      if (/blocked|403|forbidden|connection refused/i.test(text)) {
+        return { errorKind: "dependency" satisfies ErrorKind };
+      }
+      return false;
+    },
+  });
 }

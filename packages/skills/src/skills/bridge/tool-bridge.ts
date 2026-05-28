@@ -134,6 +134,12 @@ export interface ToolPipelineDeps {
   logger?: ToolBridgeLogger;
   /** Optional agent ID for audit event attribution. */
   agentId?: string;
+  /** Optional operator `$HOME` for SEC-02 `$HOME`→`~` compaction of audit-event
+   *  params (WR-05). Only consumed when `eventBus` is also supplied (the audit
+   *  wrap path). The production daemon emits tool events via PiEventBridge with
+   *  no eventBus here, so this is for non-daemon/test callers that opt into the
+   *  audit wrap. */
+  homeDir?: string;
   /** Optional credential injector for transparent API key injection. */
   credentialInjector?: CredentialInjector;
   /** Optional callback for suspicious content detection in external content. */
@@ -227,7 +233,7 @@ export async function assembleToolPipeline(
 
   // Audit wrap
   if (deps.eventBus) {
-    tools = tools.map((tool) => wrapWithAudit(tool, deps.eventBus!, deps.agentId));
+    tools = tools.map((tool) => wrapWithAudit(tool, deps.eventBus!, deps.agentId, deps.homeDir));
   }
 
   return tools;

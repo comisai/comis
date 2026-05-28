@@ -1,0 +1,9 @@
+{
+  "calls": [
+    { "op": "send", "id": "sig-msg-0", "text": "running tool" },
+    { "op": "delete", "id": "sig-msg-0" },
+    { "op": "send", "id": "sig-msg-1", "text": "tool failed" },
+    { "op": "delete", "id": "sig-msg-1" },
+    { "op": "send", "id": "sig-msg-2", "text": "❌ dependency" }
+  ]
+}

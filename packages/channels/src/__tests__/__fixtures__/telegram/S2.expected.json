@@ -1,0 +1,6 @@
+{
+  "calls": [
+    { "op": "send", "id": "tg-msg-0", "text": "running tool", "silent": true },
+    { "op": "delete", "id": "tg-msg-0" }
+  ]
+}

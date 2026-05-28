@@ -111,6 +111,7 @@ const VERB_FORMS: ReadonlySet<string> = new Set([
   "create","creates","created","creating",
   "emit","emits","emitted","emitting",
   "surface","surfaces","surfaced","surfacing",
+  "summarize","summarizes","summarized","summarizing",
   "decode","decodes","decoded","decoding",
   "preserve","preserves","preserved","preserving",
   "export","exports","exported","exporting",

@@ -155,6 +155,14 @@ function cleanTestArtifacts(): void {
   //    between runs (and the daemon's gitignore template un-ignores
   //    *.yaml, which makes *.last-good.yaml show as untracked in the
   //    outer repo via most-specific-gitignore-wins).
+  //
+  //    NOTE: test/config/.gitignore is a daemon ARTIFACT (written by
+  //    git-manager.ts initRepo from GITIGNORE_CONTENT), not a source
+  //    file — it is intentionally untracked and outer-ignored (see the
+  //    root .gitignore `test/config/.gitignore` entry). Do NOT re-add it
+  //    to git: a tracked copy turns this best-effort delete into a dirty
+  //    working tree on every cleanup, which is what caused the #129/#130
+  //    "accidentally deleted → restore" loop.
   for (const entry of [".git", ".gitignore"]) {
     try {
       rmSync(join(TEST_CONFIG_DIR, entry), { recursive: true, force: true });

@@ -13,7 +13,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static } from "typebox";
 import type { ApprovalGate } from "@comis/core";
-import { tryGetContext } from "@comis/core";
+import { tryGetContext, registerActivityLabelSpec } from "@comis/core";
 import {
   jsonResult,
   throwToolError,
@@ -21,6 +21,20 @@ import {
   createTrustGuard,
 } from "../tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";
+
+// Activity label spec (LBL-01, §17.6). Descriptor name == emitted name.
+// Per-action overrides use the tool's REAL action enum.
+registerActivityLabelSpec("memory_manage", {
+  semanticPhase: "memory",
+  label: "managing memory",
+  actions: {
+    stats: { label: "reading memory stats" },
+    browse: { label: "browsing memory" },
+    delete: { label: "deleting memory entries" },
+    flush: { label: "flushing memory" },
+    export: { label: "exporting memory" },
+  },
+});
 
 // ---------------------------------------------------------------------------
 // Parameter schema

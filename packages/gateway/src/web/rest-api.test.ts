@@ -27,6 +27,13 @@ function createMockRpcDeps(overrides?: Partial<RpcAdapterDeps>): RpcAdapterDeps 
     getConfig: vi.fn().mockResolvedValue({
       agents: [{ id: "default", provider: "anthropic" }],
     }),
+    listAgentSummaries: vi.fn().mockReturnValue([
+      { id: "default", name: "Comis", provider: "anthropic", model: "claude-sonnet-4-6" },
+    ]),
+    listChannelSummaries: vi.fn().mockReturnValue([
+      { name: "telegram", enabled: true },
+      { name: "discord", enabled: false },
+    ]),
     setConfig: vi.fn().mockResolvedValue({ ok: true }),
     logger: { info: vi.fn(), error: vi.fn() },
     ...overrides,
@@ -153,7 +160,7 @@ describe("createRestApi", () => {
   });
 
   describe("GET /agents", () => {
-    it("returns agent configuration from agent section", async () => {
+    it("returns non-secret agent summaries via listAgentSummaries", async () => {
       const deps = createApiDeps();
       const api = createRestApi(deps);
 
@@ -161,14 +168,30 @@ describe("createRestApi", () => {
       expect(res.status).toBe(200);
 
       const body = await res.json();
-      expect(body.agents).toBeDefined();
-      expect(deps.rpcAdapterDeps.getConfig).toHaveBeenCalledWith({ section: "agents" });
+      expect(body.agents).toEqual([
+        { id: "default", name: "Comis", provider: "anthropic", model: "claude-sonnet-4-6", status: "active" },
+      ]);
+      // WR-03: /agents MUST source from the dedicated non-secret projection,
+      // NOT getConfig (which no longer egresses the agents section).
+      expect(deps.rpcAdapterDeps.listAgentSummaries).toHaveBeenCalled();
+      expect(deps.rpcAdapterDeps.getConfig).not.toHaveBeenCalledWith({ section: "agents" });
+    });
+
+    it("reports suspended status for suspended agents", async () => {
+      const deps = createApiDeps({ suspendedAgents: new Set(["default"]) });
+      const api = createRestApi(deps);
+
+      const res = await api.request("/agents", { headers: authHeaders() });
+      const body = await res.json();
+      expect(body.agents[0].status).toBe("suspended");
     });
 
     it("returns 500 with generic error on adapter error", async () => {
       const deps = createApiDeps({
         rpcAdapterDeps: createMockRpcDeps({
-          getConfig: vi.fn().mockRejectedValue(new Error("Config unavailable")),
+          listAgentSummaries: vi.fn(() => {
+            throw new Error("Config unavailable");
+          }),
         }),
       });
       const api = createRestApi(deps);
@@ -183,13 +206,39 @@ describe("createRestApi", () => {
   });
 
   describe("GET /channels", () => {
-    it("returns channel status from channels section", async () => {
+    it("returns only enabled channels via listChannelSummaries", async () => {
       const deps = createApiDeps();
       const api = createRestApi(deps);
 
       const res = await api.request("/channels", { headers: authHeaders() });
       expect(res.status).toBe(200);
-      expect(deps.rpcAdapterDeps.getConfig).toHaveBeenCalledWith({ section: "channels" });
+
+      const body = await res.json();
+      // Only enabled channels surface (the mock's discord is disabled).
+      expect(body.channels).toEqual([
+        { type: "telegram", name: "telegram", enabled: true, status: "connected" },
+      ]);
+      // WR-03: /channels MUST source from the dedicated non-secret projection,
+      // NOT getConfig (which no longer egresses the channels section).
+      expect(deps.rpcAdapterDeps.listChannelSummaries).toHaveBeenCalled();
+      expect(deps.rpcAdapterDeps.getConfig).not.toHaveBeenCalledWith({ section: "channels" });
+    });
+
+    it("returns 500 with generic error on adapter error", async () => {
+      const deps = createApiDeps({
+        rpcAdapterDeps: createMockRpcDeps({
+          listChannelSummaries: vi.fn(() => {
+            throw new Error("Channels unavailable");
+          }),
+        }),
+      });
+      const api = createRestApi(deps);
+
+      const res = await api.request("/channels", { headers: authHeaders() });
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error).toBe("Internal error");
+      expect(JSON.stringify(body)).not.toContain("Channels unavailable");
     });
   });
 

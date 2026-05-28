@@ -210,6 +210,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "wrapInEnvelope",
       "formatElapsed",
       "PiExecutorDeps",
+      // createExecutionPlanHolder + ExecutionPlanHolder (Phase 74, workstream D,
+      // ACP-03) are NO LONGER orphans: 74-07 wired the composition root. The
+      // daemon's setup-acp-wiring.ts now imports createExecutionPlanHolder from
+      // @comis/agent (and the ExecutionPlanHolder type) to build the one shared
+      // holder threaded into both PiExecutorDeps.executionPlanHolder and the
+      // gateway's AcpServerDeps.executionPlanPort. Both entries removed here
+      // (the public-export-consumers gate now finds the real in-repo consumer).
       "clearSessionState",
       "CacheSafeParams",
       "cleanupServerFromAllTrackers",
@@ -578,6 +585,23 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "DiscordTextLikeChannel",
       "asThreadInfo",
       "DiscordThreadInfo",
+      // Activity-renderer surface re-exported in 71-05 so the daemon's
+      // buildActivityRenderers (setup-channels-activity-renderers.ts) can
+      // construct the EditPlace renderers from the @comis/channels barrel.
+      // The four per-channel factories (createTelegramActivityRenderer,
+      // createDiscordActivityRenderer, createSlackActivityRenderer,
+      // createWhatsAppActivityRenderer) HAVE that in-repo consumer and are
+      // NOT listed. createEchoActivityRenderer is the Echo→TestSink wrapper
+      // (the daemon constructs createTestSink() directly, so the Echo factory
+      // has no production consumer yet — its consumer arrives with the Echo
+      // activity-renderer wiring). createEditPlaceRenderer + EditPlaceDeps are
+      // wrapped INTERNALLY by the four per-channel factories, so the daemon
+      // never imports them by name; they are public-surface for embedders +
+      // the per-channel factory implementations. Shrink each as a real
+      // cross-package consumer lands.
+      "createEchoActivityRenderer",
+      "createEditPlaceRenderer",
+      "EditPlaceDeps",
     ])],
     // @comis/cli: 3 documented external-API entries (withClient,
     // credentialsStep, RpcClient). All register*Command factories and
@@ -593,6 +617,68 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // @comis/core: baseline orphans tracked here. See inline comments
     // throughout this set for per-entry rationale.
     ["@comis/core", new Set<string>([
+      // ── v2.5 Agent Transparency (Phase 73 — interactive approvals) ──
+      // ParsedCallback is the documented return shape of the public
+      // parseCallbackData (73-01). The orchestrator router consumes the
+      // function, not the type name (it destructures the value), so the type
+      // has no production import. It is part of the signing API surface external
+      // consumers of parseCallbackData rely on; tracked here.
+      "ParsedCallback",
+      // ── v2.5 Agent Transparency (Phase 70 foundation) ──────────────
+      // Activity + redaction public surface shipped in the @comis/core
+      // barrel per ACT-12 (foundation phase). Consumers land in Phases
+      // 71-76: channel renderers wire chatProjection/acpProjection/
+      // coalesce/ActivityStrategy; the ACP bridge consumes acpProjection;
+      // label specs register via registerActivityLabelSpec; the redaction
+      // types/limits feed emit sites. redactValue itself already has
+      // cross-package consumers (template-engine + emit sites) so it is
+      // NOT listed here. Shrink each entry as it gains a real consumer.
+      "ActivityEventSchema",
+      "RedactedParamValueSchema",
+      "RedactedParamsSchema",
+      "ActivityParseError",
+      "ActivityVerbosity",
+      "isNonEmptyEvents",
+      "ApprovalChoice",
+      "ApprovalChoiceSchema",
+      "ApprovalCorrelation",
+      "ApprovalCorrelationSchema",
+      "TemplateOutput",
+      "TemplateError",
+      "SemanticPhase",
+      "classifySemanticPhase",
+      "LabelSpec",
+      "ActionLabelSpec",
+      "RegisteredLabelSpec",
+      "ResolveLabelOptions",
+      "registerActivityLabelSpec",
+      // hasRegisteredLabelSpec (Phase 76, LBL-03): the explicit-registration
+      // introspection primitive the transparency coverage gate
+      // (packages/skills/src/__tests__/transparency-label-coverage.test.ts)
+      // calls. resolveLabelSpec is total (always returns a humanized fallback)
+      // so it cannot gate; the gate must ask "was a spec explicitly
+      // registered?". The sole consumer is that __tests__ gate (excluded from
+      // the consumer scan), so the public primitive has no in-repo production
+      // import yet — tracked here. Shrink when a production caller lands.
+      "hasRegisteredLabelSpec",
+      // ThemeName (Phase 75, UX-01): the activity-theme name union shipped on
+      // the @comis/core barrel for the four bundled themes. Channel renderers
+      // pass a theme through resolveLabelSpec options; the type name itself has
+      // no in-repo value consumer yet — tracked here.
+      "ThemeName",
+      "chatProjection",
+      "acpProjection",
+      "coalesce",
+      "CoalesceResult",
+      "CHAT_COALESCE_RULES",
+      "ActivityStrategy",
+      "ReadonlyPlanStep",
+      "REDACT_LIMITS",
+      "RedactLimits",
+      "RedactOptions",
+      "RedactedValue",
+      "RedactionRecord",
+      // ───────────────────────────────────────────────────────────────
       "AttachmentSchema",
       "NormalizedMessageSchema",
       "parseMessage",
@@ -1564,8 +1650,42 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PENDING_FLOW_TIMEOUT_MS",
       "OAuthCallbackDeps",
       "PendingFlow",
+      // Email approval-token route (73-10). createApprovalTokenRoute +
+      // insertPendingApprovalToken + PendingApprovalToken + ApprovalLinkChoice are
+      // consumed by the daemon composition root (setup-interactive-callback.ts +
+      // setup-gateway-routes.ts). APPROVAL_TOKEN_TIMEOUT_MS is exported for test
+      // parity (mirrors PENDING_FLOW_TIMEOUT_MS) and ApprovalTokenDeps is the
+      // route's deps shape (the daemon constructs it inline) — both tracked here.
+      "APPROVAL_TOKEN_TIMEOUT_MS",
+      "ApprovalTokenDeps",
+      // AcpServerDeps is NO LONGER an orphan: 74-07's daemon setup-acp-wiring.ts
+      // imports the AcpServerDeps type from @comis/gateway to assemble the ACP
+      // server deps (executionPlanPort + eventBus + activityStreamPort) — removed.
+      // createAcpAgent + startAcpServer remain baseline orphans: 74-07 wired the
+      // bridges + the executionPlanPort seam INSIDE startAcpServer and re-exported
+      // startAcpServer from the package index (IN-02), but no daemon/CLI site yet
+      // INVOKES startAcpServer (spawning the ACP subprocess entry point is a
+      // separate concern, out of ACP-01..05). They light up when that caller lands.
       "createAcpAgent",
-      "AcpServerDeps",
+      "startAcpServer",
+      // ACP activity/plan/approval bridges + the local bounded queue (Phase 74,
+      // workstream D). After 74-07 these are CONSTRUCTED in-repo —
+      // createAcpPlanBridge + createAcpActivityBridge + createAcpApprovalBridge in
+      // acp-server.ts (startAcpServer / createAcpAgent), createAcpBoundedQueue in
+      // acp-activity-bridge.ts — but ALL via RELATIVE (intra-gateway) imports. The
+      // public-export-consumers walker only counts cross-package `@comis/gateway`
+      // imports, so the barrel re-exports stay tracked orphans until a consumer
+      // outside the gateway package imports them by bare-package name. AcpAgentHandle
+      // + the three deps types are likewise referenced only intra-gateway. Shrink
+      // each entry when a cross-package `@comis/gateway` consumer lands.
+      "AcpAgentHandle",
+      "createAcpActivityBridge",
+      "createAcpPlanBridge",
+      "createAcpApprovalBridge",
+      "createAcpBoundedQueue",
+      "CreateAcpActivityBridgeDeps",
+      "CreateAcpPlanBridgeDeps",
+      "CreateAcpApprovalBridgeDeps",
       "createMdnsAdvertiser",
       "validateCertificates",
       "extractClientCN",

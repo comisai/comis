@@ -5,6 +5,7 @@ import type { TTLCache } from "@comis/shared";
 import type { TypedEventBus } from "../event-bus/bus.js";
 import type { ApprovalRequest, ApprovalResolution, SerializedApprovalRequest, SerializedApprovalCacheEntry } from "../domain/approval-request.js";
 import type { ClockPort, TimerPort, TimerHandle } from "../ports/index.js";
+import { mintApprovalShortId } from "./approval-short-id.js";
 
 /**
  * Dependencies for the approval gate factory.
@@ -38,7 +39,7 @@ export interface ApprovalGateDeps {
 export interface ApprovalGate {
   /** Submit a request for approval. Returns a promise that resolves when approved/denied/timed-out. */
   requestApproval(
-    req: Omit<ApprovalRequest, "requestId" | "createdAt" | "timeoutMs"> & { channelType?: string },
+    req: Omit<ApprovalRequest, "requestId" | "shortId" | "createdAt" | "timeoutMs"> & { channelType?: string },
   ): Promise<ApprovalResolution>;
 
   /** Resolve (approve or deny) a pending request. */
@@ -54,6 +55,17 @@ export interface ApprovalGate {
 
   /** Get a single pending request by ID, or undefined. */
   getRequest(requestId: string): ApprovalRequest | undefined;
+
+  /**
+   * Resolve a minted `shortId` to its pending request, or undefined (APV-04).
+   * Returns undefined once the request is resolved/disposed — the removal is the
+   * router's replay guard. The orchestrator's InteractiveCallbackRouter is the sole
+   * consumer; channels never call the gate.
+   */
+  getRequestByShortId(shortId: string): ApprovalRequest | undefined;
+
+  /** Get all pending requests whose `sessionKey` matches (the plain-text router branch — APV-04). */
+  pendingForSession(sessionKey: string): ApprovalRequest[];
 
   /** Clear denial cache entries. If sessionKey is provided, clears entries for that session only. If omitted, clears all entries. */
   clearDenialCache(sessionKey?: string): void;
@@ -99,6 +111,15 @@ interface PendingEntry {
  */
 export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
   const pendingMap = new Map<string, PendingEntry>();
+
+  /**
+   * Secondary index: minted `shortId → requestId`. Lets the InteractiveCallbackRouter
+   * resolve an attacker-supplied shortId to a server-side requestId/sessionKey (APV-04).
+   * INVARIANT (Pitfall 4 / T-73-05): mutated symmetrically with `pendingMap` at EVERY
+   * set/delete/clear site — a stale entry would defeat replay rejection, since the
+   * pending-table removal IS the router's replay guard.
+   */
+  const shortIdIndex = new Map<string, string>();
 
   /** Denial cache: keyed by `${sessionKey}::${action}`, stores cached denial resolutions. TTL managed by createTTLCache. */
   const denialCache: TTLCache<ApprovalResolution> = createTTLCache<ApprovalResolution>({
@@ -191,12 +212,15 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       batchFollowers.delete(batchKey);
     }
 
-    // Remove from pending map.
+    // Remove from pending map AND the secondary index atomically (Pitfall 4 / T-73-05).
+    // Covers the explicit approve/deny path AND the timeout path (the timer calls
+    // resolveApproval), so this single site keeps shortIdIndex free of stale entries.
     pendingMap.delete(requestId);
+    shortIdIndex.delete(entry.request.shortId);
   }
 
   function requestApproval(
-    req: Omit<ApprovalRequest, "requestId" | "createdAt" | "timeoutMs"> & { channelType?: string },
+    req: Omit<ApprovalRequest, "requestId" | "shortId" | "createdAt" | "timeoutMs"> & { channelType?: string },
   ): Promise<ApprovalResolution> {
     const cacheKey = `${req.sessionKey}::${req.action}`;
 
@@ -252,11 +276,15 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     }
 
     const requestId = randomUUID();
+    // Mint the callback-safe short id (§6.4.1). The gate is the sole minter;
+    // callers never supply it (it is Omit-ted from the requestApproval input).
+    const shortId = mintApprovalShortId();
     const timeoutMs = deps.getTimeoutMs();
     const createdAt = deps.clock.now();
 
     const request: ApprovalRequest = {
       requestId,
+      shortId,
       toolName: req.toolName,
       action: req.action,
       params: { ...req.params },
@@ -277,11 +305,14 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       timer.unref();
 
       pendingMap.set(requestId, { request, resolve, timer });
+      // Populate the secondary index with the freshly minted shortId (APV-04).
+      shortIdIndex.set(shortId, requestId);
     });
 
     // Emit request event with shallow-cloned params to prevent mutation.
     deps.eventBus.emit("approval:requested", {
       requestId,
+      shortId: request.shortId,
       toolName: request.toolName,
       action: request.action,
       params: { ...request.params },
@@ -302,6 +333,17 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
 
   function getRequest(requestId: string): ApprovalRequest | undefined {
     return pendingMap.get(requestId)?.request;
+  }
+
+  function getRequestByShortId(shortId: string): ApprovalRequest | undefined {
+    const requestId = shortIdIndex.get(shortId);
+    return requestId === undefined ? undefined : pendingMap.get(requestId)?.request;
+  }
+
+  function pendingForSession(sessionKey: string): ApprovalRequest[] {
+    return Array.from(pendingMap.values())
+      .map((e) => e.request)
+      .filter((r) => r.sessionKey === sessionKey);
   }
 
   function clearDenialCache(sessionKey?: string): void {
@@ -342,6 +384,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       });
     }
     pendingMap.clear();
+    shortIdIndex.clear();
     denialCache.clear();
     approvalCache.clear();
     batchFollowers.clear();
@@ -350,6 +393,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
   function serializePending(): SerializedApprovalRequest[] {
     return Array.from(pendingMap.values()).map((e) => ({
       requestId: e.request.requestId,
+      shortId: e.request.shortId,
       toolName: e.request.toolName,
       action: e.request.action,
       params: { ...e.request.params },
@@ -397,6 +441,7 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       const remainingMs = record.timeoutMs - elapsed;
       const request: ApprovalRequest = {
         requestId: record.requestId,
+        shortId: record.shortId,
         toolName: record.toolName,
         action: record.action,
         params: { ...record.params },
@@ -420,10 +465,16 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
       // Use a no-op resolve for the restored entry; the original caller's promise
       // is gone after restart. resolveApproval() will still emit events.
       pendingMap.set(record.requestId, { request, resolve: () => {}, timer });
+      // Restore the secondary index too, or restored approvals are unreachable via
+      // getRequestByShortId — the persisted shortId is re-used so callback identity
+      // survives the restart (70-12 invariant).
+      shortIdIndex.set(record.shortId, record.requestId);
 
-      // Emit approval:requested so channel adapters can re-render the approval prompt
+      // Emit approval:requested so channel adapters can re-render the approval prompt.
+      // The persisted shortId is re-used so callback identity survives the restart.
       deps.eventBus.emit("approval:requested", {
         requestId: request.requestId,
+        shortId: request.shortId,
         toolName: request.toolName,
         action: request.action,
         params: { ...request.params },
@@ -444,6 +495,8 @@ export function createApprovalGate(deps: ApprovalGateDeps): ApprovalGate {
     resolveApproval,
     pending,
     getRequest,
+    getRequestByShortId,
+    pendingForSession,
     clearDenialCache,
     clearApprovalCache,
     serializePending,

@@ -24,6 +24,10 @@ const EMAIL_CAPABILITIES: ChannelCapability = {
     deleteMessages: false,
     fetchHistory: false,
     attachments: true,
+    // §17.2: Email DigestOnly — no typing, no threads, no buttons.
+    typing: false,
+    threads: false,
+    buttons: "none",
   },
   limits: {
     maxMessageChars: 100_000,

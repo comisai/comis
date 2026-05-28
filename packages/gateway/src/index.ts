@@ -56,6 +56,18 @@ export type {
 // Web -- media routes
 export { createMediaRoutes } from "./web/index.js";
 
+// Web -- email approval-token route (single-use, 5-min, revoke-on-first-touch)
+export {
+  createApprovalTokenRoute,
+  insertPendingApprovalToken,
+  APPROVAL_TOKEN_TIMEOUT_MS,
+} from "./web/index.js";
+export type {
+  ApprovalTokenDeps,
+  PendingApprovalToken,
+  ApprovalLinkChoice,
+} from "./web/index.js";
+
 // OpenAI compatibility endpoints
 export { createOpenaiCompletionsRoute } from "./openai/index.js";
 export { createOpenaiModelsRoute } from "./openai/index.js";
@@ -65,8 +77,23 @@ export { createOpenaiEmbeddingsRoute } from "./openai/index.js";
 export { createResponsesRoute } from "./responses/index.js";
 
 // ACP server for IDE integration
-export { createAcpAgent } from "./acp/index.js";
-export type { AcpServerDeps } from "./acp/index.js";
+export { createAcpAgent, startAcpServer } from "./acp/index.js";
+export type { AcpServerDeps, AcpAgentHandle } from "./acp/index.js";
+
+// ACP activity/plan/approval bridges + local queue — the daemon composition
+// root constructs these per ACP session (createAcpAgent's AcpAgentHandle
+// provides getConnection; the holder from @comis/agent is the ExecutionPlanPort).
+export {
+  createAcpActivityBridge,
+  createAcpPlanBridge,
+  createAcpApprovalBridge,
+  createAcpBoundedQueue,
+} from "./acp/index.js";
+export type {
+  CreateAcpActivityBridgeDeps,
+  CreateAcpPlanBridgeDeps,
+  CreateAcpApprovalBridgeDeps,
+} from "./acp/index.js";
 
 // mDNS/Bonjour service discovery
 export { createMdnsAdvertiser } from "./discovery/index.js";

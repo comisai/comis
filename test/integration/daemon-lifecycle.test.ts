@@ -123,6 +123,11 @@ describe("Daemon Lifecycle", () => {
         // but cannot run it because unprivileged user-namespace cloning is
         // restricted at the kernel level — informational on test runners)
         if (msg.includes("bwrap installed but smoke test failed")) return false;
+        // Exclude OAuth hot-reload notice (oauth.storage defaults to
+        // "encrypted"; the daemon emits a one-shot operator notice that
+        // hot-reload is unsupported on encrypted SQLite WAL — fires
+        // whenever the test config omits the oauth block).
+        if (msg.includes("OAuth hot-reload disabled in encrypted-store mode")) return false;
         return true;
       });
 

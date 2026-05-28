@@ -135,7 +135,10 @@ export async function sendMessage(
       },
       "Send message failed",
     );
-    return err(new Error(`Failed to send message: ${sendErr.message}`));
+    // Preserve the typed GrammyError (error_code/parameters) as `cause` so an
+    // activity render-actions adapter can classify it STRUCTURALLY (CHAN-02) —
+    // it must never parse this generic message string.
+    return err(new Error(`Failed to send message: ${sendErr.message}`, { cause: error }));
   }
 }
 
@@ -174,7 +177,9 @@ export async function editMessage(
     return ok(undefined);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return err(new Error(`Failed to edit message: ${message}`));
+    // Preserve the typed GrammyError as `cause` for structural classification
+    // (CHAN-02: 429 → rate_limited, message-not-found → not_supported).
+    return err(new Error(`Failed to edit message: ${message}`, { cause: error }));
   }
 }
 
@@ -227,7 +232,8 @@ export async function deleteMessage(
     return ok(undefined);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return err(new Error(`Failed to delete message: ${message}`));
+    // Preserve the typed GrammyError as `cause` for structural classification.
+    return err(new Error(`Failed to delete message: ${message}`, { cause: error }));
   }
 }
 

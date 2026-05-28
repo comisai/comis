@@ -23,6 +23,10 @@ const CAPABILITIES: ChannelCapability = {
     deleteMessages: false,
     fetchHistory: true,
     attachments: true,
+    // §17.2: iMessage AppendOnly — no typing, no threads, no buttons.
+    typing: false,
+    threads: false,
+    buttons: "none",
   },
   limits: {
     maxMessageChars: 20000,

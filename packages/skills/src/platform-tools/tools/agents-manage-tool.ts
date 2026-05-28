@@ -13,9 +13,26 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import type { ApprovalGate, ComisLogger } from "@comis/core";
+import { registerActivityLabelSpec } from "@comis/core";
 import { readStringParam } from "../tool-helpers.js";
 import { createAdminManageTool } from "../admin-manage-factory.js";
 import type { RpcCall } from "./cron-tool.js";
+
+// Activity label spec (LBL-01, §17.6). Descriptor name == emitted name.
+// Per-action overrides use the tool's REAL action enum.
+registerActivityLabelSpec("agents_manage", {
+  semanticPhase: "tool",
+  label: "managing agents",
+  actions: {
+    create: { label: "creating agent" },
+    get: { label: "reading agent config" },
+    update: { label: "updating agent" },
+    delete: { label: "deleting agent" },
+    suspend: { label: "suspending agent" },
+    resume: { label: "resuming agent" },
+    list: { label: "listing agents" },
+  },
+});
 
 // ---------------------------------------------------------------------------
 // Parameter schema

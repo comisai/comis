@@ -46,11 +46,16 @@ describe("CLI Agent Integration (real daemon)", () => {
 
   describe("RPC Connectivity", () => {
     it("connects to daemon and receives a valid JSON-RPC response", async () => {
+      // WR-03: config.get({section:"routing"}) returns only the safe default and
+      // does not egress the routing section.
       const response = (await sendJsonRpc(ws, "config.get", { section: "routing" }, 1, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
       expect(response).toHaveProperty("jsonrpc", "2.0");
       expect(response).toHaveProperty("result");
       expect(response).not.toHaveProperty("error");
+
+      const result = response.result as Record<string, unknown>;
+      expect(result.routing).toBeUndefined();
     });
 
     it("handles unknown RPC method with JSON-RPC error", async () => {
@@ -68,16 +73,23 @@ describe("CLI Agent Integration (real daemon)", () => {
   // -------------------------------------------------------------------------
 
   describe("Agent List", () => {
-    it("returns routing config from config.get routing section", async () => {
+    it("config.get does not egress the routing section (WR-03)", async () => {
+      // WR-03: config.get({section:"routing"}) returns only the safe default
+      // { tenantId, logLevel, gateway } and omits the routing section.
       const response = (await sendJsonRpc(ws, "config.get", { section: "routing" }, 3, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
       expect(response).toHaveProperty("result");
       expect(response).not.toHaveProperty("error");
       expect(typeof response.result).toBe("object");
+
+      const result = response.result as Record<string, unknown>;
+      expect(result.routing).toBeUndefined();
     });
 
-    it("returns agent configuration from config.get agents section", async () => {
-      const response = (await sendJsonRpc(ws, "config.get", { section: "agents" }, 4, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
+    it("returns agent configuration from agents.get", async () => {
+      // WR-03: agent config is read via agents.get rather than
+      // config.get({section:"agents"}), which no longer egresses agent configs.
+      const response = (await sendJsonRpc(ws, "agents.get", { agentId: "default" }, 4, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
       expect(response).toHaveProperty("result");
       expect(response).not.toHaveProperty("error");
@@ -85,9 +97,8 @@ describe("CLI Agent Integration (real daemon)", () => {
 
       // The test config has a default agent named "TestAgent"
       const result = response.result as Record<string, unknown>;
-      const agents = result.agents as Record<string, unknown>;
-      expect(agents).toHaveProperty("default");
-      const defaultAgent = agents.default as Record<string, unknown>;
+      expect(result.agentId).toBe("default");
+      const defaultAgent = result.config as Record<string, unknown>;
       expect(defaultAgent.name).toBe("TestAgent");
     });
 
@@ -135,16 +146,17 @@ describe("CLI Agent Integration (real daemon)", () => {
       expect(hasResult || hasError).toBe(true);
     });
 
-    it("verifies config.get returns pre-existing agent data after set call", async () => {
-      const response = (await sendJsonRpc(ws, "config.get", { section: "agents" }, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
+    it("verifies agents.list returns pre-existing agent data after set call", async () => {
+      // WR-03: agent data is read back via agents.list rather than
+      // config.get({section:"agents"}), which no longer egresses agent configs.
+      const response = (await sendJsonRpc(ws, "agents.list", {}, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
       expect(response).toHaveProperty("result");
       expect(response).not.toHaveProperty("error");
 
       // Verify the pre-configured default agent still exists
-      const result = response.result as Record<string, unknown>;
-      const agents = result.agents as Record<string, unknown>;
-      expect(agents).toHaveProperty("default");
+      const result = response.result as { agents: string[] };
+      expect(result.agents).toContain("default");
     });
 
     it("sends update agent via config.patch with updated model", async () => {
@@ -163,17 +175,18 @@ describe("CLI Agent Integration (real daemon)", () => {
       expect(hasResult || hasError).toBe(true);
     });
 
-    it("verifies config.get still returns consistent agent data after update", async () => {
-      const response = (await sendJsonRpc(ws, "config.get", { section: "agents" }, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
+    it("verifies agents.get still returns consistent agent data after update", async () => {
+      // WR-03: agent data is read back via agents.get rather than
+      // config.get({section:"agents"}), which no longer egresses agent configs.
+      const response = (await sendJsonRpc(ws, "agents.get", { agentId: "default" }, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
       expect(response).toHaveProperty("result");
       expect(response).not.toHaveProperty("error");
 
       // Verify the agent config structure is still intact
       const result = response.result as Record<string, unknown>;
-      expect(result).toHaveProperty("agents");
-      const agents = result.agents as Record<string, unknown>;
-      const defaultAgent = agents.default as Record<string, unknown>;
+      expect(result.agentId).toBe("default");
+      const defaultAgent = result.config as Record<string, unknown>;
       expect(defaultAgent).toHaveProperty("name", "TestAgent");
       expect(defaultAgent).toHaveProperty("model");
     });
@@ -190,15 +203,18 @@ describe("CLI Agent Integration (real daemon)", () => {
       expect(hasResult || hasError).toBe(true);
     });
 
-    it("verifies config.get returns valid response after delete call", async () => {
-      const response = (await sendJsonRpc(ws, "config.get", { section: "agents" }, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
+    it("verifies agents.list no longer contains the deleted agent", async () => {
+      // WR-03: agent data is read back via agents.list rather than
+      // config.get({section:"agents"}), which no longer egresses agent configs.
+      const response = (await sendJsonRpc(ws, "agents.list", {}, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
       expect(response).toHaveProperty("result");
       expect(response).not.toHaveProperty("error");
 
-      // Config structure remains valid after delete round-trip
-      const result = response.result as Record<string, unknown>;
-      expect(result).toHaveProperty("agents");
+      // The deleted agent is gone; the pre-configured default remains.
+      const result = response.result as { agents: string[] };
+      expect(result.agents).not.toContain(TEST_AGENT);
+      expect(result.agents).toContain("default");
     });
   });
 });

@@ -24,6 +24,10 @@ const CAPABILITIES: ChannelCapability = {
     deleteMessages: false,
     fetchHistory: false,
     attachments: false,
+    // §17.2: IRC LinePerEvent — text-only; no typing, no threads, no buttons.
+    typing: false,
+    threads: false,
+    buttons: "none",
   },
   limits: {
     maxMessageChars: 512,

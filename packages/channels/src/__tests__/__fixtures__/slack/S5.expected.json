@@ -1,0 +1,9 @@
+{
+  "calls": [
+    { "op": "send", "id": "sl-msg-0", "text": "attempt 1", "silent": false },
+    { "op": "edit", "id": "sl-msg-0", "text": "attempt 1 failed" },
+    { "op": "edit", "id": "sl-msg-0", "text": "attempt 2 ok" },
+    { "op": "edit", "id": "sl-msg-0", "text": "✓ done" },
+    { "op": "delete", "id": "sl-msg-0" }
+  ]
+}

@@ -36,6 +36,7 @@ export type GateDeps = Pick<
   | "commandQueue"
   | "getResetTriggers"
   | "approvalGate"
+  | "interactiveCallbackRouter"
   | "handleConfigCommand"
   | "handleSlashCommand"
   | "activeRunRegistry"
@@ -186,6 +187,66 @@ export async function evaluateInboundGate(
       );
       return { action: "skip" };
     }
+  }
+
+  // -------------------------------------------------------------------
+  // BUTTON-CALLBACK INTERCEPT (APV-05 inbound wiring)
+  // -------------------------------------------------------------------
+  // A platform button tap arrives as a NormalizedMessage carrying
+  // metadata.isButtonCallback + metadata.callbackData (Telegram callback_query /
+  // Slack block_actions). It MUST be intercepted and forwarded to the
+  // InteractiveCallbackRouter (the verifier) BEFORE any slash-command parsing —
+  // a signed payload must never also be parsed as a chat command, and the
+  // ApprovalGate is never called directly from this inbound path (the router
+  // performs lookup-first + sessionKey-match + HMAC verify; 73-04). The
+  // orchestrator derives the trusted sessionKey here and forwards only the raw
+  // payload; the wire never carries requestId/sessionKey.
+  if (
+    msg.metadata?.isButtonCallback === true &&
+    typeof msg.metadata.callbackData === "string" &&
+    deps.interactiveCallbackRouter
+  ) {
+    const routed = await deps.interactiveCallbackRouter.route({
+      channelType: adapter.channelType,
+      channelKey: msg.channelId,
+      agentId,
+      sessionKey: formatSessionKey(sessionKey),
+      rawData: msg.metadata.callbackData,
+      inboundUserId: msg.senderId,
+    });
+    // route() is infallible at the Result level (never errors); guard anyway.
+    const resolution = routed.ok ? routed.value : { kind: "unknown" as const };
+    switch (resolution.kind) {
+      case "resolved":
+      case "details_requested":
+        // The router already drove the resolution (resolveApproval) and the
+        // resolution reactor will edit the original prompt — surface no extra
+        // chat line here (§6.4.4) to avoid double feedback.
+        break;
+      case "malformed":
+      case "invalid_signature":
+      case "expired":
+      case "unknown":
+        // A forged/expired/stale/replayed button. Surface a single concise
+        // "no longer valid" line (no UI mutation on replay). Never echo the
+        // payload, the kind detail, or any id.
+        await deps.deliveryService.deliverToChannel(
+          adapter, msg.channelId,
+          "This approval is no longer valid (it may have already been resolved or expired).",
+          { skipChunking: true },
+        );
+        break;
+      case "ambiguous":
+        // A button payload is always shortId-specific, so `ambiguous` is not
+        // expected here; treat it as a no-longer-valid signal rather than crash.
+        await deps.deliveryService.deliverToChannel(
+          adapter, msg.channelId,
+          "This approval is no longer valid (it may have already been resolved or expired).",
+          { skipChunking: true },
+        );
+        break;
+    }
+    return { action: "handled" }; // Do NOT fall through to slash handling.
   }
 
   // -------------------------------------------------------------------
@@ -405,12 +466,12 @@ async function handleApprovalCommand(
       const verb = isApprove ? "Approved" : "Denied";
       await deps.deliveryService.deliverToChannel(
         adapter, msg.channelId,
-        `${verb}: ${matches[0].toolName ?? matches[0].action} (${matches[0].requestId.slice(0, 8)})`,
+        `${verb}: ${matches[0].toolName ?? matches[0].action} (${matches[0].shortId})`,
         { skipChunking: true },
       );
     } else {
       const lines = matches.map(
-        (r) => `  ${r.requestId.slice(0, 8)} - ${r.toolName ?? r.action}`,
+        (r) => `  ${r.shortId} - ${r.toolName ?? r.action}`,
       );
       const cmd = isApprove ? "/approve" : "/deny";
       await deps.deliveryService.deliverToChannel(
@@ -428,10 +489,13 @@ async function handleApprovalCommand(
 
   if (approveMatch || denyMatch) {
     const isApprove = !!approveMatch;
-    const arg = (approveMatch?.[1] ?? denyMatch?.[1] ?? "").trim().toLowerCase();
+    // Preserve the argument's case: a shortId is a 12-char base62 token that
+    // distinguishes case, so it must be matched case-sensitively. Only the
+    // `all` keyword test is case-insensitive (lower-cased separately below).
+    const arg = (approveMatch?.[1] ?? denyMatch?.[1] ?? "").trim();
     const approvedBy = `chat:${msg.senderId}`;
 
-    if (arg === "all") {
+    if (arg.toLowerCase() === "all") {
       // Batch: resolve all pending approvals matching this session
       const formattedKey = formatSessionKey(sessionKey);
       const pending = gate.pending();
@@ -451,33 +515,25 @@ async function handleApprovalCommand(
         );
       }
     } else {
-      // Single: resolve by request ID prefix match.
-      // Use filter+length check instead of first-match lookup — when the
-      // prefix is short and two pending requests share it, the operator
-      // must NOT silently get the first match. Warn and bail; the
-      // operator can re-issue with a longer prefix.
+      // Single: resolve by EXACT 12-char shortId (APV-09). The full requestId
+      // and its prefix never reach the channel, so the chat path no longer
+      // accepts a requestId prefix — only the shortId shown in the prompt. The
+      // shortId is unique, so an exact match yields at most one request.
       const pending = gate.pending();
-      const matches = pending.filter((r) => r.requestId.startsWith(arg));
+      const match = pending.find((r) => r.shortId === arg);
 
-      if (matches.length === 0) {
+      if (match === undefined) {
         await deps.deliveryService.deliverToChannel(
           adapter, msg.channelId,
           `No pending approval found for ID: ${arg} (may have already been resolved or timed out).`,
           { skipChunking: true },
         );
-      } else if (matches.length > 1) {
-        await deps.deliveryService.deliverToChannel(
-          adapter, msg.channelId,
-          `Ambiguous prefix "${arg}" matches ${matches.length} pending approvals. Use a longer prefix.`,
-          { skipChunking: true },
-        );
       } else {
-        const match = matches[0]!;
         gate.resolveApproval(match.requestId, isApprove, approvedBy);
         const verb = isApprove ? "Approved" : "Denied";
         await deps.deliveryService.deliverToChannel(
           adapter, msg.channelId,
-          `${verb}: ${match.toolName ?? match.action} (${match.requestId.slice(0, 8)})`,
+          `${verb}: ${match.toolName ?? match.action} (${match.shortId})`,
           { skipChunking: true },
         );
       }

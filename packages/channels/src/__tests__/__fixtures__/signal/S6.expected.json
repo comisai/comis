@@ -1,0 +1,8 @@
+{
+  "calls": [
+    { "op": "send", "id": "sig-msg-0", "text": "planning" },
+    { "op": "delete", "id": "sig-msg-0" },
+    { "op": "send", "id": "sig-msg-1", "text": "executing" },
+    { "op": "delete", "id": "sig-msg-1" }
+  ]
+}

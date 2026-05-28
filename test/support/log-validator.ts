@@ -110,6 +110,12 @@ const KNOWN_ACCEPTABLE: LogPattern[] = [
   // warns and falls back to a non-sandboxed exec mode — informational on the
   // test runner, not a regression.
   { level: "warn", msg: /bwrap installed but smoke test failed/ },
+
+  // oauth.storage defaults to "encrypted" (production default per
+  // packages/core/src/config/schema-oauth.ts). The daemon emits a one-shot
+  // operator notice that hot-reload is unsupported on encrypted SQLite WAL
+  // — informational, fires whenever a test config omits the oauth block.
+  { level: "warn", msg: /OAuth hot-reload disabled in encrypted-store mode/ },
 ];
 
 // ---------------------------------------------------------------------------

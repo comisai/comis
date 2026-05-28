@@ -1,0 +1,158 @@
+{
+  "frames": [
+    {
+      "frameSeq": 0,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000001",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "progress",
+          "status": "running",
+          "kind": "tool",
+          "semanticPhase": "tool",
+          "defaultLabel": "step 1"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    },
+    {
+      "frameSeq": 1,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000002",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "progress",
+          "status": "running",
+          "kind": "tool",
+          "semanticPhase": "tool",
+          "defaultLabel": "step 2"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    },
+    {
+      "frameSeq": 2,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000003",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "progress",
+          "status": "running",
+          "kind": "tool",
+          "semanticPhase": "tool",
+          "defaultLabel": "step 3"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    },
+    {
+      "frameSeq": 3,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000004",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "progress",
+          "status": "running",
+          "kind": "tool",
+          "semanticPhase": "tool",
+          "defaultLabel": "step 4"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    },
+    {
+      "frameSeq": 4,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000005",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "progress",
+          "status": "running",
+          "kind": "tool",
+          "semanticPhase": "tool",
+          "defaultLabel": "step 5"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    },
+    {
+      "frameSeq": 5,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000006",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "progress",
+          "status": "running",
+          "kind": "tool",
+          "semanticPhase": "tool",
+          "defaultLabel": "step 6"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    }
+  ],
+  "outcome": {
+    "kind": "success",
+    "trivial": false,
+    "delivery": {
+      "ok": true,
+      "deliveredChunks": 1,
+      "lastChunkMessageId": "msg-final",
+      "deliveredAtMs": 5000
+    }
+  }
+}

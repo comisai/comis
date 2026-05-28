@@ -95,47 +95,34 @@ describe("SecretManager Daemon E2E Tests (real daemon)", () => {
   // ---------------------------------------------------------------------------
 
   describe("Provider Config Wiring", () => {
-    it("config.get({section: 'agents'}) returns agent config with provider field", async () => {
-      const response = (await sendJsonRpc(ws, "config.get", { section: "agents" }, 20, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
+    it("agents.get returns the default agent config with a provider field", async () => {
+      // WR-03: agent provider config is read via agents.get rather than
+      // config.get({section:"agents"}), which no longer egresses agent configs.
+      const response = (await sendJsonRpc(ws, "agents.get", { agentId: "default" }, 20, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
       expect(response).toHaveProperty("jsonrpc", "2.0");
       expect(response).toHaveProperty("id", 20);
-      // config.get with section is a core registered method
-      const hasResult = "result" in response;
-      const hasError = "error" in response;
-      expect(hasResult || hasError).toBe(true);
+      expect(response).toHaveProperty("result");
+      expect(response).not.toHaveProperty("error");
 
-      if (hasResult) {
-        const result = response.result as Record<string, unknown>;
-        // config.get({section: "agents"}) returns { agents: { default: { ... } } }
-        expect(result).toHaveProperty("agents");
-        const agents = result.agents as Record<string, Record<string, unknown>>;
-        expect(typeof agents).toBe("object");
+      const result = response.result as Record<string, unknown>;
+      expect(result.agentId).toBe("default");
+      expect(result).toHaveProperty("config");
+      const config = result.config as Record<string, unknown>;
 
-        // Check that at least one agent config exists with a provider field
-        const agentKeys = Object.keys(agents);
-        expect(agentKeys.length).toBeGreaterThan(0);
-
-        // Get the first agent config
-        const firstAgent = agents[agentKeys[0]!]!;
-        expect(firstAgent).toHaveProperty("provider");
-        expect(typeof firstAgent.provider).toBe("string");
-      }
+      expect(config).toHaveProperty("provider");
+      expect(typeof config.provider).toBe("string");
     });
 
     it("provider name follows the ${PROVIDER}_API_KEY naming convention", async () => {
-      const response = (await sendJsonRpc(ws, "config.get", { section: "agents" }, 21, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
+      // WR-03: provider read via agents.get rather than config.get({section:"agents"}).
+      const response = (await sendJsonRpc(ws, "agents.get", { agentId: "default" }, 21, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
       expect(response).toHaveProperty("result");
       const result = response.result as Record<string, unknown>;
-      // config.get({section: "agents"}) returns { agents: { default: { ... } } }
-      expect(result).toHaveProperty("agents");
-      const agents = result.agents as Record<string, Record<string, unknown>>;
-      const agentKeys = Object.keys(agents);
-      expect(agentKeys.length).toBeGreaterThan(0);
+      const config = result.config as Record<string, unknown>;
 
-      const firstAgent = agents[agentKeys[0]!]!;
-      const provider = firstAgent.provider as string;
+      const provider = config.provider as string;
       expect(typeof provider).toBe("string");
       expect(provider.length).toBeGreaterThan(0);
 

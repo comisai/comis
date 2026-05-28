@@ -136,11 +136,18 @@ function seedProfilesFile(dataDir: string, profilesJson: object): void {
  */
 function writeTempConfig(dataDir: string): string {
   const yamlPath = path.join(dataDir, "config.yaml");
-  // Minimal AppConfig — only `dataDir` is meaningful; AppConfigSchema
-  // defaults the other fields. We omit `agents` entirely so the schema
-  // produces its default `{ default: PerAgentConfigSchema.parse({}) }`,
-  // which satisfies the loadConfigFile/validateConfig path.
-  writeFileSync(yamlPath, `dataDir: ${dataDir}\n`, { mode: 0o600 });
+  // Minimal AppConfig — `dataDir` redirects from ~/.comis, and
+  // `oauth.storage: file` opts into the plaintext file backend so doctor
+  // reads the seeded `auth-profiles.json`. (AppConfig defaults oauth.storage
+  // to "encrypted"; doctor returns a single skip finding in that mode per
+  // packages/cli/src/doctor/checks/oauth-health.ts — these tests exercise
+  // the file-backed code path.) AppConfigSchema defaults the rest, including
+  // `agents` → `{ default: PerAgentConfigSchema.parse({}) }`.
+  writeFileSync(
+    yamlPath,
+    `dataDir: ${dataDir}\noauth:\n  storage: file\n`,
+    { mode: 0o600 },
+  );
   return yamlPath;
 }
 

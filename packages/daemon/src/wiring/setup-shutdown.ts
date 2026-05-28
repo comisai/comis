@@ -117,8 +117,8 @@ export interface ShutdownDeps {
   continuationTracker?: RestartContinuationTracker;
   /** Lifecycle reactors for cleanup on shutdown */
   lifecycleReactors?: Array<{ destroy: () => void }>;
-  /** Observability persistence write buffers for shutdown drain */
-  obsPersistence?: { drainAll(): void; snapshotTimer: ReturnType<typeof setInterval> };
+  /** Observability persistence write buffers for shutdown drain */ obsPersistence?: { drainAll(): void; snapshotTimer: ReturnType<typeof setInterval> };
+  disposeActivityStream?: () => void; // WIRE-05/§17.7: drain + unsubscribe ActivityStream
   /** Context pipeline collector for shutdown cleanup */
   contextPipelineCollector?: { dispose(): void };
   /** Gemini CachedContent lifecycle manager for shutdown disposal. */
@@ -148,14 +148,11 @@ export interface ShutdownDeps {
   bgCompletionRunnerShutdown?: () => Promise<void>;
   /** Cleanup proxy typing controllers + sweep timer (from registerProxyTypingListeners). */
   proxyTypingCleanup?: () => void;
-  /** Stop the approval notifier (from setup-channels-runtime). */
-  approvalNotifierStop?: () => void;
   /** Stop the delivery queue (from setupDeliveryQueue). */
   shutdownDeliveryQueue?: () => void;
   /** Stop the delivery mirror (from setupDeliveryMirror). */
   shutdownDeliveryMirror?: () => void;
-  /** Stop the output retention housekeeper (from setupOutputRetention). */
-  outputRetentionShutdown?: () => void;
+  /** Stop the output retention housekeeper (from setupOutputRetention). */ outputRetentionShutdown?: () => void;
   /** Stop the channel health monitor (from setupChannelHealthMonitor). */
   stopChannelHealthMonitor?: () => void;
   /** Unsubscribe health budget aggregator. */ unsubscribeHealthAggregator?: () => void;
@@ -179,12 +176,13 @@ async function withStepTimeout(
   component: string,
   logger: ComisLogger,
 ): Promise<void> {
+  let timer: ReturnType<typeof systemSetTimeout> | undefined;
   try {
     await Promise.race([
       Promise.resolve(fn()),
-      new Promise<never>((_, reject) =>
-        systemSetTimeout(() => reject(new Error(`Shutdown step "${component}" timed out after ${STEP_TIMEOUT_MS}ms`)), STEP_TIMEOUT_MS),
-      ),
+      new Promise<never>((_, reject) => {
+        timer = systemSetTimeout(() => reject(new Error(`Shutdown step "${component}" timed out after ${STEP_TIMEOUT_MS}ms`)), STEP_TIMEOUT_MS);
+      }),
     ]);
   } catch (err) {
     logger.warn(
@@ -197,6 +195,10 @@ async function withStepTimeout(
       },
       "Shutdown step timed out or failed, continuing",
     );
+  } finally {
+    // Clear the step timer once the race settles so a fast step does not
+    // leave a dangling 5s timer (≈30 of them per shutdown otherwise).
+    if (timer !== undefined) systemClearTimeout(timer);
   }
 }
 
@@ -245,7 +247,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     dataDir,
     continuationTracker,
     lifecycleReactors,
-    obsPersistence,
+    obsPersistence, disposeActivityStream,
     geminiCacheManager,
     trajectoryRegistry,
     // 9 new teardown handles lifted from system:shutdown subscribers.
@@ -253,7 +255,6 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     mcpClientManagerDisconnectAll,
     bgCompletionRunnerShutdown,
     proxyTypingCleanup,
-    approvalNotifierStop,
     shutdownDeliveryQueue,
     shutdownDeliveryMirror,
     outputRetentionShutdown,
@@ -514,16 +515,6 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "proxy-typing", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "proxy-typing", daemonLogger);
       }
-      // Stop the approval notifier — replaces the
-      // system:shutdown subscriber that previously called
-      // approvalNotifier?.stop() in setup-channels-runtime.ts.
-      if (approvalNotifierStop) {
-        const stopMs = systemNowMs();
-        await withStepTimeout(() => {
-          approvalNotifierStop();
-          daemonLogger.info({ component: "approval-notifier", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
-        }, "approval-notifier", daemonLogger);
-      }
       // Stop the channel health monitor — replaces the
       // system:shutdown subscriber in daemon.ts.
       if (stopChannelHealthMonitor) {
@@ -625,10 +616,11 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "obs-persistence", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "obs-persistence", daemonLogger);
       }
-      // Dispose observability modules (remove EventBus subscriptions)
+      // Dispose observability modules (remove EventBus subscriptions).
       {
         const stopMs = systemNowMs();
         await withStepTimeout(() => {
+          disposeActivityStream?.(); // WIRE-05: drain ActivityStream FIRST (T-70-10-03)
           deps.contextPipelineCollector?.dispose();
           diagnosticCollector.dispose();
           channelActivityTracker.dispose();

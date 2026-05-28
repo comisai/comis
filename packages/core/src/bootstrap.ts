@@ -18,6 +18,17 @@ import { createHookRunner } from "./hooks/hook-runner.js";
 const DEFAULT_DATA_DIR = safePath(os.homedir(), ".comis");
 
 /**
+ * Name of the 32-byte HMAC secret backing every signed channel callback
+ * (interactive approvals, APV-05/APV-07). It is generated/read at the daemon
+ * composition root (via SecretStorePort, with an in-memory fallback when the
+ * encrypted store is disabled) and is added unconditionally to
+ * `platformSecretNames` so user-facing secret-ref tools can never resolve it
+ * (T-73-31). NOT a config `${VAR}` reference — a platform-managed secret.
+ */
+export const INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME =
+  "activity.interactiveCallbackSigningSecret";
+
+/**
  * Resolve runtime paths in config.
  * - dataDir defaults to ~/.comis
  * - memory.dbPath resolves relative to dataDir if not absolute
@@ -97,6 +108,10 @@ export function bootstrap(options: BootstrapOptions): Result<AppContainer, Confi
   // the config layer stack at lower priority than YAML files, so explicit
   // user config wins over env — see config/env-layer.ts.
   const referencedNames = new Set<string>();
+  // Platform-managed secrets that are NOT config `${VAR}` references but must
+  // still be on the deny surface (never resolvable via user-facing secret-ref
+  // tools). The interactive-callback signing secret backs every signed channel.
+  referencedNames.add(INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME);
   const configResult = loadLayered(options.configPaths, {
     getSecret: (key) => {
       referencedNames.add(key);

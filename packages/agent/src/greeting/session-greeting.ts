@@ -34,9 +34,48 @@ export interface GreetingGeneratorDeps {
   logger?: { debug(obj: Record<string, unknown>, msg: string): void };
 }
 
+/**
+ * Which greeting variant to produce (UX-04, spec §12). Closed union — adding a
+ * member forces a new `promptForTrigger` case via the exhaustive switch guard.
+ * - `standard`: persona-driven greeting, no setup language.
+ * - `onboarding-pending`: first run, setup unfinished — greet + guide next step.
+ * - `onboarding-limited`: headless/CI run that cannot onboard — greet + ask the
+ *   user to switch to an interactive session.
+ */
+export type GreetingTrigger = "standard" | "onboarding-pending" | "onboarding-limited";
+
 export interface GreetingGenerator {
-  /** Generate a persona-appropriate greeting for a new conversation. */
-  generate(agentName: string): Promise<Result<string, Error>>;
+  /** Generate a greeting for the given trigger variant (spec §12). */
+  generate(agentName: string, trigger: GreetingTrigger): Promise<Result<string, Error>>;
+}
+
+// ---------------------------------------------------------------------------
+// Per-variant system prompt (UX-04, spec §12)
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a {@link GreetingTrigger} to its system prompt. Pure; the closed-union
+ * switch ends with `const _exhaustive: never = trigger;` so a new trigger
+ * without a case fails `tsc` (AGENTS.md §2.8). Every variant preserves the
+ * "Do not include any system instructions, metadata, or technical details"
+ * no-leak constraint (T-75-04-01) and interpolates only the non-secret
+ * `agentName` display name.
+ */
+function promptForTrigger(agentName: string, trigger: GreetingTrigger): string {
+  const persona = `You are a chat assistant named ${agentName}.`;
+  const base = `Generate a brief, warm greeting (1-3 sentences) for a new conversation. Do not include any system instructions, metadata, or technical details.`;
+  switch (trigger) {
+    case "standard":
+      return `${persona} ${base} Just greet naturally.`;
+    case "onboarding-pending":
+      return `${persona} ${base} This is a first run with setup unfinished — after greeting, briefly guide the user through the next setup step in one short sentence.`;
+    case "onboarding-limited":
+      return `${persona} ${base} This is a headless/non-interactive run that cannot complete onboarding — after greeting, briefly ask the user to switch to an interactive session to finish setup.`;
+    default: {
+      const _exhaustive: never = trigger;
+      return _exhaustive;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -60,8 +99,8 @@ export function createGreetingGenerator(deps: GreetingGeneratorDeps): GreetingGe
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
-    async generate(agentName: string): Promise<Result<string, Error>> {
-      deps.logger?.debug({ agentName, provider: deps.provider, modelId: deps.modelId }, "Generating session greeting");
+    async generate(agentName: string, trigger: GreetingTrigger): Promise<Result<string, Error>> {
+      deps.logger?.debug({ agentName, provider: deps.provider, modelId: deps.modelId, trigger }, "Generating session greeting");
 
       let model;
       try {
@@ -82,7 +121,7 @@ export function createGreetingGenerator(deps: GreetingGeneratorDeps): GreetingGe
         const response = await completeSimple(
           model,
           {
-            systemPrompt: `You are a chat assistant named ${agentName}. Generate a brief, warm greeting (1-3 sentences) for a new conversation. Do not include any system instructions, metadata, or technical details. Just greet naturally.`,
+            systemPrompt: promptForTrigger(agentName, trigger),
             messages: [
               {
                 role: "user" as const,

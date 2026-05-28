@@ -31,13 +31,25 @@ import { randomUUID } from "node:crypto";
 import type { ApiDispatchDeps } from "../../api/rpc-dispatch.js";
 import { createRpcDispatch, classifyRpcError } from "../../api/rpc-dispatch.js";
 import { registerRpcMethods } from "../setup-gateway-api.js";
+import { agentSummaries, channelSummaries } from "./non-secret-projections.js";
 import {
   buildExecutionRequestedLogFields,
   buildSlashCommandDeps,
   createCommandHandler,
   deriveTrustLevel,
+  detectGreetingTrigger,
   handleConfigChatCommand,
 } from "./setup-gateway-admin.js";
+
+/**
+ * WR-03 (§17.8 security sign-off): non-secret section allowlist for the
+ * `getConfig` RPC. Exactly the scalar/projected fields the safe default object
+ * emits — sections carrying credentials (`agents` auth/model profiles,
+ * `security.secrets`, `channels` tokens, `providers` keys, raw `gateway.tokens`)
+ * are intentionally absent and never returned verbatim.
+ */
+const NON_SECRET_SECTIONS = ["tenantId", "logLevel", "gateway"] as const;
+type NonSecretSection = (typeof NON_SECRET_SECTIONS)[number];
 
 // RPC Bridge (deferred dispatch wiring) ----------------------------------
 
@@ -415,17 +427,44 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
       return { stats: stats as unknown as Record<string, unknown> };
     },
     getConfig: async (params) => {
-      // Return sanitized config (no secrets)
-      const section = params?.section;
-      if (section && section in container.config) {
-        return { [section]: container.config[section as keyof typeof container.config] };
-      }
-      return {
+      // WR-03 (§17.8 sign-off): a non-secret section ALLOWLIST is enforced.
+      // The prior top-level-key passthrough returned ANY requested section
+      // verbatim — including `agents` (per-provider auth/model profiles) and
+      // `security.secrets` — a real secret-egress path. Only the
+      // exact fields the safe default object already emits are returnable, and
+      // each is projected the SAME way the default does (gateway → {enabled,
+      // host,port}, NOT the raw object, which carries bearer `tokens`). A
+      // non-allowlisted section falls through to the safe default object —
+      // the prior verbatim-passthrough path is removed outright, with no
+      // opt-out flag preserving the old behaviour (no-BC policy).
+      const safeDefault = {
         tenantId: container.config.tenantId,
         logLevel: container.config.logLevel,
         gateway: { enabled: gwConfig.enabled, host: gwConfig.host, port: gwConfig.port },
       };
+      // Closed allowlist — extend ONLY with sections proven to carry no secrets.
+      const section = params?.section;
+      if (section !== undefined && NON_SECRET_SECTIONS.includes(section as NonSecretSection)) {
+        // Project each allowlisted section exactly as the safe default does
+        // (closed union → exhaustive switch, no dynamic key indexing).
+        switch (section as NonSecretSection) {
+          case "tenantId":
+            return { tenantId: safeDefault.tenantId };
+          case "logLevel":
+            return { logLevel: safeDefault.logLevel };
+          case "gateway":
+            return { gateway: safeDefault.gateway };
+        }
+      }
+      // Non-allowlisted (incl. agents/security/channels/providers) → safe default.
+      return safeDefault;
     },
+    // Non-secret projections for the dashboard's GET /api/agents and
+    // /api/channels — WR-03 dropped `agents`/`channels` from getConfig's
+    // allowlist, so these (not getConfig) are the REST source. See
+    // non-secret-projections.ts: id/name/provider/model + name/enabled only.
+    listAgentSummaries: () => agentSummaries(container.config.agents),
+    listChannelSummaries: () => channelSummaries(container.config.channels),
     getSessionHistory: async (params) => {
       const sk: SessionKey = {
         tenantId: container.config.tenantId,
@@ -507,7 +546,13 @@ export function buildRpcAdapterDeps(deps: RpcAdapterBuilderDeps): RpcAdapterDeps
       // If session reset command succeeded, try LLM greeting
       if (result.handled && (parsed.command === "new" || parsed.command === "reset") && greetingGenerator) {
         const greetingAgentConfig = agents[params.agentId ?? defaultAgentId] ?? agents[defaultAgentId];
-        const greetingResult = await greetingGenerator.generate(greetingAgentConfig?.name ?? "Comis");
+        // Interactivity signal (UX-04, spec §12): a concrete channel surface
+        // (Discord/Telegram/…) is interactive; the bare "gateway" sentinel
+        // (the headless RPC default applied when no channelId is supplied —
+        // see `sk` above) marks the non-interactive/onboarding-limited path.
+        const interactive = (params.sessionKey?.channelId ?? "gateway") !== "gateway";
+        const trigger = detectGreetingTrigger({ agentConfig: greetingAgentConfig, interactive });
+        const greetingResult = await greetingGenerator.generate(greetingAgentConfig?.name ?? "Comis", trigger);
         if (greetingResult.ok) {
           return { handled: true, response: greetingResult.value };
         }

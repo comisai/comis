@@ -4,11 +4,12 @@ import type { EventMap } from "./events.js";
 import { TypedEventBus } from "./bus.js";
 
 describe("InfraEvents payload structure", () => {
-  it("approval:requested delivers requestId, toolName, params, timeoutMs", () => {
+  it("approval:requested delivers requestId, toolName, params, timeoutMs, shortId", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
     const payload: EventMap["approval:requested"] = {
       requestId: "req-001",
+      shortId: "abc123ABC456",
       toolName: "bash",
       action: "execute",
       params: { command: "rm -rf /tmp/test" },
@@ -25,9 +26,87 @@ describe("InfraEvents payload structure", () => {
     expect(handler).toHaveBeenCalledWith(payload);
     const received = handler.mock.calls[0]![0] as EventMap["approval:requested"];
     expect(received.requestId).toBe("req-001");
+    expect(received.shortId).toBe("abc123ABC456");
     expect(received.toolName).toBe("bash");
     expect(received.params).toEqual({ command: "rm -rf /tmp/test" });
     expect(received.timeoutMs).toBe(30000);
+  });
+
+  // -------------------------------------------------------------------------
+  // v2.5 Agent Transparency — approval:requested shortId/traceId (EVT-05)
+  //
+  // §4.2 / §6.4.1: the gate mints a short, renderer-safe id and emits it on
+  // approval:requested. shortId is REQUIRED (M0 test, spec §17.1); traceId is
+  // optional because restorePending() preserves shortId but may omit traceId.
+  // The SOLE emit site (approval-gate.ts) that supplies shortId lands in plan
+  // 70-12 — this plan only declares the required field. These cases fail to
+  // compile on the pre-patch type (shortId absent) — RED proof.
+  // -------------------------------------------------------------------------
+
+  it("approval:requested requires shortId and accepts an optional traceId", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["approval:requested"] = {
+      requestId: "req-evt05",
+      shortId: "abc123ABC456",
+      traceId: "t1",
+      toolName: "config_manage",
+      action: "set",
+      params: { key: "x" },
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      trustLevel: "standard",
+      createdAt: Date.now(),
+      timeoutMs: 30000,
+    };
+
+    bus.on("approval:requested", handler);
+    bus.emit("approval:requested", payload);
+
+    const received = handler.mock.calls[0]![0] as EventMap["approval:requested"];
+    expect(received.shortId).toBe("abc123ABC456");
+    expect(received.traceId).toBe("t1");
+  });
+
+  it("approval:requested restored shape carries shortId without traceId", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    // restorePending() preserves shortId but may omit traceId (§4.2).
+    const restored: EventMap["approval:requested"] = {
+      requestId: "req-restored",
+      shortId: "ZYX987zyx654",
+      toolName: "bash",
+      action: "execute",
+      params: {},
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      trustLevel: "standard",
+      createdAt: Date.now(),
+      timeoutMs: 30000,
+    };
+
+    bus.on("approval:requested", handler);
+    bus.emit("approval:requested", restored);
+
+    const received = handler.mock.calls[0]![0] as EventMap["approval:requested"];
+    expect(received.shortId).toBe("ZYX987zyx654");
+    expect(received.traceId).toBeUndefined();
+  });
+
+  it("approval:requested rejects a payload missing shortId at the type level", () => {
+    const bus = new TypedEventBus();
+    // @ts-expect-error - shortId is now required on approval:requested
+    bus.emit("approval:requested", {
+      requestId: "req-no-short",
+      toolName: "bash",
+      action: "execute",
+      params: {},
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      trustLevel: "standard",
+      createdAt: Date.now(),
+      timeoutMs: 30000,
+    });
   });
 
   it("approval:resolved delivers approved boolean and optional reason", () => {

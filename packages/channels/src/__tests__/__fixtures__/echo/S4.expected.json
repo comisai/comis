@@ -1,0 +1,73 @@
+{
+  "frames": [
+    {
+      "frameSeq": 0,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000001",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "start",
+          "status": "running",
+          "kind": "tool",
+          "semanticPhase": "tool",
+          "defaultLabel": "running tool"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    },
+    {
+      "frameSeq": 1,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000001",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "end",
+          "status": "failed",
+          "kind": "tool",
+          "semanticPhase": "error",
+          "defaultLabel": "tool failed",
+          "errorKind": "dependency"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    }
+  ],
+  "outcome": {
+    "kind": "failure",
+    "errorKind": "dependency",
+    "failedEvents": [
+      {
+        "schemaVersion": 1,
+        "activityId": "00000000-0000-0000-0000-000000000001",
+        "sessionKey": "sess-a",
+        "agentId": "main",
+        "traceId": "trace-a",
+        "ts": "2026-05-26T00:00:00.000Z",
+        "phase": "progress",
+        "status": "failed",
+        "kind": "tool",
+        "semanticPhase": "tool",
+        "defaultLabel": "working",
+        "errorKind": "dependency"
+      }
+    ]
+  }
+}

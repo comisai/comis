@@ -15,12 +15,20 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Result } from "@comis/shared";
-import { validateUrl } from "@comis/core";
+import { validateUrl, registerActivityLabelSpec } from "@comis/core";
 import { jsonResult, throwToolError, imageResult, dualImageResult, readStringParam } from "../tool-helpers.js";
 import type { RpcCall } from "./cron-tool.js";
 import { BrowserToolSchema } from "./browser-tool-schema.js";
 import type { SanitizedImage } from "../../tools/integrations/image-sanitizer.js";
 import type { MediaPersistenceService } from "../../tools/media/media-persistence.js";
+
+// Activity label spec (LBL-01, §17.6). Descriptor name == emitted name. A
+// tool-level label covers the gate; the browser action enum lives in
+// browser-tool-schema.ts and is not surfaced per-action here.
+registerActivityLabelSpec("browser", {
+  semanticPhase: "web",
+  label: "browsing the web",
+});
 
 // ---------------------------------------------------------------------------
 // Deps

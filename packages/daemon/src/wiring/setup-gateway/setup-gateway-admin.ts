@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { formatSessionKey, safePath, systemDateFrom } from "@comis/core";
 import type { AppConfig, AppContainer, SessionKey } from "@comis/core";
 import type { RpcCall } from "@comis/skills/platform-tools";
-import { createGreetingGenerator, type GreetingGenerator, type CostTracker } from "@comis/agent";
+import { createGreetingGenerator, type GreetingGenerator, type GreetingTrigger, type CostTracker } from "@comis/agent";
 import { createCommandHandler, type CommandHandlerDeps } from "@comis/orchestrator";
 import { suppressError } from "@comis/shared";
 
@@ -207,6 +207,32 @@ export function buildGreetingGenerator(input: {
     apiKey: greetingApiKey,
     timeoutMs: 5000,
   });
+}
+
+/**
+ * Detect the greeting variant (UX-04, spec §12) from wiring-tier state — NOT
+ * from a `core/bootstrap.ts` hook (RESEARCH Pitfall 4). Pure: reads only
+ * non-secret agent-config presence + an interactivity flag, never `process.env`
+ * and never a secret (the API-key gate stays in {@link buildGreetingGenerator}).
+ *
+ * - `onboarding-limited`: a non-interactive/headless surface that cannot onboard.
+ * - `onboarding-pending`: the agent record is incomplete (provider or model is
+ *   missing), i.e. setup is unfinished.
+ * - `standard`: a fully-configured agent on an interactive surface (the default).
+ *
+ * NOTE on the apiKey overlap: when the provider has no API key,
+ * {@link buildGreetingGenerator} returns `undefined` and the LLM greeting never
+ * fires (static fallback), so this helper only runs for a configured provider.
+ */
+export function detectGreetingTrigger(input: {
+  agentConfig: AppConfig["agents"][string] | undefined;
+  interactive: boolean;
+}): GreetingTrigger {
+  if (!input.interactive) return "onboarding-limited";
+  const hasProvider = typeof input.agentConfig?.provider === "string" && input.agentConfig.provider.length > 0;
+  const hasModel = typeof input.agentConfig?.model === "string" && input.agentConfig.model.length > 0;
+  if (!hasProvider || !hasModel) return "onboarding-pending";
+  return "standard";
 }
 
 // ---------------------------------------------------------------------------

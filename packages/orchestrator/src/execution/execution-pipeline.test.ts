@@ -462,7 +462,7 @@ describe("executeAndDeliver", () => {
       );
     });
 
-    it("emits message:sent event with response content", async () => {
+    it("emits message:sent event carrying the real lastChunkMessageId (TURN-06, not block-delivery)", async () => {
       const eventBus = makeEventBus();
       const deps = makeDeps({ eventBus });
       const msg = makeMessage();
@@ -472,14 +472,45 @@ describe("executeAndDeliver", () => {
         "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
       );
 
+      // The synthetic "block-delivery" id is replaced by the receipt's real
+      // lastChunkMessageId — here the adapter.sendMessage mock returns "msg-99".
       expect(eventBus.emit).toHaveBeenCalledWith(
         "message:sent",
         expect.objectContaining({
           channelId: "12345",
-          messageId: "block-delivery",
+          messageId: "msg-99",
           content: "Agent response text",
         }),
       );
+      // Defend against regression: no message:sent emit carries the synthetic id.
+      const sentEmits = vi.mocked(eventBus.emit).mock.calls
+        .filter(([name]) => name === "message:sent")
+        .map(([, payload]) => payload as { messageId: string });
+      expect(sentEmits.every((p) => p.messageId !== "block-delivery")).toBe(true);
+    });
+
+    it("delivers the real lastChunkMessageId to a downstream message:sent subscriber", async () => {
+      // Enumerated message:sent subscribers (grep -Rn '"message:sent"'):
+      //   daemon/observability/{delivery-tracer,channel-activity-tracker},
+      //   daemon/observability/diagnostic-collector, channels/shared/lifecycle-reactor,
+      //   gateway web/rest + sse fan-out, web SPA. All read payload.messageId.
+      // This asserts the on()-style subscriber contract holds end-to-end.
+      const eventBus = makeEventBus();
+      const received: string[] = [];
+      vi.mocked(eventBus.emit).mockImplementation(((name: string, payload: { messageId?: string }) => {
+        if (name === "message:sent" && payload?.messageId) received.push(payload.messageId);
+        return true;
+      }) as typeof eventBus.emit);
+      const deps = makeDeps({ eventBus });
+      const msg = makeMessage();
+
+      await executeAndDeliver(
+        deps, makeAdapter(), msg, msg, makeExecutor(), makeSessionKey(),
+        "agent-1", makeBlockStreamCfg(), new Set(), makeSendOverrides(),
+      );
+
+      expect(received).toContain("msg-99");
+      expect(received).not.toContain("block-delivery");
     });
   });
 

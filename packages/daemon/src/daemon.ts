@@ -92,6 +92,7 @@ import {
   safePath,
   resolveConfigSecretRefs,
   validateMemoryWrite,
+  themeForName,
   BackgroundTasksConfigSchema,
   writeMasterKeyIfAbsent,
   systemGetEnv,
@@ -123,6 +124,7 @@ import {
   setupAgents,
   setupSchedulers,
   setupChannels,
+  createInteractiveCallbackWiring,
   setupMedia,
   setupCrossSession,
   setupTools,
@@ -163,6 +165,11 @@ import {
   detectSandboxProvider,
 } from "@comis/skills";
 import { createChannelHealthMonitor } from "@comis/channels";
+// WIRE-08: the single process-singleton activity circuit breaker is constructed
+// here (D2) and threaded down through ChannelsDeps → buildAndStartChannelManager
+// into every per-turn coordinator. The daemon is the composition root that owns
+// the breaker's lifetime; the orchestrator owns its logic.
+import { createActivityCircuitBreaker } from "@comis/orchestrator";
 import { createGraphCoordinator, createNodeTypeRegistry } from "./graph/index.js";
 import { createWakeCoalescer, createSystemEventQueue, type WakeReasonKind } from "@comis/scheduler";
 import { createTokenRegistry } from "./api/token-handlers.js";
@@ -640,9 +647,9 @@ function buildChannelManagerDeps(deps: {
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
     workspaceDirs, defaultWorkspaceDir, memoryAdapter, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
-    continuationTracker, approvalGate,
+    continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
-    onSuspiciousContent, dataDir,
+    onSuspiciousContent, dataDir, clock, timers, activityBreaker, activityStream, activityRendererFactoryOverride,
   } = agents;
   // Build exportSessionBundle DI closure for the /export-trajectory slash
   // command. Uses exportTrajectoryBundle from @comis/observability (same
@@ -664,7 +671,24 @@ function buildChannelManagerDeps(deps: {
   };
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
-    logger, channelsLogger,
+    logger, channelsLogger, clock, timers,
+    // WIRE-03: the orchestrator-facing redacted ActivityStream (setupObservability)
+    // injected into the inbound coordinatorFactory as its activityStreamPort.
+    // WIRE-08: the process-singleton circuit breaker shared across every coordinator.
+    activityStream, activityBreaker,
+    // WIRE-06 test-only renderer-injection seam. Default-undefined in production
+    // (the daemon override is never set); threaded into buildActivityRenderers so
+    // an integration test can inject a spy renderer.
+    activityRendererFactory: activityRendererFactoryOverride,
+    // 73-10: signed approval buttons (Telegram/Discord/Slack/LINE) + the Email
+    // single-use approval link. The wiring is built once in the agents phase
+    // (always present at runtime; optional-typed on BootContext).
+    signCallbackData: interactiveCallbackWiring?.signCallbackData,
+    mintApprovalLink: interactiveCallbackWiring?.mintApprovalLink,
+    // CR-01: thread the verifier. The InteractiveCallbackRouter is the server-side
+    // authority that intercepts inbound button callbacks (inbound-gate.ts) BEFORE
+    // slash parsing — without this hop the signed payload reaches the LLM as text.
+    interactiveCallbackRouter: interactiveCallbackWiring?.router,
     linkRunner, ssrfFetcher, transcriber,
     maxMediaBytes: container.config.integrations.media.infrastructure.maxRemoteFetchBytes,
     assembleToolsForAgent,
@@ -1424,6 +1448,17 @@ async function bootFoundation(
 
   // 0.6. Runtime adapter construction (composition root). overrides.timers is opt-in for test fake-timers; never set in production.
   const clock = createSystemClock(); const env = createSystemEnv(mergedEnv); const timers = overrides.timers ?? createSystemTimers();
+  // WIRE-06 test-only renderer-injection seam (mirrors overrides.timers): captured here
+  // and threaded onto BootContext so buildChannelManagerDeps can forward it into
+  // buildActivityRenderers. Never set in production; inert on the inbound path until Plan 03.
+  const activityRendererFactory = overrides.activityRendererFactory;
+  // WIRE-08: ONE process-singleton ActivityCircuitBreaker, constructed at the
+  // composition root (D2) and shared across EVERY per-turn coordinator the inbound
+  // coordinatorFactory builds. Constructed once here (NOT inside a per-turn or
+  // per-agent loop) so a permission/error storm on one (agentId, channelKey) pair
+  // auto-quiesces that pair across turns. Threaded down via BootContext →
+  // buildChannelManagerDeps → ChannelsDeps → buildAndStartChannelManager.
+  const activityBreaker = createActivityCircuitBreaker(clock);
 
   // 1. Bootstrap core container. Under VITEST=true, refuse to silently read ~/.comis/config.yaml when COMIS_CONFIG_PATHS is unset.
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution + VITEST guard
@@ -1512,11 +1547,49 @@ async function bootFoundation(
   const {
     tokenTracker, sharedCostTracker,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
-  } = setupObservability({ eventBus: container.eventBus, _createTokenTracker, logger: logLevelManager.getLogger("observability"), dataDir });
+    // WIRE-01: the canonical redacted ActivityStream (the orchestrator-facing
+    // ActivityStreamPort) + its drain hook. `activityStream` is injected into
+    // ExecutionPipelineDeps + the ACP renderer hook; `disposeActivityStream` is
+    // threaded into setupShutdown (WIRE-05). The activity-stream logger + homeDir
+    // are read here at the sanctioned composition root (no env reads in the
+    // substrate; OBS-02 injected logger).
+    activityStream, disposeActivityStream,
+  } = setupObservability({
+    eventBus: container.eventBus,
+    _createTokenTracker,
+    logger: logLevelManager.getLogger("observability"),
+    activityLogger: logLevelManager.getLogger("activity-stream"),
+    homeDir: mergedEnv["HOME"],
+    dataDir,
+    // UX-01 runtime reachability: resolve the DEFAULT agent's activity.theme →
+    // themeForName bundle and forward it so the process-wide ActivityStream's
+    // subagent marker follows the configured theme (the four themes are now
+    // selectable at runtime; the schema fully-defaults activity.theme, the
+    // `?? "default"` is belt-and-suspenders). Per-agent-per-turn theming via
+    // TurnActivityContext is a documented future refinement.
+    theme: themeForName(
+      container.config.agents[container.config.routing.defaultAgentId]?.activity?.theme ?? "default",
+    ),
+  });
   const contextPipelineCollector = createContextPipelineCollector({
     eventBus: container.eventBus,
     logger: logLevelManager.getLogger("context-pipeline"),
   });
+
+  // WIRE-01 ack: the ActivityStream substrate is live and subscribed to the
+  // EventBus. WIRE-03 (Plan 77-03): the orchestrator-facing ActivityStreamPort +
+  // the per-channel coordinator-factory are now threaded into the INBOUND
+  // execution pipeline (ExecutionPipelineDeps.activityStreamPort /
+  // coordinatorFactory) — `activityStream` flows through buildChannelManagerDeps →
+  // ChannelsDeps → buildAndStartChannelManager, which assembles the
+  // coordinatorFactory over the live activityRenderers map and injects it onto
+  // createChannelManager. The substrate is drained on shutdown via
+  // disposeActivityStream (WIRE-05). Per-renderer egress stays fail-closed until an
+  // operator opts in via activity.channels.<rendererKey> (§22.2 Day-0).
+  daemonLogger.debug(
+    { component: "activity-stream", counters: activityStream.counters() },
+    "ActivityStream substrate constructed and subscribed to EventBus",
+  );
 
   // 5. Health / process
   const { processMonitor } = setupHealth({
@@ -1651,13 +1724,14 @@ async function bootFoundation(
   boot.bgNotifyRef = bgNotifyRef;
   Object.assign(boot, {
     container, dataDir, configPaths, envPath,
-    clock, env, timers,
+    clock, env, timers, activityBreaker, activityRendererFactoryOverride: activityRendererFactory,
     secretStore, secretsCrypto, secretsDb, permissionCorrections,
     execGit, configGitManager,
     logger, logLevelManager, daemonLogger, gatewayLogger, channelsLogger, agentLogger,
     schedulerLogger, skillsLogger, memoryLogger, daemonVersion,
     tokenTracker, sharedCostTracker,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
+    activityStream, disposeActivityStream,
     contextPipelineCollector,
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
@@ -1715,6 +1789,7 @@ async function bootAgents(
     deliveryMirror, geminiCacheManager,
     channelPluginsRef, backgroundTaskManager,
     secretsCrypto, secretsDb, obsStore, // thread into setupAgents
+    secretStore, // 73-10: interactive-callback signing-secret resolution
   } = foundation;
   const _setupMedia = overrides.setupMedia ?? setupMedia;
 
@@ -1986,6 +2061,20 @@ async function bootAgents(
     daemonLogger,
   });
 
+  // 6.6.8.6.3. Interactive-callback wiring (73-10, APV-07/APV-10/SEC-06): resolve
+  // the signing secret (store or in-memory fallback), bind the renderer signer,
+  // construct the InteractiveCallbackRouter over the SAME gate + secret, and build
+  // the Email single-use link minter + the gateway approval-token map/resolver.
+  // Built here (gate + secretStore + clock all available) and consumed by both
+  // bootChannels (signer + minter) and bootGateway (token map + resolveApproval).
+  const interactiveCallbackWiring = createInteractiveCallbackWiring({
+    secretStore,
+    approvalGate,
+    clock,
+    config: container.config,
+    logger: daemonLogger,
+  });
+
   // 6.6.7.8. Delivery queue: create adapter BEFORE setupChannels.
   // channelAdapters map is passed by reference -- populated after setupChannels.
   // drainAndStart() is called AFTER setupChannels (two-phase lifecycle).
@@ -2005,7 +2094,7 @@ async function bootAgents(
     sessionTrackerRegistry, auditAggregator, onSuspiciousContent,
     ttsAdapter, visionRegistry, linkRunner, mediaTempManager, mediaSemaphore, audioConverter,
     transcriber, ssrfFetcher, fileExtractor,
-    rpcCall, wireDispatch, approvalGate,
+    rpcCall, wireDispatch, approvalGate, interactiveCallbackWiring,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
     cronWakeCallbackRef, trajectoryRegistry,
   });
@@ -2148,7 +2237,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // pass accessor closures for sessionTracker / inboundMessageIdResolver
   // (const `{current?:T}` container pattern; populated after setupChannels
   // returns by mutating the .current field).
-  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, commandQueue, deliveryService, approvalNotifier } = await setupChannels(
+  const { adaptersByType, channelManager, resolveAttachment, lifecycleReactors, channelPlugins, commandQueue, deliveryService } = await setupChannels(
     buildChannelManagerDeps({
       agents: handle,
       assembleToolsForAgent,
@@ -2275,7 +2364,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     nodeTypeRegistry, graphCoordinator, namedGraphStore,
     suspendedAgents, modelCatalog, channelConfig, promptTimeoutTimestamps,
     // Teardown handles surfaced for ShutdownDeps wiring.
-    shutdownBackgroundProcesses, proxyTypingCleanup, approvalNotifier,
+    shutdownBackgroundProcesses, proxyTypingCleanup,
     outputRetentionHandle,
   });
 }
@@ -2322,6 +2411,7 @@ async function bootGateway(
     getExecutor, rpcCall, wireDispatch,
     assembleToolsForAgent, preprocessMessageText,
     suspendedAgents, gatewaySendRef,
+    interactiveCallbackWiring,
   } = channels;
   const _createGatewayServer = overrides.createGatewayServer ?? createGatewayServer;
 
@@ -2383,6 +2473,7 @@ async function bootGateway(
     daemonVersion: boot.daemonVersion,
     suspendedAgents,
     instanceId, startupStartMs,
+    interactiveCallbackWiring,
   });
 
   // 7.0.1. Wire deferred gateway attachment deps (wsConnections / mediaDir /
@@ -2509,7 +2600,7 @@ async function bootShutdown(
     | "activeExecutions" | "getActiveConnectionCount" | "wsConnections"
     | "heartbeatRunner" | "duplicateDetector" | "perAgentRunner"
     | "stopChannelHealthMonitor" | "shutdownBackgroundProcesses" | "proxyTypingCleanup"
-    | "approvalNotifier" | "outputRetentionHandle"
+    | "outputRetentionHandle"
     | "bgCompletionRunnerContext" | "trajectoryRegistry"
     | "auditAggregator" | "onSuspiciousContent"
     | "sessionManager"
@@ -2527,6 +2618,7 @@ async function bootShutdown(
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
     contextPipelineCollector, backgroundIndexingPromise, db,
     disposeEmbedding, cachedPort, maintenanceTick, obsPersistence,
+    disposeActivityStream,
     injectionRateLimiter, geminiCacheManager, backgroundTaskManager,
     secretStore,
     executors: _execs, cronSchedulers, resetSchedulers, browserServices,
@@ -2543,7 +2635,7 @@ async function bootShutdown(
     activeExecutions, getActiveConnectionCount,
     trajectoryRegistry,
     // 9 new teardown handles surfaced through BootContext.
-    shutdownBackgroundProcesses, proxyTypingCleanup, approvalNotifier,
+    shutdownBackgroundProcesses, proxyTypingCleanup,
     outputRetentionHandle, shutdownDeliveryQueue, shutdownMirror,
     bgCompletionRunnerContext, stopChannelHealthMonitor, mcpClientManager,
   } = gateway;
@@ -2577,6 +2669,7 @@ async function bootShutdown(
     continuationTracker,
     lifecycleReactors,  // destroy lifecycle reactors on shutdown
     obsPersistence,  // drain write buffers before db.close
+    disposeActivityStream,  // WIRE-05: drain + unsubscribe ActivityStream from EventBus
     geminiCacheManager,  // Dispose all Gemini caches on shutdown
     trajectoryRegistry,  // Drain session-scoped trajectory recorders
     // 9 new teardown fields (8 production subscribers + setup-tools
@@ -2586,7 +2679,6 @@ async function bootShutdown(
     mcpClientManagerDisconnectAll: () => mcpClientManager.disconnectAll(),
     bgCompletionRunnerShutdown: () => bgCompletionRunnerContext.runner.shutdown(),
     proxyTypingCleanup,
-    approvalNotifierStop: approvalNotifier ? () => approvalNotifier.stop() : undefined,
     shutdownDeliveryQueue,
     shutdownDeliveryMirror: shutdownMirror,
     outputRetentionShutdown: outputRetentionHandle ? () => outputRetentionHandle.shutdown() : undefined,
@@ -2662,6 +2754,11 @@ async function bootShutdown(
     container, logger, logLevelManager, tokenTracker,
     processMonitor, shutdownHandle, cronSchedulers, resetSchedulers,
     browserServices, heartbeatRunner, gatewayHandle, adapterRegistry: adaptersByType,
+    // Expose the orchestrator ChannelManager so integration tests can drive a
+    // real inbound turn through the daemon's REAL pipeline deps
+    // (channelManager.injectMessage). Undefined when no channels are configured
+    // at boot — see DaemonInstance.channelManager doc.
+    channelManager,
     // Expose the delivery-queue-side adapter map and the queue port itself so
     // integration tests can register adapters that the recurring drainer sees
     // and assert on queue depth.

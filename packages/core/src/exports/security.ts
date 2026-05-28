@@ -12,12 +12,31 @@ export type { ActionClassification } from "../security/index.js";
 export { AuditEventSchema, createAuditEvent } from "../security/index.js";
 export type { AuditEvent, CreateAuditEventParams } from "../security/index.js";
 export { sanitizeLogString } from "../security/index.js";
+// Bounded redaction primitive (security/redact-value.ts) — surfaced on the
+// @comis/core barrel for the template engine (70-04) and emit sites (70-06).
+export { redactValue, REDACT_LIMITS } from "../security/index.js";
+export type {
+  RedactedValue,
+  RedactionReason,
+  RedactionRecord,
+  RedactOptions,
+  RedactLimits,
+} from "../security/index.js";
 export { validateUrl, BLOCKED_RANGES, CLOUD_METADATA_IPS } from "../security/index.js";
 export type { ValidatedUrl } from "../security/index.js";
 export { wrapExternalContent, wrapWebContent, detectSuspiciousPatterns, EXTERNAL_CONTENT_WARNING } from "../security/index.js";
 export type { ExternalContentSource, WrapExternalContentOptions } from "../security/index.js";
 export { createOutputGuard } from "../security/index.js";
 export { generateCanaryToken, detectCanaryLeakage } from "../security/index.js";
+// Signed interactive-approval callback primitive (APV-05 / SEC-06) — channels
+// MAY import this; the orchestrator's InteractiveCallbackRouter delegates here.
+export {
+  signCallbackData,
+  verifyCallbackData,
+  renderCallbackData,
+  parseCallbackData,
+} from "../security/index.js";
+export type { CallbackChoice, CallbackRenderError, ParsedCallback } from "../security/index.js";
 export { createSecretsCrypto, parseMasterKey } from "../security/index.js";
 export type { SecretsCrypto, EncryptedSecret } from "../security/index.js";
 export { matchesSecretPattern, isSecretAccessible } from "../security/index.js";

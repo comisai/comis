@@ -1,0 +1,127 @@
+{
+  "frames": [
+    {
+      "frameSeq": 0,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000001",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "start",
+          "status": "running",
+          "kind": "tool",
+          "semanticPhase": "tool",
+          "defaultLabel": "attempt 1"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    },
+    {
+      "frameSeq": 1,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000001",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "progress",
+          "status": "failed",
+          "kind": "tool",
+          "semanticPhase": "error",
+          "defaultLabel": "attempt 1 failed",
+          "errorKind": "network"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    },
+    {
+      "frameSeq": 2,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000002",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "start",
+          "status": "running",
+          "kind": "tool",
+          "semanticPhase": "tool",
+          "defaultLabel": "attempt 2"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    },
+    {
+      "frameSeq": 3,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000002",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "end",
+          "status": "completed",
+          "kind": "tool",
+          "semanticPhase": "tool",
+          "defaultLabel": "attempt 2 ok"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    }
+  ],
+  "outcome": {
+    "kind": "success_with_recovered_failures",
+    "trivial": false,
+    "delivery": {
+      "ok": true,
+      "deliveredChunks": 1,
+      "lastChunkMessageId": "msg-final",
+      "deliveredAtMs": 5000
+    },
+    "recoveredFailures": [
+      {
+        "schemaVersion": 1,
+        "activityId": "00000000-0000-0000-0000-000000000001",
+        "sessionKey": "sess-a",
+        "agentId": "main",
+        "traceId": "trace-a",
+        "ts": "2026-05-26T00:00:00.000Z",
+        "phase": "progress",
+        "status": "failed",
+        "kind": "tool",
+        "semanticPhase": "tool",
+        "defaultLabel": "working",
+        "errorKind": "network"
+      }
+    ]
+  }
+}

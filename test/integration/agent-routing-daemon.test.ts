@@ -58,35 +58,50 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
 
   describe("Per-Agent Model Configuration (ROUTE-11)", () => {
     it(
-      "ROUTE-11a: config.get returns all 3 agents with distinct names",
+      "ROUTE-11a: agents.list/agents.get return all 3 agents with distinct names",
       async () => {
+        // WR-03: agent config is read via agents.list / agents.get rather than
+        // config.get({section:"agents"}), which no longer egresses agent configs.
         let ws: WebSocket | undefined;
         try {
           ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
 
-          const response = (await sendJsonRpc(
+          const listResponse = (await sendJsonRpc(
             ws,
-            "config.get",
-            { section: "agents" },
+            "agents.list",
+            {},
             10,
             { timeoutMs: RPC_FAST_MS },
           )) as Record<string, unknown>;
 
-          expect(response).toHaveProperty("result");
-          const result = response.result as Record<string, unknown>;
-          // config.get({section: "agents"}) returns { agents: { ... } }
-          expect(result).toHaveProperty("agents");
-          const agents = result.agents as Record<string, Record<string, unknown>>;
+          expect(listResponse).toHaveProperty("result");
+          const listResult = listResponse.result as { agents: string[] };
 
           // Verify all 3 agents are present
-          expect(agents).toHaveProperty("router-alpha");
-          expect(agents).toHaveProperty("router-beta");
-          expect(agents).toHaveProperty("router-gamma");
+          expect(listResult.agents).toContain("router-alpha");
+          expect(listResult.agents).toContain("router-beta");
+          expect(listResult.agents).toContain("router-gamma");
 
-          // Verify distinct name fields
-          expect(agents["router-alpha"]!.name).toBe("RouterAlpha");
-          expect(agents["router-beta"]!.name).toBe("RouterBeta");
-          expect(agents["router-gamma"]!.name).toBe("RouterGamma");
+          // Verify distinct name fields via agents.get
+          const expectedNames: Record<string, string> = {
+            "router-alpha": "RouterAlpha",
+            "router-beta": "RouterBeta",
+            "router-gamma": "RouterGamma",
+          };
+          for (const [agentId, expectedName] of Object.entries(expectedNames)) {
+            const getResponse = (await sendJsonRpc(
+              ws,
+              "agents.get",
+              { agentId },
+              10,
+              { timeoutMs: RPC_FAST_MS },
+            )) as Record<string, unknown>;
+            expect(getResponse).toHaveProperty("result");
+            const getResult = getResponse.result as Record<string, unknown>;
+            expect(getResult.agentId).toBe(agentId);
+            const config = getResult.config as Record<string, unknown>;
+            expect(config.name).toBe(expectedName);
+          }
         } finally {
           ws?.close();
         }
@@ -97,24 +112,24 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
     it(
       "ROUTE-11b: each agent has anthropic provider and model configured",
       async () => {
+        // WR-03: per-agent provider/model is read via agents.get rather than
+        // config.get({section:"agents"}).
         let ws: WebSocket | undefined;
         try {
           ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
 
-          const response = (await sendJsonRpc(
-            ws,
-            "config.get",
-            { section: "agents" },
-            11,
-            { timeoutMs: RPC_FAST_MS },
-          )) as Record<string, unknown>;
-
-          expect(response).toHaveProperty("result");
-          const result = response.result as Record<string, unknown>;
-          const agents = result.agents as Record<string, Record<string, unknown>>;
-
           for (const agentId of ["router-alpha", "router-beta", "router-gamma"]) {
-            const agent = agents[agentId]!;
+            const response = (await sendJsonRpc(
+              ws,
+              "agents.get",
+              { agentId },
+              11,
+              { timeoutMs: RPC_FAST_MS },
+            )) as Record<string, unknown>;
+
+            expect(response).toHaveProperty("result");
+            const result = response.result as Record<string, unknown>;
+            const agent = result.config as Record<string, unknown>;
             expect(agent.provider).toBe("anthropic");
             expect(agent.model).toBe("claude-opus-4-6");
             expect(agent.maxSteps).toBe(5);
@@ -127,8 +142,12 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
     );
 
     it(
-      "ROUTE-11c: routing config has correct defaultAgentId and bindings",
+      "ROUTE-11c: config.get does not egress the routing section (WR-03)",
       async () => {
+        // WR-03: config.get({section:"routing"}) no longer egresses routing config;
+        // it returns only the safe default { tenantId, logLevel, gateway }. The
+        // defaultAgentId/bindings values were previously asserted here but are no
+        // longer RPC-observable via config.get post-WR-03.
         let ws: WebSocket | undefined;
         try {
           ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
@@ -143,20 +162,16 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
 
           expect(response).toHaveProperty("result");
           const result = response.result as Record<string, unknown>;
-          const routing = result.routing as Record<string, unknown>;
 
-          expect(routing.defaultAgentId).toBe("router-alpha");
-          const bindings = routing.bindings as Array<Record<string, unknown>>;
-          expect(bindings.length).toBe(2);
+          // The requested section must be absent: only the safe default is returned.
+          expect(result.routing).toBeUndefined();
+          expect(result).toHaveProperty("tenantId");
+          expect(result).toHaveProperty("gateway");
 
-          // Verify specific bindings
-          const discordBinding = bindings.find((b) => b.channelType === "discord");
-          expect(discordBinding).toBeDefined();
-          expect(discordBinding!.agentId).toBe("router-beta");
-
-          const vipBinding = bindings.find((b) => b.peerId === "vip-user");
-          expect(vipBinding).toBeDefined();
-          expect(vipBinding!.agentId).toBe("router-gamma");
+          // Binding details must not leak through any other field of the response.
+          const serialized = JSON.stringify(result);
+          expect(serialized).not.toContain("defaultAgentId");
+          expect(serialized).not.toContain("vip-user");
         } finally {
           ws?.close();
         }
@@ -246,8 +261,10 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
 
   describe("Daemon-Level Routing Dispatch (ROUTE-13) - Structural", () => {
     it(
-      "ROUTE-13a: config.get confirms routing defaultAgentId is router-alpha",
+      "ROUTE-13a: config.get does not egress the routing section (WR-03)",
       async () => {
+        // WR-03: the routing defaultAgentId is no longer RPC-observable via
+        // config.get; it returns only the safe default and omits the routing section.
         let ws: WebSocket | undefined;
         try {
           ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
@@ -262,8 +279,8 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
 
           expect(response).toHaveProperty("result");
           const result = response.result as Record<string, unknown>;
-          const routing = result.routing as Record<string, unknown>;
-          expect(routing.defaultAgentId).toBe("router-alpha");
+          expect(result.routing).toBeUndefined();
+          expect(JSON.stringify(result)).not.toContain("defaultAgentId");
         } finally {
           ws?.close();
         }
@@ -272,26 +289,27 @@ describe("Agent Routing: Config, Workspace, Dispatch", () => {
     );
 
     it(
-      "ROUTE-13b: config.get confirms all 3 agent executors are configured",
+      "ROUTE-13b: agents.list confirms all 3 agent executors are configured",
       async () => {
+        // WR-03: the configured agent set is read via agents.list rather than
+        // config.get({section:"agents"}).
         let ws: WebSocket | undefined;
         try {
           ws = await openAuthenticatedWebSocket(handle.gatewayUrl, handle.authToken);
 
           const response = (await sendJsonRpc(
             ws,
-            "config.get",
-            { section: "agents" },
+            "agents.list",
+            {},
             21,
             { timeoutMs: RPC_FAST_MS },
           )) as Record<string, unknown>;
 
           expect(response).toHaveProperty("result");
-          const result = response.result as Record<string, unknown>;
-          const agents = result.agents as Record<string, unknown>;
+          const result = response.result as { agents: string[] };
 
-          // All 3 agents should be present in config
-          expect(Object.keys(agents)).toEqual(
+          // All 3 agents should be present in the configured agent list
+          expect(result.agents).toEqual(
             expect.arrayContaining(["router-alpha", "router-beta", "router-gamma"]),
           );
         } finally {

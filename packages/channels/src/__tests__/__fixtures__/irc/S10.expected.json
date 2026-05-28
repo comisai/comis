@@ -1,0 +1,8 @@
+{
+  "calls": [
+    { "op": "send", "id": "irc-msg-0", "text": "verbose 1" },
+    { "op": "send", "id": "irc-msg-1", "text": "verbose 2" },
+    { "op": "send", "id": "irc-msg-2", "text": "verbose 3" },
+    { "op": "send", "id": "irc-msg-3", "text": "✓ done · 3 steps · 2.0s" }
+  ]
+}

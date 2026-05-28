@@ -46,10 +46,7 @@ import {
   resolveDescription,
   type ToolDescriptionContext,
 } from "@comis/agent";
-import {
-  ensureWorkspace,
-  resolveWorkspaceDir,
-} from "@comis/core";
+import { ensureWorkspace, resolveWorkspaceDir } from "@comis/core";
 import {
   agentToolsToToolDefinitions,
   createSkillRegistry,
@@ -57,10 +54,8 @@ import {
   type SkillWatcherHandle,
 } from "@comis/skills";
 import { resolveAgentModel, deriveCanaryFallback } from "./setup-agents-tooling.js";
-import type {
-  SingleAgentDeps,
-  SingleAgentResult,
-} from "./setup-agents-types.js";
+import { createAcpWiring } from "./setup-acp-wiring.js";
+import type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
 // Re-export types so consumers of the runtime leaf preserve the historic
 // import shape (parity-tests + setup-agents.test.ts inspect by name).
 export type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
@@ -458,9 +453,14 @@ export async function setupSingleAgent(
     ? createAuthRotationAdapter({ authStorage: piAuthStorage, profileManager: authProfileManager })
     : undefined;
 
+  // ACP-03: one ExecutionPlanHolder per agent runtime, shared by reference into
+  // PiExecutorDeps.executionPlanHolder AND AcpServerDeps via createAcpWiring (T-74-33).
+  const { holder: executionPlanHolder } = createAcpWiring({ eventBus: container.eventBus, logger: perAgentLogger });
+
   const executor = createPiExecutor(effectiveConfig, {
     circuitBreaker,
     providerHealth: deps.providerHealth,
+    executionPlanHolder,
     lastKnownModel: deps.lastKnownModel,
     budgetGuard,
     costTracker,

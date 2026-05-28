@@ -87,12 +87,23 @@ export interface ChannelPort {
    * the capability gate (`features.editMessages` at daemon/api/message-handlers.ts:113-128)
    * blocks the call before it reaches the adapter.
    *
+   * The optional `options` arg lets activity renderers update rich approval /
+   * status frames in place — inline keyboards, components, or Block Kit — not
+   * just the message text (STRAT-06, §16.11). In-tree adapters are updated to
+   * honour it in Phase 71/72; this is the port-shape widening only.
+   *
    * @param channelId - Target channel/chat/room identifier
    * @param messageId - The platform-specific ID of the message to edit
    * @param text - Updated message content
+   * @param options - Channel-specific rich options (buttons, cards, effects, threadId)
    * @returns void on success, or an error
    */
-  editMessage?(channelId: string, messageId: string, text: string): Promise<Result<void, Error>>;
+  editMessage?(
+    channelId: string,
+    messageId: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<Result<void, Error>>;
 
   /**
    * Register a handler for incoming messages.

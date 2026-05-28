@@ -142,7 +142,12 @@ describe("setupShutdown", () => {
     expect(deps.channelActivityTracker.dispose).toHaveBeenCalled();
     expect(deps.deliveryTracer.dispose).toHaveBeenCalled();
     expect(deps.db.close).toHaveBeenCalled();
-  });
+    // 15s timeout (matches the per-step-timeout tests below): this is the
+    // first and largest test in the file and drives the full real-timer
+    // teardown chain across ~26 steps. Under the saturated parallel suite
+    // the default 5s budget is CPU-starvation-flaky even though no step
+    // actually hangs.
+  }, 15_000);
 
   // -------------------------------------------------------------------------
   // 2. Optional component handling
@@ -626,6 +631,36 @@ describe("setupShutdown", () => {
       "Shutdown step timed out or failed, continuing",
     );
   }, 15_000);
+
+  // -------------------------------------------------------------------------
+  // 18. Per-step timer does not leak on the fast path
+  // -------------------------------------------------------------------------
+
+  it("clears each per-step timer when the step resolves fast (no timer leak)", async () => {
+    // withStepTimeout races the step against a STEP_TIMEOUT_MS timer. When
+    // the step wins (the common case), the timer must be cleared — otherwise
+    // every teardown leaks ~one 5s timer per step. Drive a fast shutdown
+    // under fake timers and assert nothing remains pending afterward.
+    vi.useFakeTimers();
+    try {
+      const deps = createMinimalDeps({
+        gatewayHandle: { stop: vi.fn(async () => {}) } as any,
+        channelManager: { stopAll: vi.fn(async () => {}) },
+        heartbeatRunner: { stop: vi.fn() } as any,
+        cronSchedulers: new Map([["agent-1", { stop: vi.fn() } as any]]),
+        browserServices: new Map([["agent-1", { stop: vi.fn(async () => {}) } as any]]),
+      });
+
+      const setupShutdown = await getSetupShutdown();
+      const result = setupShutdown(deps);
+      await result.shutdownHandle.trigger("SIGTERM");
+
+      // Every per-step timer plus the hard-timeout must have been cleared.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

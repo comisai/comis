@@ -39,20 +39,19 @@ describe("renderTelegramButtons", () => {
     });
   });
 
-  it("callback data truncation: callback_data > 64 bytes truncated to 64 bytes", () => {
+  it("callback data over budget: an over-64-byte callback button is omitted, never truncated", () => {
     // Use multi-byte UTF-8 chars: each emoji is 4 bytes, 17 emojis = 68 bytes
     const longData = "\u{1F600}".repeat(17); // 68 bytes
+    expect(new TextEncoder().encode(longData).length).toBe(68);
     const buttons: RichButton[][] = [
       [{ text: "Test", callback_data: longData }],
     ];
     const keyboard = renderTelegramButtons(buttons);
-    const data = keyboard.inline_keyboard[0][0].callback_data as string;
 
-    // Verify truncated to <= 64 bytes
-    const encoder = new TextEncoder();
-    expect(encoder.encode(data).length).toBeLessThanOrEqual(64);
-    // Should have lost at least 1 emoji (4 bytes trimmed)
-    expect(data.length).toBeLessThan(longData.length);
+    // The over-budget button is dropped (truncating would corrupt a signed
+    // payload's HMAC). The row exists but holds no over-budget callback button,
+    // and no truncated callback_data is ever emitted.
+    expect(keyboard.inline_keyboard[0]).toHaveLength(0);
   });
 
   it("callback_data fallback: when callback_data undefined, uses btn.text", () => {

@@ -10,6 +10,8 @@
  * different sources can register different fields for the same tool.
  */
 
+import type { ErrorKind } from "./logging/log-fields.js";
+
 // ---------------------------------------------------------------------------
 // ToolCapabilityMetadata interface (v1.1 capability layer)
 // ---------------------------------------------------------------------------
@@ -38,6 +40,15 @@ export interface ToolCapabilityMetadata {
 // ---------------------------------------------------------------------------
 
 /** Per-tool metadata stored in the side-channel registry. All fields optional. */
+// @optional-field-count: 14 optional fields — this is a side-channel metadata
+// aggregator keyed by tool name, registered incrementally via spread-merge from
+// independent sources (result caps, parallel-safety flags, action-gating
+// schema, MCP-export policy, capability routing, and the v2.5 activity hints
+// suppressActivity/failureDetector). Every field is conditionally present per
+// tool by design; the registry merges partial registrations, so a required
+// field would force every caller to supply unrelated keys. Splitting would
+// fragment a single per-tool record into N parallel maps with no added type
+// safety. Well-bounded record, not an undermodeled type.
 export interface ComisToolMetadata {
   /** Per-tool result size cap in characters. */
   maxResultSizeChars?: number;
@@ -87,6 +98,20 @@ export interface ComisToolMetadata {
    *  Spread-merge in `registerToolMetadata` preserves this field across multiple
    *  registrations for the same tool name. */
   mcpExportPolicy?: "safe" | "permission-gated" | "never-export";
+  /** When true, this tool's lifecycle produces no activity messages (the
+   *  activity pipeline skips it). Lifecycle reactions + final delivery are
+   *  unaffected. Read by the activity layer in a later phase (EVT-09, §16.11). */
+  suppressActivity?: boolean;
+  /** Tool-specific failure classifier consulted *before* the `tool:executed`
+   *  emit (§16.10), so observability never sees the raw result. Receives the
+   *  tool result and the SDK `isError` flag; returns `true`/`false` (failed or
+   *  not) or `{ errorKind }` (failed, with a closed-union classification).
+   *  Lets a tool flag a logically-failed result that the SDK reported as
+   *  success (e.g. a non-zero exit code). (EVT-09, §16.11). */
+  failureDetector?: (
+    result: unknown,
+    isError: boolean,
+  ) => boolean | { errorKind: ErrorKind };
 }
 
 // ---------------------------------------------------------------------------

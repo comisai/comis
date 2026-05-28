@@ -57,6 +57,13 @@ export interface PiExecutorDeps {
   stepCounter: StepCounter;
   eventBus: TypedEventBus;
   logger: ComisLogger;
+  /**
+   * Optional ExecutionPlanPort holder (ACP-03). When provided, session-bootstrap
+   * publishes the per-turn SEP ref into it (SEP-on) / clears it (SEP-off) so the
+   * gateway/ACP plan bridge reads the live plan via the shared port. Absent in
+   * non-ACP runtimes — existing callers are unaffected.
+   */
+  executionPlanHolder?: import("./execution-plan-holder.js").ExecutionPlanHolder;
   // Adapters
   authStorage: AuthStorage;
   modelRegistry: ModelRegistry;

@@ -140,6 +140,160 @@ describe("setupRpcBridge", () => {
   });
 });
 
+describe("buildRpcAdapterDeps getConfig non-secret allowlist (WR-03)", () => {
+  // Minimal container.config carrying an apiKey-shaped secret in the `agents`
+  // section (the real leak: per-agent auth/model profiles) plus a non-secret
+  // gateway section and the two scalar allowlist fields. Only the fields the
+  // getConfig handler reads need to be real — the rest of AppConfig is absent.
+  function makeContainerConfig() {
+    return {
+      tenantId: "tenant-a",
+      logLevel: "info",
+      gateway: {
+        enabled: true,
+        host: "127.0.0.1",
+        port: 4766,
+        // A secret adjacent to the allowlisted gateway projection — bearer
+        // tokens live on the raw gateway object and must NEVER egress even
+        // when `gateway` is allowlisted (the handler returns the projection).
+        tokens: [{ token: "tok-GATEWAY-SECRET", scopes: ["admin"] }],
+      },
+      agents: {
+        default: {
+          name: "Comis",
+          provider: "anthropic",
+          model: "claude",
+          // apiKey-shaped value reachable when the section is returned verbatim.
+          modelFailover: { authProfiles: [{ keyName: "ANTHROPIC_API_KEY", provider: "anthropic" }] },
+          apiKey: "sk-LEAK-TOKEN",
+        },
+      },
+    };
+  }
+
+  async function makeDeps(config: ReturnType<typeof makeContainerConfig>) {
+    const mod = await import("./setup-gateway-rpc.js");
+    const container = {
+      config,
+      eventBus: { emit: vi.fn() },
+    } as unknown as Parameters<typeof mod.buildRpcAdapterDeps>[0]["container"];
+    return mod.buildRpcAdapterDeps({
+      container,
+      gwConfig: config.gateway as never,
+      agents: config.agents as never,
+      defaultAgentId: "default",
+      gatewayLogger: createMockLogger() as never,
+      memoryApi: {} as never,
+      sessionStore: {} as never,
+      getExecutor: (() => ({})) as never,
+      assembleToolsForAgent: (async () => []) as never,
+      preprocessMessageText: (async (t: string) => t) as never,
+      rpcCall: (async () => ({})) as never,
+      costTrackers: new Map() as never,
+      workspaceDirs: new Map() as never,
+      activeExecutions: new Map() as never,
+    });
+  }
+
+  async function makeGetConfig(config: ReturnType<typeof makeContainerConfig>) {
+    return (await makeDeps(config)).getConfig;
+  }
+
+  it("does not egress apiKey-shaped values when getConfig requests the agents section", async () => {
+    const getConfig = await makeGetConfig(makeContainerConfig());
+
+    const res = await getConfig({ section: "agents" });
+    const serialized = JSON.stringify(res);
+
+    // RED on the verbatim passthrough: the `agents` section flows out wholesale.
+    expect(serialized).not.toContain("sk-LEAK-TOKEN");
+    expect(serialized).not.toContain("ANTHROPIC_API_KEY");
+    expect(serialized).not.toContain("apiKey");
+    // The non-allowlisted section must not be echoed back as its own key.
+    expect((res as Record<string, unknown>).agents).toBeUndefined();
+  });
+
+  it("does not return the security section verbatim when getConfig requests it", async () => {
+    const config = makeContainerConfig() as Record<string, unknown>;
+    // security.secrets is the encrypted-store config block; never egress it.
+    config.security = { secrets: { masterKeyPath: "/etc/comis/master.key", password: "pw-LEAK" } };
+    const getConfig = await makeGetConfig(config as ReturnType<typeof makeContainerConfig>);
+
+    const res = await getConfig({ section: "security" });
+    const serialized = JSON.stringify(res);
+
+    expect(serialized).not.toContain("pw-LEAK");
+    expect(serialized).not.toContain("master.key");
+    expect((res as Record<string, unknown>).security).toBeUndefined();
+  });
+
+  it("still returns the allowlisted gateway section as a non-secret projection", async () => {
+    const getConfig = await makeGetConfig(makeContainerConfig());
+
+    const res = await getConfig({ section: "gateway" });
+    const gateway = (res as { gateway?: Record<string, unknown> }).gateway;
+
+    // Allowlisted section is returned (regression guard) but only as the
+    // {enabled,host,port} projection — never the raw object with tokens.
+    expect(gateway).toEqual({ enabled: true, host: "127.0.0.1", port: 4766 });
+    expect(JSON.stringify(res)).not.toContain("tok-GATEWAY-SECRET");
+  });
+
+  it("returns the safe default object unchanged for the no-section request", async () => {
+    const getConfig = await makeGetConfig(makeContainerConfig());
+
+    const res = await getConfig({});
+
+    expect(res).toEqual({
+      tenantId: "tenant-a",
+      logLevel: "info",
+      gateway: { enabled: true, host: "127.0.0.1", port: 4766 },
+    });
+  });
+
+  it("listAgentSummaries returns only non-secret id/name/provider/model fields", async () => {
+    const deps = await makeDeps(makeContainerConfig());
+
+    // Dedicated non-secret projection for the dashboard's GET /api/agents.
+    // WR-03 removed `agents` from getConfig's allowlist, so the REST listing
+    // can no longer source agents from getConfig; this is its replacement.
+    const summaries = deps.listAgentSummaries?.();
+
+    expect(summaries).toEqual([
+      { id: "default", name: "Comis", provider: "anthropic", model: "claude" },
+    ]);
+    // The same secret-shaped fields the getConfig egress test guards against
+    // must NOT appear in this projection either.
+    const serialized = JSON.stringify(summaries);
+    expect(serialized).not.toContain("sk-LEAK-TOKEN");
+    expect(serialized).not.toContain("ANTHROPIC_API_KEY");
+    expect(serialized).not.toContain("apiKey");
+  });
+
+  it("listChannelSummaries returns only non-secret name/enabled fields (no tokens)", async () => {
+    // makeContainerConfig has no channels; add one carrying a secret-shaped
+    // token plus the internal healthCheck block to prove both are handled.
+    const config = {
+      ...makeContainerConfig(),
+      channels: {
+        telegram: { enabled: true, botToken: "tok-LEAK" },
+        discord: { enabled: false },
+        healthCheck: { enabled: true },
+      },
+    } as ReturnType<typeof makeContainerConfig>;
+    const deps = await makeDeps(config);
+
+    const summaries = deps.listChannelSummaries?.();
+
+    // healthCheck excluded (not a chat adapter); bot token dropped.
+    expect(summaries).toEqual([
+      { name: "telegram", enabled: true },
+      { name: "discord", enabled: false },
+    ]);
+    expect(JSON.stringify(summaries)).not.toContain("tok-LEAK");
+  });
+});
+
 describe("setup-gateway-rpc source guard", () => {
   it("wires buildExecutionRequestedLogFields into the executeAgent log call and removes the raw-message logger pattern", async () => {
     // The executeAgent adapter that consumes buildExecutionRequestedLogFields

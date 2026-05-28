@@ -8,8 +8,9 @@
  * @module
  */
 
-import type { AppContainer } from "@comis/core";
-import { systemSetInterval } from "@comis/core";
+import type { AppContainer, ActivityTheme } from "@comis/core";
+import { systemSetInterval, getToolMetadata } from "@comis/core";
+import { createActivityStream, type ActivityStream } from "@comis/observability";
 import { createCostTracker, createCacheBreakDiffWriter } from "@comis/agent";
 import type { createTokenTracker } from "../observability/token-tracker.js";
 import type { TokenTracker } from "../observability/token-tracker.js";
@@ -34,6 +35,22 @@ export interface ObservabilityResult {
   billingEstimator: BillingEstimator;
   channelActivityTracker: ChannelActivityTracker;
   deliveryTracer: DeliveryTracer;
+  /**
+   * The canonical redacted `ActivityEvent` source (WIRE-01, §17.7). Subscribes
+   * to the EventBus at construction; the daemon injects it as the orchestrator-
+   * facing `ActivityStreamPort` (via `ExecutionPipelineDeps.activityStreamPort`)
+   * and the ACP renderer hook. It is NEVER imported directly by the orchestrator
+   * — the composition root owns this DI seam (the core+observability→channels
+   * boundary; TURN-03/§4.7).
+   */
+  activityStream: ActivityStream;
+  /**
+   * Drain + unsubscribe hook for {@link activityStream} (WIRE-01/WIRE-05). The
+   * shutdown chain calls this to detach every EventBus handler and clear the
+   * correlation index so per-turn bounded queues drain and no pending placeholder
+   * is orphaned across a restart (T-70-10-03).
+   */
+  disposeActivityStream: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -50,9 +67,41 @@ export interface ObservabilityResult {
 export function setupObservability(deps: {
   eventBus: AppContainer["eventBus"];
   _createTokenTracker: typeof createTokenTracker;
-  logger?: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
+  /**
+   * Object-first logger for the cache-break INFO line and the diff-writer's
+   * `warn`. Typed as the structural `ComisLogger` (WR-02) — the daemon already
+   * passes `logLevelManager.getLogger("observability")`, whose object-first
+   * `LogMethod`s are assignable to `createCacheBreakDiffWriter`'s
+   * `{ warn: (obj, msg) => void }` requirement WITHOUT a cast. The prior
+   * `{ info/warn: (...args: unknown[]) => void }` shape forced an unsafe `as`
+   * assertion that the declared type did not guarantee. Mirrors the
+   * `activityLogger` field's correct `ComisLogger` typing.
+   */
+  logger?: import("@comis/core").ComisLogger;
   /** Data directory for persistent observability files (e.g., cache-break diffs) */
   dataDir?: string;
+  /**
+   * Bound logger for the ActivityStream (WIRE-01/OBS-02). Injected so the stream
+   * never constructs its own logger; when absent the stream is silent. The
+   * `ComisLogger` shape is structural — passing the daemon's
+   * `logLevelManager.getLogger("activity-stream")` satisfies it.
+   */
+  activityLogger?: import("@comis/core").ComisLogger;
+  /**
+   * Operator home directory for the ActivityStream's SEC-02 `$HOME`→`~` path
+   * compaction. Read once at this sanctioned composition root and injected; the
+   * substrate performs no env reads of its own.
+   */
+  homeDir?: string;
+  /**
+   * Active operator theme for the ActivityStream (UX-01 runtime reachability).
+   * Resolved once at the daemon composition root from the DEFAULT agent's
+   * `activity.theme` (`themeForName(name)`) and forwarded into
+   * `createActivityStream`, so the four themes are reachable at runtime (the
+   * subagent marker baked into `defaultLabel` follows the configured theme).
+   * Optional — when absent the stream uses its DEFAULT_MARKERS (default-parity).
+   */
+  theme?: ActivityTheme;
 }): ObservabilityResult {
   const { eventBus, _createTokenTracker } = deps;
 
@@ -114,10 +163,29 @@ export function setupObservability(deps: {
       // path of every diff artifact must stay inside the operator's data
       // root (closes the ancestor-symlink escape).
       dataDir: deps.dataDir,
-      logger: deps.logger as { warn: (obj: Record<string, unknown>, msg: string) => void },
+      // ComisLogger's object-first `warn` (LogMethod) is structurally assignable
+      // to the diff writer's `{ warn: (obj, msg) => void }` — no cast (WR-02).
+      logger: deps.logger,
     });
     eventBus.on("observability:cache_break", diffWriter);
   }
+
+  // WIRE-01: construct the canonical ActivityStream substrate (70-08). It
+  // subscribes to the EventBus immediately (tool:*/model:*/approval:*) and maps
+  // each to a redacted ActivityEvent. The bound logger is injected (OBS-02 — no
+  // in-module getLogger); `getToolMetadata` (the @comis/core module registry)
+  // honors per-tool `suppressActivity`; `homeDir` drives the SEC-02 $HOME→~
+  // path compaction (read once here at the sanctioned composition root). The
+  // returned port is the orchestrator-facing ActivityStreamPort.
+  const activityStream = createActivityStream({
+    eventBus,
+    logger: deps.activityLogger,
+    getToolMetadata,
+    homeDir: deps.homeDir,
+    // UX-01: forward the resolved operator theme so the subagent marker baked
+    // into `defaultLabel` follows the configured theme (ascii strips emoji).
+    ...(deps.theme !== undefined ? { theme: deps.theme } : {}),
+  });
 
   const diagnosticCollector = createDiagnosticCollector({
     eventBus,
@@ -149,5 +217,10 @@ export function setupObservability(deps: {
     billingEstimator,
     channelActivityTracker,
     deliveryTracer,
+    activityStream,
+    // WIRE-05 drain hook: dispose() detaches every EventBus handler and clears
+    // the correlation index. The shutdown chain invokes this so pending per-turn
+    // bounded queues drain and no placeholder is orphaned across restart.
+    disposeActivityStream: () => activityStream.dispose(),
   };
 }

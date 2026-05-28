@@ -16,5 +16,5 @@ export {
 export type { RequestContext, UserTrustLevel } from "../context/index.js";
 
 // Bootstrap (composition root)
-export { bootstrap } from "../bootstrap.js";
+export { bootstrap, INTERACTIVE_CALLBACK_SIGNING_SECRET_NAME } from "../bootstrap.js";
 export type { BootstrapOptions, AppContainer } from "../bootstrap.js";

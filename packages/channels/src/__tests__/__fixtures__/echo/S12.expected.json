@@ -1,0 +1,32 @@
+{
+  "frames": [
+    {
+      "frameSeq": 0,
+      "visibleEvents": [
+        {
+          "schemaVersion": 1,
+          "activityId": "00000000-0000-0000-0000-000000000001",
+          "sessionKey": "sess-a",
+          "agentId": "main",
+          "traceId": "trace-a",
+          "ts": "2026-05-26T00:00:00.000Z",
+          "phase": "progress",
+          "status": "running",
+          "kind": "lifecycle",
+          "semanticPhase": "done",
+          "defaultLabel": "suppressed reply"
+        }
+      ],
+      "groupedActivityIds": {},
+      "changeSet": {
+        "added": [],
+        "edited": [],
+        "removed": []
+      }
+    }
+  ],
+  "outcome": {
+    "kind": "silent",
+    "reason": "NO_REPLY"
+  }
+}
