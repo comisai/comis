@@ -208,8 +208,15 @@ const MAC_RE = /\b(?:[0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}\b/g;
 // e.g. `db-primary.internal.example.com`. Requiring ≥ 3 labels avoids matching
 // two-segment filenames like `config.yaml` / `bar.ts` (those are paths/leaves,
 // not hosts). Run AFTER email/IP so those more-specific shapes win first.
+//
+// nsv-hotfix: `(?<!\/\/)` negative-lookbehind exempts URL hosts (preceded by
+// the scheme's two slashes) from this mask. Per SPEC §8.4, public URL hosts are
+// information the user expects to see — `tavily.com/search` renders verbatim —
+// not internal infrastructure leakage. Standalone hostnames not inside a URL
+// (e.g. an internal `db-primary.internal.example.com` reference in a log line)
+// remain masked as defense-in-depth.
 const HOSTNAME_RE =
-  /\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.){2,}[a-zA-Z]{2,}\b/g;
+  /(?<!\/\/)\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.){2,}[a-zA-Z]{2,}\b/g;
 
 /** Length guard mirroring `log-sanitizer.ts` `MAX_SANITIZE_LENGTH` — ReDoS protection. */
 const MAX_SANITIZE_LENGTH = 1_048_576;
