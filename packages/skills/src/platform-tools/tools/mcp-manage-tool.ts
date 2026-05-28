@@ -315,16 +315,40 @@ export function createMcpManageTool(
           validateConnectParams(serverName, inferredTransport, p.command, p.url);
           // validateConnectParams threw if any field was missing — past this
           // point both serverName and inferredTransport are non-empty strings.
-          return rpcCall("mcp.connect", {
-            server_name: serverName,
-            transport: inferredTransport,
-            command: p.command,
-            args: coercedArgs,
-            url: p.url,
-            headers: coerceHeaders(p) as Record<string, string> | undefined,
-            ...(coercedAuth !== undefined && { auth: coercedAuth }),
-            _trustLevel: ctx.trustLevel,
-          });
+          try {
+            return await rpcCall("mcp.connect", {
+              server_name: serverName,
+              transport: inferredTransport,
+              command: p.command,
+              args: coercedArgs,
+              url: p.url,
+              headers: coerceHeaders(p) as Record<string, string> | undefined,
+              ...(coercedAuth !== undefined && { auth: coercedAuth }),
+              _trustLevel: ctx.trustLevel,
+            });
+          } catch (err: unknown) {
+            // R8.4'-01: catch structured needs_oauth_login error from mcp-handlers
+            // (Plan 05) and surface an actionable hint instead of re-throwing a
+            // generic error that the agent cannot act on. Only catches errors where
+            // .data.needs_oauth_login === true — all other errors are re-thrown
+            // unchanged (T-01-06-02 non-swallow invariant).
+            if (
+              err instanceof Error &&
+              (err as { data?: { needs_oauth_login?: boolean } }).data?.needs_oauth_login === true
+            ) {
+              const d = (err as { data: { server_name: string; action: string } }).data;
+              return {
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `Run \`mcp_login({server_name: "${d.server_name}"})\` to start the OAuth flow, then retry mcp_manage(action:"connect", auth:"oauth", url:..., transport:"http").`,
+                  },
+                ],
+                details: d,
+              };
+            }
+            throw err;
+          }
         },
         async disconnect(p, rpcCall, ctx) {
           const name = readStringParam(p, "server_name");

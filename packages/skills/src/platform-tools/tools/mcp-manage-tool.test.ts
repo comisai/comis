@@ -761,4 +761,70 @@ describe("mcp_manage tool", () => {
       );
     });
   });
+
+  // -----------------------------------------------------------------------
+  // connect action -- needs_oauth_login structured error (R8.4'-01 consumer)
+  // -----------------------------------------------------------------------
+
+  describe("connect action -- needs_oauth_login structured error (R8.4'-01)", () => {
+    it("mcp_manage connect returns actionable hint when daemon throws needs_oauth_login structured error", async () => {
+      // RED: mcp_manage currently re-throws the structured error from the daemon
+      // instead of catching it and returning an actionable content[0].text hint.
+      // This test FAILS on HEAD because there is no catch block for .data.needs_oauth_login
+      // in the connect actionOverride — the error propagates up as an exception.
+      //
+      // GREEN: after adding the catch block, tool.execute() returns a tool result
+      // with content[0].text starting with `Run \`mcp_login(`.
+      const structuredErr = Object.assign(
+        new Error("[needs_oauth_login] MCP server \"x\" requires OAuth login"),
+        {
+          data: {
+            needs_oauth_login: true,
+            server_name: "x",
+            action: "comis mcp login x",
+          },
+        },
+      );
+      mockRpcCall.mockImplementation(async (method: string) => {
+        if (method === "mcp.connect") throw structuredErr;
+        return { stub: true };
+      });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      const result = await runWithContext(makeContext("admin"), () =>
+        tool.execute("call-oauth-hint", {
+          action: "connect",
+          server_name: "x",
+          url: "https://x.ai/mcp",
+          transport: "http",
+          auth: "oauth",
+        } as never),
+      );
+
+      expect(result.content[0].text).toMatch(/^Run `mcp_login\(/);
+      expect(result.content[0].text).toContain('"x"');
+    });
+
+    it("mcp_manage connect re-throws non-oauth errors unchanged", async () => {
+      // Non-oauth errors must NOT be swallowed — only needs_oauth_login is caught.
+      const plainErr = new Error("Network timeout");
+      mockRpcCall.mockImplementation(async (method: string) => {
+        if (method === "mcp.connect") throw plainErr;
+        return { stub: true };
+      });
+      const tool = createMcpManageTool(mockRpcCall);
+
+      await expect(
+        runWithContext(makeContext("admin"), () =>
+          tool.execute("call-rethrow", {
+            action: "connect",
+            server_name: "x",
+            url: "https://x.ai/mcp",
+            transport: "http",
+            auth: "oauth",
+          } as never),
+        ),
+      ).rejects.toThrow("Network timeout");
+    });
+  });
 });
