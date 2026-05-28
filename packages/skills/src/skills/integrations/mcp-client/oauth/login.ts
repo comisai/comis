@@ -142,6 +142,17 @@ export interface RunOauthLoginDeps {
   readonly existsSync?: (path: string) => boolean;
   /** Callback timeout in ms. Defaults to the browser-callback's 300s. */
   readonly timeoutMs?: number;
+  /**
+   * Fired after the headless background task completes the second-pass code
+   * exchange and persists tokens. Wired by `mcp-oauth-handlers.ts` to
+   * `mcpClientManager.reconnect(serverName)` so the live connection upgrades
+   * to the new bearer without an additional RPC round-trip. NEVER invoked on
+   * the non-headless path (the caller of `runOauthLogin` already awaits
+   * `authorized` synchronously and triggers the reconnect itself). NEVER
+   * invoked on a failed exchange. Errors thrown by this hook are caught and
+   * logged so a reconnect failure does NOT corrupt the persisted token file.
+   */
+  readonly onAuthorized?: (serverName: string) => Promise<void> | void;
   readonly logger: OAuthLoginLogger;
 }
 
@@ -231,6 +242,11 @@ export async function runOauthLogin(
   };
 
   let handle: BrowserCallbackHandle | undefined;
+  // When the headless branch spawns a background task, that task owns the
+  // handle's lifecycle (it closes it in its own finally). The outer finally
+  // below must skip its close in that case, otherwise the loopback dies
+  // before the operator's redirect arrives. See login.test.ts Fix 6 tests.
+  let keepHandleOpen = false;
   try {
     // Pre-flight discovery — cold-load only. Surfaces the actionable
     // cascade-fail error before binding the callback server.
@@ -300,17 +316,84 @@ export async function runOauthLogin(
 
     const authUrl = capturedAuthUrl;
 
-    // Headless host: do NOT open a browser that isn't there. Return the
-    // port-forward hint + the URL for the operator. The callback server stays
-    // up (the operator forwards the port + completes the redirect) — the caller's
-    // CLI awaits, but the daemon RPC returns the hint immediately and the server
-    // is closed here since this RPC does not block for the headless flow.
+    // Headless host: do NOT open a browser that isn't there. The RPC returns
+    // immediately so the caller (agent / CLI) can surface the authUrl, but
+    // the loopback callback server STAYS UP so the operator's eventual
+    // redirect to http://127.0.0.1:<port>/callback?code=…&state=… can be
+    // delivered. The post-callback second-pass exchange (code → tokens →
+    // saveTokens → onAuthorized) runs as a background task; its own
+    // try/finally closes the handle on completion / failure / timeout.
+    //
+    // Pre-fix this branch called `handle.close()` BEFORE returning, tearing
+    // down the loopback ~700 ms after the agent posted the authUrl. Observed
+    // 2026-05-28 against Higgsfield: the operator clicked Allow, the browser
+    // got redirected to a dead socket ("This site can't be reached").
     if (handle.headless) {
       logger.info(
         { submodule: SUBMODULE, serverName, headless: true },
-        "OAuth login: headless host — returning port-forward hint (no daemon browser)",
+        "OAuth login: headless host — loopback stays open; background task awaits redirect",
       );
-      handle.close();
+      keepHandleOpen = true;
+      // Background completion. The `void` discards the returned Promise
+      // intentionally: callers do not await it (the RPC has already
+      // returned). All failure modes are caught and logged inside the IIFE so
+      // nothing escapes as an unhandledRejection.
+      const headlessHandle = handle;
+      void (async () => {
+        try {
+          const code = await headlessHandle.waitForCode();
+          const second: AuthResult = await authFn(wrappedProvider, {
+            serverUrl,
+            authorizationCode: code,
+            ...(oauthConfig.scope !== undefined ? { scope: oauthConfig.scope } : {}),
+            fetchFn,
+          });
+          if (second !== "AUTHORIZED") {
+            logger.warn(
+              { submodule: SUBMODULE, serverName, errorKind: "auth" as const },
+              "OAuth login (headless background): code exchange did not authorize",
+            );
+            return;
+          }
+          logger.info(
+            { submodule: SUBMODULE, serverName },
+            "OAuth login (headless background): authorized — tokens persisted",
+          );
+          if (deps.onAuthorized !== undefined) {
+            try {
+              await deps.onAuthorized(serverName);
+            } catch (hookErr) {
+              // Tokens are persisted; only the reconnect side-effect failed.
+              // Surface a WARN so the operator sees it but do not roll back
+              // the saved tokens.
+              logger.warn(
+                {
+                  submodule: SUBMODULE,
+                  serverName,
+                  err: hookErr instanceof Error ? hookErr : new Error(String(hookErr)),
+                  errorKind: "auth" as const,
+                  hint: "OAuth tokens persisted but onAuthorized hook (typically mcpClientManager.reconnect) threw; retry mcp.reconnect",
+                },
+                "OAuth login (headless background): onAuthorized hook failed",
+              );
+            }
+          }
+        } catch (bgErr) {
+          // waitForCode timeout / CSRF drop / second-pass exchange failure.
+          // NEVER log token/verifier/code.
+          logger.warn(
+            {
+              submodule: SUBMODULE,
+              serverName,
+              err: bgErr instanceof Error ? bgErr : new Error(String(bgErr)),
+              errorKind: "auth" as const,
+            },
+            "OAuth login (headless background): completion failed",
+          );
+        } finally {
+          headlessHandle.close();
+        }
+      })();
       return {
         status: "headless_hint",
         ...(handle.portForwardHint !== undefined
@@ -376,7 +459,10 @@ export async function runOauthLogin(
       ...(capturedAuthUrl !== undefined ? { authUrl: capturedAuthUrl } : {}),
     };
   } finally {
-    // Always release the loopback port — idempotent close.
-    handle?.close();
+    // Release the loopback port — UNLESS the headless branch handed the
+    // handle off to a background task that owns its lifecycle (Fix 6). The
+    // background task's own finally closes the handle when the redirect
+    // arrives, the callback times out, or the exchange fails.
+    if (!keepHandleOpen) handle?.close();
   }
 }

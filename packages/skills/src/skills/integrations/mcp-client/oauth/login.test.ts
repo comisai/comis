@@ -205,10 +205,25 @@ describe("runOauthLogin — full orchestration flow", () => {
     }
   });
 
-  it("headless host: returns headless_hint with the port-forward hint and never opens a browser", async () => {
+  // Fix 6 (2026-05-28). Observed against the live Higgsfield install: the
+  // operator clicked "Allow" on the consent screen, Higgsfield redirected to
+  // http://127.0.0.1:61089/callback?code=…&state=…, and the browser hit a
+  // dead socket — `lsof -nP -iTCP:61089 -sTCP:LISTEN` returned nothing. The
+  // headless branch at login.ts:313 called `handle.close()` BEFORE returning,
+  // so the loopback server was torn down 712 ms after mcp_login returned —
+  // long before the operator could click Allow. The author's own comment
+  // (login.ts:303-307) caught the intent ("The callback server STAYS UP") but
+  // the code matched the second half ("is closed here"). Fix: keep the
+  // loopback alive, return the authUrl immediately, and run the
+  // second-pass token exchange in a background task that closes the handle
+  // when the operator's redirect arrives (or the callback times out).
+  it("headless host: returns immediately with authUrl + portForwardHint AND keeps the loopback OPEN for the operator's redirect", async () => {
     const handle = makeHandle({
       headless: true,
       portForwardHint: "ssh -L 54321:localhost:54321 vps",
+      // Background task awaits this — control it so the synchronous return
+      // is observable BEFORE the code arrives.
+      waitForCode: vi.fn(() => new Promise<string>(() => { /* never resolves in this test */ })),
     });
     const openUrl = vi.fn();
     const auth = vi.fn(async (provider: OAuthClientProvider) => {
@@ -233,10 +248,64 @@ describe("runOauthLogin — full orchestration flow", () => {
     expect(result.authUrl).toContain("idp.example/authorize");
     // NEVER open a browser that isn't there.
     expect(openUrl).not.toHaveBeenCalled();
-    // The (unused) callback server is closed immediately on the headless return.
-    expect(handle.close).toHaveBeenCalled();
-    // waitForCode is never awaited on the headless path.
-    expect(handle.waitForCode).not.toHaveBeenCalled();
+    // CRITICAL: the loopback is alive at return time so the redirect can be
+    // delivered. The background task closes it later (success / failure /
+    // timeout).
+    expect(handle.close).not.toHaveBeenCalled();
+    // The background task has started awaiting the code.
+    expect(handle.waitForCode).toHaveBeenCalledTimes(1);
+  });
+
+  it("headless host: background task exchanges the code, persists tokens, fires onAuthorized, and closes the handle", async () => {
+    let resolveCode!: (code: string) => void;
+    const codePromise = new Promise<string>((res) => { resolveCode = res; });
+    const handle = makeHandle({
+      headless: true,
+      waitForCode: vi.fn(() => codePromise),
+    });
+
+    let authCalls = 0;
+    const auth = vi.fn(async (provider: OAuthClientProvider, opts: { authorizationCode?: string }) => {
+      authCalls += 1;
+      if (opts.authorizationCode === undefined) {
+        await provider.redirectToAuthorization(new URL("https://idp.example/authorize?state=bg"));
+        return "REDIRECT" as const;
+      }
+      expect(opts.authorizationCode).toBe("background-code-xyz");
+      return "AUTHORIZED" as const;
+    });
+
+    const onAuthorized = vi.fn(async () => undefined);
+
+    const result = await runOauthLogin({
+      serverName: "srv-headless-bg",
+      serverUrl: "https://mcp.example",
+      oauthConfig: {},
+      createTokenStore: () => store,
+      openUrl: () => undefined,
+      auth: auth as never,
+      runBrowserCallback: vi.fn(async () => handle) as never,
+      resolveDiscovery: vi.fn(async () => ({}) as never),
+      onAuthorized,
+      logger,
+    });
+
+    // Synchronous return — operator's redirect hasn't arrived yet.
+    expect(result.status).toBe("headless_hint");
+    expect(authCalls).toBe(1);              // only the first pass (URL build) so far
+    expect(onAuthorized).not.toHaveBeenCalled();
+    expect(handle.close).not.toHaveBeenCalled();
+
+    // Simulate the operator's browser hitting the loopback callback.
+    resolveCode("background-code-xyz");
+    // Flush microtasks so the background task observes the code, runs the
+    // second auth pass, and fires onAuthorized + close.
+    await new Promise((res) => setImmediate(res));
+    await new Promise((res) => setImmediate(res));
+
+    expect(authCalls).toBe(2);              // second pass (code exchange) ran
+    expect(onAuthorized).toHaveBeenCalledWith("srv-headless-bg");
+    expect(handle.close).toHaveBeenCalled(); // background task cleaned up
   });
 
   it("first auth() returns AUTHORIZED (valid creds already present) → authorized, no browser", async () => {

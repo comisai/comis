@@ -150,12 +150,31 @@ export function createMcpOauthHandlers(
       // Run the server-side login. The orchestrator owns the SDK auth() call +
       // the loopback callback + saveTokens; it NEVER throws. The daemon
       // openUrl is a no-op — the CLI opens the returned authUrl.
+      //
+      // Fix 6: on the headless path, runOauthLogin returns immediately with
+      // status:"headless_hint" while a background task keeps the loopback
+      // alive and awaits the operator's redirect. When the redirect arrives
+      // and tokens are persisted, that background task fires `onAuthorized`
+      // so the live connection upgrades to the new bearer without an
+      // additional RPC. The non-headless path still returns "authorized"
+      // synchronously and the post-call branch below handles the reconnect.
       const result = await runOauthLogin({
         serverName: server_name,
         serverUrl: entry.url,
         oauthConfig: entry.oauth ?? {},
         createTokenStore: makeTokenStore,
         openUrl,
+        onAuthorized: async (name) => {
+          const reconnectResult = await deps.mcpClientManager.reconnect(name);
+          if (!reconnectResult.ok) {
+            // Tokens persisted but reconnect failed — surface a WARN so the
+            // operator knows to retry mcp.reconnect. Throwing here would
+            // propagate to runOauthLogin's background try/catch which
+            // already logs a fallback WARN; throwing communicates the same
+            // diagnostic upstream without duplicating the failure log.
+            throw new Error(reconnectResult.error.message);
+          }
+        },
         logger: deps.logger,
       });
 
