@@ -300,4 +300,86 @@ describe("createEditPlaceRenderer", () => {
     expect(calls.some((c) => c.op === "delete")).toBe(true);
     expect(calls.some((c) => c.op === "edit")).toBe(false);
   });
+
+  // --- Phase 78 / SPEC-§8.5 production wiring (Task 3 — elapsedMs threading) ---
+  //
+  // EditPlace captures `startedAtMs` on the first apply() (via clock.now() if
+  // a clock is injected) and passes `elapsedMs = clock.now() - startedAtMs`
+  // as the 3rd arg to renderFrameText. The §8.5 fallback "(running N s)"
+  // appears in the sent/edited text whenever the frame has no plan snapshot
+  // AND a clock is injected. These tests regression-lock the live production
+  // path so the fallback is not silently inert after Plan 78-05 lands.
+
+  it("EditPlace passes elapsedMs=0 on the first apply (no time advancement) so the placeholder carries (running 0 s)", async () => {
+    const timer = createFakeTimers();
+    const clock = createFakeClock(1000);
+    const { actions, calls } = makeRecordingActions();
+    const r = createEditPlaceRenderer({ actions, timer, clock });
+
+    await r.apply(makeFrame(0, "step 1"));
+
+    const sends = calls.filter((c): c is Extract<Call, { op: "send" }> => c.op === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0].text).toContain("(running 0 s)");
+  });
+
+  it("EditPlace captures startedAtMs on first apply and the next debounced edit text contains (running 12 s) after 12 000 ms advancement (SPEC-§8.5 production wiring)", async () => {
+    const timer = createFakeTimers();
+    const clock = createFakeClock(1000);
+    const { actions, calls } = makeRecordingActions();
+    const r = createEditPlaceRenderer({ actions, timer, clock });
+
+    // First apply at t=1000 captures startedAtMs and posts the placeholder.
+    await r.apply(makeFrame(0, "step 1"));
+
+    // Advance the clock by 12_000 ms; the next apply schedules an edit.
+    clock.advance(12_000);
+    await r.apply(makeFrame(1, "step 2"));
+
+    // Fire the debounce so the edit lands.
+    timer.advance(DEBOUNCE_MS);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const edits = calls.filter((c): c is Extract<Call, { op: "edit" }> => c.op === "edit");
+    expect(edits).toHaveLength(1);
+    // Latest text computed at the apply() call site (clock.now()===13_000) carries 12s.
+    expect(edits[0].text).toContain("(running 12 s)");
+    expect(edits[0].text).toContain("step 2");
+  });
+
+  it("EditPlace does NOT emit elapsed fallback when frame.planSnapshot is present (no double-display)", async () => {
+    const timer = createFakeTimers();
+    const clock = createFakeClock(1000);
+    const { actions, calls } = makeRecordingActions();
+    const r = createEditPlaceRenderer({ actions, timer, clock });
+
+    const frameWithPlan: ActivityRenderFrame = {
+      frameSeq: 0,
+      visibleEvents: [makeEvent({ defaultLabel: "step 1" })],
+      groupedActivityIds: {},
+      planSnapshot: {
+        entries: [{ id: "0", label: "a", status: "in_progress" }],
+      },
+      changeSet: { added: [], edited: [], removed: [] },
+    };
+    await r.apply(frameWithPlan);
+
+    const sends = calls.filter((c): c is Extract<Call, { op: "send" }> => c.op === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0].text).not.toContain("(running");
+  });
+
+  it("EditPlace WITHOUT injected clock skips the elapsed fallback (graceful degrade)", async () => {
+    const timer = createFakeTimers();
+    const { actions, calls } = makeRecordingActions();
+    // No clock dep — startedAtMs stays undefined → elapsedMs undefined → fallback skipped.
+    const r = createEditPlaceRenderer({ actions, timer });
+
+    await r.apply(makeFrame(0, "step 1"));
+
+    const sends = calls.filter((c): c is Extract<Call, { op: "send" }> => c.op === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0].text).not.toContain("(running");
+  });
 });

@@ -184,4 +184,56 @@ describe("createDeleteAndRepostRenderer", () => {
     const sends = calls.filter((c): c is Extract<Call, { op: "send" }> => c.op === "send");
     expect(sends[sends.length - 1].text).toBe("❌ timeout");
   });
+
+  // --- Phase 78 / SPEC-§8.5 production wiring (Task 3 — elapsedMs threading) ---
+  //
+  // DeleteAndRepost captures `startedAtMs` on the first apply() and passes
+  // `elapsedMs = clock.now() - startedAtMs` to renderFrameText on EVERY
+  // repost. So a delete+repost cycle after 7.5 s of clock advancement
+  // produces "(running 7 s)" in the latest send text (Math.floor(7500/1000)).
+
+  it("DeleteAndRepost first send carries (running 0 s) when a clock is injected and the frame has no plan", async () => {
+    const { actions, calls } = makeRecordingActions();
+    const clock = createFakeClock(1000);
+    const timer = createFakeTimers();
+    const r = createDeleteAndRepostRenderer({ actions, timer, clock });
+
+    await r.apply(makeFrame(0, "step 1"));
+
+    const sends = calls.filter((c): c is Extract<Call, { op: "send" }> => c.op === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0].text).toContain("(running 0 s)");
+  });
+
+  it("DeleteAndRepost passes elapsedMs into each repost — after 7 500 ms advancement the latest send contains (running 7 s) (SPEC-§8.5 production wiring)", async () => {
+    const { actions, calls } = makeRecordingActions();
+    const clock = createFakeClock(1000);
+    const timer = createFakeTimers();
+    const r = createDeleteAndRepostRenderer({ actions, timer, clock });
+
+    // First apply at t=1000 captures startedAtMs and posts msg-0 (elapsedMs=0).
+    await r.apply(makeFrame(0, "step 1"));
+
+    // Advance 7.5s; next apply deletes msg-0 and reposts msg-1 with elapsedMs=7500.
+    clock.advance(7_500);
+    await r.apply(makeFrame(1, "step 2"));
+
+    const sends = calls.filter((c): c is Extract<Call, { op: "send" }> => c.op === "send");
+    expect(sends).toHaveLength(2);
+    // The MOST RECENT send (the repost) carries the elapsed text.
+    expect(sends[sends.length - 1].text).toContain("(running 7 s)");
+    expect(sends[sends.length - 1].text).toContain("step 2");
+  });
+
+  it("DeleteAndRepost WITHOUT clock dep skips the elapsed fallback (graceful degrade)", async () => {
+    const { actions, calls } = makeRecordingActions();
+    // No clock — startedAtMs stays undefined → elapsedMs undefined → fallback skipped.
+    const r = createDeleteAndRepostRenderer({ actions });
+
+    await r.apply(makeFrame(0, "step 1"));
+
+    const sends = calls.filter((c): c is Extract<Call, { op: "send" }> => c.op === "send");
+    expect(sends).toHaveLength(1);
+    expect(sends[0].text).not.toContain("(running");
+  });
 });
