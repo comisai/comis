@@ -380,6 +380,26 @@ const SHORT_CODE_RE = /\b(?=[A-Za-z0-9]{6,20}\b)(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{6,
 const FRAMING_PROSE_RE = /^(I('m| will| am going to)[\s\S]|Let me|Step \d+\/\d+:)/i;
 
 /**
+ * Shared predicate for the URL/short-code surface helpers
+ * (`surfaceDiscardedPreToolUrl` and `extractActionableArtifacts`).
+ *
+ * Encodes the per-text-block predicate chain — framing-prose guard FIRST, then
+ * URL match, then short-code match — so the two call sites cannot drift apart.
+ * A future addition (new framing pattern, new URL scheme like `mcp://`) lands
+ * in one place and is automatically picked up by both consumers.
+ *
+ * Returns the matched candidate string, or `undefined` when the block is
+ * framing prose OR contains no actionable URL/short-code.
+ */
+function findFirstActionableArtifact(text: string): string | undefined {
+  if (FRAMING_PROSE_RE.test(text)) return undefined;
+  const urlMatch = URL_RE.exec(text);
+  if (urlMatch) return urlMatch[0];
+  const codeMatch = SHORT_CODE_RE.exec(text);
+  return codeMatch?.[0];
+}
+
+/**
  * Safety-net for discarded pre-tool auth links and one-time codes.
  *
  * When the LLM places a URL or short code in pre-tool text (e.g. "Visit
@@ -424,12 +444,10 @@ export function surfaceDiscardedPreToolUrl(
       // Only look at text blocks
       if (b?.type !== "text" || typeof b.text !== "string") continue;
       const text = b.text as string;
-      // Guard 2: framing prose → skip (MUST check before URL predicate)
-      if (FRAMING_PROSE_RE.test(text)) continue;
-      // Guard 3: does this block contain a URL or short code?
-      const urlMatch = URL_RE.exec(text);
-      const codeMatch = !urlMatch ? SHORT_CODE_RE.exec(text) : null;
-      const candidate = urlMatch?.[0] ?? codeMatch?.[0];
+      // Guards 2+3 (framing-prose first, then URL/code): unified via the
+      // findFirstActionableArtifact helper so this site and
+      // extractActionableArtifacts cannot drift apart on regex/predicate edits.
+      const candidate = findFirstActionableArtifact(text);
       if (!candidate) continue;
       // Guard 4: is the candidate absent from the final response?
       if (response.includes(candidate)) continue;
@@ -476,11 +494,10 @@ function extractActionableArtifacts(
       const b = block as Record<string, unknown>;
       if (b?.type !== "text" || typeof b.text !== "string") continue;
       const text = b.text as string;
-      // Guard: framing prose → skip (MUST check before URL predicate)
-      if (FRAMING_PROSE_RE.test(text)) continue;
-      const urlMatch = URL_RE.exec(text);
-      const codeMatch = !urlMatch ? SHORT_CODE_RE.exec(text) : null;
-      const candidate = urlMatch?.[0] ?? codeMatch?.[0];
+      // Framing-prose guard + URL/short-code match: unified with
+      // surfaceDiscardedPreToolUrl via findFirstActionableArtifact so the two
+      // sites cannot drift on regex/predicate edits.
+      const candidate = findFirstActionableArtifact(text);
       if (candidate && hits.length < 3 && !hits.includes(candidate)) {
         hits.push(candidate);
       }
