@@ -899,20 +899,12 @@ describe("opt-out and same-boot init", () => {
     rmSync(freshDataDir, { recursive: true, force: true });
   });
 
-  it("passes seedKeyHex to setupSecrets on first boot with a fresh data directory (operator opted in via YAML)", async () => {
-    // Fresh tmpdir — no .env file present. Encrypted store is opt-in,
-    // so the YAML must explicitly enable it for writeMasterKeyIfAbsent
-    // to run and produce the same-boot seedKeyHex.
+  it("passes seedKeyHex to setupSecrets on first boot with a fresh data directory", async () => {
+    // Fresh tmpdir — no .env file present; use a subdirectory so writeMasterKeyIfAbsent
+    // writes there rather than the shared sandbox COMIS_DATA_DIR.
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-first-boot-test-"));
-    const configPath = nodePath.resolve(freshDataDir, "config.yaml");
-    fs.writeFileSync(
-      configPath,
-      "security:\n  secrets:\n    enabled: true\n",
-      { mode: 0o600 },
-    );
-
     process.env["COMIS_DATA_DIR"] = freshDataDir;
-    process.env["COMIS_CONFIG_PATHS"] = configPath;
+    // Ensure opt-out is NOT set so writeMasterKeyIfAbsent is called
     delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
     const { overrides } = buildOverrides();
     const mockSetupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
@@ -978,60 +970,6 @@ describe("opt-out and same-boot init", () => {
       const contents = fs.readFileSync(envPath, "utf-8");
       expect(contents).not.toMatch(/^SECRETS_MASTER_KEY=/m);
     }
-
-    rmSync(freshDataDir, { recursive: true, force: true });
-  });
-
-  // Schema-default opt-in: when neither the env var nor any YAML config
-  // sets `security.secrets.enabled`, the encrypted store is opt-in
-  // (schema default = false). The daemon must skip both
-  // `writeMasterKeyIfAbsent` and `setupSecrets`, AND must NOT emit the
-  // backup-obligation WARN — that WARN is reserved for EXPLICIT opt-outs
-  // (env var or YAML explicit false) where the operator might have a
-  // previously-generated SECRETS_MASTER_KEY worth backing up. A fresh
-  // install hitting the default has nothing to back up.
-  it("schema-default applies silently: no store, no key write, and no backup-obligation WARN when nothing opts out explicitly", async () => {
-    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-default-opt-in-test-"));
-    // YAML with no security.secrets block at all → schema default (false) applies.
-    const configPath = nodePath.resolve(freshDataDir, "config.yaml");
-    fs.writeFileSync(
-      configPath,
-      "logLevel: debug\n",
-      { mode: 0o600 },
-    );
-
-    process.env["COMIS_DATA_DIR"] = freshDataDir;
-    process.env["COMIS_CONFIG_PATHS"] = configPath;
-    delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
-    delete process.env["SECRETS_MASTER_KEY"];
-
-    const { overrides, mocks } = buildOverrides();
-    const mockSetupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
-    overrides.setupSecrets = mockSetupSecrets;
-
-    const instance = await main(overrides);
-    instances.push(instance);
-
-    expect(mockSetupSecrets).not.toHaveBeenCalled();
-
-    const envPath = nodePath.resolve(freshDataDir, ".env");
-    if (fs.existsSync(envPath)) {
-      const contents = fs.readFileSync(envPath, "utf-8");
-      expect(contents).not.toMatch(/^SECRETS_MASTER_KEY=/m);
-    }
-
-    // No backup-obligation WARN: this is the schema default, not an explicit opt-out.
-    const daemonLogger = (mocks.logLevelManager.getLogger as ReturnType<typeof vi.fn>).mock.results[0]?.value;
-    const warnCalls = (daemonLogger.warn as ReturnType<typeof vi.fn>).mock.calls;
-    const backupWarn = warnCalls.find((args: unknown[]) => {
-      const msg = String(args[1] ?? "");
-      const hint = typeof args[0] === "object" && args[0] !== null
-        ? String((args[0] as Record<string, unknown>)["hint"] ?? "")
-        : "";
-      return msg.includes("encrypted secrets store disabled") ||
-             hint.includes("Back up ~/.comis/.env");
-    });
-    expect(backupWarn).toBeUndefined();
 
     rmSync(freshDataDir, { recursive: true, force: true });
   });

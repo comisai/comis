@@ -12,14 +12,12 @@
  *
  * The field is a boolean, so substitution and include directives are
  * irrelevant. Full validation runs later via `bootstrap()`; if a config
- * file is malformed we return `undefined` and let the caller decide
- * (the full bootstrap will surface the error with a proper
- * `ConfigError` on the next step).
+ * file is malformed we silently fall back to the secure-by-default
+ * value (`true`) — the full bootstrap will surface the error with a
+ * proper `ConfigError` on the next step.
  *
  * Layered-config precedence: later files override earlier ones, matching
- * `bootstrap()`'s YAML merge semantics. A later file that is SILENT on
- * the field does not erase an earlier explicit value — silence is "no
- * opinion", not "unset".
+ * `bootstrap()`'s YAML merge semantics.
  *
  * @module
  */
@@ -29,26 +27,24 @@ import { parse as parseYaml } from "yaml";
 
 /**
  * Read `security.secrets.enabled` from each YAML path in order and
- * return the effective explicit value, or `undefined` when no path
- * sets the field. The caller is expected to apply the schema default
- * (`false`) when this returns `undefined` — keeping "default applied"
- * distinguishable from "explicit opt-out" so the daemon can fire the
- * backup-obligation WARN only on the explicit-opt-out path.
+ * return the effective value. Later paths override earlier ones. Falls
+ * back to `true` (schema-default; matches daemon secure-by-default
+ * behavior) when no path explicitly sets the field.
  *
  * Silently ignores: missing files, unreadable files, parse errors, and
- * non-boolean values at `security.secrets.enabled`. These are surfaced
- * by the full bootstrap pass later in daemon startup.
+ * non-boolean values at `security.secrets.enabled`. These are
+ * surfaced by the full bootstrap pass later in daemon startup.
  *
  * @param configPaths - Ordered list of absolute YAML paths (same order
  *   the daemon passes to `bootstrap()` — earlier paths are base layers,
  *   later paths overlay).
- * @returns `true` / `false` when a path explicitly sets the field,
- *   `undefined` when no path mentions it (caller applies schema default).
+ * @returns `true` when the store should auto-bootstrap, `false` when a
+ *   config explicitly opts out.
  */
 export function preReadSecretsEnabled(
   configPaths: readonly string[],
-): boolean | undefined {
-  let value: boolean | undefined;
+): boolean {
+  let enabled = true;
   for (const path of configPaths) {
     if (!existsSync(path)) continue;
     let content: string;
@@ -63,12 +59,12 @@ export function preReadSecretsEnabled(
     } catch {
       continue;
     }
-    const explicit = extractSecretsEnabled(parsed);
-    if (explicit !== undefined) {
-      value = explicit;
+    const value = extractSecretsEnabled(parsed);
+    if (value !== undefined) {
+      enabled = value;
     }
   }
-  return value;
+  return enabled;
 }
 
 function extractSecretsEnabled(parsed: unknown): boolean | undefined {

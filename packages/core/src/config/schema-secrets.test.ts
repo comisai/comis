@@ -3,20 +3,22 @@
  * Schema-level tests for SecretsConfigSchema defaults.
  *
  * Pins the contract that an omitted `security.secrets` block in YAML
- * yields `enabled: false` after schema parsing — the encrypted secrets
- * store is opt-in. The daemon honors the same value at boot:
- * `writeMasterKeyIfAbsent` and `bootstrapSecretsAndEnv` are skipped
- * unless the operator explicitly sets `security.secrets.enabled: true`
- * (or sets it implicitly via a layered overlay).
+ * yields `enabled: true` after schema parsing — matching the daemon's
+ * secure-by-default boot behavior (writeMasterKeyIfAbsent +
+ * bootstrapSecretsAndEnv run unless explicitly opted out).
+ *
+ * Pre-fix, the schema default was `false` while the daemon ignored the
+ * field entirely; the lie surfaced in the web UI toggle reading OFF
+ * while the store was actually live. Schema must agree with daemon.
  */
 
 import { describe, it, expect } from "vitest";
 import { SecretsConfigSchema } from "./schema-secrets.js";
 
-describe("SecretsConfigSchema defaults pin encrypted-store opt-in contract", () => {
-  it("parses an empty object to enabled=false (store is opt-in; daemon will not bootstrap it)", () => {
+describe("SecretsConfigSchema defaults agree with daemon secure-by-default behavior", () => {
+  it("parses an empty object to enabled=true (matches daemon writeMasterKeyIfAbsent default path)", () => {
     const parsed = SecretsConfigSchema.parse({});
-    expect(parsed.enabled).toBe(false);
+    expect(parsed.enabled).toBe(true);
   });
 
   it("parses an empty object to dbPath='secrets.db' (default relative path under dataDir)", () => {
@@ -24,12 +26,12 @@ describe("SecretsConfigSchema defaults pin encrypted-store opt-in contract", () 
     expect(parsed.dbPath).toBe("secrets.db");
   });
 
-  it("preserves an explicit enabled=false (idempotent with the default)", () => {
+  it("preserves an explicit enabled=false as an opt-out toggle", () => {
     const parsed = SecretsConfigSchema.parse({ enabled: false });
     expect(parsed.enabled).toBe(false);
   });
 
-  it("preserves an explicit enabled=true as the opt-in toggle", () => {
+  it("preserves an explicit enabled=true (idempotent with the new default)", () => {
     const parsed = SecretsConfigSchema.parse({ enabled: true });
     expect(parsed.enabled).toBe(true);
   });

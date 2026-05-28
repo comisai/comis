@@ -6,10 +6,8 @@
  * The daemon needs this answer BEFORE `writeMasterKeyIfAbsent` and the
  * encrypted-store bootstrap (full config parsing happens later, after
  * mergedEnv is built). The pre-read is a lightweight YAML scan that
- * honors the layered-config precedence rule "later files win" and
- * returns `undefined` when no file explicitly sets the field — letting
- * the caller apply the schema default itself and tell explicit opt-out
- * apart from default-by-omission.
+ * honors the layered-config precedence rule "later files win" and falls
+ * back to `true` (the schema default) when no file mentions the field.
  *
  * Tests do not exercise env-substitution or include resolution —
  * `security.secrets.enabled` is a boolean, neither path is relevant.
@@ -39,29 +37,29 @@ describe("preReadSecretsEnabled", () => {
     return path;
   }
 
-  it("returns undefined when no config paths are provided (caller applies schema default)", () => {
-    expect(preReadSecretsEnabled([])).toBeUndefined();
+  it("returns true when no config paths are provided (schema-default fallback)", () => {
+    expect(preReadSecretsEnabled([])).toBe(true);
   });
 
-  it("returns undefined when none of the config paths exist on disk", () => {
+  it("returns true when none of the config paths exist on disk", () => {
     const missing = resolve(tmpDir, "does-not-exist.yaml");
-    expect(preReadSecretsEnabled([missing])).toBeUndefined();
+    expect(preReadSecretsEnabled([missing])).toBe(true);
   });
 
-  it("returns undefined when YAML omits the security.secrets block entirely", () => {
+  it("returns true when YAML omits the security.secrets block entirely", () => {
     const path = writeYaml(
       "config.yaml",
       "logLevel: debug\nsecurity:\n  logRedaction: true\n",
     );
-    expect(preReadSecretsEnabled([path])).toBeUndefined();
+    expect(preReadSecretsEnabled([path])).toBe(true);
   });
 
-  it("returns undefined when security.secrets exists but enabled is unset", () => {
+  it("returns true when security.secrets exists but enabled is unset", () => {
     const path = writeYaml(
       "config.yaml",
       "security:\n  secrets:\n    dbPath: secrets.db\n",
     );
-    expect(preReadSecretsEnabled([path])).toBeUndefined();
+    expect(preReadSecretsEnabled([path])).toBe(true);
   });
 
   it("returns false when YAML explicitly sets security.secrets.enabled to false", () => {
@@ -104,28 +102,16 @@ describe("preReadSecretsEnabled", () => {
     expect(preReadSecretsEnabled([base, overlay])).toBe(false);
   });
 
-  it("returns undefined when a path contains malformed YAML (full bootstrap reports the error)", () => {
+  it("falls back to true when a path contains malformed YAML (full bootstrap reports the error)", () => {
     const path = writeYaml("config.yaml", "::: not valid yaml :::\n");
-    expect(preReadSecretsEnabled([path])).toBeUndefined();
+    expect(preReadSecretsEnabled([path])).toBe(true);
   });
 
-  it("returns undefined for non-boolean enabled values (schema validation rejects them downstream)", () => {
+  it("ignores non-boolean enabled values (schema validation rejects them downstream)", () => {
     const path = writeYaml(
       "config.yaml",
       "security:\n  secrets:\n    enabled: \"false\"\n",
     );
-    expect(preReadSecretsEnabled([path])).toBeUndefined();
-  });
-
-  it("keeps an explicit earlier value when a later path is silent (silent later does not erase explicit earlier)", () => {
-    const base = writeYaml(
-      "config.yaml",
-      "security:\n  secrets:\n    enabled: true\n",
-    );
-    const overlay = writeYaml(
-      "config.local.yaml",
-      "logLevel: debug\n",
-    );
-    expect(preReadSecretsEnabled([base, overlay])).toBe(true);
+    expect(preReadSecretsEnabled([path])).toBe(true);
   });
 });

@@ -1405,27 +1405,18 @@ async function bootFoundation(
   const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"]; if (process.env["VITEST"] === "true" && !rawConfigPaths) throw new Error("VITEST=true and COMIS_CONFIG_PATHS unset — refusing to read ~/.comis/config.yaml from a test process. Set COMIS_CONFIG_PATHS to a sandbox path in your test setup, or import test/support/vitest-process-listeners.ts.");
   const requestedConfigPaths = rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS;
 
-  // Encrypted secrets store is opt-in. THREE inputs control the boot:
-  //   1. env: COMIS_DISABLE_ENCRYPTED_SECRETS=1|true|on  → forces off
-  //   2. YAML: security.secrets.enabled: true            → opts in
-  //   3. YAML: security.secrets.enabled: false / omitted → off (schema default)
-  // All are evaluated BEFORE writeMasterKeyIfAbsent so the store stays
-  // dormant by default — `.env` is never touched and `secrets.db` is
-  // never opened unless the operator explicitly opts in.
-  //
-  // The schema default (false) MUST stay in sync with
-  // packages/core/src/config/schema-secrets.ts. If it drifts, the
-  // daemon may bootstrap the store on a config that, post-validation,
-  // resolves to enabled=false (or vice versa).
+  // Opt-out checks — TWO independent paths, either disables the store:
+  //   1. env: COMIS_DISABLE_ENCRYPTED_SECRETS=1|true|on
+  //   2. config: security.secrets.enabled: false (in any YAML config path)
+  // Both are evaluated BEFORE writeMasterKeyIfAbsent so an opt-out leaves
+  // ~/.comis/.env completely untouched (no SECRETS_MASTER_KEY line appended).
   const parseDisableFlag = (raw: string | undefined): boolean => {
     if (typeof raw !== "string") return false;
     const norm = raw.trim().toLowerCase();
     return norm === "1" || norm === "true" || norm === "on";
   };
   const disableEncryptedPreLoad = parseDisableFlag(systemGetEnv("COMIS_DISABLE_ENCRYPTED_SECRETS"));
-  // tri-state: true / false (explicit) or undefined (schema default applies)
-  const secretsConfigValue = preReadSecretsEnabled(requestedConfigPaths);
-  const secretsEnabledByConfig = secretsConfigValue ?? false; // schema default
+  const secretsEnabledByConfig = preReadSecretsEnabled(requestedConfigPaths);
   const disableEncryptedAtStart = disableEncryptedPreLoad || !secretsEnabledByConfig;
 
   // Auto-generate master key on first boot (before loadEnvFile — key must be in
@@ -1547,23 +1538,19 @@ async function bootFoundation(
   }
 
   // Deferred opt-out WARN (logger not available before setupLogging).
-  // Fires ONLY on explicit opt-out — schema-default opt-in silently
-  // leaves the store dormant and has nothing to back up:
+  // Two opt-out sources, surfaced separately so the hint matches the reason:
   //   - env: COMIS_DISABLE_ENCRYPTED_SECRETS=1 (process.env or ~/.comis/.env)
-  //   - config: security.secrets.enabled: false (YAML explicit)
-  // If the operator never enabled the store (schema default applies),
-  // there is no SECRETS_MASTER_KEY worth a backup hint — the daemon
-  // simply runs in envfile-only mode, which is the documented default.
-  const envDisabled = disableEncryptedPreLoad || disableEncryptedByEnvAfterLoad;
-  const configExplicitlyDisabled = secretsConfigValue === false;
-  if (envDisabled || configExplicitlyDisabled) {
+  //   - config: security.secrets.enabled: false (YAML, applied at boot)
+  if (disableEncrypted) {
+    const envDisabled = disableEncryptedPreLoad || disableEncryptedByEnvAfterLoad;
+    const source = envDisabled ? "env" : "config";
     daemonLogger.warn(
       {
         errorKind: "config" as const,
-        optOutSource: envDisabled ? "env" : "config",
+        optOutSource: source,
         hint: envDisabled
           ? "Back up ~/.comis/.env immediately. Losing SECRETS_MASTER_KEY makes secrets.db permanently unreadable. To re-enable, unset COMIS_DISABLE_ENCRYPTED_SECRETS and restart."
-          : "Back up ~/.comis/.env immediately. Losing SECRETS_MASTER_KEY makes secrets.db permanently unreadable. To re-enable, set security.secrets.enabled: true and restart.",
+          : "Back up ~/.comis/.env immediately. Losing SECRETS_MASTER_KEY makes secrets.db permanently unreadable. To re-enable, set security.secrets.enabled: true (or remove the field) and restart.",
       },
       envDisabled
         ? "COMIS_DISABLE_ENCRYPTED_SECRETS=1: encrypted secrets store disabled. Daemon running in envfile-only mode. Backup obligation is on the operator."
