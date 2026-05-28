@@ -50,13 +50,24 @@ export interface MarkdownIR {
  *
  * Order matters — more specific patterns first:
  * 1. Inline code (backticks) — protect content from further parsing
- * 2. Links [text](url)
- * 3. Bold **text** or __text__
- * 4. Strikethrough ~~text~~
- * 5. Italic *text* or _text_
+ * 2. Bare http/https URL — protect `_` chars inside URLs from being
+ *    consumed by the italic `_text_` alternative. Without this branch,
+ *    a URL like `code_challenge_method=…` matches `_(.+?)_` and renders
+ *    as `<i>challenge</i>method=…`, dropping every paired `_` from the
+ *    surface form. Higgsfield-class providers receive params with
+ *    truncated names (`responsetype`, `redirecturi`, …) and return 400
+ *    `redirect_uri must be a valid absolute URL` (observed 2026-05-28).
+ *    Excludes `)` so URLs in parens (`(See https://x.com/)`) don't grab
+ *    the trailing close-paren; we accept that legitimate URLs with `)`
+ *    in their path (rare; Wikipedia is the canonical example) will be
+ *    truncated at the first `)`.
+ * 3. Links [text](url)
+ * 4. Bold **text** or __text__
+ * 5. Strikethrough ~~text~~
+ * 6. Italic *text* or _text_
  */
 const INLINE_RE =
-  /`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|\*(.+?)\*|_(.+?)_/g;
+  /`([^`]+)`|(https?:\/\/[^\s<>"'`)]+)|\[([^\]]+)\]\(([^)]+)\)|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|\*(.+?)\*|_(.+?)_/g;
 
 /**
  * Parse inline Markdown formatting into typed spans with UTF-16 offsets.
@@ -98,10 +109,23 @@ export function parseInlineSpans(text: string): MarkdownSpan[] {
         length: content.length,
       });
       plainOffset += content.length;
-    } else if (match[2] !== undefined && match[3] !== undefined) {
+    } else if (match[2] !== undefined) {
+      // Bare URL: pass through as a self-pointing link so the URL bytes
+      // (including every `_`) reach the renderer unmodified. See INLINE_RE
+      // docblock for the Higgsfield-OAuth bug this closes.
+      const url = match[2];
+      spans.push({
+        type: "link",
+        text: url,
+        url,
+        offset: plainOffset,
+        length: url.length,
+      });
+      plainOffset += url.length;
+    } else if (match[3] !== undefined && match[4] !== undefined) {
       // Link: [text](url)
-      const linkText = match[2];
-      const linkUrl = match[3];
+      const linkText = match[3];
+      const linkUrl = match[4];
       spans.push({
         type: "link",
         text: linkText,
@@ -110,18 +134,8 @@ export function parseInlineSpans(text: string): MarkdownSpan[] {
         length: linkText.length,
       });
       plainOffset += linkText.length;
-    } else if (match[4] !== undefined) {
-      // Bold: **text**
-      const content = match[4];
-      spans.push({
-        type: "bold",
-        text: content,
-        offset: plainOffset,
-        length: content.length,
-      });
-      plainOffset += content.length;
     } else if (match[5] !== undefined) {
-      // Bold: __text__
+      // Bold: **text**
       const content = match[5];
       spans.push({
         type: "bold",
@@ -131,8 +145,18 @@ export function parseInlineSpans(text: string): MarkdownSpan[] {
       });
       plainOffset += content.length;
     } else if (match[6] !== undefined) {
-      // Strikethrough: ~~text~~
+      // Bold: __text__
       const content = match[6];
+      spans.push({
+        type: "bold",
+        text: content,
+        offset: plainOffset,
+        length: content.length,
+      });
+      plainOffset += content.length;
+    } else if (match[7] !== undefined) {
+      // Strikethrough: ~~text~~
+      const content = match[7];
       spans.push({
         type: "strikethrough",
         text: content,
@@ -140,9 +164,9 @@ export function parseInlineSpans(text: string): MarkdownSpan[] {
         length: content.length,
       });
       plainOffset += content.length;
-    } else if (match[7] !== undefined) {
+    } else if (match[8] !== undefined) {
       // Italic: *text*
-      const content = match[7];
+      const content = match[8];
       spans.push({
         type: "italic",
         text: content,
@@ -150,9 +174,9 @@ export function parseInlineSpans(text: string): MarkdownSpan[] {
         length: content.length,
       });
       plainOffset += content.length;
-    } else if (match[8] !== undefined) {
+    } else if (match[9] !== undefined) {
       // Italic: _text_
-      const content = match[8];
+      const content = match[9];
       spans.push({
         type: "italic",
         text: content,
