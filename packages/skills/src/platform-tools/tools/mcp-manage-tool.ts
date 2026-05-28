@@ -332,19 +332,21 @@ export function createMcpManageTool(
             // generic error that the agent cannot act on. Only catches errors where
             // .data.needs_oauth_login === true — all other errors are re-thrown
             // unchanged (T-01-06-02 non-swallow invariant).
-            if (
-              err instanceof Error &&
-              (err as { data?: { needs_oauth_login?: boolean } }).data?.needs_oauth_login === true
-            ) {
-              const d = (err as { data: { server_name: string; action: string } }).data;
+            const errData =
+              err instanceof Error
+                ? (err as unknown as {
+                    data?: { needs_oauth_login?: boolean; server_name?: string; action?: string };
+                  }).data
+                : undefined;
+            if (errData?.needs_oauth_login === true) {
               return {
                 content: [
                   {
                     type: "text" as const,
-                    text: `Run \`mcp_login({server_name: "${d.server_name}"})\` to start the OAuth flow, then retry mcp_manage(action:"connect", auth:"oauth", url:..., transport:"http").`,
+                    text: `Run \`mcp_login({server_name: "${errData.server_name}"})\` to start the OAuth flow, then retry mcp_manage(action:"connect", auth:"oauth", url:..., transport:"http").`,
                   },
                 ],
-                details: d,
+                details: errData,
               };
             }
             throw err;
