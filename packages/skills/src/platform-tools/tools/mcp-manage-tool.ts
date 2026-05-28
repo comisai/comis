@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: connect action re-throws non-OAuth RPC errors at line 352; caught by the
+// skill executor tool-result boundary which formats all thrown errors as tool error responses.
+// Only the needs_oauth_login branch is caught and converted — all other errors propagate
+// unchanged per T-01-06-02 non-swallow invariant (Plan 06, R8.4'-01).
 /**
  * MCP server management tool: multi-action tool for MCP server lifecycle.
  *
