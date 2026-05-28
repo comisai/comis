@@ -609,3 +609,190 @@ describe("buildLabel compresses the post-redaction defaultLabel (UX-02 wiring)",
     expect(event.defaultLabel).toBe("reading file");
   });
 });
+
+describe("activity-stream — markers.running prefix on phase:start (Phase 78 WS-B / SPEC-§3.1)", () => {
+  /**
+   * Helper: build an ActivityStream (optional theme), emit a single bus event,
+   * return the produced ActivityEvent(s) for the turn. Mirrors the existing
+   * `spawnSubagentLabel` and `renderToolLabel` factories above — no new
+   * boilerplate; reuses `makeCtx` / `makeLogger` / TRACE / AGENT / SESSION.
+   */
+  function streamWith(theme?: ReturnType<typeof themeForName>): {
+    bus: TypedEventBus;
+    received: ActivityEvent[];
+    sub: { unsubscribe(): void };
+  } {
+    const bus = new TypedEventBus();
+    const stream = createActivityStream({
+      eventBus: bus,
+      ...(theme !== undefined ? { theme } : {}),
+    });
+    const received: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
+    return { bus, received, sub };
+  }
+
+  it("onToolStarted emits defaultLabel with markers.running prefix under default theme — SPEC-§3.1", () => {
+    // Default theme (no explicit theme arg → DEFAULT_MARKERS). The `read` tool
+    // has no LabelSpec registered here, so buildLabel falls back to the
+    // humanized tool name ("read"). The stream MUST prefix `🔧 ` at the emit
+    // site (subagent precedent mirror at activity-stream.ts:602/621).
+    const { bus, received, sub } = streamWith();
+    bus.emit("tool:started", {
+      toolName: "read",
+      toolCallId: "tc1",
+      timestamp: 1,
+      params: { path: "/tmp/x" },
+      agentId: AGENT,
+      sessionKey: SESSION,
+      traceId: TRACE,
+    });
+    expect(received).toHaveLength(1);
+    const event = received[0];
+    expect(event.phase).toBe("start");
+    expect(event.kind).toBe("tool");
+    expect(event.defaultLabel?.startsWith("🔧 ")).toBe(true);
+    expect(event.defaultLabel).toBe("🔧 read");
+    sub.unsubscribe();
+  });
+
+  it("onToolStarted emits defaultLabel with [..] prefix under ascii theme — SPEC-§3.1 + §8.9", () => {
+    // Ascii theme strips ALL Unicode > U+007F (themes/ascii.ts:8 LOCKED FACT).
+    // The marker `[..]` is pure ASCII; combined with the fallback tool name
+    // "read" the entire defaultLabel must be strictly ASCII.
+    const { bus, received, sub } = streamWith(themeForName("ascii"));
+    bus.emit("tool:started", {
+      toolName: "read",
+      toolCallId: "tc1",
+      timestamp: 1,
+      params: { path: "/tmp/x" },
+      agentId: AGENT,
+      sessionKey: SESSION,
+      traceId: TRACE,
+    });
+    expect(received).toHaveLength(1);
+    const event = received[0];
+    expect(event.defaultLabel?.startsWith("[..] ")).toBe(true);
+    expect(event.defaultLabel).toBe("[..] read");
+    // Strict ASCII — no Unicode > U+007F anywhere in the label.
+    expect(/[^\x00-\x7F]/.test(event.defaultLabel ?? "")).toBe(false);
+    sub.unsubscribe();
+  });
+
+  it("onModelEvent prefixes the static 'switching model provider' label with markers.running", () => {
+    // The model event's defaultLabel is a STATIC string in activity-stream.ts
+    // (line ~520). Under default theme it must become `🔧 switching model
+    // provider`. Pre-patch produces just `switching model provider`.
+    const { bus, received, sub } = streamWith();
+    bus.emit("model:fallback_attempt", {
+      fromProvider: "anthropic",
+      fromModel: "claude-x",
+      toProvider: "openai",
+      toModel: "gpt-y",
+      error: "boom",
+      attemptNumber: 1,
+      timestamp: 1,
+      agentId: AGENT,
+      sessionKey: SESSION,
+      traceId: TRACE,
+    });
+    expect(received).toHaveLength(1);
+    const event = received[0];
+    expect(event.kind).toBe("model");
+    expect(event.defaultLabel).toBe("🔧 switching model provider");
+    sub.unsubscribe();
+  });
+
+  it("onToolExecuted (phase:end) does NOT prefix markers.running — Pitfall 7 invariant", () => {
+    // The running marker conveys "in flight" — applying it to a completed
+    // (phase:"end") event mis-conveys status. Pitfall 7 from RESEARCH.md lines
+    // 818-826: tool:executed dispatch MUST NEVER carry the running marker.
+    // This is a regression-lock: passes against current code (no marker
+    // anywhere) AND must continue passing after the GREEN patch lands the
+    // marker only on the two phase:"start"/"progress" dispatch sites.
+    const { bus, received, sub } = streamWith();
+    bus.emit("tool:executed", {
+      toolName: "read",
+      toolCallId: "tc1",
+      durationMs: 12,
+      success: true,
+      timestamp: 2,
+      params: { path: "/tmp/x" },
+      agentId: AGENT,
+      sessionKey: SESSION,
+      traceId: TRACE,
+    });
+    expect(received).toHaveLength(1);
+    const event = received[0];
+    expect(event.phase).toBe("end");
+    expect(event.status).toBe("completed");
+    expect(
+      event.defaultLabel?.startsWith("🔧"),
+      "phase:\"end\" events MUST NOT carry markers.running (Pitfall 7)",
+    ).toBe(false);
+    expect(
+      event.defaultLabel,
+      "phase:\"end\" events MUST NOT carry markers.running (Pitfall 7)",
+    ).not.toMatch(/🔧/);
+    sub.unsubscribe();
+  });
+
+  it("marker resolution is captured at stream construction — late theme swap is ignored", () => {
+    // Pattern 2 contract (RESEARCH §Q2 + threat T-78-02-02): markers resolve
+    // ONCE at `const markers = deps.theme?.markers ?? DEFAULT_MARKERS;`
+    // (activity-stream.ts:198). A late mutation of the theme reference's
+    // markers MUST NOT affect later dispatches — proves the closure captures
+    // the original literal, never re-reads. Regression lock for the
+    // capture-once contract.
+    const bus = new TypedEventBus();
+    // Mutable clone of the ascii theme so we can mutate without TS readonly
+    // complaints. `themeForName("ascii")` returns the shared bundle reference;
+    // cloning isolates this test from sibling tests that use the same name.
+    const themeRef = {
+      markers: {
+        success: "[OK]",
+        failure: "[ERR]",
+        subagent: "[SUB]",
+        running: "[..]",
+      },
+    } as { markers: { success: string; failure: string; subagent: string; running: string } };
+    const stream = createActivityStream({
+      eventBus: bus,
+      theme: themeRef as unknown as ReturnType<typeof themeForName>,
+    });
+    const received: ActivityEvent[] = [];
+    const sub = stream.subscribeForTurn(makeCtx(), (e) => received.push(e));
+
+    // First emit before any mutation — assert baseline prefix.
+    bus.emit("tool:started", {
+      toolName: "read",
+      toolCallId: "tc-before",
+      timestamp: 1,
+      params: {},
+      agentId: AGENT,
+      sessionKey: SESSION,
+      traceId: TRACE,
+    });
+    expect(received).toHaveLength(1);
+    expect(received[0].defaultLabel?.startsWith("[..] ")).toBe(true);
+
+    // Late swap of the theme's markers.running. A correctly-implemented stream
+    // captured the ORIGINAL `[..]` reference at construction and ignores this.
+    themeRef.markers.running = "MUTATED-LATE";
+
+    bus.emit("tool:started", {
+      toolName: "read",
+      toolCallId: "tc-after",
+      timestamp: 2,
+      params: {},
+      agentId: AGENT,
+      sessionKey: SESSION,
+      traceId: TRACE,
+    });
+    expect(received).toHaveLength(2);
+    // The post-mutation event MUST still carry the original-resolved prefix.
+    expect(received[1].defaultLabel?.startsWith("[..] ")).toBe(true);
+    expect(received[1].defaultLabel).not.toContain("MUTATED-LATE");
+    sub.unsubscribe();
+  });
+});
