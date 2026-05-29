@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
+
+// LO-04: setupMemory requires a ClockPort (createCircuitBreaker(..., clock)).
+// Inject the project-standard fake so every call exercises the real signature.
+const testClock = createFakeClock(0);
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -152,6 +157,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockSqliteMemoryAdapter).toHaveBeenCalled();
@@ -178,12 +184,19 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockCreateEmbeddingProvider).toHaveBeenCalled();
     expect(result.cachedPort).toBeDefined();
     expect(result.cachedPort!.modelId).toBe("test-model");
     expect(result.disposeEmbedding).toBeTypeOf("function");
+    // LO-04: the injected ClockPort must reach createCircuitBreaker as its 2nd
+    // arg — proves the required `clock` dep is actually exercised, not ignored.
+    expect(mockCreateCircuitBreaker).toHaveBeenCalledWith(
+      expect.any(Object),
+      testClock,
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -205,6 +218,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: memoryLogger as any,
+      clock: testClock,
     });
 
     expect(result.disposeEmbedding).toBeUndefined();
@@ -230,6 +244,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockCreateCachedEmbeddingPort).toHaveBeenCalledWith(
@@ -253,6 +268,7 @@ describe("setupMemory", () => {
     await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     // SqliteMemoryAdapter should receive adjusted config with provider's dimensions (384)
@@ -281,6 +297,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockFpMgr.hasChanged).toHaveBeenCalled();
@@ -324,6 +341,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockBatchIndexer.unembeddedCount).toHaveBeenCalled();
@@ -365,6 +383,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockBatchIndexer.indexUnembedded).not.toHaveBeenCalled();
@@ -384,6 +403,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockCreateEmbeddingQueue).toHaveBeenCalled();
@@ -411,6 +431,7 @@ describe("setupMemory", () => {
     await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockFpMgr.save).toHaveBeenCalledWith("fp-saved");
@@ -436,6 +457,7 @@ describe("setupMemory", () => {
     await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(container.secretManager.get).toHaveBeenCalledWith("OPENAI_API_KEY");
@@ -462,6 +484,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(result.db).toBeDefined();
@@ -484,6 +507,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     // L2 should be created with provider and db
@@ -525,6 +549,7 @@ describe("setupMemory", () => {
     await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     // L2 should NOT be created
@@ -554,6 +579,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(result.disposeEmbedding).toBeTypeOf("function");
@@ -578,6 +604,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(result.disposeEmbedding).toBeUndefined();
@@ -594,6 +621,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     for (let i = 0; i < 9; i++) result.maintenanceTick();
@@ -614,6 +642,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     for (let i = 0; i < 20; i++) result.maintenanceTick();
@@ -632,6 +661,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     for (let i = 0; i < 10; i++) result.maintenanceTick();
@@ -649,6 +679,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     // The factory must never be invoked when no agent enabled rerank.
@@ -668,6 +699,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockCreateLocalRerankerProvider).toHaveBeenCalledOnce();
@@ -699,6 +731,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: memoryLogger as any,
+      clock: testClock,
     });
 
     expect(result.rerankerPort).toBeUndefined();
@@ -717,6 +750,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(result.disposeReranker).toBeTypeOf("function");
