@@ -312,6 +312,43 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         );
 
         // ── Step 2.5: TLS upgrade (Phase 3 — when caManager is wired) ───────
+        // Pre-flight host check (CR-02 fix): when caManager is wired, verify
+        // the CONNECT host appears in at least one binding BEFORE minting any
+        // leaf cert. A client with a valid (but single-use) token must not be
+        // able to cause the CA to sign and cache certs for arbitrary hostnames.
+        // This is a host-only check (path policy is enforced later in Step 4).
+        if (deps.caManager) {
+          const openBindings = deps.bindings.map((b) => ({
+            ...b,
+            hostRules: b.hostRules.map((r: HostRule) => ({
+              ...r,
+              pathPolicy: undefined,
+            })),
+          }));
+          const hostKnown = resolveBinding(openBindings, host, "/") !== undefined;
+          if (!hostKnown) {
+            log.debug(
+              {
+                step: "preflight-host",
+                sessionId,
+                host,
+                errorKind: "precondition" as const,
+                hint: "Host has no binding; rejecting before TLS upgrade (no cert minted)",
+              },
+              "Pre-flight host check failed — no binding for host",
+            );
+            deps.eventBus.emit("broker:denied", {
+              sessionId,
+              host,
+              reason: "no_binding" as const,
+              statusCode: 403,
+              timestamp: deps.clock.now(),
+            });
+            destroyWithStatus(clientSocket, "HTTP/1.1 403 Forbidden");
+            return;
+          }
+        }
+
         // When deps.caManager is wired and returns a SecureContext for this host,
         // we upgrade the raw TCP socket to a TLS server socket BEFORE reading
         // inner headers. When caManager is undefined (Phase 2), innerSocket
