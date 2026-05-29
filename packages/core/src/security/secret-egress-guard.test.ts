@@ -87,3 +87,21 @@ describe("cycle invariant: secret-egress-guard.ts must not import from @comis/ob
     expect(source).not.toContain("@comis/observability");
   });
 });
+
+describe("cycle invariant: @comis/core package.json must not depend on @comis/observability", () => {
+  // A `@comis/observability` entry in core's dependencies OR devDependencies
+  // closes a workspace dependency cycle (observability already depends on core),
+  // which scrambles `pnpm -r run build` topological ordering and builds
+  // observability before core on a clean checkout → "Cannot find module
+  // '@comis/core'". This guards the package-manifest edge that neither the
+  // madge `.d.ts` cycle check nor the project-reference check can see.
+  it("declares no @comis/observability dependency in deps or devDeps", () => {
+    const pkgPath = join(__dirname, "..", "..", "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const allDeps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+    expect(Object.keys(allDeps)).not.toContain("@comis/observability");
+  });
+});

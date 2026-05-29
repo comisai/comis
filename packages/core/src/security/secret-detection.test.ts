@@ -10,17 +10,20 @@
  * @module
  */
 import { describe, it, expect } from "vitest";
-// Parity guard: test-file cross-import of @comis/observability is allowed.
-// Production @comis/core must NOT import @comis/observability — forbidden edge.
-// This import lives in a test file only; devDependency in package.json.
-import { getDefaultRedactPatterns } from "@comis/observability";
 import {
   looksLikeSecretValue,
   isSecretFieldName,
   scanForSecrets,
   redactForDisplay,
-  PLAINTEXT_SECRET_PREFIXES,
 } from "./secret-detection.js";
+
+// NOTE: the cross-package "drift guard" — which compares core's keystone
+// `PLAINTEXT_SECRET_PREFIXES` against `@comis/observability`'s redact patterns —
+// lives in `packages/observability/src/redact/keystone-parity.test.ts`, NOT
+// here. A `@comis/observability` (dev)dependency on `@comis/core` closes a
+// workspace build cycle (observability already depends on core), which
+// scrambles `pnpm -r run build` ordering. See the package.json cycle-invariant
+// test in `secret-egress-guard.test.ts`.
 
 // A high-entropy 44+ char credential body (no delimiter chars) so the entropy
 // backstop fires after a leading scheme is stripped.
@@ -246,7 +249,6 @@ describe("explicit prefix entries — hf_/hfr_/r8_ (vocabulary unification)", ()
   // explicit prefix entry + length gate detects them.
   const SHORT_HF = "hf_" + "a".repeat(20); // 23 chars total — prefix + 20 body (> 18 gate, < 44 entropy floor)
   const SHORT_HFR = "hfr_" + "a".repeat(20); // 24 chars total
-  const SHORT_R8 = "r8_" + "a".repeat(20); // 23 chars total
 
   it("looksLikeSecretValue returns true for hf_ token below entropy backstop length floor", () => {
     // Explicit prefix match with 20-char body >= 18-char gate.
@@ -257,65 +259,6 @@ describe("explicit prefix entries — hf_/hfr_/r8_ (vocabulary unification)", ()
     // Returns a non-empty findings array (hfr_ prefix is explicit, length-gated).
     const findings = scanForSecrets({ k: SHORT_HFR });
     expect(findings.length).toBeGreaterThan(0);
-  });
-
-  it("PLAINTEXT_SECRET_PREFIXES covers every prefix-kind pattern in observability patterns.ts (drift guard)", () => {
-    // Extract prefixes that include - and . characters (a naive \b([A-Za-z0-9_]*)
-    // regex stops at - and . so sk-, ya29., xapp-, pplx- would be silently skipped).
-    //
-    // Strategy: for each prefix-kind pattern, extract the literal token sequence after \b
-    // up to the first character-class [ or quantifier { or end-of-pattern.
-    // Then assert it's in PLAINTEXT_SECRET_PREFIXES unless explicitly exempted.
-    //
-    // Explicit exemptions (not a single fixed provider-prefix — the regex uses a
-    // character class or non-alphanumeric anchor rather than a plain literal prefix):
-    //   "eyJ"   — JWT: base64 header anchor, body-shaped, no fixed 4-char prefix
-    //   telegram — \d{8,}: pattern; numeric prefix, no \b match on a letter
-    //   apple   — [a-z]{4}-[a-z]{4}-...; character-class start, no fixed prefix
-    //   slack-legacy-token — xox[abprs]-: character class after "xox"; keystone has xoxb-/xoxp-.
-    //   google-refresh-token — 1//0: prefix contains "/" which is a NON_CREDENTIAL_DELIMITER
-    //     char; looksLikeSecretValue always returns false for these (delimiter gate rejects
-    //     them before the prefix scan hits). Not possible to add to the keystone value heuristic.
-    const EXEMPT_PATTERN_NAMES = new Set([
-      "jwt-token",
-      "telegram-bot-token",
-      "apple-app-password",
-      "slack-legacy-token", // xox[abprs]- uses char-class; keystone has xoxb-/xoxp-
-      "google-refresh-token", // 1//0 prefix contains "/" delimiter; blocked by delimiter gate
-    ]);
-
-    const keystonePrefixes = PLAINTEXT_SECRET_PREFIXES;
-    const patterns = getDefaultRedactPatterns();
-    const prefixKindPatterns = patterns.filter((p) => p.kind === "prefix");
-
-    for (const p of prefixKindPatterns) {
-      if (EXEMPT_PATTERN_NAMES.has(p.name)) continue;
-
-      // Extract the literal prefix after the mandatory \b anchor.
-      // Character class [A-Za-z0-9_.\-] captures hyphens and dots so sk-, ya29., xapp- are included.
-      // Stop at the first [ (character class) or { (quantifier) in the regex source.
-      const m = /\\b([A-Za-z0-9][A-Za-z0-9_.\\-]*)/.exec(p.regex.source);
-      if (!m) continue; // no \b anchor — truly not a prefix pattern, skip
-
-      // Unescape any \\ sequences (the regex source represents literal \ as \\)
-      const raw = m[1]!;
-      // Extract up to the first unescaped quantifier or character class opener
-      // The match already stops at [ or { because those aren't in the char class above.
-      // Remove any trailing backslash-escaped fragment (e.g. \\ from \. in the source).
-      const prefix = raw.replace(/\\(.)/g, "$1"); // unescape \\. → . etc.
-
-      expect(keystonePrefixes, `keystone missing "${prefix}" (from pattern "${p.name}")`).toContain(prefix);
-    }
-
-    // Also verify the short tokens are explicitly covered:
-    expect(keystonePrefixes, 'keystone must contain "hf_" (Higgsfield/HuggingFace)').toContain("hf_");
-    expect(keystonePrefixes, 'keystone must contain "hfr_" (HuggingFace refresh)').toContain("hfr_");
-    expect(keystonePrefixes, 'keystone must contain "r8_" (Replicate)').toContain("r8_");
-
-    // Verify the short tokens are detected by looksLikeSecretValue
-    expect(looksLikeSecretValue(SHORT_HF), "hf_ short token must be detected").toBe(true);
-    expect(looksLikeSecretValue(SHORT_HFR), "hfr_ short token must be detected").toBe(true);
-    expect(looksLikeSecretValue(SHORT_R8), "r8_ short token must be detected").toBe(true);
   });
 });
 
