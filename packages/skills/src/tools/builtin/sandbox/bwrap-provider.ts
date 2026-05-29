@@ -63,8 +63,14 @@ export const SYSTEM_RO_PATHS = [
  * user's HOME at startup. These contain no secrets -- git config has
  * author name/email, not credentials (those live in credential helpers
  * or ~/.ssh which is intentionally NOT mounted).
+ *
+ * @param home - User home directory path.
+ * @param secureCredentialHome - When true, omits ~/.claude.json so that no
+ *   credential files are reachable inside the sandbox (EGRESS-02). The
+ *   ~/.claude and ~/.local/share/claude RW binds are gated separately in
+ *   buildArgs via getClaudeCodeRwPaths.
  */
-function getUserRoPaths(home: string): string[] {
+function getUserRoPaths(home: string, secureCredentialHome?: boolean): string[] {
   return [
     safePath(home, ".gitconfig"),
     safePath(home, ".config", "git"),
@@ -76,7 +82,9 @@ function getUserRoPaths(home: string): string[] {
     safePath(home, ".nvm"),
     // claude CLI auth/config at HOME root (not inside ~/.claude/ directory).
     // Without read access, `claude -p` hangs indefinitely producing zero output.
-    safePath(home, ".claude.json"),
+    // Omitted when secureCredentialHome is true (EGRESS-02): no credential files
+    // must be reachable inside the sandbox.
+    ...(secureCredentialHome ? [] : [safePath(home, ".claude.json")]),
   ].filter((p) => existsSync(p));
 }
 
@@ -177,13 +185,19 @@ export class BwrapProvider implements SandboxProvider {
     }
 
     // -- User config paths (read-only) --
-    for (const up of getUserRoPaths(os.homedir())) {
+    // Filtered by secureCredentialHome: when true, ~/.claude.json is omitted
+    // so the single flag gates all credential paths (EGRESS-02).
+    for (const up of getUserRoPaths(os.homedir(), opts.secureCredentialHome)) {
       args.push("--ro-bind", up, up);
     }
 
     // -- claude CLI paths (read-write) --
-    for (const cp of getClaudeCodeRwPaths(os.homedir())) {
-      args.push("--bind", cp, cp);
+    // Omitted entirely when secureCredentialHome is true (EGRESS-02).
+    // This gates ~/.claude and ~/.local/share/claude.
+    if (!opts.secureCredentialHome) {
+      for (const cp of getClaudeCodeRwPaths(os.homedir())) {
+        args.push("--bind", cp, cp);
+      }
     }
 
     // -- Dev tool RW paths (read-write) --
@@ -203,9 +217,18 @@ export class BwrapProvider implements SandboxProvider {
     }
 
     // -- Isolation flags --
+    const networkMode = opts.network?.mode ?? "open";
+    args.push("--unshare-all");
+    if (networkMode === "open") {
+      args.push("--share-net");
+    } else {
+      // broker-only: kernel-enforced network namespace; broker reachable via
+      // bind-mounted unix socket only. No general internet egress.
+      args.push("--unshare-net");
+      const { brokerSocketPath } = opts.network as { mode: "broker-only"; brokerSocketPath: string };
+      args.push("--bind", brokerSocketPath, brokerSocketPath);
+    }
     args.push(
-      "--unshare-all",
-      "--share-net",
       "--die-with-parent",
       "--new-session",
     );
