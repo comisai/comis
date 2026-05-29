@@ -29,6 +29,7 @@ function createMockResult(overrides: {
   trustLevel?: "system" | "learned" | "external";
   channel?: string;
   createdAt?: number;
+  occurredAt?: number;
   score?: number;
 }): MemorySearchResult {
   return {
@@ -45,6 +46,7 @@ function createMockResult(overrides: {
       },
       tags: [],
       createdAt: overrides.createdAt ?? 1700000000000,
+      ...(overrides.occurredAt !== undefined ? { occurredAt: overrides.occurredAt } : {}),
     },
     score: overrides.score ?? 0.8,
   };
@@ -114,8 +116,28 @@ describe("formatMemorySection", () => {
 
     const result = formatMemorySection(results, 4000);
 
-    expect(result).toContain("2023-11-14");
+    // No occurredAt → only the recorded date, no "occurred" segment (Phase-80 format
+    // with the explicit "recorded" label added in Phase-81).
+    expect(result).toContain("recorded 2023-11-14");
     expect(result).toContain("via telegram");
+    expect(result).not.toContain("occurred ");
+  });
+
+  it("surfaces BOTH recorded and occurred dates when occurredAt is present (TEMP-05)", () => {
+    const results: MemorySearchResult[] = [
+      createMockResult({
+        content: "Met the client on the 22nd",
+        trustLevel: "system", // system avoids wrap markers, keeps the line clean
+        createdAt: 1700000000000, // recorded 2023-11-14
+        occurredAt: 1690000000000, // event occurred 2023-07-22 (distinct from recorded)
+        score: 0.9,
+      }),
+    ];
+
+    const result = formatMemorySection(results, 4000);
+
+    expect(result).toContain("recorded 2023-11-14");
+    expect(result).toContain("occurred 2023-07-22");
   });
 
   it("invokes sanitizeToolOutput on each entry's content", () => {
