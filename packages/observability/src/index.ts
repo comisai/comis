@@ -258,6 +258,37 @@ export {
 export type { CacheTraceBridgedEventName } from "./cache-trace/event-bus-bridge.js";
 
 // ---------------------------------------------------------------------------
+// Recall-trace surface (86-01; OBS-01/OBS-02).
+// ---------------------------------------------------------------------------
+//
+// A daemon-wide JSONL recorder — ONE rich record per recall — and its
+// schema-versioned closed-union envelope. A near-verbatim sibling of the
+// cache-trace surface, but with NO opt-in raw-content slot: every payload is
+// routed through sanitizeForPersistence (the OBS-02 chokepoint). Consumed by
+// @comis/agent's createMemoryRecall (Plan 03) and the daemon's recall-trace
+// admin RPC (Plan 05). Stays a leaf — imports only @comis/core + in-package
+// substrate.
+
+export {
+  RECALL_RERANK_OUTCOMES,
+  RECALL_INCLUDE_REASONS,
+  RECALL_DEGRADATION_KINDS,
+  RecallTraceEventSchema,
+} from "./recall-trace/types.js";
+export type {
+  RecallTraceEvent,
+  RecallRerankOutcome,
+  RecallIncludeReason,
+  RecallDegradationKind,
+} from "./recall-trace/types.js";
+
+export { resolveRecallTraceFilePath } from "./recall-trace/paths.js";
+export type { ResolveRecallTraceFilePathInput } from "./recall-trace/paths.js";
+
+export { createRecallTrace } from "./recall-trace/runtime.js";
+export type { RecallTrace, RecallTraceInit } from "./recall-trace/runtime.js";
+
+// ---------------------------------------------------------------------------
 // Config-audit surface.
 // ---------------------------------------------------------------------------
 
