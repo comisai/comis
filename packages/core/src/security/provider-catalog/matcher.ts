@@ -158,6 +158,8 @@ function matchPathPattern(pattern: string, cleanPath: string): boolean {
     }
 
     const segment = remainder.slice(0, segmentEnd); // "foo" or "foo/bar"
+    // segment must be non-empty (CR-01: empty segment must not match)
+    if (segment.length === 0) return false;
     // segment must not itself contain "/" (exactly one segment in the slot)
     if (segment.includes("/")) return false;
 
