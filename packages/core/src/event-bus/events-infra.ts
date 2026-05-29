@@ -655,4 +655,68 @@ export interface InfraEvents {
     removedEmoji: string;
     timestamp: number;
   };
+
+  // -------------------------------------------------------------------------
+  // Credential broker events (Phase 1: type declarations; Phase 2: emit sites)
+  // -------------------------------------------------------------------------
+
+  /** Broker resolved a binding for a CONNECT request */
+  "broker:session_opened": {
+    sessionId: string;
+    agentId: string;
+    host: string;
+    presetId?: string;
+    timestamp: number;
+  };
+
+  /** Broker session torn down (normal or error) */
+  "broker:session_closed": {
+    sessionId: string;
+    agentId: string;
+    durationMs: number;
+    reason: "teardown" | "error" | "expired";
+    timestamp: number;
+  };
+
+  /** Broker received a proxy CONNECT request */
+  "broker:request": {
+    sessionId: string;
+    host: string;
+    path: string;
+    method: string;
+    timestamp: number;
+  };
+
+  /** Broker injected credentials into a request */
+  "broker:injected": {
+    sessionId: string;
+    host: string;
+    ruleKind: string;
+    timestamp: number;
+  };
+
+  /** Broker denied a request (no binding, bad token, or path-policy violation) */
+  "broker:denied": {
+    sessionId: string;
+    host: string;
+    reason: "no_binding" | "bad_token" | "path_policy" | "unknown_host";
+    statusCode: number;
+    timestamp: number;
+  };
+
+  /** Secret resolution miss — request not forwarded */
+  "broker:credential_unavailable": {
+    sessionId: string;
+    secretRef: string;
+    agentId: string;
+    timestamp: number;
+  };
+
+  /** Egress attempt to non-broker host blocked (broker-only mode) */
+  "broker:egress_blocked": {
+    sessionId: string;
+    /** SHA-256 hex of the target host — never plaintext (OBS-01 redaction) */
+    targetHostHash: string;
+    timestamp: number;
+  };
 }
