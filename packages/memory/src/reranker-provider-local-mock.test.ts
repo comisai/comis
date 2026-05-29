@@ -29,10 +29,11 @@ const mockCreateRankingContext =
 const mockLoadModel = vi.fn<(opts: { modelPath: string }) => Promise<unknown>>();
 const mockResolveModelFile =
   vi.fn<(uri: string, dir: string) => Promise<string>>();
-const mockGetLlama = vi.fn<() => Promise<unknown>>();
+const mockGetLlama =
+  vi.fn<(opts?: { gpu?: string | false }) => Promise<unknown>>();
 
 vi.mock("node-llama-cpp", () => ({
-  getLlama: () => mockGetLlama(),
+  getLlama: (opts?: { gpu?: string | false }) => mockGetLlama(opts),
   resolveModelFile: (uri: string, dir: string) => mockResolveModelFile(uri, dir),
 }));
 
@@ -181,5 +182,44 @@ describe("createLocalRerankerProvider (mocked node-llama-cpp)", () => {
       expect(result.error).toBeInstanceOf(Error);
       expect(result.error.message).toContain("model load failed");
     }
+  });
+
+  // ME-03: the rerankerGpu enum must reach getLlama, not be a silent no-op.
+  it("maps gpu=\"false\" to getLlama({ gpu: false }) (force CPU)", async () => {
+    const result = await createLocalRerankerProvider({
+      modelUri: "/local/model.gguf",
+      modelsDir: "models",
+      gpu: "false",
+    });
+    expect(result.ok).toBe(true);
+    expect(mockGetLlama).toHaveBeenCalledWith({ gpu: false });
+  });
+
+  it("passes gpu=\"cuda\" and gpu=\"metal\" through to getLlama as the string backend", async () => {
+    const cuda = await createLocalRerankerProvider({
+      modelUri: "/local/model.gguf",
+      modelsDir: "models",
+      gpu: "cuda",
+    });
+    expect(cuda.ok).toBe(true);
+    expect(mockGetLlama).toHaveBeenLastCalledWith({ gpu: "cuda" });
+
+    const metal = await createLocalRerankerProvider({
+      modelUri: "/local/model.gguf",
+      modelsDir: "models",
+      gpu: "metal",
+    });
+    expect(metal.ok).toBe(true);
+    expect(mockGetLlama).toHaveBeenLastCalledWith({ gpu: "metal" });
+  });
+
+  it("calls getLlama with no gpu option when gpu is unset (native auto-detect)", async () => {
+    const result = await createLocalRerankerProvider({
+      modelUri: "/local/model.gguf",
+      modelsDir: "models",
+    });
+    expect(result.ok).toBe(true);
+    // No gpu key forced — let node-llama-cpp auto-detect (its own default).
+    expect(mockGetLlama).toHaveBeenCalledWith({});
   });
 });
