@@ -206,6 +206,21 @@ describe("pathAllowed — empty pathPolicy fails-closed", () => {
   });
 });
 
+describe("pathAllowed — dotdot segment normalization (WR-01)", () => {
+  it("rejects /v1/../admin/secret when policy is [/v1/*] — dotdot must not bypass path policy", () => {
+    // WR-01: /v1/../admin/secret starts with /v1/ but resolves to /admin/secret
+    // which is outside the /v1/* policy scope. Must be rejected.
+    const rule = makeExactRule("example.com", { pathPolicy: ["/v1/*"] });
+    expect(pathAllowed(rule, "/v1/../admin/secret")).toBe(false);
+  });
+
+  it("allows /v1/./messages when policy is [/v1/*] — single dot normalises to /v1/messages", () => {
+    // /v1/./messages normalises to /v1/messages — still within /v1/*
+    const rule = makeExactRule("example.com", { pathPolicy: ["/v1/*"] });
+    expect(pathAllowed(rule, "/v1/./messages")).toBe(true);
+  });
+});
+
 // ── resolveBinding ────────────────────────────────────────────────────────────
 
 describe("resolveBinding — fail-closed for unknown host (T-02-03, INJECT-03)", () => {
