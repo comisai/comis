@@ -198,6 +198,7 @@ export async function setupMemory(deps: {
       modelUri: memoryConfig.rerankerModel,
       modelsDir: safePath(container.config.dataDir || ".", memoryConfig.rerankerModelsDir),
       gpu: memoryConfig.rerankerGpu,
+      threads: memoryConfig.rerankerThreads,
     });
     if (rr.ok) {
       rerankerPort = rr.value;

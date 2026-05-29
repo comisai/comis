@@ -99,6 +99,7 @@ function createMinimalContainer(overrides: Record<string, any> = {}) {
         rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
         rerankerModelsDir: "models",
         rerankerGpu: "auto",
+        rerankerThreads: 4,
         ...overrides.memory,
       },
       // Per-agent configs scanned for rag.rerank.enabled (the build gate). Default:
@@ -676,6 +677,8 @@ describe("setupMemory", () => {
         modelUri: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
         modelsDir: expect.stringContaining("models"),
         gpu: "auto",
+        // ME-02: the Phase-79 4-8 thread CPU bound must reach the factory.
+        threads: 4,
       }),
     );
     expect(result.rerankerPort).toBeDefined();

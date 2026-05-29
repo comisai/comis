@@ -5501,6 +5501,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("memor
     "type": "string"
   },
   {
+    "default": 4,
+    "immutable": false,
+    "path": "memory.rerankerThreads",
+    "type": "integer"
+  },
+  {
     "default": {
       "maxAgeDays": 0
     },
@@ -11006,6 +11012,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "rerankerGpu": "auto",
       "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
       "rerankerModelsDir": "models",
+      "rerankerThreads": 4,
       "retention": {
         "maxAgeDays": 0
       },
@@ -11078,6 +11085,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "memory.rerankerModelsDir",
     "type": "string"
+  },
+  {
+    "default": 4,
+    "immutable": false,
+    "path": "memory.rerankerThreads",
+    "type": "integer"
   },
   {
     "default": {
@@ -20510,6 +20523,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("mem
       "default": "models",
       "type": "string"
     },
+    "rerankerThreads": {
+      "default": 4,
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+    },
     "retention": {
       "additionalProperties": false,
       "default": {
@@ -20542,7 +20561,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("mem
     "retention",
     "rerankerModel",
     "rerankerModelsDir",
-    "rerankerGpu"
+    "rerankerGpu",
+    "rerankerThreads"
   ],
   "type": "object"
 }"
@@ -30255,6 +30275,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "rerankerGpu": "auto",
         "rerankerModel": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
         "rerankerModelsDir": "models",
+        "rerankerThreads": 4,
         "retention": {
           "maxAgeDays": 0
         },
@@ -30326,6 +30347,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "default": "models",
           "type": "string"
         },
+        "rerankerThreads": {
+          "default": 4,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
         "retention": {
           "additionalProperties": false,
           "default": {
@@ -30358,7 +30385,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "retention",
         "rerankerModel",
         "rerankerModelsDir",
-        "rerankerGpu"
+        "rerankerGpu",
+        "rerankerThreads"
       ],
       "type": "object"
     },
