@@ -58,6 +58,11 @@ const mockCreateLocalRerankerProvider = vi.hoisted(() => vi.fn(async () => ({
   ok: true,
   value: { isAvailable: () => true, rank: vi.fn(async () => ({ ok: true, value: [] })), dispose: mockRerankerDispose },
 })));
+// Entity store factory (Phase 83) — mocked so setup wires it without a real DB.
+const mockCreateSqliteMemoryEntityStore = vi.hoisted(() => vi.fn(() => ({
+  resolveAndLink: vi.fn(async () => ({ ok: true, value: { ok: true, value: undefined } })),
+  associativeLane: vi.fn(async () => ({ ok: true, value: [] })),
+})));
 
 vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
@@ -70,6 +75,7 @@ vi.mock("@comis/memory", () => ({
   createBatchIndexer: mockCreateBatchIndexer,
   createEmbeddingQueue: mockCreateEmbeddingQueue,
   createLocalRerankerProvider: mockCreateLocalRerankerProvider,
+  createSqliteMemoryEntityStore: mockCreateSqliteMemoryEntityStore,
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));
