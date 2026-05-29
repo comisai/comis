@@ -105,6 +105,25 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
       try {
         const key = normalizeEntityKey(name);
 
+        // MD-01: ExtractedEntitySchema.name is `z.string().min(1)` — that checks
+        // LENGTH, not non-whitespace, so a whitespace/punctuation/combining-mark-
+        // only name (e.g. "   ", "---", a lone combining acute) passes the schema
+        // yet `normalizeEntityKey` folds it to "". With no guard, every such junk
+        // name in a scope collapses into ONE empty-`canonical_key` entity (the
+        // `(tenant_id, agent_id, canonical_key)` UNIQUE index), spuriously
+        // associating unrelated memories. Refuse it here — the resolver is the
+        // sole writer — and return `err`. IN-01 (memory-review-job) treats this
+        // as NON-FATAL: the memory is still stored, only the content-free
+        // association is dropped (WARN + continue, watermark advances).
+        if (key === "") {
+          // NEVER log the entity name body (AGENTS.md §2.7) — metadata only.
+          logger?.debug(
+            { step: "entity-resolve", skipped: "empty-key" },
+            "Entity resolve skipped (name normalizes to empty canonical key)",
+          );
+          return err(new Error("entity name normalizes to empty canonical key"));
+        }
+
         // The whole resolve+link is one transaction so a fuzzy-scan + create
         // + link can never interleave with a concurrent write (mirror
         // sqlite-memory-adapter.ts:85).
