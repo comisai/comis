@@ -459,6 +459,24 @@ describe("InfraEvents payload structure", () => {
     expect(handler.mock.calls[2]![0].outcome).toBe("not_found");
   });
 
+  it('broker:denied delivers "body_too_large" reason', () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["broker:denied"] = {
+      sessionId: "sess-1",
+      host: "api.example.com",
+      reason: "body_too_large",
+      statusCode: 413,
+      timestamp: Date.now(),
+    };
+    bus.on("broker:denied", handler);
+    bus.emit("broker:denied", payload);
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["broker:denied"];
+    expect(received.reason).toBe("body_too_large");
+    expect(received.statusCode).toBe(413);
+  });
+
   it("security:warn delivers category, agentId, message", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();

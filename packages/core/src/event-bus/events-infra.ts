@@ -697,11 +697,11 @@ export interface InfraEvents {
     timestamp: number;
   };
 
-  /** Broker denied a request (no binding, bad token, path-policy violation, or malformed request) */
+  /** Broker denied a request (no binding, bad token, path-policy violation, malformed request, or body-size cap exceeded) */
   "broker:denied": {
     sessionId: string;
     host: string;
-    reason: "no_binding" | "bad_token" | "path_policy" | "unknown_host" | "malformed_request";
+    reason: "no_binding" | "bad_token" | "path_policy" | "unknown_host" | "malformed_request" | "body_too_large";
     statusCode: number;
     timestamp: number;
   };
