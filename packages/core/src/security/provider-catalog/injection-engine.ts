@@ -119,11 +119,14 @@ export function applyInjections(
       }
 
       default: {
-        // WR-03: exhaustiveness guard — catches new InjectionRule kinds at compile time.
+        // Exhaustiveness guard — catches new InjectionRule kinds at compile time.
         // At runtime the unreachable branch throws to prevent silent credential omission.
         // (File is in packages/core/src/security/ — exception zone; throw is allowed.)
         const _exhaustive: never = rule;
-        throw new Error(`Unknown injection rule kind: ${JSON.stringify(_exhaustive)}`);
+        // WR-02: Only serialize the `kind` discriminant — never JSON.stringify the
+        // full rule object, which may contain a `value` field in a future rule kind
+        // that holds a credential. Restricting to `kind` prevents credential-in-log.
+        throw new Error(`Unknown injection rule kind: ${String((_exhaustive as { kind?: unknown }).kind)}`);
       }
     }
   }
