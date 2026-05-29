@@ -40,6 +40,7 @@ import type { ComisLogger } from "@comis/core";
 import {
   buildSystemPromptReport,
   persistSystemPromptReport,
+  createRecallTrace,
   type BootstrapFileForReport,
   type ResolvedToolForReport,
 } from "@comis/observability";
@@ -209,6 +210,32 @@ export function clearCacheSafeParams(sessionKey: string): void {
   sessionCacheSafeParams.delete(sessionKey);
 }
 
+/**
+ * Construct the recall-trace recorder from `diagnostics.recallTrace` config, mirroring
+ * how `createCacheTrace` is wired in pi-executor: the `enabled` gate, the optional
+ * `filePath` override, and the `confinedBaseDir` (the daemon containment base —
+ * `~/.comis` — for ancestor-symlink rejection, applied only when no explicit path is set,
+ * exactly like cacheTrace). Returns `null` when config is absent or `enabled: false`
+ * (the recorder's null-when-disabled contract), so the default leaves recall unchanged.
+ * Extracted as a small helper to keep the recall block legible.
+ */
+function buildRecallTrace(
+  cfg: { enabled?: boolean; filePath?: string; maxFileBytes?: number } | undefined,
+  agentId: string,
+  sessionId: string,
+): ReturnType<typeof createRecallTrace> {
+  if (cfg?.enabled !== true) return null;
+  const confinedBaseDir = cfg.filePath === undefined ? safePath(os.homedir(), ".comis") : undefined;
+  return createRecallTrace({
+    enabled: true,
+    agentId,
+    sessionId,
+    ...(cfg.filePath !== undefined ? { filePath: cfg.filePath } : {}),
+    ...(cfg.maxFileBytes !== undefined ? { maxFileBytes: cfg.maxFileBytes } : {}),
+    ...(confinedBaseDir !== undefined ? { confinedBaseDir } : {}),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -248,6 +275,19 @@ export interface PromptAssemblyParams {
     documentationConfig?: import("@comis/core").DocumentationConfig;
     /** Event bus for sender:trust_resolved audit events. */
     eventBus?: TypedEventBus;
+    /**
+     * Recall-trace writer configuration (Phase 86 / OBS-01/02). Forwarded from
+     * AppConfig.diagnostics.recallTrace by daemon wiring (mirrors cacheTraceConfig).
+     * When omitted or `enabled: false`, the recall-trace recorder is null
+     * (createRecallTrace returns null), so createMemoryRecall captures nothing and
+     * behaves exactly as before — recall-trace is OPT-IN (default-off). The recorder
+     * has NO raw-content slot; every payload is full-sanitized before disk (OBS-02).
+     */
+    recallTraceConfig?: {
+      readonly enabled?: boolean;
+      readonly filePath?: string;
+      readonly maxFileBytes?: number;
+    };
     /** Spawn packet for sub-agent context injection.
      *  Threaded from ExecutionOverrides; used for system prompt template. */
     spawnPacket?: SpawnPacket;
@@ -647,6 +687,18 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   if (deps.memoryPort && config.rag?.enabled && !params.skipRag) {
     const ragStart = deps.clock.now();
     try {
+      // Recall-trace recorder (OBS-01/02), null-when-disabled (default-off). Constructed
+      // per assembly but shares a daemon-wide queued writer by path (the recorder's
+      // registry contract), so recordRecall is fire-and-forget — no per-recall
+      // flushAndClose (that would tear down the shared writer; mirrors the cacheTrace
+      // daemon-wide lifecycle). `eventBus` is the already-in-scope bus (used for
+      // memory:injected below) — threading both here keeps memory:recalled/reranked at
+      // the canonical one-per-recall site inside createMemoryRecall.
+      const recallTrace = buildRecallTrace(
+        deps.recallTraceConfig,
+        agentId ?? config.name,
+        formatSessionKey(sessionKey),
+      );
       // Single recall orchestrator (RANK-07): search->fuse->rerank->score->trust-filter
       // ->dedup. Rerank opt-in/default-OFF -> fusion order (RANK-01/03/08). Non-fatal.
       const recall = createMemoryRecall(
@@ -657,6 +709,8 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           timers: deps.timers,
           clock: deps.clock,
           logger,
+          ...(recallTrace !== null ? { recallTrace } : {}),
+          ...(deps.eventBus !== undefined ? { eventBus: deps.eventBus } : {}),
         },
         {
           maxResults: config.rag.maxResults,
