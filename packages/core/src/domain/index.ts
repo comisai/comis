@@ -9,8 +9,22 @@ export {
   MemorySourceSchema,
   MemoryEntrySchema,
   parseMemoryEntry,
+  // Structured extraction (Phase 82 — EXTR-01)
+  ExtractedEntitySchema,
+  StructuredMemorySchema,
+  MemoryExtractionResultSchema,
+  MemoryEntitySchema,
 } from "./memory-entry.js";
-export type { TrustLevel, MemoryEntry } from "./memory-entry.js";
+export type {
+  TrustLevel,
+  MemoryEntry,
+  // Structured extraction (Phase 82) + Phase-83 domain target
+  MemorySource,
+  ExtractedEntity,
+  StructuredMemory,
+  MemoryExtractionResult,
+  MemoryEntity,
+} from "./memory-entry.js";
 
 export {
   ToolCallSchema,

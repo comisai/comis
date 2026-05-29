@@ -63,3 +63,81 @@ export function parseMemoryEntry(raw: unknown): Result<MemoryEntry, z.ZodError> 
   }
   return err(result.error);
 }
+
+/**
+ * Source provenance type (inferred from {@link MemorySourceSchema}).
+ *
+ * Exported so the structured-extraction job (Phase 82, EXTR-04) can carry the
+ * memory's `{ who, channel }` provenance onto each emitted entity mention.
+ */
+export type MemorySource = z.infer<typeof MemorySourceSchema>;
+
+// ---------------------------------------------------------------------------
+// Structured extraction (Phase 82 — EXTR-01/EXTR-04)
+//
+// The background memory-extraction job (`@comis/agent`) replaces flat preference
+// strings with zod-validated structured memories `{ content, entities[], occurredAt }`.
+// These schemas are the EXTR-01 validation boundary the job parses LLM output against.
+//
+// STRICT vs LENIENT (design §6.1 / RESEARCH Pitfall 5):
+//   - LLM-OUTPUT schemas (StructuredMemorySchema, MemoryExtractionResultSchema) are
+//     LENIENT `z.object` so a benign extra LLM key (e.g. `confidence`) is STRIPPED,
+//     not rejected — a valid memory must not be discarded over an unrequested field.
+//   - DOMAIN types (ExtractedEntitySchema, MemoryEntitySchema) are STRICT `z.strictObject`
+//     (internal contracts — unknown keys are a bug, not benign drift).
+// ---------------------------------------------------------------------------
+
+/**
+ * One entity mention emitted by extraction. Phase 82 EMITS these (carrying the
+ * source memory's inherited trust + source provenance, EXTR-04); Phase 83 persists
+ * and resolves them. Minimal shape — just the mention name (design §4.2's entity
+ * table is `canonical_name`-only, so there is intentionally no `type` field).
+ */
+export const ExtractedEntitySchema = z.strictObject({
+  name: z.string().min(1),
+});
+export type ExtractedEntity = z.infer<typeof ExtractedEntitySchema>;
+
+/**
+ * One structured memory from the extraction LLM call.
+ *
+ * `occurredAt` is an ISO 8601 STRING as emitted by the LLM (relative dates already
+ * converted to absolute in-prompt, EXTR-02); the job resolves it to epoch ms
+ * post-parse before storing it on {@link MemoryEntrySchema}'s `occurredAt`.
+ *
+ * LENIENT (`z.object`): unknown keys are stripped, not rejected (Pitfall 5).
+ */
+export const StructuredMemorySchema = z.object({
+  content: z.string().min(1),
+  occurredAt: z.string().optional(),
+  entities: z.array(ExtractedEntitySchema).default([]),
+  memoryType: z.enum(["working", "episodic", "semantic", "procedural"]).default("semantic"),
+});
+export type StructuredMemory = z.infer<typeof StructuredMemorySchema>;
+
+/**
+ * The full extraction-call payload: `{ memories: [...] }`. LENIENT envelope so a
+ * benign extra top-level key from the LLM does not fail the whole batch (EXTR-01/05).
+ */
+export const MemoryExtractionResultSchema = z.object({
+  memories: z.array(StructuredMemorySchema),
+});
+export type MemoryExtractionResult = z.infer<typeof MemoryExtractionResultSchema>;
+
+/**
+ * MemoryEntity (design §4.3) — the resolved entity Phase 83 persists into the
+ * `memory_entities` table. Defined now so Phase 83 imports it; Phase 82 does NOT
+ * persist it (no entity table exists yet — entities are emit-only this phase).
+ *
+ * STRICT (`z.strictObject`): the persisted domain contract.
+ */
+export const MemoryEntitySchema = z.strictObject({
+  id: z.guid(),
+  tenantId: z.string().min(1),
+  agentId: z.string().min(1),
+  canonicalName: z.string().min(1),
+  mentionCount: z.number().int().positive(),
+  firstSeen: z.number().int().positive(),
+  lastSeen: z.number().int().positive(),
+});
+export type MemoryEntity = z.infer<typeof MemoryEntitySchema>;
