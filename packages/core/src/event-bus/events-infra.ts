@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { BackgroundTaskOrigin } from "../domain/background-task-origin.js";
 import type { McpServerEntry } from "../config/schema-integrations.js";
+import type { InjectionRule } from "../security/provider-catalog/index.js";
 
 /**
  * InfraEvents: Config, plugin, hook, auth, diagnostic,
@@ -691,7 +692,8 @@ export interface InfraEvents {
   "broker:injected": {
     sessionId: string;
     host: string;
-    ruleKind: string;
+    /** IN-02: closed union matching InjectionRule["kind"] — not open string */
+    ruleKind: InjectionRule["kind"];
     timestamp: number;
   };
 
