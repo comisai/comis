@@ -86,7 +86,7 @@ describe("MemoryEntry", () => {
       }
     });
 
-    it("accepts tags array", () => {
+    it("accepts an optional tags array on a memory", () => {
       const result = parseMemoryEntry(validEntry({ tags: ["preference", "ui"] }));
       expect(result.ok).toBe(true);
       if (result.ok) {
