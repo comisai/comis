@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createLogger, DEFAULT_REDACT_PATHS } from "./logger.js";
 import { isValidLogLevel } from "@comis/core";
 
@@ -469,6 +469,31 @@ describe("createLogger", () => {
       expect(lines[0]!.traceId).toBe("abc-123");
       expect(lines[0]!.module).toBe("gateway");
       expect(lines[0]!.durationMs).toBe(42);
+    });
+  });
+
+  // The helpers above rebuild Pino by hand and bypass createLogger(), leaving
+  // the factory's optional-mixin wiring and the err-serializer's non-Error
+  // fallback unexercised. These drive createLogger() DIRECTLY.
+  // `regexRedactInTransport: false` skips the worker-thread transport (sync
+  // stdout, no async teardown) while keeping the structured censor + serializers
+  // installed.
+  describe("createLogger factory wiring (mixin + err-serializer)", () => {
+    it("threads a provided mixin through the factory", () => {
+      const mixin = vi.fn(() => ({ traceId: "trace-xyz" }));
+      const logger = createLogger({ name: "mixin-factory", regexRedactInTransport: false, mixin });
+      // Pino runs the mixin in-process when building each enabled log line.
+      logger.info({ durationMs: 7 }, "with factory mixin");
+      expect(mixin).toHaveBeenCalled();
+    });
+
+    it("err-serializer passes a non-Error err through without throwing", () => {
+      // Default redaction stays on, so the err serializer is installed. A
+      // non-Error err value must hit the `return err as Record<…>` fallback
+      // (not the Error message/stack redaction branch) and never throw.
+      const logger = createLogger({ name: "err-nonerror", regexRedactInTransport: false });
+      expect(() => logger.error({ err: "plain-string-not-an-error" }, "boom")).not.toThrow();
+      expect(() => logger.error({ err: { code: "EACCES" } }, "boom-obj")).not.toThrow();
     });
   });
 
