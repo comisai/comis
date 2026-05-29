@@ -26,6 +26,7 @@ export type {
   RerankerPort,
   MemoryEntityStore,
   EntityScope,
+  EntityRow,
   MemoryConsolidationStore,
   ConsolidationCandidate,
   ConsolidationPlan,

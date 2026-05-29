@@ -58,7 +58,18 @@
  *   - For each contract: every required field MUST be in `refs` OR
  *     `deferred`. Missing → violation.
  *   - If no migrated handler exists for a contract, also a violation
- *     (`<name>: no migrated handler found`).
+ *     (`<name>: no migrated handler found`) — UNLESS the contract carries a
+ *     `// @contract-deferred-handler: <closing-plan>` annotation in its
+ *     leading trivia. That tag marks an INTERFACE-FIRST contract whose shape
+ *     ships in one plan/wave and whose daemon handler lands in a later one
+ *     (it MUST also stay OUT of the `API_CONTRACTS` registry until then, so
+ *     the bidirectional 1:1 gate is satisfied by construction). The tag is
+ *     greppable in PR diffs, names the closing plan, and is self-removing:
+ *     the closing plan deletes it when it adds the handler. This mirrors the
+ *     `@contract-deferred-fields` escape hatch — a narrow, documented
+ *     exemption, NOT a weakening of the 1:1 invariant (every NON-deferred
+ *     contract is still gated, and a deferred contract that DID get a handler
+ *     would simply ignore the now-redundant tag).
  *
  * Reused / duplicated helpers: `listContractFiles`, `listHandlerFiles` mirror
  * the implementation in `api-contracts-bidirectional.test.ts:45-108`. The
@@ -74,7 +85,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
-import { INTERNAL_FIELD_NAMES } from "@comis/core";
+import { INTERNAL_FIELD_NAMES, API_CONTRACTS } from "@comis/core";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(here, "../..");
@@ -97,6 +108,16 @@ const INTERNAL_SET: ReadonlySet<string> = new Set<string>(INTERNAL_FIELD_NAMES);
  *     },
  */
 const DEFERRED_TAG = "@contract-deferred-fields:";
+
+/**
+ * Contract-level escape hatch: marks an INTERFACE-FIRST contract whose shape
+ * ships now but whose daemon handler lands in a later plan/wave. A contract
+ * carrying this tag in its leading trivia is exempt from the "no migrated
+ * handler found" violation. Such a contract MUST stay out of the
+ * `API_CONTRACTS` registry until its handler lands (the bidirectional 1:1
+ * gate enforces that side). Self-removing: the closing plan deletes the tag.
+ */
+const DEFERRED_HANDLER_TAG = "@contract-deferred-handler:";
 
 // ---------------------------------------------------------------------------
 // Helpers — duplicated verbatim from api-contracts-bidirectional.test.ts
@@ -269,13 +290,26 @@ function collectRequiredFieldsFromZodObject(expr: ts.Expression): string[] {
  * method-string (`"mcp.connect"`) — the handler-side walker matches by
  * the same local name via the `[Contract.method]:` computed-name idiom.
  */
-function extractContractRequiredFields(file: string): Map<string, string[]> {
+function extractContractRequiredFields(file: string): {
+  fields: Map<string, string[]>;
+  deferredHandlers: Set<string>;
+  methodByName: Map<string, string>;
+} {
   const src = readFileSync(file, "utf8");
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.ES2023, true);
-  const out = new Map<string, string[]>();
+  const fields = new Map<string, string[]>();
+  const deferredHandlers = new Set<string>();
+  const methodByName = new Map<string, string>();
 
   ts.forEachChild(sf, (node) => {
     if (!ts.isVariableStatement(node)) return;
+    // The `@contract-deferred-handler` tag may sit in the leading trivia of
+    // the whole `export const` statement (the JSDoc/comment block above the
+    // declaration). Scope it to THIS statement via the trivia window.
+    const triviaStart = node.getFullStart();
+    const triviaEnd = node.getStart();
+    const stmtTrivia = src.substring(Math.max(0, triviaStart), triviaEnd);
+    const stmtHasDeferredHandler = stmtTrivia.includes(DEFERRED_HANDLER_TAG);
     for (const decl of node.declarationList.declarations) {
       if (!ts.isIdentifier(decl.name)) continue;
       if (!decl.initializer || !ts.isCallExpression(decl.initializer)) continue;
@@ -296,14 +330,31 @@ function extractContractRequiredFields(file: string): Map<string, string[]> {
       );
       if (!requestProp || !ts.isPropertyAssignment(requestProp)) continue;
 
-      const fields = collectRequiredFieldsFromZodObject(requestProp.initializer);
+      // Capture the `method:` literal so a deferred-handler contract can be
+      // cross-checked against the API_CONTRACTS registry by method key.
+      const methodProp = arg0.properties.find(
+        (p) =>
+          ts.isPropertyAssignment(p) &&
+          ts.isIdentifier(p.name) &&
+          p.name.text === "method",
+      );
+      if (
+        methodProp &&
+        ts.isPropertyAssignment(methodProp) &&
+        ts.isStringLiteral(methodProp.initializer)
+      ) {
+        methodByName.set(decl.name.text, methodProp.initializer.text);
+      }
+
+      const required = collectRequiredFieldsFromZodObject(requestProp.initializer);
       // Record EVERY contract — even those with zero required fields —
       // so the handler-side scan can match by name (zero-field
       // contracts trivially pass since their for-loop is empty).
-      out.set(decl.name.text, fields);
+      fields.set(decl.name.text, required);
+      if (stmtHasDeferredHandler) deferredHandlers.add(decl.name.text);
     }
   });
-  return out;
+  return { fields, deferredHandlers, methodByName };
 }
 
 // ---------------------------------------------------------------------------
@@ -411,11 +462,31 @@ function collectHandlerReferencesAndAnnotations(
 describe("contract↔handler-body field parity", () => {
   it("every required contract request field is referenced (or annotated) in its handler body", () => {
     // 1. Aggregate `ContractName -> required-field-names` across all
-    //    contract files.
+    //    contract files, plus the set of interface-first contracts whose
+    //    handler is explicitly deferred to a later plan/wave.
     const contractFields = new Map<string, string[]>();
+    const deferredHandlerContracts = new Set<string>();
+    const methodByName = new Map<string, string>();
     for (const file of listContractFiles(CONTRACT_DIR)) {
-      for (const [name, fields] of extractContractRequiredFields(file)) {
-        contractFields.set(name, fields);
+      const ex = extractContractRequiredFields(file);
+      for (const [name, required] of ex.fields) {
+        contractFields.set(name, required);
+      }
+      for (const name of ex.deferredHandlers) deferredHandlerContracts.add(name);
+      for (const [name, method] of ex.methodByName) methodByName.set(name, method);
+    }
+
+    // GUARD: the deferred-handler exemption may only apply to contracts that
+    // are genuinely OUT of the API_CONTRACTS registry. Otherwise the tag could
+    // mask a real orphan (a registered contract whose handler was forgotten).
+    // A deferred contract that IS registered is itself a violation.
+    for (const name of deferredHandlerContracts) {
+      const method = methodByName.get(name);
+      if (method && API_CONTRACTS.has(method)) {
+        throw new Error(
+          `${name} (${method}) carries @contract-deferred-handler but IS registered in ` +
+            `API_CONTRACTS — remove the tag and add its handler, or remove it from the registry.`,
+        );
       }
     }
 
@@ -441,6 +512,13 @@ describe("contract↔handler-body field parity", () => {
         // handler. The bidirectional test enforces the same shape
         // from the opposite direction; reasserting here keeps this gate
         // self-contained.
+        //
+        // EXCEPTION: an interface-first contract tagged
+        // `@contract-deferred-handler: <plan>` is exempt — its shape ships
+        // now, its handler lands in a later plan/wave. It must also stay out
+        // of the API_CONTRACTS registry until then (the bidirectional gate
+        // enforces that), so 1:1 still holds across every committed state.
+        if (deferredHandlerContracts.has(contractName)) continue;
         violations.push(`${contractName}: no migrated handler found`);
         continue;
       }

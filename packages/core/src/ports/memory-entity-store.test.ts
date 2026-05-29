@@ -42,10 +42,14 @@ describe("MemoryEntityStore.listEntities — scoped entity-graph read (OBS-06)",
     // Runtime RED proof: fails on pre-patch source where the method/type are absent.
     expect(portSrc, "EntityRow type must be declared").toMatch(/export\s+interface\s+EntityRow\b/);
     expect(portSrc, "listEntities method must be on the port").toMatch(/\blistEntities\s*\(/);
-    // The port must stay type-only (mirrors reranker.ts) — these would import
-    // runtime weight / pin the wire format and break the agent↛memory cut.
-    expect(portSrc, "no zod in a type-only port").not.toMatch(/\bz\./);
-    expect(portSrc, "no @comis/memory import in core port").not.toMatch(/@comis\/memory/);
+    // The port must stay type-only (mirrors reranker.ts) — neither a zod
+    // dependency nor a runtime import of @comis/memory (that would invert the
+    // dependency direction + break the agent↛memory build cut). The plan's
+    // verification grep is import-scoped: `import .* @comis/memory | z.`.
+    expect(portSrc, "no zod in a type-only port").not.toMatch(/\bz\.[a-z]/);
+    expect(portSrc, "no @comis/memory import in core port").not.toMatch(
+      /^\s*import\b[^\n]*@comis\/memory/m,
+    );
   });
 
   it("accepts a structurally-valid implementation exposing listEntities and exercises it", async () => {

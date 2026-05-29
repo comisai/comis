@@ -40,6 +40,27 @@ export interface EntityScope {
   now: number;
 }
 
+/**
+ * A single entity row for the entity-graph diagnostic (OBS-06). Counts +
+ * bookkeeping timestamps only — `name` is the canonical display name the
+ * admin-gated diagnostic surfaces to an operator (NOT exposed on the bus
+ * `memory:entities_linked` event, which stays counts-only). `firstSeen` /
+ * `lastSeen` are epoch milliseconds and optional (a freshly-created row may
+ * not yet have both populated by the adapter).
+ */
+export interface EntityRow {
+  /** Stable entity id. */
+  id: string;
+  /** Canonical display name (operator-facing diagnostic only). */
+  name: string;
+  /** How many memories reference this entity within the scope. */
+  mentionCount: number;
+  /** Epoch ms of the first mention (optional). */
+  firstSeen?: number;
+  /** Epoch ms of the most recent mention (optional). */
+  lastSeen?: number;
+}
+
 export interface MemoryEntityStore {
   /**
    * WRITE PATH (IN-01). Resolve `name` to an entity scoped to (tenant, agent)
@@ -63,4 +84,22 @@ export interface MemoryEntityStore {
     scope: Omit<EntityScope, "now">,
     cap: number,
   ): Promise<Result<MemorySearchResult[], Error>>;
+
+  /**
+   * DIAGNOSTIC READ PATH (OBS-06). List the entities scoped to a single
+   * `(tenantId, agentId)` partition, ordered most-mentioned-first, bounded by
+   * `limit`. This is the entity-graph diagnostic's surface — a NON-seed read,
+   * distinct from the seed-based `associativeLane` (which needs memory seeds to
+   * traverse). Bakes the SAME `(tenant, agent)` SQL isolation as the resolver
+   * UNIQUE index and the lane self-join (ENT-03) — two agents/tenants must
+   * never surface each other's entity rows even when a name is identical. The
+   * sole adapter is in @comis/memory; called only from the daemon
+   * (`memory.entities` handler, Plan 05). No new authority beyond a scoped read
+   * within the caller's own (tenant, agent).
+   */
+  listEntities(
+    agentId: string,
+    tenantId: string,
+    limit: number,
+  ): Promise<Result<EntityRow[], Error>>;
 }
