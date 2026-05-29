@@ -2,11 +2,18 @@
 /**
  * Diagnostics configuration scaffold.
  *
- * Top-level `diagnostics` section with three subschemas:
+ * Top-level `diagnostics` section with four subschemas:
  *
  *   - `diagnostics.trajectory`  — `{enabled, dir, maxFileBytes, eventTypes}`.
  *   - `diagnostics.cacheTrace`  — cache-trace JSONL artifact knobs.
  *   - `diagnostics.configAudit` — `{enabled, rotateAtBytes, keepRotated}`.
+ *   - `diagnostics.recallTrace` — recall-trace JSONL artifact knobs. The
+ *     OPT-IN sibling of `cacheTrace`: default OFF because it records
+ *     per-recall ranking previews — an operator flips `enabled:true` for a
+ *     debug session. There is NO `includeMessages`/`includeSystem` raw-content
+ *     opt-in (the recorder always full-sanitizes via `sanitizeForPersistence`,
+ *     OBS-02). The `COMIS_DISABLE_RECALL_TRACE` env escape hatch (read by
+ *     Plan 01's recorder) hard-disables it regardless of config.
  *
  * The unused fourth subschema (a placeholder slot for future redact
  * knobs) was deleted. Runtime redaction lives in
@@ -154,6 +161,47 @@ const ConfigAuditConfigSchema = z
   });
 
 /**
+ * `diagnostics.recallTrace.*` schema (Phase 86 / OBS-02).
+ *
+ * Configures the per-recall recall-trace JSONL artifact written by Plan 01's
+ * recorder (`packages/observability/src/recall-trace/runtime.ts`), a
+ * near-verbatim sibling of the cache-trace runtime. All fields carry defaults
+ * so an empty `diagnostics.recallTrace: {}` block in YAML produces a valid
+ * configuration:
+ *
+ *   - `enabled: false` — the writer is OFF by default. This is the OPT-IN
+ *     contrast to `cacheTrace`/`trajectory` (both `enabled:true`): the recall
+ *     trace records per-recall ranking previews (fused order, rerank deltas,
+ *     score breakdowns) that an operator only wants captured during a focused
+ *     debug session. The recorder additionally honors the
+ *     `COMIS_DISABLE_RECALL_TRACE` env hard-off.
+ *   - `filePath` — optional full path override. Default resolved at runtime to
+ *     `~/.comis/logs/recall-trace.jsonl` (tilde-prefix supported), mirroring
+ *     `resolveCacheTraceFilePath`.
+ *   - `maxFileBytes: 50 MB` — per-file byte cap, parity with
+ *     `cacheTrace.maxFileBytes` / `trajectory.maxFileBytes`.
+ *
+ * NOTE: there is intentionally NO `includeMessages` / `includeSystem` /
+ * `includePrompt` slot (unlike `cacheTrace`). The recall-trace recorder has no
+ * raw-content opt-in — every payload is full-sanitized via
+ * `sanitizeForPersistence` (bound → sanitize → redact) before it touches disk
+ * (OBS-02). Adding a raw-content toggle here would be a security regression.
+ */
+const RecallTraceConfigSchemaInner = z.object({
+  enabled: z.boolean().default(false),
+  filePath: z.string().optional(),
+  maxFileBytes: z
+    .number()
+    .int()
+    .positive()
+    .default(50 * 1024 * 1024),
+});
+
+const RecallTraceConfigSchema = RecallTraceConfigSchemaInner.default(() =>
+  RecallTraceConfigSchemaInner.parse({}),
+);
+
+/**
  * Root diagnostics configuration schema.
  *
  * Has sensible defaults so an empty object produces a valid
@@ -168,6 +216,7 @@ const DiagnosticsConfigSchemaInner = z.object({
   trajectory: TrajectoryConfigSchema,
   cacheTrace: CacheTraceConfigSchema,
   configAudit: ConfigAuditConfigSchema,
+  recallTrace: RecallTraceConfigSchema,
 });
 
 export const DiagnosticsConfigSchema = DiagnosticsConfigSchemaInner.default(() =>
