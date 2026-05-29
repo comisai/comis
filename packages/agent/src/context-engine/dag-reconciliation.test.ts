@@ -19,7 +19,10 @@ import {
   computeContentHash,
   flattenMessageContent,
   mapMessageRole,
+  createDagContextEngine,
 } from "./dag-reconciliation.js";
+import { ContextEngineConfigSchema } from "@comis/core";
+import type { DagContextEngineDeps } from "./types-dag.js";
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -430,5 +433,136 @@ describe("installDagIngestionHook", () => {
     // Only one entry in DAG
     const messages = store.getMessagesByConversation(conversationId);
     expect(messages).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DAG-05: context:mode_switched emission at the reconcile seam
+// ---------------------------------------------------------------------------
+
+describe("context:mode_switched emission (DAG-05)", () => {
+  /** Builds a DAG engine over the live :memory: store with a mock eventBus and
+   *  a controllable consumePendingModeSwitch stub. The model getter reports a
+   *  non-reasoning model so the thinking-block cleaner layer is skipped. */
+  function makeDagEngine(
+    conversationId: string,
+    overrides: {
+      eventBus?: { emit: ReturnType<typeof vi.fn> };
+      consumePendingModeSwitch?: DagContextEngineDeps["consumePendingModeSwitch"];
+    } = {},
+  ) {
+    const eventBus = overrides.eventBus ?? { emit: vi.fn() };
+    const config = ContextEngineConfigSchema.parse({ version: "dag" });
+    const deps: DagContextEngineDeps = {
+      logger: mockLogger as unknown as DagContextEngineDeps["logger"],
+      getModel: () => ({ reasoning: false, contextWindow: 200_000, maxTokens: 8192 }),
+      eventBus,
+      agentId: "agent-1",
+      sessionKey: "tenant:agent-1:chan",
+      contextStore: store as unknown as DagContextEngineDeps["contextStore"],
+      db,
+      conversationId,
+      estimateTokens,
+      consumePendingModeSwitch: overrides.consumePendingModeSwitch,
+    };
+    const engine = createDagContextEngine(config, deps);
+    return { engine, eventBus };
+  }
+
+  function modeSwitchedCalls(eventBus: { emit: ReturnType<typeof vi.fn> }) {
+    return eventBus.emit.mock.calls.filter((c) => c[0] === "context:mode_switched");
+  }
+
+  it("emits context:mode_switched once with from/to + real import cost on a consumed switch", async () => {
+    const conversationId = createTestConversation();
+    const consumePendingModeSwitch = vi.fn((_id: string) =>
+      ({ from: "pipeline", to: "dag" }) as const,
+    );
+    const { engine, eventBus } = makeDagEngine(conversationId, { consumePendingModeSwitch });
+
+    // 3 synthetic JSONL messages -> empty DAG -> fullImport with imported=3.
+    const messages = [
+      createAgentMessage("user", "first question"),
+      createAgentMessage("assistant", "first answer"),
+      createAgentMessage("user", "second question"),
+    ];
+    await engine.transformContext(messages);
+
+    const calls = modeSwitchedCalls(eventBus);
+    expect(calls).toHaveLength(1);
+    expect(consumePendingModeSwitch).toHaveBeenCalledWith("agent-1");
+
+    const payload = calls[0]![1] as Record<string, unknown>;
+    expect(payload.from).toBe("pipeline");
+    expect(payload.to).toBe("dag");
+    expect(payload.conversationId).toBe(conversationId);
+    expect(payload.agentId).toBe("agent-1");
+    expect(payload.sessionKey).toBe("tenant:agent-1:chan");
+    expect(payload.fullImport).toBe(true);
+    expect(payload.importedCount).toBe(3);
+    expect(typeof payload.durationMs).toBe("number");
+    expect(typeof payload.timestamp).toBe("number");
+
+    // T-85-11: payload is identifiers + counts + durations only — NO message text.
+    const allowed = new Set([
+      "from", "to", "conversationId", "agentId", "sessionKey",
+      "fullImport", "importedCount", "durationMs", "timestamp",
+    ]);
+    for (const key of Object.keys(payload)) {
+      expect(allowed.has(key)).toBe(true);
+    }
+  });
+
+  it("is one-shot: a second transformContext after consume returns undefined emits nothing further", async () => {
+    const conversationId = createTestConversation();
+    // First call returns the switch, every later call returns undefined
+    // (mirrors the daemon's delete-on-read closure).
+    let consumed = false;
+    const consumePendingModeSwitch = vi.fn((_id: string) => {
+      if (consumed) return undefined;
+      consumed = true;
+      return { from: "pipeline", to: "dag" } as const;
+    });
+    const { engine, eventBus } = makeDagEngine(conversationId, { consumePendingModeSwitch });
+
+    await engine.transformContext([
+      createAgentMessage("user", "turn one"),
+      createAgentMessage("assistant", "answer one"),
+    ]);
+    // Second turn: the JSONL grows but the pending switch is already consumed.
+    await engine.transformContext([
+      createAgentMessage("user", "turn one"),
+      createAgentMessage("assistant", "answer one"),
+      createAgentMessage("user", "turn two"),
+    ]);
+
+    expect(modeSwitchedCalls(eventBus)).toHaveLength(1);
+  });
+
+  it("suppresses the event for a brand-new DAG conversation (no pending switch) even with fullImport", async () => {
+    const conversationId = createTestConversation();
+    // consumePendingModeSwitch returns undefined -> NOT a switch, just a new
+    // DAG-default conversation. fullImport is true here, but it MUST NOT trigger.
+    const consumePendingModeSwitch = vi.fn((_id: string) => undefined);
+    const { engine, eventBus } = makeDagEngine(conversationId, { consumePendingModeSwitch });
+
+    await engine.transformContext([
+      createAgentMessage("user", "brand new conversation"),
+      createAgentMessage("assistant", "hello"),
+    ]);
+
+    expect(modeSwitchedCalls(eventBus)).toHaveLength(0);
+  });
+
+  it("suppresses the event when consumePendingModeSwitch is undefined (carrier absent)", async () => {
+    const conversationId = createTestConversation();
+    // No consumePendingModeSwitch wired at all (non-daemon / test path).
+    const { engine, eventBus } = makeDagEngine(conversationId, {
+      consumePendingModeSwitch: undefined,
+    });
+
+    await engine.transformContext([createAgentMessage("user", "hi there")]);
+
+    expect(modeSwitchedCalls(eventBus)).toHaveLength(0);
   });
 });

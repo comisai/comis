@@ -268,4 +268,16 @@ export interface DagContextEngineDeps extends ContextEngineDeps {
   dagCompactionConfig?: DagCompactionConfig;
   /** Optional partial compaction deps (store/logger provided internally). */
   dagCompactionDeps?: Omit<DagCompactionDeps, "store" | "logger">;
+  /**
+   * DAG-05: one-shot consumer of a pending engine-mode switch for this agent.
+   * Returns {from,to} on the FIRST reconcile after an operator switched the
+   * engine (detected at the daemon rebuild seam by comparing old vs new
+   * contextEngine.version), then clears it. undefined = no switch (e.g. a
+   * brand-new DAG-default conversation — fullImport alone is NOT a switch).
+   * When this returns a value, the engine emits context:mode_switched once
+   * with the real reconciliation cost. Optional — non-DAG/test paths unaffected.
+   */
+  consumePendingModeSwitch?: (
+    agentId: string,
+  ) => { from: "pipeline" | "dag"; to: "pipeline" | "dag" } | undefined;
 }
