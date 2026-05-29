@@ -52,6 +52,14 @@ export interface ContextEngineSetupDeps {
   contextStore?: import("@comis/core").ContextEngineStore;
   db?: unknown;
   /**
+   * DAG-05: one-shot consumer of a pending engine-mode switch for this agent.
+   * Spread into the DAG deps so the reconcile seam can emit context:mode_switched
+   * once and clear the pending flag. Optional — non-DAG/test paths unaffected.
+   */
+  consumePendingModeSwitch?: (
+    agentId: string,
+  ) => { from: "pipeline" | "dag"; to: "pipeline" | "dag" } | undefined;
+  /**
    * Optional OAuth token manager. When provided, compaction LLM
    * calls route through resolveProviderApiKey for OAuth-eligible providers,
    * with fallthrough to authStorage for non-OAuth providers.
@@ -417,6 +425,11 @@ export function setupContextEngine(params: ContextEngineSetupParams): ContextEng
       db: deps.db,
       conversationId: (sm as unknown as Record<string, string>).__dagConversationId ?? "",
       estimateTokens: (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN_RATIO),
+      // DAG-05: one-shot mode-switch consumer threaded from the daemon rebuild
+      // seam. The DAG engine calls it at the reconcile seam to emit
+      // context:mode_switched once with the real import cost, then clears it.
+      // Optional — undefined on test/non-daemon paths (no emit).
+      consumePendingModeSwitch: deps.consumePendingModeSwitch,
     } : {}),
   });
 
