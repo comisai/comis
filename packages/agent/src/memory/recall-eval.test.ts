@@ -27,9 +27,12 @@ import {
 } from "./recall-eval.js";
 import {
   RECALL_EVAL_FIXTURES,
+  TEMPORAL_EVAL_FIXTURES,
+  EVAL_NOW,
   type EvalQuery,
 } from "./__fixtures__/recall-eval-fixtures.js";
 import { fuse } from "../rag/fuse.js";
+import { score } from "../rag/score.js";
 // GATED import (test-only; agent->memory cut excludes *.test.ts).
 import { createLocalRerankerProvider } from "@comis/memory";
 
@@ -166,6 +169,54 @@ describe("compareRankings (reranked vs fusion lift report)", () => {
     const report = compareRankings(RECALL_EVAL_FIXTURES, fusionFn, fusionFn);
     expect(report.recallAt1Lift).toBe(0);
     expect(report.mrrLift).toBe(0);
+  });
+});
+
+// UNGATED temporal-boost lift (EVAL-01, per-phase temporal figure). Deterministic
+// pure math (score() over fixed-epoch occurredAt; no model, no LLM judge) — runs in
+// the default `pnpm test`. The temporal boost (score with temporalAlpha>0, plan 02)
+// must score a strictly positive recall@1 gain over the Phase-80 fusion-only baseline
+// on the "temporal" group, and a NEUTRAL guard (temporalAlpha 0 → zero lift) attributes
+// the gain to the temporal signal — not to score()'s other mechanics (T-81-12).
+describe("temporal boost lift (recall@1 over fusion baseline)", () => {
+  // Phase-80 baseline: single-lane fuse() is order-preserving → fusion order = the
+  // candidates' base/score order (the stale distractor first by design).
+  const fusionFn = (q: EvalQuery): MemorySearchResult[] =>
+    fuse([{ results: q.candidates, weight: 1 }]);
+  // Temporal boost ISOLATED: temporalAlpha>0, every other alpha 0 — so the only signal
+  // moving the ranking is occurredAt proximity (plan-02 temporalProx).
+  const temporalFn = (q: EvalQuery): MemorySearchResult[] =>
+    score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0.5, proofAlpha: 0, trustAlpha: 0 }, EVAL_NOW);
+  // NEUTRAL guard ranker: same score() path but temporalAlpha 0 → temporalFactor ≡ 1.0,
+  // so the boosted order collapses back to the base (= fusion) order.
+  const neutralFn = (q: EvalQuery): MemorySearchResult[] =>
+    score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 }, EVAL_NOW);
+
+  it("carries a non-empty temporal fixture group", () => {
+    expect(TEMPORAL_EVAL_FIXTURES.length).toBeGreaterThan(0);
+    expect(TEMPORAL_EVAL_FIXTURES.every((q) => q.group === "temporal")).toBe(true);
+  });
+
+  it("scores a strictly positive recall@1 lift over the Phase-80 fusion baseline", () => {
+    const report = compareRankings(TEMPORAL_EVAL_FIXTURES, fusionFn, temporalFn);
+    // Headroom: fusion mis-ranks the stale distractor to rank 1 (T-81-12 — a no-op
+    // fixture that fusion already nailed would leave nothing to measure).
+    expect(report.baseline.recallAt1, JSON.stringify(report)).toBeLessThan(1);
+    // The EVAL-01 per-phase temporal figure: the boost is a MEASURABLE recall@1 gain.
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThan(0);
+    // No regression: the boost never lowers recall@1 below fusion.
+    expect(report.reranked.recallAt1, JSON.stringify(report)).toBeGreaterThanOrEqual(
+      report.baseline.recallAt1,
+    );
+  });
+
+  it("yields ZERO lift at temporalAlpha 0 (the gain is attributable to the temporal signal)", () => {
+    // T-81-12 neutral guard: with the temporal signal off, score()'s remaining
+    // mechanics produce the fusion order → no lift. So the positive lift above is the
+    // temporal boost's work, not a fixture that trivially favors the relevant id.
+    const report = compareRankings(TEMPORAL_EVAL_FIXTURES, fusionFn, neutralFn);
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
+    expect(report.mrrLift, JSON.stringify(report)).toBe(0);
   });
 });
 
