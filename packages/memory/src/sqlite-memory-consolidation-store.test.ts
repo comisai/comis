@@ -464,4 +464,199 @@ describe("createSqliteMemoryConsolidationStore", () => {
       // the instant the observation is committed, and a re-run is a no-op.
     });
   });
+
+  // =====================================================================
+  // Error paths — every read/apply degrades to err (NEVER throws), and the
+  // canonical step-tagged WARN fires. Proves the Result boundary (T-84-01:
+  // a damaged DB never crashes the consolidation cron) and covers the
+  // catch/parse-failure branches.
+  // =====================================================================
+
+  describe("error handling (Result boundary, never throws)", () => {
+    /** A pino-shaped logger spy so the warn/debug branches execute + assert. */
+    function makeLogger() {
+      const warns: { obj: Record<string, unknown>; msg: string }[] = [];
+      const debugs: { obj: Record<string, unknown>; msg: string }[] = [];
+      return {
+        logger: {
+          info: () => {},
+          warn: (obj: Record<string, unknown>, msg: string) => warns.push({ obj, msg }),
+          debug: (obj: Record<string, unknown>, msg: string) => debugs.push({ obj, msg }),
+        },
+        warns,
+        debugs,
+      };
+    }
+
+    /** Monkeypatch db.prepare so a statement matching `re` throws on .all(). */
+    function withThrowingQuery<T>(re: RegExp, fn: () => T): T {
+      const realPrepare = db.prepare.bind(db);
+      const spy = (sql: string) => {
+        const stmt = realPrepare(sql);
+        if (re.test(sql)) {
+          return {
+            ...stmt,
+            all: () => {
+              throw new Error("injected query failure");
+            },
+          } as unknown as ReturnType<typeof realPrepare>;
+        }
+        return stmt;
+      };
+      // @ts-expect-error -- test-only monkeypatch of the prepared-statement factory
+      db.prepare = spy;
+      try {
+        return fn();
+      } finally {
+        db.prepare = realPrepare;
+      }
+    }
+
+    /** Monkeypatch db.prepare so a statement matching `re` returns a bad row. */
+    function withMalformedRow<T>(re: RegExp, badRow: unknown, fn: () => T): T {
+      const realPrepare = db.prepare.bind(db);
+      const spy = (sql: string) => {
+        const stmt = realPrepare(sql);
+        if (re.test(sql)) {
+          return {
+            ...stmt,
+            all: () => [badRow],
+          } as unknown as ReturnType<typeof realPrepare>;
+        }
+        return stmt;
+      };
+      // @ts-expect-error -- test-only monkeypatch of the prepared-statement factory
+      db.prepare = spy;
+      try {
+        return fn();
+      } finally {
+        db.prepare = realPrepare;
+      }
+    }
+
+    it("listConsolidationCandidates: a thrown query → err + a step:'consolidation-candidates' WARN, never throws", async () => {
+      const { logger, warns } = makeLogger();
+      const res = await withThrowingQuery(/FROM memories m/, () => {
+        const s = createSqliteMemoryConsolidationStore({ db, logger });
+        return s.listConsolidationCandidates(AGENT_A, TENANT_A, 10);
+      });
+      const r = await res;
+      expect(r.ok).toBe(false);
+      expect(warns.some((w) => w.obj.step === "consolidation-candidates")).toBe(true);
+    });
+
+    it("listConsolidationCandidates: a malformed row → err (mapper parse failure surfaces, no throw)", async () => {
+      // A row missing the required `id` column fails MemoryRowSchema.
+      const res = await withMalformedRow(/FROM memories m/, { not_a_memory: true, embedding: null }, () => {
+        const s = createSqliteMemoryConsolidationStore({ db });
+        return s.listConsolidationCandidates(AGENT_A, TENANT_A, 10);
+      });
+      const r = await res;
+      expect(r.ok).toBe(false);
+    });
+
+    it("listConsolidationCandidates: a successful read logs a step:'consolidation-candidates' DEBUG", async () => {
+      await seedMemory({ content: "raw", createdAt: 100 });
+      const { logger, debugs } = makeLogger();
+      const s = createSqliteMemoryConsolidationStore({ db, logger });
+      const r = await s.listConsolidationCandidates(AGENT_A, TENANT_A, 10);
+      expect(r.ok).toBe(true);
+      expect(debugs.some((d) => d.obj.step === "consolidation-candidates")).toBe(true);
+    });
+
+    it("listObservations: a thrown query → err + a step:'consolidation-observations' WARN, never throws", async () => {
+      const { logger, warns } = makeLogger();
+      const res = await withThrowingQuery(/proof_count IS NOT NULL/, () => {
+        const s = createSqliteMemoryConsolidationStore({ db, logger });
+        return s.listObservations(AGENT_A, TENANT_A, 10);
+      });
+      const r = await res;
+      expect(r.ok).toBe(false);
+      expect(warns.some((w) => w.obj.step === "consolidation-observations")).toBe(true);
+    });
+
+    it("listObservations: a malformed row → err (mapper parse failure surfaces, no throw)", async () => {
+      const res = await withMalformedRow(/proof_count IS NOT NULL/, { bogus: 1 }, () => {
+        const s = createSqliteMemoryConsolidationStore({ db });
+        return s.listObservations(AGENT_A, TENANT_A, 10);
+      });
+      const r = await res;
+      expect(r.ok).toBe(false);
+    });
+
+    it("listObservations: a successful read logs a step:'consolidation-observations' DEBUG", async () => {
+      await seedMemory({
+        content: "obs",
+        createdAt: 200,
+        proofCount: 2,
+        sourceIds: [crypto.randomUUID()],
+        confidence: 0.8,
+      });
+      const { logger, debugs } = makeLogger();
+      const s = createSqliteMemoryConsolidationStore({ db, logger });
+      const r = await s.listObservations(AGENT_A, TENANT_A, 10);
+      expect(r.ok).toBe(true);
+      expect(debugs.some((d) => d.obj.step === "consolidation-observations")).toBe(true);
+    });
+
+    it("applyConsolidation: a successful apply logs a step:'consolidation-apply' DEBUG", async () => {
+      const s1 = await seedMemory({ content: "source 1", createdAt: 100 });
+      const { logger, debugs } = makeLogger();
+      const s = createSqliteMemoryConsolidationStore({ db, logger });
+      const r = await s.applyConsolidation({
+        observation: makeEntry({
+          content: "obs",
+          createdAt: 2_000,
+          proofCount: 1,
+          sourceIds: [s1],
+          confidence: 0.9,
+        }),
+        markConsolidated: [s1],
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(r.ok).toBe(true);
+      expect(debugs.some((d) => d.obj.step === "consolidation-apply")).toBe(true);
+    });
+
+    it("applyConsolidation: a transaction failure → err + a step:'consolidation-apply' WARN, never throws", async () => {
+      const s1 = await seedMemory({ content: "source 1", createdAt: 100 });
+      const { logger, warns } = makeLogger();
+      // Force the source-mark to throw (same injection as RED 3b).
+      const realPrepare = db.prepare.bind(db);
+      const spy = (sql: string) => {
+        const stmt = realPrepare(sql);
+        if (/UPDATE memories SET consolidated_at/.test(sql)) {
+          return {
+            ...stmt,
+            run: () => {
+              throw new Error("injected mark failure");
+            },
+          } as unknown as ReturnType<typeof realPrepare>;
+        }
+        return stmt;
+      };
+      // @ts-expect-error -- test-only monkeypatch of the prepared-statement factory
+      db.prepare = spy;
+      try {
+        const s = createSqliteMemoryConsolidationStore({ db, logger });
+        const r = await s.applyConsolidation({
+          observation: makeEntry({
+            content: "obs",
+            createdAt: 2_000,
+            proofCount: 1,
+            sourceIds: [s1],
+            confidence: 0.9,
+          }),
+          markConsolidated: [s1],
+          tenantId: TENANT_A,
+          now: 5_000,
+        });
+        expect(r.ok).toBe(false);
+        expect(warns.some((w) => w.obj.step === "consolidation-apply")).toBe(true);
+      } finally {
+        db.prepare = realPrepare;
+      }
+    });
+  });
 });

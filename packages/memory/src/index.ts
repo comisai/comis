@@ -42,6 +42,14 @@ export type { LocalRerankerProviderOptions } from "./reranker-provider-local.js"
 export { createSqliteMemoryEntityStore } from "./sqlite-memory-entity-store.js";
 export type { MemoryEntityStoreDeps } from "./sqlite-memory-entity-store.js";
 
+// Memory consolidation store (sole MemoryConsolidationStore impl; Phase 84).
+// Owns the scoped, state-predicate (consolidated_at IS NULL) candidate selection
+// + the atomic applyConsolidation transaction. The daemon (Plan 05) constructs
+// it on the memory adapter's db handle; the MemoryConsolidationStore port TYPE
+// lives in @comis/core (the agent↛memory cut — the job imports the type only).
+export { createSqliteMemoryConsolidationStore } from "./sqlite-memory-consolidation-store.js";
+export type { MemoryConsolidationStoreDeps } from "./sqlite-memory-consolidation-store.js";
+
 // Embedding cache (LRU content-hash cache decorator)
 export { createCachedEmbeddingPort } from "./embedding-cache-lru.js";
 export type { EmbeddingCacheOptions, EmbeddingCacheStats } from "./embedding-cache-lru.js";
