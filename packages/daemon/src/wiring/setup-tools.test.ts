@@ -1702,4 +1702,117 @@ describe("setupTools", () => {
       expect(pipelineArgs.fileStateTracker).toBe(explicitTracker);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // 22. §8.1 ctx_* force-include under restricted profiles (DAG-02)
+  //
+  // A restricted tool profile (anything that is NOT "full") drops the ctx_*
+  // recall tools -- no profile/group in TOOL_PROFILES lists them. Yet in DAG
+  // mode the annotator emits masked tool results that say "...Use ctx_inspect
+  // to view.", so a masked result must have a reachable recovery tool. The
+  // §8.1 fix force-includes group:context + group:context_expand (the ctx_*
+  // recall tools) into the restricted-profile allow-set WHEN AND ONLY WHEN
+  // contextEngine.version === "dag". This is SECURITY-CRITICAL: it widens
+  // tool exposure, so it is constrained to (a) dag mode only and (b) the two
+  // recall groups only -- never broader. The builtinTools ceiling still runs
+  // AFTER and still wins for exec/process/browser.
+  //
+  // Fixture note: the mocked TOOL_PROFILES.minimal here is ["exec","read",
+  // "write"] and the mocked TOOL_GROUPS["group:context"]/["group:context_expand"]
+  // mirror the real tool-policy sets (ctx_search/ctx_inspect/ctx_recall and
+  // ctx_expand/ctx_inspect). The mock platform-tool registry registers neither
+  // a "read" nor a "write" descriptor (only "exec" overlaps the minimal
+  // profile), and the default builtinTools (exec:false) ceiling drops "exec".
+  // So a minimal+non-dag agent resolves to the EMPTY set here -- which makes
+  // the no-widening assertion sharp: under minimal+dag the ONLY tools that may
+  // appear are the four ctx_* recall tools introduced by the force-include.
+  // -------------------------------------------------------------------------
+
+  describe("§8.1 ctx_* force-include under restricted profiles (DAG-02)", () => {
+    const CTX_TOOLS = ["ctx_search", "ctx_inspect", "ctx_recall", "ctx_expand"] as const;
+
+    /** Restricted-profile agent ("minimal") whose contextEngine.version is set. */
+    function depsWithVersion(version: "pipeline" | "dag") {
+      return createMinimalDeps({
+        agents: {
+          "agent-1": {
+            // Only the field the SUT reads (setup-tools.ts:445 ->
+            // agentConfig?.contextEngine?.version). builtinTools left at the
+            // default (exec/process/browser all false) so the ceiling behavior
+            // is exercised alongside the force-include.
+            contextEngine: { version },
+            skills: {
+              builtinTools: { browser: false, exec: false, process: false },
+              toolPolicy: { profile: "default" },
+              discoveryPaths: [],
+              execSandbox: { enabled: "always", readOnlyAllowPaths: [] },
+            },
+          } as any,
+        },
+      });
+    }
+
+    async function resolveToolNames(
+      version: "pipeline" | "dag",
+      toolGroups: string[],
+    ): Promise<string[]> {
+      const deps = depsWithVersion(version);
+      const setupTools = await getSetupTools();
+      const { assembleToolsForAgent } = setupTools(deps);
+      await assembleToolsForAgent("agent-1", { toolGroups });
+      const tools = mockAssembleToolPipeline.mock.calls[0][0].platformTools();
+      return tools.map((t: any) => t.name);
+    }
+
+    // Test A (positive -- RED on pre-fix code): restricted profile + dag mode
+    // force-includes all four ctx_* recall tools.
+    it("force-includes ctx_search/ctx_inspect/ctx_recall/ctx_expand under a restricted profile in DAG mode", async () => {
+      const names = await resolveToolNames("dag", ["minimal"]);
+      expect(names).toEqual(expect.arrayContaining([...CTX_TOOLS]));
+    });
+
+    // Test B (gate negative -- GREEN even on pre-fix code, proves the gate):
+    // the SAME restricted profile in pipeline mode gains NO ctx_* tool. The
+    // resolved set is empty under this mock harness (no read/write descriptors;
+    // exec ceiling-stripped) -- the salient point is that NO ctx_* leaks in.
+    it("does NOT force-include any ctx_* tool under a restricted profile in pipeline mode (gate is strictly dag)", async () => {
+      const names = await resolveToolNames("pipeline", ["minimal"]);
+      expect(names.some((n) => n.startsWith("ctx_"))).toBe(false);
+    });
+
+    // Test C (V4 no-widening -- the force-include admits ONLY the recall group):
+    // restricted + dag must NOT gain exec/process/browser, and NOTHING outside
+    // (minimal baseline ∪ ctx_*) may leak in.
+    it("does NOT widen exposure beyond the ctx_* recall group under a restricted profile in DAG mode", async () => {
+      const names = await resolveToolNames("dag", ["minimal"]);
+
+      // The dangerous tools the force-include must never admit. (exec is in the
+      // mocked minimal profile but the builtinTools ceiling removes it; process
+      // and browser are neither in minimal nor in the ctx_* groups.)
+      expect(names).not.toContain("exec");
+      expect(names).not.toContain("process");
+      expect(names).not.toContain("browser");
+      expect(names).not.toContain("apply_patch");
+      expect(names).not.toContain("gateway");
+
+      // Strict containment: every resolved name is either a minimal-baseline
+      // tool (read/write -- neither is registered in this mock registry, and
+      // exec is ceiling-stripped) or one of the four ctx_* recall tools. No
+      // other tool may leak through the force-include. In this harness that
+      // means the resolved set is EXACTLY the four ctx_* recall tools.
+      const allowed = new Set<string>([...["read", "write"], ...CTX_TOOLS]);
+      const leaked = names.filter((n) => !allowed.has(n));
+      expect(leaked).toEqual([]);
+    });
+
+    // The "full" profile is unaffected -- it already returns all tools, ctx_*
+    // included, via the non-restricted branch (no force-include needed).
+    it("leaves the full profile unchanged -- ctx_* already present without the force-include in DAG mode", async () => {
+      const names = await resolveToolNames("dag", ["full"]);
+      expect(names).toEqual(expect.arrayContaining([...CTX_TOOLS]));
+      // Full profile also keeps non-ctx tools (proves it is the unfiltered path).
+      expect(names).toContain("cron");
+      expect(names).toContain("gateway");
+    });
+  });
 });
