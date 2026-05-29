@@ -14,7 +14,7 @@
  *   - Fail-closed defaults throughout: unknown host → undefined; empty `pathPolicy` → deny all.
  *
  * Consumed by the CredentialBroker (Phase 2) on every CONNECT request. No I/O, no logger,
- * no `Date.now()` — fully deterministic pure functions.
+ * no timestamps — fully deterministic pure functions.
  *
  * @module
  */
