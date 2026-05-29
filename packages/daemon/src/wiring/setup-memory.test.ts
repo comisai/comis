@@ -47,6 +47,12 @@ const mockCreateEmbeddingQueue = vi.hoisted(() => vi.fn(() => ({
   enqueue: vi.fn(),
   flush: vi.fn(),
 })));
+// Reranker provider factory — mocked so no real ~606MB GGUF ever loads in unit tests.
+const mockRerankerDispose = vi.hoisted(() => vi.fn(async () => {}));
+const mockCreateLocalRerankerProvider = vi.hoisted(() => vi.fn(async () => ({
+  ok: true,
+  value: { isAvailable: () => true, rank: vi.fn(async () => ({ ok: true, value: [] })), dispose: mockRerankerDispose },
+})));
 
 vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
@@ -58,6 +64,7 @@ vi.mock("@comis/memory", () => ({
   createFingerprintManager: mockCreateFingerprintManager,
   createBatchIndexer: mockCreateBatchIndexer,
   createEmbeddingQueue: mockCreateEmbeddingQueue,
+  createLocalRerankerProvider: mockCreateLocalRerankerProvider,
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));
@@ -89,8 +96,14 @@ function createMinimalContainer(overrides: Record<string, any> = {}) {
       memory: {
         dbPath: "/test/memory.db",
         embeddingDimensions: 768,
+        rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+        rerankerModelsDir: "models",
+        rerankerGpu: "auto",
         ...overrides.memory,
       },
+      // Per-agent configs scanned for rag.rerank.enabled (the build gate). Default:
+      // a single all-default agent with rerank OFF -> the factory must NOT be called.
+      agents: overrides.agents ?? { default: { rag: { rerank: { enabled: false } } } },
       embedding: {
         enabled: false,
         provider: "local",
@@ -622,5 +635,89 @@ describe("setupMemory", () => {
 
     for (let i = 0; i < 10; i++) result.maintenanceTick();
     expect(mockCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // 20. Reranker build gating (RANK-02/03) — no default download
+  // -------------------------------------------------------------------------
+
+  it("does NOT build the reranker for an all-default (rerank-off) config (no 606MB download)", async () => {
+    const container = createMinimalContainer(); // default agent has rerank OFF
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+    });
+
+    // The factory must never be invoked when no agent enabled rerank.
+    expect(mockCreateLocalRerankerProvider).not.toHaveBeenCalled();
+    expect(result.rerankerPort).toBeUndefined();
+  });
+
+  it("builds the reranker when at least one agent enables rerank and the factory succeeds", async () => {
+    const container = createMinimalContainer({
+      agents: {
+        default: { rag: { rerank: { enabled: false } } },
+        researcher: { rag: { rerank: { enabled: true } } },
+      },
+    });
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+    });
+
+    expect(mockCreateLocalRerankerProvider).toHaveBeenCalledOnce();
+    // safePath used for the models dir (no path.join).
+    expect(mockCreateLocalRerankerProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelUri: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+        modelsDir: expect.stringContaining("models"),
+        gpu: "auto",
+      }),
+    );
+    expect(result.rerankerPort).toBeDefined();
+    expect(result.rerankerPort!.isAvailable()).toBe(true);
+  });
+
+  it("leaves rerankerPort undefined + WARNs when the factory returns err", async () => {
+    mockCreateLocalRerankerProvider.mockResolvedValueOnce({
+      ok: false,
+      error: { message: "model load failed" },
+    });
+    const container = createMinimalContainer({
+      agents: { default: { rag: { rerank: { enabled: true } } } },
+    });
+    const memoryLogger = createMockLogger();
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: memoryLogger as any,
+    });
+
+    expect(result.rerankerPort).toBeUndefined();
+    expect(memoryLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "dependency" }),
+      expect.stringContaining("Reranker"),
+    );
+  });
+
+  it("disposes the rerankerPort via a disposeReranker callback (no leaked native context)", async () => {
+    const container = createMinimalContainer({
+      agents: { default: { rag: { rerank: { enabled: true } } } },
+    });
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+    });
+
+    expect(result.disposeReranker).toBeTypeOf("function");
+    await result.disposeReranker!();
+    expect(mockRerankerDispose).toHaveBeenCalled();
   });
 });
