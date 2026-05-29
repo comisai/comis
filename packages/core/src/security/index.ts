@@ -204,3 +204,8 @@ export type { AuditFinding, AuditSeverity, AuditOptions } from "./secrets-audit.
 // Secret egress guard — shared text scrubber for the egress firewall (intra-core only)
 export type { ScrubResult } from "./secret-egress-guard.js";
 export { mightContainSecret, scrubSecretsFromText } from "./secret-egress-guard.js";
+
+// Provider-catalog: host-matching, injection engine, presets (Phase 1 — INJECT-01..04)
+export type { HostPattern, InjectionRule, HostRule, BrokerBinding, ProviderPreset, PresetLibrary } from "./provider-catalog/index.js";
+export { normalizeHost, hostRuleMatches, pathAllowed, resolveBinding, applyInjections, expandPreset, PRESETS } from "./provider-catalog/index.js";
+export type { InjectionInput } from "./provider-catalog/index.js";

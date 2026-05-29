@@ -23,10 +23,12 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import * as ts from "typescript";
 import { findInSourceFiles } from "../../../../test/support/source-grep.js";
 import { formatViolations } from "../../../../test/support/architecture-helpers.js";
+import { findForbiddenImports } from "../../../../test/support/import-checker.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = resolve(here, "..");
 const BOOTSTRAP_PATH_FRAGMENT = "bootstrap.ts";
+const CATALOG_DIR = resolve(SRC_ROOT, "security/provider-catalog");
 
 describe("@comis/core -- architecture invariants", () => {
   it("production source does NOT import createCapabilityPortStub", () => {
@@ -190,6 +192,30 @@ describe("@comis/core -- architecture invariants", () => {
     ).toEqual([]);
     expect(result.checkedFiles, "sanity: helper walked at least one file in @comis/core src tree").toBeGreaterThan(0);
   });
+
+  for (const forbidden of ["@comis/skills", "@comis/infra"] as const) {
+    it(`provider-catalog tree does NOT import ${forbidden}`, () => {
+      const { violations, checkedFiles } = findForbiddenImports({
+        rootDir: CATALOG_DIR,
+        forbiddenPackage: forbidden,
+      });
+      expect(
+        violations,
+        formatViolations({
+          description: `packages/core/src/security/provider-catalog must not import ${forbidden}.`,
+          violations: violations.map((v) => ({
+            file: v.file,
+            line: v.line,
+            column: v.column,
+            snippet: v.snippet,
+          })),
+          suggestedFix: `Remove the ${forbidden} import. The provider-catalog is pure-logic; it must not depend on infra or skills.`,
+          designRef: "INJECT-04 catalog purity requirement",
+        }),
+      ).toEqual([]);
+      expect(checkedFiles, "sanity: walked provider-catalog files").toBeGreaterThan(0);
+    });
+  }
 });
 
 /* ---------------------------------------------------------------------- */
