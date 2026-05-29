@@ -206,6 +206,7 @@ export type { ScrubResult } from "./secret-egress-guard.js";
 export { mightContainSecret, scrubSecretsFromText } from "./secret-egress-guard.js";
 
 // Provider-catalog: host-matching, injection engine, presets (Phase 1 — INJECT-01..04)
-export type { HostPattern, InjectionRule, HostRule, BrokerBinding, ProviderPreset, PresetLibrary } from "./provider-catalog/index.js";
+// WR-05: RequestFinalizer and StaticHeader added to make them reachable via @comis/core
+export type { HostPattern, InjectionRule, RequestFinalizer, StaticHeader, HostRule, BrokerBinding, ProviderPreset, PresetLibrary } from "./provider-catalog/index.js";
 export { normalizeHost, hostRuleMatches, pathAllowed, resolveBinding, applyInjections, expandPreset, PRESETS } from "./provider-catalog/index.js";
 export type { InjectionInput } from "./provider-catalog/index.js";
