@@ -126,10 +126,14 @@ async function initCa(dataDir: string, clock: ClockPort): Promise<CaState> {
   const keyDer = await crypto.subtle.exportKey("pkcs8", caKeys.privateKey);
   const caKeyPem = derToPem(keyDer, "PRIVATE KEY");
 
-  // Atomic write at 0o600 — exact pattern from master-key.ts:72-88
-  // openSync("a", 0o600) sets the mode on file CREATION (O_CREAT path);
-  // subsequent chmodSync is defensive for any pre-existing file.
-  const fd = openSync(keyPath, "a", 0o600);
+  // Write at 0o600 — "w" (O_CREAT|O_WRONLY|O_TRUNC) truncates any existing
+  // content before writing. If the process crashed after writing the key but
+  // before writing the cert, the next start finds key-present/cert-absent,
+  // skips the reload branch, and falls into this mint-new-CA path. Using "w"
+  // ensures we truncate the stale key and write a single fresh PEM block
+  // rather than appending a second one (CR-01 fix for the append-corruption bug).
+  // chmodSync is defensive: "w" respects the process umask but we want exactly 0o600.
+  const fd = openSync(keyPath, "w", 0o600);
   try {
     writeSync(fd, caKeyPem);
   } finally {
@@ -147,13 +151,22 @@ export function createNodeCaManager(deps: NodeCaManagerDeps): CaManagerPort {
   const { clock, dataDir, leafCacheCap = 256 } = deps;
 
   let caState: CaState | null = null;
+  // Promise singleton — guards against concurrent first-start CONNECTs that
+  // would both see caState===null and each launch a separate initCa(), producing
+  // a double-PEM key file on disk (CR-03 fix). All concurrent callers await the
+  // same in-flight promise and receive the same CaState.
+  let initPromise: Promise<CaState> | null = null;
   const leafCache = new Map<string, LeafCacheEntry>();
 
   async function ensureCa(): Promise<CaState> {
-    if (caState === null) {
-      caState = await initCa(dataDir, clock);
+    if (caState !== null) return caState;
+    if (initPromise === null) {
+      initPromise = initCa(dataDir, clock).then((s) => {
+        caState = s;
+        return s;
+      });
     }
-    return caState;
+    return initPromise;
   }
 
   function evictIfNeeded(): void {
