@@ -119,7 +119,9 @@ vi.mock("node:os", async (importOriginal) => {
 import { assembleExecutionPrompt, extractUserLanguage, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, getCacheSafeParams, clearCacheSafeParams, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
 import { formatSessionKey, type SpawnPacket, type MemorySearchResult } from "@comis/core";
 // Real (un-mocked) §7.3 guidance formatter — prompt-assembly pushes its block into
-// memorySections when >=2 memories are surfaced, so charsInjected legitimately counts it.
+// the prompt when >=2 memories are surfaced. It is FIXED guidance text, NOT a
+// retrieved memory, so it must NOT inflate retrieved-memory telemetry (WR-02):
+// charsInjected / ragHits count retrieved memory only, never the guidance block.
 import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
 import { createSpawnPacketBuilder } from "../spawn/spawn-packet-builder.js";
 // Fixture stub for the capability-index gate. Default returns `false` so
@@ -341,10 +343,19 @@ describe("assembleExecutionPrompt", () => {
     expect(memoryEmit, "memory:injected emit must fire when injection produces content").toBeTruthy();
     const payload = memoryEmit![1];
     expect(payload.hitCount).toBe(2);
-    // ranked.length === 2 -> the §7.3 guidance block is appended to memorySections,
-    // so charsInjected = inline + "section body" + the (real) guidance block.
+    // WR-02: ranked.length === 2 -> the §7.3 guidance block IS injected into the
+    // prompt, but it is FIXED guidance text, NOT a retrieved memory. The
+    // memory:injected telemetry must count retrieved memory ONLY (inline +
+    // retrieved sections) and must NOT include the guidance-block length —
+    // otherwise charsInjected disagrees with hitCount about what "injected"
+    // means. Pin that charsInjected reflects ONLY the retrieved memory.
     const guidanceLen = buildTemporalGuidanceBlock(mockSearchResults as unknown as MemorySearchResult[])!.length;
-    expect(payload.charsInjected).toBe("[inline rag chunk]".length + "section body".length + guidanceLen);
+    expect(guidanceLen, "guard: the §7.3 block must be non-empty for this assertion to bite").toBeGreaterThan(0);
+    expect(payload.charsInjected).toBe("[inline rag chunk]".length + "section body".length);
+    // Consistency with hitCount: charsInjected must NOT carry the guidance block.
+    expect(payload.charsInjected).not.toBe(
+      "[inline rag chunk]".length + "section body".length + guidanceLen,
+    );
     expect(new Set(payload.trustTags)).toEqual(new Set(["learned", "system"]));
     expect(typeof payload.timestamp).toBe("number");
     expect(typeof payload.traceId).toBe("string");
@@ -653,6 +664,60 @@ describe("assembleExecutionPrompt", () => {
     expect(parsed.memoryInjection.ragHits).toBe(1);
     expect(parsed.memoryInjection.charsInjected).toBe(sectionBody.length);
     expect(parsed.memoryInjection.trustTags).toEqual([]);
+  });
+
+  it("WR-02 SystemPromptReport.memoryInjection excludes the §7.3 guidance block from ragHits/charsInjected", async () => {
+    // >=2 surfaced memories -> the §7.3 temporal-guidance block IS pushed into
+    // the prompt. The persisted report's ragHits/charsInjected must count the
+    // RETRIEVED memory ONLY (the one inline + one section here), NOT the fixed
+    // guidance text. Pre-fix this over-counted: ragHits tallied the guidance
+    // block as a RAG hit (2 sections -> ragHits 3 incl. inline) and
+    // charsInjected included the block's length.
+    const sectionBody = "RAG section body for report path";
+    const ranked = [
+      {
+        entry: { id: "m1", tenantId: "t", content: "Inline pick", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },
+        score: 0.9,
+      },
+      {
+        entry: { id: "m2", tenantId: "t", content: "Section pick", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },
+        score: 0.8,
+      },
+    ];
+    const memoryPort = {
+      search: vi.fn().mockResolvedValue({ ok: true, value: ranked }),
+      store: vi.fn(),
+    } as any;
+    mockRecall.mockResolvedValue({ ok: true, value: ranked });
+    // Inline top-1 + one retrieved section; guidance block appended by source.
+    mockHybridSplit.mockReturnValueOnce({
+      inlineMemory: "[inline rag chunk]",
+      systemPromptSections: [sectionBody],
+    });
+
+    const insertSystemPromptReport = vi.fn();
+    const observabilityStore = { insertSystemPromptReport };
+    const params = makeParams({
+      config: makeConfig({
+        rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 },
+      }),
+      deps: { workspaceDir: "/workspace", observabilityStore: observabilityStore as any, memoryPort },
+    });
+    await assembleExecutionPrompt(params);
+
+    const guidanceLen = buildTemporalGuidanceBlock(ranked as unknown as MemorySearchResult[])!.length;
+    expect(guidanceLen, "guard: the §7.3 block must be non-empty for this assertion to bite").toBeGreaterThan(0);
+
+    expect(insertSystemPromptReport).toHaveBeenCalledTimes(1);
+    const parsed = JSON.parse(insertSystemPromptReport.mock.calls[0]![0].reportJson);
+    expect(parsed.memoryInjection).toBeDefined();
+    // 1 inline + 1 retrieved section = 2 retrieved components. The guidance
+    // block must NOT bump this to 3.
+    expect(parsed.memoryInjection.ragHits).toBe(2);
+    expect(parsed.memoryInjection.charsInjected).toBe("[inline rag chunk]".length + sectionBody.length);
+    expect(parsed.memoryInjection.charsInjected).not.toBe(
+      "[inline rag chunk]".length + sectionBody.length + guidanceLen,
+    );
   });
 
   // -----------------------------------------------------------------
