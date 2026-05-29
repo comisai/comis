@@ -710,44 +710,48 @@ describe("createSqliteMemoryConsolidationStore", () => {
       return { ...(row as Record<string, unknown>) };
     }
 
-    it("a candidate whose embedding blob has a misaligned byteOffset returns ok with that candidate degraded to no embedding, others unaffected", async () => {
+    it("a candidate whose embedding blob has a misaligned byteOffset returns ok and that candidate still decodes, others unaffected", async () => {
       const goodId = await seedMemory({ content: "good embedding", createdAt: 100 });
-      const badId = await seedMemory({ content: "misaligned embedding", createdAt: 200 });
+      const misId = await seedMemory({ content: "misaligned embedding", createdAt: 200 });
 
       // GOOD row: a well-formed little-endian float32 blob at byteOffset 0.
       const goodBlob = Buffer.from(new Float32Array([0.1, 0.2, 0.3, 0.4]).buffer);
       const goodRow = { ...rawRowOf(goodId), embedding: goodBlob };
 
-      // BAD row: a 16-byte float32 payload sitting at a byteOffset of 2 (NOT a
-      // multiple of 4) — exactly the pooled-Buffer shape that makes
+      // MISALIGNED row: a 16-byte float32 payload sitting at a byteOffset of 2
+      // (NOT a multiple of 4) — exactly the pooled-Buffer shape that makes
       // `new Float32Array(buf.buffer, buf.byteOffset, len)` throw a RangeError.
+      // Pre-fix that throw is caught → err → the JOB aborts the WHOLE run on
+      // this one row (the WR-01 bug). Post-fix the decode copies to a 0-aligned
+      // buffer first, so the run completes AND this candidate decodes correctly.
       const backing = Buffer.alloc(18);
       Buffer.from(new Float32Array([1, 2, 3, 4]).buffer).copy(backing, 2);
       const misaligned = backing.subarray(2, 18); // byteOffset % 4 === 2
       expect(misaligned.byteOffset % 4).not.toBe(0); // precondition of the bug
-      const badRow = { ...rawRowOf(badId), embedding: misaligned };
+      const misRow = { ...rawRowOf(misId), embedding: misaligned };
 
-      const res = await withCandidateRows([goodRow, badRow], () => {
+      const res = await withCandidateRows([goodRow, misRow], () => {
         const s = createSqliteMemoryConsolidationStore({ db });
         return s.listConsolidationCandidates(AGENT_A, TENANT_A, 10);
       });
       const r = await res;
 
-      // The run MUST still complete (ok) — one bad blob never aborts it.
+      // The run MUST still complete (ok) — a misaligned blob never aborts it.
+      // (This is the assertion that FAILS pre-fix: the RangeError surfaces as err.)
       expect(r.ok).toBe(true);
       if (!r.ok) return;
 
-      // The good candidate keeps its decoded embedding.
+      // The good candidate keeps its decoded embedding — unaffected.
       const good = r.value.find((c) => c.entry.id === goodId);
       expect(good?.embedding).toBeDefined();
       expect(good?.embedding).toHaveLength(4);
       good?.embedding?.forEach((v, i) => expect(v).toBeCloseTo([0.1, 0.2, 0.3, 0.4][i]!, 5));
 
-      // The bad candidate is STILL returned (unaffected entry), only its
-      // embedding is dropped — degrade, not abort.
-      const bad = r.value.find((c) => c.entry.id === badId);
-      expect(bad).toBeDefined();
-      expect(bad?.embedding).toBeUndefined();
+      // The misaligned candidate is STILL returned, and the 0-aligned copy
+      // recovers its real values (alignment is no longer fatal).
+      const mis = r.value.find((c) => c.entry.id === misId);
+      expect(mis).toBeDefined();
+      expect(mis?.embedding).toEqual([1, 2, 3, 4]);
     });
 
     it("a candidate whose embedding blob byteLength is not a multiple of 4 degrades to no embedding rather than silently truncating", async () => {

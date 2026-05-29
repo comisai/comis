@@ -102,14 +102,35 @@ const memoryRowMapper = createRowMapper(MemoryRowSchema);
  * a `number[]`. Returns `undefined` when the column is null/absent (a LEFT JOIN
  * miss, or sqlite-vec unavailable) — embeddings are optional on a candidate
  * (the clusterer then degrades to entity/FTS overlap, non-fatal).
+ *
+ * Decode is TOTAL and non-throwing (WR-01). A corrupt/misaligned/truncated blob
+ * degrades that ONE candidate to "no embedding" — it MUST NOT throw, because the
+ * caller's outer try/catch would turn a single bad row into an `err` and the
+ * consolidation job treats a candidate-read `err` as FATAL (aborts the whole
+ * run). Two concrete hazards this guards:
+ *   - byteOffset alignment: `new Float32Array(buf.buffer, buf.byteOffset, len)`
+ *     throws `RangeError` when `byteOffset` is not a multiple of 4 (a POOLED
+ *     Buffer's backing ArrayBuffer window). We copy the bytes into a fresh,
+ *     0-aligned ArrayBuffer first, so the view offset is always 0.
+ *   - truncation: a blob whose byteLength is not a multiple of 4 is not a clean
+ *     float32 vector; viewing `floor(len/4)` floats would silently DROP the
+ *     trailing bytes and feed a wrong vector into cosine. We reject it.
  */
 function decodeEmbedding(raw: unknown): number[] | undefined {
   if (!Buffer.isBuffer(raw)) return undefined;
-  // sqlite-vec packs the vector as little-endian float32s. Slice on the Buffer's
-  // own byteOffset/byteLength so a pooled Buffer's backing ArrayBuffer is read
-  // at the correct window.
-  const f32 = new Float32Array(raw.buffer, raw.byteOffset, raw.byteLength / 4);
-  return Array.from(f32);
+  // A clean float32 payload is a whole number of 4-byte lanes; anything else is
+  // a corrupt/partial blob → degrade (never a silently-truncated vector).
+  if (raw.byteLength % 4 !== 0) return undefined;
+  try {
+    // Copy into a fresh, 0-offset ArrayBuffer (owns its own buffer) so the
+    // Float32Array view is always 4-byte aligned regardless of the source
+    // Buffer's pooled byteOffset. sqlite-vec packs little-endian float32s.
+    const copy = Uint8Array.prototype.slice.call(raw);
+    return Array.from(new Float32Array(copy.buffer, 0, copy.byteLength / 4));
+  } catch {
+    // Defensive: never let one bad row abort the candidate read (WR-01).
+    return undefined;
+  }
 }
 
 /**
