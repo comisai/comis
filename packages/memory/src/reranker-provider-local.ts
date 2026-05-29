@@ -30,8 +30,12 @@ export interface LocalRerankerProviderOptions {
   modelUri: string;
   /** Directory to store/resolve downloaded models. */
   modelsDir: string;
-  /** GPU acceleration mode (threaded through by the composition root). */
-  gpu?: string;
+  /**
+   * GPU acceleration mode (threaded through by the composition root). Mirrors
+   * the MemoryConfig.rerankerGpu enum; "false" forces CPU, the rest are
+   * node-llama-cpp backend selectors passed through to getLlama.
+   */
+  gpu?: "auto" | "metal" | "cuda" | "vulkan" | "false";
   /** Thread count for the ranking context. Bounds CPU contention (Phase-79: 4-8). */
   threads?: number;
 }
@@ -55,7 +59,13 @@ export async function createLocalRerankerProvider(
     // Dynamic import for graceful degradation when native binaries unavailable
     const llamaCpp = await import("node-llama-cpp");
 
-    const llama = await llamaCpp.getLlama();
+    // Map the MemoryConfig.rerankerGpu enum onto the node-llama-cpp getLlama
+    // GPU option. "false" forces CPU (boolean false); any other backend string
+    // ("auto"/"metal"/"cuda"/"vulkan") is passed through verbatim. When gpu is
+    // unset, pass no option so node-llama-cpp keeps its own auto-detect default.
+    const llama = await llamaCpp.getLlama(
+      options.gpu ? { gpu: options.gpu === "false" ? false : options.gpu } : {},
+    );
 
     // Resolve model path (auto-download from HuggingFace if hf: URI)
     let modelPath: string;
