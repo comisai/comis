@@ -631,6 +631,105 @@ describe("RagConfigSchema", () => {
 });
 
 // ---------------------------------------------------------------------------
+// RagConfigSchema.rerank (Phase-79: cross-encoder reranking, default-OFF)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.rerank", () => {
+  it("defaults reranking OFF with the Phase-79 candidate cap, timeout, and minResults", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Phase-79 DECISION: reranking is opt-in (~777ms p95 @40 exceeds budget).
+      expect(result.data.rerank.enabled).toBe(false);
+      expect(result.data.rerank.maxCandidates).toBe(40);
+      expect(result.data.rerank.minResults).toBe(1);
+      expect(result.data.rerank.timeoutMs).toBe(800);
+    }
+  });
+
+  it("leaves the existing RagConfig defaults untouched when rerank/scoring are added", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(true);
+      expect(result.data.maxResults).toBe(5);
+      expect(result.data.maxContextChars).toBe(4000);
+      expect(result.data.minScore).toBe(0.1);
+      expect(result.data.includeTrustLevels).toEqual(["system", "learned"]);
+    }
+  });
+
+  it("rejects a negative maxCandidates (positive-int bound)", () => {
+    const result = RagConfigSchema.safeParse({ rerank: { maxCandidates: -1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a non-integer maxCandidates", () => {
+    const result = RagConfigSchema.safeParse({ rerank: { maxCandidates: 1.5 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown key inside rerank (strictObject)", () => {
+    const result = RagConfigSchema.safeParse({ rerank: { unknownKey: 1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a partial rerank override and fills the rest from defaults", () => {
+    const result = RagConfigSchema.safeParse({ rerank: { enabled: true } });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.rerank.enabled).toBe(true);
+      expect(result.data.rerank.maxCandidates).toBe(40);
+      expect(result.data.rerank.timeoutMs).toBe(800);
+      expect(result.data.rerank.minResults).toBe(1);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RagConfigSchema.scoring (recency/temporal/proof/trust boosts, 0..1 alphas)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.scoring", () => {
+  it("defaults the four scoring alphas to small in-range weights", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scoring.recencyAlpha).toBe(0.2);
+      expect(result.data.scoring.temporalAlpha).toBe(0.2);
+      expect(result.data.scoring.proofAlpha).toBe(0.1);
+      expect(result.data.scoring.trustAlpha).toBe(0.1);
+    }
+  });
+
+  it("rejects an alpha above 1 (recencyAlpha out of [0,1])", () => {
+    const result = RagConfigSchema.safeParse({ scoring: { recencyAlpha: 1.5 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a negative alpha (trustAlpha out of [0,1])", () => {
+    const result = RagConfigSchema.safeParse({ scoring: { trustAlpha: -0.1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts alphas at the 0 and 1 boundaries", () => {
+    const lo = RagConfigSchema.safeParse({
+      scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
+    });
+    expect(lo.success).toBe(true);
+    const hi = RagConfigSchema.safeParse({
+      scoring: { recencyAlpha: 1, temporalAlpha: 1, proofAlpha: 1, trustAlpha: 1 },
+    });
+    expect(hi.success).toBe(true);
+  });
+
+  it("rejects an unknown key inside scoring (strictObject)", () => {
+    const result = RagConfigSchema.safeParse({ scoring: { bogusAlpha: 0.5 } });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // BootstrapConfigSchema
 // ---------------------------------------------------------------------------
 
