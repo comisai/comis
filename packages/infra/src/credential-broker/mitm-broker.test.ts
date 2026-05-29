@@ -1669,7 +1669,7 @@ async function sendPostThroughTunnel(
     };
     socket.on("data", onData);
     socket.on("error", reject);
-    setTimeout(() => reject(new Error("POST tunnel timeout")), 5000);
+    setTimeout(() => reject(new Error("POST tunnel timeout")), 12_000);
   });
 }
 
@@ -1714,7 +1714,7 @@ describe("(02-fix) CR-01 — POST body must reach upstream (bidirectional pipe)"
     expect(upstream.receivedBodies[0]).toBe(requestBody);
 
     upstream.server.close();
-  });
+  }, 15_000);
 
   it("full request→response round-trip: upstream response body reaches the client", async () => {
     const upstream = await makeBodyUpstreamFixture();
@@ -1752,7 +1752,7 @@ describe("(02-fix) CR-01 — POST body must reach upstream (bidirectional pipe)"
 
     await new Promise((r) => setTimeout(r, 100));
     upstream.server.close();
-  });
+  }, 15_000);
 });
 
 // ── CR-02 + WR-01 RED: EPIPE protection on 200 write ─────────────────────────

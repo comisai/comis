@@ -171,6 +171,15 @@ function readTunnelHeaders(
     function finish(result: { headers: string; tail: string } | null): void {
       if (finished) return;
       finished = true;
+      // Pause the socket BEFORE removing the "data" listener. Node streams do
+      // not automatically pause when the last "data" listener is removed; the
+      // stream continues flowing and emits subsequent data to no handler,
+      // silently discarding it. Pausing here ensures that any body bytes that
+      // arrive after the \r\n\r\n boundary are buffered by Node's stream layer
+      // until clientSocket.pipe(upstreamSocket) is set up in the connect
+      // callback — at which point pipe() resumes the socket and drains the
+      // buffer in order (CR-01 fix for the inter-segment body-loss race).
+      socket.pause();
       socket.off("data", onData);
       socket.off("error", onTerminate);
       socket.off("close", onTerminate);
