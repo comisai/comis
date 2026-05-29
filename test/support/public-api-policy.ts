@@ -1554,6 +1554,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "computeReachableToolNames",
       "RequiredToolsUnreachableError",
       "UnreachableToolEntry",
+      // ── v2.6 Memory consolidation (Phase 84 — interface-first foundation) ──
+      // The segregated MemoryConsolidationStore port + its DTOs are the
+      // contract the consolidation adapter (Plan 02, @comis/memory), job
+      // (Plan 03, @comis/agent), and daemon wiring (Plan 05) depend on
+      // existing first (the same interface-first pattern as MemoryEntityStore,
+      // whose own consumers landed across Phase 83's plans). Shipped on the
+      // @comis/core barrel now; the in-repo consumers land in Plans 02-05.
+      // Shrink each entry as it gains a real consumer.
+      "MemoryConsolidationStore",
+      "ConsolidationCandidate",
+      "ConsolidationPlan",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
