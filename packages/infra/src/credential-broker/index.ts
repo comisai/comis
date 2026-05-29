@@ -11,3 +11,6 @@ export type {
 
 export { createMitmBroker } from "./mitm-broker.js";
 export type { MitmBrokerPort, MitmBrokerDeps } from "./mitm-broker.js";
+
+export { createNodeCaManager } from "./ca-manager.js";
+export type { NodeCaManagerDeps } from "./ca-manager.js";

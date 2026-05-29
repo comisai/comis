@@ -129,6 +129,7 @@ describe("NodeCaManager — CA-02a: Leaf SAN contains dnsName(host)", () => {
       servername: "api.anthropic.com",
       ca: caCertPem,
       rejectUnauthorized: true,
+      ALPNProtocols: ["http/1.1"],
     });
 
     try {
@@ -169,6 +170,7 @@ describe("NodeCaManager — CA-02b+CA-02c: In-process TLS handshake", () => {
       servername: "api.anthropic.com",
       ca: caCertPem,
       rejectUnauthorized: true,
+      ALPNProtocols: ["http/1.1"], // client must advertise the protocol for negotiation to succeed
     });
 
     try {
