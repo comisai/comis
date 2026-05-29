@@ -12,15 +12,30 @@
  *   boosted = base
  *     * (1 + recencyAlpha  * (recency(createdAt, nowMs)        - 0.5))
  *     * (1 + temporalAlpha * (temporalProx(occurredAt, nowMs)  - 0.5))   // LIVE; occurredAt absent → 0.5 → 1.0
- *     * (1 + proofAlpha    * (proofNorm(proofCount)            - 0.5))   // proofCount absent → 0.5 → 1.0
+ *     * (1 + proofAlpha    * (decayedProof(entry, nowMs)       - 0.5))   // LIVE; see below — neutral 0.5 → 1.0
  *     * (1 + trustAlpha    * (trustWeight(trustLevel)          - 0.5))   // system 1.0 / learned 0.5 / external 0.0
  *
- * `occurredAt` (Phase-81/TEMP-05) is now a LIVE event-time signal: it is a typed optional
- * MemoryEntry field, and `temporalProx` computes real proximity over it (neutral 0.5 → a
- * 1.0 factor only when absent, falling back to the createdAt recency axis). `proofCount`
- * (Phase-84) does NOT exist on MemoryEntry yet — it is read defensively and is always
- * absent now, so its helper returns 0.5 (a neutral 1.0 factor). This file does not add
- * schema fields.
+ * `occurredAt` (Phase-81/TEMP-05) is a LIVE event-time signal: a typed optional MemoryEntry
+ * field over which `temporalProx` computes real proximity (neutral 0.5 → a 1.0 factor only
+ * when absent, falling back to the createdAt recency axis).
+ *
+ * The proof signal (Phase-84/CONS-08) is now LIVE — it is the read-side payoff of memory
+ * consolidation, so a corroborated observation out-ranks the raw memories it summarizes:
+ *   - `proofNorm` maps the typed `proofCount` through a log curve (design §5.4:
+ *     `clamp(0.5 + log(proofCount)/10, 0, 1)` — proofCount 1→0.5, ~150→1.0, monotone in
+ *     corroboration). A raw memory (no `proofCount`) → 0.5 (neutral).
+ *   - `confidenceFactor` applies an explicit HALF-LIFE decay over the observation's typed
+ *     `confidence` and its EVENT age (design §16.6 / Open decision 6 — LOCKED to half-life):
+ *     `confidence * 0.5^(ageDays / CONFIDENCE_HALF_LIFE_DAYS)`. A raw memory (no `confidence`)
+ *     → 1.0 (neutral).
+ *   - `decayedProof` multiplies the ABOVE-neutral portion of `proofNorm` by that decayed
+ *     confidence, so a STALE observation's boost fades back toward neutral while a fresh,
+ *     well-corroborated one keeps its full boost. The decay rides INSIDE the existing
+ *     `proofAlpha` budget — no new alpha — so the no-reorder-when-absent seam contract holds:
+ *     proofCount AND confidence absent → decayedProof 0.5 → proof factor exactly 1.0.
+ *
+ * This file does not add schema fields (proofCount/confidence/occurredAt are typed optionals
+ * on MemoryEntry from Phase-84 Plan 01) and imports only @comis/core types.
  *
  * Recency formula (deterministic, testable, monotonic-decreasing in age, in (0,1]):
  *   recency = 1 / (1 + ageDays),  ageDays = max(0, (nowMs - createdAt) / 86_400_000)
@@ -45,7 +60,7 @@ export interface ScoringAlphas {
   recencyAlpha: number;
   /** Event-time proximity boost weight (Phase-81/TEMP-05; LIVE — neutral only when occurredAt is absent). */
   temporalAlpha: number;
-  /** Proof-count boost weight (Phase-84 seam; neutral until proofCount exists). */
+  /** Proof boost weight (Phase-84/CONS-08; LIVE — log curve over proofCount × half-life confidence decay). */
   proofAlpha: number;
   /** Trust-level boost weight + tie-break (RANK-06). */
   trustAlpha: number;
@@ -96,22 +111,63 @@ function temporalProx(entry: MemorySearchResult["entry"], nowMs: number): number
 }
 
 /**
- * Proof-count normalization (Phase-84 seam). `proofCount` is not yet a MemoryEntry
- * field; when absent this returns 0.5 → a neutral 1.0 factor (no reordering).
+ * Confidence half-life: a stale observation's confidence contribution halves every
+ * `CONFIDENCE_HALF_LIFE_DAYS` of EVENT age. Design §16.6 / Open decision 6 LOCKED the
+ * decay shape to an explicit half-life but left the constant open; 30 days is the
+ * default (a month-old observation contributes half its confidence to the proof boost).
+ */
+const CONFIDENCE_HALF_LIFE_DAYS = 30;
+
+/**
+ * Proof-count normalization (CONS-08). Maps the typed `proofCount` through the design
+ * §5.4 log curve `clamp(0.5 + log(proofCount)/10, 0, 1)`: proofCount 1 → 0.5 (neutral,
+ * identical to a raw memory), ~150 → ~1.0, monotone-increasing and bounded in corroboration.
+ * A raw memory (no `proofCount`) returns 0.5 → a neutral 1.0 factor (no reordering — the
+ * seam's no-reorder-when-absent contract). `proofCount` is a typed optional MemoryEntry
+ * field (Phase-84 Plan 01) — read directly, no cast.
  */
 function proofNorm(entry: MemorySearchResult["entry"]): number {
-  const proofCount = (entry as unknown as Record<string, unknown>).proofCount;
-  if (typeof proofCount !== "number") return 0.5; // neutral seam
-  // Phase 84 will normalize the corroboration count; until then it cannot be present.
-  return 0.5;
+  const proofCount = entry.proofCount; // typed optional (P84/CONS-01) — no `as unknown` cast
+  if (typeof proofCount !== "number") return 0.5; // raw memory → neutral 1.0 factor
+  // clamp(0.5 + log(proofCount)/10, 0, 1): 1→0.5, ~150→~1.0 (monotone in corroboration).
+  return Math.min(1, Math.max(0, 0.5 + Math.log(proofCount) / 10));
+}
+
+/**
+ * Decayed confidence in [0,1] (CONS-08). `confidence * 0.5^(ageDays / halfLife)` over the
+ * observation's EVENT age (`occurredAt`, falling back to `createdAt` when the event time is
+ * unknown — the same age axis as {@link temporalProx}). A future-dated event clamps to
+ * ageDays=0 → no decay (no negative-age blow-up). A raw memory (no `confidence`) returns
+ * 1.0 → neutral, so it does not modulate the proof boost and the seam contract is preserved.
+ * `nowMs` is the injected wall-clock — same value threaded to {@link recency}/{@link temporalProx}.
+ */
+function confidenceFactor(entry: MemorySearchResult["entry"], nowMs: number): number {
+  const confidence = entry.confidence; // typed optional (P84/CONS-08) — no cast
+  if (typeof confidence !== "number") return 1; // raw memory → neutral (no reorder)
+  const eventMs = entry.occurredAt ?? entry.createdAt; // event age, createdAt fallback
+  const ageDays = Math.max(0, (nowMs - eventMs) / DAY_MS); // clamp future → 0 (no decay)
+  return confidence * Math.pow(0.5, ageDays / CONFIDENCE_HALF_LIFE_DAYS); // in [0,1]
+}
+
+/**
+ * Proof signal centered on 0.5, with its ABOVE-neutral portion modulated by the decayed
+ * confidence (CONS-08): `0.5 + (proofNorm - 0.5) * confidenceFactor`. A fresh observation
+ * (confidence ≈ 1) keeps proofNorm's full boost; a stale one (confidence decayed → 0)
+ * collapses toward 0.5 (neutral). A raw memory (proofCount absent → proofNorm 0.5) is 0.5
+ * regardless of confidence → the proof factor is exactly 1.0 (no-reorder-when-absent).
+ */
+function decayedProof(entry: MemorySearchResult["entry"], nowMs: number): number {
+  return 0.5 + (proofNorm(entry) - 0.5) * confidenceFactor(entry, nowMs);
 }
 
 /**
  * Apply the multiplicative boost stack to each result's base score, then sort
  * descending with a deterministic equal-relevance trust tie-break (RANK-06:
- * system > learned > external). temporal and proof are neutral 1.0 seams until
- * Phase-81/84 add their fields. Returns a NEW array of NEW result objects (the
- * input and its objects are never mutated); `result.score` carries the boosted value.
+ * system > learned > external). All four sub-signals (recency, temporal, proof+decay,
+ * trust) are LIVE; each is centered on 0.5 so an absent signal contributes a factor of
+ * exactly 1.0 (the proof signal's no-reorder-when-absent contract — a raw memory with no
+ * proofCount/confidence is never reordered). Returns a NEW array of NEW result objects
+ * (the input and its objects are never mutated); `result.score` carries the boosted value.
  */
 export function score(
   results: MemorySearchResult[],
@@ -122,7 +178,9 @@ export function score(
     const base = result.score ?? 0;
     const recencyFactor = 1 + alphas.recencyAlpha * (recency(result.entry.createdAt, nowMs) - 0.5);
     const temporalFactor = 1 + alphas.temporalAlpha * (temporalProx(result.entry, nowMs) - 0.5);
-    const proofFactor = 1 + alphas.proofAlpha * (proofNorm(result.entry) - 0.5);
+    // Proof boost (proofNorm) with its above-neutral portion decayed by the observation's
+    // half-life confidence (CONS-08). Raw memory → decayedProof 0.5 → proofFactor 1.0.
+    const proofFactor = 1 + alphas.proofAlpha * (decayedProof(result.entry, nowMs) - 0.5);
     const trustFactor = 1 + alphas.trustAlpha * (trustWeight(result.entry.trustLevel) - 0.5);
     const next = base * recencyFactor * temporalFactor * proofFactor * trustFactor;
     return { ...result, score: next };
