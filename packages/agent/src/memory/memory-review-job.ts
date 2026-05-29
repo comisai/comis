@@ -410,11 +410,18 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     // `clean` → the inherited `system` trust (EXTR-04). T-82-07 mitigation.
     const verdict = validateMemoryWrite(m.content);
     if (verdict.severity === "critical") {
+      // WR-02: the audit record for a security-blocking event must carry the
+      // COMPLETE matched-pattern set, not just the critical subset. The previous
+      // code logged the value `verdict.criticalPatterns` under the misleading
+      // field name `patterns`, silently dropping the broader `verdict.patterns`
+      // (for a dangerous-command match that set includes every matched pattern).
+      // Log both, each under its accurate name. Never log the offending content.
       logger.warn(
         {
           agentId,
           errorKind: "security" as const,
-          patterns: verdict.criticalPatterns,
+          patterns: verdict.patterns,
+          criticalPatterns: verdict.criticalPatterns,
           hint: "extracted memory matched a dangerous/secret pattern — blocked from store",
         },
         "Skipping extracted memory that failed the memory-write security scan",
@@ -424,7 +431,29 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     const trustLevel: TrustLevel = verdict.severity === "warn" ? "external" : "system";
 
     // Dedup check (reused — scoped to the review session key + system trust).
-    const searchResult = await memoryPort.search(reviewSessionKey, m.content, searchOpts);
+    // WR-01: MemoryPort returns Promise<Result<…>> (non-throwing), but a real
+    // adapter can VIOLATE the contract and REJECT (SQLITE_BUSY on a locked DB,
+    // disk-full, a better-sqlite3 throw surfaced async). Route through
+    // `fromPromise` so a rejection becomes an `err` Result instead of an
+    // exception escaping `runMemoryReview` before the watermark saves — which
+    // would reprocess the same sessions every cron tick (the EXTR-05 stall).
+    const searchOutcome = await fromPromise(memoryPort.search(reviewSessionKey, m.content, searchOpts));
+    if (!searchOutcome.ok) {
+      // Dedup unavailable (adapter rejected) — skip this item rather than store
+      // blind (we can't confirm it isn't a duplicate). Non-fatal: the loop and
+      // the watermark advance continue. errorKind + hint are the canonical fields.
+      logger.warn(
+        {
+          agentId,
+          err: searchOutcome.error,
+          errorKind: "io" as const,
+          hint: "memory dedup search rejected (adapter contract violation) — skipping item, advancing watermark",
+        },
+        "Skipping extracted memory — dedup search failed",
+      );
+      continue;
+    }
+    const searchResult = searchOutcome.value;
     if (searchResult.ok && searchResult.value.length > 0) {
       duplicatesSkipped++;
       logger.debug({ agentId, content: m.content.slice(0, 50) }, "Skipping duplicate memory");
@@ -453,7 +482,12 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       ...(occurredAt !== undefined ? { occurredAt } : {}),
     };
 
-    const storeResult = await memoryPort.store(entry);
+    // WR-01: same contract-violation guard as the dedup search above — a
+    // rejecting `store` (locked DB, disk-full) must NOT escape before the
+    // watermark saves. `fromPromise` collapses a rejection into an `err` that
+    // the existing non-fatal branch logs; the loop and watermark advance survive.
+    const storeOutcome = await fromPromise(memoryPort.store(entry));
+    const storeResult = storeOutcome.ok ? storeOutcome.value : storeOutcome;
     if (storeResult.ok) {
       memoriesExtracted++;
       // EXTR-04 / Q4b: emit the entity mentions on the in-memory result with the
@@ -463,7 +497,15 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
         entities: m.entities.map((e) => ({ name: e.name, trustLevel, source: memorySource })),
       });
     } else {
-      logger.warn({ agentId, err: storeResult.error }, "Failed to store extracted memory");
+      logger.warn(
+        {
+          agentId,
+          err: storeResult.error,
+          errorKind: "io" as const,
+          hint: "memory store failed/rejected — skipping item, advancing watermark",
+        },
+        "Failed to store extracted memory",
+      );
     }
   }
 
