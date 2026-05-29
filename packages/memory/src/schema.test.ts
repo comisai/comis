@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import Database from "better-sqlite3";
 import { describe, it, expect, beforeEach } from "vitest";
-import { initSchema, isVecAvailable, ensureMemoryColumns } from "./schema.js";
+import { initSchema, isVecAvailable, ensureMemoryColumns, ensureEntityTables } from "./schema.js";
 
 describe("initSchema", () => {
   let db: Database.Database;
@@ -485,5 +485,131 @@ describe("initSchema", () => {
       expect(colNames).toContain("system_sha256");
       expect(colNames).toContain("report_json");
     });
+  });
+});
+
+// =====================================================================
+// ensureEntityTables — the entity junction DDL (Phase 83 ENT-01/03/04/05)
+//
+// Pitfall 1: a raw `new Database(":memory:")` does NOT enable FK enforcement,
+// so `ON DELETE CASCADE` would silently no-op. These tests set
+// `foreign_keys=ON` explicitly (production's openSqliteDatabase sets it for
+// us — sqlite-adapter-base.ts:52).
+// =====================================================================
+
+describe("ensureEntityTables", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+  });
+
+  const tableNames = (): string[] =>
+    (
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+        .all() as Array<{ name: string }>
+    ).map((r) => r.name);
+
+  it("creates memory_entities and memory_entity_links after initSchema", () => {
+    initSchema(db, 1536);
+    const names = tableNames();
+    expect(names).toContain("memory_entities");
+    expect(names).toContain("memory_entity_links");
+  });
+
+  it("gives memory_entities the canonical_key column (the Pitfall-3 dedup key)", () => {
+    initSchema(db, 1536);
+    const cols = (
+      db.prepare("PRAGMA table_info(memory_entities)").all() as Array<{ name: string }>
+    ).map((c) => c.name);
+    expect(cols).toContain("canonical_name");
+    expect(cols).toContain("canonical_key");
+    expect(cols).toContain("mention_count");
+    expect(cols).toContain("first_seen");
+    expect(cols).toContain("last_seen");
+  });
+
+  it("declares ON DELETE CASCADE on memory_entity_links.memory_id -> memories(id)", () => {
+    initSchema(db, 1536);
+    const fks = db.prepare("PRAGMA foreign_key_list(memory_entity_links)").all() as Array<{
+      table: string;
+      from: string;
+      to: string;
+      on_delete: string;
+    }>;
+    const memoryFk = fks.find((fk) => fk.table === "memories" && fk.from === "memory_id");
+    expect(memoryFk).toBeDefined();
+    expect(memoryFk!.on_delete).toBe("CASCADE");
+  });
+
+  it("UNIQUE-indexes (tenant_id, agent_id, canonical_key) so two scopes never collapse to one entity (ENT-03)", () => {
+    initSchema(db, 1536);
+    db.prepare(
+      `INSERT INTO memory_entities
+         (id, tenant_id, agent_id, canonical_name, canonical_key, mention_count, first_seen, last_seen)
+       VALUES ('e1', 't1', 'a1', 'Istanbul', 'istanbul', 1, 1, 1)`,
+    ).run();
+    // Same (tenant, agent, canonical_key) → UNIQUE violation.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO memory_entities
+             (id, tenant_id, agent_id, canonical_name, canonical_key, mention_count, first_seen, last_seen)
+           VALUES ('e2', 't1', 'a1', 'ISTANBUL', 'istanbul', 1, 1, 1)`,
+        )
+        .run(),
+    ).toThrow();
+    // Different agent, same key → allowed (isolation: not a collision).
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO memory_entities
+             (id, tenant_id, agent_id, canonical_name, canonical_key, mention_count, first_seen, last_seen)
+           VALUES ('e3', 't1', 'a2', 'Istanbul', 'istanbul', 1, 1, 1)`,
+        )
+        .run(),
+    ).not.toThrow();
+  });
+
+  it("cascades link deletion when the parent memory is deleted (ENT-04, no orphans)", () => {
+    initSchema(db, 1536);
+    db.prepare(
+      `INSERT INTO memories (id, user_id, content, trust_level, source_who, created_at)
+       VALUES ('m1', 'u1', 'about Istanbul', 'learned', 'agent', 1)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO memory_entities
+         (id, tenant_id, agent_id, canonical_name, canonical_key, mention_count, first_seen, last_seen)
+       VALUES ('e1', 'default', 'default', 'Istanbul', 'istanbul', 1, 1, 1)`,
+    ).run();
+    db.prepare(`INSERT INTO memory_entity_links (memory_id, entity_id) VALUES ('m1', 'e1')`).run();
+
+    const linkCount = (): number =>
+      (db.prepare("SELECT COUNT(*) AS c FROM memory_entity_links").get() as { c: number }).c;
+    expect(linkCount()).toBe(1);
+
+    db.prepare("DELETE FROM memories WHERE id = 'm1'").run();
+    expect(linkCount()).toBe(0);
+    // The entity row itself survives (not cascade-deleted — RESEARCH Pitfall 7).
+    expect(
+      (db.prepare("SELECT COUNT(*) AS c FROM memory_entities").get() as { c: number }).c,
+    ).toBe(1);
+  });
+
+  it("is idempotent on a pre-existing DB (running it again on a populated DB is a no-op)", () => {
+    initSchema(db, 1536);
+    db.prepare(
+      `INSERT INTO memory_entities
+         (id, tenant_id, agent_id, canonical_name, canonical_key, mention_count, first_seen, last_seen)
+       VALUES ('e1', 't1', 'a1', 'Istanbul', 'istanbul', 1, 1, 1)`,
+    ).run();
+    // Re-running the DDL must not throw and must preserve existing rows.
+    expect(() => ensureEntityTables(db)).not.toThrow();
+    expect(
+      (db.prepare("SELECT COUNT(*) AS c FROM memory_entities").get() as { c: number }).c,
+    ).toBe(1);
+    expect(tableNames()).toContain("memory_entity_links");
   });
 });
