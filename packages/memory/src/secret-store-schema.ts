@@ -66,6 +66,36 @@ export function initSecretSchema(db: Database.Database): void {
  * @throws Error with "DECRYPTION_FAILED" if master key mismatch detected
  */
 export function validateCanary(db: Database.Database, crypto: SecretsCrypto): void {
+  // Seed the canary IDEMPOTENTLY. A check-then-INSERT (SELECT, then `if (!row)
+  // INSERT`) is a TOCTOU race: two daemons booting in parallel against a shared
+  // secrets.db (the test harness shares ~/.comis; a restart can race itself)
+  // can both observe the canary as absent and both INSERT, and the loser
+  // crashed with `UNIQUE constraint failed: secrets.name`
+  // (SQLITE_CONSTRAINT_PRIMARYKEY). `ON CONFLICT(name) DO NOTHING` makes a lost
+  // race a harmless no-op; we then read back whatever canary is persisted (ours
+  // or the winner's) and validate it — preserving wrong-key/tamper detection.
+  const result = crypto.encrypt(CANARY_PLAINTEXT);
+  if (!result.ok) {
+    throw new Error(`Failed to encrypt canary: ${result.error.message}`);
+  }
+  const candidate = result.value;
+  const now = systemNowMs();
+
+  db.prepare(
+    `INSERT INTO secrets (name, ciphertext, iv, auth_tag, salt, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(name) DO NOTHING`,
+  ).run(
+    CANARY_NAME,
+    candidate.ciphertext,
+    candidate.iv,
+    candidate.authTag,
+    candidate.salt,
+    now,
+    now,
+  );
+
+  // The INSERT above guarantees a canary row exists; read + validate it.
   const row = db
     .prepare(
       "SELECT ciphertext, iv, auth_tag, salt FROM secrets WHERE name = ?",
@@ -75,32 +105,9 @@ export function validateCanary(db: Database.Database, crypto: SecretsCrypto): vo
     | undefined;
 
   if (!row) {
-    // First initialization: encrypt and store the canary
-    const result = crypto.encrypt(CANARY_PLAINTEXT);
-    if (!result.ok) {
-      throw new Error(
-        `Failed to encrypt canary: ${result.error.message}`,
-      );
-    }
-    const encrypted = result.value;
-    const now = systemNowMs();
-
-    db.prepare(
-      `INSERT INTO secrets (name, ciphertext, iv, auth_tag, salt, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      CANARY_NAME,
-      encrypted.ciphertext,
-      encrypted.iv,
-      encrypted.authTag,
-      encrypted.salt,
-      now,
-      now,
-    );
-    return;
+    throw new Error("DECRYPTION_FAILED: secrets canary missing after seed");
   }
 
-  // Existing canary: reconstruct EncryptedSecret and decrypt
   const encrypted: EncryptedSecret = {
     ciphertext: row.ciphertext,
     iv: row.iv,
