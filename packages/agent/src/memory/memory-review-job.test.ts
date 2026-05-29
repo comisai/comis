@@ -549,6 +549,110 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
+  // WR-01 — rejecting (contract-violating) adapter must NOT stall the watermark.
+  // MemoryPort returns Promise<Result<…>> (non-throwing), but a real adapter can
+  // REJECT (SQLITE_BUSY, disk-full, a better-sqlite3 throw surfaced async). A
+  // rejection mid-loop must NOT escape runMemoryReview before the watermark
+  // saves — otherwise the same sessions reprocess every cron tick (EXTR-05 stall
+  // + repeated LLM spend). The run must complete (ok), the watermark must STILL
+  // advance, and a WARN with errorKind+hint must be logged.
+  // -------------------------------------------------------------------------
+
+  it("does NOT stall the watermark when memoryPort.store REJECTS (contract violation)", async () => {
+    const deps = makeDeps();
+    arrangeOneSession(deps, 9400);
+    (completeSimple as Mock).mockResolvedValue(structuredResponse({
+      memories: [{ content: "User likes coffee", entities: [{ name: "user" }] }],
+    }));
+    // A real adapter REJECTS instead of returning err(...) — SQLITE_BUSY etc.
+    (deps.memoryPort.store as Mock).mockRejectedValue(new Error("SQLITE_BUSY: database is locked"));
+
+    const result = await runMemoryReview(deps);
+    // Run completes (non-fatal) — the rejection did NOT escape.
+    expect(result.ok).toBe(true);
+    // A WARN carrying the canonical structured fields was logged.
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: expect.anything(), hint: expect.anything() }),
+      expect.any(String),
+    );
+    // The watermark STILL advances (no stall — the whole point of WR-01).
+    expect(writeFile).toHaveBeenCalled();
+    const writeCall = (writeFile as Mock).mock.calls[0];
+    expect(writeCall[0]).toContain(".tmp");
+    expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9400);
+    expect(rename).toHaveBeenCalled();
+    // Nothing was counted as stored.
+    expect(deps.eventBus.emit).toHaveBeenCalledWith("memory:review_completed", expect.objectContaining({
+      memoriesExtracted: 0,
+    }));
+  });
+
+  it("does NOT stall the watermark when memoryPort.search REJECTS (contract violation)", async () => {
+    const deps = makeDeps();
+    arrangeOneSession(deps, 9500);
+    (completeSimple as Mock).mockResolvedValue(structuredResponse({
+      memories: [{ content: "User likes tea", entities: [{ name: "user" }] }],
+    }));
+    // The dedup search REJECTS — a locked DB surfaced through the async wrapper.
+    (deps.memoryPort.search as Mock).mockRejectedValue(new Error("SQLITE_BUSY: database is locked"));
+
+    const result = await runMemoryReview(deps);
+    // Run completes (non-fatal) — the rejection did NOT escape.
+    expect(result.ok).toBe(true);
+    // A WARN carrying the canonical structured fields was logged.
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: expect.anything(), hint: expect.anything() }),
+      expect.any(String),
+    );
+    // With dedup unavailable, the item is skipped (not stored without a dup check).
+    expect(deps.memoryPort.store).not.toHaveBeenCalled();
+    // The watermark STILL advances (no stall).
+    expect(writeFile).toHaveBeenCalled();
+    const writeCall = (writeFile as Mock).mock.calls[0];
+    expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9500);
+    expect(rename).toHaveBeenCalled();
+  });
+
+  it("processes other sessions normally when one session's store REJECTS", async () => {
+    const deps = makeDeps();
+    // Two qualifying sessions; both load a single message and yield one memory each.
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+      makeSession("default:user1:ch1", 10, 9600),
+      makeSession("default:user2:ch1", 10, 9700),
+    ]);
+    (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
+      messages: [{ role: "user", content: "hello" }],
+      metadata: {},
+      createdAt: 1000,
+      updatedAt: 9600,
+    });
+    // Two memories — the FIRST store rejects, the SECOND succeeds.
+    (completeSimple as Mock).mockResolvedValue(structuredResponse({
+      memories: [
+        { content: "User likes coffee", entities: [{ name: "user" }] },
+        { content: "User likes tea", entities: [{ name: "user" }] },
+      ],
+    }));
+    (deps.memoryPort.store as Mock)
+      .mockRejectedValueOnce(new Error("SQLITE_BUSY: database is locked"))
+      .mockResolvedValueOnce(ok({ id: "mem-2" }));
+
+    const result = await runMemoryReview(deps);
+    expect(result.ok).toBe(true);
+    // The second (succeeding) item was stored despite the first rejecting.
+    const storedContents = (deps.memoryPort.store as Mock).mock.calls.map((c) => c[0].content);
+    expect(storedContents).toContain("User likes tea");
+    expect(deps.eventBus.emit).toHaveBeenCalledWith("memory:review_completed", expect.objectContaining({
+      memoriesExtracted: 1,
+    }));
+    // BOTH reviewed sessions' watermarks advance (run completed normally).
+    const writeCall = (writeFile as Mock).mock.calls[0];
+    const sessions = JSON.parse(writeCall[1] as string).sessions;
+    expect(sessions["default:user1:ch1"]).toBe(9600);
+    expect(sessions["default:user2:ch1"]).toBe(9700);
+  });
+
+  // -------------------------------------------------------------------------
   // Fatal LLM/model failures — err (the job's error contract)
   // -------------------------------------------------------------------------
 
