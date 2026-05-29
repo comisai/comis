@@ -62,6 +62,33 @@ describe("fuse — N-lane Reciprocal Rank Fusion", () => {
     expect(fused.map((r) => r.entry.id)).toEqual(["a", "b", "c", "d"]);
   });
 
+  it("ME-01: single-lane fuse passes the incoming adapter score THROUGH unchanged (does NOT recompute from rank)", () => {
+    // The SqliteMemoryAdapter already returns RRF-normalized relevance scores with a
+    // genuine distribution (a strong top hit and a much weaker tail). A single-lane
+    // fuse must NOT discard that and rebuild a near-flat rank ramp (1.0/0.984/…),
+    // because that collapse flips the downstream inlineMinScore=0.7 gate on the
+    // default (rerank-off) path. Pass-through preserves both order AND score.
+    const lane: FusionLane = {
+      results: [
+        makeResult("strong", {}, 0.95),
+        makeResult("weak", {}, 0.12),
+      ],
+      weight: 1.0,
+    };
+    const fused = fuse([lane]);
+    expect(fused.map((r) => r.entry.id)).toEqual(["strong", "weak"]);
+    // Pre-fix this was the rank ramp 1.0 / 0.984 — the relevance distribution was lost.
+    expect(fused[0]?.score).toBeCloseTo(0.95, 10);
+    expect(fused[1]?.score).toBeCloseTo(0.12, 10);
+  });
+
+  it("ME-01: single-lane fuse does NOT force a weak top hit (adapter score < 0.7) up to ≈1.0", () => {
+    // A weak top hit must stay weak so it is NOT force-promoted to inline injection.
+    const fused = fuse([{ results: [makeResult("weakTop", {}, 0.42)], weight: 1.0 }]);
+    expect(fused[0]?.score).toBeCloseTo(0.42, 10);
+    expect(fused[0]?.score ?? 1).toBeLessThan(0.7);
+  });
+
   it("ranks a document appearing in two lanes above one appearing in only one", () => {
     // "shared" is rank-1 in both lanes; "onlyA"/"onlyB" appear in a single lane each.
     const laneA = laneOf(["shared", "onlyA"], 1.0);
@@ -108,8 +135,21 @@ describe("fuse — N-lane Reciprocal Rank Fusion", () => {
     expect(reversed).toEqual(forward);
   });
 
-  it("assigns the normalized fused score onto result.score", () => {
-    const fused = fuse([laneOf(["a", "b"], 1.0)]);
-    expect(typeof fused[0]?.score).toBe("number");
+  it("single-lane: passes the incoming adapter score through onto result.score", () => {
+    // Single-lane is now pass-through (ME-01): the adapter's relevance score is
+    // preserved verbatim rather than recomputed from rank.
+    const fused = fuse([
+      { results: [makeResult("a", {}, 0.83), makeResult("b", {}, 0.41)], weight: 1.0 },
+    ]);
+    expect(fused[0]?.score).toBeCloseTo(0.83, 10);
+    expect(fused[1]?.score).toBeCloseTo(0.41, 10);
+  });
+
+  it("multi-lane still assigns the normalized RRF-by-rank score onto result.score", () => {
+    // Multi-lane keeps the RRF math: rank-1-in-all-lanes normalizes to ≈1.0.
+    const fused = fuse([laneOf(["a", "b"], 1.0), laneOf(["a", "c"], 1.5)]);
+    const top = fused.find((r) => r.entry.id === "a");
+    expect(typeof top?.score).toBe("number");
+    expect(top?.score).toBeCloseTo(1.0, 10);
   });
 });
