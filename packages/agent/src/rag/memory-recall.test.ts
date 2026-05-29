@@ -434,6 +434,67 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(got.value.map((r) => r.entry.id)).toEqual(["a", "b", "c", "d", "e"]);
   });
 
+  it("LO-01: when deps.timers is undefined, rerank is SKIPPED entirely (degrade to fused order; reranker.rank is never called → no unbounded hang)", async () => {
+    const input = [
+      makeResult("a", { base: 0.9 }),
+      makeResult("b", { base: 0.6 }),
+      makeResult("c", { base: 0.3 }),
+    ];
+    // A reranker that would HANG forever if invoked. With no timers there is no
+    // deadline, so invoking it would block recall indefinitely (RANK-08 cannot
+    // fire). The fix is to skip rerank when timers is absent, NOT to await an
+    // unbounded rank(). The hang is proven impossible by asserting rank is never
+    // called AND that recall resolves to fused order.
+    const { port, calls } = mockReranker({
+      rank: () => new Promise<Result<number[], Error>>(() => {}), // never resolves
+    });
+    const recall = createMemoryRecall(
+      // NOTE: timers omitted entirely.
+      { memoryPort: fakeMemoryPort(input), reranker: port, clock: fixedClock, logger: noopLogger },
+      baseConfig({
+        rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
+      }),
+    );
+    const got = await recall.recall("q", SESSION_KEY);
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // rerank skipped — the hanging rank() was never invoked.
+    expect(calls.length).toBe(0);
+    // degraded to fused order.
+    expect(got.value.map((r) => r.entry.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("LO-02: equal CE scores inside the reranked pool keep a deterministic (original pool index) order", async () => {
+    // All pool docs share the SAME CE score and the SAME trust level, so neither the
+    // CE-primary key nor score()'s trust tie-break can decide their relative order.
+    // Without an explicit secondary key the order is left to sort happenstance; the
+    // fix pins it to the original pool (fused) index, so the output equals the input
+    // order [a,b,c] deterministically.
+    const input = [
+      makeResult("a", { base: 0.9, trustLevel: "learned", createdAt: NOW }),
+      makeResult("b", { base: 0.8, trustLevel: "learned", createdAt: NOW }),
+      makeResult("c", { base: 0.7, trustLevel: "learned", createdAt: NOW }),
+    ];
+    const { port } = mockReranker({
+      // identical CE score for every pool doc
+      rank: async (_q, docs) => ok(docs.map(() => 0.5)),
+    });
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), reranker: port, timers: fakeTimers().port, clock: fixedClock, logger: noopLogger },
+      baseConfig({
+        rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        // boosts off → boosted score is exactly the CE score, so the ONLY thing that
+        // can order the equal-CE/equal-trust pool is the explicit index tie-break.
+        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
+      }),
+    );
+    const got = await recall.recall("q", SESSION_KEY);
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(["a", "b", "c"]);
+  });
+
   it("overfetch: with rerank ENABLED, search limit = max(maxResults, maxCandidates)", async () => {
     const capture: { opts?: MemorySearchOptions } = {};
     const input = [makeResult("a")];
