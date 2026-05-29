@@ -695,6 +695,25 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "TrustLevelSchema",
       "MemorySourceSchema",
       "MemoryEntrySchema",
+      // Structured-extraction (Phase 82, EXTR-01) + entity (Phase 83) domain
+      // types. MemoryEntity is the Phase-83 entity import target; the
+      // extraction LLM-output types describe the shape @comis/agent's
+      // parseExtractionResult validates. These 6 (3 schemas + 3 inferred
+      // types) are consumed intra-core (memory-entry.ts builds the
+      // MemoryExtractionResult chain from them) + are downstream-facing public
+      // domain API surface, but carry NO cross-package value/type import by
+      // name yet — the checker counts cross-package barrel consumers only.
+      // (MemoryExtractionResultSchema + MemoryExtractionResult are NOT listed:
+      // @comis/agent's parseExtractionResult imports both from @comis/core, so
+      // they have a real cross-package consumer.) Mirrors the @comis/memory
+      // row-schema / Phase-80 reranker baseline-orphan precedent. Shrink each
+      // as a real cross-package consumer lands.
+      "ExtractedEntitySchema",
+      "StructuredMemorySchema",
+      "MemoryEntitySchema",
+      "ExtractedEntity",
+      "StructuredMemory",
+      "MemoryEntity",
       "ToolCallSchema",
       "TokenUsageSchema",
       "AgentResponseSchema",
