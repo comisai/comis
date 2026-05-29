@@ -54,6 +54,33 @@ const DAY_MS = 86_400_000;
 /** Two boosted scores within this absolute delta are treated as an exact tie. */
 const TIE_EPSILON = 1e-9;
 
+/**
+ * Per-memory multiplicative score breakdown (OBS-01). The four factors are the
+ * EXACT multiplicands score() folds into the boosted score, surfaced so the recall
+ * trace can record WHY a memory ranked where it did. Pure numbers — no redaction
+ * concern (RESEARCH: the breakdown is safe to persist). Invariant:
+ *   final === base * recency * temporal * proof * trust
+ * A neutral sub-signal contributes a factor of exactly 1.0 (recency/temporal/proof/
+ * trust are each centered on 0.5), so a raw memory's proof + temporal factors are 1.0.
+ */
+export interface ScoreBreakdown {
+  /** The un-boosted relevance score (`result.score ?? 0`). */
+  base: number;
+  /** Recency factor `1 + recencyAlpha * (recency(createdAt) - 0.5)`. */
+  recency: number;
+  /** Event-time proximity factor `1 + temporalAlpha * (temporalProx - 0.5)`; 1.0 when occurredAt absent. */
+  temporal: number;
+  /** Proof factor `1 + proofAlpha * (decayedProof - 0.5)`; 1.0 for a raw memory. */
+  proof: number;
+  /** Trust factor `1 + trustAlpha * (trustWeight(level) - 0.5)`. */
+  trust: number;
+  /** The boosted score = base × recency × temporal × proof × trust. */
+  final: number;
+}
+
+/** A scored result carrying the per-memory factor breakdown (OBS-01). */
+export type ScoredWithBreakdown = MemorySearchResult & { breakdown: ScoreBreakdown };
+
 /** Multiplicative boost weights (0..1), from RagConfig.scoring. */
 export interface ScoringAlphas {
   /** Recency boost weight (live now via createdAt). */
@@ -161,20 +188,36 @@ function decayedProof(entry: MemorySearchResult["entry"], nowMs: number): number
 }
 
 /**
- * Apply the multiplicative boost stack to each result's base score, then sort
- * descending with a deterministic equal-relevance trust tie-break (RANK-06:
- * system > learned > external). All four sub-signals (recency, temporal, proof+decay,
- * trust) are LIVE; each is centered on 0.5 so an absent signal contributes a factor of
- * exactly 1.0 (the proof signal's no-reorder-when-absent contract — a raw memory with no
- * proofCount/confidence is never reordered). Returns a NEW array of NEW result objects
- * (the input and its objects are never mutated); `result.score` carries the boosted value.
+ * Deterministic comparator shared by {@link score} and {@link scoreWithBreakdown}:
+ * sort descending by boosted score, then resolve an EXACT relevance tie by trust
+ * (RANK-06: system > learned > external). Pulled out so both entry points sort
+ * IDENTICALLY — the breakdown surface must never change the ranking.
  */
-export function score(
+function compareBoosted(a: MemorySearchResult, b: MemorySearchResult): number {
+  const sa = a.score ?? 0;
+  const sb = b.score ?? 0;
+  if (Math.abs(sb - sa) > TIE_EPSILON) return sb - sa;
+  // Equal relevance → resolve by trust (RANK-06): higher trustWeight first.
+  return trustWeight(b.entry.trustLevel) - trustWeight(a.entry.trustLevel);
+}
+
+/**
+ * Apply the multiplicative boost stack to each result's base score AND surface the
+ * per-memory factor breakdown (OBS-01), then sort identically to {@link score} (the
+ * shared {@link compareBoosted}). Each returned object is a NEW result carrying
+ * `breakdown = { base, recency, temporal, proof, trust, final }` where the four factors
+ * are the exact multiplicands and `final === base * recency * temporal * proof * trust`.
+ *
+ * This is the canonical scoring path; {@link score} delegates here and strips the
+ * breakdown, so the two produce byte-identical orderings + scores (the additive contract
+ * pinned by the characterization test). The input and its objects are never mutated.
+ */
+export function scoreWithBreakdown(
   results: MemorySearchResult[],
   alphas: ScoringAlphas,
   nowMs: number,
-): MemorySearchResult[] {
-  const boosted = results.map((result) => {
+): ScoredWithBreakdown[] {
+  const boosted: ScoredWithBreakdown[] = results.map((result) => {
     const base = result.score ?? 0;
     const recencyFactor = 1 + alphas.recencyAlpha * (recency(result.entry.createdAt, nowMs) - 0.5);
     const temporalFactor = 1 + alphas.temporalAlpha * (temporalProx(result.entry, nowMs) - 0.5);
@@ -183,16 +226,41 @@ export function score(
     const proofFactor = 1 + alphas.proofAlpha * (decayedProof(result.entry, nowMs) - 0.5);
     const trustFactor = 1 + alphas.trustAlpha * (trustWeight(result.entry.trustLevel) - 0.5);
     const next = base * recencyFactor * temporalFactor * proofFactor * trustFactor;
-    return { ...result, score: next };
+    return {
+      ...result,
+      score: next,
+      breakdown: {
+        base,
+        recency: recencyFactor,
+        temporal: temporalFactor,
+        proof: proofFactor,
+        trust: trustFactor,
+        final: next,
+      },
+    };
   });
 
-  boosted.sort((a, b) => {
-    const sa = a.score ?? 0;
-    const sb = b.score ?? 0;
-    if (Math.abs(sb - sa) > TIE_EPSILON) return sb - sa;
-    // Equal relevance → resolve by trust (RANK-06): higher trustWeight first.
-    return trustWeight(b.entry.trustLevel) - trustWeight(a.entry.trustLevel);
-  });
-
+  boosted.sort(compareBoosted);
   return boosted;
+}
+
+/**
+ * Apply the multiplicative boost stack to each result's base score, then sort
+ * descending with a deterministic equal-relevance trust tie-break (RANK-06:
+ * system > learned > external). All four sub-signals (recency, temporal, proof+decay,
+ * trust) are LIVE; each is centered on 0.5 so an absent signal contributes a factor of
+ * exactly 1.0 (the proof signal's no-reorder-when-absent contract — a raw memory with no
+ * proofCount/confidence is never reordered). Returns a NEW array of NEW result objects
+ * (the input and its objects are never mutated); `result.score` carries the boosted value.
+ *
+ * Delegates to {@link scoreWithBreakdown} and strips the breakdown so this signature +
+ * behavior stay byte-identical for the non-trace callers (the rerank pool/tail scoring
+ * and the global fused-order pass in memory-recall.ts).
+ */
+export function score(
+  results: MemorySearchResult[],
+  alphas: ScoringAlphas,
+  nowMs: number,
+): MemorySearchResult[] {
+  return scoreWithBreakdown(results, alphas, nowMs).map(({ breakdown: _breakdown, ...rest }) => rest);
 }
