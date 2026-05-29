@@ -31,6 +31,11 @@ import {
   startTestDaemon,
   type TestDaemonHandle,
 } from "../support/daemon-harness.js";
+// Clears the module-scoped SIGUSR2 debounce timer that persistToConfig arms
+// after each write, so a pending restart signal can't fire once the killSpy is
+// restored (a stray real SIGUSR2 with no daemon handler would terminate the
+// test fork).
+import { _resetSigusr1Timer } from "@comis/daemon";
 
 // ---------------------------------------------------------------------------
 // Path resolution
@@ -68,37 +73,61 @@ function readConfigYaml(path: string): Record<string, unknown> {
 // Test suite
 // ---------------------------------------------------------------------------
 
-// Suite drives the daemon's real `agents.update` flow which sets
-// `provider: openai` and requires an OPENAI_API_KEY (or pre-registered
-// providers.entries.openai) to validate. Skip on bare CI runners that
-// don't expose the secret.
-describe.skipIf(!process.env.OPENAI_API_KEY)("PERSIST-RESTART-E2E: Management actions survive daemon restart", () => {
+// Suite drives the daemon's real `agents.create`/`agents.update` flow which
+// sets `provider: openai`. That path only VALIDATES that a credential is
+// present (no real LLM call), so a dummy OPENAI_API_KEY suffices — set in the
+// "Make management changes" beforeAll AFTER boot (the daemon scrubs OPENAI_*
+// from process.env at boot, so it must be re-seeded post-boot, mirroring the
+// harness's own ANTHROPIC/OPENROUTER re-seed). No real key required → no skip.
+describe("PERSIST-RESTART-E2E: Management actions survive daemon restart", () => {
   let tmpDir: string;
   let tmpConfigPath: string;
   let killSpy: ReturnType<typeof vi.spyOn>;
 
   // Track state from setup stage for verification after restart
   let createdTokenId: string;
+  /** Prior COMIS_GATEWAY_TOKEN, restored in afterAll so the suite leaves env clean. */
+  let priorGatewayToken: string | undefined;
 
   beforeAll(() => {
+    // Resolve the config's `${COMIS_GATEWAY_TOKEN}` ref to a real ≥32-char
+    // secret. Set before any daemon boots; COMIS_* is not in the daemon's
+    // SENSITIVE_PREFIXES, so it survives the env-scrub and the restart boot.
+    priorGatewayToken = process.env["COMIS_GATEWAY_TOKEN"];
+    process.env["COMIS_GATEWAY_TOKEN"] = "test-secret-persist-restart-gateway-token-pad32";
     // Create temp dir and copy config
     tmpDir = mkdtempSync(join(tmpdir(), "persist-restart-e2e-"));
     tmpConfigPath = join(tmpDir, "config.yaml");
     writeFileSync(tmpConfigPath, readFileSync(BASE_CONFIG_PATH, "utf-8"));
 
-    // Spy on process.kill to no-op SIGUSR1 (prevent actual restart during writes)
+    // Spy on process.kill to NO-OP the daemon's restart signal so persisted
+    // mutations don't trigger a self-restart mid-test (the suite drives the
+    // restart manually via cleanup + a fresh startTestDaemon). The config-change
+    // restart signal is SIGUSR2 (see setup-shutdown.ts / persist-to-config.ts);
+    // SIGUSR1 is no-op'd too for safety. Capture the ORIGINAL kill up-front and
+    // delegate other signals to it — calling `process.kill` here would re-enter
+    // this very spy and recurse infinitely (RangeError: Maximum call stack size).
+    const originalKill = process.kill.bind(process);
     killSpy = vi
       .spyOn(process, "kill")
       .mockImplementation(
         ((pid: number, signal?: string | number) => {
-          if (signal === "SIGUSR1") return true;
-          return process.kill.call(process, pid, signal as string);
+          if (signal === "SIGUSR2" || signal === "SIGUSR1") return true;
+          return originalKill(pid, signal as NodeJS.Signals);
         }) as typeof process.kill,
       );
   }, 30_000);
 
   afterAll(() => {
+    // Clear any pending SIGUSR2 restart timer BEFORE restoring the spy, so it
+    // cannot fire a real signal at the now-unspied process.kill.
+    _resetSigusr1Timer();
     if (killSpy) killSpy.mockRestore();
+    if (priorGatewayToken === undefined) {
+      delete process.env["COMIS_GATEWAY_TOKEN"];
+    } else {
+      process.env["COMIS_GATEWAY_TOKEN"] = priorGatewayToken;
+    }
     try {
       rmSync(tmpDir, { recursive: true, force: true });
     } catch {
@@ -113,13 +142,27 @@ describe.skipIf(!process.env.OPENAI_API_KEY)("PERSIST-RESTART-E2E: Management ac
   describe("Make management changes", () => {
     let handle: TestDaemonHandle;
     let rpcCall: RpcCall;
+    /** Prior OPENAI_API_KEY, restored in afterAll. */
+    let priorOpenAiKey: string | undefined;
 
     beforeAll(async () => {
       handle = await startTestDaemon({ configPath: tmpConfigPath });
+      // Seed a dummy OpenAI key AFTER boot: the daemon scrubs OPENAI_* from
+      // process.env during bootstrap, and `agents.create` (provider: openai)
+      // reads the env live to validate credential PRESENCE — it makes no real
+      // LLM call, so a non-empty placeholder satisfies the guard. (The harness
+      // re-seeds ANTHROPIC/OPENROUTER this same way; OpenAI is added here.)
+      priorOpenAiKey = process.env["OPENAI_API_KEY"];
+      process.env["OPENAI_API_KEY"] = "test-fixture-not-a-real-key";
       rpcCall = (handle.daemon as any).rpcCall;
     }, 120_000);
 
     afterAll(async () => {
+      if (priorOpenAiKey === undefined) {
+        delete process.env["OPENAI_API_KEY"];
+      } else {
+        process.env["OPENAI_API_KEY"] = priorOpenAiKey;
+      }
       if (handle) {
         try {
           await handle.cleanup();

@@ -50,6 +50,15 @@ const MCP_SERVER_FIXTURE = resolve(__dirname, "../support/__fixtures__/mcp-test-
 /** Unique gateway port for this suite (avoids colliding with the 4766 default). */
 const GATEWAY_PORT = 47662;
 
+/**
+ * Value the daemon resolves `${COMIS_GATEWAY_TOKEN}` to at config load. Set on
+ * process.env in beforeAll so the gateway token in the tmp config resolves to a
+ * real secret (and `handle.authToken` carries it), while the on-disk YAML keeps
+ * the env-ref literal that the persist guard exempts. ≥32 chars to satisfy the
+ * gateway-token schema floor.
+ */
+const GATEWAY_TOKEN_SECRET = "test-secret-key-for-cli-mcp-e2e-suite-32plus";
+
 // ---------------------------------------------------------------------------
 // Tmp config — a self-contained daemon config the daemon may freely persist
 // into. Mirrors the minimal shape of config.test.yaml with an empty MCP
@@ -76,7 +85,16 @@ function writeTmpConfig(dir: string, port: number): string {
     `  port: ${port}`,
     "  tokens:",
     '    - id: "test-token"',
-    '      secret: "test-secret-key-for-cli-mcp-e2e-suite-32plus"',
+    // Env-ref (NOT inline plaintext) for the gateway token secret. This suite
+    // exercises the persist path (`mcp connect` → persistToConfig), which since
+    // the security-hardening guard (persist-to-config.ts) refuses to write a
+    // config.yaml containing ANY plaintext secret. An inline literal here would
+    // abort every persist with `[plaintext_secret_blocked]` → "runtime_only".
+    // The `${COMIS_GATEWAY_TOKEN}` ref mirrors the production setup wizard
+    // (wizard/steps/10-write-config.ts) and is masked back to its env-ref by the
+    // guard's maskRefsFromOnDisk, so the scan exempts it. The env var is set in
+    // beforeAll (and survives the daemon env-scrub — COMIS_* is not sensitive).
+    '      secret: "${COMIS_GATEWAY_TOKEN}"',
     '      scopes: ["rpc", "ws", "admin"]',
     "  rateLimit:",
     "    windowMs: 60000",
@@ -117,8 +135,15 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
   let configPath: string;
   /** A token-less HOME so ensureGatewayToken cannot read a real ~/.comis/.env. */
   let emptyHome: string;
+  /** Prior COMIS_GATEWAY_TOKEN (restored in afterAll) so the suite leaves env clean. */
+  let priorGatewayToken: string | undefined;
 
   beforeAll(async () => {
+    // Set BEFORE boot so the config's `${COMIS_GATEWAY_TOKEN}` ref resolves at
+    // load. COMIS_* is not in the daemon's SENSITIVE_PREFIXES, so it survives
+    // the post-boot env-scrub and is still present for the Criterion-5 restart.
+    priorGatewayToken = process.env["COMIS_GATEWAY_TOKEN"];
+    process.env["COMIS_GATEWAY_TOKEN"] = GATEWAY_TOKEN_SECRET;
     tmpDir = mkdtempSync(join(tmpdir(), "cli-mcp-e2e-"));
     configPath = writeTmpConfig(tmpDir, GATEWAY_PORT);
     emptyHome = join(tmpDir, "empty-home");
@@ -134,6 +159,11 @@ describe("E2E: comis mcp CLI ↔ real daemon", () => {
         const msg = err instanceof Error ? err.message : String(err);
         if (!msg.includes("Daemon exit with code")) throw err;
       }
+    }
+    if (priorGatewayToken === undefined) {
+      delete process.env["COMIS_GATEWAY_TOKEN"];
+    } else {
+      process.env["COMIS_GATEWAY_TOKEN"] = priorGatewayToken;
     }
     rmSync(tmpDir, { recursive: true, force: true });
   }, 30_000);

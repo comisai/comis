@@ -103,6 +103,26 @@ describe("validateCanary", () => {
     expect(() => validateCanary(db, crypto)).not.toThrow();
   });
 
+  it("seeds the canary idempotently — repeated init never hits a UNIQUE constraint (race-safe)", () => {
+    // Two daemons booting in parallel against a shared secrets.db (the test
+    // harness shares ~/.comis), or a restart racing itself, both run
+    // validateCanary and both attempt to seed the canary. With the old raw
+    // INSERT the loser crashed with `UNIQUE constraint failed: secrets.name`.
+    // The idempotent seed must turn the duplicate into a no-op.
+    const crypto = makeCrypto();
+    validateCanary(db, crypto); // first initializer seeds
+    // Each subsequent call re-runs the (now unconditional) seed INSERT; it must
+    // be a no-op, not a constraint violation.
+    expect(() => validateCanary(db, crypto)).not.toThrow();
+    expect(() => validateCanary(db, crypto)).not.toThrow();
+
+    // Exactly one canary row — re-seeding did not duplicate or corrupt it.
+    const count = db
+      .prepare("SELECT COUNT(*) AS n FROM secrets WHERE name = ?")
+      .get(CANARY_NAME) as { n: number };
+    expect(count.n).toBe(1);
+  });
+
   it("throws DECRYPTION_FAILED with wrong master key", () => {
     const crypto1 = makeCrypto();
     const crypto2 = makeCrypto();
