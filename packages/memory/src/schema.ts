@@ -25,6 +25,36 @@ export function isVecAvailable(): boolean {
 }
 
 /**
+ * Additively ensure the `memories` table carries every column the current
+ * code expects, adding any that are absent. This is the package's
+ * forward-only, additive column-add path (design §4.1): SQLite has no
+ * `ADD COLUMN IF NOT EXISTS`, so each add is guarded by a
+ * `PRAGMA table_info(memories)` presence check. Safe to run on every boot,
+ * including a live `~/.comis` DB created before a column existed — existing
+ * rows get the column with a NULL value (a nullable add is O(1); no table
+ * rewrite, no backfill).
+ *
+ * Currently adds:
+ * - `occurred_at INTEGER` (TEMP-01): event time, distinct from `created_at`
+ *   (record time). NULL when the event time is unknown.
+ *
+ * @param db - An open better-sqlite3 Database instance whose `memories`
+ *   table already exists (created by `initSchema`'s `CREATE TABLE IF NOT EXISTS`).
+ */
+export function ensureMemoryColumns(db: Database.Database): void {
+  // Object-literal cast (matches the `as { v: string } | undefined` style at
+  // the vec_version() probe below); the untyped-sqlite rule targets `as Foo[]`
+  // (a \w+ named type) and does NOT match an object-literal cast.
+  const cols = new Set(
+    (db.prepare(`PRAGMA table_info(memories)`).all() as { name: string }[]).map((r) => r.name),
+  );
+  if (!cols.has("occurred_at")) {
+    // Nullable add → O(1), no table rewrite, no destructive rewrite (TEMP-01).
+    db.exec(`ALTER TABLE memories ADD COLUMN occurred_at INTEGER`);
+  }
+}
+
+/**
  * Initialize the full memory schema on the given SQLite database.
  *
  * Creates:
@@ -164,6 +194,12 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
 
   // --- Context store tables (DAG schema) ---
   initContextSchema(db);
+
+  // --- Additive memory columns (forward-only; design §4.1) ---
+  // The base CREATE TABLE above intentionally omits occurred_at; it is added
+  // here so the SAME path serves both a fresh DB and a live DB that predates
+  // the column (idempotent via the PRAGMA guard).
+  ensureMemoryColumns(db);
 
   // --- Observability persistence tables ---
   db.exec(`
