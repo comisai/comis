@@ -19,6 +19,11 @@ import { ok, err, fromPromise, type Result } from "@comis/shared";
 import { safePath, systemDateFrom, systemSetTimeout, systemClearTimeout, validateMemoryWrite } from "@comis/core";
 import type { MemoryReviewConfig } from "@comis/core";
 import type { MemoryPort, MemorySearchOptions } from "@comis/core";
+// IN-01 (Phase 83): the SEGREGATED entity-store port — imported as a TYPE ONLY.
+// The concrete adapter lives in the memory package; the agent↛memory build cut
+// forbids importing that package here (architecture-graph.test.ts). The daemon
+// (Plan 05) injects the adapter through `MemoryReviewDeps.entityStore`.
+import type { MemoryEntityStore } from "@comis/core";
 import type { MemoryEntry, MemorySource, TrustLevel, ClockPort } from "@comis/core";
 import type { SessionData, SessionKey } from "@comis/core";
 import { STRUCTURED_PROMPT, parseExtractionResult, resolveOccurredAt } from "./memory-extraction.js";
@@ -49,6 +54,16 @@ export interface MemoryReviewDeps {
   agentName: string;
   config: MemoryReviewConfig;
   memoryPort: MemoryPort;
+  /**
+   * OPTIONAL entity-associative store (IN-01, Phase 83). When injected, each
+   * memory's emitted entity mentions are resolved + linked AFTER a successful
+   * store, populating `memory_entities` / `memory_entity_links`. When ABSENT,
+   * the job behaves exactly as Phase 82 (entities are emit-only, not persisted)
+   * — so the daemon (Plan 05) can light this up independently. A link failure
+   * is NON-FATAL (mirrors the WR-01 store/search guards): the watermark still
+   * advances, so a resolver fault never stalls + reprocesses every cron tick.
+   */
+  entityStore?: MemoryEntityStore;
   sessionStore: {
     listDetailed(tenantId?: string): SessionDetailedEntry[];
     loadByFormattedKey(sessionKey: string): SessionData | undefined;
@@ -496,6 +511,39 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
         memoryId: entry.id,
         entities: m.entities.map((e) => ({ name: e.name, trustLevel, source: memorySource })),
       });
+
+      // IN-01 (Phase 83): persist the entity associations — resolve each emitted
+      // entity to a (tenant, agent)-scoped entity row and link it to THIS stored
+      // memory. The scope (tenantId, agentId) is the stored entry's own partition
+      // (ENT-03 isolation enforced at the write side); `now` comes from the
+      // injected clock (NEVER the wall-clock global — globals rule). Guarded by
+      // `deps.entityStore` so an un-injected port reproduces Phase-82 behaviour exactly.
+      //
+      // NON-FATAL (mirrors the WR-01 store/search guards above): `resolveAndLink`
+      // returns Promise<Result<string, Error>>, but a real adapter can REJECT
+      // (SQLITE_BUSY on a locked DB, disk-full). `fromPromise` collapses a
+      // rejection into an `err` Result; `!linked.ok` then covers the rejection and
+      // `!linked.value.ok` an inner-err Result. Either way we log a WARN
+      // (errorKind + hint only — NEVER the entity name body, AGENTS.md §2.7) and
+      // CONTINUE. No `return err`, no `throw`: the watermark advance below runs
+      // unchanged, so a resolver fault can never stall + reprocess every tick.
+      if (deps.entityStore) {
+        for (const e of m.entities) {
+          const linked = await fromPromise(
+            deps.entityStore.resolveAndLink(entry.id, e.name, { tenantId, agentId, now: clock.now() }),
+          );
+          if (!linked.ok || !linked.value.ok) {
+            logger.warn(
+              {
+                agentId,
+                errorKind: "dependency" as const,
+                hint: "entity link failed — memory stored, association skipped",
+              },
+              "Entity resolve/link failed (non-fatal)",
+            );
+          }
+        }
+      }
     } else {
       logger.warn(
         {
