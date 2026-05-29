@@ -355,14 +355,15 @@ describe("createSqliteMemoryEntityStore", () => {
       expect(ids).toEqual([]);
     });
 
-    it("the lane's (tenant,agent) scope is LOAD-BEARING — a cross-scope memory sharing the SAME entity_id is excluded ONLY by the WHERE (ENT-03)", async () => {
+    it("the lane's (tenant,agent) scope is LOAD-BEARING — a cross-scope memory sharing the SAME entity_id is excluded by the WHERE (ENT-03)", async () => {
       // Adversarial setup: bypass the scoped resolver and link a seed memory
       // (tenant_a/agent_a) AND a cross-AGENT memory (tenant_a/agent_z) to the
       // SAME entity_id. The resolver would never do this (it scopes entity ids),
-      // but this isolates the lane's `m.agent_id` WHERE as the single barrier:
-      // the cross memory shares the seed's tenant, so the hydration filter
-      // (`WHERE id=? AND tenant_id=?`) does NOT exclude it — ONLY the self-join's
-      // `AND m.agent_id=?` does. So this test FAILS if the lane scope is removed.
+      // but this exercises the lane's `m.agent_id` WHERE: the cross memory shares
+      // the seed's tenant, so a tenant-only filter would NOT exclude it. After
+      // LO-01 the agent dimension is enforced in TWO places — the self-join's
+      // `AND m.agent_id=?` AND the per-row hydrate's `AND agent_id=?` — so this
+      // test fails if EITHER agent filter is dropped (defense-in-depth).
       const m1 = await seedMemory({ id: "m1", tenantId: "tenant_a", agentId: "agent_a" });
       const cross = await seedMemory({
         id: "cross_shared_id",
@@ -383,8 +384,8 @@ describe("createSqliteMemoryEntityStore", () => {
       expect(res.ok).toBe(true);
       if (!res.ok) return;
 
-      // Despite a shared entity_id, the cross-scope memory is excluded — ONLY
-      // the lane's memories-row scope stops it here.
+      // Despite a shared entity_id, the cross-scope memory is excluded — the
+      // lane's memories-row (tenant, agent) scope stops it here.
       const ids = res.value.map((r) => r.entry.id);
       expect(ids).not.toContain("cross_shared_id");
       expect(ids).toEqual([]);

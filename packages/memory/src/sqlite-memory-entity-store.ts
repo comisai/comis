@@ -92,7 +92,15 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
   const insertLink = db.prepare(
     "INSERT OR IGNORE INTO memory_entity_links (memory_id, entity_id) VALUES (?, ?)",
   );
-  const hydrateMemory = db.prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?");
+  // LO-01: scope the per-row hydrate on BOTH (tenant_id, agent_id), not tenant
+  // alone. Today this is redundant — the lane self-join already filtered
+  // `m.agent_id = ?`, so every id reaching here is agent-scoped — but the
+  // isolation boundary then depends on two statements agreeing, with the agent
+  // dimension enforced in only one. Re-asserting the full scope here makes the
+  // hydrate self-sufficient (no fail-open if the lane query is ever refactored).
+  const hydrateMemory = db.prepare(
+    "SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ?",
+  );
 
   return {
     async resolveAndLink(
@@ -236,7 +244,9 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
         // order). Rows already arrive most-shared-first.
         const results: MemorySearchResult[] = [];
         for (const { memory_id, shared } of parsed.value) {
-          const memParsed = memoryRowMapper.parseOptionalRow(hydrateMemory.get(memory_id, tenantId));
+          const memParsed = memoryRowMapper.parseOptionalRow(
+            hydrateMemory.get(memory_id, tenantId, agentId),
+          );
           if (!memParsed.ok) return err(new Error(memParsed.error.message));
           const row = memParsed.value;
           if (!row) continue; // defensive: hydrate miss -> skip
