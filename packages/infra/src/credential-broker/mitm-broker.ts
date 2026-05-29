@@ -618,9 +618,10 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             { step: "upstream", sessionId, err, errorKind: "network" as const, hint: "Upstream connection failed; destroying tunnel" },
             "Upstream socket error",
           );
-          // Destroy the raw TCP socket — for TLSSocket, innerSocket.destroy()
-          // propagates to clientSocket automatically, but being explicit is correct.
-          clientSocket.destroy();
+          // Destroy the inner socket (TLSSocket when Phase 3 is wired, raw
+          // clientSocket in Phase 2). TLSSocket.destroy() propagates down to
+          // the underlying clientSocket automatically — not the reverse.
+          innerSocket.destroy();
         });
 
         // Pipe upstream response back to client (upstream → client direction).
