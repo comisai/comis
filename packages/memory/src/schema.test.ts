@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import Database from "better-sqlite3";
 import { describe, it, expect, beforeEach } from "vitest";
-import { initSchema, isVecAvailable } from "./schema.js";
+import { initSchema, isVecAvailable, ensureMemoryColumns } from "./schema.js";
 
 describe("initSchema", () => {
   let db: Database.Database;
@@ -31,6 +31,7 @@ describe("initSchema", () => {
     expect(colNames).toContain("source_session_key");
     expect(colNames).toContain("tags");
     expect(colNames).toContain("created_at");
+    expect(colNames).toContain("occurred_at");
     expect(colNames).toContain("updated_at");
     expect(colNames).toContain("expires_at");
     expect(colNames).toContain("has_embedding");
@@ -211,6 +212,116 @@ describe("initSchema", () => {
       .all() as Array<{ name: string }>;
 
     expect(tables).toHaveLength(2);
+  });
+
+  // ── occurred_at additive column (TEMP-01) ──────────────────────────
+
+  describe("occurred_at additive column (TEMP-01)", () => {
+    /**
+     * Build a `memories` table with the PRE-occurred_at column set (the
+     * shape a live ~/.comis DB has before this phase). Deliberately omits
+     * occurred_at so the additive path has something to add.
+     */
+    function createLegacyMemoriesTable(target: Database.Database): void {
+      target.exec(`
+        CREATE TABLE memories (
+          id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL DEFAULT 'default',
+          agent_id TEXT NOT NULL DEFAULT 'default',
+          user_id TEXT NOT NULL,
+          content TEXT NOT NULL,
+          trust_level TEXT NOT NULL,
+          memory_type TEXT NOT NULL DEFAULT 'semantic',
+          source_who TEXT NOT NULL,
+          source_channel TEXT,
+          source_session_key TEXT,
+          tags TEXT NOT NULL DEFAULT '[]',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER,
+          expires_at INTEGER,
+          has_embedding INTEGER NOT NULL DEFAULT 0
+        );
+      `);
+    }
+
+    it("adds occurred_at to a pre-existing memories table WITHOUT it, non-destructively", () => {
+      // Simulate a live DB created before Phase 81 — no occurred_at column.
+      createLegacyMemoriesTable(db);
+      db.prepare(
+        `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
+         VALUES ('pre-1', 'default', 'u1', 'an existing fact', 'learned', 'semantic', 'agent', '[]', 1000)`,
+      ).run();
+
+      // Pre-condition: occurred_at is genuinely absent.
+      const before = (
+        db.prepare("PRAGMA table_info(memories)").all() as Array<{ name: string }>
+      ).map((c) => c.name);
+      expect(before).not.toContain("occurred_at");
+
+      // The additive boot path must NOT throw on the live table...
+      expect(() => ensureMemoryColumns(db)).not.toThrow();
+
+      // ...and occurred_at is now present.
+      const after = (
+        db.prepare("PRAGMA table_info(memories)").all() as Array<{ name: string }>
+      ).map((c) => c.name);
+      expect(after).toContain("occurred_at");
+
+      // The pre-existing row survives, carrying occurred_at = NULL (no backfill).
+      const row = db
+        .prepare("SELECT id, content, occurred_at FROM memories WHERE id = 'pre-1'")
+        .get() as { id: string; content: string; occurred_at: number | null };
+      expect(row.id).toBe("pre-1");
+      expect(row.content).toBe("an existing fact");
+      expect(row.occurred_at).toBeNull();
+    });
+
+    it("is idempotent -- a second add on a table that already has occurred_at does not error", () => {
+      createLegacyMemoriesTable(db);
+      ensureMemoryColumns(db); // first add
+      // Second call must be a no-op (no `duplicate column name` error).
+      expect(() => ensureMemoryColumns(db)).not.toThrow();
+    });
+
+    it("initSchema run twice on the same DB keeps occurred_at exactly once", () => {
+      initSchema(db, 1536);
+      expect(() => initSchema(db, 1536)).not.toThrow();
+      const occurredCols = (
+        db.prepare("PRAGMA table_info(memories)").all() as Array<{ name: string }>
+      ).filter((c) => c.name === "occurred_at");
+      expect(occurredCols).toHaveLength(1);
+    });
+
+    it("occurred_at is NULLABLE -- inserting a row without it succeeds", () => {
+      initSchema(db, 1536);
+      expect(() => {
+        db.prepare(
+          `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
+           VALUES ('no-occ', 'default', 'u1', 'no event time', 'learned', 'semantic', 'agent', '[]', 1000)`,
+        ).run();
+      }).not.toThrow();
+
+      const row = db
+        .prepare("SELECT occurred_at FROM memories WHERE id = 'no-occ'")
+        .get() as { occurred_at: number | null };
+      expect(row.occurred_at).toBeNull();
+    });
+
+    it("occurred_at accepts an explicit epoch-ms event time distinct from created_at", () => {
+      initSchema(db, 1536);
+      db.prepare(
+        `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, occurred_at)
+         VALUES ('with-occ', 'default', 'u1', 'an event', 'learned', 'semantic', 'agent', '[]', 1700000000000, 1699000000000)`,
+      ).run();
+
+      const row = db
+        .prepare("SELECT created_at, occurred_at FROM memories WHERE id = 'with-occ'")
+        .get() as { created_at: number; occurred_at: number | null };
+      expect(row.created_at).toBe(1700000000000);
+      expect(row.occurred_at).toBe(1699000000000);
+      // Distinct axes: record time != event time.
+      expect(row.occurred_at).not.toBe(row.created_at);
+    });
   });
 
   it("vec_memories dimension matches config", () => {
