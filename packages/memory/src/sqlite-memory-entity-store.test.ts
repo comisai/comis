@@ -13,7 +13,7 @@
  * @module
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { MemoryEntry, MemoryConfig } from "@comis/core";
 import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
 import { createSqliteMemoryEntityStore } from "./sqlite-memory-entity-store.js";
@@ -419,6 +419,111 @@ describe("createSqliteMemoryEntityStore", () => {
 
       // m2's link to the surviving entity is untouched.
       expect(linkCount(m2)).toBe(1);
+    });
+  });
+
+  // =====================================================================
+  // Error paths + structured logging (cover the catch/log branches)
+  // =====================================================================
+
+  describe("logging + error paths", () => {
+    function spyLogger() {
+      return {
+        info: vi.fn(),
+        warn: vi.fn(),
+        debug: vi.fn(),
+      };
+    }
+
+    it("logs a debug 'entity-resolve' (reused:false, no fuzzyScore) on a fresh create", async () => {
+      const logger = spyLogger();
+      const loggingStore = createSqliteMemoryEntityStore({ db, logger });
+      const m1 = await seedMemory({ id: "m1" });
+
+      const res = await loggingStore.resolveAndLink(m1, "Brand New", SCOPE_A);
+      expect(res.ok).toBe(true);
+
+      const call = logger.debug.mock.calls.find((c) => c[0]?.step === "entity-resolve");
+      expect(call).toBeDefined();
+      expect(call?.[0]).toMatchObject({ step: "entity-resolve", reused: false });
+      expect(call?.[0]).not.toHaveProperty("fuzzyScore"); // omitted on create
+      // The name body is NEVER logged (AGENTS.md §2.7).
+      expect(JSON.stringify(call?.[0])).not.toContain("Brand New");
+    });
+
+    it("logs a debug 'entity-resolve' WITH fuzzyScore on a fuzzy reuse", async () => {
+      const logger = spyLogger();
+      const loggingStore = createSqliteMemoryEntityStore({ db, logger });
+      const m1 = await seedMemory({ id: "m1" });
+
+      await loggingStore.resolveAndLink(m1, "Jonathan", SCOPE_A);
+      logger.debug.mockClear();
+      await loggingStore.resolveAndLink(m1, "Jonathon", SCOPE_A); // fuzzy reuse
+
+      const call = logger.debug.mock.calls.find((c) => c[0]?.step === "entity-resolve");
+      expect(call?.[0]).toMatchObject({ step: "entity-resolve", reused: true });
+      expect(typeof call?.[0]?.fuzzyScore).toBe("number");
+      expect(call?.[0]?.fuzzyScore).toBeGreaterThanOrEqual(0.6);
+    });
+
+    it("logs a debug 'entity-lane' (resultCount + seedCount) on a non-empty lane and on the empty-seed skip", async () => {
+      const logger = spyLogger();
+      const loggingStore = createSqliteMemoryEntityStore({ db, logger });
+      const m1 = await seedMemory({ id: "m1" });
+      const m2 = await seedMemory({ id: "m2" });
+      await loggingStore.resolveAndLink(m1, "LoggedCo", SCOPE_A);
+      await loggingStore.resolveAndLink(m2, "LoggedCo", SCOPE_A);
+
+      logger.debug.mockClear();
+      await loggingStore.associativeLane([m1], { tenantId: "tenant_a", agentId: "agent_a" }, 50);
+      const laneCall = logger.debug.mock.calls.find((c) => c[0]?.step === "entity-lane");
+      expect(laneCall?.[0]).toMatchObject({ step: "entity-lane", seedCount: 1, resultCount: 1 });
+
+      logger.debug.mockClear();
+      await loggingStore.associativeLane([], { tenantId: "tenant_a", agentId: "agent_a" }, 50);
+      const skipCall = logger.debug.mock.calls.find((c) => c[0]?.step === "entity-lane");
+      expect(skipCall?.[0]).toMatchObject({ step: "entity-lane", seedCount: 0, resultCount: 0 });
+    });
+
+    it("resolveAndLink returns err + logs warn when the DB is unusable", async () => {
+      const logger = spyLogger();
+      // Build a store, seed a memory, THEN drop the memory_entities table so the
+      // resolver SELECT throws inside the transaction.
+      const localAdapter = new SqliteMemoryAdapter(memoryConfig);
+      const localDb = localAdapter.getDb();
+      const localStore = createSqliteMemoryEntityStore({ db: localDb, logger });
+      const entry = makeEntry({ id: "m1" });
+      await localAdapter.store(entry);
+      localDb.exec("DROP TABLE memory_entities");
+
+      const res = await localStore.resolveAndLink("m1", "Anything", SCOPE_A);
+      expect(res.ok).toBe(false);
+      const warn = logger.warn.mock.calls.find((c) => c[0]?.step === "entity-resolve");
+      expect(warn).toBeDefined();
+      expect(warn?.[0]).toMatchObject({ step: "entity-resolve", errorKind: "internal" });
+      expect(warn?.[0]?.err).toBeInstanceOf(Error);
+      localDb.close();
+    });
+
+    it("associativeLane returns err + logs warn when the lane query fails", async () => {
+      const logger = spyLogger();
+      const localAdapter = new SqliteMemoryAdapter(memoryConfig);
+      const localDb = localAdapter.getDb();
+      const localStore = createSqliteMemoryEntityStore({ db: localDb, logger });
+      // Drop the link table so the self-join throws.
+      localDb.exec("DROP TABLE memory_entity_links");
+
+      const res = await localStore.associativeLane(
+        ["seed-id"],
+        { tenantId: "tenant_a", agentId: "agent_a" },
+        50,
+      );
+      expect(res.ok).toBe(false);
+      const warn = logger.warn.mock.calls.find((c) => c[0]?.step === "entity-lane");
+      expect(warn).toBeDefined();
+      expect(warn?.[0]).toMatchObject({ step: "entity-lane", errorKind: "internal" });
+      expect(warn?.[0]?.err).toBeInstanceOf(Error);
+      localDb.close();
     });
   });
 });
