@@ -117,7 +117,10 @@ vi.mock("node:os", async (importOriginal) => {
 });
 
 import { assembleExecutionPrompt, extractUserLanguage, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, getCacheSafeParams, clearCacheSafeParams, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
-import { formatSessionKey, type SpawnPacket } from "@comis/core";
+import { formatSessionKey, type SpawnPacket, type MemorySearchResult } from "@comis/core";
+// Real (un-mocked) §7.3 guidance formatter — prompt-assembly pushes its block into
+// memorySections when >=2 memories are surfaced, so charsInjected legitimately counts it.
+import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
 import { createSpawnPacketBuilder } from "../spawn/spawn-packet-builder.js";
 // Fixture stub for the capability-index gate. Default returns `false` so
 // existing tests stay on the legacy gate-off path (byte-identical baseline).
@@ -338,7 +341,10 @@ describe("assembleExecutionPrompt", () => {
     expect(memoryEmit, "memory:injected emit must fire when injection produces content").toBeTruthy();
     const payload = memoryEmit![1];
     expect(payload.hitCount).toBe(2);
-    expect(payload.charsInjected).toBe("[inline rag chunk]".length + "section body".length);
+    // ranked.length === 2 -> the §7.3 guidance block is appended to memorySections,
+    // so charsInjected = inline + "section body" + the (real) guidance block.
+    const guidanceLen = buildTemporalGuidanceBlock(mockSearchResults as unknown as MemorySearchResult[])!.length;
+    expect(payload.charsInjected).toBe("[inline rag chunk]".length + "section body".length + guidanceLen);
     expect(new Set(payload.trustTags)).toEqual(new Set(["learned", "system"]));
     expect(typeof payload.timestamp).toBe("number");
     expect(typeof payload.traceId).toBe("string");
