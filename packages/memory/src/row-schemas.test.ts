@@ -84,6 +84,8 @@ import {
   BatchCacheRowSchema,
   IdProjectionRowSchema,
   CountProjectionRowSchema,
+  MemoryEntityRowSchema,
+  EntityLaneRowSchema,
 } from "./row-schemas.js";
 
 // =====================================================================
@@ -530,5 +532,58 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
       // ... missing all other required columns
     };
     expect(TokenUsageDbRowSchema.safeParse(sample).success).toBe(false);
+  });
+
+  // --- Entity-association row schemas (Phase 83) ---
+
+  it("MemoryEntityRowSchema parses a full memory_entities row including canonical_key", () => {
+    const sample = {
+      id: "e1",
+      tenant_id: "default",
+      agent_id: "default",
+      canonical_name: "Istanbul",
+      canonical_key: "istanbul",
+      mention_count: 3,
+      first_seen: 1700000000000,
+      last_seen: 1700000005000,
+    };
+    expect(MemoryEntityRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("MemoryEntityRowSchema rejects a row missing the canonical_key column", () => {
+    const sample = {
+      id: "e1",
+      tenant_id: "default",
+      agent_id: "default",
+      canonical_name: "Istanbul",
+      // canonical_key omitted
+      mention_count: 1,
+      first_seen: 1700000000000,
+      last_seen: 1700000000000,
+    };
+    expect(MemoryEntityRowSchema.safeParse(sample).success).toBe(false);
+  });
+
+  it("MemoryEntityRowSchema rejects unknown extra columns (z.strictObject)", () => {
+    const sample = {
+      id: "e1",
+      tenant_id: "default",
+      agent_id: "default",
+      canonical_name: "Istanbul",
+      canonical_key: "istanbul",
+      mention_count: 1,
+      first_seen: 1700000000000,
+      last_seen: 1700000000000,
+      attacker_injected: "x",
+    };
+    expect(MemoryEntityRowSchema.safeParse(sample).success).toBe(false);
+  });
+
+  it("EntityLaneRowSchema parses the self-join projection (memory_id + shared count)", () => {
+    expect(EntityLaneRowSchema.safeParse({ memory_id: "m2", shared: 2 }).success).toBe(true);
+  });
+
+  it("EntityLaneRowSchema rejects a non-numeric shared count", () => {
+    expect(EntityLaneRowSchema.safeParse({ memory_id: "m2", shared: "two" }).success).toBe(false);
   });
 });
