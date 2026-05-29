@@ -2334,3 +2334,96 @@ describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManage
     },
   );
 });
+
+// ── (03-fix) RED tests — findings from Phase 3 REVIEW.md ─────────────────────
+
+describe("(03-fix) CR-02 — fail-closed ordering: unlisted host must NOT get a cert minted before 403", () => {
+  let caDataDir: string;
+
+  beforeEach(() => {
+    caDataDir = mkdtempSync(join(tmpdir(), "comis-cr02-tls-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(caDataDir, { recursive: true, force: true });
+  });
+
+  it(
+    "caManager wired + valid token + unlisted host → 403 BEFORE any cert is minted or cached",
+    async () => {
+      // Track whether serverContextForHost is ever called for the unlisted host
+      const clock = createFakeClock(Date.now());
+      const caManager = createNodeCaManager({ clock, dataDir: caDataDir });
+
+      const mintCalls: string[] = [];
+      const spyCaManager = {
+        serverContextForHost: async (host: string) => {
+          mintCalls.push(host);
+          return caManager.serverContextForHost(host);
+        },
+      };
+
+      const sessionManager = createSessionManager({ clock });
+      const deps: MitmBrokerDeps = {
+        clock,
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
+        sessionManager,
+        bindings: [makeAnthropicBinding()], // only api.anthropic.com is listed
+        caManager: spyCaManager,
+      };
+
+      const broker = createMitmBroker(deps);
+      runningBrokers.push(broker);
+      const brokerPort = await broker.start();
+
+      const { proxyToken } = sessionManager.issueToken("agent-1");
+
+      // CONNECT to evil.com (unlisted host) — the broker must 403 and MUST NOT
+      // call serverContextForHost for evil.com (no cert should be minted)
+      const result = await new Promise<{ statusCode: number; socket: import("node:net").Socket }>(
+        (resolve, reject) => {
+          const s = net.connect(brokerPort, "127.0.0.1", () => {
+            s.write(
+              `CONNECT evil.com:443 HTTP/1.1\r\n` +
+                `Host: evil.com:443\r\n` +
+                `Proxy-Authorization: Bearer ${proxyToken}\r\n` +
+                `\r\n`,
+            );
+          });
+          let buf = "";
+          s.on("data", (chunk: Buffer) => {
+            buf += chunk.toString("latin1");
+            if (!buf.includes("\r\n\r\n")) return;
+            const statusLine = buf.slice(0, buf.indexOf("\r\n"));
+            const code = parseInt(statusLine.split(" ")[1] ?? "0", 10);
+            resolve({ statusCode: code, socket: s });
+          });
+          s.on("error", reject);
+          setTimeout(() => reject(new Error("CONNECT timeout")), 5000);
+        },
+      );
+
+      // The broker should return 200 for CONNECT (auth gate passed), then
+      // after TLS upgrade attempt, should detect no binding and return 403.
+      // Wait briefly for the broker to process the request
+      await new Promise((r) => setTimeout(r, 300));
+      result.socket.destroy();
+
+      // serverContextForHost must NOT have been called for evil.com
+      // (the pre-flight host check must fire before the caManager call)
+      expect(mintCalls).not.toContain("evil.com");
+
+      // broker:denied must have been emitted with no_binding reason
+      expect(deps.eventBus.emit).toHaveBeenCalledWith(
+        "broker:denied",
+        expect.objectContaining({
+          reason: "no_binding",
+          statusCode: 403,
+        }),
+      );
+    },
+    15_000,
+  );
+});
