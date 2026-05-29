@@ -1741,6 +1741,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // consumed by the daemon (setup-memory); the options type is part of its public
       // API surface — baseline orphan until an external/test consumer references it.
       "LocalRerankerProviderOptions",
+      // Entity-associative recall store (Phase 83-02). createSqliteMemoryEntityStore
+      // is the sole MemoryEntityStore adapter; the daemon composition root constructs
+      // it on the memory adapter's db handle in Plan 83-05 (setup-memory). Surfaced
+      // here ahead of that wiring — baseline orphans until the daemon consumer lands.
+      "createSqliteMemoryEntityStore",
+      "MemoryEntityStoreDeps",
       "EmbeddingCacheOptions",
       "EmbeddingCacheStats",
       "SqliteEmbeddingCacheOptions",
@@ -1794,6 +1800,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Public-row schemas + inferred types (5 × 2 = 10 entries):
       "MemoryRowSchema",
       "MemoryRowFromSchema",
+      // Entity-association row schemas (Phase 83-01). Consumed intra-package by
+      // sqlite-memory-entity-store.ts (Plan 83-02) via createRowMapper; surfaced
+      // through `export *` so tracked here like the sibling row schemas (the
+      // checker counts cross-package barrel consumers only).
+      "MemoryEntityRowSchema",
+      "EntityLaneRowSchema",
       "SessionRowSchema",
       "SessionRowFromSchema",
       "VecSearchRowSchema",
