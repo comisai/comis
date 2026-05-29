@@ -817,6 +817,175 @@ describe("v2.5 model:* turn-scoping (EVT-04)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Phase 86 (OBS-04) — memory recall/rerank/entity-link observability events.
+//
+// Counts/booleans ONLY closed-union payloads. These fail to compile on the
+// pre-patch event-bus types (RED proof): EventMap has no "memory:recalled",
+// "memory:reranked", or "memory:entities_linked" key yet. The shape
+// assertions double as the no-body invariant (the type carries no content /
+// query text / entity-name field; a source-grep test below re-proves it).
+// ---------------------------------------------------------------------------
+
+describe("Phase 86 memory:* recall observability events (OBS-04)", () => {
+  it("memory:recalled delivers per-lane candidate counts, finalCount, rerankerAvailable, durationMs", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["memory:recalled"] = {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-recall-001",
+      lanes: 3,
+      ftsCandidates: 12,
+      vectorCandidates: 8,
+      entityCandidates: 4,
+      finalCount: 6,
+      rerankerAvailable: true,
+      durationMs: 47,
+      timestamp: Date.now(),
+    };
+
+    bus.on("memory:recalled", handler);
+    bus.emit("memory:recalled", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const r = handler.mock.calls[0]![0] as EventMap["memory:recalled"];
+    expect(r.lanes).toBe(3);
+    expect(r.ftsCandidates).toBe(12);
+    expect(r.vectorCandidates).toBe(8);
+    expect(r.entityCandidates).toBe(4);
+    expect(r.finalCount).toBe(6);
+    expect(r.rerankerAvailable).toBe(true);
+    expect(r.durationMs).toBe(47);
+
+    // sessionKey is optional — bridge may omit it for non-session recalls.
+    const noSession: EventMap["memory:recalled"] = {
+      agentId: "agent-1",
+      traceId: "trace-recall-002",
+      lanes: 1,
+      ftsCandidates: 5,
+      vectorCandidates: 0,
+      entityCandidates: 0,
+      finalCount: 0,
+      rerankerAvailable: false,
+      durationMs: 3,
+      timestamp: Date.now(),
+    };
+    bus.emit("memory:recalled", noSession);
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler.mock.calls[1]![0].sessionKey).toBeUndefined();
+  });
+
+  it("memory:reranked delivers candidate/hit counts plus timedOut/fellBack outcome flags", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["memory:reranked"] = {
+      agentId: "agent-1",
+      traceId: "trace-rerank-001",
+      candidateCount: 20,
+      hitCount: 6,
+      rerankerAvailable: true,
+      timedOut: false,
+      fellBack: false,
+      durationMs: 31,
+      timestamp: Date.now(),
+    };
+
+    bus.on("memory:reranked", handler);
+    bus.emit("memory:reranked", payload);
+
+    const r = handler.mock.calls[0]![0] as EventMap["memory:reranked"];
+    expect(r.candidateCount).toBe(20);
+    expect(r.hitCount).toBe(6);
+    expect(r.rerankerAvailable).toBe(true);
+    expect(r.timedOut).toBe(false);
+    expect(r.fellBack).toBe(false);
+    expect(r.durationMs).toBe(31);
+  });
+
+  it("memory:entities_linked delivers entityCount, newEntities, durationMs", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["memory:entities_linked"] = {
+      agentId: "agent-1",
+      entityCount: 5,
+      newEntities: 2,
+      durationMs: 9,
+      timestamp: Date.now(),
+    };
+
+    bus.on("memory:entities_linked", handler);
+    bus.emit("memory:entities_linked", payload);
+
+    const r = handler.mock.calls[0]![0] as EventMap["memory:entities_linked"];
+    expect(r.entityCount).toBe(5);
+    expect(r.newEntities).toBe(2);
+    expect(r.durationMs).toBe(9);
+  });
+
+  it("type safety: @ts-expect-error rejects content/query/entity-name on the counts-only payloads", () => {
+    const bus = new TypedEventBus();
+
+    bus.emit("memory:recalled", {
+      agentId: "a",
+      traceId: "t",
+      lanes: 1,
+      ftsCandidates: 1,
+      vectorCandidates: 0,
+      entityCandidates: 0,
+      finalCount: 1,
+      rerankerAvailable: false,
+      durationMs: 1,
+      timestamp: 1,
+      // @ts-expect-error - query text is a forbidden field on the counts-only payload
+      queryText: "who is alice",
+    });
+
+    bus.emit("memory:entities_linked", {
+      agentId: "a",
+      entityCount: 1,
+      newEntities: 0,
+      durationMs: 1,
+      timestamp: 1,
+      // @ts-expect-error - entity names must never ride on the payload
+      entityNames: ["Alice"],
+    });
+
+    // @ts-expect-error - missing required finalCount on memory:recalled
+    bus.emit("memory:recalled", {
+      agentId: "a",
+      traceId: "t",
+      lanes: 1,
+      ftsCandidates: 1,
+      vectorCandidates: 0,
+      entityCandidates: 0,
+      rerankerAvailable: false,
+      durationMs: 1,
+      timestamp: 1,
+    });
+  });
+
+  it("payload types carry no content/query/entity-name field (counts-only source invariant)", () => {
+    // Source-grep the three Phase 86 event blocks for forbidden privacy-leak
+    // keys. The closed shapes MUST carry counts/booleans/ids only — never
+    // query text, memory bodies, or entity names (AGENTS.md §2.7).
+    const src = readFileSync(resolve(here, "./events-agent.ts"), "utf8");
+    for (const key of ["memory:recalled", "memory:reranked", "memory:entities_linked"]) {
+      const match = src.match(
+        new RegExp(`"${key}":\\s*\\{[\\s\\S]*?\\n\\s*\\};`),
+      );
+      expect(match, `${key} event block must exist`).toBeTruthy();
+      const block = match![0];
+      expect(block, `${key}: no raw content field`).not.toMatch(/^\s*content[?]?:/m);
+      expect(block, `${key}: no query/queryText field`).not.toMatch(/^\s*query(?:Text)?[?]?:/m);
+      expect(block, `${key}: no entityName(s)/names field`).not.toMatch(
+        /^\s*(?:entityNames?|names)[?]?:/m,
+      );
+      expect(block, `${key}: no memory body field`).not.toMatch(/^\s*body[?]?:/m);
+    }
+  });
+});
+
 describe("tool:install_detour_detected event type", () => {
   it("type-checks against the closed shape", () => {
     const bus = new TypedEventBus();
