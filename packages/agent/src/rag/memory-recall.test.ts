@@ -26,6 +26,7 @@ import type {
   MemoryPort,
   MemorySearchResult,
   MemorySearchOptions,
+  MemoryEntityStore,
   RerankerPort,
   SessionKey,
   TrustLevel,
@@ -115,6 +116,40 @@ function mockReranker(opts: {
     },
   };
   return { port, calls };
+}
+
+/**
+ * A real SessionKey object (NOT the string-cast SESSION_KEY) so the entity-lane
+ * scope (sessionKey.tenantId) is a meaningful value the lane call can be asserted on.
+ */
+const SESSION_KEY_OBJ = {
+  tenantId: "tenant_x",
+  userId: "user_a",
+  channelId: "chat_1",
+} as unknown as SessionKey;
+
+/**
+ * A controllable MemoryEntityStore stub. `associativeLane` returns a canned Result
+ * and records every call (seedIds + scope + cap) so scope/lazy-call invariants are
+ * assertable. `resolveAndLink` is the unused write-path half (recall never calls it).
+ */
+function fakeEntityStore(
+  laneResult: Result<MemorySearchResult[], Error>,
+): {
+  store: MemoryEntityStore;
+  calls: { seedIds: string[]; scope: { tenantId: string; agentId: string }; cap: number }[];
+} {
+  const calls: { seedIds: string[]; scope: { tenantId: string; agentId: string }; cap: number }[] = [];
+  const store: MemoryEntityStore = {
+    async resolveAndLink() {
+      return ok("entity_id");
+    },
+    async associativeLane(seedIds, scope, cap) {
+      calls.push({ seedIds, scope, cap });
+      return laneResult;
+    },
+  };
+  return { store, calls };
 }
 
 const fixedClock: ClockPort = { now: () => NOW } as unknown as ClockPort;
@@ -537,5 +572,202 @@ describe("createMemoryRecall — orchestrator composition", () => {
     );
     await recall.recall("q", SESSION_KEY);
     expect(capture.opts?.limit).toBe(5);
+  });
+});
+
+describe("createMemoryRecall — entity associative lane (ENT-02/ENT-04)", () => {
+  // Boosts neutralized so the FUSION verdict (not score() boosts) is what orders the
+  // output — the entity-lane RRF contribution is then the only thing under test.
+  const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 };
+  const ENABLED_LANE = { enabled: true, seedCount: 5, perEntityCap: 200, weight: 1.0 };
+  const DISABLED_LANE = { enabled: false, seedCount: 5, perEntityCap: 200, weight: 1.0 };
+
+  /**
+   * Reference: the pre-Phase-83 single-lane fused output (no entity lane) — exactly
+   * what the disabled / no-seed / err paths must reproduce verbatim (ENT-04).
+   */
+  function singleLaneReference(input: MemorySearchResult[]): string[] {
+    const fused = fuse([{ results: input, weight: 1.0 }]);
+    const scored = score(fused, NEUTRAL, NOW);
+    const allowed = new Set<TrustLevel>(["system", "learned"]);
+    return deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel))).map(
+      (r) => r.entry.id,
+    );
+  }
+
+  it("ENT-02: a shared-entity memory (from the lane, absent from search) OUTRANKS a non-sharing weak search hit after fusion", async () => {
+    // Search lane: a strong seed + a WEAK non-sharing hit. Without the lane, single-lane
+    // fuse is pass-through → order is [seed, nonSharing] and `shared` is absent entirely.
+    const input = [
+      makeResult("seed", { base: 0.9, trustLevel: "learned", createdAt: NOW }),
+      makeResult("nonSharing", { base: 0.2, trustLevel: "learned", createdAt: NOW }),
+    ];
+    // The entity lane returns ONE shared-entity memory NOT in the search lane, rank-1.
+    // Multi-lane RRF: shared = 1/(60+1) ties the seed and BEATS nonSharing = 1/(60+2).
+    const { store, calls } = fakeEntityStore(
+      ok([makeResult("shared", { base: 0.99, trustLevel: "learned", createdAt: NOW })]),
+    );
+
+    // Baseline (no lane) ranks nonSharing above shared (shared not present at all).
+    const baselineIds = singleLaneReference(input);
+    expect(baselineIds).toEqual(["seed", "nonSharing"]);
+    expect(baselineIds).not.toContain("shared");
+
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        entityStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, entityLane: ENABLED_LANE } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const ids = got.value.map((r) => r.entry.id);
+    // The lane flipped it in: shared is present AND outranks the non-sharing weak hit.
+    expect(ids).toContain("shared");
+    expect(ids.indexOf("shared")).toBeLessThan(ids.indexOf("nonSharing"));
+    // Lane invoked once, lazily, with the seed ids (top seedCount), the recall scope, and cap.
+    expect(calls.length).toBe(1);
+    expect(calls[0]?.seedIds).toEqual(["seed", "nonSharing"]);
+    expect(calls[0]?.scope).toEqual({ tenantId: "tenant_x", agentId: "agent_y" });
+    expect(calls[0]?.cap).toBe(200);
+  });
+
+  it("ENT-02 seedCount: only the top `seedCount` search hits seed the lane", async () => {
+    const input = [
+      makeResult("s1", { base: 0.9 }),
+      makeResult("s2", { base: 0.8 }),
+      makeResult("s3", { base: 0.7 }),
+    ];
+    const { store, calls } = fakeEntityStore(ok([]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        entityStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        entityLane: { ...ENABLED_LANE, seedCount: 2 },
+      } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(calls.length).toBe(1);
+    // only the top 2 hits seed the lane
+    expect(calls[0]?.seedIds).toEqual(["s1", "s2"]);
+  });
+
+  it("ENT-04 disabled: entityLane.enabled=false -> lane NOT called, output identical to single-lane fuse", async () => {
+    const input = [
+      makeResult("a", { base: 0.9 }),
+      makeResult("b", { base: 0.4 }),
+    ];
+    // Lane would return a memory IF called — proving the disabled guard, not an empty lane.
+    const { store, calls } = fakeEntityStore(ok([makeResult("shared", { base: 0.99 })]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        entityStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, entityLane: DISABLED_LANE } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0); // lane never invoked when disabled
+    expect(got.value.map((r) => r.entry.id)).toEqual(singleLaneReference(input));
+  });
+
+  it("ENT-04 no entityStore: an undefined store -> no lane, output identical to single-lane fuse", async () => {
+    const input = [
+      makeResult("a", { base: 0.9 }),
+      makeResult("b", { base: 0.4 }),
+    ];
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
+      baseConfig({ scoring: NEUTRAL, entityLane: ENABLED_LANE } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(singleLaneReference(input));
+  });
+
+  it("ENT-04 no seeds: search returned nothing -> associativeLane NOT called (no empty-seed query)", async () => {
+    const { store, calls } = fakeEntityStore(ok([makeResult("shared", { base: 0.99 })]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort([]),
+        entityStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, entityLane: ENABLED_LANE } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0); // no seeds -> lane never invoked
+    expect(got.value).toEqual([]);
+  });
+
+  it("ENT-04 empty lane: associativeLane returns ok([]) -> no 2nd lane pushed, output identical to single-lane fuse", async () => {
+    const input = [
+      makeResult("a", { base: 0.9 }),
+      makeResult("b", { base: 0.4 }),
+    ];
+    const { store, calls } = fakeEntityStore(ok([])); // no shared entities
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        entityStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, entityLane: ENABLED_LANE } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(1); // lane WAS queried (seeds existed)
+    // but it returned empty -> single-lane fuse, unchanged.
+    expect(got.value.map((r) => r.entry.id)).toEqual(singleLaneReference(input));
+  });
+
+  it("ENT-04 err-fallback NON-FATAL: associativeLane err -> WARN(errorKind+hint) + fall back to search lane only (recall succeeds)", async () => {
+    const input = [
+      makeResult("a", { base: 0.9 }),
+      makeResult("b", { base: 0.4 }),
+    ];
+    const warn = vi.fn();
+    const logger = { ...noopLogger, warn } as unknown as ComisLogger;
+    const { store } = fakeEntityStore(err(new Error("lane self-join exploded")));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        entityStore: store,
+        clock: fixedClock,
+        logger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, entityLane: ENABLED_LANE } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    // recall NEVER fails because the entity lane failed.
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // fell back to the search lane only -> single-lane fuse, unchanged.
+    expect(got.value.map((r) => r.entry.id)).toEqual(singleLaneReference(input));
+    // WARN with a structured errorKind + hint.
+    expect(warn).toHaveBeenCalled();
+    const warnArg = warn.mock.calls.find(
+      (c) => typeof (c[0] as { errorKind?: string })?.errorKind === "string" && (c[0] as { hint?: string })?.hint,
+    );
+    expect(warnArg).toBeDefined();
   });
 });
