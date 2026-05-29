@@ -6,17 +6,13 @@
  */
 import "reflect-metadata"; // MUST be first import — before @peculiar/x509 loads via ca-manager.ts
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, connect } from "node:tls";
 import type { AddressInfo } from "node:net";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
-import { createNodeCaManager } from "./ca-manager.js";
-
-// Mirror constants from ca-manager.ts for clock.advance() calculations
-const LEAF_VALIDITY_MS = 24 * 60 * 60 * 1000; // 24 hours
-const REFRESH_BUFFER_MS = 60 * 60 * 1000; // 1 hour
+import { createNodeCaManager, LEAF_VALIDITY_MS, REFRESH_BUFFER_MS } from "./ca-manager.js";
 
 let tmpDir: string;
 beforeEach(() => {
@@ -187,5 +183,57 @@ describe("NodeCaManager — CA-02b+CA-02c: In-process TLS handshake", () => {
       client.destroy();
       await new Promise<void>((r) => server.close(r));
     }
+  });
+});
+
+// ── (03-fix) RED tests — findings from REVIEW.md ─────────────────────────────
+
+describe("(03-fix) CR-01 — partial-write recovery: key file must not be corrupted by append", () => {
+  it("key-exists-but-cert-missing state: next init regenerates a single valid key (no double-PEM append)", async () => {
+    // Simulate the partial-write scenario: key written but cert not.
+    // First: create a real CA so we have a valid key PEM on disk.
+    const clock = createFakeClock(Date.now());
+    const m1 = createNodeCaManager({ clock, dataDir: tmpDir });
+    await m1.serverContextForHost("a.example.com");
+
+    // Delete just the cert — simulates a crash after key write but before cert write.
+    const certPath = join(tmpDir, "broker-ca.pem");
+    const keyPath = join(tmpDir, "broker-ca.key");
+    rmSync(certPath);
+
+    // Create a new manager — it should regenerate cleanly (not append a second PEM block).
+    const m2 = createNodeCaManager({ clock, dataDir: tmpDir });
+    // This must succeed (importKey crash would mean double-PEM was appended)
+    await expect(m2.serverContextForHost("b.example.com")).resolves.toBeDefined();
+
+    // The key file must contain exactly ONE PEM block — not two appended ones
+    const keyContent = readFileSync(keyPath, "utf8");
+    const pemBlockCount = (keyContent.match(/-----BEGIN PRIVATE KEY-----/g) ?? []).length;
+    expect(pemBlockCount).toBe(1);
+
+    // Both key and cert must now exist and be consistent
+    expect(existsSync(certPath)).toBe(true);
+  });
+});
+
+describe("(03-fix) CR-03 — concurrent ensureCa() calls: promise singleton prevents double initCa", () => {
+  it("two concurrent serverContextForHost calls on a fresh dir: initCa runs once, key file has single PEM block", async () => {
+    const clock = createFakeClock(Date.now());
+    const manager = createNodeCaManager({ clock, dataDir: tmpDir });
+    const keyPath = join(tmpDir, "broker-ca.key");
+
+    // Fire two concurrent calls — without the fix, both see caState===null and race
+    const [ctx1, ctx2] = await Promise.all([
+      manager.serverContextForHost("host1.example.com"),
+      manager.serverContextForHost("host2.example.com"),
+    ]);
+
+    expect(ctx1).toBeDefined();
+    expect(ctx2).toBeDefined();
+
+    // Key file must have exactly ONE PEM block — not two from double-initCa
+    const keyContent = readFileSync(keyPath, "utf8");
+    const pemBlockCount = (keyContent.match(/-----BEGIN PRIVATE KEY-----/g) ?? []).length;
+    expect(pemBlockCount).toBe(1);
   });
 });
