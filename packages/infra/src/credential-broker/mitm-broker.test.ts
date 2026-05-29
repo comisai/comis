@@ -2694,6 +2694,144 @@ describe("FINAL-01f — finalizer path upstream socket error is handled", () => 
   }, 15_000);
 });
 
+// ── (04-fix) Tests for CR-01/WR-01/IN-01 — finalizer stage improvements ───────
+
+describe("(04-fix) IN-01 — chunked Transfer-Encoding with no Content-Length → 411", () => {
+  it("finalizer-configured rule + chunked TE + no CL → socket receives 411 Length Required", async () => {
+    const upstream = await makeBodyUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" });
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      timers: createFakeTimers(),
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager,
+      sessionManager,
+      bindings: [makeAwsSigV4Binding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Send chunked TE with no Content-Length — broker must reject with 411
+    let responseBuf = "";
+    await new Promise<void>((resolve) => {
+      socket.on("data", (chunk: Buffer) => {
+        responseBuf += chunk.toString("latin1");
+        if (responseBuf.includes("\r\n\r\n")) resolve();
+      });
+      socket.on("error", () => resolve());
+      socket.on("close", () => resolve());
+      socket.write("POST /v1/messages HTTP/1.1\r\ntransfer-encoding: chunked\r\nhost: api.anthropic.com\r\n\r\n");
+      setTimeout(() => resolve(), 2000);
+    });
+    socket.destroy();
+
+    await new Promise((r) => setTimeout(r, 200));
+    upstream.server.close();
+
+    // Must receive 411 Length Required
+    expect(responseBuf).toContain("411");
+    // Upstream must not have received any request
+    expect(upstream.receivedHeaders).toHaveLength(0);
+  }, 15_000);
+});
+
+describe("(04-fix) body > cap via actual bytes (bufferBody null path) → 413 denied", () => {
+  it("body bytes exceed cap without Content-Length declaration → 413 fail-closed", async () => {
+    // This covers the bodyBuf === null path when cap is exceeded via actual bytes
+    // (not via declared CL). We use a tiny cap binding to make the test fast.
+    const upstream = await makeBodyUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const secretManager = createSecretManager({ SMALL_KEY: "real-sk-key" });
+    const sessionManager = createSessionManager({ clock });
+    const eventBus = createMockEventBus();
+    // A binding with a finalizer and a very small in-test cap —
+    // we achieve this by sending body > MAX_BODY_BYTES declared, but here
+    // we test the bufferBody null path via a body that exceeds the local cap.
+    // Since we can't easily inject a smaller cap, we use a real large body
+    // but test via the bytes-exceed-cap path with MAX_BODY_BYTES+1 bytes
+    // but WITHOUT declaring a Content-Length (so WR-01 doesn't intercept it).
+    // To do this efficiently in tests, we use a 1-byte body but with cap=0.
+    // We can't change the global MAX_BODY_BYTES, so instead we'll just
+    // send the cap+1 bytes without a Content-Length header so the broker
+    // must buffer them and discover the cap is exceeded.
+    const smallCapBinding: BrokerBinding = {
+      secretRef: "SMALL_KEY",
+      hostRules: [
+        {
+          pattern: { kind: "exact", host: "small.example.com" },
+          inject: [{ kind: "setHeader", name: "x-key", format: "raw" }],
+          finalizer: { kind: "awsSigV4" },
+        },
+      ],
+    };
+    const deps: MitmBrokerDeps = {
+      clock,
+      timers: createFakeTimers(),
+      eventBus,
+      logger: createMockLogger(),
+      secretManager,
+      sessionManager,
+      bindings: [smallCapBinding],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `small.example.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Send MAX_BODY_BYTES + 1 bytes with NO Content-Length (bypasses WR-01 early check).
+    // The broker must buffer and hit the cap mid-stream.
+    const overCapBuf = Buffer.alloc(MAX_BODY_BYTES + 1, 0x61);
+    let responseBuf = "";
+    await new Promise<void>((resolve) => {
+      socket.on("data", (chunk: Buffer) => {
+        responseBuf += chunk.toString("latin1");
+        if (responseBuf.includes("\r\n\r\n")) resolve();
+      });
+      socket.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EPIPE" || err.code === "ECONNRESET") return;
+        resolve();
+      });
+      socket.on("close", () => {
+        if (responseBuf.includes("\r\n\r\n")) resolve();
+      });
+      socket.write(`POST /v1/test HTTP/1.1\r\nhost: small.example.com\r\n\r\n`);
+      socket.write(overCapBuf);
+      setTimeout(() => resolve(), 5000);
+    });
+    socket.destroy();
+
+    await new Promise((r) => setTimeout(r, 300));
+    upstream.server.close();
+
+    // broker:denied must be emitted with body_too_large
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "broker:denied",
+      expect.objectContaining({ reason: "body_too_large", statusCode: 413 }),
+    );
+    // Upstream receives no request
+    expect(upstream.receivedHeaders).toHaveLength(0);
+  }, 30_000);
+});
+
 // ── (03-fix) RED tests — findings from Phase 3 REVIEW.md ─────────────────────
 
 describe("(03-fix) CR-02 — fail-closed ordering: unlisted host must NOT get a cert minted before 403", () => {

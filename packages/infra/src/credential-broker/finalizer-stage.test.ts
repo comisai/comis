@@ -264,4 +264,15 @@ describe("FINAL-01h — bufferBody: contentLength-guided stop", () => {
     const result2 = await promise;
     expect(result2).not.toBeNull();
   });
+
+  it("default scheduleTimeout (no 5th arg) — normal socket EOF resolves successfully", async () => {
+    // Exercises the default parameter value for scheduleTimeout.
+    // Without passing the 5th arg, bufferBody uses the built-in no-op default.
+    const socket = makeSocketMock();
+    const promise = bufferBody(socket as never, "abc", 100);
+    socket.emit("end");
+    const result = await promise;
+    expect(result).not.toBeNull();
+    expect(result!.equals(Buffer.from("abc", "latin1"))).toBe(true);
+  });
 });
