@@ -164,6 +164,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PendingUpdate",
       "GreetingGeneratorDeps",
       "MemoryReviewDeps",
+      // Consolidation job Deps (Phase 84-03). runMemoryConsolidation is consumed by the
+      // daemon (Plan 84-05, setup-channels-credentials __MEMORY_CONSOLIDATION__ sentinel),
+      // but it is called with an inline object, so the named Deps SHAPE type has no
+      // production consumer — baseline orphan (mirror MemoryReviewDeps).
+      "MemoryConsolidationDeps",
       "formatMemorySection",
       "CommandQueueDeps",
       "QueueStats",
@@ -1081,6 +1086,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "VerbosityOverrideSchema",
       "OutputRetentionConfigSchema",
       "MemoryReviewConfigSchema",
+      // Per-agent consolidation config schema (Phase 84-04). Wired into PerAgentConfig
+      // (schema-agent-runtime) WITHIN @comis/core; the daemon (Plan 84-05) consumes the
+      // INFERRED config TYPE, not the schema value. The schema value therefore has no
+      // out-of-package consumer — baseline orphan (mirror MemoryReviewConfigSchema).
+      "MemoryConsolidationConfigSchema",
       "ProvidersConfigSchema",
       "UserModelSchema",
       "ModelCostSchema",
@@ -1777,6 +1787,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // here ahead of that wiring — baseline orphans until the daemon consumer lands.
       "createSqliteMemoryEntityStore",
       "MemoryEntityStoreDeps",
+      // Consolidation store (Phase 84-02). createSqliteMemoryConsolidationStore is the sole
+      // MemoryConsolidationStore adapter; the daemon composition root constructs it on the
+      // memory adapter's db handle in Plan 84-05 (setup-memory) — so the FACTORY has a
+      // production consumer. The constructor-deps SHAPE type is part of its public API but
+      // is referenced only via inline objects — baseline orphan (mirror MemoryEntityStoreDeps).
+      "MemoryConsolidationStoreDeps",
       "EmbeddingCacheOptions",
       "EmbeddingCacheStats",
       "SqliteEmbeddingCacheOptions",

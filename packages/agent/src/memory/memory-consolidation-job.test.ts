@@ -133,7 +133,7 @@ beforeEach(() => {
 });
 
 describe("runMemoryConsolidation — trust ceiling end-to-end (CONS-02, the escalation guard)", () => {
-  it("a homogeneous external cluster mints an external observation (ceiling = min(sources) = external)", async () => {
+  it("mints an external observation for a homogeneous external cluster (ceiling = min(sources) = external)", async () => {
     mockMerge("merged");
     // Two near-parallel embeddings so they cluster; both external + same tags →
     // ONE homogeneous sub-cluster. minTrust([external,external]) = "external".
@@ -147,7 +147,7 @@ describe("runMemoryConsolidation — trust ceiling end-to-end (CONS-02, the esca
     expect(store.applied[0].observation.trustLevel).toBe("external");
   });
 
-  it("a [learned, learned] cluster mints a learned observation", async () => {
+  it("mints a learned observation for a [learned, learned] cluster", async () => {
     mockMerge("merged");
     const store = makeStore([
       makeCand({ trustLevel: "learned", tags: ["t"] }, [1, 0, 0]),

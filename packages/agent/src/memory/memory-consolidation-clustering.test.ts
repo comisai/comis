@@ -216,7 +216,7 @@ describe("contentSimilarity — pure Dice-bigram secondary dedup signal", () => 
     expect(contentSimilarity("abcdef", "uvwxyz")).toBeLessThan(0.1);
   });
 
-  it("is symmetric", () => {
+  it("returns a symmetric score regardless of argument order", () => {
     const ab = contentSimilarity("hello world", "world hello");
     const ba = contentSimilarity("world hello", "hello world");
     expect(ab).toBeCloseTo(ba, 10);
