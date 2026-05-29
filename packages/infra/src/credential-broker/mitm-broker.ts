@@ -547,19 +547,17 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         });
 
         // Pipe upstream response back to client (upstream → client direction).
+        // With the default { end: true }, when upstream sends EOF the pipe
+        // automatically calls clientSocket.end() so the client receives the
+        // full response before the connection is cleanly terminated.
         upstreamSocket.pipe(clientSocket);
 
         const teardownUpstream = (): void => {
           openUpstreamSockets.delete(upstreamSocket);
           upstreamSocket.destroy();
         };
-        const teardownClient = (): void => {
-          clientSocket.destroy();
-        };
+        // Clean up upstream socket when the client closes (error or normal end).
         clientSocket.on("close", teardownUpstream);
-        // upstreamSocket "close" tears down the client side too so the
-        // connection is fully cleaned up when the upstream closes normally.
-        upstreamSocket.on("close", teardownClient);
       } catch (err) {
         log.error(
           { step: "connect-handler", sessionId, err, errorKind: "internal" as const, hint: "Unexpected error in CONNECT handler; destroying socket" },

@@ -186,7 +186,6 @@ function makePolicyBinding(): BrokerBinding {
 }
 
 function makeDeps(
-  upstreamPort: number,
   overrides?: Partial<MitmBrokerDeps>,
 ): MitmBrokerDeps {
   const clock = createFakeClock(1_700_000_000_000);
@@ -203,11 +202,6 @@ function makeDeps(
     makeFinnhubBinding(),
     makePolicyBinding(),
   ];
-  // upstreamPort is used by the broker to resolve the in-process fixture.
-  // In tests, the "host" in the CONNECT is `api.anthropic.com:${upstreamPort}`
-  // and the broker normalizes it to "api.anthropic.com", then net.connect's to
-  // the actual port from the CONNECT authority (which carries the port number).
-  void upstreamPort; // used by test-specific broker configuration
   return {
     clock,
     eventBus,
@@ -234,7 +228,7 @@ afterEach(async () => {
 describe("BROKER-01 — CONNECT auth gate (fail-closed 407)", () => {
   it("missing Proxy-Authorization header → 407, zero upstream calls", async () => {
     const upstream = await makeUpstreamFixture();
-    const deps = makeDeps(upstream.port);
+    const deps = makeDeps();
     const broker = createMitmBroker(deps);
     runningBrokers.push(broker);
     const brokerPort = await broker.start();
@@ -300,7 +294,7 @@ describe("BROKER-01 — CONNECT auth gate (fail-closed 407)", () => {
 
   it("Proxy-Authorization without Bearer prefix → 407, zero upstream calls", async () => {
     const upstream = await makeUpstreamFixture();
-    const deps = makeDeps(upstream.port);
+    const deps = makeDeps();
     const broker = createMitmBroker(deps);
     runningBrokers.push(broker);
     const brokerPort = await broker.start();
@@ -334,7 +328,7 @@ describe("BROKER-01 — CONNECT auth gate (fail-closed 407)", () => {
 
   it("forged Bearer token (never issued) → 407, zero upstream calls", async () => {
     const upstream = await makeUpstreamFixture();
-    const deps = makeDeps(upstream.port);
+    const deps = makeDeps();
     const broker = createMitmBroker(deps);
     runningBrokers.push(broker);
     const brokerPort = await broker.start();
@@ -368,7 +362,7 @@ describe("BROKER-01 — CONNECT auth gate (fail-closed 407)", () => {
 
   it("consumed token used a second time → 407 on second use, zero upstream calls", async () => {
     const upstream = await makeUpstreamFixture();
-    const deps = makeDeps(upstream.port);
+    const deps = makeDeps();
     const broker = createMitmBroker(deps);
     runningBrokers.push(broker);
     const brokerPort = await broker.start();
@@ -416,7 +410,7 @@ describe("BROKER-01 — CONNECT auth gate (fail-closed 407)", () => {
 
   it("token invalidated by endSession → 407 on subsequent use, zero upstream calls", async () => {
     const upstream = await makeUpstreamFixture();
-    const deps = makeDeps(upstream.port);
+    const deps = makeDeps();
     const broker = createMitmBroker(deps);
     runningBrokers.push(broker);
     const brokerPort = await broker.start();
@@ -452,7 +446,7 @@ describe("BROKER-01 — CONNECT auth gate (fail-closed 407)", () => {
 
   it("broker:denied emitted with reason:bad_token on auth failure", async () => {
     const upstream = await makeUpstreamFixture();
-    const deps = makeDeps(upstream.port);
+    const deps = makeDeps();
     const broker = createMitmBroker(deps);
     runningBrokers.push(broker);
     const brokerPort = await broker.start();
@@ -848,7 +842,6 @@ describe("Audit — non-leakage invariants", () => {
     // Use the SENTINEL_SECRET as the real key
     const secretManager = createSecretManager({ ANTHROPIC_API_KEY: SENTINEL_SECRET });
     const sessionManager = createSessionManager({ clock });
-    const { makeMockLogger } = await import("../../../../test/support/mock-logger.js");
     const logger = makeMockLogger();
     const eventBus = createMockEventBus();
     const deps: MitmBrokerDeps = {
@@ -933,7 +926,7 @@ describe("Audit — non-leakage invariants", () => {
 
 describe("Edge cases — error paths and coverage branches", () => {
   it("stop() called before start() does not throw", async () => {
-    const deps = makeDeps(0);
+    const deps = makeDeps();
     const broker = createMitmBroker(deps);
     // stop() before start() — server is null, should resolve without error
     await expect(broker.stop()).resolves.toBeUndefined();
@@ -941,7 +934,7 @@ describe("Edge cases — error paths and coverage branches", () => {
 
   it("stop() is idempotent — can be called twice without error", async () => {
     const upstream = await makeUpstreamFixture();
-    const deps = makeDeps(upstream.port);
+    const deps = makeDeps();
     const broker = createMitmBroker(deps);
     const brokerPort = await broker.start();
     expect(brokerPort).toBeGreaterThan(0);
@@ -1137,7 +1130,7 @@ describe("Edge cases — error paths and coverage branches", () => {
   });
 
   it("createMitmBroker factory returns MitmBrokerPort with start and stop methods", () => {
-    const deps = makeDeps(0);
+    const deps = makeDeps();
     const broker = createMitmBroker(deps);
     expect(typeof broker.start).toBe("function");
     expect(typeof broker.stop).toBe("function");
@@ -1151,7 +1144,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     });
     const occupiedPort = (occupied.address() as net.AddressInfo).port;
 
-    const deps = makeDeps(0);
+    const deps = makeDeps();
     const broker = createMitmBroker(deps);
 
     // Try to start on the occupied port — should reject
