@@ -30,6 +30,11 @@ export type { EmbeddingProviderOptions } from "./embedding-provider-factory.js";
 export { createOpenAIEmbeddingProvider } from "./embedding-provider-openai.js";
 export type { OpenAIEmbeddingProviderOptions } from "./embedding-provider-openai.js";
 
+// Local cross-encoder reranker provider (sole RerankerPort impl; GGUF via
+// node-llama-cpp). Consumed by the daemon composition root in Plan 04.
+export { createLocalRerankerProvider } from "./reranker-provider-local.js";
+export type { LocalRerankerProviderOptions } from "./reranker-provider-local.js";
+
 // Embedding cache (LRU content-hash cache decorator)
 export { createCachedEmbeddingPort } from "./embedding-cache-lru.js";
 export type { EmbeddingCacheOptions, EmbeddingCacheStats } from "./embedding-cache-lru.js";
