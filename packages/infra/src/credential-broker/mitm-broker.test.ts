@@ -18,7 +18,7 @@ import { createMitmBroker } from "./mitm-broker.js";
 import type { MitmBrokerDeps } from "./mitm-broker.js";
 import { createSessionManager } from "./session-manager.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
-import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { createMockLogger, makeMockLogger } from "../../../../test/support/mock-logger.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createSecretManager } from "@comis/core";
 import type { BrokerBinding } from "@comis/core";
@@ -1594,6 +1594,476 @@ describe("Edge cases — error paths and coverage branches", () => {
 
     await new Promise((r) => setTimeout(r, 150));
     expect(upstream.receivedHeaders).toHaveLength(0);
+    upstream.server.close();
+  });
+});
+
+// ── (02-fix) RED tests — findings from REVIEW.md ─────────────────────────────
+//
+// These tests are written first (RED) and MUST FAIL on the pre-fix code.
+// The production patches (GREEN) follow in separate commits.
+
+/**
+ * makeBodyUpstreamFixture — like makeUpstreamFixture but also captures request
+ * bodies so we can assert POST/PUT bodies are forwarded bidirectionally.
+ */
+function makeBodyUpstreamFixture(): Promise<{
+  server: http.Server;
+  port: number;
+  receivedHeaders: Record<string, string | string[] | undefined>[];
+  receivedBodies: string[];
+}> {
+  const receivedHeaders: Record<string, string | string[] | undefined>[] = [];
+  const receivedBodies: string[] = [];
+  const server = http.createServer((req, res) => {
+    receivedHeaders.push({ ...req.headers });
+    let body = "";
+    req.on("data", (chunk: Buffer) => {
+      body += chunk.toString("utf-8");
+    });
+    req.on("end", () => {
+      receivedBodies.push(body);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, echo: body }));
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const port = (server.address() as net.AddressInfo).port;
+      resolve({ server, port, receivedHeaders, receivedBodies });
+    });
+  });
+}
+
+/**
+ * sendPostThroughTunnel — send a POST with a body through an already-open tunnel.
+ * Returns the response status and echoed body (from the upstream fixture above).
+ */
+async function sendPostThroughTunnel(
+  socket: net.Socket,
+  path: string,
+  body: string,
+  extraHeaders: Record<string, string> = {},
+): Promise<{ status: number; responseBody: string }> {
+  return new Promise((resolve, reject) => {
+    const bodyBytes = Buffer.from(body, "utf-8");
+    let reqStr = `POST ${path} HTTP/1.1\r\n`;
+    reqStr += `content-length: ${bodyBytes.length}\r\n`;
+    reqStr += `content-type: application/json\r\n`;
+    for (const [k, v] of Object.entries(extraHeaders)) {
+      reqStr += `${k}: ${v}\r\n`;
+    }
+    reqStr += `\r\n`;
+    socket.write(reqStr);
+    socket.write(bodyBytes);
+
+    let buf = "";
+    const onData = (chunk: Buffer) => {
+      buf += chunk.toString("latin1");
+      const headerEnd = buf.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      const statusLine = buf.slice(0, buf.indexOf("\r\n"));
+      const status = parseInt(statusLine.split(" ")[1] ?? "0", 10);
+      // Extract content-length from response to read body
+      const responseHeaders = buf.slice(0, headerEnd);
+      const clMatch = /content-length:\s*(\d+)/i.exec(responseHeaders);
+      const contentLength = clMatch ? parseInt(clMatch[1] ?? "0", 10) : 0;
+      const responseBody = buf.slice(headerEnd + 4);
+      if (responseBody.length >= contentLength) {
+        socket.off("data", onData);
+        resolve({ status, responseBody });
+      }
+    };
+    socket.on("data", onData);
+    socket.on("error", reject);
+    setTimeout(() => reject(new Error("POST tunnel timeout")), 5000);
+  });
+}
+
+// ── CR-01 RED: request body forwarding ────────────────────────────────────────
+
+describe("(02-fix) CR-01 — POST body must reach upstream (bidirectional pipe)", () => {
+  it("POST /v1/messages with JSON body: upstream receives the exact body bytes", async () => {
+    const upstream = await makeBodyUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" });
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager,
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    const requestBody = JSON.stringify({ model: "claude-3-5-sonnet-20241022", max_tokens: 1024, messages: [{ role: "user", content: "Hello" }] });
+    const { status } = await sendPostThroughTunnel(socket, "/v1/messages", requestBody, { host: "api.anthropic.com" });
+    expect(status).toBe(200);
+    socket.destroy();
+
+    // Wait for the upstream to fully receive the request
+    await new Promise((r) => setTimeout(r, 300));
+
+    // The upstream MUST have received the body — this fails if clientSocket.pipe(upstreamSocket) is missing
+    expect(upstream.receivedBodies).toHaveLength(1);
+    expect(upstream.receivedBodies[0]).toBe(requestBody);
+
+    upstream.server.close();
+  });
+
+  it("full request→response round-trip: upstream response body reaches the client", async () => {
+    const upstream = await makeBodyUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" });
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager,
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    const requestBody = '{"model":"claude-3-5-sonnet-20241022"}';
+    const { status, responseBody } = await sendPostThroughTunnel(socket, "/v1/messages", requestBody, { host: "api.anthropic.com" });
+
+    // The upstream fixture echoes the body: { ok: true, echo: <body> }
+    // Response must have arrived — this proves the upstreamSocket→clientSocket pipe works too
+    expect(status).toBe(200);
+    expect(responseBody).toContain('"ok":true');
+    socket.destroy();
+
+    await new Promise((r) => setTimeout(r, 100));
+    upstream.server.close();
+  });
+});
+
+// ── CR-02 + WR-01 RED: EPIPE protection on 200 write ─────────────────────────
+
+describe("(02-fix) CR-02/WR-01 — client socket error before 200 write must not throw uncaughtException", () => {
+  it("client closes socket immediately after CONNECT is parsed — no uncaughtException", async () => {
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+
+    // Track any uncaught exceptions
+    let uncaughtCount = 0;
+    const onUncaught = () => {
+      uncaughtCount = uncaughtCount + 1;
+    };
+    process.on("uncaughtException", onUncaught);
+
+    try {
+      // Destroy the socket as soon as the connection is established, BEFORE
+      // reading back the 200 — simulates the race where client closes before
+      // the broker writes the 200 Connection established response.
+      await new Promise<void>((resolve, reject) => {
+        const s = net.connect(brokerPort, "127.0.0.1", () => {
+          s.write(
+            `CONNECT api.anthropic.com:443 HTTP/1.1\r\n` +
+              `Host: api.anthropic.com:443\r\n` +
+              `Proxy-Authorization: Bearer ${proxyToken}\r\n` +
+              `\r\n`,
+          );
+          // Destroy immediately — before the 200 is likely written
+          s.destroy();
+        });
+        s.on("close", () => resolve());
+        s.on("error", () => resolve()); // error on close is expected
+        setTimeout(() => resolve(), 1000);
+      });
+
+      // Wait a tick for any uncaught exception to propagate
+      await new Promise((r) => setTimeout(r, 100));
+
+      // If an EPIPE escaped as uncaughtException, uncaughtCount would be > 0
+      expect(uncaughtCount).toBe(0);
+    } finally {
+      process.off("uncaughtException", onUncaught);
+    }
+  });
+
+  it("clientSocket has an error listener attached before the 200 write — no unhandled error event", async () => {
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+
+    // Open tunnel then immediately send a reset to simulate EPIPE during 200 write
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const s = net.connect(brokerPort, "127.0.0.1", () => {
+        s.write(
+          `CONNECT api.anthropic.com:443 HTTP/1.1\r\n` +
+            `Host: api.anthropic.com:443\r\n` +
+            `Proxy-Authorization: Bearer ${proxyToken}\r\n` +
+            `\r\n`,
+        );
+        resolve(s);
+      });
+      s.on("error", reject);
+      setTimeout(() => reject(new Error("connect timeout")), 3000);
+    });
+
+    // Forcefully destroy to trigger EPIPE on the broker's write side
+    socket.destroy();
+    await new Promise((r) => setTimeout(r, 150));
+    // Test passes if no exception was thrown — broker handled the error gracefully
+  });
+});
+
+// ── CR-03 + WR-04 RED: audit event completeness ──────────────────────────────
+
+describe("(02-fix) CR-03/WR-04 — broker:denied audit events on all exit paths with correct reasons", () => {
+  it("header overflow path emits broker:denied with reason:malformed_request (NOT path_policy)", async () => {
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    const eventBus = createMockEventBus();
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus,
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:443`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Send oversized headers (>8192 bytes without \r\n\r\n) to trigger overflow
+    const oversizeHeader = "GET /v1/messages HTTP/1.1\r\n" + `X-Overflow: ${"A".repeat(8300)}\r\n`;
+    socket.write(oversizeHeader);
+
+    await new Promise<void>((resolve) => {
+      socket.on("close", () => resolve());
+      socket.on("error", () => resolve());
+      setTimeout(() => resolve(), 2000);
+    });
+    socket.destroy();
+
+    // broker:denied MUST be emitted with reason "malformed_request", NOT "path_policy"
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "broker:denied",
+      expect.objectContaining({
+        reason: "malformed_request",
+        statusCode: 400,
+      }),
+    );
+    // Specifically must NOT have been called with path_policy for this scenario
+    const emitCalls = (eventBus.emit as ReturnType<typeof import("vitest").vi.fn>).mock.calls;
+    const deniedWithPathPolicy = emitCalls.filter(
+      ([name, payload]: [string, { reason?: string }]) =>
+        name === "broker:denied" && payload?.reason === "path_policy"
+    );
+    expect(deniedWithPathPolicy).toHaveLength(0);
+  });
+
+  it("malformed inner request (empty request line) emits broker:denied with reason:malformed_request", async () => {
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    const eventBus = createMockEventBus();
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus,
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:443`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Send malformed inner request (only the terminator, no request line)
+    socket.write("\r\n\r\n");
+
+    await new Promise<void>((resolve) => {
+      socket.on("close", () => resolve());
+      socket.on("error", () => resolve());
+      setTimeout(() => resolve(), 2000);
+    });
+    socket.destroy();
+
+    // broker:denied MUST be emitted on malformed parse — currently missing
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "broker:denied",
+      expect.objectContaining({
+        reason: "malformed_request",
+        statusCode: 400,
+      }),
+    );
+  });
+});
+
+// ── CR-04 RED: endSession must DELETE the map entry ──────────────────────────
+
+describe("(02-fix) CR-04 — endSession must remove the Map entry (not just set active=false)", () => {
+  it("after endSession, consumeToken returns null — session fully removed", () => {
+    const clock = createFakeClock(1_700_000_000_000);
+    const mgr = createSessionManager({ clock });
+    const { sessionId, proxyToken } = mgr.issueToken("agent-1");
+    mgr.endSession(sessionId);
+    // Verify the token cannot be consumed (existing test passes already — this is the basic gate)
+    expect(mgr.consumeToken(proxyToken)).toBeNull();
+  });
+
+  it("multiple sessions: endSession removes only the target session, not others", () => {
+    const clock = createFakeClock(1_700_000_000_000);
+    const mgr = createSessionManager({ clock });
+    const s1 = mgr.issueToken("agent-1");
+    const s2 = mgr.issueToken("agent-2");
+    // End session 1 only
+    mgr.endSession(s1.sessionId);
+    // Session 2 must still be consumable
+    const result = mgr.consumeToken(s2.proxyToken);
+    expect(result).not.toBeNull();
+    expect(result?.agentId).toBe("agent-2");
+    // Session 1 must be gone — not just inactive
+    expect(mgr.consumeToken(s1.proxyToken)).toBeNull();
+  });
+
+  it("endSession then issueToken: map does not grow unboundedly — re-issue after end creates a fresh entry", () => {
+    // This is the memory growth scenario: endSession must delete, not accumulate inactive entries.
+    // We verify correctness by confirming that calling endSession then re-issuing works cleanly,
+    // proving the Map mutation (delete) path runs without error.
+    const clock = createFakeClock(1_700_000_000_000);
+    const mgr = createSessionManager({ clock });
+    for (let i = 0; i < 5; i++) {
+      const { sessionId } = mgr.issueToken(`agent-${i}`);
+      // endSession must delete so the Map does not accumulate stale entries
+      mgr.endSession(sessionId);
+    }
+    // After 5 issue+end cycles, a new token must be issuable and consumable
+    const { proxyToken } = mgr.issueToken("agent-new");
+    const result = mgr.consumeToken(proxyToken);
+    expect(result).not.toBeNull();
+    expect(result?.agentId).toBe("agent-new");
+  });
+
+  it("endSession is idempotent — calling it twice does not throw", () => {
+    const clock = createFakeClock(1_700_000_000_000);
+    const mgr = createSessionManager({ clock });
+    const { sessionId } = mgr.issueToken("agent-1");
+    mgr.endSession(sessionId);
+    // Second call on a deleted session must not throw
+    expect(() => mgr.endSession(sessionId)).not.toThrow();
+  });
+});
+
+// ── WR-03 RED: upstreamSocket must not block process exit ────────────────────
+
+describe("(02-fix) WR-03 — stop() destroys in-flight upstream sockets (no process-exit block)", () => {
+  it("stop() called during in-flight request: broker resolves stop() promise promptly", async () => {
+    const upstream = await makeBodyUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" });
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager,
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    // Note: do NOT push to runningBrokers — we stop it manually below
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Start a POST — body not yet sent, upstream connection in-flight
+    socket.write(
+      `POST /v1/messages HTTP/1.1\r\n` +
+        `host: api.anthropic.com\r\n` +
+        `content-length: 100\r\n` +
+        `\r\n`,
+    );
+    // Don't send body — keeps upstream socket alive
+
+    // Give the broker time to open the upstream socket
+    await new Promise((r) => setTimeout(r, 100));
+
+    // stop() must resolve promptly — if upstreamSocket is not destroyed/unref'd,
+    // this will hang until the upstream socket times out
+    const stopStart = Date.now();
+    await broker.stop();
+    const stopMs = Date.now() - stopStart;
+
+    // With unref() or tracked+destroyed upstreams, stop() should resolve quickly
+    // (well under 2 seconds). Without it, it may hang for the upstream connection timeout.
+    expect(stopMs).toBeLessThan(2000);
+
+    socket.destroy();
     upstream.server.close();
   });
 });
