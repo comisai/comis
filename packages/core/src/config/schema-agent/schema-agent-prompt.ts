@@ -60,6 +60,32 @@ export const RagConfigSchema = z.strictObject({
     minScore: z.number().min(0).max(1).default(0.1),
     /** Trust levels to include in retrieval (external excluded by default for security) */
     includeTrustLevels: z.array(TrustLevelSchema).default(["system", "learned"]),
+    /** Cross-encoder reranking (opt-in; default-OFF per the Phase-79 latency decision). */
+    rerank: z
+      .strictObject({
+        /** Phase-79 DECISION: opt-in, not default-on (~777ms p95 @40 cands exceeds budget). */
+        enabled: z.boolean().default(false),
+        /** Candidate cap bounding worst-case rerank latency (~29ms/candidate). */
+        maxCandidates: z.number().int().positive().default(40),
+        /** Skip reranking when fewer than this many candidates are present. */
+        minResults: z.number().int().nonnegative().default(1),
+        /** Rerank wall-clock timeout (ms); on timeout fall back to fusion order (RANK-08). */
+        timeoutMs: z.number().int().positive().default(800),
+      })
+      .default(() => ({ enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 })),
+    /** Multiplicative scoring boosts applied to the reranked-or-fused score (RANK-05). */
+    scoring: z
+      .strictObject({
+        /** Recency boost weight (applied now via createdAt). */
+        recencyAlpha: z.number().min(0).max(1).default(0.2),
+        /** Temporal-proximity boost weight (Phase-81 hook; neutral until occurredAt exists). */
+        temporalAlpha: z.number().min(0).max(1).default(0.2),
+        /** Proof-count boost weight (Phase-84 hook; neutral until proofCount exists). */
+        proofAlpha: z.number().min(0).max(1).default(0.1),
+        /** Trust-level boost weight + tie-break (RANK-06). */
+        trustAlpha: z.number().min(0).max(1).default(0.1),
+      })
+      .default(() => ({ recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 })),
   });
 
 export type RagConfig = z.infer<typeof RagConfigSchema>;
