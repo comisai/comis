@@ -24,6 +24,7 @@ import {
   createFingerprintManager,
   createBatchIndexer,
   createEmbeddingQueue,
+  createLocalRerankerProvider,
   type MemoryApi,
 } from "@comis/memory";
 
@@ -53,6 +54,14 @@ export interface MemoryResult {
   embeddingCacheStats?: () => import("@comis/memory").EmbeddingCacheStats;
   /** Embedding circuit breaker state accessor for memory persistence operations. */
   embeddingCircuitBreakerState?: () => import("@comis/agent").CircuitState;
+  /** Cross-encoder reranker port (RANK-01). Defined only when at least one agent has
+   *  `rag.rerank.enabled === true` AND the model loaded — otherwise undefined and recall
+   *  degrades to fusion order (RANK-03). The all-default (rerank-off) config NEVER builds
+   *  it, so the ~606MB GGUF is not downloaded by default. */
+  rerankerPort?: import("@comis/core").RerankerPort;
+  /** Dispose callback for the reranker's native context (ranking ctx -> model -> llama).
+   *  Registered in the daemon shutdown path; undefined when no reranker was built. */
+  disposeReranker?: () => Promise<void>;
   /** Throttled WAL checkpoint — call every health tick, runs checkpoint every 10th call. */
   maintenanceTick: () => void;
 }
@@ -171,6 +180,36 @@ export async function setupMemory(deps: {
       memoryLogger.debug("Embedding circuit breaker active (threshold=3, reset=60s)");
     } else {
       memoryLogger.warn({ err: providerResult.error.message, hint: "Set OPENAI_API_KEY or configure an embedding provider in integrations.media", errorKind: "config" as const }, "No embedding provider available, using FTS5 only");
+    }
+  }
+
+  // 6.5.1b. Build the cross-encoder reranker — ONLY when at least one agent enables
+  // rerank. Building it downloads a ~606MB GGUF on first run, so the all-default
+  // (rerank-off) config must NEVER trigger it (Phase-79: rerank is opt-in/default-OFF).
+  // Scanning the in-memory agent configs is the cheapest correct gate (no I/O). When no
+  // reranker is built, recall degrades to fusion order (RANK-03).
+  let rerankerPort: import("@comis/core").RerankerPort | undefined;
+  let disposeReranker: (() => Promise<void>) | undefined;
+  const someAgentRerankEnabled = Object.values(container.config.agents ?? {}).some(
+    (agent) => agent?.rag?.rerank?.enabled === true,
+  );
+  if (someAgentRerankEnabled) {
+    const rr = await createLocalRerankerProvider({
+      modelUri: memoryConfig.rerankerModel,
+      modelsDir: safePath(container.config.dataDir || ".", memoryConfig.rerankerModelsDir),
+      gpu: memoryConfig.rerankerGpu,
+    });
+    if (rr.ok) {
+      rerankerPort = rr.value;
+      disposeReranker = rerankerPort.dispose
+        ? async () => { await rerankerPort!.dispose!(); }
+        : undefined;
+      memoryLogger.debug({ model: memoryConfig.rerankerModel }, "Reranker provider initialized");
+    } else {
+      memoryLogger.warn(
+        { err: rr.error.message, hint: "Reranker model unavailable; recall will use fusion order", errorKind: "dependency" as const },
+        "Reranker provider unavailable",
+      );
     }
   }
 
@@ -302,6 +341,8 @@ export async function setupMemory(deps: {
     backgroundIndexingPromise,
     embeddingCacheStats,
     embeddingCircuitBreakerState: embeddingCbRef ? () => embeddingCbRef!.getState() : undefined,
+    rerankerPort,
+    disposeReranker,
     maintenanceTick,
   };
 }

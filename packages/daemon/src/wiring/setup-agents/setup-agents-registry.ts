@@ -182,6 +182,9 @@ export async function setupAgents(deps: {
   db?: unknown;
   /** Optional embedding port for discover_tools semantic search. */
   embeddingPort?: import("@comis/core").EmbeddingPort;
+  /** Optional cross-encoder reranker (built in setup-memory only when an agent enables
+   *  rerank). Threaded into each per-agent createPiExecutor like memoryPort. */
+  rerankerPort?: import("@comis/core").RerankerPort;
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */
@@ -399,6 +402,7 @@ export async function setupAgents(deps: {
     providerHealth,
     lastKnownModel,
     embeddingPort: deps.embeddingPort,
+    rerankerPort: deps.rerankerPort,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
     geminiCacheManager: deps.geminiCacheManager,

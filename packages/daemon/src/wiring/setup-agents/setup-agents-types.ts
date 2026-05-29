@@ -64,6 +64,9 @@ export interface SingleAgentDeps {
   lastKnownModel?: LastKnownModelTracker;
   /** Optional embedding port for discover_tools semantic search. */
   embeddingPort?: import("@comis/core").EmbeddingPort;
+  /** Optional cross-encoder reranker (built in setup-memory only when an agent enables
+   *  rerank). Threaded into createPiExecutor like memoryPort; absent -> fusion order. */
+  rerankerPort?: import("@comis/core").RerankerPort;
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */

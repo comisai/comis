@@ -485,6 +485,7 @@ export async function setupSingleAgent(
     subAgentToolNames: deps.subAgentToolNames,
     mcpToolsInherited: deps.mcpToolsInherited,
     memoryPort: memoryAdapter,
+    reranker: deps.rerankerPort,  // Cross-encoder reranker (built in setup-memory only when an agent enables rerank).
     secretManager: scopedManager,
     envelopeConfig: container.config.envelope,
     senderTrustDisplayConfig: container.config.senderTrustDisplay,

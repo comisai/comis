@@ -1650,6 +1650,7 @@ async function bootFoundation(
     disposeEmbedding, cachedPort, memoryAdapter, db,
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
+    rerankerPort, disposeReranker,
   } = await setupMemory({ container, memoryLogger, clock });
 
   // Observability persistence (dual-write to SQLite). obsStore +
@@ -1785,7 +1786,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, maintenanceTick,
+    embeddingCircuitBreakerState, rerankerPort, disposeReranker, maintenanceTick,
     obsStore, obsPersistence, contextStore,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
@@ -1833,6 +1834,7 @@ async function bootAgents(
     clock, env, timers,
     daemonLogger, gatewayLogger, agentLogger, schedulerLogger, skillsLogger,
     memoryAdapter, db, sessionStore, cachedPort, embeddingQueue,
+    rerankerPort, // built in setup-memory; threaded into setupAgents -> createPiExecutor
     contextStore,
     activeRunRegistry, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, geminiCacheManager,
@@ -1969,7 +1971,7 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts,
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,
@@ -2671,7 +2673,7 @@ async function bootShutdown(
     tokenTracker, processMonitor,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
     contextPipelineCollector, backgroundIndexingPromise, db,
-    disposeEmbedding, cachedPort, maintenanceTick, obsPersistence,
+    disposeEmbedding, disposeReranker, cachedPort, maintenanceTick, obsPersistence,
     disposeActivityStream,
     injectionRateLimiter, geminiCacheManager, backgroundTaskManager,
     secretStore,
@@ -2714,6 +2716,7 @@ async function bootShutdown(
     diagnosticCollector, channelActivityTracker, deliveryTracer, contextPipelineCollector,
     backgroundIndexingPromise, db,
     disposeEmbedding,  // coordinated L1 -> L2 -> provider dispose chain
+    disposeReranker,  // release the reranker native context (ranking ctx -> model -> llama)
     approvalGate,
     secretStore,  // close secrets.db on shutdown
     auditAggregator,  // clear pending dedup timers

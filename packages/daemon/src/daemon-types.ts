@@ -372,6 +372,8 @@ export interface BootContext {
   backgroundIndexingPromise: Awaited<ReturnType<typeof setupMemory>>["backgroundIndexingPromise"];
   embeddingCacheStats: Awaited<ReturnType<typeof setupMemory>>["embeddingCacheStats"];
   embeddingCircuitBreakerState: Awaited<ReturnType<typeof setupMemory>>["embeddingCircuitBreakerState"];
+  rerankerPort: Awaited<ReturnType<typeof setupMemory>>["rerankerPort"];
+  disposeReranker: Awaited<ReturnType<typeof setupMemory>>["disposeReranker"];
   maintenanceTick: Awaited<ReturnType<typeof setupMemory>>["maintenanceTick"];
   obsStore: ObservabilityStore | undefined;
   obsPersistence: ObsPersistenceResult | undefined;
