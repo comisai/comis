@@ -35,6 +35,13 @@ export type { OpenAIEmbeddingProviderOptions } from "./embedding-provider-openai
 export { createLocalRerankerProvider } from "./reranker-provider-local.js";
 export type { LocalRerankerProviderOptions } from "./reranker-provider-local.js";
 
+// Entity-associative recall store (sole MemoryEntityStore impl; Phase 83).
+// Owns the resolve/link write path + the scoped one-hop self-join read lane.
+// The daemon (Plan 05) constructs it on the memory adapter's db handle; the
+// MemoryEntityStore port TYPE itself lives in @comis/core (not re-exported here).
+export { createSqliteMemoryEntityStore } from "./sqlite-memory-entity-store.js";
+export type { MemoryEntityStoreDeps } from "./sqlite-memory-entity-store.js";
+
 // Embedding cache (LRU content-hash cache decorator)
 export { createCachedEmbeddingPort } from "./embedding-cache-lru.js";
 export type { EmbeddingCacheOptions, EmbeddingCacheStats } from "./embedding-cache-lru.js";
