@@ -520,6 +520,25 @@ describe("setupShutdown", () => {
     expect(dbCloseIdx).toBeGreaterThan(disposeIdx);
   });
 
+  // LO-03: the reranker dispose step must log durationMs like every sibling step.
+  it("disposes the reranker and logs durationMs for observability parity", async () => {
+    const disposeReranker = vi.fn(async () => {});
+    const deps = createMinimalDeps({ disposeReranker } as any);
+
+    const setupShutdown = await getSetupShutdown();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
+
+    expect(disposeReranker).toHaveBeenCalledTimes(1);
+    expect(deps.daemonLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        component: "reranker",
+        durationMs: expect.any(Number),
+      }),
+      "Component stopped",
+    );
+  });
+
   // -------------------------------------------------------------------------
   // 14. Empty activeExecutions does not warn
   // -------------------------------------------------------------------------
