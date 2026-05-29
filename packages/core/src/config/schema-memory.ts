@@ -35,6 +35,14 @@ export const MemoryConfigSchema = z.strictObject({
     compaction: CompactionConfigSchema.default(() => CompactionConfigSchema.parse({})),
     /** Retention policy */
     retention: RetentionConfigSchema.default(() => RetentionConfigSchema.parse({})),
+    /** Reranker GGUF model URI (hf: auto-downloads on first enable). Phase-79 default (Q8_0). */
+    rerankerModel: z
+      .string()
+      .default("hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"),
+    /** Directory (relative to dataDir) to store/resolve the reranker GGUF. */
+    rerankerModelsDir: z.string().default("models"),
+    /** GPU acceleration mode for the reranker ranking context. */
+    rerankerGpu: z.enum(["auto", "metal", "cuda", "vulkan", "false"]).default("auto"),
   });
 
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
