@@ -36,8 +36,16 @@ export function formatMemorySection(
   for (const result of results) {
     const { entry } = result;
 
-    // Format date as YYYY-MM-DD
+    // Format recorded date (createdAt) as YYYY-MM-DD
     const date = systemDateFrom(entry.createdAt).toISOString().split("T")[0];
+
+    // Surface the EVENT date (occurredAt) only when present (P81/TEMP-05); absent →
+    // the line is byte-identical to the Phase-80 recorded-only format. systemDateFrom
+    // (not new Date) keeps the wall-clock globals banned (globals.test.ts).
+    const occurred =
+      typeof entry.occurredAt === "number"
+        ? `, occurred ${systemDateFrom(entry.occurredAt).toISOString().split("T")[0]}`
+        : "";
 
     // Format trust tag -- external gets explicit untrusted warning
     const trustTag =
@@ -61,8 +69,9 @@ export function formatMemorySection(
       });
     }
 
-    // Build formatted line
-    const line = `- ${trustTag} (${date}${source}): ${sanitizedContent}\n`;
+    // Build formatted line — explicit recorded/occurred labels back the plan-03
+    // guidance block ("when it was recorded and (if known) when the event occurred").
+    const line = `- ${trustTag} (recorded ${date}${occurred}${source}): ${sanitizedContent}\n`;
 
     // Check budget
     if (charCount + line.length > maxChars) {
