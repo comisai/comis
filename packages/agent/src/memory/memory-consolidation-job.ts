@@ -96,6 +96,18 @@ const LLM_TIMEOUT_MS = 120_000;
  */
 const DEDUP_OBSERVATION_LIMIT = 200;
 
+/**
+ * Per-member content cap (chars) fed into the merge prompt (WR-03 / CONS-07,
+ * threat T-84-02). `maxConsolidationTokens` bounds only the LLM OUTPUT; the
+ * INPUT was previously unbounded — every member's full `content` was
+ * concatenated (`MemoryEntrySchema.content` is `z.string().min(1)`, no max), so
+ * `maxClusterSize` members of arbitrary length could build an arbitrarily large
+ * prompt. The merge only needs the GIST of each member, so each is sliced to
+ * this cap before assembly — making the input cost bounded by
+ * `maxClusterSize × MAX_MEMORY_CHARS` rather than uncontrolled member length.
+ */
+const MAX_MEMORY_CHARS = 2_000;
+
 // ---------------------------------------------------------------------------
 // LLM response parsing
 // ---------------------------------------------------------------------------
@@ -139,11 +151,15 @@ function maxOccurredAt(cluster: MemoryEntry[]): number {
   return max;
 }
 
-/** Build the user-message text fed to the merge LLM call for one sub-cluster. */
+/**
+ * Build the user-message text fed to the merge LLM call for one sub-cluster.
+ * Each member's content is sliced to {@link MAX_MEMORY_CHARS} so the INPUT
+ * prompt is bounded (WR-03 / CONS-07) — not just the output (`maxTokens`).
+ */
 function buildClusterPrompt(cluster: MemoryEntry[]): string {
   let text = "Memories to merge:\n\n";
   for (const e of cluster) {
-    text += `- (${e.id}) ${e.content}\n`;
+    text += `- (${e.id}) ${e.content.slice(0, MAX_MEMORY_CHARS)}\n`;
   }
   return text;
 }
