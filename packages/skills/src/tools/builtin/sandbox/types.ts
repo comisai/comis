@@ -24,6 +24,19 @@ export interface SandboxOptions {
   cwd: string;
   /** Temp directory inside workspace for spillover files. */
   tempDir: string;
+  /**
+   * Network isolation mode for the sandbox.
+   * Default undefined/"open" = existing --share-net behaviour (no regression).
+   * "broker-only" = --unshare-net + unix-socket bind for broker-only egress.
+   * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
+   */
+  network?: { mode: "open" } | { mode: "broker-only"; brokerSocketPath: string };
+  /**
+   * When true, omit ~/.claude, ~/.claude.json, and ~/.local/share/claude binds.
+   * Prevents credential files from being reachable inside the sandbox (EGRESS-02).
+   * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
+   */
+  secureCredentialHome?: boolean;
 }
 
 /** Platform-specific sandbox provider (bwrap on Linux, sandbox-exec on macOS). */

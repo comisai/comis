@@ -477,6 +477,28 @@ describe("InfraEvents payload structure", () => {
     expect(received.statusCode).toBe(413);
   });
 
+  it('broker:denied delivers "ws_upgrade_not_supported" reason with statusCode 501 (EGRESS-04)', () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    // Compile-time assertion: the literal "ws_upgrade_not_supported" must be
+    // assignable to the reason union declared in events-infra.ts. If the union
+    // is missing this member the TypeScript compiler rejects the payload type
+    // annotation below — that is the failing RED proof.
+    const payload: EventMap["broker:denied"] = {
+      sessionId: "sess-ws",
+      host: "api.example.com",
+      reason: "ws_upgrade_not_supported",
+      statusCode: 501,
+      timestamp: Date.now(),
+    };
+    bus.on("broker:denied", handler);
+    bus.emit("broker:denied", payload);
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["broker:denied"];
+    expect(received.reason).toBe("ws_upgrade_not_supported");
+    expect(received.statusCode).toBe(501);
+  });
+
   it("security:warn delivers category, agentId, message", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
