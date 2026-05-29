@@ -659,4 +659,116 @@ describe("createSqliteMemoryConsolidationStore", () => {
       }
     });
   });
+
+  // =====================================================================
+  // WR-01 — a misaligned / truncated embedding BLOB must NOT abort the run.
+  // The documented contract (RESEARCH Pitfall 7 + decodeEmbedding's JSDoc) is
+  // that embeddings are OPTIONAL on a candidate: a bad blob degrades that ONE
+  // candidate to `embedding: undefined` (the clusterer falls back to entity/FTS
+  // overlap), and never throws an err that the job treats as a FATAL whole-run
+  // abort. Today `new Float32Array(raw.buffer, raw.byteOffset, len)` throws a
+  // RangeError on a byteOffset that is not a multiple of 4 (a pooled Buffer),
+  // and that throw is caught by listConsolidationCandidates' outer try/catch →
+  // err → the job aborts the entire consolidation run on one bad row.
+  // =====================================================================
+
+  describe("WR-01: a corrupt/misaligned embedding blob degrades one candidate, never aborts the run", () => {
+    /**
+     * Monkeypatch the candidate SELECT to return a caller-supplied list of raw
+     * rows. Each base row is a REAL seeded `memories` row (so every required
+     * column is present + parseable by MemoryRowSchema); only its joined
+     * `embedding` column is swapped for the test's blob. The non-candidate
+     * statements (observations, marks) keep their real behavior.
+     */
+    function withCandidateRows<T>(rows: Record<string, unknown>[], fn: () => T): T {
+      const realPrepare = db.prepare.bind(db);
+      const spy = (sql: string) => {
+        const stmt = realPrepare(sql);
+        if (/FROM memories m/.test(sql)) {
+          return {
+            ...stmt,
+            all: () => rows,
+          } as unknown as ReturnType<typeof realPrepare>;
+        }
+        return stmt;
+      };
+      // @ts-expect-error -- test-only monkeypatch of the prepared-statement factory
+      db.prepare = spy;
+      try {
+        return fn();
+      } finally {
+        db.prepare = realPrepare;
+      }
+    }
+
+    /** Read a real seeded row as the raw column bag the SELECT would yield. */
+    function rawRowOf(id: string): Record<string, unknown> {
+      const row = db.prepare("SELECT m.* FROM memories m WHERE m.id = ?").get(id) as
+        | Record<string, unknown>
+        | undefined;
+      expect(row).toBeDefined();
+      return { ...(row as Record<string, unknown>) };
+    }
+
+    it("a candidate whose embedding blob has a misaligned byteOffset returns ok with that candidate degraded to no embedding, others unaffected", async () => {
+      const goodId = await seedMemory({ content: "good embedding", createdAt: 100 });
+      const badId = await seedMemory({ content: "misaligned embedding", createdAt: 200 });
+
+      // GOOD row: a well-formed little-endian float32 blob at byteOffset 0.
+      const goodBlob = Buffer.from(new Float32Array([0.1, 0.2, 0.3, 0.4]).buffer);
+      const goodRow = { ...rawRowOf(goodId), embedding: goodBlob };
+
+      // BAD row: a 16-byte float32 payload sitting at a byteOffset of 2 (NOT a
+      // multiple of 4) — exactly the pooled-Buffer shape that makes
+      // `new Float32Array(buf.buffer, buf.byteOffset, len)` throw a RangeError.
+      const backing = Buffer.alloc(18);
+      Buffer.from(new Float32Array([1, 2, 3, 4]).buffer).copy(backing, 2);
+      const misaligned = backing.subarray(2, 18); // byteOffset % 4 === 2
+      expect(misaligned.byteOffset % 4).not.toBe(0); // precondition of the bug
+      const badRow = { ...rawRowOf(badId), embedding: misaligned };
+
+      const res = await withCandidateRows([goodRow, badRow], () => {
+        const s = createSqliteMemoryConsolidationStore({ db });
+        return s.listConsolidationCandidates(AGENT_A, TENANT_A, 10);
+      });
+      const r = await res;
+
+      // The run MUST still complete (ok) — one bad blob never aborts it.
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      // The good candidate keeps its decoded embedding.
+      const good = r.value.find((c) => c.entry.id === goodId);
+      expect(good?.embedding).toBeDefined();
+      expect(good?.embedding).toHaveLength(4);
+      good?.embedding?.forEach((v, i) => expect(v).toBeCloseTo([0.1, 0.2, 0.3, 0.4][i]!, 5));
+
+      // The bad candidate is STILL returned (unaffected entry), only its
+      // embedding is dropped — degrade, not abort.
+      const bad = r.value.find((c) => c.entry.id === badId);
+      expect(bad).toBeDefined();
+      expect(bad?.embedding).toBeUndefined();
+    });
+
+    it("a candidate whose embedding blob byteLength is not a multiple of 4 degrades to no embedding rather than silently truncating", async () => {
+      const truncId = await seedMemory({ content: "truncated embedding", createdAt: 300 });
+      // A 14-byte blob: 14 % 4 === 2. The old code would silently view it as a
+      // 3-element Float32Array (dropping the trailing 2 bytes) — a wrong vector
+      // fed into cosine. The contract is to reject it (no embedding) instead.
+      const truncated = Buffer.alloc(14);
+      Buffer.from(new Float32Array([7, 8, 9]).buffer).copy(truncated, 0);
+      const truncRow = { ...rawRowOf(truncId), embedding: truncated };
+
+      const res = await withCandidateRows([truncRow], () => {
+        const s = createSqliteMemoryConsolidationStore({ db });
+        return s.listConsolidationCandidates(AGENT_A, TENANT_A, 10);
+      });
+      const r = await res;
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      const cand = r.value.find((c) => c.entry.id === truncId);
+      expect(cand).toBeDefined();
+      expect(cand?.embedding).toBeUndefined();
+    });
+  });
 });
