@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryConsolidationStore, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry } from "@comis/agent";
@@ -49,6 +49,12 @@ export interface CronEventListenerDeps {
    *  Absent => Phase-82 behaviour (entities emitted but not persisted). Built in
    *  setup-memory on the SAME db handle the memory adapter owns. */
   entityStore?: MemoryEntityStore;
+  /** Consolidation store (Phase 84, CONS-07). Threaded into runMemoryConsolidation by the
+   *  opt-in `__MEMORY_CONSOLIDATION__` sentinel below. Built in setup-memory on the SAME db
+   *  handle the memory adapter owns; injected as the port TYPE (agent↛memory cut). Absent =>
+   *  the sentinel cannot run, but the cron is off-by-default so a default-config agent never
+   *  reaches it. */
+  consolidationStore?: MemoryConsolidationStore;
   tenantId?: string;
   piSessionAdapters?: Map<string, {
     getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;

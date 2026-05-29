@@ -63,6 +63,14 @@ const mockCreateSqliteMemoryEntityStore = vi.hoisted(() => vi.fn(() => ({
   resolveAndLink: vi.fn(async () => ({ ok: true, value: { ok: true, value: undefined } })),
   associativeLane: vi.fn(async () => ({ ok: true, value: [] })),
 })));
+// Consolidation store factory (Phase 84) — mocked so setup wires it without a real DB.
+// setupMemory now builds this on the shared db handle (mirror the entity store); without
+// the mock entry the @comis/memory factory is undefined and every setup call throws.
+const mockCreateSqliteMemoryConsolidationStore = vi.hoisted(() => vi.fn(() => ({
+  listConsolidationCandidates: vi.fn(async () => ({ ok: true, value: [] })),
+  listObservations: vi.fn(async () => ({ ok: true, value: [] })),
+  applyConsolidation: vi.fn(async () => ({ ok: true, value: undefined })),
+})));
 
 vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
@@ -76,6 +84,7 @@ vi.mock("@comis/memory", () => ({
   createEmbeddingQueue: mockCreateEmbeddingQueue,
   createLocalRerankerProvider: mockCreateLocalRerankerProvider,
   createSqliteMemoryEntityStore: mockCreateSqliteMemoryEntityStore,
+  createSqliteMemoryConsolidationStore: mockCreateSqliteMemoryConsolidationStore,
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));
@@ -762,5 +771,30 @@ describe("setupMemory", () => {
     expect(result.disposeReranker).toBeTypeOf("function");
     await result.disposeReranker!();
     expect(mockRerankerDispose).toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Consolidation store wiring (Phase 84, CONS-07) — built on the shared db
+  // -------------------------------------------------------------------------
+
+  it("builds the consolidation store on the SAME shared db handle and returns it (Phase 84)", async () => {
+    const container = createMinimalContainer(); // all-default config (consolidation OFF)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // Built UNCONDITIONALLY (no opt-in gate at build time — only the cron is gated).
+    expect(mockCreateSqliteMemoryConsolidationStore).toHaveBeenCalledOnce();
+    // The SOLE adapter must share the memory adapter's db handle (the same mockDb the
+    // entity store + caches receive) — NOT a second Database. This is what keeps the
+    // observation columns + FK behaviour consistent with the memories it consolidates.
+    expect(mockCreateSqliteMemoryConsolidationStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb }),
+    );
+    expect(result.consolidationStore).toBeDefined();
   });
 });

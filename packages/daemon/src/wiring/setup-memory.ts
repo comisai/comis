@@ -26,6 +26,7 @@ import {
   createEmbeddingQueue,
   createLocalRerankerProvider,
   createSqliteMemoryEntityStore,
+  createSqliteMemoryConsolidationStore,
   type MemoryApi,
 } from "@comis/memory";
 
@@ -68,6 +69,16 @@ export interface MemoryResult {
    *  `agents.<id>.rag.entityLane.enabled` (default OFF) — see setup-agents-runtime / the cron
    *  review wiring, which thread this port into the read + write paths. */
   entityStore: import("@comis/core").MemoryEntityStore;
+  /** Consolidation store (Phase 84, CONS-01..07). The SOLE adapter for the segregated
+   *  `MemoryConsolidationStore` port — built UNCONDITIONALLY on the SAME shared `db` handle
+   *  as the memory adapter + entity store (so the observation columns, the `(tenant, agent)`
+   *  isolation scope, and the FK-enabled connection are all consistent with the memory rows
+   *  it consolidates). Like the entity store there is no model/IO cost to building it, so it
+   *  is always present; the consolidation cron stays dormant until an operator opts in via
+   *  `agents.<id>.memoryConsolidation.enabled` (default OFF, a cost gate — CONS-07). The daemon
+   *  (composition root) is the only place this @comis/memory adapter and the @comis/agent
+   *  `runMemoryConsolidation` job are joined — the agent receives the port TYPE only. */
+  consolidationStore: import("@comis/core").MemoryConsolidationStore;
   /** Dispose callback for the reranker's native context (ranking ctx -> model -> llama).
    *  Registered in the daemon shutdown path; undefined when no reranker was built. */
   disposeReranker?: () => Promise<void>;
@@ -243,6 +254,18 @@ export async function setupMemory(deps: {
   // operator enables `agents.<id>.rag.entityLane.enabled` (default OFF).
   const entityStore = createSqliteMemoryEntityStore({ db, logger: memoryLogger });
 
+  // 6.5.2c. Consolidation store (Phase 84). Built on the SAME `db` handle the memory
+  // adapter owns — NOT a second Database — so the observation columns (proof_count /
+  // source_ids / consolidated_at / confidence / history) and the memories table share
+  // one FK-enabled connection, and the (tenant, agent) isolation scope is consistent
+  // with the memory rows the consolidation job reads + marks. Always constructed (no
+  // model/IO cost, like the entity store); the consolidation cron stays dormant until an
+  // operator enables `agents.<id>.memoryConsolidation.enabled` (default OFF — the cost
+  // gate, CONS-07). This is the composition-root join: the daemon builds the @comis/memory
+  // adapter here and injects it into the @comis/agent job as the port TYPE (no agent→memory
+  // edge — the architecture-graph cut is preserved).
+  const consolidationStore = createSqliteMemoryConsolidationStore({ db, logger: memoryLogger });
+
   // 6.5.3. Wire caching: L1(L2(provider)) when persistent, L1(provider) otherwise
   let cachedPort: EmbeddingPort | undefined;
   let embeddingCacheStats: (() => import("@comis/memory").EmbeddingCacheStats) | undefined;
@@ -366,6 +389,7 @@ export async function setupMemory(deps: {
     rerankerPort,
     disposeReranker,
     entityStore,
+    consolidationStore,
     maintenanceTick,
   };
 }

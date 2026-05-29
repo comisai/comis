@@ -648,7 +648,7 @@ function buildChannelManagerDeps(deps: {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
-    workspaceDirs, defaultWorkspaceDir, memoryAdapter, entityStore, embeddingQueue,
+    workspaceDirs, defaultWorkspaceDir, memoryAdapter, entityStore, consolidationStore, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
@@ -711,6 +711,10 @@ function buildChannelManagerDeps(deps: {
     // Forwarded into registerCronEventListeners -> runMemoryReview (the write path that
     // populates memory_entities / memory_entity_links after each successful store).
     entityStore,
+    // Phase 84: the consolidation store (built in setup-memory on the shared db).
+    // Forwarded into registerCronEventListeners -> runMemoryConsolidation (the opt-in
+    // __MEMORY_CONSOLIDATION__ cron path). The executor recall path does NOT receive it.
+    consolidationStore,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,
@@ -1654,7 +1658,7 @@ async function bootFoundation(
     disposeEmbedding, cachedPort, memoryAdapter, db,
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
-    rerankerPort, disposeReranker, entityStore,
+    rerankerPort, disposeReranker, entityStore, consolidationStore,
   } = await setupMemory({ container, memoryLogger, clock });
 
   // Observability persistence (dual-write to SQLite). obsStore +
@@ -1790,7 +1794,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, rerankerPort, disposeReranker, entityStore, maintenanceTick,
+    embeddingCircuitBreakerState, rerankerPort, disposeReranker, entityStore, consolidationStore, maintenanceTick,
     obsStore, obsPersistence, contextStore,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,

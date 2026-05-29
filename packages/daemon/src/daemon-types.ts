@@ -377,6 +377,10 @@ export interface BootContext {
   /** Entity-associative store (Phase 83) — threaded into setupAgents (executor recall
    *  read path) + the cron review (write path). Built in setup-memory on the shared db. */
   entityStore: Awaited<ReturnType<typeof setupMemory>>["entityStore"];
+  /** Consolidation store (Phase 84, CONS-07) — threaded into the cron path ONLY (the
+   *  registerCronEventListeners → runMemoryConsolidation sentinel). NOT the executor recall
+   *  path. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). */
+  consolidationStore: Awaited<ReturnType<typeof setupMemory>>["consolidationStore"];
   maintenanceTick: Awaited<ReturnType<typeof setupMemory>>["maintenanceTick"];
   obsStore: ObservabilityStore | undefined;
   obsPersistence: ObsPersistenceResult | undefined;
