@@ -10,14 +10,17 @@
  * contributes a factor of exactly 1.0):
  *
  *   boosted = base
- *     * (1 + recencyAlpha  * (recency(createdAt, nowMs) - 0.5))
- *     * (1 + temporalAlpha * (temporalProx(occurredAt)  - 0.5))   // occurredAt absent → 0.5 → 1.0
- *     * (1 + proofAlpha    * (proofNorm(proofCount)      - 0.5))   // proofCount absent → 0.5 → 1.0
- *     * (1 + trustAlpha    * (trustWeight(trustLevel)    - 0.5))   // system 1.0 / learned 0.5 / external 0.0
+ *     * (1 + recencyAlpha  * (recency(createdAt, nowMs)        - 0.5))
+ *     * (1 + temporalAlpha * (temporalProx(occurredAt, nowMs)  - 0.5))   // LIVE; occurredAt absent → 0.5 → 1.0
+ *     * (1 + proofAlpha    * (proofNorm(proofCount)            - 0.5))   // proofCount absent → 0.5 → 1.0
+ *     * (1 + trustAlpha    * (trustWeight(trustLevel)          - 0.5))   // system 1.0 / learned 0.5 / external 0.0
  *
- * `occurredAt` (Phase-81) and `proofCount` (Phase-84) do NOT exist on MemoryEntry yet
- * — they are read defensively and are always absent now, so their helpers return 0.5
- * (a neutral 1.0 factor, no reordering). This file does not add schema fields.
+ * `occurredAt` (Phase-81/TEMP-05) is now a LIVE event-time signal: it is a typed optional
+ * MemoryEntry field, and `temporalProx` computes real proximity over it (neutral 0.5 → a
+ * 1.0 factor only when absent, falling back to the createdAt recency axis). `proofCount`
+ * (Phase-84) does NOT exist on MemoryEntry yet — it is read defensively and is always
+ * absent now, so its helper returns 0.5 (a neutral 1.0 factor). This file does not add
+ * schema fields.
  *
  * Recency formula (deterministic, testable, monotonic-decreasing in age, in (0,1]):
  *   recency = 1 / (1 + ageDays),  ageDays = max(0, (nowMs - createdAt) / 86_400_000)
@@ -40,7 +43,7 @@ const TIE_EPSILON = 1e-9;
 export interface ScoringAlphas {
   /** Recency boost weight (live now via createdAt). */
   recencyAlpha: number;
-  /** Temporal-proximity boost weight (Phase-81 seam; neutral until occurredAt exists). */
+  /** Event-time proximity boost weight (Phase-81/TEMP-05; LIVE — neutral only when occurredAt is absent). */
   temporalAlpha: number;
   /** Proof-count boost weight (Phase-84 seam; neutral until proofCount exists). */
   proofAlpha: number;
@@ -76,14 +79,20 @@ function recency(createdAt: number, nowMs: number): number {
 }
 
 /**
- * Temporal proximity (Phase-81 seam). `occurredAt` is not yet a MemoryEntry field;
- * when absent this returns 0.5 → a neutral 1.0 factor (no reordering).
+ * Temporal proximity over EVENT time (`occurredAt`, the time the event happened —
+ * distinct from `createdAt`, the time the memory was recorded). Mirrors {@link recency}:
+ * `1 / (1 + ageDays)`, monotone-decreasing in event age, in (0,1]. A future-dated
+ * `occurredAt` (negative age) clamps to ageDays=0 → 1.0 (no negative-age blow-up).
+ *
+ * When `occurredAt` is absent (event time unknown) this returns 0.5 → a neutral 1.0
+ * factor, so ranking falls back to the `createdAt` recency axis (TEMP-01) with no
+ * reordering. `nowMs` is the injected wall-clock — same value threaded to `recency`.
  */
-function temporalProx(entry: MemorySearchResult["entry"]): number {
-  const occurredAt = (entry as unknown as Record<string, unknown>).occurredAt;
-  if (typeof occurredAt !== "number") return 0.5; // neutral seam
-  // Phase 81 will compute real proximity; until then the field cannot be present.
-  return 0.5;
+function temporalProx(entry: MemorySearchResult["entry"], nowMs: number): number {
+  const occurredAt = entry.occurredAt; // typed optional (P81/TEMP-01)
+  if (typeof occurredAt !== "number") return 0.5; // neutral seam → createdAt fallback
+  const ageDays = Math.max(0, (nowMs - occurredAt) / DAY_MS); // clamp future → 1.0
+  return 1 / (1 + ageDays); // same monotone shape as recency(); in (0,1]
 }
 
 /**
@@ -112,7 +121,7 @@ export function score(
   const boosted = results.map((result) => {
     const base = result.score ?? 0;
     const recencyFactor = 1 + alphas.recencyAlpha * (recency(result.entry.createdAt, nowMs) - 0.5);
-    const temporalFactor = 1 + alphas.temporalAlpha * (temporalProx(result.entry) - 0.5);
+    const temporalFactor = 1 + alphas.temporalAlpha * (temporalProx(result.entry, nowMs) - 0.5);
     const proofFactor = 1 + alphas.proofAlpha * (proofNorm(result.entry) - 0.5);
     const trustFactor = 1 + alphas.trustAlpha * (trustWeight(result.entry.trustLevel) - 0.5);
     const next = base * recencyFactor * temporalFactor * proofFactor * trustFactor;
