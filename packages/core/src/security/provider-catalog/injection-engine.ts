@@ -117,6 +117,14 @@ export function applyInjections(
         applySetParam(input.url, rule.name, input.secret);
         break;
       }
+
+      default: {
+        // WR-03: exhaustiveness guard — catches new InjectionRule kinds at compile time.
+        // At runtime the unreachable branch throws to prevent silent credential omission.
+        // (File is in packages/core/src/security/ — exception zone; throw is allowed.)
+        const _exhaustive: never = rule;
+        throw new Error(`Unknown injection rule kind: ${JSON.stringify(_exhaustive)}`);
+      }
     }
   }
 }

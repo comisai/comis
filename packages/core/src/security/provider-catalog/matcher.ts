@@ -82,6 +82,14 @@ export function hostRuleMatches(rule: HostRule, hostname: string): boolean {
         hostname.endsWith(rule.pattern.suffix) &&
         hostname.length > rule.pattern.suffix.length
       );
+    default: {
+      // WR-03: exhaustiveness guard — catches new HostPattern kinds at compile time.
+      // Fail-closed at runtime: return false so an unknown pattern never grants access.
+      const _exhaustive: never = rule.pattern;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      void _exhaustive;
+      return false;
+    }
   }
 }
 
