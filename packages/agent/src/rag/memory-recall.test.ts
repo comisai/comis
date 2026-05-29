@@ -202,6 +202,31 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(got.value.map((r) => r.entry.id)).not.toContain("c");
   });
 
+  it("ME-01: a weak top hit (adapter score < 0.7) stays below the inline gate on the default path (single-lane fuse pass-through, not rank-ramped to ≈1.0)", async () => {
+    // Pre-fix, single-lane fuse rebuilt the score from rank → the top hit became
+    // ≈1.0 and (after the default 0.2 recency / 0.1 trust boosts) sat WELL above the
+    // injector's 0.7 inlineMinScore, force-promoting a genuinely weak hit to inline
+    // injection. Post-fix the adapter score (0.42) passes through; the only boost on
+    // a same-`createdAt` learned hit is recency = 1 + 0.2*(1.0-0.5) = 1.1, so the
+    // boosted top score is 0.42*1.1 ≈ 0.462 — still below 0.7, i.e. NOT inlined.
+    const input = [
+      makeResult("weakTop", { base: 0.42, trustLevel: "learned", createdAt: NOW }),
+      makeResult("weaker", { base: 0.2, trustLevel: "learned", createdAt: NOW }),
+    ];
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
+      baseConfig(),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const topScore = got.value[0]?.score ?? 0;
+    // The recall output feeds createHybridMemoryInjector (inlineMinScore=0.7);
+    // a sub-0.7 top score means the hit goes to the system prompt, NOT inline.
+    expect(topScore).toBeLessThan(0.7);
+    expect(topScore).toBeCloseTo(0.42 * 1.1, 6);
+  });
+
   it("propagates a search error (early-return) without throwing", async () => {
     const recall = createMemoryRecall(
       { memoryPort: failingMemoryPort(), clock: fixedClock, logger: noopLogger },
@@ -371,6 +396,41 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(calls.length).toBe(1);
     expect(calls[0]?.docs.length).toBe(2);
     // tail (c,d,e) keeps fused order after the reranked pool (a,b)
+    expect(got.value.map((r) => r.entry.id)).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("HI-01 scale-mismatch: a LOW absolute CE pool score still precedes the higher-fused-score tail (no global re-sort across scales)", async () => {
+    // 5 candidates, pool=top-2. The reranker scores the pool with LOW absolute CE
+    // probabilities ([0.3, 0.2]) — BELOW the tail's fused-by-rank scores (rank 3/4/5 at
+    // k=60 ≈ 0.968/0.953/0.938). Pre-fix, the orchestrator concatenated the CE-scored
+    // pool with the RRF-scored tail and ran a GLOBAL score() re-sort, so the tail
+    // (≈0.95+) leapfrogged the reranked pool (≤0.3) — silently undoing the rerank.
+    // The reranked pool MUST still occupy the head: the cross-encoder judged a/b the
+    // most relevant of the pool, and the contract is pool-before-tail, always.
+    const input = [
+      makeResult("a", { base: 0.9 }),
+      makeResult("b", { base: 0.8 }),
+      makeResult("c", { base: 0.7 }),
+      makeResult("d", { base: 0.6 }),
+      makeResult("e", { base: 0.5 }),
+    ];
+    const { port, calls } = mockReranker({
+      // LOW absolute CE scores for the pool (below the tail's fused-rank scores).
+      rank: async (_q, docs) => ok(docs.map((_d, i) => (i === 0 ? 0.3 : 0.2))),
+    });
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), reranker: port, timers: fakeTimers().port, clock: fixedClock, logger: noopLogger },
+      baseConfig({
+        rerank: { enabled: true, maxCandidates: 2, minResults: 1, timeoutMs: 800 },
+        // boosts off so the pool-before-tail partition is the only thing under test.
+        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
+      }),
+    );
+    const got = await recall.recall("q", SESSION_KEY);
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(1);
+    // The reranked pool (a,b — by CE score 0.3 > 0.2) precedes the fused tail (c,d,e).
     expect(got.value.map((r) => r.entry.id)).toEqual(["a", "b", "c", "d", "e"]);
   });
 

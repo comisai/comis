@@ -16,10 +16,15 @@
  *   maxScore  = (Σ weights) / (k + 1)                   theoretical max (rank-1 in all lanes)
  *   normalized = min(1, score(d) / maxScore)            → (0, 1]
  *
- * With a SINGLE lane this is order-preserving (identity): one accumulated term per
- * entry whose magnitude is strictly decreasing in rank, so the output order equals
- * the input order. That is the DEFAULT recall path (rerank is default-OFF and the
- * entity lane is an empty Phase-83 seam) — it must not reorder.
+ * With a SINGLE lane this is a PASS-THROUGH (ME-01): the lane's incoming order is
+ * preserved AND each result's incoming `score` is carried through unchanged. The
+ * upstream adapter (SqliteMemoryAdapter.search) already returns RRF-normalized
+ * relevance scores with a genuine distribution (a strong top hit vs. a weak tail);
+ * recomputing a fresh score from array rank here would collapse that distribution to
+ * a near-flat ramp (1.0/0.984/…) and flip the downstream inlineMinScore=0.7 gate on
+ * the DEFAULT (rerank-off) path. So single-lane fusion is the identity on BOTH order
+ * and score. Only the multi-lane case (the Phase-83 entity-lane seam) runs the RRF
+ * rank math, where rebasing onto a common rank scale is exactly the point.
  *
  * @module
  */
@@ -55,8 +60,20 @@ interface FusionAccumulator {
  * sorted by descending fused score; equal scores fall back to first-seen order so
  * fusing the same lanes in a different lane order yields the same final ranking
  * (RRF is commutative over lanes).
+ *
+ * SINGLE-LANE PASS-THROUGH (ME-01): with exactly one lane the upstream adapter score
+ * is preserved verbatim (order and `score` both untouched) — see the module doc for
+ * why rebuilding a rank-ramp score would regress the inline-injection gate.
  */
 export function fuse(lanes: FusionLane[]): MemorySearchResult[] {
+  // Single lane: pass the adapter's relevance score (and order) straight through.
+  // Skip empty holes to match the multi-lane path's `result === undefined` guard.
+  if (lanes.length === 1) {
+    const only = lanes[0];
+    if (only === undefined) return [];
+    return only.results.filter((r): r is MemorySearchResult => r !== undefined);
+  }
+
   const merged = new Map<string, FusionAccumulator>();
   let totalWeight = 0;
   let nextOrder = 0;
