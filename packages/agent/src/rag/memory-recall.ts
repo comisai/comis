@@ -46,7 +46,7 @@ import { tryGetContext } from "@comis/core";
 import type { RecallTrace } from "@comis/observability";
 import { ok, withTimeout, TimeoutError, type Result } from "@comis/shared";
 import { fuse, type FusionLane } from "./fuse.js";
-import { score, scoreWithBreakdown, type ScoringAlphas, type ScoreBreakdown } from "./score.js";
+import { scoreWithBreakdown, type ScoringAlphas, type ScoreBreakdown } from "./score.js";
 import { deduplicateResults } from "./rag-retriever.js";
 import {
   buildRecallRecord,
@@ -180,7 +180,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // FTS-only case). When candidates exist but the vector lane could not contribute, we
       // log ONE WARN + record a vec_unavailable degradation. This fires only for a
       // degenerate query, never as per-recall noise (see vectorLaneCouldContribute).
-      let vectorLaneActive = vectorLaneCouldContribute(query);
+      const vectorLaneActive = vectorLaneCouldContribute(query);
       if (ftsCandidates > 0 && !vectorLaneActive) {
         const hint = "vector lane unavailable; recall used FTS only";
         deps.logger.warn(
