@@ -314,6 +314,104 @@ describe("occurred_at round-trip (domain -> INSERT -> SELECT * -> rowToEntry)", 
   });
 });
 
+// ── Observation columns full round-trip (Phase 84 CONS-01/05/08) ────
+//
+// THE 4-WAY LOCKSTEP guard for the 5 observation columns: domain
+// MemoryEntry -> insertMemoryRow -> SELECT * -> MemoryRowSchema
+// (z.strictObject) -> rowToEntry. If proof_count/source_ids/
+// consolidated_at/confidence/history are added to the table but NOT to
+// MemoryRowSchema, the strict parse below FAILS -> the adapter skips the
+// row -> recall silently returns []. These fail loudly instead. A column
+// shift in insertMemoryRow's INSERT/VALUES/run triplet also surfaces here
+// as a wrong-value mismatch.
+
+describe("observation columns round-trip (domain -> INSERT -> SELECT * -> rowToEntry)", () => {
+  let db: Database.Database;
+  const memoryRowMapper = createRowMapper(MemoryRowSchema);
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, DIMS);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  function selectAndParse(id: string): MemoryRow {
+    const raw = db.prepare("SELECT * FROM memories WHERE id = ?").get(id);
+    const parsed = memoryRowMapper.parseOptionalRow(raw);
+    // The strict schema MUST accept the SELECT * shape (incl. all 5 obs cols).
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(`row parse failed: ${parsed.error.message}`);
+    expect(parsed.value).toBeDefined();
+    return parsed.value!;
+  }
+
+  it("preserves all five observation fields through a store/read cycle", () => {
+    const src1 = crypto.randomUUID();
+    const src2 = crypto.randomUUID();
+    const entry: MemoryEntry = {
+      ...makeEntry({ id: crypto.randomUUID(), createdAt: 1700000000000 }),
+      proofCount: 3,
+      sourceIds: [src1, src2],
+      confidence: 0.8,
+      consolidatedAt: 1700500000000,
+      history: [{ previousContent: "x", changedAt: 1699000000000 }],
+    };
+    insertMemoryRow(db, entry, "semantic");
+
+    const row = selectAndParse(entry.id);
+    const back = rowToEntry(row);
+
+    expect(back.proofCount).toBe(3);
+    expect(back.sourceIds).toEqual([src1, src2]);
+    expect(back.confidence).toBe(0.8);
+    expect(back.consolidatedAt).toBe(1700500000000);
+    expect(back.history).toEqual([{ previousContent: "x", changedAt: 1699000000000 }]);
+  });
+
+  it("omits every observation key after a round-trip when all columns are NULL (raw memory)", () => {
+    const entry = makeEntry({ id: "rt-raw" });
+    insertMemoryRow(db, entry, "semantic");
+
+    const row = selectAndParse("rt-raw");
+    expect(row.proof_count).toBeNull();
+    expect(row.source_ids).toBeNull();
+    expect(row.consolidated_at).toBeNull();
+    expect(row.confidence).toBeNull();
+    expect(row.history).toBeNull();
+
+    const back = rowToEntry(row);
+    expect("proofCount" in back).toBe(false);
+    expect("sourceIds" in back).toBe(false);
+    expect("consolidatedAt" in back).toBe(false);
+    expect("confidence" in back).toBe(false);
+    expect("history" in back).toBe(false);
+  });
+
+  it("degrades a corrupt source_ids JSON column to an absent field (never throws)", () => {
+    const entry = makeEntry({ id: "rt-corrupt" });
+    insertMemoryRow(db, entry, "semantic");
+    // Simulate on-disk corruption of the JSON TEXT column.
+    db.prepare("UPDATE memories SET source_ids = ? WHERE id = ?").run("{not-json", "rt-corrupt");
+
+    const row = selectAndParse("rt-corrupt");
+    expect(() => rowToEntry(row)).not.toThrow();
+    const back = rowToEntry(row);
+    expect("sourceIds" in back).toBe(false);
+  });
+
+  it("rejects an unknown extra column so the strict-reject guard stays intact", () => {
+    // After adding 5 keys, MemoryRowSchema must still reject unknown columns
+    // (z.strictObject) — proves we did not loosen the schema to strip extras.
+    const base = makeRow();
+    const withBogus = { ...base, bogus_col: "surprise" } as unknown;
+    const parsed = MemoryRowSchema.safeParse(withBogus);
+    expect(parsed.success).toBe(false);
+  });
+});
+
 // ── storeEmbedding ───────────────────────────────────────────────────
 
 describe("storeEmbedding", () => {

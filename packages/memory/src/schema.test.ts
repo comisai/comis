@@ -324,6 +324,116 @@ describe("initSchema", () => {
     });
   });
 
+  // ── observation additive columns (Phase 84 CONS-01/04/05/08) ────────
+  //
+  // The column-flag data model (design §4.1): an observation is a `memories`
+  // row with `proof_count IS NOT NULL` (NOT a separate table, NOT a
+  // memory_type CHECK change). ensureMemoryColumns must add all 5 nullable
+  // columns idempotently on a live DB that predates them (existing rows get
+  // NULL), and initSchema must create the 2 partial indexes.
+
+  describe("observation additive columns (Phase 84)", () => {
+    const OBS_COLS = ["proof_count", "source_ids", "consolidated_at", "confidence", "history"];
+
+    /**
+     * Build a `memories` table at the PRE-Phase-84 shape (occurred_at present,
+     * the 5 observation columns absent) — the shape a live ~/.comis DB has
+     * after Phase 81 but before this phase.
+     */
+    function createPreObservationTable(target: Database.Database): void {
+      target.exec(`
+        CREATE TABLE memories (
+          id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL DEFAULT 'default',
+          agent_id TEXT NOT NULL DEFAULT 'default',
+          user_id TEXT NOT NULL,
+          content TEXT NOT NULL,
+          trust_level TEXT NOT NULL,
+          memory_type TEXT NOT NULL DEFAULT 'semantic',
+          source_who TEXT NOT NULL,
+          source_channel TEXT,
+          source_session_key TEXT,
+          tags TEXT NOT NULL DEFAULT '[]',
+          created_at INTEGER NOT NULL,
+          occurred_at INTEGER,
+          updated_at INTEGER,
+          expires_at INTEGER,
+          has_embedding INTEGER NOT NULL DEFAULT 0
+        );
+      `);
+    }
+
+    it("adds the five observation columns to a pre-existing table WITHOUT them, non-destructively", () => {
+      createPreObservationTable(db);
+      db.prepare(
+        `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
+         VALUES ('pre-obs', 'default', 'u1', 'an existing raw fact', 'learned', 'semantic', 'agent', '[]', 1000)`,
+      ).run();
+
+      const before = (
+        db.prepare("PRAGMA table_info(memories)").all() as Array<{ name: string }>
+      ).map((c) => c.name);
+      for (const col of OBS_COLS) expect(before).not.toContain(col);
+
+      expect(() => ensureMemoryColumns(db)).not.toThrow();
+
+      const after = (
+        db.prepare("PRAGMA table_info(memories)").all() as Array<{ name: string }>
+      ).map((c) => c.name);
+      for (const col of OBS_COLS) expect(after).toContain(col);
+
+      // The pre-existing row survives, all 5 observation columns NULL (no backfill).
+      const row = db
+        .prepare(
+          "SELECT id, content, proof_count, source_ids, consolidated_at, confidence, history FROM memories WHERE id = 'pre-obs'",
+        )
+        .get() as Record<string, unknown>;
+      expect(row.id).toBe("pre-obs");
+      expect(row.content).toBe("an existing raw fact");
+      expect(row.proof_count).toBeNull();
+      expect(row.source_ids).toBeNull();
+      expect(row.consolidated_at).toBeNull();
+      expect(row.confidence).toBeNull();
+      expect(row.history).toBeNull();
+    });
+
+    it("is idempotent -- a second add on a table that already has the observation columns does not error", () => {
+      createPreObservationTable(db);
+      ensureMemoryColumns(db); // first add
+      expect(() => ensureMemoryColumns(db)).not.toThrow(); // second add is a no-op
+    });
+
+    it("initSchema run twice keeps each observation column exactly once", () => {
+      initSchema(db, 1536);
+      expect(() => initSchema(db, 1536)).not.toThrow();
+      const cols = (
+        db.prepare("PRAGMA table_info(memories)").all() as Array<{ name: string }>
+      ).map((c) => c.name);
+      for (const col of OBS_COLS) {
+        expect(cols.filter((c) => c === col)).toHaveLength(1);
+      }
+    });
+
+    it("creates the unconsolidated and observations partial indexes", () => {
+      initSchema(db, 1536);
+      const indexes = (
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='memories'")
+          .all() as Array<{ name: string }>
+      ).map((r) => r.name);
+      expect(indexes).toContain("idx_memories_unconsol");
+      expect(indexes).toContain("idx_memories_observations");
+    });
+
+    it("does NOT add a superseded_by column (deferred this phase)", () => {
+      initSchema(db, 1536);
+      const cols = (
+        db.prepare("PRAGMA table_info(memories)").all() as Array<{ name: string }>
+      ).map((c) => c.name);
+      expect(cols).not.toContain("superseded_by");
+    });
+  });
+
   it("vec_memories dimension matches config", () => {
     initSchema(db, 384);
 
