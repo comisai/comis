@@ -46,9 +46,25 @@ function makeLogger() {
   };
 }
 
-/** Wait long enough for chokidar (atomic:100) + the 100ms debounce to flush. */
-async function waitForWatchFlush(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 450));
+/**
+ * Poll `predicate` until it returns truthy or the attempt budget is exhausted.
+ *
+ * Replaces a fixed sleep: chokidar's `change` event plus the store's 100ms
+ * debounce can exceed ANY fixed wait under heavy suite/coverage load — observed
+ * as a flaky stale-cache read (`expected 'AT' to be 'AT-EXTERNAL'`). Polling
+ * waits exactly as long as the watcher actually needs (up to ~5s) and never
+ * longer. Crucially, each iteration drives a `store` read, which is what
+ * triggers the lazy re-read after the watcher clears the cache.
+ */
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  { attempts = 200, intervalMs = 25 }: { attempts?: number; intervalMs?: number } = {},
+): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    if (await predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return false;
 }
 
 describe("createTokenStore", () => {
@@ -209,7 +225,12 @@ describe("createTokenStore", () => {
     };
     writeFileSync(join(dir, "notion.json"), JSON.stringify(external), { mode: 0o600 });
 
-    await waitForWatchFlush();
+    // Poll until the watcher's debounced cache-invalidation lands and the next
+    // read re-reads the external value — no fixed sleep, so not load-sensitive.
+    const invalidated = await waitFor(
+      async () => (await store.tokens("notion"))?.access_token === "AT-EXTERNAL",
+    );
+    expect(invalidated).toBe(true);
 
     const second = await store.tokens("notion");
     expect(second?.access_token).toBe("AT-EXTERNAL");
@@ -226,9 +247,19 @@ describe("createTokenStore", () => {
     const primed = await store.tokens("notion");
     expect(primed?.access_token).toBe("AT-GOOD");
 
+    // Ignore any construction-time warns; only the fail-soft re-read counts.
+    logger.warn.mockClear();
+
     // Write a truncated (invalid JSON) file directly.
     writeFileSync(join(dir, "notion.json"), '{"accessToken":"AT-', { mode: 0o600 });
-    await waitForWatchFlush();
+
+    // The WARN only fires when a read re-parses the file AFTER the watcher
+    // clears the cache, so poll BY reading until the fail-soft path logs.
+    const warned = await waitFor(async () => {
+      await store.tokens("notion");
+      return logger.warn.mock.calls.length > 0;
+    });
+    expect(warned).toBe(true);
 
     // Fail-soft: parse error must NOT throw; the last-good cache is served.
     const after = await store.tokens("notion");
