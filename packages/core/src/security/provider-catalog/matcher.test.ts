@@ -56,6 +56,11 @@ describe("normalizeHost — edge inputs", () => {
   it("returns empty string for empty authority input", () => {
     expect(normalizeHost("")).toBe("");
   });
+
+  it("lowercases a malformed bracketed IPv6 with no closing bracket rather than crashing", () => {
+    // Covers the closeBracket === -1 branch (malformed input handled gracefully)
+    expect(normalizeHost("[2001:db8::1")).toBe("[2001:db8::1");
+  });
 });
 
 // ── hostRuleMatches ───────────────────────────────────────────────────────────
@@ -163,6 +168,27 @@ describe("pathAllowed — query string stripping (T-02-05)", () => {
     // T-02-05: query string must be stripped before comparison — /v1/x?token=LEAK matches /v1/*
     const rule = makeExactRule("example.com", { pathPolicy: ["/v1/*"] });
     expect(pathAllowed(rule, "/v1/x?token=LEAK")).toBe(true);
+  });
+});
+
+describe("pathAllowed — exact path match in policy", () => {
+  it("allows a path that exactly equals a pattern with no wildcard characters", () => {
+    const rule = makeExactRule("example.com", { pathPolicy: ["/v1/status"] });
+    expect(pathAllowed(rule, "/v1/status")).toBe(true);
+  });
+
+  it("rejects a path that does not exactly match the non-wildcard pattern", () => {
+    const rule = makeExactRule("example.com", { pathPolicy: ["/v1/status"] });
+    expect(pathAllowed(rule, "/v1/status/extra")).toBe(false);
+  });
+});
+
+describe("pathAllowed — segment wildcard with insufficient path depth", () => {
+  it("rejects a path missing the trailing suffix required by a mid-pattern segment wildcard", () => {
+    // Covers the segmentEnd === -1 branch: path /repos/myrepo has no slash after the wildcard slot,
+    // but the pattern /repos/*/issues requires /issues after the slot — so it must be rejected.
+    const rule = makeExactRule("example.com", { pathPolicy: ["/repos/*/issues"] });
+    expect(pathAllowed(rule, "/repos/myrepo")).toBe(false);
   });
 });
 
