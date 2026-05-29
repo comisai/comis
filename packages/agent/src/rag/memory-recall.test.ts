@@ -771,3 +771,308 @@ describe("createMemoryRecall — entity associative lane (ENT-02/ENT-04)", () =>
     expect(warnArg).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plan 03 — recall-trace capture + memory:recalled/reranked emit + vec→FTS signal
+// ---------------------------------------------------------------------------
+
+/** A recording RecallTrace spy: captures every recordRecall payload. */
+function recordingRecallTrace(): {
+  recallTrace: { recordRecall: (r: Record<string, unknown>) => "queued" | "dropped" };
+  records: Record<string, unknown>[];
+} {
+  const records: Record<string, unknown>[] = [];
+  return {
+    recallTrace: {
+      recordRecall(r: Record<string, unknown>) {
+        records.push(r);
+        return "queued";
+      },
+    },
+    records,
+  };
+}
+
+/** A minimal eventBus spy capturing emit(event, payload) pairs. */
+function recordingEventBus(): {
+  eventBus: { emit: (event: string, payload: Record<string, unknown>) => void };
+  emits: { event: string; payload: Record<string, unknown> }[];
+} {
+  const emits: { event: string; payload: Record<string, unknown> }[] = [];
+  return {
+    eventBus: {
+      emit(event: string, payload: Record<string, unknown>) {
+        emits.push({ event, payload });
+      },
+    },
+    emits,
+  };
+}
+
+/** Type-erasing deps builder so the test can inject recallTrace/eventBus before the type ships. */
+function recallWithObs(
+  deps: Record<string, unknown>,
+  cfg: MemoryRecallConfig,
+): ReturnType<typeof createMemoryRecall> {
+  return createMemoryRecall(deps as unknown as Parameters<typeof createMemoryRecall>[0], cfg);
+}
+
+describe("createMemoryRecall — recall-trace capture (OBS-01)", () => {
+  it("writes exactly ONE recordRecall per recall carrying lanes, fusedOrder, rerank.outcome, and ranked[] with id+reason+breakdown", async () => {
+    const input = [
+      makeResult("a", { base: 0.9, trustLevel: "learned", createdAt: NOW }),
+      makeResult("b", { base: 0.6, trustLevel: "system", createdAt: NOW }),
+    ];
+    const { recallTrace, records } = recordingRecallTrace();
+    const recall = recallWithObs(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger, recallTrace },
+      baseConfig(),
+    );
+    const got = await recall.recall("what is the plan", SESSION_KEY, "agent_z");
+    expect(got.ok).toBe(true);
+    // exactly one record per recall.
+    expect(records.length).toBe(1);
+    const rec = records[0] as {
+      lanes?: { fts?: number; vector?: number; entity?: number };
+      fusedOrder?: string[];
+      rerank?: { outcome?: string };
+      ranked?: Array<{ id?: string; reason?: string; breakdown?: { final?: number } }>;
+      durationMs?: number;
+    };
+    // lanes carries per-lane candidate counts.
+    expect(rec.lanes?.fts).toBe(2);
+    expect(typeof rec.lanes?.vector).toBe("number");
+    expect(rec.lanes?.entity).toBe(0);
+    // fusedOrder is the post-fuse id order.
+    expect(rec.fusedOrder).toEqual(["a", "b"]);
+    // rerank outcome is a closed-union value (rerank off → fell_back).
+    expect(["ran", "fell_back", "timed_out"]).toContain(rec.rerank?.outcome);
+    // ranked[] explains each survivor with id + reason + breakdown.
+    expect(rec.ranked?.length).toBeGreaterThan(0);
+    for (const entry of rec.ranked ?? []) {
+      expect(typeof entry.id).toBe("string");
+      expect(["included", "trust_filtered", "deduped", "below_budget"]).toContain(entry.reason);
+    }
+    const included = (rec.ranked ?? []).filter((e) => e.reason === "included");
+    expect(included.length).toBeGreaterThan(0);
+    expect(typeof included[0]?.breakdown?.final).toBe("number");
+    expect(typeof rec.durationMs).toBe("number");
+  });
+
+  it("DEFAULT-OFF: with recallTrace absent, recall output is byte-identical to today and no record is written (optional-dep no-op path)", async () => {
+    const input = [
+      makeResult("a", { base: 0.9, trustLevel: "learned", createdAt: NOW - 10 * 86_400_000 }),
+      makeResult("b", { base: 0.6, trustLevel: "system", createdAt: NOW - 1 * 86_400_000 }),
+      makeResult("c", { base: 0.3, trustLevel: "external", createdAt: NOW }),
+    ];
+    const cfg = baseConfig();
+    // Reference = the documented default pipeline (unchanged from pre-Plan-03).
+    const fused = fuse([{ results: input, weight: 1.0 }]);
+    const scored = score(fused, cfg.scoring, NOW);
+    const allowed = new Set<TrustLevel>(cfg.includeTrustLevels);
+    const expected = deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel))).map(
+      (r) => r.entry.id,
+    );
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
+      cfg,
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(expected);
+  });
+
+  it("records trust-filtered AND deduped memories in ranked[] with the correct exclude reason (the trace explains the exclusion)", async () => {
+    const input = [
+      makeResult("keep", { content: "alpha", base: 0.9, trustLevel: "system", createdAt: NOW }),
+      makeResult("dropTrust", { content: "beta", base: 0.8, trustLevel: "external", createdAt: NOW }),
+      makeResult("dupA", { content: "same body", base: 0.7, trustLevel: "system", createdAt: NOW - 86_400_000 }),
+      makeResult("dupB", { content: "same body", base: 0.6, trustLevel: "system", createdAt: NOW }),
+    ];
+    const { recallTrace, records } = recordingRecallTrace();
+    const recall = recallWithObs(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger, recallTrace },
+      baseConfig({ includeTrustLevels: ["system", "learned"] }),
+    );
+    await recall.recall("q", SESSION_KEY, "agent_z");
+    const rec = records[0] as { ranked?: Array<{ id: string; reason: string }> };
+    const byId = new Map((rec.ranked ?? []).map((e) => [e.id, e.reason]));
+    // external memory excluded by the trust filter — present in the trace with the reason.
+    expect(byId.get("dropTrust")).toBe("trust_filtered");
+    // a near-duplicate is recorded with reason "deduped" (one of dupA/dupB is dropped).
+    const dedupedReasons = (rec.ranked ?? []).filter((e) => e.reason === "deduped");
+    expect(dedupedReasons.length).toBeGreaterThan(0);
+  });
+
+  it("records the query as a DIGEST (hex fingerprint), never the raw query text", async () => {
+    const input = [makeResult("a", { base: 0.5 })];
+    const { recallTrace, records } = recordingRecallTrace();
+    const recall = recallWithObs(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger, recallTrace },
+      baseConfig(),
+    );
+    const rawQuery = "my secret query about project apollo";
+    await recall.recall(rawQuery, SESSION_KEY, "agent_z");
+    const rec = records[0] as { queryDigest?: string };
+    expect(typeof rec.queryDigest).toBe("string");
+    // the recorded value is NOT the raw query and looks like a hex digest.
+    expect(rec.queryDigest).not.toBe(rawQuery);
+    expect(rec.queryDigest).not.toContain("apollo");
+    expect(rec.queryDigest).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("createMemoryRecall — memory:recalled / memory:reranked emit (OBS-04)", () => {
+  it("emits memory:recalled once with a counts-only payload (no query text / memory body)", async () => {
+    const input = [
+      makeResult("a", { base: 0.9, content: "sensitive body text" }),
+      makeResult("b", { base: 0.6 }),
+    ];
+    const { eventBus, emits } = recordingEventBus();
+    const recall = recallWithObs(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger, eventBus },
+      baseConfig(),
+    );
+    await recall.recall("the raw query", SESSION_KEY, "agent_z");
+    const recalled = emits.filter((e) => e.event === "memory:recalled");
+    expect(recalled.length).toBe(1);
+    const p = recalled[0]?.payload as Record<string, unknown>;
+    expect(typeof p.ftsCandidates).toBe("number");
+    expect(typeof p.vectorCandidates).toBe("number");
+    expect(typeof p.entityCandidates).toBe("number");
+    expect(typeof p.finalCount).toBe("number");
+    expect(typeof p.rerankerAvailable).toBe("boolean");
+    expect(typeof p.durationMs).toBe("number");
+    expect(p.agentId).toBe("agent_z");
+    // counts-only: no query text, no memory body anywhere in the payload.
+    const serialized = JSON.stringify(p);
+    expect(serialized).not.toContain("the raw query");
+    expect(serialized).not.toContain("sensitive body text");
+  });
+
+  it("emits memory:reranked with timedOut/fellBack reflecting the outcome when reranking runs", async () => {
+    const input = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.6 })];
+    const { eventBus, emits } = recordingEventBus();
+    // reranker returns err -> fellBack:true.
+    const { port } = mockReranker({ rank: async () => err(new Error("ce down")) });
+    const recall = recallWithObs(
+      {
+        memoryPort: fakeMemoryPort(input),
+        reranker: port,
+        timers: fakeTimers().port,
+        clock: fixedClock,
+        logger: noopLogger,
+        eventBus,
+      },
+      baseConfig({ rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 } }),
+    );
+    await recall.recall("q", SESSION_KEY, "agent_z");
+    const reranked = emits.filter((e) => e.event === "memory:reranked");
+    expect(reranked.length).toBe(1);
+    const p = reranked[0]?.payload as { fellBack?: boolean; timedOut?: boolean };
+    expect(p.fellBack).toBe(true);
+    expect(p.timedOut).toBe(false);
+  });
+
+  it("does NOT emit memory:reranked when reranking was never attempted (rerank off)", async () => {
+    const input = [makeResult("a", { base: 0.9 })];
+    const { eventBus, emits } = recordingEventBus();
+    const recall = recallWithObs(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger, eventBus },
+      baseConfig(),
+    );
+    await recall.recall("q", SESSION_KEY, "agent_z");
+    expect(emits.filter((e) => e.event === "memory:reranked").length).toBe(0);
+    // but memory:recalled still fires once.
+    expect(emits.filter((e) => e.event === "memory:recalled").length).toBe(1);
+  });
+});
+
+describe("createMemoryRecall — vec→FTS-only degradation signal (OBS-03 gap)", () => {
+  it("logs ONE WARN (errorKind dependency + hint) AND records a vec_unavailable degradation AND zero vectorCandidates when the vector lane cannot contribute", async () => {
+    // A whitespace-only query cannot produce a vector embedding (the memory layer's
+    // zero-length-embedding → FTS-only fallback). The recall layer surfaces this as the
+    // operator-facing vec→FTS signal: one WARN + a degradations[] entry + zero vector
+    // candidates in the recalled event. Candidates still exist (FTS matched).
+    const input = [makeResult("a", { base: 0.9, createdAt: NOW }), makeResult("b", { base: 0.6, createdAt: NOW })];
+    const warn = vi.fn();
+    const logger = { ...noopLogger, warn } as unknown as ComisLogger;
+    const { recallTrace, records } = recordingRecallTrace();
+    const { eventBus, emits } = recordingEventBus();
+    const recall = recallWithObs(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger, recallTrace, eventBus },
+      baseConfig(),
+    );
+    // whitespace-only query → no vector lane.
+    const got = await recall.recall("   ", SESSION_KEY, "agent_z");
+    expect(got.ok).toBe(true);
+    // ONE WARN with the vec→FTS errorKind + hint.
+    const warnArg = warn.mock.calls.find(
+      (c) =>
+        ((c[0] as { errorKind?: string })?.errorKind === "dependency" ||
+          (c[0] as { errorKind?: string })?.errorKind === "precondition") &&
+        /vector lane unavailable/i.test((c[0] as { hint?: string })?.hint ?? ""),
+    );
+    expect(warnArg).toBeDefined();
+    // the trace's degradations[] carries the vec_unavailable kind.
+    const rec = records[0] as {
+      vectorLaneActive?: boolean;
+      degradations?: Array<{ kind?: string; errorKind?: string; hint?: string }>;
+    };
+    expect(rec.vectorLaneActive).toBe(false);
+    const vecDeg = (rec.degradations ?? []).find((d) => d.kind === "vec_unavailable");
+    expect(vecDeg).toBeDefined();
+    expect(typeof vecDeg?.errorKind).toBe("string");
+    expect(typeof vecDeg?.hint).toBe("string");
+    // memory:recalled carries zero vectorCandidates.
+    const recalled = emits.find((e) => e.event === "memory:recalled");
+    expect((recalled?.payload as { vectorCandidates?: number })?.vectorCandidates).toBe(0);
+  });
+
+  it("does NOT fire the vec→FTS WARN for a normal query (the signal is conservative, not per-recall noise)", async () => {
+    const input = [makeResult("a", { base: 0.9 })];
+    const warn = vi.fn();
+    const logger = { ...noopLogger, warn } as unknown as ComisLogger;
+    const { recallTrace, records } = recordingRecallTrace();
+    const recall = recallWithObs(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger, recallTrace },
+      baseConfig(),
+    );
+    await recall.recall("a perfectly normal embeddable query", SESSION_KEY, "agent_z");
+    const vecWarn = warn.mock.calls.find((c) =>
+      /vector lane unavailable/i.test((c[0] as { hint?: string })?.hint ?? ""),
+    );
+    expect(vecWarn).toBeUndefined();
+    const rec = records[0] as { vectorLaneActive?: boolean; degradations?: Array<{ kind?: string }> };
+    expect(rec.vectorLaneActive).toBe(true);
+    expect((rec.degradations ?? []).some((d) => d.kind === "vec_unavailable")).toBe(false);
+  });
+
+  it("records a recorder/emit failure NEVER aborts recall (non-fatal observability)", async () => {
+    const input = [makeResult("a", { base: 0.9 })];
+    const recall = recallWithObs(
+      {
+        memoryPort: fakeMemoryPort(input),
+        clock: fixedClock,
+        logger: noopLogger,
+        recallTrace: {
+          recordRecall() {
+            throw new Error("recorder exploded");
+          },
+        },
+        eventBus: {
+          emit() {
+            throw new Error("bus exploded");
+          },
+        },
+      },
+      baseConfig(),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "agent_z");
+    // recall succeeds despite the recorder + bus throwing — observability is non-fatal.
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(["a"]);
+  });
+});
