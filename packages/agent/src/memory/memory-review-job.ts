@@ -16,11 +16,12 @@
  */
 
 import { ok, err, fromPromise, type Result } from "@comis/shared";
-import { safePath, parseFormattedSessionKey, systemNowMs, systemDateFrom, systemSetTimeout, systemClearTimeout } from "@comis/core";
+import { safePath, systemDateFrom, systemSetTimeout, systemClearTimeout, validateMemoryWrite } from "@comis/core";
 import type { MemoryReviewConfig } from "@comis/core";
 import type { MemoryPort, MemorySearchOptions } from "@comis/core";
-import type { MemoryEntry } from "@comis/core";
+import type { MemoryEntry, MemorySource, TrustLevel, ClockPort } from "@comis/core";
 import type { SessionData, SessionKey } from "@comis/core";
+import { STRUCTURED_PROMPT, parseExtractionResult, resolveOccurredAt } from "./memory-extraction.js";
 import { completeSimple, getModel } from "@earendil-works/pi-ai";
 import { readFile, writeFile, rename } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -57,6 +58,12 @@ export interface MemoryReviewDeps {
   provider: string;
   modelId: string;
   apiKey: string;
+  /**
+   * Wall-clock reads — the relative-date RESOLUTION reference + each stored
+   * entry's `createdAt`/event timestamps. Never `Date.now()` (globals rule);
+   * Plan 04 wires the daemon's `createSystemClock()` adapter here.
+   */
+  clock: ClockPort;
   logger: {
     info(obj: Record<string, unknown>, msg: string): void;
     debug(obj: Record<string, unknown>, msg: string): void;
@@ -74,9 +81,16 @@ interface ReviewWatermark {
   sessions: Record<string, number>;
 }
 
-interface ExtractedPreference {
-  content: string;
-  session: string;
+/**
+ * An extracted memory paired with its emitted entity mentions (Phase 82, EXTR-04 / Q4b).
+ *
+ * Entities are EMITTED on this in-memory result carrying the stored memory's
+ * inherited trust + provenance — they are NOT persisted (no entity table exists
+ * until Phase 83). `memoryId` is the link target Phase 83's resolver consumes.
+ */
+interface ExtractedMemoryWithEntities {
+  memoryId: string;
+  entities: { name: string; trustLevel: TrustLevel; source: MemorySource }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -84,11 +98,6 @@ interface ExtractedPreference {
 // ---------------------------------------------------------------------------
 
 const LLM_TIMEOUT_MS = 120_000;
-const SYSTEM_PROMPT = `You are analyzing chat session histories to extract user preferences and facts.
-For each session, extract any user preferences, facts about the user, or recurring patterns.
-Return a JSON array of objects: [{"content": "preference text", "session": "session_key"}]
-If no preferences found, return an empty array: []
-Return ONLY valid JSON, no markdown fences, no explanation.`;
 
 // ---------------------------------------------------------------------------
 // Watermark helpers
@@ -190,24 +199,6 @@ function buildSessionSummary(
 // LLM response parsing
 // ---------------------------------------------------------------------------
 
-function parseExtractedPreferences(text: string): ExtractedPreference[] | undefined {
-  // Strip markdown code fences
-  const cleaned = text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-  try {
-    const parsed = JSON.parse(cleaned);
-    if (!Array.isArray(parsed)) return undefined;
-    return parsed.filter(
-      (item: unknown) =>
-        item &&
-        typeof item === "object" &&
-        typeof (item as Record<string, unknown>).content === "string" &&
-        typeof (item as Record<string, unknown>).session === "string",
-    ) as ExtractedPreference[];
-  } catch {
-    return undefined;
-  }
-}
-
 function extractResponseText(response: { content?: unknown[] }): string {
   let text = "";
   if (response.content && Array.isArray(response.content)) {
@@ -234,15 +225,19 @@ function extractResponseText(response: { content?: unknown[] }): string {
  * Run periodic memory review for a single agent.
  *
  * Scans sessions updated since last watermark, batches them into a single
- * cheap-model LLM call, deduplicates extracted preferences, and stores new
- * findings via MemoryPort.
+ * cheap-model LLM call, then parses the LLM output into zod-validated STRUCTURED
+ * memories (`{ content, occurredAt?, entities[] }`, Phase 82 / EXTR-01..05),
+ * resolves each `occurredAt` via the injected clock, deduplicates, and stores
+ * new findings (content + occurredAt only) via MemoryPort. Entity mentions are
+ * EMITTED (not persisted — Q4b). Malformed output is non-fatal: the watermark
+ * advances and the run returns ok (EXTR-05).
  *
- * @param deps - Injected dependencies (memoryPort, sessionStore, eventBus, LLM config, etc.)
+ * @param deps - Injected dependencies (memoryPort, sessionStore, eventBus, clock, LLM config, etc.)
  * @returns Result<void, Error> -- ok on success (even if 0 memories extracted), err on fatal failure
  */
 export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<void, Error>> {
-  const startTime = systemNowMs();
-  const { config, agentId, tenantId, memoryPort, sessionStore, eventBus, logger } = deps;
+  const { config, agentId, tenantId, memoryPort, sessionStore, eventBus, logger, clock } = deps;
+  const startTime = clock.now();
 
   // Load watermark
   const watermarkPath = safePath(deps.workspacePath, ".memory-review-watermark");
@@ -261,8 +256,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       sessionsReviewed: 0,
       memoriesExtracted: 0,
       duplicatesSkipped: 0,
-      durationMs: systemNowMs() - startTime,
-      timestamp: systemNowMs(),
+      durationMs: clock.now() - startTime,
+      timestamp: clock.now(),
     });
     return ok(undefined);
   }
@@ -297,8 +292,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       sessionsReviewed: 0,
       memoriesExtracted: 0,
       duplicatesSkipped: 0,
-      durationMs: systemNowMs() - startTime,
-      timestamp: systemNowMs(),
+      durationMs: clock.now() - startTime,
+      timestamp: clock.now(),
     });
     return ok(undefined);
   }
@@ -324,12 +319,12 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     const response = await completeSimple(
       model,
       {
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt: STRUCTURED_PROMPT,
         messages: [
           {
             role: "user" as const,
             content: batchContent,
-            timestamp: systemNowMs(),
+            timestamp: clock.now(),
           },
         ],
       },
@@ -349,11 +344,24 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     systemClearTimeout(timer);
   }
 
-  // Parse LLM response
-  const preferences = parseExtractedPreferences(responseText);
-  if (!preferences) {
-    logger.warn({ agentId, responseLength: responseText.length }, "Memory review LLM returned invalid JSON, skipping extraction");
-    // Still update watermarks and emit event
+  // Parse LLM response into the zod-validated structured envelope. A total
+  // parser (Plan 02): undefined on ANY whole-payload failure (bad JSON, schema
+  // mismatch, or the DELETED flat `[{content, session}]` shape — there is NO
+  // fallback to the old path, design principle 8).
+  const extraction = parseExtractionResult(responseText);
+  if (!extraction) {
+    // EXTR-05 (whole-batch non-fatal): warn + advance the watermark for EVERY
+    // reviewed session BEFORE returning ok, so a malformed batch never stalls
+    // (Pitfall 4). errorKind + hint are the canonical structured fields.
+    logger.warn(
+      {
+        agentId,
+        responseLength: responseText.length,
+        errorKind: "validation" as const,
+        hint: "LLM extraction output failed schema validation — skipping batch, advancing watermark",
+      },
+      "Structured extraction returned invalid output, skipping",
+    );
     for (const session of reviewedSessions) {
       watermark.sessions[session.sessionKey] = session.updatedAt;
     }
@@ -363,79 +371,119 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       sessionsReviewed: reviewedSessions.length,
       memoriesExtracted: 0,
       duplicatesSkipped: 0,
-      durationMs: systemNowMs() - startTime,
-      timestamp: systemNowMs(),
+      durationMs: clock.now() - startTime,
+      timestamp: clock.now(),
     });
     return ok(undefined);
   }
 
-  // Dedup and store
+  // The fixed review session key — structured memories carry no per-message
+  // `session` field, so dedup search/store scope to one review-owned key.
+  const reviewSessionKey: SessionKey = {
+    tenantId,
+    userId: "system",
+    channelId: "memory-review",
+  };
+  const searchOpts: MemorySearchOptions = {
+    limit: 1,
+    minScore: config.dedupThreshold,
+    trustLevel: "system",
+    tags: ["auto-review"],
+    agentId,
+  };
+
+  // Dedup, validate, and store each structured memory.
   let memoriesExtracted = 0;
   let duplicatesSkipped = 0;
+  const extractedEntities: ExtractedMemoryWithEntities[] = [];
 
-  for (const pref of preferences) {
-    if (!pref.content || !pref.session) continue;
+  for (const m of extraction.memories) {
+    // Per-item resilience (EXTR-05): a single bad memory must `continue`, never
+    // abort the batch. The lenient schema already guarantees content.min(1),
+    // but guard defensively.
+    if (!m.content) continue;
 
-    // Build a SessionKey for the search
-    const parsedKey = parseFormattedSessionKey(pref.session);
-    const sessionKey: SessionKey = parsedKey ?? {
-      tenantId,
-      userId: "system",
-      channelId: "memory-review",
-    };
+    // SECURITY (AGENTS.md §2.2, ASVS V5): the extracted `content` is derived
+    // from untrusted conversation text. Scan it BEFORE store. `critical`
+    // (dangerous-command / secret-egress patterns) → skip the item; `warn`
+    // (jailbreak/role patterns) → store with trust downgraded to "external";
+    // `clean` → the inherited `system` trust (EXTR-04). T-82-07 mitigation.
+    const verdict = validateMemoryWrite(m.content);
+    if (verdict.severity === "critical") {
+      logger.warn(
+        {
+          agentId,
+          errorKind: "security" as const,
+          patterns: verdict.criticalPatterns,
+          hint: "extracted memory matched a dangerous/secret pattern — blocked from store",
+        },
+        "Skipping extracted memory that failed the memory-write security scan",
+      );
+      continue;
+    }
+    const trustLevel: TrustLevel = verdict.severity === "warn" ? "external" : "system";
 
-    // Dedup check
-    const searchOpts: MemorySearchOptions = {
-      limit: 1,
-      minScore: config.dedupThreshold,
-      trustLevel: "system",
-      tags: ["auto-review"],
-      agentId,
-    };
-
-    const searchResult = await memoryPort.search(sessionKey, pref.content, searchOpts);
+    // Dedup check (reused — scoped to the review session key + system trust).
+    const searchResult = await memoryPort.search(reviewSessionKey, m.content, searchOpts);
     if (searchResult.ok && searchResult.value.length > 0) {
       duplicatesSkipped++;
-      logger.debug({ agentId, content: pref.content.slice(0, 50) }, "Skipping duplicate memory");
+      logger.debug({ agentId, content: m.content.slice(0, 50) }, "Skipping duplicate memory");
       continue;
     }
 
-    // Store new memory
+    // Resolve the LLM's ISO event time → epoch ms against the injected clock
+    // (EXTR-02); undefined → omit the key (falls back to createdAt per TEMP-01).
+    const occurredAt = resolveOccurredAt(m.occurredAt, clock.now());
+
+    // Store ONLY content + occurredAt. Trust + provenance inherit one consistent
+    // value (EXTR-04); NO `entities` field is persisted (Q4b — the strict
+    // MemoryRowSchema has no entity column; entities are emit-only below).
+    const memorySource: MemorySource = { who: "system", channel: "memory-review" };
     const entry: MemoryEntry = {
       id: randomUUID(),
       tenantId,
       agentId,
       userId: "system",
-      content: pref.content,
-      trustLevel: "system",
-      source: { who: "system", channel: "memory-review" },
+      content: m.content,
+      trustLevel,
+      source: memorySource,
       tags: ["auto-review", ...config.autoTags],
       sourceType: "conversation",
-      createdAt: systemNowMs(),
+      createdAt: clock.now(),
+      ...(occurredAt !== undefined ? { occurredAt } : {}),
     };
 
     const storeResult = await memoryPort.store(entry);
     if (storeResult.ok) {
       memoriesExtracted++;
+      // EXTR-04 / Q4b: emit the entity mentions on the in-memory result with the
+      // SAME inherited trust + provenance. NOT persisted — for the Phase-83 handoff.
+      extractedEntities.push({
+        memoryId: entry.id,
+        entities: m.entities.map((e) => ({ name: e.name, trustLevel, source: memorySource })),
+      });
     } else {
       logger.warn({ agentId, err: storeResult.error }, "Failed to store extracted memory");
     }
   }
 
-  // Update watermark per-session
+  const entitiesExtracted = extractedEntities.reduce((n, e) => n + e.entities.length, 0);
+
+  // Update watermark per-session (success path — runs on every terminating path).
   for (const session of reviewedSessions) {
     watermark.sessions[session.sessionKey] = session.updatedAt;
   }
   await saveWatermark(watermarkPath, watermark);
 
-  // Emit completion event
+  // Emit completion event (entitiesExtracted is additive/harmless — Open Q Q3).
   eventBus.emit("memory:review_completed", {
     agentId,
     sessionsReviewed: reviewedSessions.length,
     memoriesExtracted,
     duplicatesSkipped,
-    durationMs: systemNowMs() - startTime,
-    timestamp: systemNowMs(),
+    entitiesExtracted,
+    durationMs: clock.now() - startTime,
+    timestamp: clock.now(),
   });
 
   logger.info({
@@ -443,7 +491,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     sessionsReviewed: reviewedSessions.length,
     memoriesExtracted,
     duplicatesSkipped,
-    durationMs: systemNowMs() - startTime,
+    entitiesExtracted,
+    durationMs: clock.now() - startTime,
   }, "Memory review completed");
 
   return ok(undefined);
