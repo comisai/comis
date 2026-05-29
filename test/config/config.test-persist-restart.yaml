@@ -32,7 +32,12 @@ gateway:
   port: 8602
   tokens:
     - id: "restart-token"
-      secret: "test-secret-persist-restart-pad32"
+      # Env-ref (NOT inline plaintext): this suite persists config via RPC, and
+      # the persist guard (persist-to-config.ts) refuses to write a config.yaml
+      # containing any plaintext secret. The `${COMIS_GATEWAY_TOKEN}` ref is
+      # resolved at load and masked back to its env-ref by the guard's scan, so
+      # the persist succeeds. The env var is set by the test's beforeAll.
+      secret: "${COMIS_GATEWAY_TOKEN}"
       scopes: ["rpc", "ws", "admin"]
   rateLimit:
     windowMs: 60000

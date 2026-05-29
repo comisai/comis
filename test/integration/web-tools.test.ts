@@ -16,6 +16,13 @@ import {
   createWebSearchTool,
   __clearSearchCache,
 } from "@comis/skills";
+import { isHttpbinHealthy } from "../support/network-probe.js";
+
+// These fetch tests depend on the live httpbin.org service, which intermittently
+// returns 503 under load. Probe once at load: when it's down, the httpbin-backed
+// cases SKIP (vs. false-failing). The error-path / missing-key cases below do
+// NOT depend on a healthy httpbin and always run.
+const HTTPBIN_UP = await isHttpbinHealthy();
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,7 +56,7 @@ describe("WEB-01: web_fetch", () => {
     __clearFetchCache();
   });
 
-  it(
+  it.skipIf(!HTTPBIN_UP)(
     "fetches HTML with readability extraction",
     async () => {
       // Use httpbin.org/html which returns a simple HTML page (Moby-Dick excerpt).
@@ -75,7 +82,7 @@ describe("WEB-01: web_fetch", () => {
     30_000,
   );
 
-  it(
+  it.skipIf(!HTTPBIN_UP)(
     "fetches JSON from httpbin",
     async () => {
       const tool = createWebFetchTool();
@@ -114,7 +121,7 @@ describe("WEB-01: web_fetch", () => {
     30_000,
   );
 
-  it(
+  it.skipIf(!HTTPBIN_UP)(
     "respects maxChars truncation",
     async () => {
       // httpbin /html has enough content that 100 chars will trigger truncation.

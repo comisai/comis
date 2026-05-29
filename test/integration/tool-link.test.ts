@@ -18,6 +18,13 @@ import {
   type TestDaemonHandle,
 } from "../support/daemon-harness.js";
 import { DAEMON_STARTUP_MS } from "../support/timeouts.js";
+import { isHttpbinHealthy } from "../support/network-probe.js";
+
+// LINK-01 / LINK-03 fetch live httpbin.org URLs, which intermittently 503s
+// under load. Probe once at load: when it's down, those two SKIP (vs.
+// false-failing). LINK-02 (no URL) and LINK-04 (unreachable URL) don't depend
+// on a healthy httpbin and always run.
+const HTTPBIN_UP = await isHttpbinHealthy();
 
 // ---------------------------------------------------------------------------
 // Path resolution
@@ -80,7 +87,7 @@ describe("TOOL-LINK: Link Understanding Integration", () => {
   // LINK-01: link.process enriches text containing a real URL
   // -------------------------------------------------------------------------
 
-  it(
+  it.skipIf(!HTTPBIN_UP)(
     "LINK-01: link.process enriches text containing a real URL",
     async () => {
       const originalText =
@@ -121,7 +128,7 @@ describe("TOOL-LINK: Link Understanding Integration", () => {
   // LINK-03: link.process handles multiple URLs in one message
   // -------------------------------------------------------------------------
 
-  it(
+  it.skipIf(!HTTPBIN_UP)(
     "LINK-03: link.process handles multiple URLs in one message",
     async () => {
       const originalText =
