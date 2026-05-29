@@ -502,7 +502,7 @@ describe("runMemoryReview", () => {
     const storedContents = (deps.memoryPort.store as Mock).mock.calls.map((c) => c[0].content);
     expect(storedContents).toEqual(["User likes tea"]);
     expect(deps.logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ errorKind: "security", hint: expect.any(String) }),
+      expect.objectContaining({ errorKind: "validation", hint: expect.any(String) }),
       expect.any(String),
     );
     // Watermark still advances (per-item skip is non-fatal).

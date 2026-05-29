@@ -419,7 +419,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       logger.warn(
         {
           agentId,
-          errorKind: "security" as const,
+          errorKind: "validation" as const,
           patterns: verdict.patterns,
           criticalPatterns: verdict.criticalPatterns,
           hint: "extracted memory matched a dangerous/secret pattern — blocked from store",
@@ -446,7 +446,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
         {
           agentId,
           err: searchOutcome.error,
-          errorKind: "io" as const,
+          errorKind: "dependency" as const,
           hint: "memory dedup search rejected (adapter contract violation) — skipping item, advancing watermark",
         },
         "Skipping extracted memory — dedup search failed",
@@ -501,7 +501,7 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
         {
           agentId,
           err: storeResult.error,
-          errorKind: "io" as const,
+          errorKind: "dependency" as const,
           hint: "memory store failed/rejected — skipping item, advancing watermark",
         },
         "Failed to store extracted memory",
