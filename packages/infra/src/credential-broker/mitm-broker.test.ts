@@ -11,9 +11,15 @@
  *
  * @module
  */
-import { describe, it, expect, afterEach } from "vitest";
+import "reflect-metadata"; // required when createNodeCaManager is used in Phase 3 tests
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import * as http from "node:http";
 import * as net from "node:net";
+import * as tls from "node:tls";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createNodeCaManager } from "./ca-manager.js";
 import { createMitmBroker } from "./mitm-broker.js";
 import type { MitmBrokerDeps } from "./mitm-broker.js";
 import { createSessionManager } from "./session-manager.js";
@@ -2059,4 +2065,158 @@ describe("(02-fix) WR-03 — stop() destroys in-flight upstream sockets (no proc
     socket.destroy();
     upstream.server.close();
   });
+});
+
+// ── (03-03) RED: TLS upgrade via caManager — Phase 3 wiring ──────────────────
+//
+// These tests MUST FAIL before mitm-broker.ts wires the TLS upgrade.
+// The caManager seam already exists in Phase 2 (caManager?: CaManagerPort)
+// but the CONNECT handler currently ignores it. Phase 3 wires the upgrade.
+
+describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManager", () => {
+  let caDataDir: string;
+
+  beforeEach(() => {
+    caDataDir = mkdtempSync(join(tmpdir(), "comis-broker-tls-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(caDataDir, { recursive: true, force: true });
+  });
+
+  it(
+    "caManager wired: after 200, client TLS handshake succeeds (broker terminates TLS for allow-listed host)",
+    async () => {
+      // Build a real NodeCaManager so the broker can mint a leaf cert for api.anthropic.com
+      const clock = createFakeClock(Date.now());
+      const caManager = createNodeCaManager({ clock, dataDir: caDataDir });
+
+      // Warm up the CA so broker-ca.pem exists before the test needs it
+      await caManager.serverContextForHost("api.anthropic.com");
+      const caCertPem = readFileSync(join(caDataDir, "broker-ca.pem"), "utf8");
+
+      const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" });
+      const sessionManager = createSessionManager({ clock });
+
+      const deps: MitmBrokerDeps = {
+        clock,
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        secretManager,
+        sessionManager,
+        bindings: [makeAnthropicBinding()],
+        caManager, // Phase 3: wired!
+      };
+
+      const broker = createMitmBroker(deps);
+      runningBrokers.push(broker);
+      const brokerPort = await broker.start();
+
+      const { proxyToken } = sessionManager.issueToken("agent-1");
+
+      // Step 1: send the CONNECT request to the broker
+      const rawSocket = await new Promise<net.Socket>((resolve, reject) => {
+        const s = net.connect(brokerPort, "127.0.0.1", () => {
+          s.write(
+            `CONNECT api.anthropic.com:443 HTTP/1.1\r\n` +
+              `Host: api.anthropic.com:443\r\n` +
+              `Proxy-Authorization: Bearer ${proxyToken}\r\n` +
+              `\r\n`,
+          );
+        });
+        let buf = "";
+        s.on("data", (chunk: Buffer) => {
+          buf += chunk.toString("latin1");
+          if (!buf.includes("\r\n\r\n")) return;
+          const statusLine = buf.slice(0, buf.indexOf("\r\n"));
+          const code = parseInt(statusLine.split(" ")[1] ?? "0", 10);
+          if (code !== 200) {
+            reject(new Error(`Expected 200, got ${code}`));
+            return;
+          }
+          resolve(s);
+        });
+        s.on("error", reject);
+        setTimeout(() => reject(new Error("CONNECT timeout")), 5000);
+      });
+
+      // Step 2: after the 200, wrap the raw TCP socket in a TLS client that trusts the broker CA.
+      // When Phase 3 is wired, the broker upgrades the raw socket to a TLS server socket, so
+      // a TLS client handshake should complete. Before Phase 3, the broker does not upgrade
+      // the socket and the handshake will fail (the raw socket sends no TLS ServerHello).
+      const tlsResult = await new Promise<{ alpnProtocol: string | boolean | null; subjectaltname: string }>(
+        (resolve, reject) => {
+          const tlsSocket = tls.connect({
+            socket: rawSocket as net.Socket,
+            servername: "api.anthropic.com",
+            ca: caCertPem, // trust only the broker CA
+            rejectUnauthorized: true,
+          });
+          tlsSocket.on("secureConnect", () => {
+            const cert = tlsSocket.getPeerCertificate();
+            resolve({
+              alpnProtocol: tlsSocket.alpnProtocol,
+              subjectaltname: cert.subjectaltname ?? "",
+            });
+            tlsSocket.destroy();
+          });
+          tlsSocket.on("error", reject);
+          setTimeout(() => reject(new Error("TLS handshake timeout")), 5000);
+        },
+      );
+
+      // These assertions prove: (a) TLS handshake completed, (b) ALPN = http/1.1,
+      // (c) leaf cert SAN contains the target hostname
+      expect(tlsResult.alpnProtocol).toBe("http/1.1");
+      expect(tlsResult.subjectaltname).toContain("DNS:api.anthropic.com");
+
+      rawSocket.destroy();
+    },
+    15_000, // 15s timeout for TLS handshake + cert generation
+  );
+
+  it(
+    "caManager undefined (Phase 2 mode): CONNECT handler behaves identically — no TLS upgrade, inner HTTP still works",
+    async () => {
+      // Regression guard: when caManager is NOT wired, Phase 2 behavior is unchanged.
+      const upstream = await makeUpstreamFixture();
+      const clock = createFakeClock(1_700_000_000_000);
+      const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "no-upgrade-key" });
+      const sessionManager = createSessionManager({ clock });
+
+      const deps: MitmBrokerDeps = {
+        clock,
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        secretManager,
+        sessionManager,
+        bindings: [makeAnthropicBinding()],
+        // caManager intentionally omitted — Phase 2 behavior
+      };
+
+      const broker = createMitmBroker(deps);
+      runningBrokers.push(broker);
+      const brokerPort = await broker.start();
+
+      const { proxyToken } = sessionManager.issueToken("agent-1");
+      const { statusCode, socket } = await connectThroughProxy(
+        brokerPort,
+        proxyToken,
+        `api.anthropic.com:${upstream.port}`,
+      );
+      expect(statusCode).toBe(200);
+
+      // Send a plain HTTP request (no TLS) — should still work since caManager is undefined
+      await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+      socket.destroy();
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Upstream received the request — Phase 2 injection path still works
+      expect(upstream.receivedHeaders.length).toBeGreaterThan(0);
+      expect(upstream.receivedHeaders[0]).toMatchObject({ "x-api-key": "no-upgrade-key" });
+
+      upstream.server.close();
+    },
+  );
 });
