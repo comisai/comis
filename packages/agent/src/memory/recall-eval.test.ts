@@ -28,6 +28,8 @@ import {
 import {
   RECALL_EVAL_FIXTURES,
   TEMPORAL_EVAL_FIXTURES,
+  ENTITY_EVAL_FIXTURES,
+  entityLane,
   EVAL_NOW,
   type EvalQuery,
 } from "./__fixtures__/recall-eval-fixtures.js";
@@ -215,6 +217,66 @@ describe("temporal boost lift (recall@1 over fusion baseline)", () => {
     // mechanics produce the fusion order → no lift. So the positive lift above is the
     // temporal boost's work, not a fixture that trivially favors the relevant id.
     const report = compareRankings(TEMPORAL_EVAL_FIXTURES, fusionFn, neutralFn);
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
+    expect(report.mrrLift, JSON.stringify(report)).toBe(0);
+  });
+});
+
+// UNGATED entity-association lift (EVAL-01, the per-phase entity figure / criterion 5).
+// Deterministic pure fusion math — NO live DB, NO associativeLane port, NO model. The
+// entity lane is MODELED here as a 2nd fuse() lane built from the fixtures (the
+// shared-entity neighbour subset surfaced first via `entityLane(q)`), so the lift is
+// reproducible from the fixtures alone. The entity lane (added as a 2nd fusion lane)
+// must score a strictly positive recall@1 gain over the prior (fusion-only) baseline on
+// the "entity" group, and a NEUTRAL guard (an EMPTY 2nd lane → RRF unchanged → zero
+// lift) attributes the gain to the entity lane — not to fuse()'s rank rebasing alone
+// (mirrors the Phase-81 temporalAlpha=0 guard; T-83-19).
+describe("entity-association lift (recall@1 over fusion baseline)", () => {
+  // Prior-phase baseline: single-lane fuse() is order-preserving → fusion order = the
+  // candidates' base/score order (the lexical distractor first by design).
+  const fusionFn = (q: EvalQuery): MemorySearchResult[] =>
+    fuse([{ results: q.candidates, weight: 1 }]);
+  // Entity lane MODELED as a 2nd fusion lane: the shared-entity neighbour subset for
+  // this query, relevant-first. RRF sums the relevant id's two lane terms over the
+  // distractor's single term → the relevant memory is lifted to rank 1.
+  const withLaneFn = (q: EvalQuery): MemorySearchResult[] =>
+    fuse([
+      { results: q.candidates, weight: 1 },
+      { results: entityLane(q), weight: 1 },
+    ]);
+  // NEUTRAL guard ranker: the same two-lane shape but the entity lane is EMPTY, so RRF
+  // sees only the candidates lane and the fused order collapses back to fusion order.
+  const neutralFn = (q: EvalQuery): MemorySearchResult[] =>
+    fuse([
+      { results: q.candidates, weight: 1 },
+      { results: [], weight: 1 },
+    ]);
+
+  it("carries a non-empty entity fixture group", () => {
+    expect(ENTITY_EVAL_FIXTURES.length).toBeGreaterThan(0);
+    expect(ENTITY_EVAL_FIXTURES.every((q) => q.group === "entity")).toBe(true);
+  });
+
+  it("scores a strictly positive recall@1 lift over the fusion-only baseline", () => {
+    const report = compareRankings(ENTITY_EVAL_FIXTURES, fusionFn, withLaneFn);
+    // Headroom: fusion mis-ranks the lexical distractor to rank 1 (T-83-19 — a no-op
+    // fixture that fusion already nailed would leave nothing to measure).
+    expect(report.baseline.recallAt1, JSON.stringify(report)).toBeLessThan(1);
+    // The EVAL-01 per-phase entity figure (criterion 5): the entity lane is a
+    // MEASURABLE recall@1 gain over the prior fusion-only baseline.
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThan(0);
+    // No regression: the entity lane never lowers recall@1 below fusion.
+    expect(report.reranked.recallAt1, JSON.stringify(report)).toBeGreaterThanOrEqual(
+      report.baseline.recallAt1,
+    );
+  });
+
+  it("yields ZERO lift with an EMPTY entity lane (the gain is attributable to the entity lane)", () => {
+    // T-83-19 neutral guard: with the entity lane empty, RRF over the lone candidates
+    // lane reproduces the fusion order → no lift. So the positive lift above is the
+    // entity lane's work, not fuse()'s rank rebasing on a fixture that already favored
+    // the relevant id.
+    const report = compareRankings(ENTITY_EVAL_FIXTURES, fusionFn, neutralFn);
     expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
     expect(report.mrrLift, JSON.stringify(report)).toBe(0);
   });
