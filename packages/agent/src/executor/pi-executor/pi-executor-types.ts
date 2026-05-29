@@ -17,6 +17,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type {
   TypedEventBus,
   MemoryPort,
+  MemoryEntityStore,
   RerankerPort,
   HookRunner,
   SecretManager,
@@ -87,6 +88,11 @@ export interface PiExecutorDeps {
    *  agent enables rerank; threaded into prompt-assembly's createMemoryRecall via
    *  ToolAssemblyDeps. Absent -> recall keeps fusion order (RANK-03). */
   reranker?: RerankerPort;
+  /** Optional entity-associative store (ENT-02). Built in the daemon (Plan 05) on the
+   *  shared memory db handle; threaded into prompt-assembly's createMemoryRecall via
+   *  ToolAssemblyDeps. Absent -> no entity lane (recall RRF unchanged). TYPE-only from
+   *  @comis/core — the agent never imports the memory package (the agent↛memory cut). */
+  entityStore?: MemoryEntityStore;
   hookRunner?: HookRunner;
   // System prompt config
   outboundMediaEnabled?: boolean;

@@ -77,6 +77,9 @@ export interface ToolAssemblyDeps {
   memoryPort?: MemoryPort;
   /** Optional cross-encoder reranker, threaded into prompt-assembly's createMemoryRecall. */
   reranker?: import("@comis/core").RerankerPort;
+  /** Optional entity-associative store (ENT-02), threaded into prompt-assembly's
+   *  createMemoryRecall. TYPE-only from @comis/core (the agent↛memory build cut). */
+  entityStore?: import("@comis/core").MemoryEntityStore;
   /** Timer port for the rerank wall-clock deadline (createMemoryRecall). */
   timers?: import("@comis/core").TimerPort;
   hookRunner?: HookRunner;
@@ -348,6 +351,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       workspaceDir: deps.workspaceDir,
       memoryPort: deps.memoryPort,
       reranker: deps.reranker,
+      entityStore: deps.entityStore,
       timers: deps.timers,
       hookRunner: deps.hookRunner,
       secretManager: deps.secretManager,

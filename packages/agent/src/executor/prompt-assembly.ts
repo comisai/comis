@@ -221,6 +221,9 @@ export interface PromptAssemblyParams {
     memoryPort?: MemoryPort;
     /** Optional cross-encoder reranker + timers for createMemoryRecall (default-OFF). */
     reranker?: import("@comis/core").RerankerPort;
+    /** Optional entity-associative store for createMemoryRecall's entity lane (ENT-02;
+     *  default-OFF via config.rag.entityLane). TYPE-only (the agent↛memory build cut). */
+    entityStore?: import("@comis/core").MemoryEntityStore;
     timers?: import("@comis/core").TimerPort;
     hookRunner?: HookRunner;
     secretManager?: SecretManager;
@@ -650,6 +653,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         {
           memoryPort: deps.memoryPort,
           reranker: deps.reranker,
+          entityStore: deps.entityStore,
           timers: deps.timers,
           clock: deps.clock,
           logger,
@@ -660,6 +664,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           includeTrustLevels: config.rag.includeTrustLevels,
           rerank: config.rag.rerank,
           scoring: config.rag.scoring,
+          entityLane: config.rag.entityLane,
         },
       );
       const recalled = await recall.recall(msg.text, sessionKey, agentId);
