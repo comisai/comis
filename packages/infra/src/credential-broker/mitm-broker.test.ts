@@ -240,7 +240,7 @@ describe("BROKER-01 — CONNECT auth gate (fail-closed 407)", () => {
     const brokerPort = await broker.start();
 
     // Send CONNECT without the Proxy-Authorization header
-    const socket = await new Promise<net.Socket>((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const s = net.connect(brokerPort, "127.0.0.1", () => {
         s.write(
           `CONNECT api.anthropic.com:${upstream.port} HTTP/1.1\r\n` +
@@ -251,47 +251,16 @@ describe("BROKER-01 — CONNECT auth gate (fail-closed 407)", () => {
       let buf = "";
       s.on("data", (chunk) => {
         buf += chunk.toString("latin1");
-        if (buf.includes("\r\n\r\n")) resolve(s);
-      });
-      s.on("error", reject);
-      setTimeout(() => reject(new Error("timeout")), 3000);
-    });
-
-    const statusCode = parseInt(socket.read()?.toString() ?? "", 10);
-    void statusCode;
-    // parse the actual status from the buffer
-    const rawBuf = await new Promise<string>((res, rej) => {
-      setTimeout(() => rej(new Error("read timeout")), 500);
-      // We already got the data in the connect promise — re-read from socket.read() buffer
-      // Actually the data is in the promise above, let's use a different approach
-      res(""); // handled inline below
-    }).catch(() => "");
-    void rawBuf;
-
-    // Simpler: re-do the connection with proper data capture
-    socket.destroy();
-
-    await new Promise<void>((resolve, reject) => {
-      const s2 = net.connect(brokerPort, "127.0.0.1", () => {
-        s2.write(
-          `CONNECT api.anthropic.com:${upstream.port} HTTP/1.1\r\n` +
-            `Host: api.anthropic.com:${upstream.port}\r\n` +
-            `\r\n`,
-        );
-      });
-      let buf2 = "";
-      s2.on("data", (chunk) => {
-        buf2 += chunk.toString("latin1");
-        const idx = buf2.indexOf("\r\n\r\n");
+        const idx = buf.indexOf("\r\n\r\n");
         if (idx === -1) return;
-        const statusLine = buf2.slice(0, buf2.indexOf("\r\n"));
+        const statusLine = buf.slice(0, buf.indexOf("\r\n"));
         const code = parseInt(statusLine.split(" ")[1] ?? "0", 10);
-        s2.destroy();
+        s.destroy();
         expect(code).toBe(407);
         expect(upstream.receivedHeaders).toHaveLength(0);
         resolve();
       });
-      s2.on("error", reject);
+      s.on("error", reject);
       setTimeout(() => reject(new Error("timeout")), 3000);
     });
 
