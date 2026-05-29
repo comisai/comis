@@ -75,6 +75,10 @@ export interface ToolAssemblyDeps {
   logger: ComisLogger;
   eventBus: TypedEventBus;
   memoryPort?: MemoryPort;
+  /** Optional cross-encoder reranker, threaded into prompt-assembly's createMemoryRecall. */
+  reranker?: import("@comis/core").RerankerPort;
+  /** Timer port for the rerank wall-clock deadline (createMemoryRecall). */
+  timers?: import("@comis/core").TimerPort;
   hookRunner?: HookRunner;
   secretManager?: SecretManager;
   envelopeConfig?: EnvelopeConfig;
@@ -343,6 +347,8 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     deps: {
       workspaceDir: deps.workspaceDir,
       memoryPort: deps.memoryPort,
+      reranker: deps.reranker,
+      timers: deps.timers,
       hookRunner: deps.hookRunner,
       secretManager: deps.secretManager,
       envelopeConfig: deps.envelopeConfig,

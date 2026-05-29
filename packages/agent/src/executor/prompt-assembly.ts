@@ -26,7 +26,6 @@ import type {
   DeliveryMirrorPort,
   ModelOperationType,
   ToolCapabilityPort,
-  TrustLevel,
 } from "@comis/core";
 import {
   wrapExternalContent,
@@ -67,8 +66,8 @@ import {
   type TrustDisplayMode,
   type SystemPromptBlocks,
 } from "../bootstrap/index.js";
-import { deduplicateResults } from "../rag/rag-retriever.js";
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
+import { createMemoryRecall } from "../rag/memory-recall.js";
 import { BOOTSTRAP_BUDGET_WARN_PERCENT, CHARS_PER_TOKEN_RATIO } from "../context-engine/index.js";
 import { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "../workspace/boot-file.js";
 import { detectOnboardingState } from "../workspace/onboarding-detector.js";
@@ -219,6 +218,9 @@ export interface PromptAssemblyParams {
   deps: {
     workspaceDir: string;
     memoryPort?: MemoryPort;
+    /** Optional cross-encoder reranker + timers for createMemoryRecall (default-OFF). */
+    reranker?: import("@comis/core").RerankerPort;
+    timers?: import("@comis/core").TimerPort;
     hookRunner?: HookRunner;
     secretManager?: SecretManager;
     envelopeConfig?: EnvelopeConfig;
@@ -630,79 +632,77 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     bootstrapFilesForReport = bootstrapFiles;
   }
 
-  // 3. RAG retrieval via hybrid memory injector (non-fatal)
-  // Top-1 result goes inline with user message for maximum LLM attention;
-  // remaining results go into the dynamic preamble (same location as before).
+  // 3. RAG recall via createMemoryRecall + hybrid memory injector (non-fatal).
   let memorySections: string[] = [];
   let inlineMemory: string | undefined;
   if (deps.memoryPort && config.rag?.enabled && !params.skipRag) {
     const ragStart = deps.clock.now();
     try {
-      logger.debug({ agentId, queryLength: msg.text.length }, "RAG search started");
-      const searchResults = await deps.memoryPort.search(sessionKey, msg.text, {
-        limit: config.rag.maxResults,
-        minScore: config.rag.minScore,
-        agentId,
-      });
+      // Single recall orchestrator (RANK-07): search->fuse->rerank->score->trust-filter
+      // ->dedup. Rerank opt-in/default-OFF -> fusion order (RANK-01/03/08). Non-fatal.
+      const recall = createMemoryRecall(
+        {
+          memoryPort: deps.memoryPort,
+          reranker: deps.reranker,
+          timers: deps.timers,
+          clock: deps.clock,
+          logger,
+        },
+        {
+          maxResults: config.rag.maxResults,
+          minScore: config.rag.minScore,
+          includeTrustLevels: config.rag.includeTrustLevels,
+          rerank: config.rag.rerank,
+          scoring: config.rag.scoring,
+        },
+      );
+      const recalled = await recall.recall(msg.text, sessionKey, agentId);
 
-      if (searchResults.ok && searchResults.value.length > 0) {
-        // Post-filter by allowed trust levels
-        const allowedTrustLevels = new Set<TrustLevel>(config.rag.includeTrustLevels);
-        const filtered = searchResults.value.filter(r => allowedTrustLevels.has(r.entry.trustLevel));
+      if (recalled.ok && recalled.value.length > 0) {
+        // Hybrid split: top-1 inline with user message, rest in dynamic preamble.
+        const ranked = recalled.value;
+        const injector = createHybridMemoryInjector({
+          onSuspiciousContent: deps.onSuspiciousContent,
+        });
+        const injection = injector.split(ranked, config.rag.maxContextChars);
 
-        // Deduplicate near-identical content
-        const deduped = deduplicateResults(filtered);
+        inlineMemory = injection.inlineMemory;
+        memorySections = injection.systemPromptSections;
 
-        if (deduped.length > 0) {
-          // Hybrid split: top-1 inline with user message, rest in dynamic preamble
-          const injector = createHybridMemoryInjector({
-            onSuspiciousContent: deps.onSuspiciousContent,
-          });
-          const injection = injector.split(deduped, config.rag.maxContextChars);
-
-          inlineMemory = injection.inlineMemory;
-          memorySections = injection.systemPromptSections;
-
-          // Emit memory:injected observability event so the trajectory bridge
-          // can record one line per RAG injection. Fires only on turns where
-          // the injector actually produced content (inline OR sections) —
-          // no-injection turns produce no event. Best-effort: any failure in
-          // the emit is swallowed via try/catch so it never aborts assembly.
-          if (deps.eventBus) {
-            try {
-              const charsInjected =
-                (injection.inlineMemory?.length ?? 0) +
-                injection.systemPromptSections.reduce((sum, s) => sum + s.length, 0);
-              const trustTags = Array.from(
-                new Set(deduped.map((r) => r.entry.trustLevel)),
-              );
-              deps.eventBus.emit("memory:injected", {
-                agentId: agentId ?? config.name,
-                sessionKey: formatSessionKey(sessionKey),
-                traceId: tryGetContext()?.traceId ?? formatSessionKey(sessionKey),
-                hitCount: deduped.length,
-                charsInjected,
-                trustTags,
-                timestamp: systemNowMs(),
-              });
-            } catch (emitErr) {
-              logger.debug(
-                {
-                  err: emitErr,
-                  hint: "memory:injected emit failed; trajectory will miss this turn's RAG record",
-                  errorKind: "internal" as const,
-                },
-                "Failed to emit memory:injected",
-              );
-            }
+        // Emit memory:injected observability event so the trajectory bridge
+        // can record one line per RAG injection. Fires only on turns where
+        // the injector actually produced content (inline OR sections) —
+        // no-injection turns produce no event. Best-effort: any failure in
+        // the emit is swallowed via try/catch so it never aborts assembly.
+        if (deps.eventBus) {
+          try {
+            const charsInjected = (injection.inlineMemory?.length ?? 0) +
+              injection.systemPromptSections.reduce((sum, s) => sum + s.length, 0);
+            const trustTags = Array.from(new Set(ranked.map((r) => r.entry.trustLevel)));
+            deps.eventBus.emit("memory:injected", {
+              agentId: agentId ?? config.name,
+              sessionKey: formatSessionKey(sessionKey),
+              traceId: tryGetContext()?.traceId ?? formatSessionKey(sessionKey),
+              hitCount: ranked.length,
+              charsInjected,
+              trustTags,
+              timestamp: systemNowMs(),
+            });
+          } catch (emitErr) {
+            logger.debug(
+              {
+                err: emitErr,
+                hint: "memory:injected emit failed; trajectory will miss this turn's RAG record",
+                errorKind: "internal" as const,
+              },
+              "Failed to emit memory:injected",
+            );
           }
         }
-        logger.debug({ agentId, resultCount: deduped.length, durationMs: deps.clock.now() - ragStart }, "RAG search complete");
-      } else {
-        logger.debug({ agentId, resultCount: 0, durationMs: deps.clock.now() - ragStart }, "RAG search complete");
       }
+      logger.debug({ agentId, resultCount: recalled.ok ? recalled.value.length : 0, durationMs: deps.clock.now() - ragStart }, "RAG recall complete");
     } catch (err) {
-      logger.warn({ agentId, err, durationMs: deps.clock.now() - ragStart, hint: "RAG search failed — agent will proceed without memory context", errorKind: "dependency" as const }, "RAG retrieval failed (non-fatal)");
+      logger.warn({ agentId, err, durationMs: deps.clock.now() - ragStart, hint: "RAG recall failed — agent will proceed without memory context", errorKind: "dependency" as const }, "RAG recall failed (non-fatal)");
     }
   }
 

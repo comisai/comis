@@ -17,6 +17,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type {
   TypedEventBus,
   MemoryPort,
+  RerankerPort,
   HookRunner,
   SecretManager,
   EnvelopeConfig,
@@ -82,6 +83,10 @@ export interface PiExecutorDeps {
   agentDir: string;
   // Optional
   memoryPort?: MemoryPort;
+  /** Optional cross-encoder reranker. Built in the daemon (setup-memory) only when an
+   *  agent enables rerank; threaded into prompt-assembly's createMemoryRecall via
+   *  ToolAssemblyDeps. Absent -> recall keeps fusion order (RANK-03). */
+  reranker?: RerankerPort;
   hookRunner?: HookRunner;
   // System prompt config
   outboundMediaEnabled?: boolean;
