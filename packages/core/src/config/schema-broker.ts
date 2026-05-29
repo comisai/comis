@@ -18,7 +18,16 @@ import { z } from "zod";
 
 export const HostPatternSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("exact"), host: z.string().min(1) }),
-  z.strictObject({ kind: z.literal("suffix"), suffix: z.string().min(1) }),
+  z.strictObject({
+    kind: z.literal("suffix"),
+    // IN-03: suffix must start with '.' or '-' to require a domain-boundary
+    // separator. Without a separator, 'amazonaws.com' would match
+    // 'notamazonaws.com' because 'notamazonaws.com'.endsWith('amazonaws.com').
+    suffix: z.string().min(1).refine(
+      (s) => s.startsWith(".") || s.startsWith("-"),
+      { message: "Suffix must start with '.' or '-' to require a domain-boundary separator" },
+    ),
+  }),
 ]);
 
 export type HostPatternConfig = z.infer<typeof HostPatternSchema>;
@@ -49,13 +58,38 @@ export const InjectionRuleSchema = z.discriminatedUnion("kind", [
 
 export type InjectionRuleConfig = z.infer<typeof InjectionRuleSchema>;
 
+// ── Static header schema (CR-02) ─────────────────────────────────────────────
+
+/** Validates a StaticHeader (non-secret header like x-goog-user-project). */
+export const StaticHeaderSchema = z.strictObject({
+  name: z.string().min(1),
+  valueRef: z.string().min(1),
+});
+
+export type StaticHeaderConfig = z.infer<typeof StaticHeaderSchema>;
+
+// ── Request finalizer schema (CR-02) ─────────────────────────────────────────
+
+/** Validates a RequestFinalizer (post-injection body-aware step). */
+export const RequestFinalizerSchema = z.strictObject({
+  kind: z.literal("awsSigV4"),
+});
+
+export type RequestFinalizerConfig = z.infer<typeof RequestFinalizerSchema>;
+
 // ── Host rule schema ─────────────────────────────────────────────────────────
 
 export const HostRuleSchema = z.strictObject({
   pattern: HostPatternSchema,
-  pathPrefix: z.string().optional(),
+  // WR-02: min(1) prevents empty-string pathPrefix which would silently match
+  // every path at higher priority than host-only rules.
+  pathPrefix: z.string().min(1).optional(),
   pathPolicy: z.array(z.string()).optional(),
   inject: z.array(InjectionRuleSchema),
+  // CR-02: staticHeaders and finalizer were missing, causing z.strictObject to
+  // reject valid operator YAML that includes these fields.
+  staticHeaders: z.array(StaticHeaderSchema).optional(),
+  finalizer: RequestFinalizerSchema.optional(),
 });
 
 export type HostRuleConfig = z.infer<typeof HostRuleSchema>;
