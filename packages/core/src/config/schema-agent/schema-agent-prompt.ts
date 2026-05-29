@@ -86,6 +86,20 @@ export const RagConfigSchema = z.strictObject({
         trustAlpha: z.number().min(0).max(1).default(0.1),
       })
       .default(() => ({ recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 })),
+    /** One-hop entity-associative lane (ENT-02). Default-OFF; the daemon enables it once
+     *  the entity store is wired (Phase-83 Plan 05). Empty/disabled -> RRF unchanged (ENT-04). */
+    entityLane: z
+      .strictObject({
+        /** Default-OFF; enabled by the daemon once the entity store is wired. */
+        enabled: z.boolean().default(false),
+        /** How many top search hits seed the self-join (design §4.4 seedCount). */
+        seedCount: z.number().int().positive().default(5),
+        /** Max shared-entity neighbour rows the lane returns (design §4.4 perEntityCap default 200). */
+        perEntityCap: z.number().int().positive().default(200),
+        /** RRF weight for the entity lane (parity with the other lanes). */
+        weight: z.number().min(0).default(1.0),
+      })
+      .default(() => ({ enabled: false, seedCount: 5, perEntityCap: 200, weight: 1.0 })),
   });
 
 export type RagConfig = z.infer<typeof RagConfigSchema>;
