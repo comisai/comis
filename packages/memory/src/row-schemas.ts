@@ -86,6 +86,43 @@ export const MemoryRowSchema = z.strictObject({
 });
 
 /**
+ * Schema for the `memory_entities` table (Phase 83, ENT-05).
+ *
+ * `canonical_key` is DB-row-ONLY (OQ-2): it is the normalized dedup/index key
+ * (TS lower+NFKD+strip-marks — see entity-resolver.ts) and is intentionally
+ * NOT a field on the strict `MemoryEntity` domain type in @comis/core, which
+ * carries only the display `canonicalName`. The key is an implementation
+ * detail of the resolver + UNIQUE index, not part of the domain contract.
+ */
+export const MemoryEntityRowSchema = z.strictObject({
+  id: z.string(),
+  tenant_id: z.string(),
+  agent_id: z.string(),
+  /** Display form (first-seen casing). */
+  canonical_name: z.string(),
+  /** Normalized dedup key; DB-row-only (not on the MemoryEntity domain type). */
+  canonical_key: z.string(),
+  mention_count: z.number(),
+  /** Unix timestamp in milliseconds. */
+  first_seen: z.number(),
+  /** Unix timestamp in milliseconds. */
+  last_seen: z.number(),
+});
+
+/**
+ * Schema for the entity associative-lane self-join projection (Phase 83,
+ * ENT-02; RESEARCH Pattern 2). The one-hop self-join over
+ * `memory_entity_links` returns, per other memory, the count of distinct
+ * entities it shares with the seed set. Parsed via `createRowMapper` in the
+ * (Plan-02) lane query — never `as Row[]`.
+ */
+export const EntityLaneRowSchema = z.strictObject({
+  memory_id: z.string(),
+  /** COUNT(DISTINCT shared entity_id) — drives most-shared-first ordering. */
+  shared: z.number(),
+});
+
+/**
  * Schema for the `sessions` table.
  * Paired with `SessionRow` exported from `./types.js`.
  */

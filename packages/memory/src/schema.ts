@@ -55,6 +55,64 @@ export function ensureMemoryColumns(db: Database.Database): void {
 }
 
 /**
+ * Idempotently create the entity-association junction tables (Phase 83):
+ * `memory_entities` (one row per resolved entity, scoped to a tenant+agent)
+ * and `memory_entity_links` (the many-to-many memory<->entity edge). Mirrors
+ * `ensureMemoryColumns`'s forward-only, additive contract — all DDL is
+ * `CREATE … IF NOT EXISTS`, so it is safe to run on every boot including a
+ * live `~/.comis` DB created before the feature existed (no backfill: existing
+ * memories simply have no links until re-extracted).
+ *
+ * ## The UNIQUE index keys on `canonical_key`, NOT a SQL lower() expression
+ *
+ * RESEARCH Pitfall 3: SQLite's built-in `lower()` is ASCII-only (it leaves
+ * `İSTANBUL`/`CAFÉ`/`ПРИВЕТ` unchanged), so the original §4.2 spec's UNIQUE
+ * index over a SQL `lower(...)` expression of the display name would NOT dedup
+ * Turkish/CJK/Cyrillic case-variants → duplicate entities (ENT-05 break).
+ * Instead the resolver computes a locale-independent `canonical_key` in
+ * TypeScript (`normalizeEntityKey` in entity-resolver.ts: lower+NFKD+strip-
+ * marks) and we UNIQUE-index THAT stored column.
+ *
+ * The index keys on `(tenant_id, agent_id, canonical_key)` so two agents or
+ * tenants NEVER collapse to one entity row even with an identical name — the
+ * resolver-side half of the ENT-03 isolation boundary.
+ *
+ * `ON DELETE CASCADE` on `memory_entity_links.memory_id → memories(id)` is the
+ * ENTIRE link-maintenance story (ENT-04 — no orphan-sweep job). It fires
+ * automatically because `openSqliteDatabase` already sets
+ * `PRAGMA foreign_keys = ON` (sqlite-adapter-base.ts:52) — no pragma is set
+ * here. NB: the parent `memory_entities` row is intentionally NOT cascaded by a
+ * memory delete (entities are per-concept and may be re-linked; RESEARCH
+ * Pitfall 7), so a stale `mention_count` is by-design, not an orphan bug.
+ *
+ * @param db - An open better-sqlite3 Database whose `memories` table already
+ *   exists (the FK target). Call AFTER the base `memories` CREATE.
+ */
+export function ensureEntityTables(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_entities (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      canonical_name TEXT NOT NULL,            -- display form (first-seen casing)
+      canonical_key  TEXT NOT NULL,            -- normalized key (TS lower+NFKD+strip-marks; NOT sqlite lower(), Pitfall 3)
+      mention_count INTEGER NOT NULL DEFAULT 1,
+      first_seen INTEGER NOT NULL,
+      last_seen  INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_mement_uniq
+      ON memory_entities(tenant_id, agent_id, canonical_key);
+
+    CREATE TABLE IF NOT EXISTS memory_entity_links (
+      memory_id TEXT NOT NULL REFERENCES memories(id)        ON DELETE CASCADE,
+      entity_id TEXT NOT NULL REFERENCES memory_entities(id) ON DELETE CASCADE,
+      PRIMARY KEY (memory_id, entity_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_mentlink_entity ON memory_entity_links(entity_id);
+  `);
+}
+
+/**
  * Initialize the full memory schema on the given SQLite database.
  *
  * Creates:
@@ -200,6 +258,11 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   // here so the SAME path serves both a fresh DB and a live DB that predates
   // the column (idempotent via the PRAGMA guard).
   ensureMemoryColumns(db);
+
+  // --- Entity-association junction tables (Phase 83) ---
+  // Created right after the `memories` table (the FK target) exists, so the
+  // ON DELETE CASCADE on memory_entity_links.memory_id is valid. Idempotent.
+  ensureEntityTables(db);
 
   // --- Observability persistence tables ---
   db.exec(`
