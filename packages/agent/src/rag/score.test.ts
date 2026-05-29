@@ -20,7 +20,7 @@
 
 import type { MemorySearchResult, TrustLevel } from "@comis/core";
 import { describe, it, expect } from "vitest";
-import { score, type ScoringAlphas } from "./score.js";
+import { score, scoreWithBreakdown, type ScoringAlphas, type ScoreBreakdown } from "./score.js";
 
 const DAY_MS = 86_400_000;
 const NOW = 1_700_000_000_000;
@@ -302,5 +302,108 @@ describe("score — boosts + trust tie-break", () => {
     const out = score([noScore], { ...ZERO_ALPHAS, trustAlpha: 0.5 }, NOW);
     expect(out).toHaveLength(1);
     expect(typeof out[0]?.score).toBe("number");
+  });
+});
+
+describe("scoreWithBreakdown — per-memory factor breakdown (OBS-01)", () => {
+  it("attaches a breakdown whose final equals base * recency * temporal * proof * trust", () => {
+    // The four breakdown values are the multiplicative FACTORS (not the centered
+    // sub-signals): final === base * recency * temporal * proof * trust. With every
+    // alpha live and a non-neutral memory, the product must reconstruct `final`
+    // exactly (the recorder relies on this to explain WHY a memory ranked).
+    const alphas: ScoringAlphas = {
+      recencyAlpha: 0.3,
+      temporalAlpha: 0.2,
+      proofAlpha: 0.4,
+      trustAlpha: 0.1,
+    };
+    const input = [
+      makeResult("m", {
+        base: 0.7,
+        trustLevel: "system",
+        createdAt: NOW - 5 * DAY_MS,
+        occurredAt: NOW - 2 * DAY_MS,
+        proofCount: 40,
+        confidence: 0.8,
+      }),
+    ];
+    const out = scoreWithBreakdown(input, alphas, NOW);
+    expect(out).toHaveLength(1);
+    const b = out[0]?.breakdown as ScoreBreakdown;
+    expect(b).toBeDefined();
+    // final === base * each factor (the four returned values ARE the factors).
+    expect(b.final).toBeCloseTo(b.base * b.recency * b.temporal * b.proof * b.trust, 10);
+    // and `score` on the result carries that same final value.
+    expect(out[0]?.score).toBeCloseTo(b.final, 10);
+    // base is the un-boosted relevance score.
+    expect(b.base).toBeCloseTo(0.7, 10);
+  });
+
+  it("returns neutral 1.0 proof AND temporal factors for a raw memory (no proofCount/confidence/occurredAt)", () => {
+    // The no-reorder-when-absent contract surfaces as a factor of EXACTLY 1.0:
+    // a raw memory's temporal factor and proof factor are both 1.0 even at maximal
+    // alphas, because the centered sub-signals are neutral (0.5 / 1.0 multiplier).
+    const input = [makeResult("raw", { base: 0.5, trustLevel: "learned", createdAt: NOW })];
+    const out = scoreWithBreakdown(
+      input,
+      { recencyAlpha: 0, temporalAlpha: 1.0, proofAlpha: 1.0, trustAlpha: 0 },
+      NOW,
+    );
+    const b = out[0]?.breakdown as ScoreBreakdown;
+    expect(b.proof).toBeCloseTo(1.0, 10);
+    expect(b.temporal).toBeCloseTo(1.0, 10);
+  });
+
+  it("gives a system-trust memory a strictly larger trust factor than a learned-trust memory (RANK-06 surfaced)", () => {
+    // RANK-06 made visible per-memory: at trustAlpha>0 the system memory's trust
+    // FACTOR exceeds the learned memory's, which is exactly what lets the trace
+    // explain a trust-driven rank.
+    const sys = makeResult("sys", { base: 0.5, trustLevel: "system", createdAt: NOW });
+    const learned = makeResult("learned", { base: 0.5, trustLevel: "learned", createdAt: NOW });
+    const out = scoreWithBreakdown(
+      [learned, sys],
+      { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0.5 },
+      NOW,
+    );
+    const sysB = out.find((r) => r.entry.id === "sys")?.breakdown as ScoreBreakdown;
+    const learnedB = out.find((r) => r.entry.id === "learned")?.breakdown as ScoreBreakdown;
+    expect(sysB.trust).toBeGreaterThan(learnedB.trust);
+  });
+
+  it("produces the SAME ordering as score() for the same input — the breakdown is additive, not a re-rank (characterization, UNCHANGED)", () => {
+    // The headline additive contract: scoreWithBreakdown must NOT reorder relative to
+    // score(). Run a representative mixed input through both and assert identical id
+    // order AND identical per-result scores. This is the no-regression proof that
+    // surfacing the breakdown never changes the ranking score() already produces.
+    const alphas: ScoringAlphas = {
+      recencyAlpha: 0.2,
+      temporalAlpha: 0.2,
+      proofAlpha: 0.1,
+      trustAlpha: 0.1,
+    };
+    const input = [
+      makeResult("a", { base: 0.9, trustLevel: "learned", createdAt: NOW - 10 * DAY_MS }),
+      makeResult("b", { base: 0.6, trustLevel: "system", createdAt: NOW - 1 * DAY_MS, proofCount: 20 }),
+      makeResult("c", { base: 0.6, trustLevel: "external", createdAt: NOW, occurredAt: NOW - 3 * DAY_MS }),
+      makeResult("d", { base: 0.3, trustLevel: "learned", createdAt: NOW, proofCount: 80, confidence: 0.9 }),
+    ];
+    const plain = score(input, alphas, NOW);
+    const withBreakdown = scoreWithBreakdown(input, alphas, NOW);
+    expect(withBreakdown.map((r) => r.entry.id)).toEqual(plain.map((r) => r.entry.id));
+    for (let i = 0; i < plain.length; i++) {
+      expect(withBreakdown[i]?.score).toBeCloseTo(plain[i]?.score ?? NaN, 10);
+      // the breakdown's final mirrors the boosted score exactly.
+      expect(withBreakdown[i]?.breakdown.final).toBeCloseTo(plain[i]?.score ?? NaN, 10);
+    }
+  });
+
+  it("does not mutate the input array or its result objects", () => {
+    const input = [makeResult("a", { base: 0.5 })];
+    const snapshotScore = input[0]?.score;
+    const out = scoreWithBreakdown(input, { ...ZERO_ALPHAS, recencyAlpha: 0.5 }, NOW);
+    expect(out).not.toBe(input);
+    expect(input[0]?.score).toBe(snapshotScore);
+    // the input result object must not carry a breakdown (additive on a NEW object).
+    expect((input[0] as unknown as { breakdown?: unknown }).breakdown).toBeUndefined();
   });
 });
