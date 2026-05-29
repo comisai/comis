@@ -132,9 +132,16 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
           return err(new Error("entity name normalizes to empty canonical key"));
         }
 
-        // The whole resolve+link is one transaction so a fuzzy-scan + create
-        // + link can never interleave with a concurrent write (mirror
-        // sqlite-memory-adapter.ts:85).
+        // The whole resolve+link runs in ONE transaction (mirror
+        // sqlite-memory-adapter.ts:85) so the selectExact-miss -> fuzzy-scan ->
+        // create -> link sequence is atomic. NOTE: better-sqlite3 transactions
+        // are DEFERRED (no up-front write lock), so atomicity here does NOT by
+        // itself serialize two *concurrent* writers; what guarantees no
+        // interleave is that the daemon memory write path is SINGLE-THREADED
+        // and better-sqlite3 is synchronous — two resolveAndLink calls cannot
+        // run mid-transaction. The create branch below leans on that assumption
+        // (see its note); were this path ever made concurrent, the plain INSERT
+        // would need INSERT OR IGNORE + re-resolve.
         const resolution = db.transaction((): { entityId: string; reused: boolean; fuzzyScore?: number } => {
           // 1) Exact reuse on the normalized canonical_key (scoped).
           const exactParsed = entityRowMapper.parseOptionalRow(selectExact.get(tenantId, agentId, key));
@@ -164,6 +171,16 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
           }
 
           // 3) Create a new entity (display-cased name; normalized key).
+          // LO-02: this is a plain INSERT (not INSERT OR IGNORE). It is race-safe
+          // ONLY because of the single-writer assumption documented on the
+          // transaction above: under the single-threaded daemon write path no
+          // other writer can commit a row for this `(tenant_id, agent_id,
+          // canonical_key)` between the selectExact miss and this INSERT. If that
+          // assumption were ever broken (a second concurrent writer), this could
+          // throw SQLITE_CONSTRAINT_UNIQUE — which is NON-FATAL today (caught
+          // below -> err Result -> IN-01 WARN + continue, the memory is still
+          // stored), not data loss. A concurrent design would make this branch
+          // idempotent (INSERT OR IGNORE + re-resolve the now-existing row).
           const entityId = randomUUID();
           insertEntity.run(entityId, tenantId, agentId, name, key, now, now);
           insertLink.run(memoryId, entityId);
