@@ -201,9 +201,12 @@ export async function setupMemory(deps: {
       threads: memoryConfig.rerankerThreads,
     });
     if (rr.ok) {
-      rerankerPort = rr.value;
-      disposeReranker = rerankerPort.dispose
-        ? async () => { await rerankerPort!.dispose!(); }
+      // Capture the resolved port so the dispose closure has a non-nullable
+      // reference (no `rerankerPort!.dispose!()` non-null clusters; AGENTS.md).
+      const port = rr.value;
+      rerankerPort = port;
+      disposeReranker = port.dispose
+        ? async () => { await port.dispose?.(); }
         : undefined;
       memoryLogger.debug({ model: memoryConfig.rerankerModel }, "Reranker provider initialized");
     } else {

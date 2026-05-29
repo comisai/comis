@@ -646,9 +646,10 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         }, "embedding-cache", daemonLogger);
       }
       if (disposeReranker) {
+        const stopMs = systemNowMs();
         await withStepTimeout(async () => {
           await disposeReranker();  // reranker native context: ranking ctx -> model -> llama
-          daemonLogger.info({ component: "reranker", shutdownOrder: ++shutdownOrder }, "Component stopped");
+          daemonLogger.info({ component: "reranker", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "reranker", daemonLogger);
       }
       // Destroy audit aggregator timers
