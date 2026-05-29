@@ -26,6 +26,16 @@ export interface MemoryRow {
   created_at: number;
   /** Unix timestamp in milliseconds, null if the event time is unknown (TEMP-01). */
   occurred_at: number | null;
+  /** Evidence count; null = raw memory, >=1 = observation (P84/CONS-01). */
+  proof_count: number | null;
+  /** JSON-encoded string[] of contributing source ids; null on raw memories. */
+  source_ids: string | null;
+  /** Unix ms; set when folded into an observation (P84/CONS-04). */
+  consolidated_at: number | null;
+  /** Observation confidence 0..1 (P84/CONS-08); null on raw memories. */
+  confidence: number | null;
+  /** JSON-encoded audit array of prior contents (P84/CONS-05); null on raw memories. */
+  history: string | null;
   /** Unix timestamp in milliseconds, null if never updated */
   updated_at: number | null;
   /** Unix timestamp in milliseconds, null if no expiry */

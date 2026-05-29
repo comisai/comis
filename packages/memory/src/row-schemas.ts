@@ -77,6 +77,16 @@ export const MemoryRowSchema = z.strictObject({
   created_at: z.number(),
   /** Unix timestamp in milliseconds, null if event time unknown (TEMP-01). */
   occurred_at: z.number().nullable(),
+  /** Evidence count; null = raw memory, >=1 = observation (P84/CONS-01). */
+  proof_count: z.number().nullable(),
+  /** JSON-encoded string[] of source ids — consumer parses; null on raw. */
+  source_ids: z.string().nullable(),
+  /** Unix ms; set when folded into an observation (P84/CONS-04); null on raw. */
+  consolidated_at: z.number().nullable(),
+  /** Observation confidence 0..1 (P84/CONS-08); null on raw. */
+  confidence: z.number().nullable(),
+  /** JSON-encoded audit array — consumer parses; null on raw (P84/CONS-05). */
+  history: z.string().nullable(),
   /** Unix timestamp in milliseconds, null if never updated. */
   updated_at: z.number().nullable(),
   /** Unix timestamp in milliseconds, null if no expiry. */

@@ -37,6 +37,14 @@ export function isVecAvailable(): boolean {
  * Currently adds:
  * - `occurred_at INTEGER` (TEMP-01): event time, distinct from `created_at`
  *   (record time). NULL when the event time is unknown.
+ * - `proof_count INTEGER` (P84/CONS-01): evidence count. NULL = raw memory;
+ *   >=1 marks the row as an observation (the column-flag data model — design
+ *   §4.1; the `memory_type` CHECK is intentionally NOT touched).
+ * - `source_ids TEXT` (P84/CONS-01): JSON array of contributing source ids.
+ * - `consolidated_at INTEGER` (P84/CONS-04): set when a raw memory is folded
+ *   into an observation; the state predicate for candidate selection.
+ * - `confidence REAL` (P84/CONS-08): observation confidence 0..1.
+ * - `history TEXT` (P84/CONS-05): JSON audit array of prior contents.
  *
  * @param db - An open better-sqlite3 Database instance whose `memories`
  *   table already exists (created by `initSchema`'s `CREATE TABLE IF NOT EXISTS`).
@@ -52,6 +60,13 @@ export function ensureMemoryColumns(db: Database.Database): void {
     // Nullable add → O(1), no table rewrite, no destructive rewrite (TEMP-01).
     db.exec(`ALTER TABLE memories ADD COLUMN occurred_at INTEGER`);
   }
+  // Observation columns (P84). All nullable → O(1) ADD, no rewrite, no backfill
+  // (existing rows get NULL = "raw, never consolidated"). Forward-only.
+  if (!cols.has("proof_count")) db.exec(`ALTER TABLE memories ADD COLUMN proof_count INTEGER`);
+  if (!cols.has("source_ids")) db.exec(`ALTER TABLE memories ADD COLUMN source_ids TEXT`);
+  if (!cols.has("consolidated_at")) db.exec(`ALTER TABLE memories ADD COLUMN consolidated_at INTEGER`);
+  if (!cols.has("confidence")) db.exec(`ALTER TABLE memories ADD COLUMN confidence REAL`);
+  if (!cols.has("history")) db.exec(`ALTER TABLE memories ADD COLUMN history TEXT`);
 }
 
 /**
@@ -263,6 +278,20 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   // Created right after the `memories` table (the FK target) exists, so the
   // ON DELETE CASCADE on memory_entity_links.memory_id is valid. Idempotent.
   ensureEntityTables(db);
+
+  // --- Observation partial indexes (Phase 84; design §4.1) ---
+  // Created AFTER ensureMemoryColumns (the indexed columns must exist first).
+  // `idx_memories_unconsol` serves the candidate scan (WHERE consolidated_at IS
+  // NULL, the CONS-04 state predicate); `idx_memories_observations` serves the
+  // observation lookup (WHERE proof_count IS NOT NULL — the column-flag). The
+  // design's third "live" index (the exact-dup-retirement filter) is OMITTED —
+  // exact-dup retirement and its column are deferred to a later phase.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_memories_unconsol
+      ON memories(agent_id, created_at) WHERE consolidated_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_memories_observations
+      ON memories(agent_id) WHERE proof_count IS NOT NULL;
+  `);
 
   // --- Observability persistence tables ---
   db.exec(`

@@ -43,6 +43,18 @@ export const MemoryEntrySchema = z.strictObject({
     createdAt: z.number().int().positive(),
     /** Event time in epoch ms (P81/TEMP-01); distinct from createdAt (record time). Absent when the event time is unknown. */
     occurredAt: z.number().int().positive().optional(),
+    /** Evidence count (P84/CONS-01). NULL/absent = raw memory; >=1 = observation. Design §4.3. */
+    proofCount: z.number().int().positive().optional(),
+    /** Contributing source memory ids (P84/CONS-01). */
+    sourceIds: z.array(z.guid()).optional(),
+    /** Set when this raw memory was folded into an observation (P84/CONS-04/05 candidate predicate). */
+    consolidatedAt: z.number().int().positive().optional(),
+    /** Observation confidence 0..1 (P84/CONS-08), decays over time. */
+    confidence: z.number().min(0).max(1).optional(),
+    /** JSON audit trail of prior contents (P84/CONS-05 non-destructive history). */
+    history: z
+      .array(z.strictObject({ previousContent: z.string(), changedAt: z.number().int().positive() }))
+      .optional(),
     updatedAt: z.number().int().positive().optional(),
     expiresAt: z.number().int().positive().optional(),
     /** Taint level indicating content sanitization status */
