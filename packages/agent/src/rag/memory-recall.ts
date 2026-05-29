@@ -111,30 +111,60 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // 2. FUSE (N-lane; single lane now = identity. Entity lane is a Phase-83 seam).
       let ranked = fuse([{ results: searched.value, weight: 1.0 }]);
 
+      // Set once the rerank-SUCCESS path has already applied score() boosts
+      // per-segment (pool, then tail). When false, the global score() pass below
+      // boosts the fused/degraded order. This split is what prevents HI-01: a single
+      // global score() over [CE-scored pool ++ RRF-scored tail] mixes two scales and
+      // lets a high-RRF tail item leapfrog a low-absolute-CE pool item, undoing the
+      // rerank. Scoring each segment independently keeps the pool-before-tail
+      // partition intact (the cross-encoder's verdict is authoritative for the pool).
+      let rerankApplied = false;
+
       // 3. RERANK (opt-in, default-OFF; graceful degrade + timeout -> fused order).
+      // LO-01: a reranker rank() that never settles would hang recall forever when no
+      // TimerPort is injected (the timeout cannot fire). So rerank requires deps.timers
+      // — without it we skip reranking entirely and degrade to fused order rather than
+      // awaiting an unbounded rank(). In production timers is always present
+      // (PiExecutorDeps.timers); this guards the optional-deps surface only.
+      const timers = deps.timers;
       if (
         cfg.rerank.enabled &&
+        timers !== undefined &&
         deps.reranker?.isAvailable() === true &&
         ranked.length >= cfg.rerank.minResults
       ) {
         const pool = ranked.slice(0, cfg.rerank.maxCandidates);
         const tail = ranked.slice(cfg.rerank.maxCandidates);
         const docs = pool.map((r) => r.entry.content);
-        const timers = deps.timers;
         const schedule = (cb: () => void, ms: number): (() => void) => {
-          const handle = timers?.setTimeout(cb, ms);
-          return () => handle?.cancel();
+          const handle = timers.setTimeout(cb, ms);
+          return () => handle.cancel();
         };
         try {
-          const scored = timers
-            ? await withTimeout(deps.reranker.rank(query, docs), cfg.rerank.timeoutMs, schedule, "rerank")
-            : await deps.reranker.rank(query, docs);
+          const scored = await withTimeout(
+            deps.reranker.rank(query, docs),
+            cfg.rerank.timeoutMs,
+            schedule,
+            "rerank",
+          );
           if (scored.ok) {
-            // CE score becomes PRIMARY for the reranked pool; the tail keeps fused order.
-            const reranked: MemorySearchResult[] = pool
-              .map((r, i) => ({ ...r, score: scored.value[i] ?? 0 }))
-              .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-            ranked = reranked.concat(tail);
+            // HI-01: apply boosts to each segment SEPARATELY on its own scale, then
+            // concat pool-before-tail. No global re-sort across scales runs afterward.
+            // The reranked pool's base score becomes the cross-encoder probability.
+            //
+            // LO-02: score() sorts by boosted score, then by trust (RANK-06) for equal
+            // relevance. For pool docs with EQUAL CE *and* equal trust, the final
+            // tie-break is the fused (pre-rerank) index: score() uses a stable sort and
+            // we hand it the pool in fused order, so equal-on-both-keys ties resolve to
+            // that order deterministically (not to sort happenstance).
+            const rerankedPool = score(
+              pool.map((r, i) => ({ ...r, score: scored.value[i] ?? 0 })),
+              cfg.scoring,
+              deps.clock.now(),
+            );
+            const scoredTail = score(tail, cfg.scoring, deps.clock.now());
+            ranked = rerankedPool.concat(scoredTail);
+            rerankApplied = true;
           } else {
             deps.logger.warn(
               {
@@ -145,7 +175,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
               },
               "rerank fallback",
             );
-            // ranked stays = fused order
+            // ranked stays = fused order; global score() below applies boosts.
           }
         } catch (e) {
           const kind: "timeout" | "dependency" = e instanceof TimeoutError ? "timeout" : "dependency";
@@ -159,12 +189,16 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
             },
             "rerank fallback",
           );
-          // ranked stays = fused order
+          // ranked stays = fused order; global score() below applies boosts.
         }
       }
 
-      // 4. SCORE (boosts + trust tie-break) on the reranked-or-fused order.
-      ranked = score(ranked, cfg.scoring, deps.clock.now());
+      // 4. SCORE (boosts + trust tie-break) — only for the fused/degraded order. The
+      //    rerank-success path already scored each segment above (rerankApplied), and
+      //    re-running a global score() here would re-mix the CE and RRF scales (HI-01).
+      if (!rerankApplied) {
+        ranked = score(ranked, cfg.scoring, deps.clock.now());
+      }
 
       // 5. TRUST-FILTER (mirrors the old inline filter). score() does not depend on the
       //    excluded entries, so filtering after scoring yields the same survivors.
