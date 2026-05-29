@@ -287,23 +287,16 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
     const targetPort = extractPort(authority);
 
     // Attach a no-op error listener to clientSocket BEFORE writing the 200
-    // response. Without this listener, an EPIPE (client closed before we
-    // write) fires as an unhandled "error" event which Node promotes to an
-    // uncaughtException. The actual EPIPE on the write is caught by the
-    // try/catch below (CR-02 / WR-01).
+    // response. On Node.js, socket.write() to a closed socket does NOT throw
+    // synchronously — it emits an "error" event on the socket instead. Without
+    // a listener attached, an unhandled "error" event on a socket throws
+    // uncaughtException (CR-02 / WR-01). The no-op here absorbs those errors;
+    // the async IIFE's outer try/catch handles cleanup for all other errors.
     clientSocket.on("error", () => undefined);
 
     void (async () => {
       try {
-        // Write 200 inside the async IIFE so that if the client has already
-        // closed (EPIPE race), the thrown error is caught by the outer try/catch
-        // below rather than propagating as an uncaughtException (CR-02).
-        try {
-          clientSocket.write("HTTP/1.1 200 Connection established\r\n\r\n");
-        } catch {
-          // Client dropped the connection before receiving the 200 — silently exit.
-          return;
-        }
+        clientSocket.write("HTTP/1.1 200 Connection established\r\n\r\n");
 
         log.debug(
           { step: "tunnel-open", sessionId, agentId, host },
