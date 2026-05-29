@@ -337,6 +337,8 @@ export type { ContextTruncationResult } from "./safety/context-truncation-recove
 // Hybrid memory injector (split RAG results: inline + system prompt)
 export { createHybridMemoryInjector } from "./rag/hybrid-memory-injector.js";
 export type { HybridMemoryInjector, HybridMemoryInjection } from "./rag/hybrid-memory-injector.js";
+export { createMemoryRecall } from "./rag/memory-recall.js";
+export type { MemoryRecall, MemoryRecallDeps, MemoryRecallConfig } from "./rag/memory-recall.js";
 
 // Schema normalizer (strip unsupported JSON Schema keywords per provider)
 export { normalizeToolSchema, PROVIDER_UNSUPPORTED_KEYWORDS } from "./safety/tool-schema-safety.js";
