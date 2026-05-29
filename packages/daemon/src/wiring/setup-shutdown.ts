@@ -351,14 +351,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         const stopMs = systemNowMs();
         await withStepTimeout(async () => {
           await trajectoryRegistry.closeAll();
-          daemonLogger.info(
-            {
-              component: "trajectory-registry",
-              durationMs: systemNowMs() - stopMs,
-              shutdownOrder: ++shutdownOrder,
-            },
-            "Component stopped",
-          );
+          daemonLogger.info({ component: "trajectory-registry", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "trajectory-registry", daemonLogger);
       }
 
