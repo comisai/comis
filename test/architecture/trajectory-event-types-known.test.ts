@@ -104,10 +104,15 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "cache:graph_prefix_written",
 
   // -------------------------------------------------------------------
-  // Command + memory-review lifecycle — internal handlers.
+  // Command + memory-maintenance lifecycle — internal handlers / background
+  // jobs, not turn-level trajectory events.
   // -------------------------------------------------------------------
   "command:blocked",
   "memory:review_completed",
+  // Background consolidation job metrics (clustersProcessed/observationsCreated/
+  // dedupHits) — a maintenance job, not part of an agent turn. Same class as
+  // memory:review_completed above.
+  "memory:consolidated",
 
   // -------------------------------------------------------------------
   // Session-store lifecycle (distinct from session:started/ended which

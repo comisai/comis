@@ -92,14 +92,22 @@ describe("setup-agents-runtime skills directory creation", () => {
 
 describe("setupSingleAgent OAuth wiring", () => {
   const source = readRuntimeSource();
+  // The OAuth auth-provider construction was extracted to setup-agents-oauth.ts
+  // (85-05 file-size split); the runtime file now calls wireAuthProvider(...).
+  const oauthSource = readFileSync(
+    join(__dirname, "setup-agents-oauth.ts"),
+    "utf-8",
+  );
 
   it("invokes createAuthProvider({ oauth: ... }) — closes the unwired-OAuth gap", () => {
     // createAuthProvider was previously exported by @comis/agent but never
     // called by the daemon, so refreshed OAuth tokens lived only in the
     // in-memory cache and silently disappeared on restart. The daemon-side
-    // call closes that gap.
-    expect(source).toContain("createAuthProvider({");
-    expect(source).toMatch(/createAuthProvider\(\s*{[\s\S]*?oauth:\s*{/);
+    // call (now in the extracted wireAuthProvider helper) closes that gap.
+    expect(oauthSource).toContain("createAuthProvider({");
+    expect(oauthSource).toMatch(/createAuthProvider\(\s*{[\s\S]*?oauth:\s*{/);
+    // The runtime file delegates to the extracted helper.
+    expect(source).toContain("wireAuthProvider({");
   });
 
   it("uses safePath (NOT path.join) for all newly-added path constructions", () => {
@@ -109,10 +117,14 @@ describe("setupSingleAgent OAuth wiring", () => {
     // discovery), but the OAuth wiring must use safePath only.
     expect(source).not.toMatch(/path\.join\(/);
     expect(source).not.toMatch(/path\.resolve\(/);
-    // The OAuth wiring's dataDir construction must use safePath.
+    expect(oauthSource).not.toMatch(/path\.join\(/);
+    expect(oauthSource).not.toMatch(/path\.resolve\(/);
+    // The OAuth wiring's path construction (now in the helper) must use safePath.
+    expect(oauthSource).toContain("safePath(");
+    // The runtime file's remaining dataDir construction also uses safePath.
     const oauthSection = source.slice(
       source.indexOf("FIRST daemon-side OAuth wiring"),
-      source.indexOf("createAuthProvider({"),
+      source.indexOf("wireAuthProvider({"),
     );
     expect(oauthSection).toContain("safePath(");
   });
@@ -282,6 +294,13 @@ describe("setupSingleAgent context-engine mode-switch detection (DAG-05)", () =>
     join(__dirname, "setup-agents-registry.ts"),
     "utf-8",
   );
+  // The detection + one-shot consume logic was extracted to
+  // setup-agents-mode-switch.ts (85-05 file-size split); the runtime file calls
+  // detectAndRecordModeSwitch(...) + makeConsumePendingModeSwitch(...).
+  const modeSwitchSource = readFileSync(
+    join(__dirname, "setup-agents-mode-switch.ts"),
+    "utf-8",
+  );
 
   it("SingleAgentDeps carries the daemon-level pendingModeSwitches Map", () => {
     // The pending-switch carrier is a single shared Map keyed by agentId,
@@ -321,16 +340,16 @@ describe("setupSingleAgent context-engine mode-switch detection (DAG-05)", () =>
   });
 
   it("guards the pending-switch write on a REAL version change (prior defined AND prior !== new)", () => {
-    const fnStart = source.indexOf("export async function setupSingleAgent(");
-    const fnBody = source.slice(fnStart);
-
+    // The guard + INFO log live in the extracted detectAndRecordModeSwitch.
     // The set is guarded so a first build (no prior version) and a no-change
-    // reload record nothing — only old!=new fires. fullImport is NOT the trigger.
-    expect(fnBody).toMatch(/prevVersion\s*&&\s*prevVersion\s*!==\s*newVersion/);
-    expect(fnBody).toMatch(/pendingModeSwitches\.set\(\s*agentId/);
+    // reload record nothing — only prev!=new fires. fullImport is NOT the trigger.
+    expect(modeSwitchSource).toMatch(/prevVersion\s*&&\s*prevVersion\s*!==\s*resolvedNew/);
+    expect(modeSwitchSource).toMatch(/pendingModeSwitches\.set\(\s*agentId/);
     // The new version falls back to the schema default when unset (parity with
     // the per-turn engine build which reads ContextEngineConfigSchema.parse({})).
-    expect(fnBody).toContain("ContextEngineConfigSchema");
+    expect(modeSwitchSource).toContain("ContextEngineConfigSchema");
+    // The runtime file delegates the detection to the extracted helper.
+    expect(source).toContain("detectAndRecordModeSwitch(");
   });
 
   it("threads a one-shot consumePendingModeSwitch closure into createPiExecutor deps", () => {
@@ -339,10 +358,12 @@ describe("setupSingleAgent context-engine mode-switch detection (DAG-05)", () =>
     expect(depsStart).toBeGreaterThan(-1);
     expect(depsEnd).toBeGreaterThan(depsStart);
     const depsBlock = source.slice(depsStart, depsEnd);
-    // The executor receives the consume-and-clear callback so the DAG engine
-    // can emit context:mode_switched once at the next reconcile.
+    // The executor receives the consume-and-clear callback (built by the
+    // extracted makeConsumePendingModeSwitch) so the DAG engine can emit
+    // context:mode_switched once at the next reconcile.
     expect(depsBlock).toContain("consumePendingModeSwitch");
+    expect(depsBlock).toContain("makeConsumePendingModeSwitch(deps.pendingModeSwitches)");
     // The closure deletes the entry on read (one-shot semantics).
-    expect(source).toContain("deps.pendingModeSwitches.delete(");
+    expect(modeSwitchSource).toContain("pendingModeSwitches.delete(");
   });
 });

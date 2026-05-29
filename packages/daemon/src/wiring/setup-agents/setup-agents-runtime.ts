@@ -21,7 +21,7 @@
  * @module
  */
 
-import { safePath, SkillsConfigSchema, createScopedSecretManager, createOutputGuard, generateCanaryToken, createInputSecurityGuard, validateInput, PerAgentConfigSchema, ContextEngineConfigSchema, type PerAgentConfig } from "@comis/core";
+import { safePath, SkillsConfigSchema, createScopedSecretManager, createOutputGuard, generateCanaryToken, createInputSecurityGuard, validateInput, PerAgentConfigSchema, type PerAgentConfig } from "@comis/core";
 import { createToolCapabilityAdapter } from "../tool-capability-adapter.js";
 import { suppressError } from "@comis/shared";
 import { homedir } from "node:os";
@@ -36,7 +36,6 @@ import {
   createComisSessionManager,
   cleanupStaleLocks,
   createAuthStorageAdapter,
-  createAuthProvider,
   createModelRegistryAdapter,
   registerCustomProviders,
   createAuthProfileManager,
@@ -55,6 +54,11 @@ import {
 } from "@comis/skills";
 import { resolveAgentModel, deriveCanaryFallback } from "./setup-agents-tooling.js";
 import { createAcpWiring } from "./setup-acp-wiring.js";
+import {
+  detectAndRecordModeSwitch,
+  makeConsumePendingModeSwitch,
+} from "./setup-agents-mode-switch.js";
+import { wireAuthProvider } from "./setup-agents-oauth.js";
 import type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
 // Re-export types so consumers of the runtime leaf preserve the historic
 // import shape (parity-tests + setup-agents.test.ts inspect by name).
@@ -95,36 +99,17 @@ export async function setupSingleAgent(
 
   // DAG-05: detect a context-engine MODE SWITCH at the rebuild seam.
   // container.config.agents[agentId] still holds the PRIOR config here (on a
-  // config-reload re-invocation); it is undefined on the very first build. A
-  // real switch = the prior version is defined AND differs from the new one.
-  // We must read it BEFORE the overwrite below (which destroys the prior
-  // config). The new version falls back to the schema default when unset —
-  // parity with the per-turn engine build, which reads
-  // ContextEngineConfigSchema.parse({}) (executor-context-engine-setup.ts).
-  // We deliberately do NOT use fullImport as the trigger: fullImport fires for
-  // every brand-new DAG-default conversation (now the common case), which is
-  // NOT a switch (RESEARCH Pitfall 2). The pending switch is consumed one-shot
-  // by the DAG engine at the next reconcile, which emits context:mode_switched
-  // with the real import cost.
-  const prevVersion = container.config.agents[agentId]?.contextEngine?.version;
-  const newVersion =
-    effectiveConfig.contextEngine?.version ?? ContextEngineConfigSchema.parse({}).version;
-  if (prevVersion && prevVersion !== newVersion) {
-    deps.pendingModeSwitches.set(agentId, { from: prevVersion, to: newVersion });
-    // INFO boundary log (AGENTS.md §2.7 event↔log duality): the switch both
-    // logs here at the rebuild seam AND emits context:mode_switched at the
-    // reconcile seam, so an operator can reconstruct it from logs OR events.
-    // No errorKind — this is an INFO line, not a WARN/ERROR.
-    agentLogger.info(
-      {
-        agentId,
-        from: prevVersion,
-        to: newVersion,
-        hint: "engine mode switched via config reload; takes effect next turn",
-      },
-      "Context engine mode switch detected",
-    );
-  }
+  // config-reload re-invocation); it is undefined on the very first build. We
+  // must read the prior version BEFORE the overwrite below (which destroys the
+  // prior config). The detection + INFO boundary log live in
+  // detectAndRecordModeSwitch (setup-agents-mode-switch.ts).
+  detectAndRecordModeSwitch(
+    agentId,
+    container.config.agents[agentId]?.contextEngine?.version,
+    effectiveConfig.contextEngine?.version,
+    deps.pendingModeSwitches,
+    agentLogger,
+  );
 
   // Write resolved values back to container.config.agents so all downstream
   // consumers (getConfig RPC, agents.get, session.status, REST /api/agents)
@@ -204,21 +189,8 @@ export async function setupSingleAgent(
     customProviderEntries,
   });
 
-  // -------------------------------------------------------------------------
-  // FIRST daemon-side OAuth wiring.
-  //
-  // Closes the unwired-OAuth gap — the createAuthProvider symbol was exported
-  // by @comis/agent but never called by the daemon, so refreshed OAuth tokens
-  // lived only in the in-memory cache and silently disappeared on restart.
-  // AuthProviderConfig.oauth credentialStore + logger + dataDir are REQUIRED
-  // so this wiring is type-checked at compile time — future regressions
-  // surface as TS errors, not silent runtime failures.
-  //
-  // All path constructions in this block use safePath from @comis/core (NOT
-  // path.join — required by the ESLint security rule).
-  // When storage === "encrypted", the OAuth profile adapter SHARES the
-  // existing secretsDb handle from createSqliteSecretStore (no dual-handle).
-  // -------------------------------------------------------------------------
+  // FIRST daemon-side OAuth wiring — see setup-agents-oauth.ts for the full
+  // rationale (unwired-OAuth gap closure + closure-stability invariant).
   const oauthStorageMode = container.config.oauth.storage;
   const dataDirAbs =
     container.config.dataDir && container.config.dataDir.length > 0
@@ -231,65 +203,16 @@ export async function setupSingleAgent(
   // RpcDispatchDeps for the agents.update oauthProfiles existence check.
   const oauthCredentialStore = deps.oauthCredentialStore;
 
-  const authProvider = createAuthProvider({
-    secretManager: scopedManager,
-    additionalProviderKeys: undefined,
-    oauth: {
-      eventBus: container.eventBus,
-      credentialStore: oauthCredentialStore,
-      logger: agentLogger.child({ submodule: "oauth-token-manager" }),
-      dataDir: dataDirAbs,
-      // Same canonical FileLockPort instance the OAuth credential store
-      // was constructed with — both the file adapter and the token manager
-      // need cross-process serialization on the same .locks/ directory.
-      fileLock: deps.fileLock,
-      keyPrefix: "OAUTH_",
-      // Pass auth-profiles.json path when file adapter active so
-      // OAuthTokenManager can register the chokidar watcher and pick up
-      // CLI-written profiles within ~250ms without a daemon restart.
-      // Encrypted-mode: undefined -> no watcher; documented limitation.
-      watchPath:
-        oauthStorageMode === "file"
-          ? safePath(dataDirAbs, "auth-profiles.json")
-          : undefined,
-      // Closure-stability: the closure dereferences
-      // container.config.agents[agentId]?.oauthProfiles on every call.
-      // This is the only correct shape because:
-      //   1. The `container.config.agents[agentId] = effectiveConfig`
-      //      writeback above (search for that assignment in this file)
-      //      stores a NEW object built from
-      //      { ...agentConfig, model, provider } into the daemon's map.
-      //      The local `agentConfig` parameter diverges from the map
-      //      immediately at startup — capturing it would observe the
-      //      wrong value.
-      //   2. agents.update at agent-handlers.ts:341 executes
-      //      `deps.agents[agentId] = parsedConfig`, REPLACING the
-      //      reference at that key with a new validated object. Capturing
-      //      the local agentConfig parameter would miss this hot-update.
-      //   3. daemon.ts confirms `deps.agents` and `container.config.agents`
-      //      are THE SAME map object — search for
-      //      `agents: container.config.agents` in the RpcDispatchDeps
-      //      construction. The daemon holds a single per-process
-      //      Container.config instance.
-      // The map identity is stable; only the value at the agent key
-      // changes. The closure-evaluated dereference observes (1) at
-      // startup AND (2) on every agents.update without an event-bus
-      // invalidation or daemon restart, allowing the agents_manage tool to
-      // update without a daemon restart.
-      getAgentOauthProfiles: () =>
-        container.config.agents?.[agentId]?.oauthProfiles,
-    },
+  const authProvider = wireAuthProvider({
+    agentId,
+    container,
+    scopedManager,
+    oauthCredentialStore,
+    fileLock: deps.fileLock,
+    dataDirAbs,
+    oauthStorageMode,
+    agentLogger,
   });
-
-  agentLogger.debug(
-    {
-      agentId,
-      oauthStorage: oauthStorageMode,
-      dataDir: dataDirAbs,
-      submodule: "setup-agents",
-    },
-    "OAuth credential store + auth provider + per-LLM-call dispatch wired",
-  );
 
   const piModelRegistry = createModelRegistryAdapter(piAuthStorage);
   const { registered: customProviderCount, providerAliases } = registerCustomProviders(
@@ -545,17 +468,13 @@ export async function setupSingleAgent(
     // DAG context engine deps (optional -- only when context engine version is dag)
     contextStore: deps.contextStore,
     db: deps.db,
-    // DAG-05: one-shot consumer of a pending engine-mode switch for this agent.
+    // DAG-05: one-shot delete-on-read consumer of a pending engine-mode switch.
     // Threaded through PiExecutorDeps -> setupContextEngine -> DagContextEngineDeps
     // so the DAG reconcile seam can emit context:mode_switched once (with the
     // real import cost) and then clear the pending flag. Returns undefined when
     // there is no pending switch (e.g. a brand-new DAG-default conversation),
-    // so no false event fires. consume = delete-on-read.
-    consumePendingModeSwitch: (id: string) => {
-      const s = deps.pendingModeSwitches.get(id);
-      if (s) deps.pendingModeSwitches.delete(id);
-      return s;
-    },
+    // so no false event fires.
+    consumePendingModeSwitch: makeConsumePendingModeSwitch(deps.pendingModeSwitches),
     tenantId: container.config.tenantId,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
