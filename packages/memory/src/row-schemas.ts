@@ -75,6 +75,8 @@ export const MemoryRowSchema = z.strictObject({
   tags: z.string(),
   /** Unix timestamp in milliseconds. */
   created_at: z.number(),
+  /** Unix timestamp in milliseconds, null if event time unknown (TEMP-01). */
+  occurred_at: z.number().nullable(),
   /** Unix timestamp in milliseconds, null if never updated. */
   updated_at: z.number().nullable(),
   /** Unix timestamp in milliseconds, null if no expiry. */

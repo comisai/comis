@@ -50,6 +50,7 @@ export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry & 
     },
     tags: parseTags(row.tags),
     createdAt: row.created_at,
+    ...(row.occurred_at !== null ? { occurredAt: row.occurred_at } : {}),
     ...(row.updated_at !== null ? { updatedAt: row.updated_at } : {}),
     ...(row.expires_at !== null ? { expiresAt: row.expires_at } : {}),
     ...(embedding ? { embedding } : {}),
@@ -70,8 +71,8 @@ export function insertMemoryRow(
   memoryType: string,
 ): void {
   db.prepare(
-    `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_channel, source_session_key, tags, created_at, updated_at, expires_at, has_embedding)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_channel, source_session_key, tags, created_at, occurred_at, updated_at, expires_at, has_embedding)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
   ).run(
     entry.id,
     entry.tenantId,
@@ -85,6 +86,7 @@ export function insertMemoryRow(
     entry.source.sessionKey ?? null,
     JSON.stringify(entry.tags),
     entry.createdAt,
+    entry.occurredAt ?? null,
     entry.updatedAt ?? null,
     entry.expiresAt ?? null,
   );

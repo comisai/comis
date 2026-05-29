@@ -41,6 +41,8 @@ export const MemoryEntrySchema = z.strictObject({
     source: MemorySourceSchema,
     tags: z.array(z.string()).default([]),
     createdAt: z.number().int().positive(),
+    /** Event time in epoch ms (P81/TEMP-01); distinct from createdAt (record time). Absent when the event time is unknown. */
+    occurredAt: z.number().int().positive().optional(),
     updatedAt: z.number().int().positive().optional(),
     expiresAt: z.number().int().positive().optional(),
     /** Taint level indicating content sanitization status */

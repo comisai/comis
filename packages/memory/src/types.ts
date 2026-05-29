@@ -24,6 +24,8 @@ export interface MemoryRow {
   tags: string;
   /** Unix timestamp in milliseconds */
   created_at: number;
+  /** Unix timestamp in milliseconds, null if the event time is unknown (TEMP-01). */
+  occurred_at: number | null;
   /** Unix timestamp in milliseconds, null if never updated */
   updated_at: number | null;
   /** Unix timestamp in milliseconds, null if no expiry */
