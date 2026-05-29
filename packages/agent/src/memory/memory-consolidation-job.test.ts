@@ -316,6 +316,93 @@ describe("runMemoryConsolidation — bounded run + minimal event (CONS-07)", () 
   });
 });
 
+describe("runMemoryConsolidation — WR-02: a dedup-hit cluster must NOT consume the maxClustersPerRun budget", () => {
+  it("with maxClustersPerRun=1 and a dedup-hit cluster ordered before a real-merge cluster, the real merge still happens (budget not wasted on the dedup skip)", async () => {
+    // The starvation bug: `clustersProcessed++` runs BEFORE the dedup check, and
+    // the loop guard is `clustersProcessed >= maxClustersPerRun`. So a leading
+    // dedup-hit cluster burns the entire budget and the loop BREAKs before the
+    // mergeable cluster — genuinely-new observations are starved under churn.
+    mockMerge("merged");
+
+    // dedupS1/dedupS2 are the source ids of the FIRST (tag "a") cluster. We seed
+    // an EXISTING observation whose source-id set equals {dedupS1, dedupS2}, so
+    // the primary deterministic dedup key matches → cluster 1 is a dedup hit.
+    const dedupS1 = nextId();
+    const dedupS2 = nextId();
+    const existing = makeEntry({
+      content: "already merged fact A",
+      proofCount: 2,
+      sourceIds: [dedupS1, dedupS2],
+      trustLevel: "learned",
+    });
+
+    // Two ORTHOGONAL clusters (no cosine neighbour between them → two separate
+    // clusters; input order is preserved as cluster order). Cluster 1 (tag "a")
+    // is the dedup hit; cluster 2 (tag "b") is a NOVEL source set that must merge.
+    const store = makeStore(
+      [
+        // Cluster 1 — dedup hit (its source set already has an observation).
+        makeCand({ id: dedupS1, trustLevel: "learned", tags: ["a"] }, [1, 0, 0]),
+        makeCand({ id: dedupS2, trustLevel: "learned", tags: ["a"] }, [0.999, 0.001, 0]),
+        // Cluster 2 — novel, mergeable; orthogonal embedding so it is a distinct cluster.
+        makeCand({ trustLevel: "learned", tags: ["b"] }, [0, 1, 0]),
+        makeCand({ trustLevel: "learned", tags: ["b"] }, [0.001, 0.999, 0]),
+      ],
+      [existing],
+    );
+
+    const deps = makeDeps(store, { maxClustersPerRun: 1, similarityThreshold: 0.9 });
+    const result = await runMemoryConsolidation(deps);
+    expect(result.ok).toBe(true);
+
+    // The dedup hit must NOT have consumed the budget: the real merge (cluster 2)
+    // STILL produces exactly one observation. Pre-fix, store.applied is empty
+    // (the budget was burned by the dedup skip and the loop broke).
+    expect(store.applied).toHaveLength(1);
+    // The created observation is the NOVEL cluster (tag "b"), not the dedup'd set.
+    expect(store.applied[0].observation.sourceIds).not.toContain(dedupS1);
+    expect(store.applied[0].observation.sourceIds).not.toContain(dedupS2);
+
+    // dedupHits still counts the skipped cluster; observationsCreated reflects the
+    // one real merge that the budget correctly funded.
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    const payload = emit.mock.calls.find((c) => c[0] === "memory:consolidated")?.[1] as {
+      dedupHits: number;
+      observationsCreated: number;
+      clustersProcessed: number;
+    };
+    expect(payload.dedupHits).toBe(1);
+    expect(payload.observationsCreated).toBe(1);
+  });
+
+  it("a dedup-hit followed by a real merge under maxClustersPerRun=1 invokes the LLM once (only for the cluster that actually merges)", async () => {
+    // Corollary cost-bound assertion: the dedup-hit cluster must not even reach an
+    // LLM call, and — crucially — must not block the budget the mergeable cluster
+    // needs. Exactly ONE completeSimple call (the tag-"b" merge).
+    mockMerge("merged");
+    const dedupS1 = nextId();
+    const dedupS2 = nextId();
+    const existing = makeEntry({
+      content: "already merged fact A",
+      proofCount: 2,
+      sourceIds: [dedupS1, dedupS2],
+      trustLevel: "learned",
+    });
+    const store = makeStore(
+      [
+        makeCand({ id: dedupS1, trustLevel: "learned", tags: ["a"] }, [1, 0, 0]),
+        makeCand({ id: dedupS2, trustLevel: "learned", tags: ["a"] }, [0.999, 0.001, 0]),
+        makeCand({ trustLevel: "learned", tags: ["b"] }, [0, 1, 0]),
+        makeCand({ trustLevel: "learned", tags: ["b"] }, [0.001, 0.999, 0]),
+      ],
+      [existing],
+    );
+    const deps = makeDeps(store, { maxClustersPerRun: 1, similarityThreshold: 0.9 });
+    await runMemoryConsolidation(deps);
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("runMemoryConsolidation — non-fatal LLM failure (mirrors review-job posture)", () => {
   it("returns ok and creates nothing when the LLM throws", async () => {
     (completeSimple as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("boom"));
