@@ -303,3 +303,85 @@ describe("cacheTrace.maxFileBytes config field", () => {
     expect(result.success).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// recallTrace subsection (Phase 86 / OBS-02)
+//
+// `diagnostics.recallTrace` is the OPT-IN sibling of `cacheTrace` — it gates
+// Plan 01's per-recall ranking-preview JSONL recorder. Default OFF (distinct
+// from cacheTrace's enabled:true digests) because it records ranking previews
+// for a debug session. It has NO includeMessages/includeSystem slot: the
+// recorder always full-sanitizes (no raw-content opt-in).
+// ---------------------------------------------------------------------------
+
+describe("DiagnosticsConfigSchema.recallTrace — fields and defaults (OBS-02)", () => {
+  it("empty parse populates recallTrace with enabled:false (opt-in) + 50 MB cap", () => {
+    const result = DiagnosticsConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Opt-IN: distinct from cacheTrace/trajectory which default enabled:true.
+      expect(result.data.recallTrace.enabled).toBe(false);
+      expect(result.data.recallTrace.maxFileBytes).toBe(50 * 1024 * 1024);
+      expect(result.data.recallTrace.filePath).toBeUndefined();
+    }
+  });
+
+  it("undefined input also yields a populated recallTrace (top-level sticky default)", () => {
+    const result = DiagnosticsConfigSchema.safeParse(undefined);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.recallTrace.enabled).toBe(false);
+      expect(result.data.recallTrace.maxFileBytes).toBe(50 * 1024 * 1024);
+    }
+  });
+
+  it("a minimal AppConfig with NO diagnostics key still populates recallTrace (existing YAML parses unchanged)", () => {
+    const result = AppConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (!result.success) throw new Error("unreachable");
+    expect(result.data.diagnostics.recallTrace.enabled).toBe(false);
+    expect(result.data.diagnostics.recallTrace.maxFileBytes).toBe(50 * 1024 * 1024);
+  });
+
+  it("an explicit { enabled:true, filePath } override round-trips with defaults preserved", () => {
+    const result = DiagnosticsConfigSchema.safeParse({
+      recallTrace: { enabled: true, filePath: "~/x.jsonl" },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.recallTrace.enabled).toBe(true);
+      expect(result.data.recallTrace.filePath).toBe("~/x.jsonl");
+      // Untouched field keeps its default.
+      expect(result.data.recallTrace.maxFileBytes).toBe(50 * 1024 * 1024);
+    }
+  });
+
+  it("rejects a non-positive recallTrace.maxFileBytes (z.int().positive())", () => {
+    const r1 = DiagnosticsConfigSchema.safeParse({ recallTrace: { maxFileBytes: 0 } });
+    const r2 = DiagnosticsConfigSchema.safeParse({ recallTrace: { maxFileBytes: -1 } });
+    expect(r1.success).toBe(false);
+    expect(r2.success).toBe(false);
+  });
+
+  it("rejects a non-integer recallTrace.maxFileBytes", () => {
+    const result = DiagnosticsConfigSchema.safeParse({
+      recallTrace: { maxFileBytes: 1024.5 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("recallTrace declares NO raw-content opt-in (no includeMessages/includeSystem field)", () => {
+    // The recorder always full-sanitizes, so there is intentionally no
+    // includeMessages / includeSystem / includePrompt slot (unlike cacheTrace).
+    // Passthrough z.object() means unknown keys parse, but the parsed shape
+    // must not surface those keys as populated defaults.
+    const result = DiagnosticsConfigSchema.safeParse({ recallTrace: {} });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const rt = result.data.recallTrace as Record<string, unknown>;
+      expect(rt.includeMessages).toBeUndefined();
+      expect(rt.includeSystem).toBeUndefined();
+      expect(rt.includePrompt).toBeUndefined();
+    }
+  });
+});
