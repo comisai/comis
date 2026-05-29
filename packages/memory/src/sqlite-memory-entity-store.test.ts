@@ -208,6 +208,41 @@ describe("createSqliteMemoryEntityStore", () => {
       // mention_count still bumps even though the link was a no-op.
       expect(entityRow(first.value)?.mention_count).toBe(2);
     });
+
+    it("does NOT link an entity whose name normalizes to an empty canonical_key — returns err, mints no junk row (MD-01)", async () => {
+      // ExtractedEntitySchema.name is z.string().min(1) — LENGTH, not non-whitespace
+      // (memory-entry.ts). A whitespace/punctuation/combining-mark-only name passes
+      // the schema but normalizeEntityKey folds it to "". Without an empty-key guard
+      // ALL such junk names collapse into ONE empty-canonical_key entity (the
+      // (tenant,agent,canonical_key) UNIQUE index), spuriously associating unrelated
+      // memories within the scope. The resolver MUST refuse to mint/reuse an
+      // empty-key entity and return err (IN-01 treats this as non-fatal: the memory
+      // is still stored, only the content-free association is dropped).
+      const junk = await seedMemory({ id: "junk" });
+      const real = await seedMemory({ id: "real" });
+
+      // Whitespace-only and combining-mark-only — both normalize to "".
+      const ws = await store.resolveAndLink(junk, "   ", SCOPE_A);
+      expect(ws.ok).toBe(false); // refused — NOT linked to a junk empty-key entity
+
+      const combining = await store.resolveAndLink(junk, "́", { ...SCOPE_A, now: 1_100 });
+      expect(combining.ok).toBe(false); // lone combining acute also folds to ""
+
+      // No empty-canonical_key row was minted, and the junk memory has no links.
+      const emptyKeyRows = db
+        .prepare("SELECT COUNT(*) AS c FROM memory_entities WHERE canonical_key = ''")
+        .get() as { c: number };
+      expect(emptyKeyRows.c).toBe(0);
+      expect(linkCount(junk)).toBe(0);
+
+      // A REAL entity in the same batch/scope still links normally (the guard is
+      // surgical — it rejects only the empty-key case, not the whole batch).
+      const good = await store.resolveAndLink(real, "Acme Corp", { ...SCOPE_A, now: 1_200 });
+      expect(good.ok).toBe(true);
+      if (!good.ok) return;
+      expect(linkCount(real)).toBe(1);
+      expect(entityCount()).toBe(1); // exactly the one real entity, no junk row
+    });
   });
 
   // =====================================================================
