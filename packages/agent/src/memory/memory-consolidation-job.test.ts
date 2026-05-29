@@ -403,6 +403,55 @@ describe("runMemoryConsolidation — WR-02: a dedup-hit cluster must NOT consume
   });
 });
 
+describe("runMemoryConsolidation — WR-03: the consolidation LLM INPUT prompt is bounded, not just the output (CONS-07)", () => {
+  /** The per-member content cap the merge prompt must enforce (mirror of the production constant). */
+  const MAX_MEMORY_CHARS = 2_000;
+
+  /** Pull the user-message content string that the (mocked) LLM call received. */
+  function userPromptOf(callIndex = 0): string {
+    const call = (completeSimple as ReturnType<typeof vi.fn>).mock.calls[callIndex];
+    // completeSimple(model, { systemPrompt, messages }, opts) — read messages[0].content.
+    const req = call[1] as { messages: { role: string; content: string }[] };
+    return req.messages[0].content;
+  }
+
+  it("truncates each oversized member's content to the per-member cap before building the merge prompt", async () => {
+    mockMerge("merged");
+    // Two members, each WAY over the cap (10k chars). Pre-fix the prompt embeds
+    // both in full (~20k+); post-fix each is sliced to MAX_MEMORY_CHARS.
+    const huge = "x".repeat(10_000);
+    const store = makeStore([
+      makeCand({ trustLevel: "learned", tags: ["t"], content: huge }, [1, 0, 0]),
+      makeCand({ trustLevel: "learned", tags: ["t"], content: huge }, [0.999, 0.001, 0]),
+    ]);
+    await runMemoryConsolidation(makeDeps(store));
+    expect(completeSimple).toHaveBeenCalledTimes(1);
+
+    const prompt = userPromptOf();
+    // The full 10k-char content must NOT appear verbatim (it was sliced).
+    expect(prompt).not.toContain(huge);
+    // No run of the filler char may exceed the per-member cap (the only place a
+    // long run can come from is an un-truncated member content).
+    const longestRun = prompt.match(/x+/g)?.reduce((m, s) => Math.max(m, s.length), 0) ?? 0;
+    expect(longestRun).toBeLessThanOrEqual(MAX_MEMORY_CHARS);
+    // And the assembled prompt stays far below the unbounded 2×10k it would be.
+    expect(prompt.length).toBeLessThan(2 * MAX_MEMORY_CHARS + 500); // 2 members × cap + small framing
+  });
+
+  it("leaves a small (sub-cap) member content intact — the bound only clips oversized content", async () => {
+    mockMerge("merged");
+    const small = "the sky is blue";
+    const store = makeStore([
+      makeCand({ trustLevel: "learned", tags: ["t"], content: small }, [1, 0, 0]),
+      makeCand({ trustLevel: "learned", tags: ["t"], content: small }, [0.999, 0.001, 0]),
+    ]);
+    await runMemoryConsolidation(makeDeps(store));
+    const prompt = userPromptOf();
+    // A short fact is preserved verbatim — no over-aggressive truncation.
+    expect(prompt).toContain(small);
+  });
+});
+
 describe("runMemoryConsolidation — non-fatal LLM failure (mirrors review-job posture)", () => {
   it("returns ok and creates nothing when the LLM throws", async () => {
     (completeSimple as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("boom"));
