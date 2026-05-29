@@ -538,8 +538,10 @@ export interface AgentEvents {
    * turns where the hybrid memory injector actually emitted at least one
    * section / inline string — no-injection turns produce no event.
    *
-   * Emit site: `packages/agent/src/executor/prompt-assembly.ts`
-   * (immediately after `inlineMemory = injection.inlineMemory`).
+   * Emit site: `packages/agent/src/executor/prompt-assembly.ts`, after the
+   * hybrid split. `charsInjected`/`hitCount` count RETRIEVED memory only
+   * (inline + retrieved sections); the §7.3 temporal-guidance block is fixed
+   * guidance text and is deliberately NOT tallied here (WR-02).
    */
   "memory:injected": {
     agentId: string;

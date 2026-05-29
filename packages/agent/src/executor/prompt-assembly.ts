@@ -634,8 +634,13 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   }
 
   // 3. RAG recall via createMemoryRecall + hybrid memory injector (non-fatal).
+  // `memorySections` = prompt content (retrieved sections + §7.3 guidance block when
+  // present); the `retrieved*` accumulators are telemetry truth — retrieved memory
+  // only, excluding the fixed guidance block (WR-02).
   let memorySections: string[] = [];
   let inlineMemory: string | undefined;
+  let retrievedSectionsChars = 0;
+  let retrievedRagHits = 0;
   if (deps.memoryPort && config.rag?.enabled && !params.skipRag) {
     const ragStart = deps.clock.now();
     try {
@@ -668,11 +673,18 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         const injection = injector.split(ranked, config.rag.maxContextChars);
 
         inlineMemory = injection.inlineMemory;
-        memorySections = injection.systemPromptSections;
+        // WR-02: own the array — `injection.systemPromptSections` is what telemetry
+        // reads, so pushing the guidance block into an alias of it would inflate
+        // retrieved-memory metrics. Snapshot RETRIEVED-only char + RAG-hit counts
+        // BEFORE the push so charsInjected/ragHits stay consistent with hitCount.
+        memorySections = [...injection.systemPromptSections];
+        retrievedSectionsChars = memorySections.reduce((sum, s) => sum + s.length, 0);
+        retrievedRagHits = memorySections.length + (inlineMemory ? 1 : 0);
 
         // Read-time contradiction guidance (TEMP-02/03/04): inject the §7.3 block when
         // >=2 surfaced memories are co-retrieved for the same query. Pure formatter; no
         // deletion, no content echo. Phase 83 tightens the >=2 gate with entity overlap.
+        // FIXED guidance text, NOT a retrieved memory — excluded from telemetry above.
         const temporalGuidance = buildTemporalGuidanceBlock(ranked);
         if (temporalGuidance) memorySections.push(temporalGuidance);
 
@@ -683,8 +695,9 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         // the emit is swallowed via try/catch so it never aborts assembly.
         if (deps.eventBus) {
           try {
-            const charsInjected = (injection.inlineMemory?.length ?? 0) +
-              injection.systemPromptSections.reduce((sum, s) => sum + s.length, 0);
+            // WR-02: retrieved memory only (inline + retrieved sections), never
+            // the guidance block — keeps charsInjected consistent with hitCount.
+            const charsInjected = (injection.inlineMemory?.length ?? 0) + retrievedSectionsChars;
             const trustTags = Array.from(new Set(ranked.map((r) => r.entry.trustLevel)));
             deps.eventBus.emit("memory:injected", {
               agentId: agentId ?? config.name,
@@ -974,19 +987,16 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         bootstrapFiles: reportBootstrapFiles,
         tools: reportTools,
         policyFilteredToolNames: deps.policyFilteredToolNames,
-        // The memoryInjection block must reflect every memory component of
-        // the assembled prompt (inline + system-prompt sections). The
-        // previous predicate dropped the block entirely when only RAG
-        // sections were injected (inlineMemory === undefined). The `?? 0`
-        // on inlineMemory.length is load-bearing for the sections-only
-        // branch now that the outer predicate can be true with inlineMemory
-        // undefined.
+        // memoryInjection reflects RETRIEVED memory only (inline + retrieved
+        // sections). The predicate gates on injected content (memorySections
+        // includes the §7.3 guidance block); the COUNTS use the retrieved-only
+        // accumulators (WR-02) so they never tally the fixed guidance text. The
+        // `?? 0` on inlineMemory.length is load-bearing for the sections-only
+        // branch (the outer predicate can be true with inlineMemory undefined).
         memoryInjection: (inlineMemory !== undefined || memorySections.length > 0)
           ? {
-              ragHits: memorySections.length + (inlineMemory ? 1 : 0),
-              charsInjected:
-                (inlineMemory?.length ?? 0) +
-                memorySections.reduce((s, m) => s + m.length, 0),
+              ragHits: retrievedRagHits,
+              charsInjected: (inlineMemory?.length ?? 0) + retrievedSectionsChars,
               trustTags: [],
             }
           : undefined,
