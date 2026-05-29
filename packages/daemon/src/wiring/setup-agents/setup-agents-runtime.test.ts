@@ -267,3 +267,82 @@ describe("setupSingleAgent structural parity", () => {
     expect(fnBody).toContain("PerAgentConfigSchema.parse(");
   });
 });
+
+// ---------------------------------------------------------------------------
+// DAG-05: context-engine mode-switch DIRECTION detection at the rebuild seam
+// ---------------------------------------------------------------------------
+
+describe("setupSingleAgent context-engine mode-switch detection (DAG-05)", () => {
+  const source = readRuntimeSource();
+  const typesSource = readFileSync(
+    join(__dirname, "setup-agents-types.ts"),
+    "utf-8",
+  );
+  const registrySource = readFileSync(
+    join(__dirname, "setup-agents-registry.ts"),
+    "utf-8",
+  );
+
+  it("SingleAgentDeps carries the daemon-level pendingModeSwitches Map", () => {
+    // The pending-switch carrier is a single shared Map keyed by agentId,
+    // set at the rebuild seam on a contextEngine.version change and consumed
+    // one-shot by the DAG engine at the reconcile seam.
+    expect(typesSource).toContain("pendingModeSwitches");
+    // Map of agentId -> { from, to } with the closed pipeline|dag union.
+    expect(typesSource).toMatch(
+      /pendingModeSwitches:\s*Map<string,\s*\{\s*from:\s*"pipeline"\s*\|\s*"dag";\s*to:\s*"pipeline"\s*\|\s*"dag"\s*\}>/,
+    );
+  });
+
+  it("constructs pendingModeSwitches as a shared new Map() in the registry deps", () => {
+    // A single shared Map: the daemon reload re-invokes setupSingleAgent with
+    // the SAME deps object, so the Map persists across reloads.
+    expect(registrySource).toContain("pendingModeSwitches: new Map()");
+  });
+
+  it("reads the PRIOR contextEngine.version BEFORE overwriting container.config.agents[agentId]", () => {
+    const fnStart = source.indexOf("export async function setupSingleAgent(");
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnBody = source.slice(fnStart);
+
+    // The detection reads the prior version off the still-present prior config
+    // and compares it to the new effective version.
+    expect(fnBody).toContain("contextEngine?.version");
+    expect(fnBody).toContain("pendingModeSwitches");
+
+    // CRITICAL ORDERING: the prevVersion read must happen BEFORE the
+    // overwrite at `container.config.agents[agentId] = effectiveConfig`,
+    // because that overwrite destroys the prior config we compare against.
+    const prevVersionRead = fnBody.indexOf("container.config.agents[agentId]?.contextEngine?.version");
+    const overwrite = fnBody.indexOf("container.config.agents[agentId] = effectiveConfig");
+    expect(prevVersionRead).toBeGreaterThan(-1);
+    expect(overwrite).toBeGreaterThan(-1);
+    expect(prevVersionRead).toBeLessThan(overwrite);
+  });
+
+  it("guards the pending-switch write on a REAL version change (prior defined AND prior !== new)", () => {
+    const fnStart = source.indexOf("export async function setupSingleAgent(");
+    const fnBody = source.slice(fnStart);
+
+    // The set is guarded so a first build (no prior version) and a no-change
+    // reload record nothing — only old!=new fires. fullImport is NOT the trigger.
+    expect(fnBody).toMatch(/prevVersion\s*&&\s*prevVersion\s*!==\s*newVersion/);
+    expect(fnBody).toMatch(/pendingModeSwitches\.set\(\s*agentId/);
+    // The new version falls back to the schema default when unset (parity with
+    // the per-turn engine build which reads ContextEngineConfigSchema.parse({})).
+    expect(fnBody).toContain("ContextEngineConfigSchema");
+  });
+
+  it("threads a one-shot consumePendingModeSwitch closure into createPiExecutor deps", () => {
+    const depsStart = source.indexOf("createPiExecutor(effectiveConfig, {");
+    const depsEnd = source.indexOf("});", depsStart);
+    expect(depsStart).toBeGreaterThan(-1);
+    expect(depsEnd).toBeGreaterThan(depsStart);
+    const depsBlock = source.slice(depsStart, depsEnd);
+    // The executor receives the consume-and-clear callback so the DAG engine
+    // can emit context:mode_switched once at the next reconcile.
+    expect(depsBlock).toContain("consumePendingModeSwitch");
+    // The closure deletes the entry on read (one-shot semantics).
+    expect(source).toContain("deps.pendingModeSwitches.delete(");
+  });
+});
