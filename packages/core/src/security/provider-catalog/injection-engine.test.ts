@@ -282,25 +282,17 @@ describe("applyInjections — multiple rules are applied in declaration order", 
 // ── applyInjections — CRLF tamper guard (T-03-03) ────────────────────────────
 
 describe("applyInjections — CRLF in header name rejected by WHATWG Headers (T-03-03)", () => {
-  it("CRLF injection via setHeader either throws or leaves the injected name absent", () => {
+  it("CRLF injection via setHeader throws — Node 22 WHATWG Headers rejects invalid header names (WR-04)", () => {
+    // WR-04: Node 22 always throws on CRLF in header names
+    // ("Headers.set: 'x-evil\nX-Injected' is an invalid header name.").
+    // Assert unconditionally — the weakened either/or branch would silently
+    // accept a hypothetical implementation that strips the CRLF and injects
+    // with a sanitized name.
     const input = makeInput("https://api.example.com/");
     const rules: readonly InjectionRule[] = [
       { kind: "setHeader", name: "x-evil\r\nX-Injected", format: "raw" },
     ];
-    let threw = false;
-    try {
-      applyInjections(rules, input);
-    } catch {
-      threw = true;
-    }
-    if (!threw) {
-      // If it didn't throw, verify the injected header name is absent
-      expect(input.headers.has("x-evil\r\nX-Injected")).toBe(false);
-      expect(input.headers.has("X-Injected")).toBe(false);
-    } else {
-      // Throwing is the correct WHATWG behaviour
-      expect(threw).toBe(true);
-    }
+    expect(() => applyInjections(rules, input)).toThrow();
   });
 });
 
