@@ -15,7 +15,7 @@ import { expandPreset, PRESETS } from "./presets.js";
 import type { BrokerBinding } from "./types.js";
 
 describe("expandPreset", () => {
-  it('expandPreset("anthropic", ref) deep-equals the hand-written anthropic BrokerBinding', () => {
+  it("returns a BrokerBinding deep-equal to the hand-written anthropic binding when called with id=anthropic", () => {
     const anthropicHandWritten: BrokerBinding = {
       secretRef: "ANTHROPIC_EXECUTOR_KEY",
       hostRules: [
@@ -38,7 +38,7 @@ describe("expandPreset", () => {
     expect(result).toEqual(anthropicHandWritten);
   });
 
-  it('expandPreset("finnhub", ref) deep-equals the hand-written finnhub BrokerBinding', () => {
+  it("returns a BrokerBinding deep-equal to the hand-written finnhub binding when called with id=finnhub", () => {
     const finnhubHandWritten: BrokerBinding = {
       secretRef: "FINNHUB_TOKEN",
       hostRules: [
@@ -53,7 +53,7 @@ describe("expandPreset", () => {
     expect(result).toEqual(finnhubHandWritten);
   });
 
-  it('expandPreset("unknown-id", ref) throws with message containing "Unknown preset"', () => {
+  it('throws with message containing "Unknown preset" for an unrecognised preset id', () => {
     expect(() => expandPreset("unknown-id", "some-ref")).toThrow("Unknown preset");
   });
 });
