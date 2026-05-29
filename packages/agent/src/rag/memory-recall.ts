@@ -30,6 +30,7 @@
 import type {
   MemoryPort,
   MemorySearchResult,
+  MemoryEntityStore,
   RerankerPort,
   TrustLevel,
   TimerPort,
@@ -38,7 +39,7 @@ import type {
   ComisLogger,
 } from "@comis/core";
 import { ok, withTimeout, TimeoutError, type Result } from "@comis/shared";
-import { fuse } from "./fuse.js";
+import { fuse, type FusionLane } from "./fuse.js";
 import { score, type ScoringAlphas } from "./score.js";
 import { deduplicateResults } from "./rag-retriever.js";
 
@@ -48,6 +49,15 @@ export interface MemoryRecallDeps {
   memoryPort: MemoryPort;
   /** Optional cross-encoder reranker. Absent/unavailable -> fusion order (RANK-03). */
   reranker?: RerankerPort;
+  /**
+   * Optional entity-associative store (ENT-02). When present AND entityLane.enabled,
+   * the read path queries `associativeLane(seedIds, scope, cap)` for memories sharing
+   * an entity with the top search hits and fuses them as a 2nd lane. Absent -> no
+   * entity lane (graceful; RRF unchanged). TYPE-only from @comis/core — the agent
+   * never imports the memory package (the agent↛memory build cut); the daemon injects
+   * the concrete adapter (Plan 05).
+   */
+  entityStore?: MemoryEntityStore;
   /** Timer port for the rerank wall-clock deadline. Absent -> no timeout wrap. */
   timers?: TimerPort;
   /** Wall-clock reads for the recency boost (never Date.now()). */
@@ -68,6 +78,12 @@ export interface MemoryRecallConfig {
   rerank: { enabled: boolean; maxCandidates: number; minResults: number; timeoutMs: number };
   /** Multiplicative scoring boost weights. */
   scoring: ScoringAlphas;
+  /**
+   * Entity-associative lane knobs (sourced from RagConfig.entityLane). Optional so
+   * callers that predate the lane (or the daemon before Plan 05 wiring) leave it
+   * absent -> no entity lane. Default-OFF (`enabled: false`) -> RRF unchanged (ENT-04).
+   */
+  entityLane?: { enabled: boolean; seedCount: number; perEntityCap: number; weight: number };
 }
 
 /** The recall orchestrator surface — a single `recall` method. */
@@ -108,8 +124,52 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       });
       if (!searched.ok) return searched;
 
-      // 2. FUSE (N-lane; single lane now = identity. Entity lane is a Phase-83 seam).
-      let ranked = fuse([{ results: searched.value, weight: 1.0 }]);
+      // 2. FUSE (N-lane RRF). The search lane is always present. The entity-associative
+      // lane (ENT-02) is composed LAZILY: only when an entity store is injected, the
+      // lane is enabled, AND the search produced seeds. The seeds are the top
+      // `seedCount` search hits; the store's scoped self-join returns OTHER memories
+      // sharing >= 1 entity (hydrated, most-shared-first), which fuse() rebases onto the
+      // shared RRF rank scale so a shared-entity memory can outrank a non-sharing one.
+      //
+      // Every no-op path leaves the fused output identical to the pre-Phase-83
+      // single-lane result (ENT-04): no store / disabled / no seeds / empty lane all
+      // fall through to `fuse([searchLane])`. A lane err is NON-FATAL — recall never
+      // fails because the entity lane failed (the search lane already succeeded); we
+      // WARN and fall back to the search lane only. The lane SQL lives in the memory
+      // package behind the injected MemoryEntityStore port — this file imports the TYPE
+      // only (the agent↛memory build cut).
+      const lanes: FusionLane[] = [{ results: searched.value, weight: 1.0 }];
+      const el = cfg.entityLane;
+      if (el?.enabled === true && deps.entityStore !== undefined && searched.value.length > 0) {
+        const seedIds = searched.value.slice(0, el.seedCount).map((r) => r.entry.id);
+        if (seedIds.length > 0) {
+          // Scope mirrors memoryPort.search above: tenant from the session key, agent
+          // from the recall arg (else the session key's agent, else "default"). The
+          // lane's WHERE enforces this in SQL — the load-bearing isolation (ENT-03).
+          const scope = {
+            tenantId: sessionKey.tenantId,
+            agentId: agentId ?? sessionKey.agentId ?? "default",
+          };
+          const laneRes = await deps.entityStore.associativeLane(seedIds, scope, el.perEntityCap);
+          if (laneRes.ok) {
+            // ENT-04: an empty lane pushes nothing -> fuse() stays single-lane, unchanged.
+            if (laneRes.value.length > 0) {
+              lanes.push({ results: laneRes.value, weight: el.weight });
+            }
+          } else {
+            deps.logger.warn(
+              {
+                agentId,
+                seedCount: seedIds.length,
+                errorKind: "internal" as const,
+                hint: "entity lane failed; using search lane only",
+              },
+              "entity lane fallback",
+            );
+          }
+        }
+      }
+      let ranked = fuse(lanes);
 
       // Set once the rerank-SUCCESS path has already applied score() boosts
       // per-segment (pool, then tail). When false, the global score() pass below
