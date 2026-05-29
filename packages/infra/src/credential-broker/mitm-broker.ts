@@ -41,6 +41,7 @@ import type {
   InjectionRule,
   InjectionInput,
   ClockPort,
+  TimerPort,
   CaManagerPort,
   ComisLogger,
 } from "@comis/core";
@@ -65,6 +66,7 @@ export interface MitmBrokerDeps {
   eventBus: TypedEventBus;
   logger: ComisLogger;
   clock: ClockPort;
+  timers: TimerPort;
   caManager?: CaManagerPort; // undefined in Phase 2; wired in Phase 3
 }
 
@@ -562,39 +564,49 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         );
 
         // ── Step 6.5: Finalizer stage (after injection, before upstream connect) ──
-        // When rule has no finalizer, keep the existing streaming pipe path
-        // (byte-identical, no buffering overhead). When a finalizer is configured,
-        // buffer the full body up to MAX_BODY_BYTES before opening upstream —
-        // exceeding the cap returns 413 fail-closed (BEFORE net.connect, matching
-        // the existing 403/502 pattern above).
+        // When rule has no finalizer, keep the existing streaming pipe path.
+        // When a finalizer is configured, buffer the full body before upstream.
         if (rule.finalizer !== undefined) {
-          // Parse Content-Length from the inner request headers so bufferBody
-          // can stop accumulating once the declared body size is reached, rather
-          // than waiting for socket EOF (HTTP/1.1 keep-alive never sends EOF).
-          const rawContentLength = whatwgHeaders.get("content-length");
-          const declaredContentLength =
-            rawContentLength !== null
-              ? parseInt(rawContentLength, 10) || undefined
-              : undefined;
-          const bodyBuf = await bufferBody(innerSocket, bodyPrefix, MAX_BODY_BYTES, declaredContentLength);
-          if (bodyBuf === null) {
-            log.debug(
-              {
-                step: "finalizer_body_cap",
-                sessionId,
-                errorKind: "validation" as const,
-                hint: "Request body exceeds body-size cap; returning 413",
-              },
-              "Body size cap exceeded — fail closed",
-            );
-            deps.eventBus.emit("broker:denied", {
-              sessionId,
-              host,
-              reason: "body_too_large" as const,
-              statusCode: 413,
-              timestamp: deps.clock.now(),
-            });
+          // Helper: emit broker:denied 413 and destroy the tunnel socket.
+          function deny413(hint: string): void {
+            log.debug({ step: "finalizer_body_cap", sessionId, errorKind: "validation" as const, hint }, "Body 413 — fail closed");
+            deps.eventBus.emit("broker:denied", { sessionId, host, reason: "body_too_large" as const, statusCode: 413, timestamp: deps.clock.now() });
             destroyWithStatus(innerSocket, "HTTP/1.1 413 Content Too Large");
+          }
+
+          // CR-01: parse CL with explicit isNaN+non-negative guard — 0 is valid.
+          const rawContentLength = whatwgHeaders.get("content-length");
+          const declaredContentLength = (() => {
+            if (rawContentLength === null) return undefined;
+            const parsed = parseInt(rawContentLength, 10);
+            return !isNaN(parsed) && parsed >= 0 ? parsed : undefined;
+          })();
+
+          // IN-01: reject chunked TE without CL — bufferBody cannot decode frames
+          // and keep-alive never sends EOF. 411 Length Required.
+          const transferEncoding = whatwgHeaders.get("transfer-encoding");
+          if (transferEncoding?.toLowerCase().includes("chunked") && declaredContentLength === undefined) {
+            destroyWithStatus(innerSocket, "HTTP/1.1 411 Length Required");
+            return;
+          }
+
+          // WR-01: early 413 when declared CL already exceeds cap — no buffering.
+          if (declaredContentLength !== undefined && declaredContentLength > MAX_BODY_BYTES) {
+            deny413("Declared Content-Length exceeds cap; returning 413 before buffering");
+            return;
+          }
+
+          // CR-02: inject timer from deps.timers so bufferBody has a read-deadline.
+          const scheduleTimeout = (cb: () => void, ms: number): (() => void) => {
+            const h = deps.timers.setTimeout(cb, ms);
+            return () => h.cancel();
+          };
+
+          const bodyBuf = await bufferBody(
+            innerSocket, bodyPrefix, MAX_BODY_BYTES, declaredContentLength, scheduleTimeout,
+          );
+          if (bodyBuf === null) {
+            deny413("Request body exceeds body-size cap or read-timeout; returning 413");
             return;
           }
 

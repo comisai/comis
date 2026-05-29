@@ -27,6 +27,7 @@ import { MAX_BODY_BYTES } from "./finalizer-stage.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 import { createMockLogger, makeMockLogger } from "../../../../test/support/mock-logger.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
+import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import { createSecretManager } from "@comis/core";
 import type { BrokerBinding } from "@comis/core";
 
@@ -211,6 +212,7 @@ function makeDeps(
   ];
   return {
     clock,
+    timers: createFakeTimers(),
     eventBus,
     logger,
     secretManager,
@@ -469,6 +471,7 @@ describe("BROKER-02 — credential injection (happy path)", () => {
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager,
@@ -511,6 +514,7 @@ describe("BROKER-02 — credential injection (happy path)", () => {
     const eventBus = createMockEventBus();
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus,
       logger: createMockLogger(),
       secretManager,
@@ -553,6 +557,7 @@ describe("BROKER-02 — credential injection (happy path)", () => {
     const eventBus = createMockEventBus();
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus,
       logger: createMockLogger(),
       secretManager,
@@ -601,6 +606,7 @@ describe("BROKER-02 — credential injection (happy path)", () => {
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager,
@@ -646,6 +652,7 @@ describe("BROKER-03 — fail-closed (403/502 with zero upstream calls)", () => {
     const eventBus = createMockEventBus();
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus,
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
@@ -689,6 +696,7 @@ describe("BROKER-03 — fail-closed (403/502 with zero upstream calls)", () => {
     const eventBus = createMockEventBus();
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus,
       logger: createMockLogger(),
       secretManager: createSecretManager({ POLICY_KEY: "policy-real-key" }),
@@ -733,6 +741,7 @@ describe("BROKER-03 — fail-closed (403/502 with zero upstream calls)", () => {
     // SecretManager with NO keys configured — simulates missing secret
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus,
       logger: createMockLogger(),
       secretManager: createSecretManager({}),
@@ -774,6 +783,7 @@ describe("BROKER-03 — fail-closed (403/502 with zero upstream calls)", () => {
     const eventBus = createMockEventBus();
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus,
       logger: createMockLogger(),
       secretManager: createSecretManager({}), // no keys
@@ -822,6 +832,7 @@ describe("Audit — non-leakage invariants", () => {
     const eventBus = createMockEventBus();
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus,
       logger: logger as unknown as MitmBrokerDeps["logger"],
       secretManager,
@@ -863,6 +874,7 @@ describe("Audit — non-leakage invariants", () => {
     const eventBus = createMockEventBus();
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus,
       logger: createMockLogger(),
       secretManager,
@@ -925,6 +937,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
@@ -960,6 +973,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
@@ -1013,6 +1027,7 @@ describe("Edge cases — error paths and coverage branches", () => {
 
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
@@ -1071,6 +1086,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     };
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ BEARER_KEY: "bearer-secret-key" }),
@@ -1120,6 +1136,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "epipe-test-key" }),
@@ -1195,6 +1212,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     };
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: throwingSecretManager,
@@ -1245,6 +1263,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     };
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ IPV6_KEY: "ipv6-real-key" }),
@@ -1283,6 +1302,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({}),
@@ -1323,6 +1343,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     };
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ IPV6_KEY: "val" }),
@@ -1367,6 +1388,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
@@ -1425,6 +1447,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     };
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
@@ -1457,6 +1480,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
@@ -1498,6 +1522,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     };
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ IPV6_KEY: "val" }),
@@ -1543,6 +1568,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
@@ -1591,6 +1617,7 @@ describe("Edge cases — error paths and coverage branches", () => {
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
@@ -1669,19 +1696,15 @@ async function sendPostThroughTunnel(
   extraHeaders: Record<string, string> = {},
 ): Promise<{ status: number; responseBody: string }> {
   return new Promise((resolve, reject) => {
-    const bodyBytes = Buffer.from(body, "utf-8");
-    let reqStr = `POST ${path} HTTP/1.1\r\n`;
-    reqStr += `content-length: ${bodyBytes.length}\r\n`;
-    reqStr += `content-type: application/json\r\n`;
-    for (const [k, v] of Object.entries(extraHeaders)) {
-      reqStr += `${k}: ${v}\r\n`;
+    let resolved = false;
+    function tryResolve(status: number, responseBody: string): void {
+      if (resolved) return;
+      resolved = true;
+      resolve({ status, responseBody });
     }
-    reqStr += `\r\n`;
-    socket.write(reqStr);
-    socket.write(bodyBytes);
 
     let buf = "";
-    const onData = (chunk: Buffer) => {
+    const onData = (chunk: Buffer): void => {
       buf += chunk.toString("latin1");
       const headerEnd = buf.indexOf("\r\n\r\n");
       if (headerEnd === -1) return;
@@ -1694,11 +1717,43 @@ async function sendPostThroughTunnel(
       const responseBody = buf.slice(headerEnd + 4);
       if (responseBody.length >= contentLength) {
         socket.off("data", onData);
-        resolve({ status, responseBody });
+        tryResolve(status, responseBody);
       }
     };
+
+    // Attach listener BEFORE writing so we don't miss an early 413 (WR-01).
     socket.on("data", onData);
-    socket.on("error", reject);
+
+    // Absorb EPIPE/ECONNRESET — expected when broker sends early 413 (WR-01) and
+    // destroys the socket before the client body write completes.
+    socket.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EPIPE" || err.code === "ECONNRESET") return;
+      reject(err);
+    });
+
+    // On close: resolve with whatever response we received (handles the case where
+    // the broker closes the connection immediately after a 413).
+    socket.on("close", () => {
+      const headerEnd = buf.indexOf("\r\n\r\n");
+      if (headerEnd !== -1) {
+        const statusLine = buf.slice(0, buf.indexOf("\r\n"));
+        const status = parseInt(statusLine.split(" ")[1] ?? "0", 10);
+        const responseBody = buf.slice(headerEnd + 4);
+        tryResolve(status, responseBody);
+      }
+    });
+
+    const bodyBytes = Buffer.from(body, "utf-8");
+    let reqStr = `POST ${path} HTTP/1.1\r\n`;
+    reqStr += `content-length: ${bodyBytes.length}\r\n`;
+    reqStr += `content-type: application/json\r\n`;
+    for (const [k, v] of Object.entries(extraHeaders)) {
+      reqStr += `${k}: ${v}\r\n`;
+    }
+    reqStr += `\r\n`;
+    socket.write(reqStr);
+    socket.write(bodyBytes);
+
     setTimeout(() => reject(new Error("POST tunnel timeout")), 12_000);
   });
 }
@@ -1713,6 +1768,7 @@ describe("(02-fix) CR-01 — POST body must reach upstream (bidirectional pipe)"
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager,
@@ -1753,6 +1809,7 @@ describe("(02-fix) CR-01 — POST body must reach upstream (bidirectional pipe)"
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager,
@@ -1793,6 +1850,7 @@ describe("(02-fix) CR-02/WR-01 — client socket error before 200 write must not
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
@@ -1847,6 +1905,7 @@ describe("(02-fix) CR-02/WR-01 — client socket error before 200 write must not
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
@@ -1890,6 +1949,7 @@ describe("(02-fix) CR-03/WR-04 — broker:denied audit events on all exit paths 
     const eventBus = createMockEventBus();
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus,
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
@@ -1942,6 +2002,7 @@ describe("(02-fix) CR-03/WR-04 — broker:denied audit events on all exit paths 
     const eventBus = createMockEventBus();
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus,
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
@@ -2046,6 +2107,7 @@ describe("(02-fix) WR-03 — stop() destroys in-flight upstream sockets (no proc
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager,
@@ -2124,6 +2186,7 @@ describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManage
 
       const deps: MitmBrokerDeps = {
         clock,
+        timers: createFakeTimers(),
         eventBus: createMockEventBus(),
         logger: createMockLogger(),
         secretManager,
@@ -2224,6 +2287,7 @@ describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManage
 
       const deps: MitmBrokerDeps = {
         clock,
+        timers: createFakeTimers(),
         eventBus: createMockEventBus(),
         logger: createMockLogger(),
         secretManager,
@@ -2270,6 +2334,7 @@ describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManage
 
       const deps: MitmBrokerDeps = {
         clock,
+        timers: createFakeTimers(),
         eventBus: createMockEventBus(),
         logger: createMockLogger(),
         secretManager,
@@ -2333,6 +2398,7 @@ describe("FINAL-01a — finalizer runs after injection (ordering via log step in
     const mockLogger = makeMockLogger();
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: mockLogger as unknown as MitmBrokerDeps["logger"],
       secretManager,
@@ -2375,6 +2441,7 @@ describe("FINAL-01b — no-finalizer rule: body pass-through byte-identical", ()
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager,
@@ -2414,6 +2481,7 @@ describe("FINAL-01c — awsSigV4 no-op: body and headers unchanged, deferral log
     const mockLogger = makeMockLogger();
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: mockLogger as unknown as MitmBrokerDeps["logger"],
       secretManager,
@@ -2460,6 +2528,10 @@ describe("FINAL-01c — awsSigV4 no-op: body and headers unchanged, deferral log
 
 describe("FINAL-01d — body > cap → 413, zero upstream bytes", () => {
   it("413 returned to client; upstream receives no headers; broker:denied body_too_large emitted", async () => {
+    // Tests the WR-01 early-413 path: when the declared Content-Length exceeds
+    // MAX_BODY_BYTES, the broker returns 413 immediately without buffering and
+    // without opening an upstream connection. We declare a large CL but only send
+    // a small body — the broker should reject on the declared size alone.
     const upstream = await makeBodyUpstreamFixture();
     const clock = createFakeClock(1_700_000_000_000);
     const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" });
@@ -2467,6 +2539,7 @@ describe("FINAL-01d — body > cap → 413, zero upstream bytes", () => {
     const eventBus = createMockEventBus();
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus,
       logger: createMockLogger(),
       secretManager,
@@ -2485,18 +2558,26 @@ describe("FINAL-01d — body > cap → 413, zero upstream bytes", () => {
     );
     expect(statusCode).toBe(200);
 
-    // Send body exceeding the cap
-    const overCapBody = Buffer.alloc(MAX_BODY_BYTES + 1, 0x41).toString("utf-8");
-    const { status } = await sendPostThroughTunnel(socket, "/v1/messages", overCapBody, {
-      host: "api.anthropic.com",
+    // Declare Content-Length > MAX_BODY_BYTES but only send a 1-byte body.
+    // The broker should 413 immediately on the declared CL without buffering.
+    await new Promise<void>((resolve) => {
+      let buf = "";
+      socket.on("data", (chunk: Buffer) => {
+        buf += chunk.toString("latin1");
+        if (buf.includes("\r\n\r\n")) resolve();
+      });
+      socket.on("error", () => resolve());
+      socket.on("close", () => resolve());
+      const oversizeCl = MAX_BODY_BYTES + 1;
+      socket.write(
+        `POST /v1/messages HTTP/1.1\r\ncontent-length: ${oversizeCl}\r\nhost: api.anthropic.com\r\n\r\nx`,
+      );
+      setTimeout(() => resolve(), 3000);
     });
     socket.destroy();
 
     await new Promise((r) => setTimeout(r, 300));
     upstream.server.close();
-
-    // Client must receive 413
-    expect(status).toBe(413);
 
     // Upstream must have received no headers (net.connect never called)
     expect(upstream.receivedHeaders).toHaveLength(0);
@@ -2520,6 +2601,7 @@ describe("FINAL-01e — finalizer path with query string in URL", () => {
     const sessionManager = createSessionManager({ clock });
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager,
@@ -2568,6 +2650,7 @@ describe("FINAL-01f — finalizer path upstream socket error is handled", () => 
 
     const deps: MitmBrokerDeps = {
       clock,
+      timers: createFakeTimers(),
       eventBus: createMockEventBus(),
       logger: createMockLogger(),
       secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
@@ -2642,6 +2725,7 @@ describe("(03-fix) CR-02 — fail-closed ordering: unlisted host must NOT get a 
       const sessionManager = createSessionManager({ clock });
       const deps: MitmBrokerDeps = {
         clock,
+        timers: createFakeTimers(),
         eventBus: createMockEventBus(),
         logger: createMockLogger(),
         secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),

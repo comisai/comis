@@ -50,8 +50,34 @@ export interface FinalizerResult {
  * socket EOF. Required for HTTP/1.1 keep-alive connections where the client
  * does not close the connection after the request body.
  *
+ * contentLength = 0: resolves immediately with an empty Buffer (before
+ * resume() is called). This handles GET/HEAD/DELETE/empty-POST on keep-alive
+ * connections, where the client never sends a body and never emits EOF.
+ *
+ * contentLength < 0: treated as absent (invalid); cap + timeout govern.
+ *
+ * Chunked Transfer-Encoding note: when a client sends Transfer-Encoding:
+ * chunked with no Content-Length, bufferBody is called with
+ * contentLength = undefined. It then relies on the cap + timeout to settle.
+ * The raw chunk-framing bytes are buffered verbatim (not decoded). For the
+ * Phase 4 awsSigV4 no-op this is transparent; a real signing finalizer
+ * (FINAL-02) must decode chunked framing before signing. To avoid this,
+ * mitm-broker.ts rejects chunked requests with 411 Length Required when a
+ * finalizer is configured.
+ *
+ * scheduleTimeout: caller-injected timer factory — `(cb, ms) => cancelFn`.
+ * Provides a backstop deadline so that an under-filled Content-Length (a
+ * client that declares N bytes but sends fewer) does not block forever.
+ * On deadline expiry, settle(null) is called, which flows into the existing
+ * 413 / timeout fail-closed path in mitm-broker.ts. The cancel function
+ * returned by scheduleTimeout is called on any normal settle to prevent
+ * the timer from firing after the promise has already resolved. Pass a
+ * no-op `(_cb, _ms) => () => {}` in tests that do not exercise the timeout
+ * path; pass the TimerPort-backed adaptor in production.
+ *
  * Returns the full body Buffer on success, or null if:
  *   - total bytes exceed cap (caller must 413 — do NOT call net.connect)
+ *   - timeout deadline fires before body is fully received (fail closed)
  *   - socket emits "error" or "close" before "end" (fail closed)
  */
 export function bufferBody(
@@ -59,15 +85,24 @@ export function bufferBody(
   bodyPrefix: string,
   cap: number,
   contentLength?: number,
+  scheduleTimeout: (cb: () => void, ms: number) => () => void = (_cb, _ms) => () => {},
+  timeoutMs = 30_000,
 ): Promise<Buffer | null> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let total = 0;
     let settled = false;
 
+    // Schedule deadline backstop — fires settle(null) if the body never arrives.
+    // cancelTimeout is called in settle() to prevent the timer from firing
+    // after the promise has already resolved (double-settle is idempotent but
+    // unnecessary).
+    const cancelTimeout = scheduleTimeout(() => settle(null), timeoutMs);
+
     function settle(result: Buffer | null): void {
       if (settled) return;
       settled = true;
+      cancelTimeout();
       innerSocket.pause();
       innerSocket.off("data", onData);
       innerSocket.off("end", onEnd);
@@ -77,7 +112,8 @@ export function bufferBody(
     }
 
     function checkContentLength(): void {
-      if (contentLength !== undefined && total >= contentLength) {
+      // contentLength < 0 is invalid — treat as absent (cap+timeout govern).
+      if (contentLength !== undefined && contentLength >= 0 && total >= contentLength) {
         settle(Buffer.concat(chunks));
       }
     }
@@ -95,6 +131,12 @@ export function bufferBody(
       checkContentLength();
       if (settled) return;
     }
+
+    // Check content-length unconditionally — handles contentLength=0
+    // (GET/HEAD/DELETE on keep-alive) which must resolve immediately without
+    // waiting for a socket EOF that never arrives.
+    checkContentLength();
+    if (settled) return;
 
     function onData(chunk: Buffer): void {
       total += chunk.length;
