@@ -288,6 +288,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createHybridMemoryInjector",
       "HybridMemoryInjector",
       "HybridMemoryInjection",
+      // Recall orchestrator (Phase 80). Consumed internally by prompt-assembly via a
+      // direct relative import; exported for the Phase-80/05 eval harness + external
+      // recall composition. Baseline orphan until the eval harness lands its consumer.
+      "createMemoryRecall",
+      "MemoryRecall",
+      "MemoryRecallDeps",
+      "MemoryRecallConfig",
       "normalizeToolSchema",
       "normalizeToolSchemas",
       "PROVIDER_UNSUPPORTED_KEYWORDS",
@@ -1730,6 +1737,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "EmbeddingProviderOptions",
       "createOpenAIEmbeddingProvider",
       "OpenAIEmbeddingProviderOptions",
+      // Reranker provider options type (Phase 80). createLocalRerankerProvider is
+      // consumed by the daemon (setup-memory); the options type is part of its public
+      // API surface — baseline orphan until an external/test consumer references it.
+      "LocalRerankerProviderOptions",
       "EmbeddingCacheOptions",
       "EmbeddingCacheStats",
       "SqliteEmbeddingCacheOptions",

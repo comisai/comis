@@ -99,9 +99,7 @@ export interface ShutdownDeps {
   db: { close: () => void; pragma: (source: string) => unknown };
   /** Coordinated embedding dispose callback: L1 -> L2 flush -> provider dispose */
   disposeEmbedding?: () => Promise<void>;
-  /** Reranker dispose callback: ranking context -> model -> llama. Undefined when no
-   *  reranker was built (default-off config). */
-  disposeReranker?: () => Promise<void>;
+  disposeReranker?: () => Promise<void>;  // reranker native ctx dispose; undefined when off
   /** Per-agent skill watcher handles for shutdown cleanup. */
   skillWatcherHandles?: Map<string, { close: () => Promise<void> }>;
   /** Approval gate for cleanup of pending timers */
@@ -647,12 +645,10 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "embedding-cache", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "embedding-cache", daemonLogger);
       }
-      // Dispose the reranker native context (ranking ctx -> model -> llama) -- before db.close
       if (disposeReranker) {
-        const stopMs = systemNowMs();
         await withStepTimeout(async () => {
-          await disposeReranker();
-          daemonLogger.info({ component: "reranker", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+          await disposeReranker();  // reranker native context: ranking ctx -> model -> llama
+          daemonLogger.info({ component: "reranker", shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "reranker", daemonLogger);
       }
       // Destroy audit aggregator timers
