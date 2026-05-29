@@ -23,6 +23,7 @@ import { createNodeCaManager } from "./ca-manager.js";
 import { createMitmBroker } from "./mitm-broker.js";
 import type { MitmBrokerDeps } from "./mitm-broker.js";
 import { createSessionManager } from "./session-manager.js";
+import { MAX_BODY_BYTES } from "./finalizer-stage.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 import { createMockLogger, makeMockLogger } from "../../../../test/support/mock-logger.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
@@ -2302,6 +2303,213 @@ describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManage
       upstream.server.close();
     },
   );
+});
+
+// ── FINAL-01 — Finalizer interface tests ─────────────────────────────────────
+
+/**
+ * Build an awsSigV4 BrokerBinding based on the Anthropic binding but with a
+ * finalizer: { kind: "awsSigV4" } on the first hostRule. Used by FINAL-01 tests.
+ */
+function makeAwsSigV4Binding(): BrokerBinding {
+  const base = makeAnthropicBinding();
+  return {
+    ...base,
+    hostRules: [
+      {
+        ...base.hostRules[0]!,
+        finalizer: { kind: "awsSigV4" },
+      },
+    ],
+  };
+}
+
+describe("FINAL-01a — finalizer runs after injection (ordering via log step index)", () => {
+  it("step='inject' log index is strictly less than step='finalizer_skipped' log index", async () => {
+    const upstream = await makeBodyUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" });
+    const sessionManager = createSessionManager({ clock });
+    const mockLogger = makeMockLogger();
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: mockLogger as unknown as MitmBrokerDeps["logger"],
+      secretManager,
+      sessionManager,
+      bindings: [makeAwsSigV4Binding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Send a small body so finalizer runs (well under cap)
+    await sendPostThroughTunnel(socket, "/v1/messages", "small body", { host: "api.anthropic.com" });
+    socket.destroy();
+
+    await new Promise((r) => setTimeout(r, 300));
+    upstream.server.close();
+
+    const debugCalls = mockLogger._calls("debug");
+    const injectIdx = debugCalls.findIndex((c) => c.payload["step"] === "inject");
+    const finalizerIdx = debugCalls.findIndex((c) => c.payload["step"] === "finalizer_skipped");
+
+    expect(injectIdx).toBeGreaterThanOrEqual(0);
+    expect(finalizerIdx).toBeGreaterThan(injectIdx);
+  }, 15_000);
+});
+
+describe("FINAL-01b — no-finalizer rule: body pass-through byte-identical", () => {
+  it("body received by upstream matches body sent by client exactly", async () => {
+    const upstream = await makeBodyUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" });
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager,
+      sessionManager,
+      bindings: [makeAnthropicBinding()], // no finalizer
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    const body = "hello world";
+    await sendPostThroughTunnel(socket, "/v1/messages", body, { host: "api.anthropic.com" });
+    socket.destroy();
+
+    await new Promise((r) => setTimeout(r, 300));
+    upstream.server.close();
+
+    expect(upstream.receivedBodies).toHaveLength(1);
+    expect(upstream.receivedBodies[0]).toBe(body);
+  }, 15_000);
+});
+
+describe("FINAL-01c — awsSigV4 no-op: body and headers unchanged, deferral logged", () => {
+  it("upstream sees original body and custom header; deferral log emitted", async () => {
+    const upstream = await makeBodyUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" });
+    const sessionManager = createSessionManager({ clock });
+    const mockLogger = makeMockLogger();
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: mockLogger as unknown as MitmBrokerDeps["logger"],
+      secretManager,
+      sessionManager,
+      bindings: [makeAwsSigV4Binding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    const body = "test body";
+    await sendPostThroughTunnel(socket, "/v1/messages", body, {
+      host: "api.anthropic.com",
+      "x-custom": "val",
+    });
+    socket.destroy();
+
+    await new Promise((r) => setTimeout(r, 300));
+    upstream.server.close();
+
+    // Body reaches upstream unchanged
+    expect(upstream.receivedBodies).toHaveLength(1);
+    expect(upstream.receivedBodies[0]).toBe(body);
+
+    // Custom header is forwarded unchanged
+    expect(upstream.receivedHeaders.length).toBeGreaterThan(0);
+    expect(upstream.receivedHeaders[0]?.["x-custom"]).toBe("val");
+
+    // Deferral log must be present
+    const debugCalls = mockLogger._calls("debug");
+    const deferralLogs = debugCalls.filter((c) => c.payload["step"] === "finalizer_skipped");
+    expect(deferralLogs).toHaveLength(1);
+    expect(deferralLogs[0]!.payload["hint"]).toBe("sigv4 deferred");
+  }, 15_000);
+});
+
+describe("FINAL-01d — body > cap → 413, zero upstream bytes", () => {
+  it("413 returned to client; upstream receives no headers; broker:denied body_too_large emitted", async () => {
+    const upstream = await makeBodyUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" });
+    const sessionManager = createSessionManager({ clock });
+    const eventBus = createMockEventBus();
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus,
+      logger: createMockLogger(),
+      secretManager,
+      sessionManager,
+      bindings: [makeAwsSigV4Binding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Send body exceeding the cap
+    const overCapBody = Buffer.alloc(MAX_BODY_BYTES + 1, 0x41).toString("utf-8");
+    const { status } = await sendPostThroughTunnel(socket, "/v1/messages", overCapBody, {
+      host: "api.anthropic.com",
+    });
+    socket.destroy();
+
+    await new Promise((r) => setTimeout(r, 300));
+    upstream.server.close();
+
+    // Client must receive 413
+    expect(status).toBe(413);
+
+    // Upstream must have received no headers (net.connect never called)
+    expect(upstream.receivedHeaders).toHaveLength(0);
+
+    // broker:denied must be emitted with body_too_large
+    expect(eventBus.emit).toHaveBeenCalledWith(
+      "broker:denied",
+      expect.objectContaining({
+        reason: "body_too_large",
+        statusCode: 413,
+      }),
+    );
+  }, 30_000);
 });
 
 // ── (03-fix) RED tests — findings from Phase 3 REVIEW.md ─────────────────────
