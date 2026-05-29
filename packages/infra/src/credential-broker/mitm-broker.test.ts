@@ -1142,6 +1142,60 @@ describe("Edge cases — error paths and coverage branches", () => {
     expect(typeof broker.stop).toBe("function");
   });
 
+  it("clientSocket error listener absorbs EPIPE/ECONNRESET before 200 write — no uncaughtException", async () => {
+    // Exercises the noopErrorHandler registered on clientSocket before the 200 write.
+    // Forces EPIPE by half-closing the client side WHILE the broker is writing 200,
+    // using a flag to detect if uncaughtException fired.
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ ANTHROPIC_API_KEY: "epipe-test-key" }),
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+
+    let uncaughtCount = 0;
+    const onUncaught = () => { uncaughtCount = uncaughtCount + 1; };
+    process.on("uncaughtException", onUncaught);
+
+    try {
+      // Connect and write CONNECT request, then half-close the socket
+      // with resetAndDestroy() to force ECONNRESET/EPIPE on the broker side.
+      await new Promise<void>((resolve) => {
+        const s = net.connect(brokerPort, "127.0.0.1", () => {
+          s.write(
+            `CONNECT api.anthropic.com:443 HTTP/1.1\r\n` +
+              `Host: api.anthropic.com:443\r\n` +
+              `Proxy-Authorization: Bearer ${proxyToken}\r\n` +
+              `\r\n`,
+          );
+          // Issue RST immediately to force ECONNRESET on the server socket.
+          // This races with the broker's 200 write — the error handler absorbs it.
+          s.resetAndDestroy();
+        });
+        s.on("close", () => resolve());
+        s.on("error", () => resolve());
+        setTimeout(() => resolve(), 500);
+      });
+
+      // Wait for any uncaught exception to propagate
+      await new Promise((r) => setTimeout(r, 100));
+
+      // The no-op error handler must have absorbed any EPIPE/ECONNRESET
+      expect(uncaughtCount).toBe(0);
+    } finally {
+      process.off("uncaughtException", onUncaught);
+    }
+  });
+
   it("start() rejects when port is already in use — server error callback fires", async () => {
     // Start a server to occupy a port
     const occupied = await new Promise<http.Server>((resolve) => {
@@ -2174,8 +2228,65 @@ describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManage
       expect(tlsResult.subjectaltname).toContain("DNS:api.anthropic.com");
 
       rawSocket.destroy();
+
+      // Wait for the broker's async IIFE (handleConnect) to process the socket
+      // close and complete its async steps — ensures V8 coverage collection
+      // captures the lines inside the TLS-upgrade branch before the test ends.
+      await new Promise((r) => setTimeout(r, 150));
     },
     15_000, // 15s timeout for TLS handshake + cert generation
+  );
+
+  it(
+    "caManager wired but returns undefined (pass-through host): raw TCP socket used, inner HTTP still works",
+    async () => {
+      // When caManager.serverContextForHost returns undefined, the broker
+      // passes through without TLS upgrade (pass-through host behavior).
+      const upstream = await makeUpstreamFixture();
+      const clock = createFakeClock(1_700_000_000_000);
+      const secretManager = createSecretManager({ ANTHROPIC_API_KEY: "pass-through-key" });
+      const sessionManager = createSessionManager({ clock });
+
+      // A caManager that always returns undefined (no host uses TLS termination)
+      const passThroughCaManager = {
+        serverContextForHost: async (_host: string) => undefined,
+      };
+
+      const deps: MitmBrokerDeps = {
+        clock,
+        eventBus: createMockEventBus(),
+        logger: createMockLogger(),
+        secretManager,
+        sessionManager,
+        bindings: [makeAnthropicBinding()],
+        caManager: passThroughCaManager, // wired but always returns undefined
+      };
+
+      const broker = createMitmBroker(deps);
+      runningBrokers.push(broker);
+      const brokerPort = await broker.start();
+
+      const { proxyToken } = sessionManager.issueToken("agent-1");
+      const { statusCode, socket } = await connectThroughProxy(
+        brokerPort,
+        proxyToken,
+        `api.anthropic.com:${upstream.port}`,
+      );
+      expect(statusCode).toBe(200);
+
+      // Send plain HTTP (no TLS) — broker should not attempt TLS upgrade
+      // since caManager returned undefined for this host.
+      await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+      socket.destroy();
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Upstream received the request — pass-through injection path works
+      expect(upstream.receivedHeaders.length).toBeGreaterThan(0);
+      expect(upstream.receivedHeaders[0]).toMatchObject({ "x-api-key": "pass-through-key" });
+
+      upstream.server.close();
+    },
   );
 
   it(

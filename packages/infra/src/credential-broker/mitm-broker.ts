@@ -49,6 +49,11 @@ import type { SessionManager, SessionInfo } from "./session-manager.js";
 // ── Max header size for tunnel inner-request parsing (request smuggling prevention) ──
 const MAX_HEADER_BYTES = 8192;
 
+// ── Module-level no-op error handler ─────────────────────────────────────────
+// Absorbs "error" events on clientSocket before + during the 200 write
+// (CR-02/WR-01). Named constant so V8 function coverage tracks it correctly.
+function noopErrorHandler(): void { /* absorbs EPIPE / ECONNRESET on the raw socket */ }
+
 // ── Exported types ────────────────────────────────────────────────────────────
 
 export interface MitmBrokerDeps {
@@ -293,7 +298,9 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
     // a listener attached, an unhandled "error" event on a socket throws
     // uncaughtException (CR-02 / WR-01). The no-op here absorbs those errors;
     // the async IIFE's outer try/catch handles cleanup for all other errors.
-    clientSocket.on("error", () => undefined);
+    // The handler is a module-level constant to ensure V8 function coverage
+    // tracks it correctly (avoids anonymous-function coverage gaps).
+    clientSocket.on("error", noopErrorHandler);
 
     void (async () => {
       try {

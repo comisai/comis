@@ -50,7 +50,11 @@ export interface NodeCaManagerDeps {
 // ── Helper: convert DER ArrayBuffer to PEM string ──────────────────────────
 function derToPem(der: ArrayBuffer, label: string): string {
   const b64 = btoa(String.fromCharCode(...new Uint8Array(der)));
-  const lines = b64.match(/.{1,64}/g) ?? [];
+  // Chunk into 64-char lines (PEM canonical format)
+  const lines: string[] = [];
+  for (let i = 0; i < b64.length; i += 64) {
+    lines.push(b64.slice(i, i + 64));
+  }
   return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----\n`;
 }
 
@@ -154,8 +158,10 @@ export function createNodeCaManager(deps: NodeCaManagerDeps): CaManagerPort {
 
   function evictIfNeeded(): void {
     if (leafCache.size >= leafCacheCap) {
-      const firstKey = leafCache.keys().next().value;
-      if (firstKey !== undefined) leafCache.delete(firstKey);
+      // Map.keys().next().value is always defined when size > 0,
+      // and size >= leafCacheCap > 0 guarantees at least one entry.
+      const firstKey = leafCache.keys().next().value as string;
+      leafCache.delete(firstKey);
     }
   }
 
