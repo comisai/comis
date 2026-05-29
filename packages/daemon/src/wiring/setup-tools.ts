@@ -601,6 +601,19 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           for (const t of groupTools) allowedNames.add(t);
         }
       }
+      // §8.1 fix (DAG-02): in DAG mode, force-include the ctx_* recall tools
+      // regardless of the restricted profile. Without this, a masked DAG tool
+      // result ("...Use ctx_inspect to view.") has no recovery path -- no
+      // profile lists ctx_* (tool-policy.ts), so a restricted-profile DAG agent
+      // would be told to call a tool it cannot reach. Gated strictly on
+      // version === "dag" (ctx_* are dead/confusing in pipeline mode -- no DAG
+      // RPC backing) and unions ONLY the two recall groups (V4: no widening
+      // beyond group:context + group:context_expand). The builtinTools ceiling
+      // below still runs AFTER and still wins for exec/process/browser.
+      if (agentConfig?.contextEngine?.version === "dag") {
+        for (const t of TOOL_GROUPS["group:context"] ?? []) allowedNames.add(t);
+        for (const t of TOOL_GROUPS["group:context_expand"] ?? []) allowedNames.add(t);
+      }
       platformToolProvider = () => agentPlatformTools().filter(t => allowedNames.has(t.name));
     } else {
       // No toolGroups or "full" in toolGroups -- return all platform tools unfiltered
