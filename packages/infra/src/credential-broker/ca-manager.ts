@@ -210,6 +210,10 @@ export function createNodeCaManager(deps: NodeCaManagerDeps): CaManagerPort {
             x509.KeyUsageFlags.keyEncipherment,
           false,
         ),
+        // ExtendedKeyUsage with id-kp-serverAuthentication (1.3.6.1.5.5.7.3.1)
+        // RFC 5280 §4.2.1.12 — required for TLS server certs in hardened clients
+        // and enforced by future Node.js/OpenSSL versions (WR-02 fix).
+        new x509.ExtendedKeyUsageExtension(["1.3.6.1.5.5.7.3.1"], false),
         await x509.SubjectKeyIdentifierExtension.create(leafKeys.publicKey),
       ],
     });
