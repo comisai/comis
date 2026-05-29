@@ -216,6 +216,22 @@ describe("@comis/core -- architecture invariants", () => {
       expect(checkedFiles, "sanity: walked provider-catalog files").toBeGreaterThan(0);
     });
   }
+
+  it("provider-catalog tree does NOT call console.* or Date.now() in production source (IN-01)", () => {
+    // IN-01: provider-catalog is a pure deterministic module — no logging, no timestamps.
+    // Guard against future changes that accidentally introduce console calls or Date.now().
+    for (const needle of [/console\./, /Date\.now\b/] as const) {
+      const result = findInSourceFiles({
+        rootDir: CATALOG_DIR,
+        needle,
+        excludeFileSuffixes: [".test.ts"],
+      });
+      expect(
+        result.matches,
+        `provider-catalog production source must not contain '${needle.source}' (pure-logic requirement — INJECT-04)`,
+      ).toEqual([]);
+    }
+  });
 });
 
 /* ---------------------------------------------------------------------- */
