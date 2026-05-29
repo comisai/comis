@@ -1728,6 +1728,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createMitmBroker",
       "MitmBrokerPort",
       "MitmBrokerDeps",
+      // CA manager (Phase 3) — no in-repo consumer yet.
+      // The daemon composition root wires caManager into the broker in a future phase.
+      "createNodeCaManager",
+      "NodeCaManagerDeps",
     ])],
     // @comis/memory: baseline orphans tracked here + 5 transient orphans
     // (SessionStore alias + SessionDetailedEntry + 3 Ctx*Row types).

@@ -31,6 +31,7 @@
  */
 import * as http from "node:http";
 import * as net from "node:net";
+import * as tls from "node:tls";
 import type {
   TypedEventBus,
   SecretManager,
@@ -303,6 +304,33 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           "CONNECT tunnel established",
         );
 
+        // ── Step 2.5: TLS upgrade (Phase 3 — when caManager is wired) ───────
+        // When deps.caManager is wired and returns a SecureContext for this host,
+        // we upgrade the raw TCP socket to a TLS server socket BEFORE reading
+        // inner headers. When caManager is undefined (Phase 2), innerSocket
+        // remains clientSocket and the code path is identical to Phase 2.
+        let innerSocket: net.Socket | tls.TLSSocket = clientSocket;
+        if (deps.caManager) {
+          const secureCtx = await deps.caManager.serverContextForHost(host);
+          if (secureCtx !== undefined) {
+            const tlsSocket = new tls.TLSSocket(clientSocket, {
+              isServer: true,
+              secureContext: secureCtx,
+              ALPNProtocols: ["http/1.1"],
+            });
+            // Wait for the TLS handshake to complete before reading inner headers
+            await new Promise<void>((resolve, reject) => {
+              tlsSocket.on("secure", resolve);
+              tlsSocket.on("error", reject);
+            });
+            innerSocket = tlsSocket;
+            log.debug(
+              { step: "tls-upgrade", sessionId, agentId, host },
+              "TLS upgrade complete — reading inner HTTP/1.1 headers",
+            );
+          }
+        }
+
         // ── Step 3: Read inner HTTP request headers ──────────────────────────
         // The client will start sending the inner HTTP/1.1 request after the 200.
         // We must buffer until \r\n\r\n with an 8 KB cap.
@@ -313,7 +341,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         // initial chunk to handle any edge case where data arrives early.
         // readTunnelHeaders handles an empty initial chunk gracefully —
         // it will wait for the next "data" event.
-        const tunnelResult = await readTunnelHeaders(clientSocket, _head);
+        const tunnelResult = await readTunnelHeaders(innerSocket, _head);
 
         if (tunnelResult === null) {
           log.debug({ step: "header-parse", sessionId, hint: "Header overflow or parse error; fail closed", errorKind: "validation" as const }, "Inner request header overflow");
@@ -328,7 +356,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             statusCode: 400,
             timestamp: deps.clock.now(),
           });
-          destroyWithStatus(clientSocket, "HTTP/1.1 400 Bad Request");
+          destroyWithStatus(innerSocket, "HTTP/1.1 400 Bad Request");
           return;
         }
 
@@ -351,7 +379,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             statusCode: 400,
             timestamp: deps.clock.now(),
           });
-          destroyWithStatus(clientSocket, "HTTP/1.1 400 Bad Request");
+          destroyWithStatus(innerSocket, "HTTP/1.1 400 Bad Request");
           return;
         }
 
@@ -406,7 +434,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             statusCode: 403,
             timestamp: deps.clock.now(),
           });
-          destroyWithStatus(clientSocket, "HTTP/1.1 403 Forbidden");
+          destroyWithStatus(innerSocket, "HTTP/1.1 403 Forbidden");
           return;
         }
 
@@ -440,7 +468,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             agentId,
             timestamp: deps.clock.now(),
           });
-          destroyWithStatus(clientSocket, "HTTP/1.1 502 Bad Gateway");
+          destroyWithStatus(innerSocket, "HTTP/1.1 502 Bad Gateway");
           return;
         }
 
@@ -531,7 +559,8 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           // to be silently discarded — the upstream only saw headers and the
           // body was buffered in the client socket's read buffer and never
           // forwarded (CR-01).
-          clientSocket.pipe(upstreamSocket);
+          // When TLS is active, innerSocket is the TLSSocket (decrypted stream).
+          innerSocket.pipe(upstreamSocket);
         });
 
         // Track upstream socket so stop() can destroy it (WR-03).
@@ -545,21 +574,23 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             { step: "upstream", sessionId, err, errorKind: "network" as const, hint: "Upstream connection failed; destroying tunnel" },
             "Upstream socket error",
           );
+          // Destroy the raw TCP socket — for TLSSocket, innerSocket.destroy()
+          // propagates to clientSocket automatically, but being explicit is correct.
           clientSocket.destroy();
         });
 
         // Pipe upstream response back to client (upstream → client direction).
         // With the default { end: true }, when upstream sends EOF the pipe
-        // automatically calls clientSocket.end() so the client receives the
+        // automatically calls innerSocket.end() so the client receives the
         // full response before the connection is cleanly terminated.
-        upstreamSocket.pipe(clientSocket);
+        upstreamSocket.pipe(innerSocket);
 
         const teardownUpstream = (): void => {
           openUpstreamSockets.delete(upstreamSocket);
           upstreamSocket.destroy();
         };
-        // Clean up upstream socket when the client closes (error or normal end).
-        clientSocket.on("close", teardownUpstream);
+        // Clean up upstream socket when the client (inner socket) closes (error or normal end).
+        innerSocket.on("close", teardownUpstream);
       } catch (err) {
         log.error(
           { step: "connect-handler", sessionId, err, errorKind: "internal" as const, hint: "Unexpected error in CONNECT handler; destroying socket" },

@@ -19,7 +19,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { safePath } from "@comis/core";
+import { safePath, systemDateFrom } from "@comis/core";
 import type { ClockPort, CaManagerPort } from "@comis/core";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -100,11 +100,12 @@ async function initCa(dataDir: string, clock: ClockPort): Promise<CaState> {
   const alg: EcKeyGenParams = { name: "ECDSA", namedCurve: "P-256" };
   const caKeys = await crypto.subtle.generateKey(alg, true, ["sign", "verify"]);
 
+  const nowMs = clock.now();
   const caCert = await x509.X509CertificateGenerator.createSelfSigned({
     serialNumber: "01",
     name: CA_DN,
-    notBefore: new Date(clock.now()),
-    notAfter: new Date(clock.now() + CA_VALIDITY_MS),
+    notBefore: clock.nowDate(),
+    notAfter: systemDateFrom(nowMs + CA_VALIDITY_MS),
     signingAlgorithm: { name: "ECDSA", hash: "SHA-256" },
     keys: caKeys,
     extensions: [
@@ -174,8 +175,8 @@ export function createNodeCaManager(deps: NodeCaManagerDeps): CaManagerPort {
       serialNumber: randomHex16(),
       subject: `CN=${host}`,
       issuer: ca.caCert.subject, // CA's subject DN
-      notBefore: new Date(clock.now()),
-      notAfter: new Date(notAfterMs),
+      notBefore: clock.nowDate(),
+      notAfter: systemDateFrom(notAfterMs),
       signingAlgorithm: { name: "ECDSA", hash: "SHA-256" },
       publicKey: leafKeys.publicKey,
       signingKey: ca.caKeys.privateKey, // CA key signs the leaf

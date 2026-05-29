@@ -2151,6 +2151,9 @@ describe("(03-03) Phase 3 — broker CONNECT handler terminates TLS via caManage
             servername: "api.anthropic.com",
             ca: caCertPem, // trust only the broker CA
             rejectUnauthorized: true,
+            // Offer both h2 and http/1.1 — the broker's ALPNProtocols: ["http/1.1"]
+            // means the server can only pick http/1.1, proving the ALPN constraint works.
+            ALPNProtocols: ["h2", "http/1.1"],
           });
           tlsSocket.on("secureConnect", () => {
             const cert = tlsSocket.getPeerCertificate();
