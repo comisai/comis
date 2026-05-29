@@ -161,6 +161,12 @@ describe("pathAllowed — segment wildcard /repos/*/issues", () => {
     const rule = makeExactRule("example.com", { pathPolicy: ["/repos/*/issues"] });
     expect(pathAllowed(rule, "/repos/foo/bar/issues")).toBe(false);
   });
+
+  it("rejects /repos//issues because the empty segment in the wildcard slot is not a valid segment (CR-01)", () => {
+    // CR-01: empty segment must NOT match — /repos/*/issues requires one non-empty segment
+    const rule = makeExactRule("example.com", { pathPolicy: ["/repos/*/issues"] });
+    expect(pathAllowed(rule, "/repos//issues")).toBe(false);
+  });
 });
 
 describe("pathAllowed — query string stripping (T-02-05)", () => {
