@@ -78,7 +78,7 @@ export const RagConfigSchema = z.strictObject({
       .strictObject({
         /** Recency boost weight (applied now via createdAt). */
         recencyAlpha: z.number().min(0).max(1).default(0.2),
-        /** Temporal-proximity boost weight (Phase-81 hook; neutral until occurredAt exists). */
+        /** Event-time proximity boost weight (Phase-81/TEMP-05; LIVE — applies when occurredAt is present, neutral when absent). */
         temporalAlpha: z.number().min(0).max(1).default(0.2),
         /** Proof-count boost weight (Phase-84 hook; neutral until proofCount exists). */
         proofAlpha: z.number().min(0).max(1).default(0.1),
