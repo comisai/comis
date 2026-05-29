@@ -741,4 +741,175 @@ describe("runMemoryReview", () => {
       memoriesExtracted: 0,
     }));
   });
+
+  // -------------------------------------------------------------------------
+  // IN-01 — entity resolve+link AFTER a successful store (Phase 83, ENT-01/03).
+  //
+  // The entities are already emitted (with inherited trust + provenance) at the
+  // store-success branch. Phase 83 persists them via the INJECTED
+  // `MemoryEntityStore` port (`deps.entityStore`). The port is OPTIONAL: when it
+  // is not injected the job behaves EXACTLY as Phase 82 (no entity persistence,
+  // no crash) so the daemon (Plan 05) can light it up independently. A link
+  // failure must be NON-FATAL (mirror the WR-01 store/search guards): a WARN is
+  // logged (errorKind + hint only — NEVER the entity name), the loop continues,
+  // and the watermark STILL advances. The scope is the stored entry's
+  // (tenantId, agentId) + the injected clock `now` (NEVER Date.now).
+  // -------------------------------------------------------------------------
+
+  /** A stub MemoryEntityStore whose `resolveAndLink` is a spy (default: ok). */
+  function makeEntityStore(
+    resolveAndLink = vi.fn().mockResolvedValue(ok("entity-id")),
+  ): NonNullable<MemoryReviewDeps["entityStore"]> {
+    return {
+      resolveAndLink,
+      associativeLane: vi.fn().mockResolvedValue(ok([])),
+    } as unknown as NonNullable<MemoryReviewDeps["entityStore"]>;
+  }
+
+  it("resolves+links EACH emitted entity after store (with the stored id + (tenant,agent) scope + injected clock now)", async () => {
+    const resolveAndLink = vi.fn().mockResolvedValue(ok("entity-id"));
+    const deps = makeDeps({ agentId: "agent-x", tenantId: "tenant-y", entityStore: makeEntityStore(resolveAndLink) });
+    arrangeOneSession(deps);
+    // ONE memory with TWO entities.
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User lives in Berlin","entities":[{"name":"user"},{"name":"Berlin"}]}]}',
+    ));
+    // The store assigns the entry's own id (a UUID); capture it to assert linking targets it.
+    (deps.memoryPort.store as Mock).mockResolvedValue(ok({ id: "irrelevant" }));
+
+    await runMemoryReview(deps);
+
+    const storedEntry = (deps.memoryPort.store as Mock).mock.calls[0]?.[0];
+    expect(storedEntry).toBeDefined();
+    const storedId = storedEntry.id as string;
+
+    // resolveAndLink called once per emitted entity, each with (entry.id, name, scope).
+    expect(resolveAndLink).toHaveBeenCalledTimes(2);
+    expect(resolveAndLink).toHaveBeenNthCalledWith(1, storedId, "user", {
+      tenantId: "tenant-y",
+      agentId: "agent-x",
+      now: NOW,
+    });
+    expect(resolveAndLink).toHaveBeenNthCalledWith(2, storedId, "Berlin", {
+      tenantId: "tenant-y",
+      agentId: "agent-x",
+      now: NOW,
+    });
+    // The `now` is the injected fake clock value (NEVER Date.now).
+    for (const call of resolveAndLink.mock.calls) {
+      expect((call[2] as { now: number }).now).toBe(NOW);
+    }
+  });
+
+  it("does NOT call resolveAndLink when entityStore is not injected (Phase-82 behaviour, no crash)", async () => {
+    const deps = makeDeps(); // no entityStore
+    expect(deps.entityStore).toBeUndefined();
+    arrangeOneSession(deps);
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User lives in Berlin","entities":[{"name":"user"},{"name":"Berlin"}]}]}',
+    ));
+
+    const result = await runMemoryReview(deps);
+
+    // Identical to Phase 82: memory stored, count incremented, no crash.
+    expect(result.ok).toBe(true);
+    expect(deps.memoryPort.store).toHaveBeenCalledTimes(1);
+    expect(deps.eventBus.emit).toHaveBeenCalledWith("memory:review_completed", expect.objectContaining({
+      memoriesExtracted: 1,
+    }));
+  });
+
+  it("entity link failure (err Result) is NON-FATAL — WARN logged, other entity still attempted, watermark advances", async () => {
+    // The FIRST entity link fails (err), the SECOND succeeds — proves the loop continues.
+    const resolveAndLink = vi
+      .fn()
+      .mockResolvedValueOnce(err(new Error("resolver unavailable")))
+      .mockResolvedValueOnce(ok("entity-id"));
+    const deps = makeDeps({ entityStore: makeEntityStore(resolveAndLink) });
+    arrangeOneSession(deps, 9800);
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User lives in Berlin","entities":[{"name":"user"},{"name":"Berlin"}]}]}',
+    ));
+
+    const result = await runMemoryReview(deps);
+
+    // Run still ok (the link failure did not crash the run).
+    expect(result.ok).toBe(true);
+    // BOTH entities were attempted (the failure of the first did not abort the loop).
+    expect(resolveAndLink).toHaveBeenCalledTimes(2);
+    // A WARN with errorKind + hint was logged (and NEVER the entity name body).
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: expect.anything(), hint: expect.anything() }),
+      expect.any(String),
+    );
+    const warnObjs = (deps.logger.warn as Mock).mock.calls.map((c) => JSON.stringify(c[0]));
+    // The entity names ("user"/"Berlin") must NEVER appear in any WARN object (AGENTS.md §2.7).
+    for (const o of warnObjs) {
+      expect(o).not.toContain("Berlin");
+    }
+    // The memory was still counted as stored (the link failure is orthogonal).
+    expect(deps.eventBus.emit).toHaveBeenCalledWith("memory:review_completed", expect.objectContaining({
+      memoriesExtracted: 1,
+    }));
+    // The watermark STILL advances (the whole point: a resolver fault never stalls).
+    expect(writeFile).toHaveBeenCalled();
+    const writeCall = (writeFile as Mock).mock.calls[0];
+    expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9800);
+    expect(rename).toHaveBeenCalled();
+  });
+
+  it("entity link REJECTION (adapter throws) is NON-FATAL — run ok, watermark advances", async () => {
+    // A real adapter can REJECT (not return err) — the fromPromise guard must catch it.
+    const resolveAndLink = vi.fn().mockRejectedValue(new Error("SQLITE_BUSY: database is locked"));
+    const deps = makeDeps({ entityStore: makeEntityStore(resolveAndLink) });
+    arrangeOneSession(deps, 9900);
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User lives in Berlin","entities":[{"name":"user"}]}]}',
+    ));
+
+    const result = await runMemoryReview(deps);
+
+    // The rejection did NOT escape runMemoryReview.
+    expect(result.ok).toBe(true);
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: expect.anything(), hint: expect.anything() }),
+      expect.any(String),
+    );
+    // The watermark STILL advances.
+    expect(writeFile).toHaveBeenCalled();
+    const writeCall = (writeFile as Mock).mock.calls[0];
+    expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9900);
+    expect(rename).toHaveBeenCalled();
+  });
+
+  it("does NOT resolveAndLink a memory whose store FAILED (links only after a successful store)", async () => {
+    const resolveAndLink = vi.fn().mockResolvedValue(ok("entity-id"));
+    const deps = makeDeps({ entityStore: makeEntityStore(resolveAndLink) });
+    arrangeOneSession(deps, 9950);
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User lives in Berlin","entities":[{"name":"user"},{"name":"Berlin"}]}]}',
+    ));
+    // The store FAILS — no link should be attempted for this memory's entities.
+    (deps.memoryPort.store as Mock).mockResolvedValue(err(new Error("disk full")));
+
+    const result = await runMemoryReview(deps);
+
+    expect(result.ok).toBe(true);
+    expect(resolveAndLink).not.toHaveBeenCalled();
+  });
+
+  it("uses the injected clock for the entity-link `now` (never Date.now)", async () => {
+    const resolveAndLink = vi.fn().mockResolvedValue(ok("entity-id"));
+    const deps = makeDeps({ entityStore: makeEntityStore(resolveAndLink) });
+    arrangeOneSession(deps);
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User likes tea","entities":[{"name":"user"}]}]}',
+    ));
+
+    await runMemoryReview(deps);
+
+    expect(resolveAndLink).toHaveBeenCalledTimes(1);
+    const scope = (resolveAndLink.mock.calls[0]?.[2]) as { now: number };
+    expect(scope.now).toBe(NOW);
+  });
 });
