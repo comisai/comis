@@ -1,0 +1,31 @@
+#!/bin/sh
+# Local mirror of CI's required, deterministic checks — the gate that would have
+# stopped the #133 build-cycle cascade from ever reaching `main`.
+#
+# Runs `pnpm validate`:
+#   build:clean (clean-room build) → cycles (madge dist) → cycles:refs
+#   (project-reference cycle) → lint:security → test:coverage (unit + arch +
+#   coverage floors).
+#
+# Installed via the repo's `prepare` script (`git config core.hooksPath
+# .githooks`). It does NOT run the integration / E2E / tarball / audit tiers —
+# those need Linux + ffmpeg/bubblewrap; run `pnpm validate:full` on Linux or
+# rely on CI for them.
+#
+# Bypass a single push (e.g. docs-only, or a known-slow machine):
+#   git push --no-verify
+set -e
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "pre-push: pnpm not on PATH — skipping local checks (CI will still run them)." >&2
+  exit 0
+fi
+
+echo "▶ pre-push: pnpm validate (clean build + cycles + lint + coverage)…"
+echo "  (bypass with: git push --no-verify)"
+if ! pnpm validate; then
+  echo "" >&2
+  echo "✗ pre-push: validate failed — fix the above, or bypass with: git push --no-verify" >&2
+  exit 1
+fi
+echo "✓ pre-push: validate passed."

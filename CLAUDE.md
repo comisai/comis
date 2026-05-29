@@ -16,12 +16,16 @@ Comis is a security-first AI agent platform connecting agents to chat channels (
 
 ```bash
 pnpm install                    # native deps: better-sqlite3, sharp
-pnpm build                      # all packages (tsc + project references)
-pnpm test                       # unit tests (Vitest workspace)
-pnpm test --coverage            # @vitest/coverage-v8; floor = lines 90 / branches 85 / functions 90 on packages/*/src/**/*.ts
+pnpm build                      # all packages (tsc + project references) — incremental
+pnpm clean                      # rm packages/*/dist + *.tsbuildinfo (force a clean-room build)
+pnpm build:clean                # clean && build — matches a fresh CI checkout
+pnpm test                       # unit tests (Vitest workspace) — watch mode (CI=true → run-once)
+pnpm test:coverage              # vitest run --coverage; floors are PER-PACKAGE (see vitest.config.ts)
 pnpm lint:security              # security ESLint rules
 pnpm cycles                     # madge dist-mode .d.ts circular-dep check
-pnpm validate                   # build && test && lint:security && cycles (one-shot pre-commit chain)
+pnpm cycles:refs                # tsc -b --dry packages/comis — project-reference cycle (TS6202) check
+pnpm validate                   # FULL local mirror of CI's deterministic gates (see below)
+pnpm validate:full              # validate + integration coverage + tarball smoke (needs Linux + ffmpeg/bubblewrap)
 ```
 
 Single package or file:
@@ -39,7 +43,9 @@ pnpm test:cleanup               # clean test artifacts
 
 Vitest aliases `@comis/*` → `packages/*/dist/index.js` for integration tests — use bare-package imports, never `../packages/*/src/*`. **Stale `dist/` silently masks `src/` changes**: if a test passes after editing only `src/`, you forgot `pnpm build`.
 
-Primary validation: `pnpm validate` (= `pnpm build && pnpm test && pnpm lint:security && pnpm cycles`).
+Primary validation: **`pnpm validate`** = `build:clean && cycles && cycles:refs && lint:security && test:coverage`. This is the local mirror of CI's deterministic, cross-platform gates — run it before pushing. It deliberately uses **`build:clean`** (not incremental `build`) and **`test:coverage`** (not bare `test`) because those are exactly the gaps that let the #133 build-cycle + coverage cascade reach `main`: a stale `dist/` hides a workspace-dependency cycle, and the per-package coverage floors are CI-only unless coverage actually runs.
+
+A **pre-push git hook** (`.githooks/pre-push`, auto-installed by the `prepare` script via `git config core.hooksPath .githooks`) runs `pnpm validate` and blocks the push on failure. Bypass a single push with `git push --no-verify`. The integration/E2E/tarball/audit tiers are NOT in the hook (they need Linux + ffmpeg/bubblewrap) — run `pnpm validate:full` on Linux or rely on CI.
 
 ## Daemon
 
@@ -130,7 +136,7 @@ Steps to ship `vX.Y.Z`:
 
    `docs/operations/docker.mdx` mentions a version illustratively (`pushing vX.Y.Z produces …`) and is **not** bumped per release.
 
-3. **Validate:** `pnpm validate` — build, test, lint:security, and cycles must all pass before the bump commit. (Skipping the cycles step is what let v1.0.38 ship with a missing `@comis/core` dep in `packages/web/package.json` and the latent 17-cycle backlog go unnoticed for days.)
+3. **Validate:** `pnpm validate` — clean build, cycles (madge + project-reference), lint:security, and coverage must all pass before the bump commit. (Skipping the cycles step is what let v1.0.38 ship with a missing `@comis/core` dep in `packages/web/package.json` and the latent 17-cycle backlog go unnoticed for days.) For the release, also run `pnpm validate:full` on Linux to exercise the integration + tarball tiers.
 
 4. **Commit, push, tag:**
    ```bash

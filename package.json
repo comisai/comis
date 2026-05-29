@@ -19,19 +19,26 @@
   },
   "scripts": {
     "build": "pnpm -r run build",
+    "clean": "node scripts/clean-build-artifacts.mjs",
+    "build:clean": "pnpm clean && pnpm build",
     "contracts:generate": "npx tsx scripts/contracts/generate-web-artifact.ts",
     "cycles": "madge --circular --extensions ts packages/*/dist",
+    "cycles:refs": "tsc -b --dry packages/comis",
     "lint:security": "eslint --config eslint.config.js",
     "lint:fixtures": "bash scripts/check-fixture-diff.sh",
     "test": "vitest",
-    "validate": "pnpm build && pnpm test && pnpm lint:security && pnpm cycles",
+    "test:coverage": "vitest run --coverage",
+    "validate": "pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage",
+    "validate:full": "pnpm validate && pnpm test:integration --coverage && pnpm smoke:tarball",
     "test:architecture": "vitest run --project architecture",
     "test:transparency": "vitest run packages/skills/src/__tests__/transparency-label-coverage.test.ts",
     "test:e2e": "vitest run --config test/e2e/vitest.config.ts",
     "smoke:tarball": "node scripts/smoke/tarball-smoke.mjs",
     "test:integration": "vitest run --config test/vitest.config.ts",
     "test:orchestrate": "npx tsx test/orchestrate.ts",
-    "test:cleanup": "npx tsx test/support/cleanup-test-artifacts.ts"
+    "test:cleanup": "npx tsx test/support/cleanup-test-artifacts.ts",
+    "hooks:install": "git config core.hooksPath .githooks || true",
+    "prepare": "pnpm hooks:install"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "0.22.1",
