@@ -209,4 +209,216 @@ describe("createSqliteMemoryEntityStore", () => {
       expect(entityRow(first.value)?.mention_count).toBe(2);
     });
   });
+
+  // =====================================================================
+  // Task 2 — associativeLane (scoped self-join, seeds excluded, hydrated)
+  //          + CASCADE + empty-lane
+  // =====================================================================
+
+  describe("associativeLane", () => {
+    const LANE_SCOPE = { tenantId: "tenant_a", agentId: "agent_a" } as const;
+
+    it("POSITIVE control: returns the OTHER memory sharing an entity (seed excluded), hydrated with a score in (0,1]", async () => {
+      const m1 = await seedMemory({ id: "m1", content: "m1 body" });
+      const m2 = await seedMemory({ id: "m2", content: "m2 body" });
+
+      // Both memories mention the SAME entity in the SAME scope.
+      await store.resolveAndLink(m1, "Shared Co", SCOPE_A);
+      await store.resolveAndLink(m2, "Shared Co", { ...SCOPE_A, now: 1_100 });
+
+      const res = await store.associativeLane([m1], LANE_SCOPE, 50);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+
+      // m2 surfaces; m1 (the seed) does NOT.
+      expect(res.value.map((r) => r.entry.id)).toEqual(["m2"]);
+      const only = res.value[0];
+      expect(only?.entry.id).toBe("m2");
+      expect(only?.entry.content).toBe("m2 body"); // hydrated, not just an id
+      expect(only?.score).toBeGreaterThan(0);
+      expect(only?.score).toBeLessThanOrEqual(1);
+    });
+
+    it("orders most-shared-first: a memory sharing 2 entities ranks before one sharing 1", async () => {
+      const seed = await seedMemory({ id: "seed" });
+      const two = await seedMemory({ id: "two" }); // shares E1 + E2
+      const one = await seedMemory({ id: "one" }); // shares only E1
+
+      // Two DISsimilar names (nameSimilarity ~0.09 << 0.6) so they resolve to
+      // TWO distinct entities — using near-identical names would (correctly)
+      // fuzzy-collapse to one entity (ENT-05) and defeat the 2-vs-1 ordering.
+      await store.resolveAndLink(seed, "Mercury Labs", SCOPE_A);
+      await store.resolveAndLink(seed, "Saturn Foods", SCOPE_A);
+      await store.resolveAndLink(two, "Mercury Labs", SCOPE_A);
+      await store.resolveAndLink(two, "Saturn Foods", SCOPE_A);
+      await store.resolveAndLink(one, "Mercury Labs", SCOPE_A);
+
+      const res = await store.associativeLane([seed], LANE_SCOPE, 50);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+
+      // Both surface; the 2-shared memory ("two") ranks before the 1-shared ("one").
+      expect(res.value.map((r) => r.entry.id)).toEqual(["two", "one"]);
+      // Score is monotonic with shared count.
+      expect(res.value[0]?.score ?? 0).toBeGreaterThan(res.value[1]?.score ?? 0);
+    });
+
+    it("does NOT surface a cross-tenant memory sharing the same entity NAME (ENT-03 isolation negative)", async () => {
+      const m1 = await seedMemory({ id: "m1", tenantId: "tenant_a", agentId: "agent_a" });
+      // A memory in a DIFFERENT tenant that mentions the SAME entity name.
+      const cross = await seedMemory({
+        id: "cross_tenant",
+        tenantId: "tenant_b",
+        agentId: "agent_a",
+        content: "leak target",
+      });
+
+      await store.resolveAndLink(m1, "Globex", SCOPE_A);
+      await store.resolveAndLink(cross, "Globex", {
+        tenantId: "tenant_b",
+        agentId: "agent_a",
+        now: 1_000,
+      });
+
+      const res = await store.associativeLane([m1], LANE_SCOPE, 50);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+
+      // The cross-tenant memory MUST NOT appear. Two independent layers exclude
+      // it: (a) the scoped resolver minted DISTINCT entity ids per scope, so the
+      // self-join's entity_id match never bridges; (b) the lane's
+      // `AND m.tenant_id=? AND m.agent_id=?` filter. The dedicated
+      // "load-bearing lane scope" test below isolates layer (b) by sharing one
+      // entity_id directly.
+      const ids = res.value.map((r) => r.entry.id);
+      expect(ids).not.toContain("cross_tenant");
+      expect(ids).toEqual([]); // no same-scope sharer exists either
+    });
+
+    it("does NOT surface a cross-AGENT memory sharing the same entity NAME (ENT-03 isolation negative)", async () => {
+      const m1 = await seedMemory({ id: "m1", tenantId: "tenant_a", agentId: "agent_a" });
+      const crossAgent = await seedMemory({
+        id: "cross_agent",
+        tenantId: "tenant_a",
+        agentId: "agent_z",
+        content: "leak target",
+      });
+
+      await store.resolveAndLink(m1, "Initech", SCOPE_A);
+      await store.resolveAndLink(crossAgent, "Initech", {
+        tenantId: "tenant_a",
+        agentId: "agent_z",
+        now: 1_000,
+      });
+
+      const res = await store.associativeLane([m1], LANE_SCOPE, 50);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+
+      const ids = res.value.map((r) => r.entry.id);
+      expect(ids).not.toContain("cross_agent");
+      expect(ids).toEqual([]);
+    });
+
+    it("the lane's (tenant,agent) scope is LOAD-BEARING — a cross-scope memory sharing the SAME entity_id is excluded ONLY by the WHERE (ENT-03)", async () => {
+      // Adversarial setup: bypass the scoped resolver and link a seed memory
+      // (tenant_a/agent_a) AND a cross-AGENT memory (tenant_a/agent_z) to the
+      // SAME entity_id. The resolver would never do this (it scopes entity ids),
+      // but this isolates the lane's `m.agent_id` WHERE as the single barrier:
+      // the cross memory shares the seed's tenant, so the hydration filter
+      // (`WHERE id=? AND tenant_id=?`) does NOT exclude it — ONLY the self-join's
+      // `AND m.agent_id=?` does. So this test FAILS if the lane scope is removed.
+      const m1 = await seedMemory({ id: "m1", tenantId: "tenant_a", agentId: "agent_a" });
+      const cross = await seedMemory({
+        id: "cross_shared_id",
+        tenantId: "tenant_a",
+        agentId: "agent_z",
+        content: "leak target",
+      });
+
+      // One entity row (any scope) + two links sharing its id, inserted directly.
+      const sharedEntityId = crypto.randomUUID();
+      db.prepare(
+        "INSERT INTO memory_entities (id, tenant_id, agent_id, canonical_name, canonical_key, mention_count, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+      ).run(sharedEntityId, "tenant_a", "agent_a", "Shared", "shared", 1_000, 1_000);
+      db.prepare("INSERT INTO memory_entity_links (memory_id, entity_id) VALUES (?, ?)").run(m1, sharedEntityId);
+      db.prepare("INSERT INTO memory_entity_links (memory_id, entity_id) VALUES (?, ?)").run(cross, sharedEntityId);
+
+      const res = await store.associativeLane([m1], LANE_SCOPE, 50);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+
+      // Despite a shared entity_id, the cross-scope memory is excluded — ONLY
+      // the lane's memories-row scope stops it here.
+      const ids = res.value.map((r) => r.entry.id);
+      expect(ids).not.toContain("cross_shared_id");
+      expect(ids).toEqual([]);
+    });
+
+    it("ENT-04: empty seeds -> ok([]); seeds with NO shared entities -> ok([])", async () => {
+      const lonely = await seedMemory({ id: "lonely" });
+      const other = await seedMemory({ id: "other" });
+      // Distinct, non-overlapping entities.
+      await store.resolveAndLink(lonely, "Alpha", SCOPE_A);
+      await store.resolveAndLink(other, "Omega", SCOPE_A);
+
+      const empty = await store.associativeLane([], LANE_SCOPE, 50);
+      expect(empty.ok).toBe(true);
+      if (empty.ok) expect(empty.value).toEqual([]);
+
+      const noShare = await store.associativeLane([lonely], LANE_SCOPE, 50);
+      expect(noShare.ok).toBe(true);
+      if (noShare.ok) expect(noShare.value).toEqual([]);
+    });
+
+    it("respects cap: at most `cap` rows are returned", async () => {
+      const seed = await seedMemory({ id: "seed" });
+      await store.resolveAndLink(seed, "Hub", SCOPE_A);
+      // Three other memories all sharing the same entity.
+      for (const id of ["s1", "s2", "s3"]) {
+        const mid = await seedMemory({ id });
+        await store.resolveAndLink(mid, "Hub", SCOPE_A);
+      }
+
+      const res = await store.associativeLane([seed], LANE_SCOPE, 2);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value.length).toBe(2); // capped from 3 candidates
+    });
+  });
+
+  // =====================================================================
+  // Task 2 — CASCADE + no-recompute (ENT-04 / OQ-4)
+  // =====================================================================
+
+  describe("CASCADE on memory delete (ENT-04)", () => {
+    it("deleting a memory drops its entity links to 0; the entity row survives with an UNCHANGED mention_count", async () => {
+      const m1 = await seedMemory({ id: "m1" });
+      const m2 = await seedMemory({ id: "m2" });
+
+      // Both link the same entity -> mention_count becomes 2.
+      const linked = await store.resolveAndLink(m1, "Persistent Co", SCOPE_A);
+      await store.resolveAndLink(m2, "Persistent Co", { ...SCOPE_A, now: 1_100 });
+      expect(linked.ok).toBe(true);
+      if (!linked.ok) return;
+
+      const entityId = linked.value;
+      expect(linkCount(m1)).toBe(1);
+      expect(entityRow(entityId)?.mention_count).toBe(2);
+
+      // Delete m1 via the EXISTING adapter path (foreign_keys=ON -> CASCADE).
+      const del = await adapter.delete(m1, "tenant_a");
+      expect(del.ok).toBe(true);
+
+      // m1's links are gone (CASCADE)...
+      expect(linkCount(m1)).toBe(0);
+      // ...but the entity row SURVIVES, mention_count UNCHANGED (no recompute, OQ-4).
+      const survivor = entityRow(entityId);
+      expect(survivor).toBeDefined();
+      expect(survivor?.mention_count).toBe(2); // stale-by-design, NOT decremented
+
+      // m2's link to the surviving entity is untouched.
+      expect(linkCount(m2)).toBe(1);
+    });
+  });
 });
