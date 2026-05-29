@@ -20,6 +20,7 @@ export type {
 } from "./memory.js";
 export type { EmbeddingPort } from "./embedding.js";
 export type { RerankerPort } from "./reranker.js";
+export type { MemoryEntityStore, EntityScope } from "./memory-entity-store.js";
 export type { ContextStorePort } from "./context-store.js";
 export type { ContextEngineStore } from "./context-engine-store.js";
 export type { ContextAdminStore } from "./context-admin-store.js";
