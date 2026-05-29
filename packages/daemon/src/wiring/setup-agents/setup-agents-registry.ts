@@ -185,6 +185,9 @@ export async function setupAgents(deps: {
   /** Optional cross-encoder reranker (built in setup-memory only when an agent enables
    *  rerank). Threaded into each per-agent createPiExecutor like memoryPort. */
   rerankerPort?: import("@comis/core").RerankerPort;
+  /** Entity-associative store (Phase 83). Threaded into each per-agent createPiExecutor
+   *  like memoryPort (the recall read path). Built in setup-memory on the shared db. */
+  entityStore?: import("@comis/core").MemoryEntityStore;
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */
@@ -403,6 +406,7 @@ export async function setupAgents(deps: {
     lastKnownModel,
     embeddingPort: deps.embeddingPort,
     rerankerPort: deps.rerankerPort,
+    entityStore: deps.entityStore,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
     geminiCacheManager: deps.geminiCacheManager,

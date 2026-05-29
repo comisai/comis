@@ -648,7 +648,7 @@ function buildChannelManagerDeps(deps: {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
-    workspaceDirs, defaultWorkspaceDir, memoryAdapter, embeddingQueue,
+    workspaceDirs, defaultWorkspaceDir, memoryAdapter, entityStore, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
@@ -707,6 +707,10 @@ function buildChannelManagerDeps(deps: {
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore,
     fileExtractor, fileExtractionConfig: container.config.integrations.media.documentExtraction,
     workspaceDirs, defaultWorkspaceDir, memoryAdapter,
+    // Phase 83: the entity-associative store (built in setup-memory on the shared db).
+    // Forwarded into registerCronEventListeners -> runMemoryReview (the write path that
+    // populates memory_entities / memory_entity_links after each successful store).
+    entityStore,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,
@@ -1650,7 +1654,7 @@ async function bootFoundation(
     disposeEmbedding, cachedPort, memoryAdapter, db,
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
-    rerankerPort, disposeReranker,
+    rerankerPort, disposeReranker, entityStore,
   } = await setupMemory({ container, memoryLogger, clock });
 
   // Observability persistence (dual-write to SQLite). obsStore +
@@ -1786,7 +1790,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, rerankerPort, disposeReranker, maintenanceTick,
+    embeddingCircuitBreakerState, rerankerPort, disposeReranker, entityStore, maintenanceTick,
     obsStore, obsPersistence, contextStore,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
@@ -1835,6 +1839,7 @@ async function bootAgents(
     daemonLogger, gatewayLogger, agentLogger, schedulerLogger, skillsLogger,
     memoryAdapter, db, sessionStore, cachedPort, embeddingQueue,
     rerankerPort, // built in setup-memory; threaded into setupAgents -> createPiExecutor
+    entityStore, // Phase 83: threaded into setupAgents -> createPiExecutor (recall read path) + the cron review (write path)
     contextStore,
     activeRunRegistry, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, geminiCacheManager,
@@ -1971,7 +1976,7 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts,
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, entityStore, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,

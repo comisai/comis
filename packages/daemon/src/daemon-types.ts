@@ -374,6 +374,9 @@ export interface BootContext {
   embeddingCircuitBreakerState: Awaited<ReturnType<typeof setupMemory>>["embeddingCircuitBreakerState"];
   rerankerPort: Awaited<ReturnType<typeof setupMemory>>["rerankerPort"];
   disposeReranker: Awaited<ReturnType<typeof setupMemory>>["disposeReranker"];
+  /** Entity-associative store (Phase 83) — threaded into setupAgents (executor recall
+   *  read path) + the cron review (write path). Built in setup-memory on the shared db. */
+  entityStore: Awaited<ReturnType<typeof setupMemory>>["entityStore"];
   maintenanceTick: Awaited<ReturnType<typeof setupMemory>>["maintenanceTick"];
   obsStore: ObservabilityStore | undefined;
   obsPersistence: ObsPersistenceResult | undefined;

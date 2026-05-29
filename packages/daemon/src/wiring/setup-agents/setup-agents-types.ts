@@ -67,6 +67,11 @@ export interface SingleAgentDeps {
   /** Optional cross-encoder reranker (built in setup-memory only when an agent enables
    *  rerank). Threaded into createPiExecutor like memoryPort; absent -> fusion order. */
   rerankerPort?: import("@comis/core").RerankerPort;
+  /** Entity-associative store (Phase 83). Threaded into each per-agent createPiExecutor
+   *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the
+   *  shared db handle; the entity lane stays dormant until an operator enables
+   *  `agents.<id>.rag.entityLane.enabled` (default OFF). */
+  entityStore?: import("@comis/core").MemoryEntityStore;
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */

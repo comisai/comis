@@ -486,6 +486,7 @@ export async function setupSingleAgent(
     mcpToolsInherited: deps.mcpToolsInherited,
     memoryPort: memoryAdapter,
     reranker: deps.rerankerPort,  // Cross-encoder reranker (built in setup-memory only when an agent enables rerank).
+    entityStore: deps.entityStore,  // Entity-associative store (Phase 83) -> createMemoryRecall read path; lane stays dormant until rag.entityLane.enabled (default OFF).
     secretManager: scopedManager,
     envelopeConfig: container.config.envelope,
     senderTrustDisplayConfig: container.config.senderTrustDisplay,

@@ -25,6 +25,7 @@ import {
   createBatchIndexer,
   createEmbeddingQueue,
   createLocalRerankerProvider,
+  createSqliteMemoryEntityStore,
   type MemoryApi,
 } from "@comis/memory";
 
@@ -59,6 +60,14 @@ export interface MemoryResult {
    *  degrades to fusion order (RANK-03). The all-default (rerank-off) config NEVER builds
    *  it, so the ~606MB GGUF is not downloaded by default. */
   rerankerPort?: import("@comis/core").RerankerPort;
+  /** Entity-associative store (Phase 83, ENT-01/02/03). The SOLE adapter for the segregated
+   *  `MemoryEntityStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
+   *  memory adapter (so entity tables + memories share one FK-enabled connection and the
+   *  `ON DELETE CASCADE` fires). Unlike the reranker there is no model/IO cost to building it,
+   *  so it is always present; the entity lane stays dormant until an operator opts in via
+   *  `agents.<id>.rag.entityLane.enabled` (default OFF) — see setup-agents-runtime / the cron
+   *  review wiring, which thread this port into the read + write paths. */
+  entityStore: import("@comis/core").MemoryEntityStore;
   /** Dispose callback for the reranker's native context (ranking ctx -> model -> llama).
    *  Registered in the daemon shutdown path; undefined when no reranker was built. */
   disposeReranker?: () => Promise<void>;
@@ -225,6 +234,15 @@ export async function setupMemory(deps: {
   const memoryAdapter = new SqliteMemoryAdapter(adjustedMemoryConfig, embeddingPort, memoryLogger);
   const db = memoryAdapter.getDb();
 
+  // 6.5.2b. Entity-associative store (Phase 83). Built on the SAME `db` handle the
+  // memory adapter owns — NOT a second Database — so the entity tables
+  // (memory_entities / memory_entity_links) and the memories table share one
+  // FK-enabled connection. That is what makes the link `ON DELETE CASCADE` fire and
+  // keeps the (tenant, agent) isolation scope consistent with the memory rows it joins.
+  // Always constructed (no model/IO cost); the entity recall lane stays dormant until an
+  // operator enables `agents.<id>.rag.entityLane.enabled` (default OFF).
+  const entityStore = createSqliteMemoryEntityStore({ db, logger: memoryLogger });
+
   // 6.5.3. Wire caching: L1(L2(provider)) when persistent, L1(provider) otherwise
   let cachedPort: EmbeddingPort | undefined;
   let embeddingCacheStats: (() => import("@comis/memory").EmbeddingCacheStats) | undefined;
@@ -347,6 +365,7 @@ export async function setupMemory(deps: {
     embeddingCircuitBreakerState: embeddingCbRef ? () => embeddingCbRef!.getState() : undefined,
     rerankerPort,
     disposeReranker,
+    entityStore,
     maintenanceTick,
   };
 }

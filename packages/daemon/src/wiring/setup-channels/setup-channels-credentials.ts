@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry } from "@comis/agent";
@@ -43,6 +43,12 @@ export interface CronEventListenerDeps {
   transcriber?: TranscriptionPort;
   workspaceDirs?: Map<string, string>;
   memoryAdapter?: MemoryPort;
+  /** Entity-associative store (Phase 83, IN-01). Threaded into runMemoryReview so each
+   *  successfully-stored memory's entity mentions are resolved + linked
+   *  (memory_entities / memory_entity_links), scoped to the entry's (tenantId, agentId).
+   *  Absent => Phase-82 behaviour (entities emitted but not persisted). Built in
+   *  setup-memory on the SAME db handle the memory adapter owns. */
+  entityStore?: MemoryEntityStore;
   tenantId?: string;
   piSessionAdapters?: Map<string, {
     getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
@@ -138,6 +144,10 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         modelId: resolved.modelId,
         apiKey,
         clock: deps.clock,
+        // Phase 83 (IN-01): persist each stored memory's entity mentions. The store
+        // is scoped to (tenantId, agentId) in SQL — load-bearing isolation (ENT-03).
+        // Absent (older config / store not built) => Phase-82 emit-only behaviour.
+        entityStore: deps.entityStore,
         logger: reviewLogger,
       });
 
