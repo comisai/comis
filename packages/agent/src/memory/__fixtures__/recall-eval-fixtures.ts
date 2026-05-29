@@ -222,3 +222,81 @@ export const TEMPORAL_EVAL_FIXTURES: EvalQuery[] = [
     relevantIds: ["t4"],
   },
 ];
+
+/**
+ * Phase-83 entity-association fixtures (ENT-02 / EVAL-01, success criterion 5) — the
+ * `"entity"` group scored against the entity lane MODELED as a 2nd fusion lane
+ * (recall-eval.test.ts). Kept in a SEPARATE exported array from
+ * {@link RECALL_EVAL_FIXTURES} / {@link TEMPORAL_EVAL_FIXTURES} so the Phase-80
+ * reranking-group assertions (exact `1/3` recall@1) and the Phase-81 temporal-group
+ * assertions stay untouched and green.
+ *
+ * LIFT HEADROOM (mirrors the reranking + temporal doc-blocks above; T-83-19). Each
+ * query pairs a lexically-strong DISTRACTOR carrying a HIGHER fusion `score` against the
+ * RELEVANT memory — one that shares an entity with the query's subject — carrying a
+ * LOWER fusion `score`. Because single-lane `fuse()` is order-preserving, the
+ * fusion-only baseline ranks the distractor at rank 1 and MISSES the relevant id at
+ * recall@1. Adding the entity lane (the shared-entity neighbour, surfaced FIRST) as a
+ * 2nd fusion lane sums the relevant id's two RRF terms over the distractor's single term
+ * and lifts it to rank 1 — the measurable EVAL-01 entity figure. A no-op fixture that
+ * fusion already nailed would leave nothing to measure, so the lift test also asserts
+ * `baseline.recallAt1 < 1`.
+ *
+ * THE ENTITY-LANE SEAM. This is the FIXTURE model of the live `associativeLane` (Phase
+ * 83 plans 02/03): a one-hop entity self-join that surfaces memories sharing an entity
+ * with the seed, absent from (or under-ranked by) lexical search. {@link entityLane}
+ * builds that lane from each fixture's `relevantIds` (the shared-entity neighbour),
+ * relevant-first — PURE, no DB, so the lift is reproducible from the fixtures alone.
+ *
+ * Determinism (AGENTS.md §2.5): neutral placeholders + stable ids `e1`, `e2`, … No real
+ * identities, no network, no `Date.now`/`Math.random`.
+ *
+ * - E1 ("what is acme_corp's support email") — the entity-association "shared-subject"
+ *   case: the lexical distractor "user_a emailed support about a refund" (e1, base 0.92)
+ *   outscores the relevant "acme_corp support email is help@example.com" (e2, base 0.55,
+ *   shares the `acme_corp` entity with the query) in fusion order; the entity lane
+ *   surfaces e2 first and RRF rescues it to rank 1.
+ * - E2 ("which project is widget_x part of") — the shared-entity neighbour case: the
+ *   lexical distractor "user_a shipped widget_x last week" (e4, base 0.88) precedes the
+ *   relevant "widget_x belongs to project_atlas" (e5, base 0.50, shares the `widget_x`
+ *   entity) in fusion order; the entity lane rescues e5.
+ */
+export const ENTITY_EVAL_FIXTURES: EvalQuery[] = [
+  {
+    group: "entity",
+    query: "what is acme_corp's support email",
+    candidates: [
+      // Lexical distractor: high fusion score, no shared subject — fusion rank 1.
+      candidate("e1", "user_a emailed support about a refund last month", 0.92),
+      // Relevant: shares the acme_corp entity, lower fusion score — fusion rank 2 (missed @1).
+      candidate("e2", "acme_corp support email is help@example.com", 0.55),
+      candidate("e3", "user_a prefers dark mode in the app", 0.3),
+    ],
+    relevantIds: ["e2"],
+  },
+  {
+    group: "entity",
+    query: "which project is widget_x part of",
+    candidates: [
+      // Lexical distractor: high fusion score, no shared subject — fusion rank 1.
+      candidate("e4", "user_a shipped widget_x to staging last week", 0.88),
+      // Relevant: shares the widget_x entity, lower fusion score — fusion rank 2 (missed @1).
+      candidate("e5", "widget_x belongs to project_atlas", 0.5),
+      candidate("e6", "user_a scheduled a sync on example.com", 0.25),
+    ],
+    relevantIds: ["e5"],
+  },
+];
+
+/**
+ * The MODELED entity lane for a fixture — the shared-entity neighbour(s) surfaced
+ * FIRST, ready to fuse as a 2nd {@link import("../../rag/fuse.js").FusionLane}. This is
+ * the fixture stand-in for the live `associativeLane`'s output (Phase-83 plans 02/03):
+ * the entity self-join returns the memories that share an entity with the seed. Here
+ * those are exactly the fixture's `relevantIds` (the shared-entity memory), placed at
+ * lane rank 1 so RRF lifts them over the lexical distractor. PURE — no DB, no I/O.
+ */
+export function entityLane(q: EvalQuery): MemorySearchResult[] {
+  const relevant = new Set(q.relevantIds);
+  return q.candidates.filter((c) => relevant.has(c.entry.id));
+}
