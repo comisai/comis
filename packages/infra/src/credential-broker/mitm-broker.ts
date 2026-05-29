@@ -1,0 +1,544 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * NodeMitmBroker — HTTP CONNECT proxy with per-request credential injection.
+ *
+ * Accepts HTTP CONNECT tunnels from driven CLIs, validates single-use proxy
+ * tokens via SessionManager, resolves secrets per-request from SecretManager,
+ * injects credentials via the Phase 1 engine (applyInjections), and fails
+ * closed in all error scenarios (407/403/502, zero upstream bytes on failure).
+ *
+ * CONNECT handler pipeline (strict ordering — no upstream socket until all gates pass):
+ *   1. Validate Proxy-Authorization Bearer token → 407 + destroy on fail
+ *   2. Send 200 Connection established (tunnel open)
+ *   3. Read inner HTTP/1.1 headers from tunnel socket (8 KB cap)
+ *   4. Resolve binding (host + path matching) → 403 + destroy on no-match
+ *   5. Resolve secret from SecretManager → 502 + destroy on miss
+ *   6. Inject credentials (applyInjections) → forward to upstream
+ *
+ * TLS seam (Phase 3): accepts optional CaManagerPort; when undefined, passes
+ * TCP stream opaque. When wired, Phase 3 terminates TLS and injects on the
+ * decrypted HTTP/1.1 layer.
+ *
+ * Security invariants (BROKER-01..03):
+ *   - Every fail-closed exit (407/403/502) calls clientSocket.destroy() BEFORE
+ *     any upstream net.connect — zero upstream bytes are sent on any gate failure.
+ *   - secret variable is NEVER passed to logger or event payloads.
+ *   - broker:injected carries ruleKind + host, NOT the secret value.
+ *   - secret:accessed is emitted on BOTH success and miss paths.
+ *   - No Date.now() — all timestamps via deps.clock.now().
+ *
+ * @module
+ */
+import * as http from "node:http";
+import * as net from "node:net";
+import type {
+  TypedEventBus,
+  SecretManager,
+  BrokerBinding,
+  HostRule,
+  InjectionRule,
+  InjectionInput,
+  ClockPort,
+  CaManagerPort,
+  ComisLogger,
+} from "@comis/core";
+import { resolveBinding, applyInjections, normalizeHost } from "@comis/core";
+import type { SessionManager, SessionInfo } from "./session-manager.js";
+
+// ── Max header size for tunnel inner-request parsing (request smuggling prevention) ──
+const MAX_HEADER_BYTES = 8192;
+
+// ── Exported types ────────────────────────────────────────────────────────────
+
+export interface MitmBrokerDeps {
+  sessionManager: SessionManager;
+  secretManager: SecretManager;
+  bindings: readonly BrokerBinding[];
+  eventBus: TypedEventBus;
+  logger: ComisLogger;
+  clock: ClockPort;
+  caManager?: CaManagerPort; // undefined in Phase 2; wired in Phase 3
+}
+
+export interface MitmBrokerPort {
+  /** Start the proxy server on a loopback port. Resolves with the bound port number. */
+  start(port?: number): Promise<number>;
+  /** Stop the proxy server and close all connections. */
+  stop(): Promise<void>;
+}
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Extract the port number from a CONNECT authority string like "host:port".
+ * Defaults to 443 if no port is present (HTTPS convention).
+ */
+function extractPort(authority: string): number {
+  if (authority.startsWith("[")) {
+    // Bracketed IPv6: [::1]:8080
+    const closeBracket = authority.indexOf("]");
+    if (closeBracket === -1) return 443;
+    const afterBracket = authority.slice(closeBracket + 1);
+    if (afterBracket.startsWith(":")) {
+      const parsed = parseInt(afterBracket.slice(1), 10);
+      return isNaN(parsed) ? 443 : parsed;
+    }
+    return 443;
+  }
+  const lastColon = authority.lastIndexOf(":");
+  if (lastColon === -1) return 443;
+  const parsed = parseInt(authority.slice(lastColon + 1), 10);
+  return isNaN(parsed) ? 443 : parsed;
+}
+
+/**
+ * Write a raw HTTP status line + headers to a socket and destroy it.
+ * Used for error responses written directly to the tunnel socket (after 200).
+ */
+function destroyWithStatus(
+  socket: net.Socket,
+  statusLine: string,
+): void {
+  try {
+    socket.write(`${statusLine}\r\n\r\n`);
+  } catch {
+    // Socket may already be closed — ignore write errors
+  }
+  socket.destroy();
+}
+
+/**
+ * Parse the first HTTP/1.1 request headers from a raw buffer string.
+ * Returns { method, path, headers } or null on parse failure.
+ */
+function parseInnerRequest(rawHeaders: string): {
+  method: string;
+  path: string;
+  headers: Map<string, string>;
+} | null {
+  const lines = rawHeaders.split("\r\n");
+  const requestLine = lines[0] ?? "";
+  const parts = requestLine.split(" ");
+  if (parts.length < 2) return null;
+
+  // parts.length >= 2 is guaranteed by the guard above.
+  const method = String(parts[0]);
+  const path = String(parts[1]);
+
+  const headers = new Map<string, string>();
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    const colonIdx = line.indexOf(":");
+    if (colonIdx === -1) continue;
+    const name = line.slice(0, colonIdx).trim().toLowerCase();
+    const value = line.slice(colonIdx + 1).trim();
+    headers.set(name, value);
+  }
+
+  return { method, path, headers };
+}
+
+/**
+ * Read from a socket until \r\n\r\n is found, with an 8 KB cap.
+ * Returns the headers section (without the terminator) or null on error/overflow.
+ * Resolves immediately if enough data is buffered from the initial dataChunk.
+ */
+function readTunnelHeaders(
+  socket: net.Socket,
+  initialChunk: Buffer,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    let finished = false;
+    let buf = initialChunk.toString("latin1");
+
+    function onData(chunk: Buffer): void {
+      buf += chunk.toString("latin1");
+      check();
+    }
+
+    // Both error and close resolve with null (fail closed).
+    // Using a shared handler so both events trigger the same cleanup path.
+    function onTerminate(): void {
+      finish(null);
+    }
+
+    function finish(result: string | null): void {
+      if (finished) return;
+      finished = true;
+      socket.off("data", onData);
+      socket.off("error", onTerminate);
+      socket.off("close", onTerminate);
+      resolve(result);
+    }
+
+    function check(): void {
+      const idx = buf.indexOf("\r\n\r\n");
+      if (idx !== -1) {
+        finish(buf.slice(0, idx));
+        return;
+      }
+      if (buf.length > MAX_HEADER_BYTES) {
+        finish(null); // overflow — fail closed
+      }
+    }
+
+    socket.on("data", onData);
+    socket.on("error", onTerminate);
+    socket.on("close", onTerminate);
+
+    // Process any initial data that was already buffered (e.g., when _head is non-empty).
+    // If buf is empty this is a no-op; if buf already has the terminator, finish() resolves.
+    check();
+  });
+}
+
+// ── createMitmBroker ──────────────────────────────────────────────────────────
+
+export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
+  const log = deps.logger.child({ submodule: "mitm-broker" });
+  let server: http.Server | null = null;
+  // Track open sockets so stop() can destroy them immediately
+  const openSockets = new Set<net.Socket>();
+
+  function handleConnect(
+    req: http.IncomingMessage,
+    clientSocket: net.Socket,
+    _head: Buffer,
+  ): void {
+    // ── Step 1: Validate Proxy-Authorization ──────────────────────────────
+    const auth = req.headers["proxy-authorization"];
+    const authority = req.url ?? "";
+    const host = normalizeHost(authority);
+
+    if (!auth?.startsWith("Bearer ")) {
+      log.debug({ step: "auth-gate", host }, "CONNECT missing or non-Bearer auth");
+      deps.eventBus.emit("broker:denied", {
+        sessionId: "unknown",
+        host,
+        reason: "bad_token" as const,
+        statusCode: 407,
+        timestamp: deps.clock.now(),
+      });
+      try {
+        clientSocket.write(
+          "HTTP/1.1 407 Proxy Authentication Required\r\n" +
+            'Proxy-Authenticate: Bearer realm="comis-broker"\r\n' +
+            "\r\n",
+        );
+      } catch {
+        // Ignore write errors — socket may be closing
+      }
+      clientSocket.destroy();
+      return;
+    }
+
+    const rawToken = auth.slice(7); // strip "Bearer "
+    const session: SessionInfo | null = deps.sessionManager.consumeToken(rawToken);
+
+    if (!session) {
+      log.debug({ step: "auth-gate", host }, "CONNECT invalid or consumed token");
+      deps.eventBus.emit("broker:denied", {
+        sessionId: "unknown",
+        host,
+        reason: "bad_token" as const,
+        statusCode: 407,
+        timestamp: deps.clock.now(),
+      });
+      try {
+        clientSocket.write(
+          "HTTP/1.1 407 Proxy Authentication Required\r\n" +
+            'Proxy-Authenticate: Bearer realm="comis-broker"\r\n' +
+            "\r\n",
+        );
+      } catch {
+        // Ignore write errors
+      }
+      clientSocket.destroy();
+      return;
+    }
+
+    const sessionId = session.sessionId;
+    const agentId = session.agentId;
+
+    // ── Step 2: Send 200 Connection established (tunnel open) ────────────
+    // Extract target port from the CONNECT authority
+    const targetPort = extractPort(authority);
+
+    clientSocket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+
+    log.debug(
+      { step: "tunnel-open", sessionId, agentId, host },
+      "CONNECT tunnel established",
+    );
+
+    // ── Step 3: Read inner HTTP request headers ──────────────────────────
+    // The client will start sending the inner HTTP/1.1 request after the 200.
+    // We must buffer until \r\n\r\n with an 8 KB cap.
+    // NOTE: the `_head` argument from the http.createServer "connect" event
+    // is the data that arrived after the CONNECT request. In practice this
+    // buffer is always empty (the client waits for the 200 response before
+    // sending anything), but we pass it through `readTunnelHeaders` as the
+    // initial chunk to handle any edge case where data arrives early.
+    void (async () => {
+      try {
+        // readTunnelHeaders handles an empty initial chunk gracefully —
+        // it will wait for the next "data" event.
+        const rawHeaders = await readTunnelHeaders(clientSocket, _head);
+
+        if (rawHeaders === null) {
+          log.debug({ step: "header-parse", sessionId, hint: "Header overflow or parse error; fail closed", errorKind: "validation" as const }, "Inner request header overflow");
+          deps.eventBus.emit("broker:denied", {
+            sessionId,
+            host,
+            reason: "path_policy" as const,
+            statusCode: 403,
+            timestamp: deps.clock.now(),
+          });
+          destroyWithStatus(clientSocket, "HTTP/1.1 400 Bad Request");
+          return;
+        }
+
+        const parsed = parseInnerRequest(rawHeaders);
+        if (parsed === null) {
+          log.debug({ step: "header-parse", sessionId, hint: "Malformed inner HTTP request; fail closed", errorKind: "validation" as const }, "Malformed inner request");
+          destroyWithStatus(clientSocket, "HTTP/1.1 400 Bad Request");
+          return;
+        }
+
+        const { method, path } = parsed;
+
+        log.debug(
+          { step: "inner-request", sessionId, agentId, host, method },
+          "Inner HTTP request received",
+        );
+
+        // ── Step 4: Resolve binding ──────────────────────────────────────
+        // Single-pass: resolveBinding returns undefined for both "unknown host"
+        // and "known host, path rejected". Distinguish the two cases by checking
+        // whether ANY host rule in the bindings matches the hostname (without
+        // path-policy restrictions). pathAllowed with a synthetic open rule
+        // (pathPolicy: undefined) and path "/" tests the host pattern only.
+        const resolved = resolveBinding(deps.bindings, host, path);
+
+        if (!resolved) {
+          // Check if the host itself is known by stripping all pathPolicy constraints.
+          const openBindings = deps.bindings.map((b) => ({
+            ...b,
+            hostRules: b.hostRules.map((r: HostRule) => {
+              // Spread into a new object with pathPolicy cleared.
+              // pathAllowed(openRule, "/") will return true if host rule matches
+              // (since pathPolicy === undefined → allow all paths).
+              const openRule: HostRule = { ...r, pathPolicy: undefined };
+              return openRule;
+            }),
+          }));
+
+          const hostKnown = resolveBinding(openBindings, host, "/") !== undefined;
+          const denialReason: "no_binding" | "path_policy" = hostKnown
+            ? "path_policy"
+            : "no_binding";
+
+          log.debug(
+            {
+              step: "binding-resolve",
+              sessionId,
+              host,
+              denialReason,
+              errorKind: "precondition" as const,
+              hint: "Request denied by binding lookup; fail closed with 403",
+            },
+            "Broker binding denied",
+          );
+          deps.eventBus.emit("broker:denied", {
+            sessionId,
+            host,
+            reason: denialReason,
+            statusCode: 403,
+            timestamp: deps.clock.now(),
+          });
+          destroyWithStatus(clientSocket, "HTTP/1.1 403 Forbidden");
+          return;
+        }
+
+        const { binding, rule } = resolved;
+
+        // ── Step 5: Resolve secret (BEFORE net.connect) ─────────────────
+        const secretValue = deps.secretManager.get(binding.secretRef);
+
+        deps.eventBus.emit("secret:accessed", {
+          secretName: binding.secretRef,
+          agentId,
+          outcome: secretValue !== undefined ? "success" : "not_found",
+          timestamp: deps.clock.now(),
+        });
+
+        if (secretValue === undefined) {
+          log.warn(
+            {
+              step: "secret-resolve",
+              sessionId,
+              agentId,
+              secretRef: binding.secretRef,
+              errorKind: "precondition" as const,
+              hint: "SecretManager returned undefined for secretRef; fail closed with 502",
+            },
+            "Secret not available for broker request",
+          );
+          deps.eventBus.emit("broker:credential_unavailable", {
+            sessionId,
+            secretRef: binding.secretRef,
+            agentId,
+            timestamp: deps.clock.now(),
+          });
+          destroyWithStatus(clientSocket, "HTTP/1.1 502 Bad Gateway");
+          return;
+        }
+
+        // ── Step 6: Inject + forward (ALL gates passed) ──────────────────
+        // Build mutable WHATWG Headers from the parsed inner request headers
+        const whatwgHeaders = new Headers();
+        for (const [name, value] of parsed.headers) {
+          whatwgHeaders.set(name, value);
+        }
+
+        // Build mutable WHATWG URL for setParam injection.
+        // Use the host as the base; path may contain query string.
+        // IPv6 literals need brackets in the URL: http://[::1]/path.
+        // NUL/control bytes are stripped from path before parsing.
+        const hostForUrl = host.includes(":") ? `[${host}]` : host;
+        const baseUrl = `http://${hostForUrl}`;
+        // Strip ASCII control characters (0x00-0x1F and 0x7F) from the path.
+        // eslint-disable-next-line no-control-regex
+        const safePath = path.replace(/[\x00-\x1f\x7f]/g, "");
+        const targetUrl = new URL(safePath !== "" ? safePath : "/", baseUrl);
+
+        // Build the typed InjectionInput — secretValue MUST NOT be logged
+        const injectionInput: InjectionInput = {
+          headers: whatwgHeaders,
+          url: targetUrl,
+          secret: secretValue,
+        };
+
+        // Apply injections — this mutates whatwgHeaders and targetUrl
+        applyInjections(rule.inject, injectionInput);
+
+        // Emit broker:injected — ruleKind ONLY, never the secret value
+        const primaryRule: InjectionRule | undefined = rule.inject[0];
+        const ruleKind: InjectionRule["kind"] = primaryRule !== undefined ? primaryRule.kind : "setHeader";
+        deps.eventBus.emit("broker:injected", {
+          sessionId,
+          host,
+          ruleKind,
+          timestamp: deps.clock.now(),
+        });
+
+        log.debug(
+          { step: "inject", sessionId, agentId, host, ruleKind },
+          "Credentials injected into tunnel request",
+        );
+
+        // Connect to the upstream (FIRST upstream socket — only reached here)
+        const upstreamSocket = net.connect(targetPort, "127.0.0.1", () => {
+          // Rebuild the HTTP/1.1 request line with the (possibly modified) URL
+          // For setParam: use the new search string from targetUrl
+          let requestPath = targetUrl.pathname;
+          if (targetUrl.search) {
+            requestPath += targetUrl.search;
+          }
+
+          // Reconstruct the request with injected headers
+          let requestStr = `${method} ${requestPath} HTTP/1.1\r\n`;
+          whatwgHeaders.forEach((value, name) => {
+            requestStr += `${name}: ${value}\r\n`;
+          });
+          requestStr += "\r\n";
+
+          upstreamSocket.write(requestStr);
+        });
+
+        upstreamSocket.on("error", (err) => {
+          log.debug(
+            { step: "upstream", sessionId, err, errorKind: "network" as const, hint: "Upstream connection failed; destroying tunnel" },
+            "Upstream socket error",
+          );
+          clientSocket.destroy();
+        });
+
+        // Pipe upstream response back to client.
+        // Both "error" and "close" on clientSocket tear down the upstream socket.
+        upstreamSocket.pipe(clientSocket);
+
+        const teardownUpstream = (): void => {
+          upstreamSocket.destroy();
+        };
+        clientSocket.on("error", teardownUpstream);
+        clientSocket.on("close", teardownUpstream);
+      } catch (err) {
+        log.error(
+          { step: "connect-handler", sessionId, err, errorKind: "internal" as const, hint: "Unexpected error in CONNECT handler; destroying socket" },
+          "Unexpected CONNECT handler error",
+        );
+        clientSocket.destroy();
+      }
+    })();
+  }
+
+  return {
+    start(port = 0): Promise<number> {
+      return new Promise((resolve, reject) => {
+        server = http.createServer();
+
+        // Track every incoming TCP connection so stop() can destroy them
+        server.on("connection", (socket: net.Socket) => {
+          openSockets.add(socket);
+          socket.on("close", () => {
+            openSockets.delete(socket);
+          });
+        });
+
+        server.on("connect", handleConnect);
+
+        server.on("error", (err: Error) => {
+          log.error(
+            { step: "server", err, errorKind: "network" as const, hint: "Broker HTTP server error" },
+            "Broker server error",
+          );
+          reject(err);
+        });
+
+        server.listen(port, "127.0.0.1", () => {
+          // server.address() is guaranteed non-null inside the "listening" callback
+          // (Node docs: "Returns the bound address, the address family name, and
+          //  port of the server as reported by the operating system." — never null
+          //  after the "listening" event fires on a TCP server.)
+          const addr = (server as http.Server).address() as net.AddressInfo;
+          log.info(
+            { step: "start", port: addr.port },
+            "NodeMitmBroker started",
+          );
+          resolve(addr.port);
+        });
+      });
+    },
+
+    stop(): Promise<void> {
+      return new Promise((resolve) => {
+        if (!server) {
+          resolve();
+          return;
+        }
+        const srv = server;
+        server = null;
+        // Destroy all tracked open sockets to unblock server.close()
+        for (const socket of openSockets) {
+          socket.destroy();
+        }
+        openSockets.clear();
+        srv.close(() => {
+          log.info({ step: "stop" }, "NodeMitmBroker stopped");
+          resolve();
+        });
+      });
+    },
+  };
+}

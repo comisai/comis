@@ -1528,6 +1528,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "computeReachableToolNames",
       "RequiredToolsUnreachableError",
       "UnreachableToolEntry",
+      // Provider-catalog symbols added in Phase 2 (BROKER-01..03). The broker
+      // in @comis/infra imports resolveBinding, applyInjections, normalizeHost,
+      // BrokerBinding, InjectionRule, HostRule, InjectionInput — all consumed.
+      // pathAllowed is exported for external callers that need to gate requests;
+      // the broker uses resolveBinding (which calls pathAllowed internally).
+      // Broker wiring in the daemon composition root is Phase 3.
+      "pathAllowed",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
@@ -1711,6 +1718,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createSystemClock",
       "createSystemEnv",
       "createSystemTimers",
+      // Credential broker (Phase 2) — no in-repo consumer yet.
+      // The daemon composition root wires these in a future phase.
+      "createSessionManager",
+      "SessionManager",
+      "SessionManagerDeps",
+      "IssuedSession",
+      "SessionInfo",
+      "createMitmBroker",
+      "MitmBrokerPort",
+      "MitmBrokerDeps",
     ])],
     // @comis/memory: baseline orphans tracked here + 5 transient orphans
     // (SessionStore alias + SessionDetailedEntry + 3 Ctx*Row types).

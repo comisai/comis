@@ -113,4 +113,5 @@ export type {
   EnvPort,
   TimerPort,
   TimerHandle,
+  CaManagerPort,
 } from "../ports/index.js";

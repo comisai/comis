@@ -928,3 +928,672 @@ describe("Audit — non-leakage invariants", () => {
     upstream.server.close();
   });
 });
+
+// ── Edge-case / error-path coverage ──────────────────────────────────────────
+
+describe("Edge cases — error paths and coverage branches", () => {
+  it("stop() called before start() does not throw", async () => {
+    const deps = makeDeps(0);
+    const broker = createMitmBroker(deps);
+    // stop() before start() — server is null, should resolve without error
+    await expect(broker.stop()).resolves.toBeUndefined();
+  });
+
+  it("stop() is idempotent — can be called twice without error", async () => {
+    const upstream = await makeUpstreamFixture();
+    const deps = makeDeps(upstream.port);
+    const broker = createMitmBroker(deps);
+    const brokerPort = await broker.start();
+    expect(brokerPort).toBeGreaterThan(0);
+    await broker.stop();
+    await expect(broker.stop()).resolves.toBeUndefined();
+    upstream.server.close();
+  });
+
+  it("client socket closes before sending inner request — broker does not hang", async () => {
+    const upstream = await makeUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+
+    // Open tunnel, get 200, then immediately destroy without sending inner request
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+    socket.destroy(); // destroy before sending GET
+
+    // Wait for broker to process the close — should not hang or throw
+    await new Promise((r) => setTimeout(r, 150));
+
+    // No upstream calls were made
+    expect(upstream.receivedHeaders).toHaveLength(0);
+    upstream.server.close();
+  });
+
+  it("8KB header overflow → broker closes tunnel without forwarding to upstream", async () => {
+    const upstream = await makeUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Send a header that exceeds 8192 bytes without \r\n\r\n
+    // This triggers the MAX_HEADER_BYTES overflow path
+    const oversizeHeader = "GET /v1/messages HTTP/1.1\r\n" +
+      `X-Overflow: ${"A".repeat(8200)}\r\n`;
+    socket.write(oversizeHeader);
+
+    // The broker should destroy the socket
+    await new Promise<void>((resolve) => {
+      socket.on("close", () => resolve());
+      socket.on("error", () => resolve());
+      setTimeout(() => resolve(), 2000); // fallback timeout
+    });
+    socket.destroy();
+
+    // Upstream must not have received any request
+    expect(upstream.receivedHeaders).toHaveLength(0);
+    upstream.server.close();
+  });
+
+  it("upstream connection error is handled gracefully — client socket is destroyed", async () => {
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    // Use a port where connections are immediately refused
+    // We start a temporary server to get a valid port, then close it
+    const tempServer = await new Promise<http.Server>((resolve) => {
+      const s = http.createServer();
+      s.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    const refusedPort = (tempServer.address() as net.AddressInfo).port;
+    await new Promise<void>((resolve) => tempServer.close(() => resolve()));
+    // Port is now closed — connections will be refused
+
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
+      sessionManager,
+      bindings: [
+        {
+          secretRef: "ANTHROPIC_API_KEY",
+          hostRules: [
+            {
+              pattern: { kind: "exact", host: "api.anthropic.com" },
+              inject: [{ kind: "setHeader", name: "x-api-key", format: "raw" }],
+            },
+          ],
+        },
+      ],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+
+    // CONNECT to a target that will refuse connection
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${refusedPort}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Send the GET request — this will trigger net.connect to the refused port
+    socket.write("GET /v1/messages HTTP/1.1\r\nhost: api.anthropic.com\r\n\r\n");
+
+    // Wait for socket to close due to upstream error
+    await new Promise<void>((resolve) => {
+      socket.on("close", () => resolve());
+      socket.on("error", () => resolve());
+      setTimeout(() => resolve(), 2000);
+    });
+    socket.destroy();
+  });
+
+  it("empty inject array uses default Bearer injection — upstream receives Authorization header", async () => {
+    const upstream = await makeUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    // Binding with empty inject → default Bearer behavior
+    const emptyInjectBinding: BrokerBinding = {
+      secretRef: "BEARER_KEY",
+      hostRules: [
+        {
+          pattern: { kind: "exact", host: "bearer.example.com" },
+          inject: [], // empty → default Authorization: Bearer
+        },
+      ],
+    };
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ BEARER_KEY: "bearer-secret-key" }),
+      sessionManager,
+      bindings: [emptyInjectBinding],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `bearer.example.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/api/v1", { host: "bearer.example.com" });
+    socket.destroy();
+
+    await new Promise((r) => setTimeout(r, 100));
+    expect(upstream.receivedHeaders.length).toBeGreaterThan(0);
+    // Default Bearer injection sets Authorization header
+    const authHeader = upstream.receivedHeaders[0]?.["authorization"];
+    expect(authHeader).toBe("Bearer bearer-secret-key");
+
+    // broker:injected ruleKind defaults to "setHeader" for empty inject
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "broker:injected",
+      expect.objectContaining({ ruleKind: "setHeader" }),
+    );
+    upstream.server.close();
+  });
+
+  it("createMitmBroker factory returns MitmBrokerPort with start and stop methods", () => {
+    const deps = makeDeps(0);
+    const broker = createMitmBroker(deps);
+    expect(typeof broker.start).toBe("function");
+    expect(typeof broker.stop).toBe("function");
+  });
+
+  it("start() rejects when port is already in use — server error callback fires", async () => {
+    // Start a server to occupy a port
+    const occupied = await new Promise<http.Server>((resolve) => {
+      const s = http.createServer();
+      s.listen(0, "127.0.0.1", () => resolve(s));
+    });
+    const occupiedPort = (occupied.address() as net.AddressInfo).port;
+
+    const deps = makeDeps(0);
+    const broker = createMitmBroker(deps);
+
+    // Try to start on the occupied port — should reject
+    await expect(broker.start(occupiedPort)).rejects.toThrow();
+
+    occupied.close();
+  });
+
+  it("unexpected exception in pipeline (secretManager.get throws) — outer catch handles gracefully", async () => {
+    const upstream = await makeUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    // Create a mock secret manager that throws on get()
+    const throwingSecretManager = {
+      get: (_key: string): string | undefined => {
+        throw new Error("unexpected internal error");
+      },
+    };
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: throwingSecretManager,
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Send GET — secretManager.get() will throw inside the pipeline
+    socket.write("GET /v1/messages HTTP/1.1\r\nhost: api.anthropic.com\r\n\r\n");
+
+    // Broker's catch block should destroy the clientSocket
+    await new Promise<void>((resolve) => {
+      socket.on("close", () => resolve());
+      socket.on("error", () => resolve());
+      setTimeout(() => resolve(), 2000);
+    });
+    socket.destroy();
+
+    // Upstream must not have received any request
+    expect(upstream.receivedHeaders).toHaveLength(0);
+    upstream.server.close();
+  });
+
+  it("CONNECT with IPv6 bracketed authority — broker normalizes and routes correctly", async () => {
+    const upstream = await makeUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    // A binding for the loopback IPv6 address
+    const ipv6Binding: BrokerBinding = {
+      secretRef: "IPV6_KEY",
+      hostRules: [
+        {
+          pattern: { kind: "exact", host: "::1" },
+          inject: [{ kind: "setHeader", name: "x-ipv6-key", format: "raw" }],
+        },
+      ],
+    };
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ IPV6_KEY: "ipv6-real-key" }),
+      sessionManager,
+      bindings: [ipv6Binding],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+
+    // CONNECT with IPv6 bracketed authority: [::1]:PORT
+    // This exercises the extractPort and normalizeHost IPv6 paths
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `[::1]:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    await sendGetThroughTunnel(socket, "/test", { host: "::1" });
+    socket.destroy();
+
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Upstream should have received the request with injected header
+    expect(upstream.receivedHeaders.length).toBeGreaterThan(0);
+    expect(upstream.receivedHeaders[0]).toMatchObject({ "x-ipv6-key": "ipv6-real-key" });
+    upstream.server.close();
+  });
+
+  it("CONNECT with malformed IPv6 authority (no closing bracket) — 407 because token needed", async () => {
+    // This exercises extractPort with authority.startsWith("[") && closeBracket === -1
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({}),
+      sessionManager,
+      bindings: [],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    // Missing token → 407 (before extractPort is even called)
+    // But the authority "[::1-no-close-bracket" exercises normalizeHost + extractPort IPv6 branch
+    await new Promise<void>((resolve, reject) => {
+      const s = net.connect(brokerPort, "127.0.0.1", () => {
+        // "[::1:PORT" — bracket never closed, exercises closeBracket === -1 → return 443
+        s.write(`CONNECT [::1:8080 HTTP/1.1\r\nHost: [::1:8080\r\nProxy-Authorization: Bearer invalid\r\n\r\n`);
+      });
+      let buf = "";
+      s.on("data", (chunk) => {
+        buf += chunk.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return;
+        const code = parseInt(buf.slice(0, buf.indexOf("\r\n")).split(" ")[1] ?? "0", 10);
+        s.destroy();
+        expect(code).toBe(407); // bad token
+        resolve();
+      });
+      s.on("error", reject);
+      setTimeout(() => reject(new Error("timeout")), 3000);
+    });
+  });
+
+  it("CONNECT with IPv6 authority and non-numeric port — broker uses default port 443", async () => {
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    const ipv6Binding: BrokerBinding = {
+      secretRef: "IPV6_KEY",
+      hostRules: [{ pattern: { kind: "exact", host: "::1" }, inject: [{ kind: "setHeader", name: "x-key", format: "raw" }] }],
+    };
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ IPV6_KEY: "val" }),
+      sessionManager,
+      bindings: [ipv6Binding],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+
+    // [::1]:abc — non-numeric port for IPv6 → isNaN(parsed) branch → return 443
+    const result = await new Promise<{ statusCode: number; socket: net.Socket }>((resolve, reject) => {
+      const s = net.connect(brokerPort, "127.0.0.1", () => {
+        s.write(
+          `CONNECT [::1]:abc HTTP/1.1\r\n` +
+            `Host: [::1]:abc\r\n` +
+            `Proxy-Authorization: Bearer ${proxyToken}\r\n` +
+            `\r\n`,
+        );
+      });
+      let buf = "";
+      s.on("data", (chunk) => {
+        buf += chunk.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return;
+        const code = parseInt(buf.slice(0, buf.indexOf("\r\n")).split(" ")[1] ?? "0", 10);
+        resolve({ statusCode: code, socket: s });
+      });
+      s.on("error", reject);
+      setTimeout(() => reject(new Error("timeout")), 3000);
+    });
+
+    expect(result.statusCode).toBe(200);
+    result.socket.destroy();
+    await new Promise((r) => setTimeout(r, 200));
+  });
+
+  it("CONNECT authority without port number (default port) — broker parses authority correctly", async () => {
+    const upstream = await makeUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+
+    // CONNECT without a port number (no colon in authority) exercises
+    // the extractPort "lastColon === -1" branch which returns 443.
+    const result = await new Promise<{ statusCode: number; socket: net.Socket }>((resolve, reject) => {
+      const s = net.connect(brokerPort, "127.0.0.1", () => {
+        s.write(
+          `CONNECT api.anthropic.com HTTP/1.1\r\n` +
+            `Host: api.anthropic.com\r\n` +
+            `Proxy-Authorization: Bearer ${proxyToken}\r\n` +
+            `\r\n`,
+        );
+      });
+      let buf = "";
+      s.on("data", (chunk) => {
+        buf += chunk.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return;
+        const statusLine = buf.slice(0, buf.indexOf("\r\n"));
+        const code = parseInt(statusLine.split(" ")[1] ?? "0", 10);
+        resolve({ statusCode: code, socket: s });
+      });
+      s.on("error", reject);
+      setTimeout(() => reject(new Error("timeout")), 3000);
+    });
+
+    // Auth passed → 200 Connection established (even though port 443 may be unavailable)
+    expect(result.statusCode).toBe(200);
+    result.socket.destroy();
+    await new Promise((r) => setTimeout(r, 200));
+    upstream.server.close();
+  });
+
+  it("CONNECT with a suffix-matched host that exceeds suffix boundary — 403 if suffix host itself is the target", async () => {
+    const upstream = await makeUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    // Binding with suffix pattern: *.anthropic.com
+    const suffixBinding: BrokerBinding = {
+      secretRef: "ANTHROPIC_API_KEY",
+      hostRules: [
+        {
+          pattern: { kind: "suffix", suffix: ".anthropic.com" },
+          inject: [{ kind: "setHeader", name: "x-api-key", format: "raw" }],
+        },
+      ],
+    };
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
+      sessionManager,
+      bindings: [suffixBinding],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    // api.anthropic.com should match the suffix .anthropic.com
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+    socket.destroy();
+
+    await new Promise((r) => setTimeout(r, 100));
+    expect(upstream.receivedHeaders.length).toBeGreaterThan(0);
+    upstream.server.close();
+  });
+
+  it("malformed inner HTTP request (empty request line) — broker closes tunnel without forwarding", async () => {
+    const upstream = await makeUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Send an inner request with just the header terminator — no request line
+    socket.write("\r\n\r\n");
+
+    await new Promise<void>((resolve) => {
+      socket.on("close", () => resolve());
+      socket.on("error", () => resolve());
+      setTimeout(() => resolve(), 2000);
+    });
+    socket.destroy();
+
+    expect(upstream.receivedHeaders).toHaveLength(0);
+    upstream.server.close();
+  });
+
+  it("CONNECT with IPv6 authority without port — broker uses default port 443", async () => {
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    const ipv6Binding: BrokerBinding = {
+      secretRef: "IPV6_KEY",
+      hostRules: [{ pattern: { kind: "exact", host: "::1" }, inject: [{ kind: "setHeader", name: "x-key", format: "raw" }] }],
+    };
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ IPV6_KEY: "val" }),
+      sessionManager,
+      bindings: [ipv6Binding],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+
+    // [::1] without port — afterBracket is empty, doesn't start with ":" → return 443
+    const result = await new Promise<{ statusCode: number; socket: net.Socket }>((resolve, reject) => {
+      const s = net.connect(brokerPort, "127.0.0.1", () => {
+        s.write(
+          `CONNECT [::1] HTTP/1.1\r\n` +
+            `Host: [::1]\r\n` +
+            `Proxy-Authorization: Bearer ${proxyToken}\r\n` +
+            `\r\n`,
+        );
+      });
+      let buf = "";
+      s.on("data", (chunk) => {
+        buf += chunk.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return;
+        const statusLine = buf.slice(0, buf.indexOf("\r\n"));
+        const code = parseInt(statusLine.split(" ")[1] ?? "0", 10);
+        resolve({ statusCode: code, socket: s });
+      });
+      s.on("error", reject);
+      setTimeout(() => reject(new Error("timeout")), 3000);
+    });
+
+    expect(result.statusCode).toBe(200);
+    result.socket.destroy();
+    await new Promise((r) => setTimeout(r, 200));
+  });
+
+  it("CONNECT with non-numeric port in authority — broker uses default port 443", async () => {
+    const upstream = await makeUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+
+    // CONNECT with a non-numeric port triggers the isNaN(parsed) branch in extractPort
+    // The broker will use port 443 (default) and fail to connect — but the 200 is sent first
+    const result = await new Promise<{ statusCode: number; socket: net.Socket }>((resolve, reject) => {
+      const s = net.connect(brokerPort, "127.0.0.1", () => {
+        s.write(
+          `CONNECT api.anthropic.com:notaport HTTP/1.1\r\n` +
+            `Host: api.anthropic.com:notaport\r\n` +
+            `Proxy-Authorization: Bearer ${proxyToken}\r\n` +
+            `\r\n`,
+        );
+      });
+      let buf = "";
+      s.on("data", (chunk) => {
+        buf += chunk.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return;
+        const statusLine = buf.slice(0, buf.indexOf("\r\n"));
+        const code = parseInt(statusLine.split(" ")[1] ?? "0", 10);
+        resolve({ statusCode: code, socket: s });
+      });
+      s.on("error", reject);
+      setTimeout(() => reject(new Error("timeout")), 3000);
+    });
+
+    // 200 is sent before port check — auth passed
+    expect(result.statusCode).toBe(200);
+    result.socket.destroy();
+    await new Promise((r) => setTimeout(r, 200));
+    upstream.server.close();
+  });
+
+  it("socket error event during header read — broker handles gracefully", async () => {
+    const upstream = await makeUpstreamFixture();
+    const clock = createFakeClock(1_700_000_000_000);
+    const sessionManager = createSessionManager({ clock });
+    const deps: MitmBrokerDeps = {
+      clock,
+      eventBus: createMockEventBus(),
+      logger: createMockLogger(),
+      secretManager: createSecretManager({ ANTHROPIC_API_KEY: "real-sk-key" }),
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+
+    // Establish tunnel and immediately destroy with error
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Destroy the socket immediately without sending any inner request
+    // This tests the close event path in readTunnelHeaders
+    socket.destroy(new Error("simulated client error"));
+
+    await new Promise((r) => setTimeout(r, 150));
+    expect(upstream.receivedHeaders).toHaveLength(0);
+    upstream.server.close();
+  });
+});

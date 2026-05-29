@@ -17,6 +17,17 @@ export { createSystemClock } from "./runtime/clock.js";
 export { createSystemEnv } from "./runtime/env.js";
 export { createSystemTimers } from "./runtime/timers.js";
 
+// Credential broker (MITM proxy runtime, Phase 2)
+export { createSessionManager, createMitmBroker } from "./credential-broker/index.js";
+export type {
+  SessionManager,
+  SessionManagerDeps,
+  IssuedSession,
+  SessionInfo,
+  MitmBrokerPort,
+  MitmBrokerDeps,
+} from "./credential-broker/index.js";
+
 // The fs-safe primitives (appendRegularFile + writeRegularFile +
 // SymlinkParentRejected / PathEscapesConfinementError /
 // FileSizeLimitExceeded sentinels + option/result types) live in
