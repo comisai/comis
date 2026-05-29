@@ -140,13 +140,19 @@ function parseInnerRequest(rawHeaders: string): {
 
 /**
  * Read from a socket until \r\n\r\n is found, with an 8 KB cap.
- * Returns the headers section (without the terminator) or null on error/overflow.
+ * Returns { headers, tail } where `headers` is the headers section (without
+ * the terminator) and `tail` is any bytes that arrived after the terminator
+ * in the same read buffers (e.g., a request body that arrived in the same
+ * TCP segment as the headers). Returns null on error/overflow.
  * Resolves immediately if enough data is buffered from the initial dataChunk.
+ *
+ * The `tail` must be written to the upstream socket BEFORE piping, so that
+ * body bytes that co-arrived with headers are not silently discarded (CR-01).
  */
 function readTunnelHeaders(
   socket: net.Socket,
   initialChunk: Buffer,
-): Promise<string | null> {
+): Promise<{ headers: string; tail: string } | null> {
   return new Promise((resolve) => {
     let finished = false;
     let buf = initialChunk.toString("latin1");
@@ -162,7 +168,7 @@ function readTunnelHeaders(
       finish(null);
     }
 
-    function finish(result: string | null): void {
+    function finish(result: { headers: string; tail: string } | null): void {
       if (finished) return;
       finished = true;
       socket.off("data", onData);
@@ -174,7 +180,7 @@ function readTunnelHeaders(
     function check(): void {
       const idx = buf.indexOf("\r\n\r\n");
       if (idx !== -1) {
-        finish(buf.slice(0, idx));
+        finish({ headers: buf.slice(0, idx), tail: buf.slice(idx + 4) });
         return;
       }
       if (buf.length > MAX_HEADER_BYTES) {
@@ -199,6 +205,13 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
   let server: http.Server | null = null;
   // Track open sockets so stop() can destroy them immediately
   const openSockets = new Set<net.Socket>();
+  // Track upstream (outbound) sockets separately — these are created by
+  // net.connect() and are NOT accepted by the server, so they are not
+  // captured by the server "connection" event. Without tracking them here,
+  // a stop() call leaves in-flight upstream sockets alive, preventing clean
+  // process exit (WR-03). Calling .unref() alone is insufficient for test
+  // environments where we need stop() to be fully synchronous.
+  const openUpstreamSockets = new Set<net.Socket>();
 
   function handleConnect(
     req: http.IncomingMessage,
@@ -264,43 +277,78 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
     // Extract target port from the CONNECT authority
     const targetPort = extractPort(authority);
 
-    clientSocket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+    // Attach a no-op error listener to clientSocket BEFORE writing the 200
+    // response. Without this listener, an EPIPE (client closed before we
+    // write) fires as an unhandled "error" event which Node promotes to an
+    // uncaughtException. The actual EPIPE on the write is caught by the
+    // try/catch below (CR-02 / WR-01).
+    clientSocket.on("error", () => undefined);
 
-    log.debug(
-      { step: "tunnel-open", sessionId, agentId, host },
-      "CONNECT tunnel established",
-    );
-
-    // ── Step 3: Read inner HTTP request headers ──────────────────────────
-    // The client will start sending the inner HTTP/1.1 request after the 200.
-    // We must buffer until \r\n\r\n with an 8 KB cap.
-    // NOTE: the `_head` argument from the http.createServer "connect" event
-    // is the data that arrived after the CONNECT request. In practice this
-    // buffer is always empty (the client waits for the 200 response before
-    // sending anything), but we pass it through `readTunnelHeaders` as the
-    // initial chunk to handle any edge case where data arrives early.
     void (async () => {
       try {
+        // Write 200 inside the async IIFE so that if the client has already
+        // closed (EPIPE race), the thrown error is caught by the outer try/catch
+        // below rather than propagating as an uncaughtException (CR-02).
+        try {
+          clientSocket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+        } catch {
+          // Client dropped the connection before receiving the 200 — silently exit.
+          return;
+        }
+
+        log.debug(
+          { step: "tunnel-open", sessionId, agentId, host },
+          "CONNECT tunnel established",
+        );
+
+        // ── Step 3: Read inner HTTP request headers ──────────────────────────
+        // The client will start sending the inner HTTP/1.1 request after the 200.
+        // We must buffer until \r\n\r\n with an 8 KB cap.
+        // NOTE: the `_head` argument from the http.createServer "connect" event
+        // is the data that arrived after the CONNECT request. In practice this
+        // buffer is always empty (the client waits for the 200 response before
+        // sending anything), but we pass it through `readTunnelHeaders` as the
+        // initial chunk to handle any edge case where data arrives early.
         // readTunnelHeaders handles an empty initial chunk gracefully —
         // it will wait for the next "data" event.
-        const rawHeaders = await readTunnelHeaders(clientSocket, _head);
+        const tunnelResult = await readTunnelHeaders(clientSocket, _head);
 
-        if (rawHeaders === null) {
+        if (tunnelResult === null) {
           log.debug({ step: "header-parse", sessionId, hint: "Header overflow or parse error; fail closed", errorKind: "validation" as const }, "Inner request header overflow");
+          // Correct reason: this is a malformed request (header overflow), NOT
+          // a path policy violation. Using "path_policy" here was a
+          // misclassification that could hide real malformed-request attacks in
+          // the audit trail (CR-03).
           deps.eventBus.emit("broker:denied", {
             sessionId,
             host,
-            reason: "path_policy" as const,
-            statusCode: 403,
+            reason: "malformed_request" as const,
+            statusCode: 400,
             timestamp: deps.clock.now(),
           });
           destroyWithStatus(clientSocket, "HTTP/1.1 400 Bad Request");
           return;
         }
 
+        // `tail` contains any bytes that arrived after \r\n\r\n in the same
+        // TCP segment as the headers (typically the beginning of a request
+        // body). These must be written to the upstream socket after the
+        // injected headers, before piping, so they are not silently discarded.
+        const { headers: rawHeaders, tail: bodyPrefix } = tunnelResult;
+
         const parsed = parseInnerRequest(rawHeaders);
         if (parsed === null) {
           log.debug({ step: "header-parse", sessionId, hint: "Malformed inner HTTP request; fail closed", errorKind: "validation" as const }, "Malformed inner request");
+          // Emit broker:denied so every consumed-token exit path is audited.
+          // Previously this path silently called destroyWithStatus with no event
+          // — leaving no trace in the audit log (WR-04).
+          deps.eventBus.emit("broker:denied", {
+            sessionId,
+            host,
+            reason: "malformed_request" as const,
+            statusCode: 400,
+            timestamp: deps.clock.now(),
+          });
           destroyWithStatus(clientSocket, "HTTP/1.1 400 Bad Request");
           return;
         }
@@ -446,15 +494,49 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             requestPath += targetUrl.search;
           }
 
-          // Reconstruct the request with injected headers
+          // Reconstruct the request with injected headers.
+          // NOTE: WHATWG Headers.forEach iteration is alphabetical (RFC 7230
+          // normalization). This is acceptable for Phase 2. Phase 3 awsSigV4
+          // finalizer must reconstruct headers in the SignedHeaders-declared
+          // order — do not use forEach for that path (WR-05).
           let requestStr = `${method} ${requestPath} HTTP/1.1\r\n`;
           whatwgHeaders.forEach((value, name) => {
             requestStr += `${name}: ${value}\r\n`;
           });
           requestStr += "\r\n";
 
+          // Write the injected headers first, then any body bytes that
+          // arrived in the same TCP segment as the headers (the bodyPrefix),
+          // then pipe the remaining body from clientSocket.
+          //
+          // Ordering is critical (CR-01):
+          //  1. headers (already-injected) go first
+          //  2. bodyPrefix (buffered by readTunnelHeaders) goes next
+          //  3. the pipe forwards any subsequent body chunks from clientSocket
+          //
+          // The pipe must be set up INSIDE the connect callback, AFTER writing
+          // headers, to ensure the body does not precede the headers on the
+          // upstream connection.
           upstreamSocket.write(requestStr);
+
+          // Flush body bytes that arrived in the same segment as the headers.
+          if (bodyPrefix.length > 0) {
+            upstreamSocket.write(bodyPrefix, "latin1");
+          }
+
+          // Pipe client request body to upstream (client → upstream direction).
+          // This is the missing reverse pipe that caused POST/PUT/PATCH bodies
+          // to be silently discarded — the upstream only saw headers and the
+          // body was buffered in the client socket's read buffer and never
+          // forwarded (CR-01).
+          clientSocket.pipe(upstreamSocket);
         });
+
+        // Track upstream socket so stop() can destroy it (WR-03).
+        openUpstreamSockets.add(upstreamSocket);
+        // Unref so the socket does not hold the event loop open on its own
+        // after stop() is called (defense-in-depth alongside tracked destroy).
+        upstreamSocket.unref();
 
         upstreamSocket.on("error", (err) => {
           log.debug(
@@ -464,15 +546,20 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           clientSocket.destroy();
         });
 
-        // Pipe upstream response back to client.
-        // Both "error" and "close" on clientSocket tear down the upstream socket.
+        // Pipe upstream response back to client (upstream → client direction).
         upstreamSocket.pipe(clientSocket);
 
         const teardownUpstream = (): void => {
+          openUpstreamSockets.delete(upstreamSocket);
           upstreamSocket.destroy();
         };
-        clientSocket.on("error", teardownUpstream);
+        const teardownClient = (): void => {
+          clientSocket.destroy();
+        };
         clientSocket.on("close", teardownUpstream);
+        // upstreamSocket "close" tears down the client side too so the
+        // connection is fully cleaned up when the upstream closes normally.
+        upstreamSocket.on("close", teardownClient);
       } catch (err) {
         log.error(
           { step: "connect-handler", sessionId, err, errorKind: "internal" as const, hint: "Unexpected error in CONNECT handler; destroying socket" },
@@ -529,11 +616,19 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         }
         const srv = server;
         server = null;
-        // Destroy all tracked open sockets to unblock server.close()
+        // Destroy all tracked open client sockets to unblock server.close()
         for (const socket of openSockets) {
           socket.destroy();
         }
         openSockets.clear();
+        // Destroy all in-flight upstream sockets so they do not keep the
+        // process alive after stop() returns (WR-03). Without this, upstream
+        // net.connect() sockets created after all gates pass are invisible to
+        // the server's connection tracking and would survive stop().
+        for (const socket of openUpstreamSockets) {
+          socket.destroy();
+        }
+        openUpstreamSockets.clear();
         srv.close(() => {
           log.info({ step: "stop" }, "NodeMitmBroker stopped");
           resolve();
