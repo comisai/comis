@@ -98,6 +98,11 @@ export function hostRuleMatches(rule: HostRule, hostname: string): boolean {
  *
  * Query string is stripped before comparison (T-02-05).
  * Fail-closed: `pathPolicy: []` rejects all paths.
+ *
+ * WR-01 normalization: `/../` and `/./` segments are resolved before comparison
+ * via `new URL(path, "https://x").pathname`. Malformed paths that cannot be
+ * parsed return false (deny). This is defense-in-depth — the CredentialBroker
+ * (Phase 2) MUST also normalize the raw path before calling this function.
  */
 export function pathAllowed(rule: HostRule, path: string): boolean {
   // No policy → allow all paths (open policy when operator has not restricted)
@@ -106,8 +111,18 @@ export function pathAllowed(rule: HostRule, path: string): boolean {
   // Empty policy → deny all (fail-closed)
   if (rule.pathPolicy.length === 0) return false;
 
-  // Strip query string before comparison
-  const cleanPath = path.split("?")[0] ?? path;
+  // WR-01: normalize dotdot and dot segments before comparison.
+  // new URL resolves /v1/../admin/secret → /admin/secret so it cannot
+  // escape the intended policy scope. Malformed paths deny fail-closed.
+  let normalizedPath: string;
+  try {
+    normalizedPath = new URL(path, "https://x").pathname;
+  } catch {
+    return false;
+  }
+
+  // Strip query string before comparison (T-02-05)
+  const cleanPath = normalizedPath.split("?")[0] ?? normalizedPath;
 
   for (const pattern of rule.pathPolicy) {
     if (matchPathPattern(pattern, cleanPath)) return true;
