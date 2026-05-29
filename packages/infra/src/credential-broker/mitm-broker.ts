@@ -14,6 +14,7 @@
  *   4. Resolve binding (host + path matching) → 403 + destroy on no-match
  *   5. Resolve secret from SecretManager → 502 + destroy on miss
  *   6. Inject credentials (applyInjections) → forward to upstream
+ *   6.5 Finalizer stage (body-aware) → buffer body + dispatch → forward OR 413 fail-closed
  *
  * TLS seam (Phase 3): accepts optional CaManagerPort; when undefined, passes
  * TCP stream opaque. When wired, Phase 3 terminates TLS and injects on the
@@ -45,6 +46,7 @@ import type {
 } from "@comis/core";
 import { resolveBinding, applyInjections, normalizeHost } from "@comis/core";
 import type { SessionManager, SessionInfo } from "./session-manager.js";
+import { bufferBody, runFinalizer, MAX_BODY_BYTES } from "./finalizer-stage.js";
 
 // ── Max header size for tunnel inner-request parsing (request smuggling prevention) ──
 const MAX_HEADER_BYTES = 8192;
@@ -559,83 +561,134 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           "Credentials injected into tunnel request",
         );
 
-        // Connect to the upstream (FIRST upstream socket — only reached here)
-        const upstreamSocket = net.connect(targetPort, "127.0.0.1", () => {
-          // Rebuild the HTTP/1.1 request line with the (possibly modified) URL
-          // For setParam: use the new search string from targetUrl
+        // ── Step 6.5: Finalizer stage (after injection, before upstream connect) ──
+        // When rule has no finalizer, keep the existing streaming pipe path
+        // (byte-identical, no buffering overhead). When a finalizer is configured,
+        // buffer the full body up to MAX_BODY_BYTES before opening upstream —
+        // exceeding the cap returns 413 fail-closed (BEFORE net.connect, matching
+        // the existing 403/502 pattern above).
+        if (rule.finalizer !== undefined) {
+          // Parse Content-Length from the inner request headers so bufferBody
+          // can stop accumulating once the declared body size is reached, rather
+          // than waiting for socket EOF (HTTP/1.1 keep-alive never sends EOF).
+          const rawContentLength = whatwgHeaders.get("content-length");
+          const declaredContentLength =
+            rawContentLength !== null
+              ? parseInt(rawContentLength, 10) || undefined
+              : undefined;
+          const bodyBuf = await bufferBody(innerSocket, bodyPrefix, MAX_BODY_BYTES, declaredContentLength);
+          if (bodyBuf === null) {
+            log.debug(
+              {
+                step: "finalizer_body_cap",
+                sessionId,
+                errorKind: "validation" as const,
+                hint: "Request body exceeds body-size cap; returning 413",
+              },
+              "Body size cap exceeded — fail closed",
+            );
+            deps.eventBus.emit("broker:denied", {
+              sessionId,
+              host,
+              reason: "body_too_large" as const,
+              statusCode: 413,
+              timestamp: deps.clock.now(),
+            });
+            destroyWithStatus(innerSocket, "HTTP/1.1 413 Content Too Large");
+            return;
+          }
+
+          const result = runFinalizer(rule.finalizer, bodyBuf, whatwgHeaders, log);
+
+          // Rebuild request path (same logic as the no-finalizer path below)
           let requestPath = targetUrl.pathname;
           if (targetUrl.search) {
             requestPath += targetUrl.search;
           }
 
-          // Reconstruct the request with injected headers.
-          // NOTE: WHATWG Headers.forEach iteration is alphabetical (RFC 7230
-          // normalization). This is acceptable for Phase 2. Phase 3 awsSigV4
-          // finalizer must reconstruct headers in the SignedHeaders-declared
-          // order — do not use forEach for that path (WR-05).
+          // Reconstruct request headers from the finalizer result.
+          // NOTE: WHATWG Headers.forEach iteration is alphabetical (WR-05).
+          // Phase 4 awsSigV4 is a no-op so alphabetical order is acceptable.
+          // FINAL-02 (actual signing) must preserve SignedHeaders-declared order.
           let requestStr = `${method} ${requestPath} HTTP/1.1\r\n`;
-          whatwgHeaders.forEach((value, name) => {
+          result.headers.forEach((value, name) => {
             requestStr += `${name}: ${value}\r\n`;
           });
           requestStr += "\r\n";
 
-          // Write the injected headers first, then any body bytes that
-          // arrived in the same TCP segment as the headers (the bodyPrefix),
-          // then pipe the remaining body from clientSocket.
-          //
-          // Ordering is critical (CR-01):
-          //  1. headers (already-injected) go first
-          //  2. bodyPrefix (buffered by readTunnelHeaders) goes next
-          //  3. the pipe forwards any subsequent body chunks from clientSocket
-          //
-          // The pipe must be set up INSIDE the connect callback, AFTER writing
-          // headers, to ensure the body does not precede the headers on the
-          // upstream connection.
-          upstreamSocket.write(requestStr);
+          // Open upstream only after body is fully known and finalizer has run.
+          const upstreamSocket = net.connect(targetPort, "127.0.0.1", () => {
+            upstreamSocket.write(requestStr);
+            upstreamSocket.write(result.body);
+            // Signal EOF on the client→upstream direction — body is fully buffered,
+            // no more bytes will arrive from innerSocket.
+            upstreamSocket.end();
+          });
 
-          // Flush body bytes that arrived in the same segment as the headers.
-          if (bodyPrefix.length > 0) {
-            upstreamSocket.write(bodyPrefix, "latin1");
-          }
+          openUpstreamSockets.add(upstreamSocket);
+          upstreamSocket.unref();
 
-          // Pipe client request body to upstream (client → upstream direction).
-          // This is the missing reverse pipe that caused POST/PUT/PATCH bodies
-          // to be silently discarded — the upstream only saw headers and the
-          // body was buffered in the client socket's read buffer and never
-          // forwarded (CR-01).
-          // When TLS is active, innerSocket is the TLSSocket (decrypted stream).
-          innerSocket.pipe(upstreamSocket);
-        });
+          upstreamSocket.on("error", (err) => {
+            log.debug(
+              { step: "upstream", sessionId, err, errorKind: "network" as const, hint: "Upstream connection failed; destroying tunnel" },
+              "Upstream socket error",
+            );
+            innerSocket.destroy();
+          });
 
-        // Track upstream socket so stop() can destroy it (WR-03).
-        openUpstreamSockets.add(upstreamSocket);
-        // Unref so the socket does not hold the event loop open on its own
-        // after stop() is called (defense-in-depth alongside tracked destroy).
-        upstreamSocket.unref();
+          upstreamSocket.pipe(innerSocket);
 
-        upstreamSocket.on("error", (err) => {
-          log.debug(
-            { step: "upstream", sessionId, err, errorKind: "network" as const, hint: "Upstream connection failed; destroying tunnel" },
-            "Upstream socket error",
-          );
-          // Destroy the inner socket (TLSSocket when Phase 3 is wired, raw
-          // clientSocket in Phase 2). TLSSocket.destroy() propagates down to
-          // the underlying clientSocket automatically — not the reverse.
-          innerSocket.destroy();
-        });
+          const teardownUpstream = (): void => {
+            openUpstreamSockets.delete(upstreamSocket);
+            upstreamSocket.destroy();
+          };
+          innerSocket.on("close", teardownUpstream);
 
-        // Pipe upstream response back to client (upstream → client direction).
-        // With the default { end: true }, when upstream sends EOF the pipe
-        // automatically calls innerSocket.end() so the client receives the
-        // full response before the connection is cleanly terminated.
-        upstreamSocket.pipe(innerSocket);
+        } else {
+          // No finalizer — existing streaming path (byte-identical pass-through, CR-01).
+          const upstreamSocket = net.connect(targetPort, "127.0.0.1", () => {
+            let requestPath = targetUrl.pathname;
+            if (targetUrl.search) {
+              requestPath += targetUrl.search;
+            }
+            // NOTE: WHATWG Headers.forEach iteration is alphabetical (RFC 7230
+            // normalization). Acceptable for Phase 2/4. FINAL-02 (awsSigV4
+            // signing) must reconstruct in SignedHeaders-declared order (WR-05).
+            let requestStr = `${method} ${requestPath} HTTP/1.1\r\n`;
+            whatwgHeaders.forEach((value, name) => {
+              requestStr += `${name}: ${value}\r\n`;
+            });
+            requestStr += "\r\n";
 
-        const teardownUpstream = (): void => {
-          openUpstreamSockets.delete(upstreamSocket);
-          upstreamSocket.destroy();
-        };
-        // Clean up upstream socket when the client (inner socket) closes (error or normal end).
-        innerSocket.on("close", teardownUpstream);
+            upstreamSocket.write(requestStr);
+
+            if (bodyPrefix.length > 0) {
+              upstreamSocket.write(bodyPrefix, "latin1");
+            }
+
+            // Pipe client request body to upstream (client → upstream direction).
+            innerSocket.pipe(upstreamSocket);
+          });
+
+          openUpstreamSockets.add(upstreamSocket);
+          upstreamSocket.unref();
+
+          upstreamSocket.on("error", (err) => {
+            log.debug(
+              { step: "upstream", sessionId, err, errorKind: "network" as const, hint: "Upstream connection failed; destroying tunnel" },
+              "Upstream socket error",
+            );
+            innerSocket.destroy();
+          });
+
+          upstreamSocket.pipe(innerSocket);
+
+          const teardownUpstream = (): void => {
+            openUpstreamSockets.delete(upstreamSocket);
+            upstreamSocket.destroy();
+          };
+          innerSocket.on("close", teardownUpstream);
+        }
       } catch (err) {
         log.error(
           { step: "connect-handler", sessionId, err, errorKind: "internal" as const, hint: "Unexpected error in CONNECT handler; destroying socket" },

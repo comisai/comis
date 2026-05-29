@@ -45,6 +45,11 @@ export interface FinalizerResult {
  * innerSocket was paused inside readTunnelHeaders; this function resumes it
  * AFTER attaching all listeners to preserve ordering (CR-01 parallel).
  *
+ * contentLength: when provided (from the inner request Content-Length header),
+ * buffering stops as soon as total bytes >= contentLength, without waiting for
+ * socket EOF. Required for HTTP/1.1 keep-alive connections where the client
+ * does not close the connection after the request body.
+ *
  * Returns the full body Buffer on success, or null if:
  *   - total bytes exceed cap (caller must 413 — do NOT call net.connect)
  *   - socket emits "error" or "close" before "end" (fail closed)
@@ -53,6 +58,7 @@ export function bufferBody(
   innerSocket: net.Socket | tls.TLSSocket,
   bodyPrefix: string,
   cap: number,
+  contentLength?: number,
 ): Promise<Buffer | null> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
@@ -62,11 +68,18 @@ export function bufferBody(
     function settle(result: Buffer | null): void {
       if (settled) return;
       settled = true;
+      innerSocket.pause();
       innerSocket.off("data", onData);
       innerSocket.off("end", onEnd);
       innerSocket.off("error", onError);
       innerSocket.off("close", onError);
       resolve(result);
+    }
+
+    function checkContentLength(): void {
+      if (contentLength !== undefined && total >= contentLength) {
+        settle(Buffer.concat(chunks));
+      }
     }
 
     // Seed from bodyPrefix (latin1 string → Buffer)
@@ -78,6 +91,9 @@ export function bufferBody(
         return;
       }
       chunks.push(seed);
+      // Seed may already satisfy content-length (e.g. small bodies in one segment)
+      checkContentLength();
+      if (settled) return;
     }
 
     function onData(chunk: Buffer): void {
@@ -87,6 +103,7 @@ export function bufferBody(
         return;
       }
       chunks.push(chunk);
+      checkContentLength();
     }
 
     function onEnd(): void {
