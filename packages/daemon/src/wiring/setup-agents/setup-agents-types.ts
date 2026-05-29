@@ -130,6 +130,17 @@ export interface SingleAgentDeps {
   /** Timer scheduling. */
   timers: import("@comis/core").TimerPort;
   /**
+   * Daemon-level in-memory record of pending engine-mode switches, keyed by
+   * agentId. Set at the rebuild seam (setupSingleAgent) ONLY when an operator
+   * config reload CHANGES contextEngine.version (old defined AND old !== new),
+   * then consumed one-shot by the DAG engine at the next reconcile to emit
+   * context:mode_switched with the real import cost. A single shared Map: the
+   * daemon reload re-invokes setupSingleAgent with the SAME deps object, so the
+   * Map persists across reloads. NOT triggered by fullImport — a brand-new
+   * DAG-default conversation records nothing here.
+   */
+  pendingModeSwitches: Map<string, { from: "pipeline" | "dag"; to: "pipeline" | "dag" }>;
+  /**
    * ObservabilityStore for SystemPromptReport persistence in the
    * production prompt-assembly path. Constructed in daemon.ts
    * (createObservabilityStore(db) when obsConfig.persistence.enabled is

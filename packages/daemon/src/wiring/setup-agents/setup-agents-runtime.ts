@@ -21,7 +21,7 @@
  * @module
  */
 
-import { safePath, SkillsConfigSchema, createScopedSecretManager, createOutputGuard, generateCanaryToken, createInputSecurityGuard, validateInput, PerAgentConfigSchema, type PerAgentConfig } from "@comis/core";
+import { safePath, SkillsConfigSchema, createScopedSecretManager, createOutputGuard, generateCanaryToken, createInputSecurityGuard, validateInput, PerAgentConfigSchema, ContextEngineConfigSchema, type PerAgentConfig } from "@comis/core";
 import { createToolCapabilityAdapter } from "../tool-capability-adapter.js";
 import { suppressError } from "@comis/shared";
 import { homedir } from "node:os";
@@ -92,6 +92,39 @@ export async function setupSingleAgent(
   const modelsConfig = container.config.models;
   const resolved = resolveAgentModel(agentConfig, modelsConfig);
   const effectiveConfig = { ...agentConfig, model: resolved.model, provider: resolved.provider };
+
+  // DAG-05: detect a context-engine MODE SWITCH at the rebuild seam.
+  // container.config.agents[agentId] still holds the PRIOR config here (on a
+  // config-reload re-invocation); it is undefined on the very first build. A
+  // real switch = the prior version is defined AND differs from the new one.
+  // We must read it BEFORE the overwrite below (which destroys the prior
+  // config). The new version falls back to the schema default when unset —
+  // parity with the per-turn engine build, which reads
+  // ContextEngineConfigSchema.parse({}) (executor-context-engine-setup.ts).
+  // We deliberately do NOT use fullImport as the trigger: fullImport fires for
+  // every brand-new DAG-default conversation (now the common case), which is
+  // NOT a switch (RESEARCH Pitfall 2). The pending switch is consumed one-shot
+  // by the DAG engine at the next reconcile, which emits context:mode_switched
+  // with the real import cost.
+  const prevVersion = container.config.agents[agentId]?.contextEngine?.version;
+  const newVersion =
+    effectiveConfig.contextEngine?.version ?? ContextEngineConfigSchema.parse({}).version;
+  if (prevVersion && prevVersion !== newVersion) {
+    deps.pendingModeSwitches.set(agentId, { from: prevVersion, to: newVersion });
+    // INFO boundary log (AGENTS.md §2.7 event↔log duality): the switch both
+    // logs here at the rebuild seam AND emits context:mode_switched at the
+    // reconcile seam, so an operator can reconstruct it from logs OR events.
+    // No errorKind — this is an INFO line, not a WARN/ERROR.
+    agentLogger.info(
+      {
+        agentId,
+        from: prevVersion,
+        to: newVersion,
+        hint: "engine mode switched via config reload; takes effect next turn",
+      },
+      "Context engine mode switch detected",
+    );
+  }
 
   // Write resolved values back to container.config.agents so all downstream
   // consumers (getConfig RPC, agents.get, session.status, REST /api/agents)
@@ -512,6 +545,17 @@ export async function setupSingleAgent(
     // DAG context engine deps (optional -- only when context engine version is dag)
     contextStore: deps.contextStore,
     db: deps.db,
+    // DAG-05: one-shot consumer of a pending engine-mode switch for this agent.
+    // Threaded through PiExecutorDeps -> setupContextEngine -> DagContextEngineDeps
+    // so the DAG reconcile seam can emit context:mode_switched once (with the
+    // real import cost) and then clear the pending flag. Returns undefined when
+    // there is no pending switch (e.g. a brand-new DAG-default conversation),
+    // so no false event fires. consume = delete-on-read.
+    consumePendingModeSwitch: (id: string) => {
+      const s = deps.pendingModeSwitches.get(id);
+      if (s) deps.pendingModeSwitches.delete(id);
+      return s;
+    },
     tenantId: container.config.tenantId,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,

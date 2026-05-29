@@ -434,6 +434,11 @@ export async function setupAgents(deps: {
     // Session-scoped trajectory recorder registry — threaded into every
     // per-agent executor so the same registry is shared across agents.
     trajectoryRegistry,
+    // DAG-05: single shared pending-switch carrier. Built ONCE here and reused
+    // for every setupSingleAgent call (incl. config-reload re-invocations with
+    // the SAME deps object), so a contextEngine.version switch recorded at the
+    // rebuild seam survives until the DAG engine consumes it at the next reconcile.
+    pendingModeSwitches: new Map(),
   };
 
   for (const [agentId, agentConfig] of Object.entries(agents)) {
