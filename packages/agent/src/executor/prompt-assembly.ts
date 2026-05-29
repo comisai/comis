@@ -68,6 +68,7 @@ import {
 } from "../bootstrap/index.js";
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createMemoryRecall } from "../rag/memory-recall.js";
+import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
 import { BOOTSTRAP_BUDGET_WARN_PERCENT, CHARS_PER_TOKEN_RATIO } from "../context-engine/index.js";
 import { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "../workspace/boot-file.js";
 import { detectOnboardingState } from "../workspace/onboarding-detector.js";
@@ -668,6 +669,12 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
 
         inlineMemory = injection.inlineMemory;
         memorySections = injection.systemPromptSections;
+
+        // Read-time contradiction guidance (TEMP-02/03/04): inject the §7.3 block when
+        // >=2 surfaced memories are co-retrieved for the same query. Pure formatter; no
+        // deletion, no content echo. Phase 83 tightens the >=2 gate with entity overlap.
+        const temporalGuidance = buildTemporalGuidanceBlock(ranked);
+        if (temporalGuidance) memorySections.push(temporalGuidance);
 
         // Emit memory:injected observability event so the trajectory bridge
         // can record one line per RAG injection. Fires only on turns where

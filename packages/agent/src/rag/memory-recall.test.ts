@@ -268,6 +268,28 @@ describe("createMemoryRecall — orchestrator composition", () => {
     expect(got.value.length).toBe(1);
   });
 
+  it("TEMP-03 NON-DESTRUCTIVE: two CONFLICTING memories about the same subject BOTH survive recall (no write-time deletion of older facts)", async () => {
+    // Distinct content (so the 200-char dedup fingerprint does NOT collapse them) but
+    // contradictory about the same subject. Recall resolves contradictions at READ time
+    // (the §7.3 guidance block, injected at prompt-assembly) — it NEVER deletes, supersedes,
+    // or filters the older conflicting fact. Both ids must remain in the recall result.
+    const input = [
+      makeResult("m1", { content: "user_a owns a horse named Bella", createdAt: NOW - 30 * 86_400_000 }),
+      makeResult("m2", { content: "user_a sold the horse last month", createdAt: NOW }),
+    ];
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
+      baseConfig(),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const ids = got.value.map((r) => r.entry.id);
+    expect(ids).toContain("m1"); // older conflicting fact NOT dropped
+    expect(ids).toContain("m2"); // newer fact present
+    expect(got.value.length).toBe(2); // both live — non-destructive
+  });
+
   it("RANK-03 graceful degrade: reranker isAvailable()===false -> fused order, ok, non-empty (no error)", async () => {
     const input = [
       makeResult("a", { base: 0.9 }),
