@@ -12,7 +12,7 @@
  * @module
  */
 import "reflect-metadata"; // required when createNodeCaManager is used in Phase 3 tests
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import * as http from "node:http";
 import * as net from "node:net";
 import * as tls from "node:tls";
@@ -2924,4 +2924,180 @@ describe("(03-fix) CR-02 — fail-closed ordering: unlisted host must NOT get a 
     },
     15_000,
   );
+});
+
+// ── EGRESS-04: WebSocket upgrade guard ────────────────────────────────────────
+
+describe("EGRESS-04 — WebSocket upgrade guard", () => {
+  it("inner request with Upgrade: websocket → 501, broker:denied emitted, no upstream reached", async () => {
+    const upstream = await makeUpstreamFixture();
+    const deps = makeDeps();
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Send inner request with WebSocket upgrade headers
+    const { status } = await sendGetThroughTunnel(socket, "/v1/messages", {
+      Upgrade: "websocket",
+      Connection: "Upgrade",
+      host: "api.anthropic.com",
+    });
+    socket.destroy();
+
+    // Assert 501 — WS guard must fire
+    expect(status).toBe(501);
+
+    // Assert broker:denied emitted with ws_upgrade_not_supported
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "broker:denied",
+      expect.objectContaining({
+        reason: "ws_upgrade_not_supported",
+        statusCode: 501,
+      }),
+    );
+
+    // Assert upstream received ZERO requests — guard fires before secret resolution
+    expect(upstream.receivedHeaders).toHaveLength(0);
+
+    upstream.server.close();
+  });
+
+  it("inner request with Upgrade: WebSocket (mixed case) → 501 (case-insensitive guard)", async () => {
+    const upstream = await makeUpstreamFixture();
+    const deps = makeDeps();
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Send inner request with mixed-case WebSocket upgrade header
+    const { status } = await sendGetThroughTunnel(socket, "/v1/messages", {
+      Upgrade: "WebSocket",
+      Connection: "Upgrade",
+      host: "api.anthropic.com",
+    });
+    socket.destroy();
+
+    // Mixed case must also trigger the guard
+    expect(status).toBe(501);
+
+    // broker:denied emitted with ws_upgrade_not_supported
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "broker:denied",
+      expect.objectContaining({
+        reason: "ws_upgrade_not_supported",
+        statusCode: 501,
+      }),
+    );
+
+    upstream.server.close();
+  });
+
+  it("inner request with Upgrade: h2c (non-WebSocket upgrade) → NOT 501 (Pitfall 5 guard)", async () => {
+    const upstream = await makeUpstreamFixture();
+    const deps = makeDeps();
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Send inner request with h2c (non-WebSocket) upgrade header
+    const { status } = await sendGetThroughTunnel(socket, "/v1/messages", {
+      Upgrade: "h2c",
+      Connection: "Upgrade",
+      host: "api.anthropic.com",
+    });
+    socket.destroy();
+
+    // h2c must NOT trigger the WS guard (501 is wrong here)
+    expect(status).not.toBe(501);
+
+    // broker:denied must NOT have been emitted with ws_upgrade_not_supported
+    const deniedCalls: Array<[string, unknown]> = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    const wsGuardEmits = deniedCalls.filter(
+      ([event, payload]) =>
+        event === "broker:denied" &&
+        (payload as { reason?: string }).reason === "ws_upgrade_not_supported",
+    );
+    expect(wsGuardEmits).toHaveLength(0);
+
+    upstream.server.close();
+  });
+});
+
+// ── EGRESS-01: Unix socket listen ─────────────────────────────────────────────
+
+describe("EGRESS-01 — Unix socket listen (startUnixSocket)", () => {
+  it("startUnixSocket creates a listening Unix-domain socket that accepts CONNECT and fires auth gate (407)", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "mitm-broker-unix-"));
+    const socketPath = join(tmpDir, "broker.sock");
+
+    const deps = makeDeps();
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+
+    // Start TCP server (existing API, unchanged)
+    await broker.start();
+
+    // Start Unix socket listener (additive new method)
+    // @ts-expect-error — startUnixSocket does not exist on MitmBrokerPort yet (RED phase)
+    await broker.startUnixSocket(socketPath);
+
+    // Connect to the Unix socket and send CONNECT without Proxy-Authorization
+    const status = await new Promise<number>((resolve, reject) => {
+      const s = net.connect(socketPath, () => {
+        s.write(
+          `CONNECT api.anthropic.com:443 HTTP/1.1\r\n` +
+            `Host: api.anthropic.com:443\r\n` +
+            `\r\n`,
+        );
+      });
+      let buf = "";
+      s.on("data", (chunk: Buffer) => {
+        buf += chunk.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return;
+        const statusLine = buf.slice(0, buf.indexOf("\r\n"));
+        const code = parseInt(statusLine.split(" ")[1] ?? "0", 10);
+        s.destroy();
+        resolve(code);
+      });
+      s.on("error", reject);
+      setTimeout(() => reject(new Error("unix socket connect timeout")), 3000);
+    });
+
+    // Auth gate must fire on the Unix socket path (407 — no token provided)
+    expect(status).toBe(407);
+
+    // stop() must unlink the socket file
+    await broker.stop();
+
+    // The socket path must no longer exist after stop()
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(socketPath)).toBe(false);
+
+    // Cleanup temp dir
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 });
