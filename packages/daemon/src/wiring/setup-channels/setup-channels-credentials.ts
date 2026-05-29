@@ -19,7 +19,7 @@ import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } f
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry } from "@comis/agent";
 import type { createSessionStore } from "@comis/memory";
-import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, classifyError } from "@comis/agent";
+import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, runMemoryConsolidation, classifyError } from "@comis/agent";
 import { applyToolPolicy } from "@comis/skills";
 import { filterResponse } from "@comis/channels";
 import type { ExecutionLogEntry } from "@comis/scheduler";
@@ -161,6 +161,72 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         logger.error({ agentId, err: reviewResult.error, hint: "Memory review failed -- will retry next cycle", errorKind: "internal" as const }, "Memory review error");
       }
       payload.onComplete?.({ status: reviewResult.ok ? "ok" : "error", error: reviewResult.ok ? undefined : reviewResult.error?.message });
+      return;
+    }
+
+    // -- Memory consolidation sentinel intercept (Phase 84, CONS-07) --
+    // Mirrors the review branch above 1:1. The cron is registered ONLY for an
+    // operator-enabled agent (setup-schedulers), but the sentinel ALSO re-checks
+    // cfg.enabled and short-circuits ok when off (T-84-19, defence-in-depth: a
+    // stale persisted job must not run consolidation for a now-disabled agent).
+    if (resultText === "__MEMORY_CONSOLIDATION__") {
+      const { agentId } = payload;
+      if (!agentId) {
+        logger.warn({ hint: "Memory consolidation job fired without agentId", errorKind: "config" as const }, "Skipping memory consolidation -- no agentId");
+        payload.onComplete?.({ status: "error", error: "No agentId for memory consolidation" });
+        return;
+      }
+
+      const agentConfig = agents[agentId];
+      const consolidationConfig = agentConfig?.memoryConsolidation;
+      if (!consolidationConfig?.enabled) {
+        // The opt-in cost gate (CONS-07): a disabled (or default-config) agent does
+        // NO LLM work — short-circuit ok so the scheduler records a clean run.
+        logger.debug({ agentId }, "Memory consolidation disabled for agent, skipping");
+        payload.onComplete?.({ status: "ok" });
+        return;
+      }
+
+      // Resolve the cheap model for consolidation via the "cron" operation type
+      // (IDENTICAL to the review block) — never the agent's primary model.
+      const resolved = resolveOperationModel({
+        operationType: "cron",
+        agentProvider: agentConfig.provider ?? "anthropic",
+        agentModel: agentConfig.model ?? "anthropic:claude-sonnet-4-20250514",
+        operationModels: agentConfig.operationModels ?? {},
+        providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
+      });
+
+      // Resolve the API key for the provider. The no-key branch logs only the
+      // env-var NAME + a hint — never the value (T-84-20; Pino also auto-redacts).
+      const providerEntry = container.config.providers?.entries?.[resolved.provider];
+      const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
+      const apiKey = container.secretManager.get(apiKeyName) ?? "";
+      if (!apiKey) {
+        logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for memory consolidation`, errorKind: "config" as const }, "Skipping memory consolidation -- no API key");
+        payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
+        return;
+      }
+
+      const consolidationResult = await runMemoryConsolidation({
+        agentId,
+        tenantId: deps.tenantId ?? container.config.tenantId ?? "default",
+        config: consolidationConfig,
+        // Injected from setup-memory (the composition-root join). The agent receives
+        // the port TYPE only — no agent→memory edge (T-84-21).
+        consolidationStore: deps.consolidationStore!,
+        eventBus: container.eventBus,
+        provider: resolved.provider,
+        modelId: resolved.modelId,
+        apiKey,
+        clock: deps.clock,
+        logger: logger.child({ agentId, submodule: "memory-consolidation" }),
+      });
+
+      if (!consolidationResult.ok) {
+        logger.error({ agentId, err: consolidationResult.error, hint: "Memory consolidation failed -- will retry next cycle", errorKind: "internal" as const }, "Memory consolidation error");
+      }
+      payload.onComplete?.({ status: consolidationResult.ok ? "ok" : "error", error: consolidationResult.ok ? undefined : consolidationResult.error?.message });
       return;
     }
 
