@@ -162,6 +162,10 @@ export type { GreetingGenerator, GreetingGeneratorDeps, GreetingTrigger } from "
 export { runMemoryReview } from "./memory/memory-review-job.js";
 export type { MemoryReviewDeps } from "./memory/memory-review-job.js";
 
+// Memory consolidation (periodic clustering of near-duplicate memories → observations)
+export { runMemoryConsolidation } from "./memory/memory-consolidation-job.js";
+export type { MemoryConsolidationDeps } from "./memory/memory-consolidation-job.js";
+
 // RAG (Retrieval-Augmented Generation)
 export { formatMemorySection } from "./rag/rag-retriever.js";
 

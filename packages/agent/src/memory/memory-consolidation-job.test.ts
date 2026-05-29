@@ -133,11 +133,12 @@ beforeEach(() => {
 });
 
 describe("runMemoryConsolidation — trust ceiling end-to-end (CONS-02, the escalation guard)", () => {
-  it("mints an observation with trustLevel = min(sources): [learned, external] → external, NOT system", async () => {
+  it("a homogeneous external cluster mints an external observation (ceiling = min(sources) = external)", async () => {
     mockMerge("merged");
-    // Two near-parallel embeddings so they cluster; same tags so they stay one sub-cluster.
+    // Two near-parallel embeddings so they cluster; both external + same tags →
+    // ONE homogeneous sub-cluster. minTrust([external,external]) = "external".
     const store = makeStore([
-      makeCand({ trustLevel: "learned", tags: ["t"] }, [1, 0, 0]),
+      makeCand({ trustLevel: "external", tags: ["t"] }, [1, 0, 0]),
       makeCand({ trustLevel: "external", tags: ["t"] }, [0.999, 0.001, 0]),
     ]);
     const result = await runMemoryConsolidation(makeDeps(store, { consolidateExternal: true }));
@@ -156,6 +157,23 @@ describe("runMemoryConsolidation — trust ceiling end-to-end (CONS-02, the esca
     expect(result.ok).toBe(true);
     expect(store.applied).toHaveLength(1);
     expect(store.applied[0].observation.trustLevel).toBe("learned");
+  });
+
+  it("NEVER merges mixed-trust sources together — a [system, learned] cluster is split into two singletons and neither is consolidated (no escalation path)", async () => {
+    // This is the strongest escalation guard: a low-trust + high-trust pair can
+    // never even REACH a merge call. groupByTrustAndTagScope splits the cosine
+    // cluster into (system)×1 and (learned)×1; both are singletons → dropped.
+    // There is no observation that could outrank its lower-trust member because
+    // the two are never combined (CONS-06 + CONS-02).
+    mockMerge("merged");
+    const store = makeStore([
+      makeCand({ trustLevel: "system", tags: ["t"] }, [1, 0, 0]),
+      makeCand({ trustLevel: "learned", tags: ["t"] }, [0.999, 0.001, 0]),
+    ]);
+    const result = await runMemoryConsolidation(makeDeps(store));
+    expect(result.ok).toBe(true);
+    expect(store.applied).toHaveLength(0);
+    expect(completeSimple).not.toHaveBeenCalled();
   });
 
   it("the LLM is never allowed to set trust — a smuggled trustLevel is ignored, code wins", async () => {

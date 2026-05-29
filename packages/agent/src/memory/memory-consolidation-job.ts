@@ -1,0 +1,464 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Memory consolidation job handler (Phase 84 — CONS-01/02/04/06/07).
+ *
+ * Runs as a background cron (wired in the daemon, Plan 05). Reads raw
+ * not-yet-consolidated candidates from the segregated
+ * {@link MemoryConsolidationStore} (a `consolidated_at IS NULL` STATE predicate
+ * — never a time cursor, RESEARCH Pitfall 1), clusters near-duplicates, merges
+ * each homogeneous sub-cluster via a cheap-model LLM call (MERGE-only contract),
+ * and applies each consolidation ATOMICALLY through the store port.
+ *
+ * Security posture (this is the security-critical plan, design §9):
+ * - Trust is computed in CODE (`minTrust`, the ceiling — CONS-02), NEVER chosen
+ *   by the LLM. Consolidating lower-trust sources can never mint a higher-trust
+ *   observation. The LLM contract has no trust field; any it smuggles is dropped
+ *   by the parser.
+ * - A single LLM call NEVER mixes trust levels or tag scopes
+ *   (`groupByTrustAndTagScope` partitions first — CONS-06, anti-trust-laundering).
+ * - `external` sources are excluded by default (`consolidateExternal:false`).
+ * - Merged content runs through `validateMemoryWrite` (defense-in-depth on
+ *   LLM-produced text, AGENTS.md §2.2): `critical` → skip; `warn` → trust
+ *   downgraded to "external"; `clean` → the code-computed ceiling.
+ * - Deterministic dedup pre-check (sorted source-id hash primary + content
+ *   similarity secondary — CONS-04) prevents re-run double-create.
+ * - The run is BOUNDED (maxCandidatesPerRun / maxClustersPerRun /
+ *   maxConsolidationTokens — CONS-07) and emits a MINIMAL `memory:consolidated`
+ *   event (Phase 86 owns the rich observability surface).
+ *
+ * The agent consumes the store as a TYPE from `@comis/core` (the agent↛memory
+ * build cut); the daemon injects the concrete memory-package adapter. NO
+ * memory-package import here, NO wall-clock global (the injected `clock`).
+ *
+ * @module
+ */
+
+import { ok, err, fromPromise, type Result } from "@comis/shared";
+import { systemSetTimeout, systemClearTimeout, validateMemoryWrite } from "@comis/core";
+import type {
+  MemoryConsolidationConfig,
+  MemoryConsolidationStore,
+  MemoryEntry,
+  MemorySource,
+  TrustLevel,
+  ClockPort,
+} from "@comis/core";
+import { completeSimple, getModel } from "@earendil-works/pi-ai";
+import { randomUUID } from "node:crypto";
+import {
+  clusterByEntityThenEmbedding,
+  groupByTrustAndTagScope,
+  minTrust,
+  deterministicDedupKey,
+  contentSimilarity,
+} from "./memory-consolidation-clustering.js";
+import { CONSOLIDATION_PROMPT, parseConsolidationResult } from "./memory-consolidation-prompt.js";
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/** Dependencies injected into the memory consolidation handler. */
+export interface MemoryConsolidationDeps {
+  agentId: string;
+  tenantId: string;
+  config: MemoryConsolidationConfig;
+  /**
+   * The SEGREGATED consolidation store (port TYPE from `@comis/core`). The
+   * concrete adapter lives in the memory package; the daemon (Plan 05) injects
+   * it. The agent cannot import that package (the agent↛memory build cut).
+   */
+  consolidationStore: MemoryConsolidationStore;
+  eventBus: { emit(event: string, payload: unknown): void };
+  provider: string;
+  modelId: string;
+  apiKey: string;
+  /** Wall-clock reads — every timestamp + `durationMs`. NEVER a wall-clock global. */
+  clock: ClockPort;
+  logger: {
+    info(obj: Record<string, unknown>, msg: string): void;
+    debug(obj: Record<string, unknown>, msg: string): void;
+    warn(obj: Record<string, unknown>, msg: string): void;
+    error(obj: Record<string, unknown>, msg: string): void;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const LLM_TIMEOUT_MS = 120_000;
+
+/**
+ * How many existing observations to fetch for the dedup pre-check. The same
+ * candidate cap is reused — a re-run's would-be duplicate is one of the recent
+ * observations created by a prior run over the same sources.
+ */
+const DEDUP_OBSERVATION_LIMIT = 200;
+
+// ---------------------------------------------------------------------------
+// LLM response parsing
+// ---------------------------------------------------------------------------
+
+function extractResponseText(response: { content?: unknown[] }): string {
+  let text = "";
+  if (response.content && Array.isArray(response.content)) {
+    for (const part of response.content) {
+      if (
+        typeof part === "object" &&
+        part !== null &&
+        "type" in part &&
+        (part as Record<string, unknown>).type === "text" &&
+        "text" in part
+      ) {
+        text += (part as Record<string, unknown>).text;
+      }
+    }
+  }
+  return text;
+}
+
+// ---------------------------------------------------------------------------
+// Cluster helpers
+// ---------------------------------------------------------------------------
+
+/** Union of the tags across a (homogeneous-by-tag) sub-cluster — deterministic, sorted. */
+function uniqueTagsOf(cluster: MemoryEntry[]): string[] {
+  const tags = new Set<string>();
+  for (const e of cluster) for (const t of e.tags) tags.add(t);
+  return [...tags].sort();
+}
+
+/** The latest event/record time across a cluster (observation's `occurredAt`). */
+function maxOccurredAt(cluster: MemoryEntry[]): number {
+  let max = 0;
+  for (const e of cluster) {
+    const t = e.occurredAt ?? e.createdAt;
+    if (t > max) max = t;
+  }
+  return max;
+}
+
+/** Build the user-message text fed to the merge LLM call for one sub-cluster. */
+function buildClusterPrompt(cluster: MemoryEntry[]): string {
+  let text = "Memories to merge:\n\n";
+  for (const e of cluster) {
+    text += `- (${e.id}) ${e.content}\n`;
+  }
+  return text;
+}
+
+// ---------------------------------------------------------------------------
+// Main handler
+// ---------------------------------------------------------------------------
+
+/**
+ * Run one consolidation pass for a single agent.
+ *
+ * Reads candidates → clusters → partitions into homogeneous sub-clusters
+ * (CONS-06) → for each (bounded by `maxClustersPerRun`): compute the trust
+ * ceiling (CONS-02), gate `external` (CONS-02), dedup pre-check (CONS-04),
+ * (mocked-in-test) LLM merge, `validateMemoryWrite`, then `applyConsolidation`
+ * atomically (CONS-03 — the store owns the transaction). Emits a minimal
+ * `memory:consolidated` event. Non-fatal posture (mirrors `runMemoryReview`): a
+ * bad LLM parse / a failed cluster → WARN + continue; the run returns `ok` even
+ * with 0 observations. Only an inability to READ candidates is fatal.
+ *
+ * @returns `ok` on success (even with 0 observations); `err` only when the
+ *   candidate read fails (cannot proceed safely).
+ */
+export async function runMemoryConsolidation(
+  deps: MemoryConsolidationDeps,
+): Promise<Result<void, Error>> {
+  const { config, agentId, tenantId, consolidationStore, eventBus, logger, clock } = deps;
+  const startMs = clock.now();
+
+  // 1. Candidates — a READ failure is fatal (we cannot safely proceed).
+  const candidatesResult = await fromPromise(
+    consolidationStore.listConsolidationCandidates(agentId, tenantId, config.maxCandidatesPerRun),
+  );
+  if (!candidatesResult.ok) return err(candidatesResult.error);
+  if (!candidatesResult.value.ok) return err(candidatesResult.value.error);
+  const candidates = candidatesResult.value.value;
+
+  if (candidates.length === 0) {
+    eventBus.emit("memory:consolidated", {
+      agentId,
+      clustersProcessed: 0,
+      observationsCreated: 0,
+      dedupHits: 0,
+      durationMs: clock.now() - startMs,
+      timestamp: clock.now(),
+    });
+    return ok(undefined);
+  }
+
+  // 2. Greedy clustering, then 3. partition into homogeneous sub-clusters
+  // (CONS-06). Singletons carry nothing to merge → dropped (left for a future
+  // run; SAFE because selection is a state predicate, not a cursor).
+  const clusters = clusterByEntityThenEmbedding(candidates, {
+    similarityThreshold: config.similarityThreshold,
+    maxClusterSize: config.maxClusterSize,
+  });
+  const subClusters = clusters
+    .flatMap((c) => groupByTrustAndTagScope(c))
+    .filter((c) => c.length >= 2);
+
+  // 4. Existing observations for the deterministic dedup pre-check (CONS-04).
+  // A read failure is NON-FATAL: degrade to "no known duplicates" (we may
+  // re-create, but the next run's predicate re-converges). Log + continue.
+  let existing: MemoryEntry[] = [];
+  const obsResult = await fromPromise(
+    consolidationStore.listObservations(agentId, tenantId, DEDUP_OBSERVATION_LIMIT),
+  );
+  if (obsResult.ok && obsResult.value.ok) {
+    existing = obsResult.value.value;
+  } else {
+    logger.warn(
+      {
+        agentId,
+        errorKind: "dependency" as const,
+        hint: "could not list existing observations for dedup — proceeding without the pre-check",
+      },
+      "Consolidation dedup pre-check unavailable",
+    );
+  }
+  // The PRIOR-RUN observations (loaded above) — the stable snapshot the
+  // SECONDARY content-similarity dedup compares against. NOT mutated with
+  // same-run mints (that would collapse two distinct trust scopes).
+  const priorObservations = existing;
+  // Pre-index existing observations by their source-id dedup key (primary, O(1)
+  // lookup). Same-run mints ARE added here so a later sub-cluster with the SAME
+  // source set in this run still dedups (exact-source double-create guard).
+  const existingKeys = new Set<string>();
+  for (const obs of existing) {
+    if (obs.sourceIds && obs.sourceIds.length > 0) {
+      existingKeys.add(deterministicDedupKey(obs.sourceIds));
+    }
+  }
+
+  let clustersProcessed = 0;
+  let observationsCreated = 0;
+  let dedupHits = 0;
+
+  for (const cluster of subClusters) {
+    if (clustersProcessed >= config.maxClustersPerRun) break; // CONS-07 bound
+
+    // CONS-02: the trust CEILING — computed in CODE, never the LLM.
+    const trust = minTrust(cluster);
+
+    // CONS-02: external excluded by default (no observation, no LLM call/spend).
+    if (trust === "external" && !config.consolidateExternal) {
+      logger.debug({ agentId, step: "consolidate" }, "Skipping external-trust cluster (consolidateExternal=false)");
+      continue;
+    }
+
+    clustersProcessed++;
+    const sourceIds = cluster.map((e) => e.id);
+
+    // CONS-04 PRIMARY dedup: identical source set → an equivalent observation
+    // already exists. Skip (leave sources consolidated_at IS NULL; the existing
+    // observation already covers them — the next run re-hits this dedup, no
+    // double-create). This keeps the port at exactly 3 methods (no markOnly).
+    const key = deterministicDedupKey(sourceIds);
+    if (existingKeys.has(key)) {
+      dedupHits++;
+      logger.debug({ agentId, step: "consolidate" }, "Dedup hit (existing observation covers this source set) — skipping");
+      continue;
+    }
+
+    // 5. (Mocked-in-test) LLM merge of the homogeneous sub-cluster. Non-fatal:
+    // a thrown/aborted call WARNs + continues (the run still returns ok).
+    const mergeText = await mergeCluster(deps, cluster);
+    if (mergeText === undefined) {
+      // mergeCluster already logged the WARN with errorKind + hint.
+      continue;
+    }
+    const parsed = parseConsolidationResult(mergeText);
+    if (!parsed) {
+      logger.warn(
+        {
+          agentId,
+          errorKind: "validation" as const,
+          hint: "consolidation merge output failed schema validation — skipping cluster",
+        },
+        "Consolidation merge returned invalid output, skipping",
+      );
+      continue;
+    }
+
+    // CONS-04 SECONDARY dedup: a DIFFERENT source set expressing the SAME fact.
+    // Compare the merged content ONLY against PRIOR-RUN observations of the SAME
+    // trust level (`priorObservations`, never observations minted earlier in
+    // THIS run): cross-trust content collapse would violate the trust-scope
+    // separation (CONS-06) — two distinct trust scopes are distinct
+    // observations even with identical text. Same-run exact-source re-hits are
+    // already caught by the primary source-id key above.
+    const contentDup = priorObservations.some(
+      (obs) =>
+        obs.trustLevel === trust &&
+        contentSimilarity(parsed.content, obs.content) >= config.dedupThreshold,
+    );
+    if (contentDup) {
+      dedupHits++;
+      logger.debug({ agentId, step: "consolidate" }, "Dedup hit (content similar to existing observation) — skipping");
+      continue;
+    }
+
+    // Defense-in-depth on the LLM-produced text (AGENTS.md §2.2): scan BEFORE
+    // store. `critical` → skip; `warn` → downgrade trust toward external (never
+    // ABOVE the code-computed ceiling); `clean` → the ceiling.
+    const verdict = validateMemoryWrite(parsed.content);
+    if (verdict.severity === "critical") {
+      logger.warn(
+        {
+          agentId,
+          errorKind: "validation" as const,
+          patterns: verdict.patterns,
+          criticalPatterns: verdict.criticalPatterns,
+          hint: "merged observation matched a dangerous/secret pattern — blocked from store",
+        },
+        "Skipping merged observation that failed the memory-write security scan",
+      );
+      continue;
+    }
+    // `warn` downgrades toward external, but NEVER raises trust above the ceiling.
+    const effectiveTrust: TrustLevel = verdict.severity === "warn" ? "external" : trust;
+
+    const source: MemorySource = { who: "system", channel: "memory-consolidation" };
+    const now = clock.now();
+    const observation: MemoryEntry = {
+      id: randomUUID(),
+      tenantId,
+      agentId,
+      userId: "system",
+      content: parsed.content,
+      trustLevel: effectiveTrust, // CODE-computed ceiling (or downgrade) — NOT the LLM
+      source,
+      tags: [...uniqueTagsOf(cluster), ...config.autoTags],
+      proofCount: cluster.length,
+      sourceIds,
+      confidence: parsed.confidence ?? 1,
+      occurredAt: maxOccurredAt(cluster),
+      createdAt: now,
+      sourceType: "conversation",
+    };
+
+    // 6. Apply atomically (CONS-03 — the store owns the transaction). Non-fatal:
+    // a rejecting/erroring store WARNs + continues; sources stay
+    // consolidated_at IS NULL and are retried next run (idempotent).
+    const applied = await fromPromise(
+      consolidationStore.applyConsolidation({ observation, markConsolidated: sourceIds, tenantId, now }),
+    );
+    if (!applied.ok || !applied.value.ok) {
+      logger.warn(
+        {
+          agentId,
+          errorKind: "dependency" as const,
+          hint: "applyConsolidation failed/rejected — sources left unconsolidated for retry next run",
+        },
+        "Failed to apply consolidation (non-fatal)",
+      );
+      continue;
+    }
+    observationsCreated++;
+    // Index the just-created observation's source-id key so a later sub-cluster
+    // with the SAME source set in THIS run also dedups (exact-source guard).
+    // Deliberately NOT added to `priorObservations` — see the secondary-dedup
+    // note above (no same-run cross-trust content collapse).
+    existingKeys.add(key);
+  }
+
+  eventBus.emit("memory:consolidated", {
+    agentId,
+    clustersProcessed,
+    observationsCreated,
+    dedupHits,
+    durationMs: clock.now() - startMs,
+    timestamp: clock.now(),
+  });
+
+  logger.info(
+    { agentId, clustersProcessed, observationsCreated, dedupHits, durationMs: clock.now() - startMs },
+    "Memory consolidation completed",
+  );
+
+  return ok(undefined);
+}
+
+// ---------------------------------------------------------------------------
+// LLM merge call (mirrors memory-review-job's completeSimple scaffold)
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge one homogeneous sub-cluster via a cheap-model LLM call. Returns the raw
+ * response text, or `undefined` on any failure (model resolution, abort/timeout,
+ * thrown call) — the caller treats `undefined` as a non-fatal skip (mirrors the
+ * review-job posture). Bounded by `config.maxConsolidationTokens` (CONS-07).
+ */
+async function mergeCluster(
+  deps: MemoryConsolidationDeps,
+  cluster: MemoryEntry[],
+): Promise<string | undefined> {
+  const { config, agentId, clock, logger } = deps;
+
+  let model;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- provider/modelId are dynamic strings
+    model = getModel(deps.provider as any, deps.modelId as any);
+  } catch (modelErr) {
+    logger.warn(
+      {
+        agentId,
+        err: modelErr,
+        errorKind: "dependency" as const,
+        hint: `could not resolve model ${deps.provider}/${deps.modelId} — skipping cluster`,
+      },
+      "Consolidation model resolution failed (non-fatal)",
+    );
+    return undefined;
+  }
+  if (!model) {
+    logger.warn(
+      {
+        agentId,
+        errorKind: "dependency" as const,
+        hint: `model not found ${deps.provider}/${deps.modelId} — skipping cluster`,
+      },
+      "Consolidation model not found (non-fatal)",
+    );
+    return undefined;
+  }
+
+  const controller = new AbortController();
+  const timer = systemSetTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+  try {
+    const response = await completeSimple(
+      model,
+      {
+        systemPrompt: CONSOLIDATION_PROMPT,
+        messages: [{ role: "user" as const, content: buildClusterPrompt(cluster), timestamp: clock.now() }],
+      },
+      {
+        apiKey: deps.apiKey,
+        temperature: 0.2,
+        maxTokens: config.maxConsolidationTokens,
+        signal: controller.signal,
+      },
+    );
+    return extractResponseText(response);
+  } catch (llmErr) {
+    logger.warn(
+      {
+        agentId,
+        err: llmErr,
+        errorKind: "dependency" as const,
+        hint: "consolidation merge LLM call failed/aborted — skipping cluster",
+      },
+      "Consolidation merge LLM call failed (non-fatal)",
+    );
+    return undefined;
+  } finally {
+    systemClearTimeout(timer);
+  }
+}

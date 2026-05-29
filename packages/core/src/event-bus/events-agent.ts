@@ -456,6 +456,25 @@ export interface AgentEvents {
     timestamp: number;
   };
 
+  /**
+   * Memory consolidation completed (periodic clustering of near-duplicate raw
+   * memories into observations — Phase 84 / CONS-07). MINIMAL payload by design:
+   * Phase 86 (OBS-03/04) owns the rich observability surface (recall trace,
+   * per-cluster diagnostics). Counts only — NEVER memory content or tags
+   * (AGENTS.md §2.7).
+   */
+  "memory:consolidated": {
+    agentId: string;
+    /** Homogeneous sub-clusters that passed the trust/external gate and were processed. */
+    clustersProcessed: number;
+    /** New observation rows created (excludes dedup-hit clusters). */
+    observationsCreated: number;
+    /** Clusters skipped because an equivalent observation already existed (CONS-04). */
+    dedupHits: number;
+    durationMs: number;
+    timestamp: number;
+  };
+
   /** First graph subagent LLM turn confirmed a cache prefix write.
    *  Graph coordinator uses this as spawn gate for remaining nodes. */
   "cache:graph_prefix_written": {
