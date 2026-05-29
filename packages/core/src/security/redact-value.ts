@@ -316,6 +316,9 @@ function withUrlsProtected(input: string, fn: (s: string) => string): string {
   });
   if (urls.length === 0) return fn(input); // hot-path: no URLs, no wrapping cost
   const processed = fn(stashed);
+  // NUL (\x00) is a deliberate stash sentinel — it cannot occur in normal text
+  // or URLs, so it is an unambiguous, injection-proof placeholder delimiter.
+  // eslint-disable-next-line no-control-regex
   return processed.replace(/\x00URL(\d+)\x00/g, (_, i) => urls[Number(i)] ?? "");
 }
 
