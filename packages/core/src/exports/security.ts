@@ -159,5 +159,6 @@ export {
 export type { OAuthErrorCode, RewrittenOAuthError } from "../security/index.js";
 
 // Provider-catalog: types and pure functions for the MITM broker (Phase 2, BROKER-01..03)
-export type { BrokerBinding, InjectionRule, HostRule, InjectionInput } from "../security/index.js";
+// WR-05: RequestFinalizer exported here so @comis/infra finalizer-stage.ts can consume it
+export type { BrokerBinding, InjectionRule, HostRule, InjectionInput, RequestFinalizer } from "../security/index.js";
 export { resolveBinding, applyInjections, normalizeHost, pathAllowed } from "../security/index.js";
