@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * RecallTraceEventSchema tests — schema-versioned closed-union envelope.
+ *
+ * The recall trace is ONE rich per-recall record (Assumption A1 — NOT a
+ * per-stage stage enum like cache-trace). The schema parses a well-formed
+ * record, fences the `traceSchema` literal + `schemaVersion` literal, and
+ * closes the rerank-outcome + include/exclude-reason unions.
+ *
+ * @module
+ */
+import { describe, it, expect, expectTypeOf } from "vitest";
+
+import {
+  RecallTraceEventSchema,
+  RECALL_RERANK_OUTCOMES,
+  RECALL_INCLUDE_REASONS,
+  type RecallTraceEvent,
+} from "./types.js";
+
+function makeValidRecord(): Record<string, unknown> {
+  return {
+    traceSchema: "comis-recall-trace",
+    schemaVersion: 1,
+    ts: "2026-05-30T00:00:00.000Z",
+    seq: 0,
+    agentId: "agent-1",
+    sessionId: "sid-1",
+    traceId: "sid-1",
+    queryDigest: "a".repeat(64),
+    lanes: { fts: 5, vector: 3, entity: 2 },
+    vectorLaneActive: true,
+    fusedOrder: ["m-1", "m-2", "m-3"],
+    rerank: {
+      outcome: "ran",
+      candidateCount: 3,
+      preScores: [0.9, 0.5, 0.1],
+      postScores: [0.95, 0.4, 0.05],
+    },
+    ranked: [
+      {
+        id: "m-1",
+        reason: "included",
+        breakdown: {
+          base: 1,
+          recency: 1.1,
+          temporal: 1.0,
+          proof: 1.2,
+          trust: 1.0,
+          final: 1.32,
+        },
+        preview: "a short safe preview",
+      },
+      { id: "m-2", reason: "trust_filtered" },
+      { id: "m-3", reason: "deduped" },
+    ],
+    durationMs: 12,
+  };
+}
+
+describe("RecallTraceEventSchema -- well-formed record", () => {
+  it("parses a well-formed recall record with the full envelope + recall fields", () => {
+    const parsed = RecallTraceEventSchema.safeParse(makeValidRecord());
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.traceSchema).toBe("comis-recall-trace");
+      expect(parsed.data.schemaVersion).toBe(1);
+      expect(parsed.data.lanes.vector).toBe(3);
+      expect(parsed.data.rerank.outcome).toBe("ran");
+      expect(parsed.data.ranked[0]!.reason).toBe("included");
+    }
+  });
+
+  it("parses an optional envelope cluster (sessionKey, tenantId, runId)", () => {
+    const record = {
+      ...makeValidRecord(),
+      sessionKey: "sk-1",
+      tenantId: "tenant-1",
+      runId: "run-1",
+    };
+    const parsed = RecallTraceEventSchema.safeParse(record);
+    expect(parsed.success).toBe(true);
+  });
+});
+
+describe("RecallTraceEventSchema -- parser fences", () => {
+  it("rejects a foreign traceSchema literal (comis-cache-trace)", () => {
+    const record = { ...makeValidRecord(), traceSchema: "comis-cache-trace" };
+    const parsed = RecallTraceEventSchema.safeParse(record);
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects a wrong schemaVersion (2) — version fence", () => {
+    const record = { ...makeValidRecord(), schemaVersion: 2 };
+    const parsed = RecallTraceEventSchema.safeParse(record);
+    expect(parsed.success).toBe(false);
+  });
+});
+
+describe("RecallTraceEventSchema -- closed unions", () => {
+  it("rerank.outcome is a CLOSED union: ran | fell_back | timed_out parse, unknown rejects", () => {
+    for (const outcome of RECALL_RERANK_OUTCOMES) {
+      const record = makeValidRecord();
+      (record.rerank as Record<string, unknown>).outcome = outcome;
+      expect(RecallTraceEventSchema.safeParse(record).success).toBe(true);
+    }
+    const bad = makeValidRecord();
+    (bad.rerank as Record<string, unknown>).outcome = "exploded";
+    expect(RecallTraceEventSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("ranked[].reason is a CLOSED union: included | trust_filtered | deduped | below_budget parse, unknown rejects", () => {
+    for (const reason of RECALL_INCLUDE_REASONS) {
+      const record = makeValidRecord();
+      (record.ranked as Array<Record<string, unknown>>)[0]!.reason = reason;
+      expect(RecallTraceEventSchema.safeParse(record).success).toBe(true);
+    }
+    const bad = makeValidRecord();
+    (bad.ranked as Array<Record<string, unknown>>)[0]!.reason = "made_up";
+    expect(RecallTraceEventSchema.safeParse(bad).success).toBe(false);
+  });
+});
+
+describe("RecallTraceEvent -- z.infer type-level invariant", () => {
+  it("RecallTraceEvent is assignment-compatible with a literal record (mirror cache-trace)", () => {
+    const ev: RecallTraceEvent = {
+      traceSchema: "comis-recall-trace",
+      schemaVersion: 1,
+      ts: "2026-05-30T00:00:00.000Z",
+      seq: 1,
+      agentId: "a",
+      sessionId: "s",
+      traceId: "s",
+      queryDigest: "d",
+      lanes: { fts: 1, vector: 0, entity: 0 },
+      vectorLaneActive: false,
+      fusedOrder: ["m-1"],
+      rerank: { outcome: "fell_back", candidateCount: 1 },
+      ranked: [{ id: "m-1", reason: "included" }],
+      durationMs: 1,
+    };
+    expect(ev.traceSchema).toBe("comis-recall-trace");
+    expectTypeOf(ev).toHaveProperty("queryDigest");
+    expectTypeOf(ev.rerank.outcome).toEqualTypeOf<
+      "ran" | "fell_back" | "timed_out"
+    >();
+  });
+});
