@@ -16,7 +16,7 @@ describe("ContextEngineConfigSchema", () => {
     expect(result).toEqual({
       // Core
       enabled: true,
-      version: "pipeline",
+      version: "dag",
       // Shared
       thinkingKeepTurns: 10,
       replayDriftIdleMs: 30 * 60_000,
@@ -191,12 +191,21 @@ describe("ContextEngineConfigSchema", () => {
   // -------------------------------------------------------------------------
 
   describe("version", () => {
-    it("defaults to 'pipeline'", () => {
+    it("defaults to 'dag'", () => {
+      // DAG is the first-class default engine (DAG-01). New conversations use
+      // the graph-based context engine unless an operator opts out explicitly.
       const result = ContextEngineConfigSchema.parse({});
-      expect(result.version).toBe("pipeline");
+      expect(result.version).toBe("dag");
     });
 
     it("accepts 'pipeline'", () => {
+      const result = ContextEngineConfigSchema.parse({ version: "pipeline" });
+      expect(result.version).toBe("pipeline");
+    });
+
+    it("opt-out: explicit version 'pipeline' still parses to 'pipeline'", () => {
+      // The default flipped pipeline -> dag, but pipeline remains a valid
+      // opt-out: an operator who sets it explicitly keeps the pipeline engine.
       const result = ContextEngineConfigSchema.parse({ version: "pipeline" });
       expect(result.version).toBe("pipeline");
     });
