@@ -24,6 +24,8 @@ export type {
   MemorySearchResult,
   EmbeddingPort,
   RerankerPort,
+  MemoryEntityStore,
+  EntityScope,
   ContextStorePort,
   ContextEngineStore,
   ContextAdminStore,
