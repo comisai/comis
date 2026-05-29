@@ -242,30 +242,42 @@ export async function runMemoryConsolidation(
   let dedupHits = 0;
 
   for (const cluster of subClusters) {
-    if (clustersProcessed >= config.maxClustersPerRun) break; // CONS-07 bound
-
     // CONS-02: the trust CEILING — computed in CODE, never the LLM.
     const trust = minTrust(cluster);
 
     // CONS-02: external excluded by default (no observation, no LLM call/spend).
+    // A skip here consumes NO budget (it never reaches the LLM).
     if (trust === "external" && !config.consolidateExternal) {
       logger.debug({ agentId, step: "consolidate" }, "Skipping external-trust cluster (consolidateExternal=false)");
       continue;
     }
 
-    clustersProcessed++;
     const sourceIds = cluster.map((e) => e.id);
 
     // CONS-04 PRIMARY dedup: identical source set → an equivalent observation
     // already exists. Skip (leave sources consolidated_at IS NULL; the existing
     // observation already covers them — the next run re-hits this dedup, no
     // double-create). This keeps the port at exactly 3 methods (no markOnly).
+    //
+    // WR-02: this dedup check (and the external gate above) runs BEFORE the
+    // maxClustersPerRun budget gate, because a dedup hit needs NO LLM call and
+    // does NO merge work — it must NOT consume the per-run cluster budget.
+    // Counting dedup skips against the budget let a churny steady state (many
+    // recurring already-consolidated source sets) burn the whole budget on skips
+    // and `break` before reaching the clusters that actually need merging,
+    // indefinitely starving genuinely-new observations. dedupHits still counts.
     const key = deterministicDedupKey(sourceIds);
     if (existingKeys.has(key)) {
       dedupHits++;
       logger.debug({ agentId, step: "consolidate" }, "Dedup hit (existing observation covers this source set) — skipping");
       continue;
     }
+
+    // CONS-07 bound — gate ONLY clusters that will actually do merge work (reach
+    // the LLM + apply). Incrementing here (after the eligibility + primary-dedup
+    // skips) is the WR-02 fix: the budget funds real merges, never skipped work.
+    if (clustersProcessed >= config.maxClustersPerRun) break;
+    clustersProcessed++;
 
     // 5. (Mocked-in-test) LLM merge of the homogeneous sub-cluster. Non-fatal:
     // a thrown/aborted call WARNs + continues (the run still returns ok).
