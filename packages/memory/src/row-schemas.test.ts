@@ -166,6 +166,44 @@ describe("row-schemas — type-equality with paired interfaces", () => {
 // file-internal (the schema IS the SSOT)
 // =====================================================================
 
+describe("row-schemas — MemoryRowSchema occurred_at column (TEMP-01)", () => {
+  function baseMemoryRow(): Record<string, unknown> {
+    return {
+      id: "row-1",
+      tenant_id: "default",
+      agent_id: "default",
+      user_id: "user-1",
+      content: "test",
+      trust_level: "learned",
+      memory_type: "semantic",
+      source_who: "agent",
+      source_channel: null,
+      source_session_key: null,
+      tags: "[]",
+      created_at: 1700000000000,
+      occurred_at: null,
+      updated_at: null,
+      expires_at: null,
+      has_embedding: 0,
+    };
+  }
+
+  it("accepts a row whose occurred_at is a number (event time, epoch ms)", () => {
+    const sample = { ...baseMemoryRow(), occurred_at: 1699000000000 };
+    expect(MemoryRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("accepts a row whose occurred_at is null (event time unknown)", () => {
+    const sample = { ...baseMemoryRow(), occurred_at: null };
+    expect(MemoryRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("rejects a row whose occurred_at is a string (must be number|null)", () => {
+    const sample = { ...baseMemoryRow(), occurred_at: "2026-05-20T10:00:00Z" };
+    expect(MemoryRowSchema.safeParse(sample).success).toBe(false);
+  });
+});
+
 describe("row-schemas — internal DB row runtime parses", () => {
   it("TokenUsageDbRowSchema parses a complete token_usage row", () => {
     const sample = {
@@ -462,6 +500,7 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
       source_session_key: null,
       tags: "[]",
       created_at: 1700000000000,
+      occurred_at: 1700000000050,
       updated_at: null,
       expires_at: null,
       has_embedding: 0,

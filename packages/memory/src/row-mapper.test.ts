@@ -15,6 +15,7 @@ import {
   createRowMapper,
 } from "./row-mapper.js";
 import { initSchema, isVecAvailable } from "./schema.js";
+import { MemoryRowSchema } from "./row-schemas.js";
 import type { MemoryRow } from "./types.js";
 
 const DIMS = 4;
@@ -36,6 +37,7 @@ function makeRow(overrides?: Partial<MemoryRow>): MemoryRow {
     source_session_key: "sess-123",
     tags: '["tag1","tag2"]',
     created_at: 1700000000000,
+    occurred_at: 1699000000000,
     updated_at: 1700001000000,
     expires_at: 1700090000000,
     has_embedding: 0,
@@ -55,6 +57,7 @@ function makeEntry(overrides?: Partial<MemoryEntry>): MemoryEntry {
     source: overrides?.source ?? { who: "agent", channel: "telegram" },
     tags: overrides?.tags ?? [],
     createdAt: overrides?.createdAt ?? Date.now(),
+    ...(overrides?.occurredAt !== undefined ? { occurredAt: overrides.occurredAt } : {}),
     ...(overrides?.updatedAt !== undefined ? { updatedAt: overrides.updatedAt } : {}),
     ...(overrides?.expiresAt !== undefined ? { expiresAt: overrides.expiresAt } : {}),
     ...(overrides?.embedding ? { embedding: overrides.embedding } : {}),
@@ -79,6 +82,7 @@ describe("rowToEntry", () => {
     expect(entry.source.sessionKey).toBe("sess-123");
     expect(entry.tags).toEqual(["tag1", "tag2"]);
     expect(entry.createdAt).toBe(1700000000000);
+    expect(entry.occurredAt).toBe(1699000000000);
     expect(entry.updatedAt).toBe(1700001000000);
     expect(entry.expiresAt).toBe(1700090000000);
   });
@@ -87,6 +91,7 @@ describe("rowToEntry", () => {
     const row = makeRow({
       source_channel: null,
       source_session_key: null,
+      occurred_at: null,
       updated_at: null,
       expires_at: null,
     });
@@ -94,8 +99,27 @@ describe("rowToEntry", () => {
 
     expect(entry.source.channel).toBeUndefined();
     expect(entry.source.sessionKey).toBeUndefined();
+    expect(entry.occurredAt).toBeUndefined();
     expect(entry.updatedAt).toBeUndefined();
     expect(entry.expiresAt).toBeUndefined();
+  });
+
+  it("omits occurredAt entirely when occurred_at is null (conditional spread, not undefined)", () => {
+    const row = makeRow({ occurred_at: null });
+    const entry = rowToEntry(row);
+
+    // Mirror the updatedAt/expiresAt pattern: the key must be ABSENT, not
+    // present-with-undefined (so MemoryEntrySchema's .optional() stays clean).
+    expect("occurredAt" in entry).toBe(false);
+  });
+
+  it("maps occurred_at -> occurredAt when present", () => {
+    const row = makeRow({ created_at: 1700000000000, occurred_at: 1650000000000 });
+    const entry = rowToEntry(row);
+
+    expect(entry.occurredAt).toBe(1650000000000);
+    // Distinct axes: event time != record time.
+    expect(entry.occurredAt).not.toBe(entry.createdAt);
   });
 
   it("includes embedding when provided", () => {
@@ -153,6 +177,7 @@ describe("insertMemoryRow", () => {
       source: { who: "admin", channel: "cli", sessionKey: "sk-1" },
       tags: ["critical"],
       createdAt: 1700000000000,
+      occurredAt: 1699000000000,
       updatedAt: 1700001000000,
       expiresAt: 1700090000000,
     });
@@ -172,9 +197,23 @@ describe("insertMemoryRow", () => {
     expect(row.source_session_key).toBe("sk-1");
     expect(JSON.parse(row.tags)).toEqual(["critical"]);
     expect(row.created_at).toBe(1700000000000);
+    expect(row.occurred_at).toBe(1699000000000);
     expect(row.updated_at).toBe(1700001000000);
     expect(row.expires_at).toBe(1700090000000);
     expect(row.has_embedding).toBe(0);
+  });
+
+  it("writes occurred_at = NULL when the entry has no occurredAt", () => {
+    const entry = makeEntry({ id: "mem-no-occ" });
+    // makeEntry omits occurredAt unless explicitly overridden.
+    expect("occurredAt" in entry).toBe(false);
+
+    insertMemoryRow(db, entry, "semantic");
+
+    const row = db
+      .prepare("SELECT occurred_at FROM memories WHERE id = ?")
+      .get("mem-no-occ") as { occurred_at: number | null };
+    expect(row.occurred_at).toBeNull();
   });
 
   it("defaults agentId to 'default' when undefined", () => {
@@ -212,6 +251,66 @@ describe("insertMemoryRow", () => {
       memory_type: string;
     };
     expect(row.memory_type).toBe("procedural");
+  });
+});
+
+// ── occurred_at full round-trip through the strict schema (TEMP-01) ──
+//
+// This is the lockstep guard: domain MemoryEntry -> insertMemoryRow ->
+// SELECT * -> MemoryRowSchema (z.strictObject) -> rowToEntry. If occurred_at
+// were added to the table (Task 1) but NOT to MemoryRowSchema, the strict
+// parse below would FAIL -> the adapter would skip every row -> recall would
+// silently return []. These tests fail loudly instead.
+
+describe("occurred_at round-trip (domain -> INSERT -> SELECT * -> rowToEntry)", () => {
+  let db: Database.Database;
+  const memoryRowMapper = createRowMapper(MemoryRowSchema);
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, DIMS);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  function selectAndParse(id: string): MemoryRow {
+    const raw = db.prepare("SELECT * FROM memories WHERE id = ?").get(id);
+    const parsed = memoryRowMapper.parseOptionalRow(raw);
+    // The strict schema MUST accept the SELECT * shape (incl. occurred_at).
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(`row parse failed: ${parsed.error.message}`);
+    expect(parsed.value).toBeDefined();
+    return parsed.value!;
+  }
+
+  it("preserves occurredAt when present (distinct from createdAt)", () => {
+    const entry = makeEntry({
+      id: "rt-present",
+      createdAt: 1700000000000,
+      occurredAt: 1699000000000,
+    });
+    insertMemoryRow(db, entry, "semantic");
+
+    const row = selectAndParse("rt-present");
+    const back = rowToEntry(row);
+
+    expect(back.occurredAt).toBe(1699000000000);
+    expect(back.occurredAt).toBe(entry.occurredAt);
+    expect(back.occurredAt).not.toBe(back.createdAt);
+  });
+
+  it("omits occurredAt after a round-trip when absent (occurred_at NULL)", () => {
+    const entry = makeEntry({ id: "rt-absent" });
+    expect("occurredAt" in entry).toBe(false);
+    insertMemoryRow(db, entry, "semantic");
+
+    const row = selectAndParse("rt-absent");
+    expect(row.occurred_at).toBeNull();
+
+    const back = rowToEntry(row);
+    expect("occurredAt" in back).toBe(false);
   });
 });
 
