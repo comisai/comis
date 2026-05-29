@@ -120,6 +120,50 @@ describe("score — boosts + trust tie-break", () => {
     expect(out[1]?.score).toBeCloseTo(0.5, 10);
   });
 
+  it("ranks a recent occurredAt above an old occurredAt at temporalAlpha>0 (TEMP-05)", () => {
+    // Equal base/createdAt/trust — only the EVENT time (occurredAt) differs. The
+    // recent event must outrank the old one once the temporal seam is live.
+    const recent = makeResult("recent", { base: 0.5, occurredAt: NOW - 1 * DAY_MS });
+    const old = makeResult("old", { base: 0.5, occurredAt: NOW - 100 * DAY_MS });
+    const out = score([old, recent], { ...ZERO_ALPHAS, temporalAlpha: 0.5 }, NOW);
+    expect(out[0]?.entry.id).toBe("recent");
+    expect(out[1]?.entry.id).toBe("old");
+    expect(out[0]?.score ?? 0).toBeGreaterThan(out[1]?.score ?? 0);
+  });
+
+  it("clamps a future occurredAt to proximity 1.0 (no negative-age blow-up, Pitfall 3)", () => {
+    // A future event date clamps to ageDays=0 → proximity 1.0, same as a NOW-dated
+    // event. It must not exceed the present-dated factor, and must never be NaN/negative.
+    const future = makeResult("future", { base: 0.5, occurredAt: NOW + 10 * DAY_MS });
+    const present = makeResult("present", { base: 0.5, occurredAt: NOW });
+    const out = score([present, future], { ...ZERO_ALPHAS, temporalAlpha: 1.0 }, NOW);
+    const futureScore = out.find((r) => r.entry.id === "future")?.score ?? NaN;
+    const presentScore = out.find((r) => r.entry.id === "present")?.score ?? NaN;
+    expect(Number.isNaN(futureScore)).toBe(false);
+    expect(futureScore).toBeGreaterThan(0);
+    // Both clamp to proximity 1.0 → identical temporal factor (ties, never exceeds).
+    expect(futureScore).toBeCloseTo(presentScore, 10);
+  });
+
+  it("drives temporal proximity from occurredAt INDEPENDENTLY of createdAt (distinct axes)", () => {
+    // IDENTICAL createdAt, DIFFERENT occurredAt: with recencyAlpha=0 and temporalAlpha>0,
+    // only the event axis can reorder them — proving occurred/record are not conflated.
+    const sharedCreatedAt = NOW - 50 * DAY_MS;
+    const recentEvent = makeResult("recentEvent", {
+      base: 0.5,
+      createdAt: sharedCreatedAt,
+      occurredAt: NOW - 1 * DAY_MS,
+    });
+    const oldEvent = makeResult("oldEvent", {
+      base: 0.5,
+      createdAt: sharedCreatedAt,
+      occurredAt: NOW - 200 * DAY_MS,
+    });
+    const out = score([oldEvent, recentEvent], { ...ZERO_ALPHAS, temporalAlpha: 0.5 }, NOW);
+    expect(out[0]?.entry.id).toBe("recentEvent");
+    expect(out[1]?.entry.id).toBe("oldEvent");
+  });
+
   it("keeps the proof factor at 1.0 when proofCount is absent, even at proofAlpha=1.0", () => {
     const first = makeResult("first", { base: 0.5 });
     const second = makeResult("second", { base: 0.5 });
