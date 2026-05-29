@@ -6,9 +6,10 @@
  * PURE MATH (no Result, no throws, no I/O — AGENTS.md §2.1 carve-out for pure
  * functions). recall@k and MRR are standard, deterministic IR metrics; the
  * scorer runs a ranking function over labeled fixtures and macro-averages.
- * The harness compares a BASELINE ranker (fusion-only, via fuse()) against a
- * RERANKED ranker and reports the recall@1 / MRR lift — the EVAL-01 number that
- * proves the cross-encoder delivers a measurable recall gain over fusion-only.
+ * The harness compares a BASELINE ranker (caller-provided — typically the
+ * fusion-only order via `fuse(...)` in recall-eval.test.ts) against a RERANKED
+ * ranker and reports the recall@1 / MRR lift — the EVAL-01 number that proves
+ * the cross-encoder delivers a measurable recall gain over fusion-only.
  *
  * ARCHITECTURE CUT (architecture.test.ts "agent -> memory"): this production
  * file imports ONLY core types + the in-package fixtures type. It MUST NOT
@@ -152,10 +153,11 @@ export interface LiftReport {
  * Score a baseline ranker and a reranked ranker over the same query set and
  * report the recall@1 / MRR lift of reranked over baseline.
  *
- * The baseline is the fusion-only order (`fuse([{ results: candidates, weight: 1 }])`);
- * the reranked order is the cross-encoder ordering. A positive `recallAt1Lift`
- * is the measurable EVAL-01 gain; a zero lift means reranking did not regress
- * recall on the labeled set.
+ * The baseline ranker is the one the CALLER passes as `baselineFn` (typically
+ * the fusion-only order via `fuse([{ results: candidates, weight: 1 }])` in the
+ * harness); `rerankedFn` is the cross-encoder ordering. A positive
+ * `recallAt1Lift` is the measurable EVAL-01 gain; a zero lift means reranking
+ * did not regress recall on the labeled set.
  */
 export function compareRankings(
   queries: EvalQuery[],
