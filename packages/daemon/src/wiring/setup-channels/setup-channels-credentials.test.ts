@@ -34,6 +34,9 @@ describe("setup-channels-credentials", () => {
       sessionManager: true,
       sessionStore: true,
       logger: true,
+      // Composition-root clock threaded to runMemoryReview for relative-date
+      // resolution (EXTR-02) — pins the new closure capture into the deps surface.
+      clock: true,
       adaptersByType: true,
       deliveryService: true,
       assembleToolsForAgent: true,
@@ -45,6 +48,6 @@ describe("setup-channels-credentials", () => {
       cronExecutionTrackers: true,
       activeRunRegistry: true,
     };
-    expect(Object.keys(witness).length).toBe(16);
+    expect(Object.keys(witness).length).toBe(17);
   });
 });

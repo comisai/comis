@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, MemoryPort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry } from "@comis/agent";
@@ -34,6 +34,8 @@ export interface CronEventListenerDeps {
   sessionManager: ReturnType<typeof createSessionLifecycle>;
   sessionStore: ReturnType<typeof createSessionStore>;
   logger: ComisLogger;
+  /** Composition-root clock — threaded to runMemoryReview for relative-date resolution (EXTR-02). */
+  clock: ClockPort;
   adaptersByType: Map<string, ChannelPort>;
   deliveryService: DeliveryService;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- AgentTool generic requires complex type parameters from pi-ai SDK
@@ -135,6 +137,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         provider: resolved.provider,
         modelId: resolved.modelId,
         apiKey,
+        clock: deps.clock,
         logger: reviewLogger,
       });
 

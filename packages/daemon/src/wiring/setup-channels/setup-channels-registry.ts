@@ -316,6 +316,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     sessionManager,
     sessionStore: deps.sessionStore,
     logger,
+    clock: deps.clock,
     adaptersByType,
     deliveryService,
     assembleToolsForAgent: deps.assembleToolsForAgent,
