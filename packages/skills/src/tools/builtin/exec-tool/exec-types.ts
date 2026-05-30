@@ -149,7 +149,8 @@ export interface ExecToolDeps {
    */
   readonly brokerSpawnEnv?: {
     readonly HTTPS_PROXY: string;
-    readonly HTTP_PROXY: string;
+    /** HTTP_PROXY intentionally omitted — broker is CONNECT-only (HTTPS). */
+    readonly HTTP_PROXY?: string;
     readonly NODE_EXTRA_CA_CERTS: string;
     /** Provider placeholder key env vars. e.g. { ANTHROPIC_API_KEY: "broker-placeholder" } */
     readonly placeholders: Record<string, string>;

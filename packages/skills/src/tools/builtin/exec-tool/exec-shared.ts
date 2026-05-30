@@ -556,7 +556,8 @@ export function buildExecEnv(deps: {
   /** Broker proxy env — driven-CLI spawn only; merged LAST (EGRESS-03). */
   brokerSpawnEnv?: {
     HTTPS_PROXY: string;
-    HTTP_PROXY: string;
+    /** HTTP_PROXY intentionally omitted — broker is CONNECT-only (HTTPS). */
+    HTTP_PROXY?: string;
     NODE_EXTRA_CA_CERTS: string;
     placeholders: Record<string, string>;
   };
@@ -589,9 +590,17 @@ export function buildExecEnv(deps: {
   };
   const finalEnv = sandboxConfig?.sandbox.wrapEnv?.(env as Record<string, string>, workspacePath) ?? env;
   // Broker env LAST — only present for driven-CLI spawns (EGRESS-03).
+  // HTTP_PROXY is optional (broker is CONNECT-only; omit it to avoid routing
+  // plain HTTP requests through an unsupported path).
   if (deps.brokerSpawnEnv) {
     const { HTTPS_PROXY, HTTP_PROXY, NODE_EXTRA_CA_CERTS, placeholders } = deps.brokerSpawnEnv;
-    Object.assign(finalEnv, { HTTPS_PROXY, HTTP_PROXY, NODE_EXTRA_CA_CERTS, ...placeholders });
+    Object.assign(
+      finalEnv,
+      { HTTPS_PROXY, NODE_EXTRA_CA_CERTS, ...placeholders },
+      // Only inject HTTP_PROXY if explicitly set (preserved for future use cases
+      // where a broker might support plain HTTP; absent = no plain HTTP proxying).
+      HTTP_PROXY !== undefined ? { HTTP_PROXY } : {},
+    );
   }
   return finalEnv;
 }
