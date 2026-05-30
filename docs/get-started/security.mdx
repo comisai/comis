@@ -102,6 +102,14 @@ protection is the only thing standing between you and a threat.
     **Do I need to configure it?** No -- the sandbox is automatic on supported platforms. See [Sandbox Reference](/reference/sandbox) to customize allowed paths.
   </Accordion>
 
+  <Accordion title="Credential Broker" icon="key">
+    **What it does:** Drives API-key CLIs (Claude Code included) with the real key kept entirely out of the sandbox. The key stays in the daemon's encrypted store and is injected at the network boundary -- so `cat /proc/self/environ` inside the sandbox shows only a placeholder, never the real credential.
+
+    **Why it matters:** Even a sandboxed process can read its own environment variables. The credential broker removes the key from the environment entirely, so prompt injection or a sandbox escape cannot extract the real API key from inside the namespace.
+
+    **Do I need to configure it?** Yes -- add an `executor.broker.bindings` entry for each CLI you want to drive. Two built-in presets are available today: `anthropic` and `finnhub`. [Credential Broker →](/security/credential-broker)
+  </Accordion>
+
   <Accordion title="Gateway Authentication" icon="key">
     **What it does:** Protects the gateway -- the front door to your daemon -- with bearer-token authentication and optional mutual TLS (mTLS) for production deployments. Comparisons are timing-safe so attackers cannot guess tokens by measuring response time.
 
