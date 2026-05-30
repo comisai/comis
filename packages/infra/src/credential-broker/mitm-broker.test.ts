@@ -3220,4 +3220,44 @@ describe("EGRESS-01 — Unix socket listen (startUnixSocket)", () => {
     await broker.stop();
     rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  it("WR-02 — stop() destroys Unix server client sockets even when TCP server was never started", async () => {
+    // This test proves the bug: when only startUnixSocket() was called (start() never called),
+    // stop() must still destroy tracked openSockets. The original code hits the early
+    // `if (!server) { resolve(); return; }` before the openSockets loop.
+    const tmpDir = mkdtempSync(join(tmpdir(), "mitm-broker-wr02-"));
+    const socketPath = join(tmpDir, "broker.sock");
+
+    const deps = makeDeps();
+    const broker = createMitmBroker(deps);
+    // NOTE: do NOT call broker.start() — only startUnixSocket
+    await broker.startUnixSocket(socketPath);
+
+    // Establish a connection to create a tracked socket in openSockets
+    const clientSocket = await new Promise<net.Socket>((resolve, reject) => {
+      const s = net.connect(socketPath, () => resolve(s));
+      s.on("error", reject);
+      setTimeout(() => reject(new Error("connect timeout")), 3000);
+    });
+
+    // Give the server time to register the connection in openSockets
+    await new Promise<void>((r) => setTimeout(r, 50));
+
+    // Track whether the client socket gets destroyed
+    let clientDestroyed = false;
+    clientSocket.on("close", () => { clientDestroyed = true; });
+
+    // stop() must complete (not hang) and must destroy the unix client socket
+    await Promise.race([
+      broker.stop(),
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error("stop() timed out — unix client sockets not destroyed")), 3000)),
+    ]);
+
+    // Allow close event to propagate
+    await new Promise<void>((r) => setTimeout(r, 50));
+
+    expect(clientDestroyed).toBe(true);
+    clientSocket.destroy();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 });
