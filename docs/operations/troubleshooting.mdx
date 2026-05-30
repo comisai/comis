@@ -493,6 +493,113 @@ See [Resilience Architecture](/agents/resilience) for how these systems work tog
   </Accordion>
 </AccordionGroup>
 
+## Credential Broker
+
+The credential broker intercepts HTTPS requests from driven-CLI spawns, injects the real API key, and forwards the request upstream — all without the key ever entering the sandbox. When something goes wrong, the broker emits a `broker:denied` or `broker:credential_unavailable` event and returns a specific HTTP status code. Use the playbooks below to diagnose each failure mode.
+
+<AccordionGroup>
+  <Accordion title="Broker request fails with 407 (bad_token)">
+    **What happened:** The driven-CLI's proxy token was missing, forged, or already consumed. Each token is single-use — one is issued per driven-CLI spawn. The broker emits `broker:denied` with `reason: "bad_token"`.
+
+    **Diagnose:**
+
+    ```bash
+    grep 'broker:denied' ~/.comis/logs/daemon.log | grep bad_token | tail -20
+    ```
+
+    **Common causes:**
+
+    - The CLI was not launched through the broker (`HTTPS_PROXY` env var not set to the broker socket).
+    - The session was torn down before the request completed.
+    - A token was replayed (single-use invariant — each token can only be consumed once).
+
+    **Resolution:** Ensure the CLI is launched via the daemon's driven-CLI spawn path, not invoked manually without the broker environment.
+  </Accordion>
+
+  <Accordion title="Broker returns 403 (no_binding or path_policy)">
+    **What happened:** Two `broker:denied` reasons produce 403:
+
+    - `no_binding` — the requested host has no matching `hostRules` entry in any binding. Add a binding or use a built-in preset (`anthropic`, `finnhub`).
+    - `path_policy` — the host is allow-listed but the path is blocked by the binding's `pathPolicy` glob.
+
+    **Diagnose:**
+
+    ```bash
+    grep 'broker:denied' ~/.comis/logs/daemon.log | grep -E '"reason":"(no_binding|path_policy)"' | tail -10
+    ```
+
+    **Resolution for no_binding:** Add a `hostRules` entry for the target host in `executor.broker.bindings`, or use a matching preset.
+
+    **Resolution for path_policy:** Review the `pathPolicy` glob on the binding. Ensure the requested path matches the allowed pattern (e.g., `/v1/*`).
+  </Accordion>
+
+  <Accordion title="Broker returns 502 (credential_unavailable)">
+    **What happened:** The broker could not resolve the `secretRef` from SecretManager. The broker emits `broker:credential_unavailable` and returns 502. The request is never forwarded upstream.
+
+    **Diagnose:**
+
+    ```bash
+    grep 'broker:credential_unavailable' ~/.comis/logs/daemon.log | tail -10
+    # Check that the secret exists:
+    node packages/cli/dist/cli.js secrets list
+    ```
+
+    **Resolution:** Ensure the `secretRef` in the binding exactly matches the key name returned by `secrets list`. If the secret is missing, add it:
+
+    ```bash
+    node packages/cli/dist/cli.js secrets set YOUR_SECRET_KEY
+    ```
+  </Accordion>
+
+  <Accordion title="Broker returns 501 (WebSocket upgrade)">
+    **What happened:** A WebSocket upgrade from the credentialed sandbox returned 501 with `broker:denied` reason `ws_upgrade_not_supported`. This is an intentional fail-closed guard — WebSocket credential injection is not supported in this release. The error is returned explicitly rather than hanging silently.
+
+    **Resolution:** Use HTTPS (not WebSocket) for API calls that require credential injection. WS credential injection is on the roadmap (WS-01).
+  </Accordion>
+
+  <Accordion title="Tracing a full broker request lifecycle">
+    Every broker log line carries `step` (pipeline stage), `traceId`, and `agentId`. To trace a full request:
+
+    ```bash
+    # Find the traceId from a session_opened event for your agent:
+    grep 'broker:session_opened' ~/.comis/logs/daemon.log | grep '"agentId":"<your-agent>"' | tail -5
+
+    # Follow all events for that trace:
+    grep '"traceId":"<your-trace-id>"' ~/.comis/logs/daemon.log | jq -c '{step, event: (.event // .type), reason: .reason}'
+    ```
+
+    Expected sequence for a successful injection:
+
+    `broker:session_opened` → `broker:request` → `broker:injected` → (upstream response) → `broker:session_closed`
+
+    If `broker:denied` appears in place of `broker:injected`, the `reason` field identifies the failure mode (see accordions above).
+
+    **Filter by pipeline stage:**
+
+    ```bash
+    jq 'select(.step == "broker-inject")' ~/.comis/logs/daemon.log
+    ```
+  </Accordion>
+
+  <Accordion title="Upstream API returns 401 (key injected but rejected)">
+    **What happened:** The broker injected a credential and forwarded the request, but the upstream API returned 401. The secret value may be wrong or the injection rule kind may not match what the API expects.
+
+    **Diagnose:**
+
+    1. Verify the `secretRef` key in the binding matches the stored secret name (`secrets list`).
+    2. Check the stored secret value — update it with:
+       ```bash
+       node packages/cli/dist/cli.js secrets set YOUR_SECRET_KEY
+       ```
+    3. Check the injection rule kind — the `anthropic` preset injects `x-api-key` (raw, not Bearer). For OpenAI-compatible APIs use a custom binding with `format: bearer`.
+    4. Look for `broker:injected` in logs to confirm injection actually occurred (vs. a 403 or 502 before it reached upstream).
+  </Accordion>
+</AccordionGroup>
+
+[Full Credential Broker reference →](/security/credential-broker)
+
+---
+
 ## Related Pages
 
 <CardGroup cols={2}>
