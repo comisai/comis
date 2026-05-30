@@ -97,6 +97,7 @@ import {
   writeMasterKeyIfAbsent,
   preReadSecretsEnabled,
   systemGetEnv,
+  systemNowMs,
   selectOAuthCredentialStore,
   createFileLock,
   type SecretStorePort,
@@ -990,7 +991,7 @@ function createHotAdd(deps: {
     toolCapabilityPorts, container, daemonLogger,
   } = channels;
   return async (agentId, config) => {
-    const startMs = Date.now();
+    const startMs = systemNowMs();
     if (shutdownRef.value?.isShuttingDown) {
       throw new Error("Cannot hot-add agent during shutdown");
     }
@@ -1006,8 +1007,8 @@ function createHotAdd(deps: {
     }
     skillRegistries.set(agentId, result.skillRegistry);
     toolCapabilityPorts.set(agentId, result.toolCapabilityPort);
-    container.eventBus.emit("agent:hot_added", { agentId, timestamp: Date.now() });
-    daemonLogger.info({ agentId, durationMs: Date.now() - startMs }, "Agent hot-added to running daemon");
+    container.eventBus.emit("agent:hot_added", { agentId, timestamp: systemNowMs() });
+    daemonLogger.info({ agentId, durationMs: systemNowMs() - startMs }, "Agent hot-added to running daemon");
   };
 }
 
@@ -1023,7 +1024,7 @@ function createHotRemove(deps: {
     toolCapabilityPorts, container,
   } = deps.channels;
   return async (agentId) => {
-    const startMs = Date.now();
+    const startMs = systemNowMs();
     // Warn if agent may have active executions.
     // ActiveRunRegistry is keyed by sessionKey, not agentId. Since hot-remove is
     // rare and the registry is small, a coarse size > 0 check is sufficient for v1.
@@ -1050,8 +1051,8 @@ function createHotRemove(deps: {
     piSessionAdapters.delete(agentId);
     skillRegistries.delete(agentId);
     toolCapabilityPorts.delete(agentId);
-    container.eventBus.emit("agent:hot_removed", { agentId, timestamp: Date.now() });
-    daemonLogger.info({ agentId, durationMs: Date.now() - startMs }, "Agent hot-removed from running daemon");
+    container.eventBus.emit("agent:hot_removed", { agentId, timestamp: systemNowMs() });
+    daemonLogger.info({ agentId, durationMs: systemNowMs() - startMs }, "Agent hot-removed from running daemon");
   };
 }
 
