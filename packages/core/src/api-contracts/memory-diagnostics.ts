@@ -57,7 +57,12 @@ export const MemoryRecallTraceContract = defineContract({
     trace_id: z.string().optional(),
     tenant_id: z.string().optional(),
     agent_id: z.string().optional(),
-    limit: z.number().optional(),
+    // WR-05: bound the limit at parse time — positive integer with a sane cap.
+    // An unbounded/negative/fractional limit used to flow straight into the
+    // file-scan guard (`records.length >= limit`), so reject malformed bounds
+    // here (defense-in-depth + clearer UX), consistent with Comis's other
+    // `.int().positive()` contracts.
+    limit: z.number().int().positive().max(1000).optional(),
   }),
   response: z.object({
     records: z.array(z.record(z.string(), z.unknown())),
@@ -87,7 +92,8 @@ export const MemoryObservationsContract = defineContract({
   request: z.object({
     tenant_id: z.string().optional(),
     agent_id: z.string().optional(),
-    limit: z.number().optional(),
+    // WR-05: bound the limit at parse time — it flows straight into `LIMIT ?`.
+    limit: z.number().int().positive().max(1000).optional(),
   }),
   response: z.object({
     observations: z.array(
@@ -125,7 +131,8 @@ export const MemoryEntitiesContract = defineContract({
   request: z.object({
     tenant_id: z.string().optional(),
     agent_id: z.string().optional(),
-    limit: z.number().optional(),
+    // WR-05: bound the limit at parse time — it flows straight into `LIMIT ?`.
+    limit: z.number().int().positive().max(1000).optional(),
   }),
   response: z.object({
     entities: z.array(

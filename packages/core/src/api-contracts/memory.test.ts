@@ -637,6 +637,47 @@ describe("memory diagnostic contracts (OBS-06) — admin-scoped", () => {
     expect(() => MemoryRecallTraceContract.request.parse({})).not.toThrow();
   });
 
+  it("memory.recall_trace: rejects a non-integer, negative, or oversized limit (WR-05 bounded limit)", () => {
+    // WR-05: the diagnostic `limit` must be a positive integer with a sane cap
+    // (defense-in-depth — a malformed bound used to flow straight into the
+    // file scan / `LIMIT ?`). A small positive integer still parses.
+    expect(() =>
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: 50 }),
+    ).not.toThrow();
+    // Non-integer is rejected at parse time.
+    expect(() =>
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: 3.5 }),
+    ).toThrow();
+    // Negative / zero is rejected.
+    expect(() =>
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: -1 }),
+    ).toThrow();
+    expect(() =>
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: 0 }),
+    ).toThrow();
+    // Oversized (beyond the cap) is rejected.
+    expect(() =>
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: 1_000_000_000 }),
+    ).toThrow();
+  });
+
+  it("memory.observations / memory.entities: reject a non-integer or oversized limit (WR-05 bounded limit)", () => {
+    // The two SQL-backed diagnostics thread `limit` straight into `LIMIT ?`,
+    // so the same positive-integer-with-cap fence applies to them.
+    expect(() =>
+      MemoryObservationsContract.request.parse({ limit: 3.5 }),
+    ).toThrow();
+    expect(() =>
+      MemoryObservationsContract.request.parse({ limit: 1_000_000_000 }),
+    ).toThrow();
+    expect(() =>
+      MemoryEntitiesContract.request.parse({ limit: -5 }),
+    ).toThrow();
+    expect(() =>
+      MemoryEntitiesContract.request.parse({ limit: 1_000_000_000 }),
+    ).toThrow();
+  });
+
   it("memory.recall_trace: response carries records[] of loose forward-compat JSONL rows", () => {
     expect(() =>
       MemoryRecallTraceContract.response.parse({
