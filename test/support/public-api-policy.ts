@@ -413,6 +413,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "sweepResultFiles",
       "buildAnnouncementMessage",
       "deliverFailureNotification",
+      // buildRecallTrace (Phase 86 OBS-02 gap-closure): consumed by the
+      // recall-diagnostics-isolation integration test (the OBS-02 e2e
+      // redaction proof + OBS-08 cross-scope-leak negative drive the real
+      // recorder through the @comis/agent barrel — see
+      // test/integration/security/recall-diagnostics-isolation.test.ts:61).
+      // The public-export-consumers AST walker only scans packages/*/src/**
+      // (NOT test/), so that cross-package consumer doesn't satisfy the gate.
+      // The production consumer is intra-package (prompt-assembly.ts threads
+      // the same envelope), which the walker skips as a self-import. Mirrors
+      // the createMemoryHandlers / MEMORY_DIAGNOSTIC_CONTRACTS precedent from
+      // Phase 86. Keep the barrel export — the integration test needs it via
+      // the bare `@comis/agent` import.
+      "buildRecallTrace",
     ])],
     // @comis/channels: baseline orphans tracked here. The 5 delivery
     // helpers + the Markdown IR pipeline (incl. telegram-file-ref-guard)
