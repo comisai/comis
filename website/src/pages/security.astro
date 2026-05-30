@@ -57,6 +57,13 @@ const layers = [
     how: "Per-agent glob-pattern filtering (e.g., OPENAI_*, ANTHROPIC_*). Decorator pattern: indistinguishable from plain SecretManager. Audit events (secret:accessed) log every access attempt with success/denied/not_found outcomes.",
   },
   {
+    name: "Credential Broker",
+    category: "Secrets",
+    color: "teal",
+    threat: "API key exposure via agentic CLIs",
+    how: "The real key never enters the exec sandbox. It lives in the daemon's AES-256-GCM encrypted store and is resolved per-request by the in-daemon HTTPS MITM broker. The CLI runs with a placeholder; the broker terminates TLS with its own CA, verifies the single-use proxy token, and injects the real credential for allow-listed hosts (`x-api-key`, `Authorization: Bearer`, or query param). On Linux, the credentialed sandbox runs in broker-only network mode (`--unshare-net`) — the broker unix socket is the designed-to-be-only destination (R1 validation in progress). Broker fails closed: bad token → 407, no binding → 403, missing secret → 502, request never forwarded. Every inject/deny/blocked-egress event is audited with `agentId` + `traceId`. Anthropic and Finnhub today.",
+  },
+  {
     name: "Log Sanitizer",
     category: "Secrets",
     color: "teal",
@@ -165,7 +172,7 @@ const layers = [
 
 const categories = [
   { name: "Perimeter", color: "coral", count: 5, desc: "Block threats before they reach the LLM" },
-  { name: "Secrets", color: "teal", count: 3, desc: "Encrypt, scope, and redact credentials at every layer" },
+  { name: "Secrets", color: "teal", count: 4, desc: "Encrypt, scope, redact, and broker credentials at every layer" },
   { name: "Network", color: "purple-400", count: 1, desc: "Prevent outbound requests to private networks" },
   { name: "Process Isolation", color: "red-400", count: 1, desc: "Kernel-enforced filesystem sandbox for shell commands" },
   { name: "Access Control", color: "blue-400", count: 2, desc: "Limit what each agent can do and require approval" },
@@ -205,8 +212,8 @@ const categories = [
         <div class="bg-navy-light/80 border border-coral/20 rounded-2xl p-8 md:p-12">
           <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
             <div>
-              <p class="text-4xl font-bold text-coral font-mono">22</p>
-              <p class="text-muted text-sm mt-2">Categorical layers <span class="text-muted-light">(24 primitives)</span></p>
+              <p class="text-4xl font-bold text-coral font-mono">23</p>
+              <p class="text-muted text-sm mt-2">Categorical layers <span class="text-muted-light">(25 primitives)</span></p>
             </div>
             <div>
               <p class="text-4xl font-bold text-white font-mono">65</p>
@@ -343,10 +350,10 @@ const categories = [
       <div class="max-w-5xl mx-auto">
         <p class="text-coral font-semibold text-sm uppercase tracking-widest mb-4">Defense in depth</p>
         <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
-          9 defense categories. 22 independent layers (24 primitives).
+          9 defense categories. 23 independent layers (25 primitives).
         </h2>
         <p class="text-muted text-lg mb-12 max-w-2xl">
-          Each layer protects against a specific attack vector. No single layer failing compromises the system. The marketing count of 22 maps to 24 distinct implementation primitives in code.
+          Each layer protects against a specific attack vector. No single layer failing compromises the system. The marketing count of 23 maps to 25 distinct implementation primitives in code.
         </p>
 
         <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
