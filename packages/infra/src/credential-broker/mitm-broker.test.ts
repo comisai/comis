@@ -3261,3 +3261,99 @@ describe("EGRESS-01 — Unix socket listen (startUnixSocket)", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 });
+
+// ── Phase 6 emit-site smoke tests (RED gate) ─────────────────────────────────
+
+describe("Phase 6 emit-site smoke (RED gate)", () => {
+  it("broker:session_opened emitted when tunnel established", async () => {
+    const deps = makeDeps();
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+    const token = deps.sessionManager.issueToken("agent-smoke").token;
+    const { statusCode, socket } = await connectThroughProxy(
+      port,
+      token,
+      "api.anthropic.com:443",
+    );
+    expect(statusCode).toBe(200);
+    try {
+      await sendGetThroughTunnel(socket, "/v1/messages");
+    } finally {
+      socket.destroy();
+    }
+    // Allow async emit to fire
+    await new Promise<void>((r) => setTimeout(r, 50));
+    const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.some(([n]: [string]) => n === "broker:session_opened")).toBe(true);
+  });
+
+  it("broker:request emitted after inner headers parsed", async () => {
+    const deps = makeDeps();
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+    const token = deps.sessionManager.issueToken("agent-smoke").token;
+    const { statusCode, socket } = await connectThroughProxy(
+      port,
+      token,
+      "api.anthropic.com:443",
+    );
+    expect(statusCode).toBe(200);
+    try {
+      await sendGetThroughTunnel(socket, "/v1/messages");
+    } finally {
+      socket.destroy();
+    }
+    await new Promise<void>((r) => setTimeout(r, 50));
+    const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.some(([n]: [string]) => n === "broker:request")).toBe(true);
+  });
+
+  it("broker:egress_blocked emitted (not injected or denied) when no_binding", async () => {
+    const deps = makeDeps();
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+    const token = deps.sessionManager.issueToken("agent-smoke").token;
+    const { statusCode, socket } = await connectThroughProxy(
+      port,
+      token,
+      "unknown-host.example.com:443",
+    );
+    expect(statusCode).toBe(200);
+    try {
+      await sendGetThroughTunnel(socket, "/some/path");
+    } finally {
+      socket.destroy();
+    }
+    await new Promise<void>((r) => setTimeout(r, 50));
+    const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.some(([n]: [string]) => n === "broker:egress_blocked")).toBe(true);
+  });
+
+  it("broker:session_closed emitted on teardown with durationMs", async () => {
+    const deps = makeDeps();
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+    const token = deps.sessionManager.issueToken("agent-smoke").token;
+    const { statusCode, socket } = await connectThroughProxy(
+      port,
+      token,
+      "api.anthropic.com:443",
+    );
+    expect(statusCode).toBe(200);
+    try {
+      await sendGetThroughTunnel(socket, "/v1/messages");
+    } finally {
+      socket.destroy();
+    }
+    // Allow close event to propagate → teardownUpstream fires
+    await new Promise<void>((r) => setTimeout(r, 100));
+    const calls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+    const closedCall = calls.find(([n]: [string]) => n === "broker:session_closed");
+    expect(closedCall).toBeDefined();
+    expect(closedCall![1]).toMatchObject({ durationMs: expect.any(Number), reason: "teardown" });
+  });
+});
