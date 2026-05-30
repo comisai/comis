@@ -9,23 +9,19 @@
  * of the memory domain and are re-exported from `memory.ts`, so every existing
  * `from "./memory.js"` import (and the api-contracts barrel) still resolves.
  *
- * CROSS-WAVE SEAM (load-bearing): these are grouped in their OWN
- * `MEMORY_DIAGNOSTIC_CONTRACTS` array below and are NOT included in
- * `MEMORY_CONTRACTS` (which feeds `API_CONTRACTS` via index.ts). The
+ * CROSS-WAVE SEAM (closed in Plan 05): these are grouped in their OWN
+ * `MEMORY_DIAGNOSTIC_CONTRACTS` array below. Plan 02 held them OUT of
+ * `MEMORY_CONTRACTS` (which feeds `API_CONTRACTS` via index.ts) — and tagged
+ * each with `// @contract-deferred-handler: 86-05` — because the
  * `api-contracts-bidirectional.test.ts` + `contract-handler-parity.test.ts`
- * architecture gates require every `API_CONTRACTS` entry to have a MIGRATED
- * (`[Contract.method]:` computed-key) daemon handler — registering these
- * before Plan 05's handlers exist would turn those gates RED for the whole
- * repo between waves. Plan 05 spreads `MEMORY_DIAGNOSTIC_CONTRACTS` into
- * `MEMORY_CONTRACTS` in the SAME diff that adds the handlers, so the
- * registry↔handler set is 1:1 at every committed state.
- *
- * INTERFACE-FIRST: defined here (Plan 02) so Plan 05 has the request/response
- * shapes; the matching daemon handlers + CLI subcommands land in Plan 05. Each
- * contract carries a `// @contract-deferred-handler: 86-05` annotation in its
- * leading trivia — `contract-handler-parity.test.ts` reads that tag (in
- * whichever api-contracts file the contract lives in) to exempt the
- * not-yet-migrated handler; Plan 05 deletes the tag when it adds the handler.
+ * gates require every `API_CONTRACTS` entry to have a MIGRATED
+ * (`[Contract.method]:` computed-key) daemon handler, and registering them
+ * before the handlers existed would have turned those gates RED between waves.
+ * Plan 05 (this wave) landed the four daemon handlers in
+ * `packages/daemon/src/api/memory-handlers.ts`, spread
+ * `...MEMORY_DIAGNOSTIC_CONTRACTS` into `MEMORY_CONTRACTS`, AND removed the
+ * four `@contract-deferred-handler` annotations — all in one diff — so the
+ * registry↔handler set is 1:1 again.
  *
  * @module
  */
@@ -54,7 +50,6 @@ import { defineContract } from "./types.js";
  * in the contract would couple the wire shape to the recorder's evolving
  * record format across daemon restarts.
  */
-// @contract-deferred-handler: 86-05 (daemon handler + CLI land in Plan 05; held out of MEMORY_CONTRACTS until then)
 export const MemoryRecallTraceContract = defineContract({
   method: "memory.recall_trace",
   request: z.object({
@@ -87,7 +82,6 @@ export const MemoryRecallTraceContract = defineContract({
  * `proofCount?`, `sourceIds?`, `confidence?`, `consolidatedAt?`. `createdAt`
  * is always present.
  */
-// @contract-deferred-handler: 86-05 (daemon handler + CLI land in Plan 05; held out of MEMORY_CONTRACTS until then)
 export const MemoryObservationsContract = defineContract({
   method: "memory.observations",
   request: z.object({
@@ -126,7 +120,6 @@ export const MemoryObservationsContract = defineContract({
  * Response: `entities[]` mirroring `EntityRow` — `id`, `name`,
  * `mentionCount`, optional `firstSeen` / `lastSeen` (epoch ms).
  */
-// @contract-deferred-handler: 86-05 (daemon handler + CLI land in Plan 05; held out of MEMORY_CONTRACTS until then)
 export const MemoryEntitiesContract = defineContract({
   method: "memory.entities",
   request: z.object({
@@ -169,7 +162,6 @@ export const MemoryEntitiesContract = defineContract({
  * (= recallsWithHits/recalls). The handler guards the divide-by-zero on a
  * fresh process.
  */
-// @contract-deferred-handler: 86-05 (daemon handler + CLI land in Plan 05; held out of MEMORY_CONTRACTS until then)
 export const MemoryRecallStatsContract = defineContract({
   method: "memory.recall_stats",
   request: z.object({

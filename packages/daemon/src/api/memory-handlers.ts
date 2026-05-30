@@ -39,15 +39,26 @@ import {
   MemoryDeleteContract,
   MemoryFlushContract,
   MemoryExportContract,
+  MemoryRecallTraceContract,
+  MemoryObservationsContract,
+  MemoryEntitiesContract,
+  MemoryRecallStatsContract,
   safePath,
   stripInternalFields,
   systemGetEnv,
   systemNowMs,
 } from "@comis/core";
+import { resolveRecallTraceFilePath } from "@comis/observability";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
+import * as fsSync from "node:fs";
+import * as os from "node:os";
 
 import type { RpcHandler } from "./types.js";
+
+/** Max chars of an observation body surfaced as a provenance PREVIEW
+ *  (T-86-21 — never the full body unbounded; mirrors memory.search_files). */
+const OBSERVATION_PREVIEW_MAX = 500;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -386,6 +397,182 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       };
       if (systemGetEnv("NODE_ENV") !== "production") {
         MemoryExportContract.response.parse(result);
+      }
+      return result;
+    },
+
+    // -----------------------------------------------------------------------
+    // Memory-diagnostic handlers (Phase 86 / OBS-06) — admin-gated FIRST, then
+    // every query scoped to (tenant, agent) via deps.tenantId + params.agent_id.
+    // The agent is never on this path; the queries run here in the daemon.
+    // -----------------------------------------------------------------------
+
+    [MemoryObservationsContract.method]: async (rawParams) => {
+      // Admin gate FIRST (T-86-19) — before parse + query.
+      const trustLevel = rawParams._trustLevel as string | undefined;
+      if (trustLevel !== "admin") {
+        throw new Error("Admin access required for memory observations");
+      }
+      const userParams = stripInternalFields(rawParams);
+      const params = MemoryObservationsContract.request.parse(userParams);
+      // Scope NEVER widened — tenantId falls back to deps.tenantId.
+      const tenantId = params.tenant_id ?? deps.tenantId;
+      const agentId = params.agent_id ?? deps.defaultAgentId;
+      const limit = params.limit ?? 50;
+
+      if (!deps.consolidationStore) {
+        throw new Error("Memory observations unavailable: consolidation store not wired");
+      }
+      const obsResult = await deps.consolidationStore.listObservations(agentId, tenantId, limit);
+      if (!obsResult.ok) {
+        throw new Error(`Memory observations failed: ${obsResult.error.message}`);
+      }
+
+      const result = {
+        observations: obsResult.value.map((e) => ({
+          id: e.id,
+          // Provenance PREVIEW only — truncate the body (T-86-21).
+          content: e.content.slice(0, OBSERVATION_PREVIEW_MAX),
+          ...(e.proofCount !== undefined ? { proofCount: e.proofCount } : {}),
+          ...(e.sourceIds !== undefined ? { sourceIds: e.sourceIds } : {}),
+          ...(e.confidence !== undefined ? { confidence: e.confidence } : {}),
+          ...(e.consolidatedAt !== undefined ? { consolidatedAt: e.consolidatedAt } : {}),
+          createdAt: e.createdAt,
+        })),
+      };
+      if (systemGetEnv("NODE_ENV") !== "production") {
+        MemoryObservationsContract.response.parse(result);
+      }
+      return result;
+    },
+
+    [MemoryEntitiesContract.method]: async (rawParams) => {
+      // Admin gate FIRST (T-86-19).
+      const trustLevel = rawParams._trustLevel as string | undefined;
+      if (trustLevel !== "admin") {
+        throw new Error("Admin access required for memory entities");
+      }
+      const userParams = stripInternalFields(rawParams);
+      const params = MemoryEntitiesContract.request.parse(userParams);
+      const tenantId = params.tenant_id ?? deps.tenantId;
+      const agentId = params.agent_id ?? deps.defaultAgentId;
+      const limit = params.limit ?? 100;
+
+      if (!deps.entityStore) {
+        throw new Error("Memory entities unavailable: entity store not wired");
+      }
+      // listEntities bakes the ENT-03 `WHERE tenant_id=? AND agent_id=?` scope.
+      const entResult = await deps.entityStore.listEntities(agentId, tenantId, limit);
+      if (!entResult.ok) {
+        throw new Error(`Memory entities failed: ${entResult.error.message}`);
+      }
+
+      const result = {
+        entities: entResult.value.map((row) => ({
+          id: row.id,
+          name: row.name,
+          mentionCount: row.mentionCount,
+          ...(row.firstSeen !== undefined ? { firstSeen: row.firstSeen } : {}),
+          ...(row.lastSeen !== undefined ? { lastSeen: row.lastSeen } : {}),
+        })),
+      };
+      if (systemGetEnv("NODE_ENV") !== "production") {
+        MemoryEntitiesContract.response.parse(result);
+      }
+      return result;
+    },
+
+    [MemoryRecallStatsContract.method]: async (rawParams) => {
+      // Admin gate FIRST (T-86-19).
+      const trustLevel = rawParams._trustLevel as string | undefined;
+      if (trustLevel !== "admin") {
+        throw new Error("Admin access required for memory recall stats");
+      }
+      const userParams = stripInternalFields(rawParams);
+      MemoryRecallStatsContract.request.parse(userParams);
+
+      // The counters are a process-lifetime gauge (reset on restart). When the
+      // wiring is absent, return a zeroed snapshot so the operator view still
+      // renders rather than erroring.
+      const snap = deps.recallCounters?.snapshot() ?? {
+        laneUsage: { fts: 0, vector: 0, entity: 0 },
+        rerankRuns: 0,
+        rerankFallbacks: 0,
+        consolidationClusters: 0,
+        observationsCreated: 0,
+        recalls: 0,
+        recallsWithHits: 0,
+      };
+
+      // Derived rates — guard the divide-by-zero on a fresh/unwired process.
+      const rerankFallbackRate = snap.rerankRuns > 0 ? snap.rerankFallbacks / snap.rerankRuns : 0;
+      const recallHitRate = snap.recalls > 0 ? snap.recallsWithHits / snap.recalls : 0;
+
+      const result = { ...snap, rerankFallbackRate, recallHitRate };
+      if (systemGetEnv("NODE_ENV") !== "production") {
+        MemoryRecallStatsContract.response.parse(result);
+      }
+      return result;
+    },
+
+    [MemoryRecallTraceContract.method]: async (rawParams) => {
+      // Admin gate FIRST (T-86-19).
+      const trustLevel = rawParams._trustLevel as string | undefined;
+      if (trustLevel !== "admin") {
+        throw new Error("Admin access required for memory recall trace");
+      }
+      const userParams = stripInternalFields(rawParams);
+      const params = MemoryRecallTraceContract.request.parse(userParams);
+
+      // Mirror obs.trace.search: at least one selector required.
+      if (!params.session_key && !params.trace_id) {
+        throw new Error("Recall trace requires at least one of session_key / trace_id");
+      }
+
+      const tenantId = params.tenant_id ?? deps.tenantId;
+      const agentId = params.agent_id ?? deps.defaultAgentId;
+      const limit = params.limit ?? 200;
+
+      // Resolve the daemon-wide recall-trace JSONL via the same `~`-expanding
+      // resolver the recorder uses (safePath-confined to the data dir).
+      const baseDir = deps.dataDir ?? safePath(os.homedir(), ".comis");
+      const filePath = resolveRecallTraceFilePath({ confinedBaseDir: baseDir });
+
+      const records: Array<Record<string, unknown>> = [];
+      // The records are already sanitized/redacted on disk (Plan 01) — do NOT
+      // re-sanitize, but DO scope-filter (defense-in-depth, T-86-20).
+      if (fsSync.existsSync(filePath)) {
+        let content: string;
+        try {
+          content = fsSync.readFileSync(filePath, "utf-8");
+        } catch {
+          content = "";
+        }
+        for (const line of content.split("\n")) {
+          if (!line || records.length >= limit) continue;
+          let rec: Record<string, unknown>;
+          try {
+            rec = JSON.parse(line) as Record<string, unknown>;
+          } catch {
+            // Skip malformed JSONL lines per standard JSONL convention.
+            continue;
+          }
+          // Selector match: session_key OR trace_id.
+          const matchesSelector =
+            (params.session_key !== undefined && rec.sessionKey === params.session_key) ||
+            (params.trace_id !== undefined && rec.traceId === params.trace_id);
+          if (!matchesSelector) continue;
+          // Defense-in-depth scope filter — only when the record carries the
+          // dimension (older/leaner records may omit them).
+          if (typeof rec.tenantId === "string" && rec.tenantId !== tenantId) continue;
+          if (typeof rec.agentId === "string" && rec.agentId !== agentId) continue;
+          records.push(rec);
+        }
+      }
+
+      const result = { records };
+      if (systemGetEnv("NODE_ENV") !== "production") {
+        MemoryRecallTraceContract.response.parse(result);
       }
       return result;
     },

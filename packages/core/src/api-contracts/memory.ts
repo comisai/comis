@@ -88,6 +88,10 @@
  */
 import { z } from "zod";
 import { defineContract } from "./types.js";
+// Value import for the `...MEMORY_DIAGNOSTIC_CONTRACTS` spread into
+// MEMORY_CONTRACTS below (the `export { ... } from` re-export further down is
+// type/barrel-only and does not create a usable local value binding).
+import { MEMORY_DIAGNOSTIC_CONTRACTS } from "./memory-diagnostics.js";
 
 // ===========================================================================
 // --- memory-handlers.ts ---
@@ -648,14 +652,12 @@ export const ContextSearchByConversationContract = defineContract({
 // existing `from "./memory.js"` import — and the api-contracts barrel — still
 // resolves, and so they remain part of the memory domain's public surface.
 //
-// CROSS-WAVE SEAM (load-bearing, unchanged by the move): the four contracts
-// stay OUT of `MEMORY_CONTRACTS` (which feeds `API_CONTRACTS` via index.ts)
-// and each keeps its `// @contract-deferred-handler: 86-05` annotation in its
-// new file. `contract-handler-parity.test.ts` AST-scans EVERY file under
-// `packages/core/src/api-contracts/**`, so it reads the annotation from
-// `./memory-diagnostics.ts`; the bidirectional 1:1 + parity gates stay green.
-// Plan 05 folds `MEMORY_DIAGNOSTIC_CONTRACTS` into `MEMORY_CONTRACTS` in the
-// SAME diff that adds the handlers.
+// CROSS-WAVE SEAM (closed in Plan 05): the four contracts are now spread into
+// `MEMORY_CONTRACTS` below (`...MEMORY_DIAGNOSTIC_CONTRACTS`), in the SAME wave
+// that landed their daemon handlers in `memory-handlers.ts`, and the
+// `@contract-deferred-handler: 86-05` annotations were removed from
+// `./memory-diagnostics.ts`. The bidirectional 1:1 + contract-handler-parity
+// gates remain green by construction (registry ↔ handler set is 1:1).
 // ===========================================================================
 
 export {
@@ -663,8 +665,10 @@ export {
   MemoryObservationsContract,
   MemoryEntitiesContract,
   MemoryRecallStatsContract,
-  MEMORY_DIAGNOSTIC_CONTRACTS,
 } from "./memory-diagnostics.js";
+// Re-export the locally-imported (for the spread below) diagnostics array so
+// the public barrel surface is unchanged.
+export { MEMORY_DIAGNOSTIC_CONTRACTS };
 
 // ===========================================================================
 // Domain array — registered into API_CONTRACTS_ORDERED in index.ts.
@@ -677,10 +681,12 @@ export {
  * The grouping below is documentation-only (the bidirectional 1:1 test
  * treats the tuple as an unordered set).
  *
- * NOTE: `MEMORY_DIAGNOSTIC_CONTRACTS` (the four Phase 86 OBS-06 contracts) is
- * intentionally NOT spread here yet — Plan 05 adds it alongside its handlers
- * to keep the bidirectional 1:1 registry↔handler invariant green between
- * waves.
+ * Phase 86 (Plan 05): `MEMORY_DIAGNOSTIC_CONTRACTS` (the four OBS-06
+ * contracts) is now spread in — in the SAME wave that landed the matching
+ * `[Contract.method]:` daemon handlers in `memory-handlers.ts` — so the
+ * `API_CONTRACTS` registry ↔ handler set stays 1:1 (the cross-wave seam from
+ * Plan 02 is closed; the `@contract-deferred-handler: 86-05` annotations were
+ * removed in the same diff).
  */
 export const MEMORY_CONTRACTS = [
   // --- memory-handlers.ts ---
@@ -692,6 +698,8 @@ export const MEMORY_CONTRACTS = [
   MemoryDeleteContract,
   MemoryFlushContract,
   MemoryExportContract,
+  // --- memory-handlers.ts (Phase 86 / OBS-06 diagnostic surface) ---
+  ...MEMORY_DIAGNOSTIC_CONTRACTS,
   // --- context-handlers.ts ---
   ContextSearchContract,
   ContextInspectContract,
