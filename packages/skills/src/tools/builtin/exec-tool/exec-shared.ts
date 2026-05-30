@@ -105,6 +105,12 @@ export function buildSpawnCommand(
       readOnlyPaths: allReadOnlyPaths,
       cwd,
       tempDir,
+      // CR-02 (EGRESS-01/02): forward network isolation mode and credential home
+      // gating from ExecSandboxConfig → SandboxOptions so the production call
+      // path can actually activate broker-only egress and credential isolation.
+      // Default undefined preserves the existing open/non-gated behavior (no regression).
+      network: sandboxConfig.network,
+      secureCredentialHome: sandboxConfig.secureCredentialHome,
     });
     // bwrap handles cwd internally via --chdir; sandbox-exec does not.
     const providerHandlesCwd = sandboxConfig.sandbox.name === "bwrap";
