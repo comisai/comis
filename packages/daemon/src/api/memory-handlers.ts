@@ -549,7 +549,15 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
           content = "";
         }
         for (const line of content.split("\n")) {
-          if (!line || records.length >= limit) continue;
+          // WR-06: early-break once `limit` matching records are collected.
+          // The handler used `continue` here, so it walked the ENTIRE (up to
+          // 50 MB) file even after the limit was satisfied — heavy for an admin
+          // RPC. Records are appended chronologically and the response keeps
+          // that forward order (the existing session_key/trace_id tests assert
+          // records[0] is the FIRST match), so stopping at the limit preserves
+          // the returned set exactly while bounding the scan.
+          if (records.length >= limit) break;
+          if (!line) continue;
           let rec: Record<string, unknown>;
           try {
             rec = JSON.parse(line) as Record<string, unknown>;

@@ -938,11 +938,16 @@ describe("createMemoryHandlers - OBS-06 diagnostics", () => {
       expect(result.records[0]!.sessionKey).toBe("sess-A");
     });
 
-    it("matches by trace_id and caps at limit", async () => {
+    it("matches by trace_id and caps at limit, returning the FIRST limit matches in order (WR-06 early-break)", async () => {
+      // WR-06: four matching records, limit 2 → the handler returns the FIRST
+      // two in forward (chronological) order and early-BREAKS the scan (it no
+      // longer walks the whole file with `continue`). Distinct seq values make
+      // the forward-order + first-N identity observable.
       const dataDir = writeTraceFile([
-        { ts: "t", sessionKey: "s", traceId: "t-X", agentId: "default" },
-        { ts: "t", sessionKey: "s", traceId: "t-X", agentId: "default" },
-        { ts: "t", sessionKey: "s", traceId: "t-X", agentId: "default" },
+        { ts: "t", seq: 0, sessionId: "s", traceId: "t-X", agentId: "default" },
+        { ts: "t", seq: 1, sessionId: "s", traceId: "t-X", agentId: "default" },
+        { ts: "t", seq: 2, sessionId: "s", traceId: "t-X", agentId: "default" },
+        { ts: "t", seq: 3, sessionId: "s", traceId: "t-X", agentId: "default" },
       ]);
       const { deps } = makeDiagDeps({ dataDir });
       const handlers = createMemoryHandlers(deps);
@@ -954,6 +959,9 @@ describe("createMemoryHandlers - OBS-06 diagnostics", () => {
       })) as { records: Array<Record<string, unknown>> };
 
       expect(result.records).toHaveLength(2);
+      // The returned set is the FIRST two matches in forward order — the
+      // early-break preserves correctness (does not skip to a later window).
+      expect(result.records.map((r) => r.seq)).toEqual([0, 1]);
     });
 
     it("scope-filters the artifact read by tenantId/agentId when records carry them", async () => {
