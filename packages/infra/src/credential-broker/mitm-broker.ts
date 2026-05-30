@@ -33,6 +33,7 @@
 import * as http from "node:http";
 import * as net from "node:net";
 import * as tls from "node:tls";
+import { unlinkSync } from "node:fs";
 import type {
   TypedEventBus,
   SecretManager,
@@ -75,6 +76,13 @@ export interface MitmBrokerPort {
   start(port?: number): Promise<number>;
   /** Stop the proxy server and close all connections. */
   stop(): Promise<void>;
+  /**
+   * Start a second listener on a Unix-domain socket path.
+   * Uses the same handleConnect handler as the TCP listener.
+   * ADDITIVE — does not change start() signature.
+   * Call after start() to enable broker-only egress in the sandbox.
+   */
+  startUnixSocket(socketPath: string): Promise<void>;
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -181,14 +189,8 @@ function readTunnelHeaders(
     function finish(result: { headers: string; tail: string } | null): void {
       if (finished) return;
       finished = true;
-      // Pause the socket BEFORE removing the "data" listener. Node streams do
-      // not automatically pause when the last "data" listener is removed; the
-      // stream continues flowing and emits subsequent data to no handler,
-      // silently discarding it. Pausing here ensures that any body bytes that
-      // arrive after the \r\n\r\n boundary are buffered by Node's stream layer
-      // until clientSocket.pipe(upstreamSocket) is set up in the connect
-      // callback — at which point pipe() resumes the socket and drains the
-      // buffer in order (CR-01 fix for the inter-segment body-loss race).
+      // Pause before removing "data" listener so body bytes arriving after
+      // \r\n\r\n are buffered until pipe() resumes the stream (CR-01).
       socket.pause();
       socket.off("data", onData);
       socket.off("error", onTerminate);
@@ -211,8 +213,7 @@ function readTunnelHeaders(
     socket.on("error", onTerminate);
     socket.on("close", onTerminate);
 
-    // Process any initial data that was already buffered (e.g., when _head is non-empty).
-    // If buf is empty this is a no-op; if buf already has the terminator, finish() resolves.
+    // Process any initial data already buffered (_head non-empty path).
     check();
   });
 }
@@ -222,6 +223,8 @@ function readTunnelHeaders(
 export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
   const log = deps.logger.child({ submodule: "mitm-broker" });
   let server: http.Server | null = null;
+  let unixServer: http.Server | null = null;
+  let unixSocketPath: string | null = null;
   // Track open sockets so stop() can destroy them immediately
   const openSockets = new Set<net.Socket>();
   // Track upstream (outbound) sockets separately — these are created by
@@ -379,24 +382,14 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           }
         }
 
-        // ── Step 3: Read inner HTTP request headers ──────────────────────────
-        // The client will start sending the inner HTTP/1.1 request after the 200.
-        // We must buffer until \r\n\r\n with an 8 KB cap.
-        // NOTE: the `_head` argument from the http.createServer "connect" event
-        // is the data that arrived after the CONNECT request. In practice this
-        // buffer is always empty (the client waits for the 200 response before
-        // sending anything), but we pass it through `readTunnelHeaders` as the
-        // initial chunk to handle any edge case where data arrives early.
-        // readTunnelHeaders handles an empty initial chunk gracefully —
-        // it will wait for the next "data" event.
+        // ── Step 3: Read inner HTTP request headers (8 KB cap) ──────────────
+        // Pass _head as the initial chunk; it is typically empty but may carry
+        // early bytes on edge-case clients. readTunnelHeaders handles it.
         const tunnelResult = await readTunnelHeaders(innerSocket, _head);
 
         if (tunnelResult === null) {
           log.debug({ step: "header-parse", sessionId, hint: "Header overflow or parse error; fail closed", errorKind: "validation" as const }, "Inner request header overflow");
-          // Correct reason: this is a malformed request (header overflow), NOT
-          // a path policy violation. Using "path_policy" here was a
-          // misclassification that could hide real malformed-request attacks in
-          // the audit trail (CR-03).
+          // CR-03: malformed_request (not path_policy — avoid misclassification).
           deps.eventBus.emit("broker:denied", {
             sessionId,
             host,
@@ -408,18 +401,14 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           return;
         }
 
-        // `tail` contains any bytes that arrived after \r\n\r\n in the same
-        // TCP segment as the headers (typically the beginning of a request
-        // body). These must be written to the upstream socket after the
-        // injected headers, before piping, so they are not silently discarded.
+        // `tail` = bytes after \r\n\r\n (body prefix); must be forwarded before
+        // piping to avoid silent discard (CR-01).
         const { headers: rawHeaders, tail: bodyPrefix } = tunnelResult;
 
         const parsed = parseInnerRequest(rawHeaders);
         if (parsed === null) {
           log.debug({ step: "header-parse", sessionId, hint: "Malformed inner HTTP request; fail closed", errorKind: "validation" as const }, "Malformed inner request");
-          // Emit broker:denied so every consumed-token exit path is audited.
-          // Previously this path silently called destroyWithStatus with no event
-          // — leaving no trace in the audit log (WR-04).
+          // WR-04: emit audit event on every consumed-token exit path.
           deps.eventBus.emit("broker:denied", {
             sessionId,
             host,
@@ -438,22 +427,43 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           "Inner HTTP request received",
         );
 
+        // ── Step 3.5: WebSocket upgrade guard (EGRESS-04) ────────────────
+        // Fail closed on WS upgrade — credential injection into WS frames
+        // is not supported (WS-01 future). Silent hang would allow a client
+        // to open an unmediated tunnel; explicit 501 is the auditable exit.
+        const upgradeHeader = parsed.headers.get("upgrade");
+        if (upgradeHeader?.toLowerCase() === "websocket") {
+          log.warn(
+            {
+              step: "ws-guard",
+              sessionId,
+              agentId,
+              host,
+              errorKind: "precondition" as const,
+              hint: "WebSocket upgrade rejected; use REST equivalents via HTTPS. WS-01 future.",
+            },
+            "WebSocket upgrade rejected (EGRESS-04)",
+          );
+          deps.eventBus.emit("broker:denied", {
+            sessionId,
+            host,
+            reason: "ws_upgrade_not_supported" as const,
+            statusCode: 501,
+            timestamp: deps.clock.now(),
+          });
+          destroyWithStatus(innerSocket, "HTTP/1.1 501 Not Implemented");
+          return;
+        }
+
         // ── Step 4: Resolve binding ──────────────────────────────────────
-        // Single-pass: resolveBinding returns undefined for both "unknown host"
-        // and "known host, path rejected". Distinguish the two cases by checking
-        // whether ANY host rule in the bindings matches the hostname (without
-        // path-policy restrictions). pathAllowed with a synthetic open rule
-        // (pathPolicy: undefined) and path "/" tests the host pattern only.
+        // resolveBinding returns undefined for both "unknown host" and "known
+        // host, path rejected". Strip pathPolicy to test host-only match.
         const resolved = resolveBinding(deps.bindings, host, path);
 
         if (!resolved) {
-          // Check if the host itself is known by stripping all pathPolicy constraints.
           const openBindings = deps.bindings.map((b) => ({
             ...b,
             hostRules: b.hostRules.map((r: HostRule) => {
-              // Spread into a new object with pathPolicy cleared.
-              // pathAllowed(openRule, "/") will return true if host rule matches
-              // (since pathPolicy === undefined → allow all paths).
               const openRule: HostRule = { ...r, pathPolicy: undefined };
               return openRule;
             }),
@@ -711,64 +721,73 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
     })();
   }
 
+  /** Shared server setup: connection tracking + CONNECT handler + error log. */
+  function attachServerHandlers(srv: http.Server, step: string): void {
+    srv.on("connection", (socket: net.Socket) => {
+      openSockets.add(socket);
+      socket.on("close", () => { openSockets.delete(socket); });
+    });
+    srv.on("connect", handleConnect);
+    srv.on("error", (err: Error) => {
+      log.error(
+        { step, err, errorKind: "network" as const, hint: "Broker HTTP server error" },
+        "Broker server error",
+      );
+    });
+  }
+
   return {
     start(port = 0): Promise<number> {
       return new Promise((resolve, reject) => {
         server = http.createServer();
-
-        // Track every incoming TCP connection so stop() can destroy them
-        server.on("connection", (socket: net.Socket) => {
-          openSockets.add(socket);
-          socket.on("close", () => {
-            openSockets.delete(socket);
-          });
-        });
-
-        server.on("connect", handleConnect);
-
-        server.on("error", (err: Error) => {
-          log.error(
-            { step: "server", err, errorKind: "network" as const, hint: "Broker HTTP server error" },
-            "Broker server error",
-          );
-          reject(err);
-        });
-
+        attachServerHandlers(server, "server");
+        server.on("error", reject);
         server.listen(port, "127.0.0.1", () => {
-          // server.address() is guaranteed non-null inside the "listening" callback
-          // (Node docs: "Returns the bound address, the address family name, and
-          //  port of the server as reported by the operating system." — never null
-          //  after the "listening" event fires on a TCP server.)
+          // server.address() is non-null inside the "listening" callback.
           const addr = (server as http.Server).address() as net.AddressInfo;
-          log.info(
-            { step: "start", port: addr.port },
-            "NodeMitmBroker started",
-          );
+          log.info({ step: "start", port: addr.port }, "NodeMitmBroker started");
           resolve(addr.port);
+        });
+      });
+    },
+
+    startUnixSocket(socketPath: string): Promise<void> {
+      return new Promise((resolve, reject) => {
+        unixServer = http.createServer();
+        attachServerHandlers(unixServer, "unix-socket");
+        unixServer.on("error", reject);
+        // Unlink stale socket file before binding (prevents EADDRINUSE).
+        try { unlinkSync(socketPath); } catch { /* not present — ok */ }
+        unixServer.listen({ path: socketPath }, () => {
+          unixSocketPath = socketPath;
+          log.info({ step: "start-unix", socketPath }, "NodeMitmBroker Unix socket started");
+          resolve();
         });
       });
     },
 
     stop(): Promise<void> {
       return new Promise((resolve) => {
-        if (!server) {
-          resolve();
-          return;
+        // Close Unix socket server and unlink socket file (checker W2 cleanup).
+        if (unixServer) {
+          const uSrv = unixServer;
+          unixServer = null;
+          uSrv.close();
+          if (unixSocketPath) {
+            try { unlinkSync(unixSocketPath); } catch { /* already gone — ok */ }
+            unixSocketPath = null;
+          }
         }
+
+        if (!server) { resolve(); return; }
         const srv = server;
         server = null;
-        // Destroy all tracked open client sockets to unblock server.close()
-        for (const socket of openSockets) {
-          socket.destroy();
-        }
+        // Destroy all tracked open client sockets to unblock server.close().
+        for (const socket of openSockets) { socket.destroy(); }
         openSockets.clear();
-        // Destroy all in-flight upstream sockets so they do not keep the
-        // process alive after stop() returns (WR-03). Without this, upstream
-        // net.connect() sockets created after all gates pass are invisible to
-        // the server's connection tracking and would survive stop().
-        for (const socket of openUpstreamSockets) {
-          socket.destroy();
-        }
+        // Destroy in-flight upstream sockets (WR-03): not captured by the
+        // server "connection" event; without this, stop() leaves them alive.
+        for (const socket of openUpstreamSockets) { socket.destroy(); }
         openUpstreamSockets.clear();
         srv.close(() => {
           log.info({ step: "stop" }, "NodeMitmBroker stopped");
