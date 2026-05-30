@@ -3972,3 +3972,282 @@ describe("E2E-01 — in-process broker end-to-end", () => {
     await new Promise<void>((r) => fixture.server.close(() => r()));
   });
 });
+
+// ── (06-fix) RED tests — findings from Phase 6 REVIEW.md ─────────────────────
+//
+// CR-01: session lifecycle balance (session_closed must fire on ALL exit paths)
+// WR-01: clock snapshot in teardown (timestamp - durationMs == sessionStartedAt)
+// IN-02: emitEgressBlocked on pre-flight no_binding denial (Step 2.5)
+//
+// These tests MUST FAIL on the pre-fix code and turn GREEN after the fix.
+
+describe("(06-fix) CR-01 — broker:session_closed must be emitted on ALL exit paths (session lifecycle balance)", () => {
+  it("no_binding 403 (unknown host, post-CONNECT): session_opened AND session_closed both emitted", async () => {
+    // This is an early-exit path after session_opened — currently missing session_closed.
+    // The test verifies the imbalance is fixed.
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    // Use an unknown host — 200 CONNECT opens, then inner request hits no_binding 403
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, "cr01-unknown.example.com:443");
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/path");
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 150));
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    // session_opened must have fired
+    expect(emitCalls.some(([n]) => n === "broker:session_opened")).toBe(true);
+    // session_closed must ALSO fire on this fail-closed path (RED: currently missing)
+    expect(emitCalls.some(([n]) => n === "broker:session_closed")).toBe(true);
+    const closedEvent = emitCalls.find(([n]) => n === "broker:session_closed");
+    expect(closedEvent![1]).toMatchObject({ sessionId: expect.any(String), agentId: "agent-1", durationMs: expect.any(Number) });
+  });
+
+  it("credential_unavailable 502 path: session_opened AND session_closed both emitted", async () => {
+    const logger = makeMockLogger();
+    const deps = makeDeps({
+      logger: logger as unknown as MitmBrokerDeps["logger"],
+      secretManager: createSecretManager({}), // Anthropic key missing → 502
+    });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, "api.anthropic.com:443");
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 150));
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    expect(emitCalls.some(([n]) => n === "broker:session_opened")).toBe(true);
+    // session_closed must also fire on 502 path (RED: currently missing)
+    expect(emitCalls.some(([n]) => n === "broker:session_closed")).toBe(true);
+    const closedEvent = emitCalls.find(([n]) => n === "broker:session_closed");
+    expect(closedEvent![1]).toMatchObject({ durationMs: expect.any(Number) });
+  });
+
+  it("header overflow (400) path: session_opened AND session_closed both emitted", async () => {
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, "api.anthropic.com:443");
+    expect(statusCode).toBe(200);
+
+    // Trigger header overflow (> 8192 bytes without the header terminator)
+    const oversizeHeader = "GET /v1/messages HTTP/1.1\r\n" + `X-Overflow: ${"C".repeat(8200)}\r\n`;
+    socket.write(oversizeHeader);
+
+    await new Promise<void>((resolve) => {
+      socket.on("close", () => resolve());
+      socket.on("error", () => resolve());
+      setTimeout(() => resolve(), 2000);
+    });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    expect(emitCalls.some(([n]) => n === "broker:session_opened")).toBe(true);
+    // session_closed must also fire on overflow path (RED: currently missing)
+    expect(emitCalls.some(([n]) => n === "broker:session_closed")).toBe(true);
+  });
+
+  it("ws_upgrade_not_supported 501 path: session_opened AND session_closed both emitted", async () => {
+    const upstream = await makeUpstreamFixture();
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, `api.anthropic.com:${upstream.port}`);
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/v1/messages", {
+      Upgrade: "websocket",
+      Connection: "Upgrade",
+      host: "api.anthropic.com",
+    });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 150));
+    upstream.server.close();
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    expect(emitCalls.some(([n]) => n === "broker:session_opened")).toBe(true);
+    // session_closed must also fire on 501 path (RED: currently missing)
+    expect(emitCalls.some(([n]) => n === "broker:session_closed")).toBe(true);
+  });
+
+  it("happy path: session_opened emitted exactly once, session_closed emitted exactly once", async () => {
+    const upstream = await makeUpstreamFixture();
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, `api.anthropic.com:${upstream.port}`);
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 200));
+    upstream.server.close();
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    const openedCount = emitCalls.filter(([n]) => n === "broker:session_opened").length;
+    const closedCount = emitCalls.filter(([n]) => n === "broker:session_closed").length;
+    // Exactly 1 open, exactly 1 close (no double-emit)
+    expect(openedCount).toBe(1);
+    expect(closedCount).toBe(1);
+  });
+});
+
+describe("(06-fix) WR-01 — teardown: single clock snapshot ensures timestamp - durationMs === sessionStartedAt", () => {
+  it("session_closed: (timestamp - durationMs) equals the sessionStartedAt captured by session_opened.timestamp", async () => {
+    const upstream = await makeUpstreamFixture();
+    // Use a step-clock so each call to clock.now() advances by a fixed amount
+    // This makes the two-call bug detectable: with two separate calls, timestamp !== sessionStartedAt + durationMs
+    let clockVal = 1_700_000_000_000;
+    const stepClock = {
+      now: () => {
+        const v = clockVal;
+        clockVal += 10; // advance by 10ms each call
+        return v;
+      },
+    };
+    const logger = makeMockLogger();
+    const sessionManager = createSessionManager({ clock: stepClock });
+    const deps: MitmBrokerDeps = {
+      clock: stepClock,
+      timers: createFakeTimers(),
+      eventBus: createMockEventBus(),
+      logger: logger as unknown as MitmBrokerDeps["logger"],
+      secretManager: createSecretManager({ ANTHROPIC_API_KEY: SENTINEL_SECRET }),
+      sessionManager,
+      bindings: [makeAnthropicBinding()],
+    };
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, `api.anthropic.com:${upstream.port}`);
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 200));
+    upstream.server.close();
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    const openedEvent = emitCalls.find(([n]) => n === "broker:session_opened");
+    const closedEvent = emitCalls.find(([n]) => n === "broker:session_closed");
+    expect(openedEvent).toBeDefined();
+    expect(closedEvent).toBeDefined();
+
+    const sessionStartedAt = (openedEvent![1] as { timestamp: number }).timestamp;
+    const closedPayload = closedEvent![1] as { durationMs: number; timestamp: number };
+
+    // With a single clock snapshot: closedAt = clock.now() once
+    // durationMs = closedAt - sessionStartedAt
+    // timestamp = closedAt
+    // So: timestamp - durationMs === sessionStartedAt EXACTLY
+    // With two separate calls: timestamp - durationMs === sessionStartedAt + delta (broken)
+    expect(closedPayload.timestamp - closedPayload.durationMs).toBe(sessionStartedAt);
+  });
+});
+
+describe("(06-fix) IN-02 — pre-flight no_binding denial (Step 2.5 caManager path) emits broker:egress_blocked", () => {
+  let caDataDir: string;
+
+  beforeEach(() => {
+    const { mkdtempSync: mkdtemp } = require("node:fs");
+    const { join: pathJoin } = require("node:path");
+    const { tmpdir: osTmpdir } = require("node:os");
+    caDataDir = mkdtemp(pathJoin(osTmpdir(), "comis-in02-test-"));
+  });
+
+  afterEach(() => {
+    const { rmSync } = require("node:fs");
+    rmSync(caDataDir, { recursive: true, force: true });
+  });
+
+  it(
+    "caManager wired + unlisted host: pre-flight no_binding → broker:egress_blocked AND broker:denied both emitted",
+    async () => {
+      const unknownHost = "in02-unknown-preflight.example.com";
+      const clock = createFakeClock(Date.now());
+      const caManager = createNodeCaManager({ clock, dataDir: caDataDir });
+
+      const logger = makeMockLogger();
+      const sessionManager = createSessionManager({ clock });
+      const deps: MitmBrokerDeps = {
+        clock,
+        timers: createFakeTimers(),
+        eventBus: createMockEventBus(),
+        logger: logger as unknown as MitmBrokerDeps["logger"],
+        secretManager: createSecretManager({ ANTHROPIC_API_KEY: "key" }),
+        sessionManager,
+        bindings: [makeAnthropicBinding()], // only api.anthropic.com is allowed
+        caManager,
+      };
+
+      const broker = createMitmBroker(deps);
+      runningBrokers.push(broker);
+      const port = await broker.start();
+
+      const { proxyToken } = sessionManager.issueToken("agent-1");
+      // CONNECT to the unlisted host — pre-flight check fires before TLS upgrade
+      const rawSocket = await new Promise<net.Socket>((resolve, reject) => {
+        const s = net.connect(port, "127.0.0.1", () => {
+          s.write(
+            `CONNECT ${unknownHost}:443 HTTP/1.1\r\n` +
+              `Host: ${unknownHost}:443\r\n` +
+              `Proxy-Authorization: Bearer ${proxyToken}\r\n` +
+              `\r\n`,
+          );
+        });
+        let buf = "";
+        s.on("data", (chunk: Buffer) => {
+          buf += chunk.toString("latin1");
+          if (!buf.includes("\r\n\r\n")) return;
+          resolve(s); // 200 on CONNECT — pre-flight fires AFTER the 200
+        });
+        s.on("error", reject);
+        setTimeout(() => reject(new Error("CONNECT timeout")), 5000);
+      });
+
+      await new Promise<void>((r) => setTimeout(r, 300));
+      rawSocket.destroy();
+
+      const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+
+      // broker:denied with no_binding must be emitted (already passes)
+      expect(emitCalls.some(([n, p]) =>
+        n === "broker:denied" && (p as { reason?: string }).reason === "no_binding"
+      )).toBe(true);
+
+      // broker:egress_blocked must ALSO be emitted on the pre-flight path (RED: currently missing)
+      const blocked = emitCalls.find(([n]) => n === "broker:egress_blocked");
+      expect(blocked).toBeDefined();
+      const blockedPayload = blocked![1] as Record<string, unknown>;
+      // targetHostHash must be 64-char hex (hash of unknownHost)
+      expect(blockedPayload["targetHostHash"]).toMatch(/^[0-9a-f]{64}$/);
+      // plaintext host must NOT appear in payload
+      expect(JSON.stringify(blockedPayload)).not.toContain(unknownHost);
+
+      assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+    },
+    15_000,
+  );
+});
