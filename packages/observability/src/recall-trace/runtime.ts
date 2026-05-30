@@ -117,7 +117,11 @@ export interface RecallTrace {
   recordRecall(record: Record<string, unknown>): "queued" | "dropped";
   /** Await the queue tail. */
   flush(): Promise<void>;
-  /** Await the queue tail and remove the writer from the registry. */
+  /**
+   * Await the queue tail, emit the `recall_trace.write_failures` sentinel
+   * when the underlying writer reports per-line append failures, and remove
+   * the writer from the registry.
+   */
   flushAndClose(): Promise<void>;
   /** Underlying writer failure count — surfaced for inspection by tests. */
   failureCount(): number;
@@ -159,13 +163,60 @@ export function createRecallTrace(init: RecallTraceInit): RecallTrace | null {
 
   // Per-recorder mutable state. The writer chassis is shared across recorders
   // for the same path, but seq accounting is per-recorder.
-  const state: { seq: number; closed: boolean } = { seq: 0, closed: false };
+  //
+  // Sentinel state-machine fields (mirror cache-trace/runtime.ts):
+  //   - `writeFailureSentinelEmitted`: once-per-recorder latch for the inline
+  //     `recall_trace.write_failures` emit inside recordRecall. The latch
+  //     flips true on the first detection of `writer.failureCount() > 0` so
+  //     subsequent recordRecall calls do NOT re-emit the inline sentinel (the
+  //     summary sentinel at flushAndClose carries the final tally).
+  //   - `startedAt`: captured at construction so the summary sentinel can
+  //     report `lifetimeMs = systemNowMs() - state.startedAt`.
+  const state: {
+    seq: number;
+    closed: boolean;
+    writeFailureSentinelEmitted: boolean;
+    startedAt: number;
+  } = {
+    seq: 0,
+    closed: false,
+    writeFailureSentinelEmitted: false,
+    startedAt: systemNowMs(),
+  };
 
   const recorder: RecallTrace = {
     filePath,
 
     recordRecall(record: Record<string, unknown>): "queued" | "dropped" {
       if (state.closed) return "dropped";
+
+      // 0. Inline `recall_trace.write_failures` sentinel (mirrors
+      //    cache-trace/runtime.ts). The queued writer surfaces per-line
+      //    append failures asynchronously (inside the writer's promise
+      //    chain, not at the recordRecall call site), so on every call we
+      //    check `writer.failureCount()` and — if it's > 0 AND we have not
+      //    yet emitted the inline sentinel — emit ONE sentinel BEFORE
+      //    processing the new event. The latch
+      //    `state.writeFailureSentinelEmitted` collapses subsequent failure
+      //    detections into the summary sentinel at flushAndClose so we never
+      //    flood the file with per-failure sentinels. The emit is
+      //    best-effort: when the cap is fully exhausted the sentinel write
+      //    itself is rejected; the latch still flips so we do not spin-emit.
+      const writerFailureCount = writer.failureCount();
+      if (!state.writeFailureSentinelEmitted && writerFailureCount > 0) {
+        state.writeFailureSentinelEmitted = true;
+        writer.write(
+          encodeSentinel(
+            buildSentinel(init, state.seq, {
+              firstDropAt: systemDateFrom(systemNowMs()).toISOString(),
+              droppedEvents: writerFailureCount,
+              droppedBytes: writer.rejectedBytes(),
+              reason: "queued_writer_rejected",
+            }),
+          ),
+        );
+        state.seq += 1;
+      }
 
       // THE OBS-02 CHOKEPOINT. Route EVERY payload through
       // sanitizeForPersistence (bound → sanitize → redact in one walk). NO
@@ -193,6 +244,37 @@ export function createRecallTrace(init: RecallTraceInit): RecallTrace | null {
     async flushAndClose(): Promise<void> {
       if (state.closed) return;
       state.closed = true;
+      await writer.flush();
+
+      // Summary `recall_trace.write_failures` sentinel (mirrors
+      // cache-trace/runtime.ts). Fires at flushAndClose when the underlying
+      // queued writer reports per-line append failures. Carries the final
+      // tally + recorder lifetime so post-mortem readers know how many
+      // events were dropped, the cumulative dropped bytes, how long the
+      // recorder ran, and the last underlying error.
+      // Two-sentinel-per-failing-recorder model:
+      //   recorders that hit a write failure → exactly 1 inline + 1 summary
+      //   recorders that never fail          → 0 sentinels
+      const failureCount = writer.failureCount();
+      if (failureCount > 0) {
+        const lastError = writer.lastError();
+        // Sentinel emit is best-effort — when the underlying failure source
+        // is unrecoverable this write fails too; failureCount() continues to
+        // surface the truth even when nothing lands.
+        writer.write(
+          encodeSentinel(
+            buildSentinel(init, state.seq, {
+              reason: "queued_writer_rejected",
+              droppedEvents: failureCount,
+              totalDroppedBytes: writer.rejectedBytes(),
+              lifetimeMs: systemNowMs() - state.startedAt,
+              lastError: lastError?.message ?? null,
+            }),
+          ),
+        );
+        state.seq += 1;
+      }
+
       await writer.flushAndClose();
     },
 
@@ -267,5 +349,50 @@ function resolveTraceId(sessionId: string): string {
 }
 
 function encodeLine(evt: RecallTraceEvent): string {
+  return `${safeJsonStringify(evt)}\n`;
+}
+
+/**
+ * Build the control-plane `recall_trace.write_failures` sentinel envelope.
+ *
+ * Mirrors cache-trace's `cache_trace.write_failures` sentinel pair (inline +
+ * summary). The recall trace has NO `stage` discriminator (it is ONE rich
+ * record per recall, not a stage machine), so the sentinel cannot ride the
+ * strict `RecallTraceEvent` schema; it is a DISTINCT control-plane line keyed
+ * by a `recallTrace: "recall_trace.write_failures"` discriminator. It carries
+ * the same correlation envelope (traceSchema/schemaVersion/ts/seq/agentId/
+ * sessionId/traceId + the optional cluster) so downstream tooling joins it by
+ * `traceId` and rejects foreign artifacts by `traceSchema`.
+ *
+ * `systemDateFrom` + `systemNowMs` go through the sanctioned-root helpers in
+ * @comis/core/runtime — direct `new Date(...)` is forbidden by the globals
+ * architecture test.
+ */
+function buildSentinel(
+  init: RecallTraceInit,
+  seq: number,
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  const ts = systemDateFrom(systemNowMs()).toISOString();
+  const traceId = resolveTraceId(init.sessionId);
+  const envelope: Record<string, unknown> = {
+    traceSchema: "comis-recall-trace",
+    schemaVersion: 1,
+    recallTrace: "recall_trace.write_failures",
+    ts,
+    seq,
+    agentId: init.agentId,
+    sessionId: init.sessionId,
+    traceId,
+    data,
+  };
+  const env = init.envelope;
+  if (env?.sessionKey !== undefined) envelope.sessionKey = env.sessionKey;
+  if (env?.tenantId !== undefined) envelope.tenantId = env.tenantId;
+  if (env?.runId !== undefined) envelope.runId = env.runId;
+  return envelope;
+}
+
+function encodeSentinel(evt: Record<string, unknown>): string {
   return `${safeJsonStringify(evt)}\n`;
 }
