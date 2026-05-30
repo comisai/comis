@@ -273,6 +273,22 @@ export interface PiExecutorDeps {
     readonly includeSystem?: boolean;
   };
   /**
+   * Recall-trace writer configuration (Phase 86 / OBS-02). Forwarded from
+   * AppConfig.diagnostics.recallTrace by daemon wiring, EXACTLY mirroring the
+   * cacheTraceConfig thread above. Threaded onward via ToolAssemblyDeps into
+   * PromptAssemblyParams.deps.recallTraceConfig, where buildRecallTrace reads
+   * the `enabled` gate. When omitted or `enabled: false`, buildRecallTrace
+   * returns null and createMemoryRecall captures nothing (recall-trace is
+   * OPT-IN, default-off). There is intentionally NO raw-content slot (unlike
+   * cacheTrace's includeMessages/includeSystem): the recorder always
+   * full-sanitizes before disk (OBS-02).
+   */
+  recallTraceConfig?: {
+    readonly enabled?: boolean;
+    readonly filePath?: string;
+    readonly maxFileBytes?: number;
+  };
+  /**
    * ObservabilityStore for SystemPromptReport SQLite
    * persistence. Forwarded from daemon composition root through
    * SingleAgentDeps.obsStore. When undefined (persistence disabled),

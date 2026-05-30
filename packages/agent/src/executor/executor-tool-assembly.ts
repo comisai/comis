@@ -135,6 +135,16 @@ export interface ToolAssemblyDeps {
    *  prompt-assembly so the recall-trace recorder resolves its containment base
    *  from the SAME source the memory.recall_trace reader uses (WR-02). */
   dataDir?: string;
+  /** Recall-trace writer configuration (Phase 86 / OBS-02). Forwarded from
+   *  PiExecutorDeps.recallTraceConfig (sourced from AppConfig.diagnostics.recallTrace
+   *  by daemon wiring) into PromptAssemblyParams.deps.recallTraceConfig, where
+   *  buildRecallTrace reads the `enabled` gate. Mirrors the dataDir thread above.
+   *  When omitted or `enabled: false`, the recorder is null (default-off, opt-in). */
+  recallTraceConfig?: {
+    readonly enabled?: boolean;
+    readonly filePath?: string;
+    readonly maxFileBytes?: number;
+  };
 }
 
 /** Result of the tool assembly pipeline. */
@@ -356,6 +366,11 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       // WR-02: forward the data dir so the recall-trace recorder's base resolves
       // from the same source as the memory.recall_trace reader.
       dataDir: deps.dataDir,
+      // OBS-02: forward the recall-trace config so buildRecallTrace receives the
+      // operator's `enabled` gate + bounds. Sourced from
+      // AppConfig.diagnostics.recallTrace by daemon wiring (mirrors cacheTraceConfig).
+      // When omitted/disabled, buildRecallTrace returns null (default-off).
+      recallTraceConfig: deps.recallTraceConfig,
       memoryPort: deps.memoryPort,
       reranker: deps.reranker,
       entityStore: deps.entityStore,

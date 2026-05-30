@@ -520,6 +520,22 @@ export async function setupSingleAgent(
           maxFileBytes: container.config.diagnostics.cacheTrace.maxFileBytes,
         }
       : undefined,
+    // Forward AppConfig.diagnostics.recallTrace into the executor (Phase 86 /
+    // OBS-02), EXACTLY mirroring the cacheTraceConfig thread above. Threaded
+    // onward via ToolAssemblyDeps → PromptAssemblyParams.deps.recallTraceConfig,
+    // where buildRecallTrace reads the `enabled` gate. Without this thread
+    // buildRecallTrace always saw cfg=undefined and returned null, so zero
+    // recall traces were written even with diagnostics.recallTrace.enabled: true.
+    // Recall-trace is OPT-IN (schema default enabled:false) and has NO
+    // raw-content slot (unlike cacheTrace's includeMessages/includeSystem): the
+    // recorder always full-sanitizes before disk (OBS-02).
+    recallTraceConfig: container.config.diagnostics?.recallTrace
+      ? {
+          enabled: container.config.diagnostics.recallTrace.enabled,
+          filePath: container.config.diagnostics.recallTrace.filePath,
+          maxFileBytes: container.config.diagnostics.recallTrace.maxFileBytes,
+        }
+      : undefined,
     geminiCacheManager: deps.geminiCacheManager,  // Gemini cache lifecycle manager
     getChannelMaxChars: deps.getChannelMaxChars,  // Platform char limit for verbosity hints
     backgroundTaskManager: deps.backgroundTaskManager,  // Auto-background middleware
