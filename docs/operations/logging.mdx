@@ -183,6 +183,58 @@ Filter logs by `errorKind` to quickly find related problems. For example, to see
 all authentication errors: `grep '"errorKind":"auth"' ~/.comis/logs/daemon.log`
 </Tip>
 
+## Memory and Recall Signals
+
+The `memory` module (set its level under `daemon.logLevels.memory`, shown above)
+emits two families of structured signal: step-tagged write/curation logs and
+graceful-degradation WARNs.
+
+### Step-tagged write and curation logs
+
+Memory writes and the background curation jobs carry a `step` tag plus a
+`durationMs` timing field, so you can filter the memory pipeline by stage:
+
+| `step` | Stage |
+|--------|-------|
+| `extract` | Extracting candidate memories from a turn |
+| `store` | Persisting a memory entry (also surfaces as the INFO "Memory store complete" forensic event) |
+| `link` | Resolving and linking entities during a memory-review pass |
+| `consolidate` | Clustering and consolidating memories into observations |
+
+```bash
+# Follow the memory write/curation pipeline by stage
+jq 'select(.step == "consolidate")' ~/.comis/logs/daemon.log
+```
+
+The aggregate outcome of these passes is also emitted as the typed
+`memory:entities_linked` and `memory:consolidated` events — see
+[Observability → Recall events](/operations/observability#15-2-recall-events-direct-emit-not-bridge-mapped).
+
+### Graceful-degradation WARNs (no silent degradation)
+
+Recall degrades gracefully, and **every degradation path logs a WARN** carrying
+the mandatory `errorKind` + `hint` pair (see [Error Classification](#error-classification)
+above) — recall never drops to a cheaper path silently:
+
+| Degradation | WARN signal |
+|-------------|-------------|
+| Reranker unavailable / timed out → fusion-ranked fallback | WARN with `errorKind` + `hint`; corresponds to `memory:reranked.fellBack` / `.timedOut` |
+| Vector index unavailable → FTS-only recall | WARN with `errorKind` + `hint`; corresponds to `memory:recalled.vectorCandidates: 0` |
+| Candidate missing embedding, or invalid extraction/consolidation | WARN with `errorKind` + `hint` |
+
+As with all Comis logs, these never log secrets, message bodies, or absolute
+paths — the per-recall ranking detail lives only in the opt-in, full-sanitized
+[recall-trace artifact](/operations/observability#15-1-the-recall-trace-artifact-opt-in),
+never in `daemon.log`.
+
+```bash
+# Spot recall falling back to a cheaper path
+grep '"errorKind"' ~/.comis/logs/daemon.log | grep -i rerank
+```
+
+For the full "why did recall pick X / why is recall slow?" diagnosis flow, see the
+[Troubleshooting runbook](/operations/troubleshooting#memory-recall-issues).
+
 ## Field Dictionary
 
 Every log entry is a JSON object. Beyond the standard Pino fields (`level`, `time`,
