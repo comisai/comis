@@ -1,0 +1,20 @@
+{
+  "_provenance": "Derived from LongMemEval format (github.com/xiaowu0162/LongMemEval); neutral placeholder content, NOT the real dataset",
+  "question_id": "q_example_1",
+  "question_type": "single-session-user",
+  "question": "What did user_a say their favorite placeholder topic was?",
+  "answer": "placeholder topic alpha",
+  "haystack_sessions": [
+    [
+      { "role": "user", "content": "Hello, this is a neutral placeholder message." },
+      { "role": "assistant", "content": "Acknowledged placeholder reply." }
+    ],
+    [
+      { "role": "user", "content": "My favorite placeholder topic is alpha.", "has_answer": true },
+      { "role": "assistant", "content": "Noted, placeholder topic alpha." }
+    ]
+  ],
+  "haystack_session_ids": ["session_0001", "session_0002"],
+  "haystack_dates": ["2023/05/19 (Fri) 09:00", "2023/05/20 (Sat) 02:21"],
+  "answer_session_ids": ["session_0002"]
+}
