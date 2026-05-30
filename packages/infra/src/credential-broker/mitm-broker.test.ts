@@ -3045,6 +3045,107 @@ describe("EGRESS-04 — WebSocket upgrade guard", () => {
 
     upstream.server.close();
   });
+
+  it("duplicate Upgrade headers: websocket first, decoy second → 501 (CR-03 bypass prevention)", async () => {
+    // RFC 7230 §3.2.2: duplicate headers with the same name — the Map.set implementation
+    // keeps only the LAST value. With 'Upgrade: websocket\r\nUpgrade: x-decoy', the map
+    // stores 'x-decoy' and the simple .toLowerCase() === 'websocket' check is bypassed.
+    const upstream = await makeUpstreamFixture();
+    const deps = makeDeps();
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Manually write a raw inner request with TWO Upgrade lines — object-based helpers deduplicate
+    const rawRequest =
+      "GET /v1/messages HTTP/1.1\r\n" +
+      "Host: api.anthropic.com\r\n" +
+      "Upgrade: websocket\r\n" +
+      "Upgrade: x-comis-decoy\r\n" +
+      "Connection: Upgrade\r\n" +
+      "\r\n";
+    const status = await new Promise<number>((resolve, reject) => {
+      socket.write(rawRequest);
+      let buf = "";
+      const onData = (chunk: Buffer): void => {
+        buf += chunk.toString("latin1");
+        const idx = buf.indexOf("\r\n\r\n");
+        if (idx === -1) return;
+        socket.off("data", onData);
+        const statusLine = buf.slice(0, buf.indexOf("\r\n"));
+        resolve(parseInt(statusLine.split(" ")[1] ?? "0", 10));
+      };
+      socket.on("data", onData);
+      socket.on("error", reject);
+      setTimeout(() => reject(new Error("timeout")), 3000);
+    });
+    socket.destroy();
+
+    // The WS guard MUST fire even though the second Upgrade header shadows websocket
+    expect(status).toBe(501);
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "broker:denied",
+      expect.objectContaining({ reason: "ws_upgrade_not_supported", statusCode: 501 }),
+    );
+    expect(upstream.receivedHeaders).toHaveLength(0);
+    upstream.server.close();
+  });
+
+  it("duplicate Upgrade headers: decoy first, websocket second → 501 (CR-03 bypass prevention, reversed order)", async () => {
+    const upstream = await makeUpstreamFixture();
+    const deps = makeDeps();
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const brokerPort = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `api.anthropic.com:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    // Reversed order: decoy first, websocket second
+    const rawRequest =
+      "GET /v1/messages HTTP/1.1\r\n" +
+      "Host: api.anthropic.com\r\n" +
+      "Upgrade: x-comis-decoy\r\n" +
+      "Upgrade: websocket\r\n" +
+      "Connection: Upgrade\r\n" +
+      "\r\n";
+    const status = await new Promise<number>((resolve, reject) => {
+      socket.write(rawRequest);
+      let buf = "";
+      const onData = (chunk: Buffer): void => {
+        buf += chunk.toString("latin1");
+        const idx = buf.indexOf("\r\n\r\n");
+        if (idx === -1) return;
+        socket.off("data", onData);
+        const statusLine = buf.slice(0, buf.indexOf("\r\n"));
+        resolve(parseInt(statusLine.split(" ")[1] ?? "0", 10));
+      };
+      socket.on("data", onData);
+      socket.on("error", reject);
+      setTimeout(() => reject(new Error("timeout")), 3000);
+    });
+    socket.destroy();
+
+    expect(status).toBe(501);
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "broker:denied",
+      expect.objectContaining({ reason: "ws_upgrade_not_supported", statusCode: 501 }),
+    );
+    upstream.server.close();
+  });
 });
 
 // ── EGRESS-01: Unix socket listen ─────────────────────────────────────────────
