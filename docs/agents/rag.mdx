@@ -11,25 +11,36 @@ to find useful notes before answering.
 
 ## How memory recall works
 
-Every time you send a message, your agent goes through a quick recall process:
+Every time you send a message, your agent runs a single recall orchestrator —
+`MemoryRecall` — that searches, fuses, optionally reranks, scores, filters, and
+de-duplicates its long-term memory before answering:
 
 ```mermaid
 flowchart LR
-    A["You send a message"] --> B["Search memories"]
-    B --> C["Rank by relevance"]
-    C --> D["Include top results"]
-    D --> E["Agent responds"]
+    A["You send<br/>a message"] --> B["SEARCH"]
+    B --> C["FUSE<br/>(N-lane RRF)"]
+    C --> D["RERANK<br/>(opt-in)"]
+    D --> E["SCORE"]
+    E --> F["TRUST-FILTER"]
+    F --> G["DEDUP"]
+    G --> H["Agent responds"]
 ```
 
-1. **You send a message** -- Your question or request arrives at the agent.
-2. **Search memories** -- Comis searches the agent's long-term memory for
-   anything related to your message.
-3. **Rank by relevance** -- The results are sorted by how closely they match
-   your message. Only the most relevant memories make the cut.
-4. **Include top results** -- The best-matching memories are added to the
-   agent's context so it can reference them when forming its response.
-5. **Agent responds** -- With both your current message and the relevant
-   memories, the agent gives a more informed answer.
+1. **Search** -- Comis runs every retrieval lane in parallel: keyword (FTS5),
+   meaning (vector, when embeddings exist), and the optional entity lane.
+2. **Fuse** -- the lanes are merged with Reciprocal Rank Fusion (RRF, `k=60`).
+   Fusion order is the default recall ordering.
+3. **Rerank** *(opt-in, default skipped)* -- when enabled, a cross-encoder
+   re-scores the top fused candidates for sharper relevance.
+4. **Score** -- recency, temporal, proof, and trust boosts are applied.
+5. **Trust-filter** -- only the eligible trust levels survive (`external`
+   excluded by default).
+6. **Dedup** -- near-duplicates are collapsed and the result is trimmed to
+   `maxResults` / `maxContextChars`, then injected into the agent's context.
+
+The full pipeline — including the opt-in reranking and entity lane, the
+trust-aware ranking, and read-time temporal correctness — is documented on the
+[Memory](/agents/memory#recall-pipeline) page.
 
 ## What gets recalled
 
@@ -67,31 +78,43 @@ your agent can store and retrieve.
 
 ## How retrieval works under the hood
 
-For developers and operators who want to know what is actually happening:
+For developers and operators who want to know what is actually happening, the
+`MemoryRecall` orchestrator runs these stages:
 
 1. **Query formulation** -- The current user message and recent conversation
    context are used as the search query.
-2. **Hybrid memory search** -- The query goes to the
-   [memory store](/agents/memory) which combines two scoring methods:
-   SQLite FTS5 (BM25 text ranking) and vector similarity (cosine distance
-   over embeddings) when an embedding provider is configured.
-3. **Trust filtering** -- Hits are filtered by `includeTrustLevels`. By
-   default, only `system` and `learned` memories pass; `external` memories
-   (web pages, third-party API responses) are excluded unless you opt in.
-4. **Ranking and dedup** -- Hits are sorted by score, then deduplicated by
-   content fingerprint (first 200 characters) to avoid near-duplicates.
-5. **Budget enforcement** -- Hits are appended to a memory section until
-   `maxResults` or `maxContextChars` is reached. If a single hit would push
-   the section over budget, it is dropped (not truncated).
-6. **Provenance and sanitization** -- Each included memory is formatted
-   with its date, trust level, and source. External content is wrapped in
-   safety markers so the model treats it as untrusted input.
-7. **Injection** -- The formatted memory section is appended to the system
-   prompt as the dynamic preamble (so it never invalidates the cached
-   prefix -- see [Compaction](/agents/compaction#cache-stable-prompt-architecture)).
+2. **Search (N lanes)** -- The query fans out to every retrieval lane on the
+   [memory store](/agents/memory): SQLite FTS5 (BM25 text ranking), vector
+   similarity (cosine distance over embeddings) when an embedding provider is
+   configured, and the optional entity lane when `rag.entityLane.enabled` is on.
+3. **Fuse (N-lane RRF)** -- The lanes are merged with Reciprocal Rank Fusion
+   (`score = 1 / (k + rank)`, `k=60`), which is robust against the lanes'
+   incompatible score scales. Fusion order is the default recall order.
+4. **Rerank (opt-in, default skipped)** -- When `rag.rerank.enabled` is `true`,
+   the top fused candidates (cap `maxCandidates`, default `40`) are re-scored by
+   an on-device cross-encoder under an `800ms` timeout; on timeout or
+   unavailability recall falls back to the fused order. Default `false`, so this
+   stage is normally skipped.
+5. **Score** -- Multiplicative boosts are applied to the reranked-or-fused
+   score: `recencyAlpha`, `temporalAlpha`, `proofAlpha`, and `trustAlpha` (the
+   `rag.scoring.*` knobs). Trust here is a *ranking* signal with the tie-break
+   `system > learned > external`, not only a filter.
+6. **Trust-filter** -- Hits are filtered by `includeTrustLevels`. By default,
+   only `system` and `learned` memories pass; `external` memories (web pages,
+   third-party API responses) are excluded unless you opt in.
+7. **Dedup + budget** -- Hits are deduplicated by content fingerprint (first 200
+   characters), then appended to a memory section until `maxResults` or
+   `maxContextChars` is reached. If a single hit would push the section over
+   budget, it is dropped (not truncated).
+8. **Provenance and sanitization** -- Each included memory is formatted with its
+   date, trust level, and source. External content is wrapped in safety markers
+   so the model treats it as untrusted input.
+9. **Injection** -- The formatted memory section is appended to the system
+   prompt as the dynamic preamble (so it never invalidates the cached prefix --
+   see [Compaction](/agents/compaction#cache-stable-prompt-architecture)).
 
-The implementation is in `packages/agent/src/rag/rag-retriever.ts`, and the
-hybrid search engine lives in `packages/memory/src/hybrid-search.ts`.
+The orchestrator is in `packages/agent/src/rag/memory-recall.ts`, and the
+underlying lane search engine lives in `packages/memory/src/hybrid-search.ts`.
 
 ## What gets indexed
 
@@ -117,6 +140,16 @@ your agent explicitly stores them.
 | `rag.maxContextChars` | number | `4000` | Maximum characters of memory context to add |
 | `rag.minScore` | number | `0.1` | Minimum relevance score (0-1) for a memory to be included |
 | `rag.includeTrustLevels` | array | `["system", "learned"]` | Which trust levels to include in recall |
+| `rag.rerank.enabled` | boolean | `false` | Opt-in cross-encoder reranking (see [Memory](/agents/memory#reranking-opt-in)) |
+| `rag.rerank.maxCandidates` | number | `40` | Max candidates re-scored when rerank is enabled |
+| `rag.rerank.timeoutMs` | number | `800` | Rerank wall-clock budget; on timeout falls back to fusion order |
+| `rag.scoring.recencyAlpha` | number | `0.2` | Recency (record-time) boost weight |
+| `rag.scoring.temporalAlpha` | number | `0.2` | Event-time proximity boost weight |
+| `rag.scoring.proofAlpha` | number | `0.1` | Proof-count (consolidation) boost weight |
+| `rag.scoring.trustAlpha` | number | `0.1` | Trust-level boost weight + `system > learned > external` tie-break |
+| `rag.entityLane.enabled` | boolean | `false` | Opt-in one-hop entity associative lane (see [Memory](/agents/memory#entity-associative-recall-opt-in)) |
+| `rag.entityLane.seedCount` | number | `5` | Top hits that seed the entity self-join |
+| `rag.entityLane.perEntityCap` | number | `200` | Max shared-entity neighbours the lane returns |
 
 ```yaml title="~/.comis/config.yaml"
 agents:

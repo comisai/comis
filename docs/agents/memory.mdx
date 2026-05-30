@@ -62,6 +62,16 @@ By default, [memory recall (RAG)](/agents/rag) only includes `system` and
 `learned` memories. You can include `external` memories as well, but the agent
 will always flag them for caution.
 
+Trust does two jobs during recall, not one:
+
+- **Inclusion filter** -- `includeTrustLevels` decides which trust levels are
+  eligible at all (default `["system", "learned"]`).
+- **Ranking signal** -- among the memories that pass the filter, trust also
+  *boosts the score* (`rag.scoring.trustAlpha`, default `0.1`) and breaks ties
+  in the order `system > learned > external`. A more-trusted memory therefore
+  ranks above an equally-relevant less-trusted one. See the
+  [Recall pipeline](#recall-pipeline) below.
+
 ## Background learning
 
 Your agent does not have to consciously decide what to remember. A periodic
@@ -116,16 +126,169 @@ Automatic limits prevent memory from growing unbounded:
   (default 1000), older entries are compacted to keep the database manageable.
 - **Target size** -- After compaction, the database is trimmed to the target
   size (default 500 entries).
-- **Retention limits** -- You can set a maximum age for memories (in days) and
-  a maximum total number of entries. Memories beyond these limits are
-  automatically cleaned up.
+- **Retention limit** -- You can set a maximum age for memories in days
+  (`memory.retention.maxAgeDays`, default `0` = no age limit). Memories older
+  than this are automatically cleaned up.
 
 These limits work together to keep your agent's memory focused and efficient
 without requiring manual cleanup.
 
+## Recall pipeline
+
+Before every agent response, Comis runs a single recall orchestrator —
+`MemoryRecall` (`packages/agent/src/rag/memory-recall.ts`) — that turns your
+incoming message into the most relevant set of memories. It **replaced the
+older inline recall path** (a flat search → trust-filter → sort → dedup). The
+orchestrator runs these stages in order:
+
+```mermaid
+flowchart LR
+    A["SEARCH"] --> B["FUSE<br/>(N-lane RRF)"]
+    B --> C["RERANK<br/>(opt-in)"]
+    C --> D["SCORE"]
+    D --> E["TRUST-FILTER"]
+    E --> F["DEDUP"]
+```
+
+1. **SEARCH** -- each retrieval lane runs: the FTS5 keyword lane, the vector
+   (meaning) lane when embeddings exist, and the optional entity lane. See
+   [Search](/agents/search).
+2. **FUSE** -- the lanes are merged with **Reciprocal Rank Fusion (RRF, `k=60`)**.
+   Fusion order — *not* reranking — is the default recall ordering.
+3. **RERANK** *(opt-in, default skipped)* -- when enabled, a cross-encoder
+   re-scores the top fused candidates. Off by default, so the all-default
+   config never reaches this stage.
+4. **SCORE** -- multiplicative boosts are applied to the reranked-or-fused score:
+   recency, temporal proximity, proof count, and trust (the `rag.scoring.*`
+   alphas below).
+5. **TRUST-FILTER** -- memories whose trust level is not in `includeTrustLevels`
+   are dropped (`external` excluded by default).
+6. **DEDUP** -- near-duplicates are collapsed by content fingerprint, and the
+   result is trimmed to `maxResults` / `maxContextChars`.
+
+The recall **core is always on** (as long as `rag.enabled` is `true`); the
+reranking, entity-lane, and consolidation features layered on top of it are each
+**opt-in** and described below.
+
+### Reranking (opt-in)
+
+Reranking re-scores the fused candidates with a **cross-encoder** — a model that
+reads the query and a candidate *together* and judges their relevance directly,
+which is more accurate than the bi-encoder similarity used for the vector lane
+(see [Embeddings](/agents/embeddings#embedder-vs-reranker) for the distinction).
+
+- **Default `false`** — reranking is opt-in. The Phase-79 latency measurement
+  (~777ms p95 at 40 candidates) exceeds the per-turn budget, so fusion (RRF) is
+  the default recall order.
+- **On-device, zero new dependency** — the reranker is a local GGUF model
+  (`bge-reranker-v2-m3`, Q8_0 quantization) run through the same `node-llama-cpp`
+  runtime that already powers local embeddings. No external API call, no new
+  package.
+- **Bounded** — at most `rag.rerank.maxCandidates` (default `40`) candidates are
+  re-scored, under a `rag.rerank.timeoutMs` (default `800`) wall-clock budget.
+- **Degrades gracefully** — if the reranker is unavailable or the timeout fires,
+  recall falls back to the fusion-ranked order. Recall never fails because of
+  reranking.
+- **Nothing downloaded until you enable it** — the all-default (rerank-off)
+  configuration never builds the reranker and never downloads the ~606 MB GGUF.
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  default:
+    rag:
+      rerank:
+        enabled: true        # OPT-IN (default false) — cross-encoder re-scoring
+        maxCandidates: 40
+        timeoutMs: 800
+memory:
+  rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+  rerankerThreads: 4
+  rerankerGpu: auto
+```
+
+### Trust-aware ranking
+
+Trust is a **ranking signal**, not only an inclusion filter. During the SCORE
+stage, `rag.scoring.trustAlpha` (default `0.1`) boosts more-trusted memories, and
+ties are broken in the order **`system > learned > external`**. The pre-existing
+`includeTrustLevels` filter still decides which trust levels are *eligible*; the
+ranking dimension decides their *order* once they qualify. This is what keeps a
+trusted fact ahead of an equally-relevant but less-trusted one, preserving the
+poisoning-resistance posture.
+
+| Boost | Knob | Default |
+|-------|------|---------|
+| Recency (record time) | `rag.scoring.recencyAlpha` | `0.2` |
+| Temporal proximity (event time) | `rag.scoring.temporalAlpha` | `0.2` |
+| Proof count (consolidation) | `rag.scoring.proofAlpha` | `0.1` |
+| Trust level | `rag.scoring.trustAlpha` | `0.1` |
+
+### Read-time temporal correctness
+
+Comis distinguishes two timestamps on every memory:
+
+- **`occurred_at`** -- when the fact was *true* in the world (event time).
+- **`created_at`** -- when Comis *recorded* it (record time).
+
+When two memories contradict each other, the conflict is resolved **at read
+time**: the **latest-recorded** memory is treated as authoritative. Comis never
+averages or sums conflicting values, and it is **non-destructive** — the older
+record is never deleted, so both conflicting memories are still returned and the
+agent can see the history. `temporalAlpha` boosts memories by event-time
+proximity when `occurred_at` is present and stays **neutral when it is absent**,
+so memories without an event time are neither penalised nor favoured.
+
+<Note>
+  Temporal correctness here is read-time conflict resolution. Comis does not
+  (yet) support natural-language time-range retrieval like "what did I say last
+  March" — that is a separate, future capability.
+</Note>
+
+### Entity associative recall (opt-in)
+
+When enabled, the entity lane adds **associative recall**: starting from the top
+search hits, it does a one-hop self-join over memories that share a linked entity
+(a person, project, place, …) and fuses those neighbours into the RRF result.
+
+- **Default `false`** (`rag.entityLane.enabled`) — opt-in.
+- **Strictly scoped** — the join is confined to the current `(tenant, agent)`;
+  one agent can never pull another's linked memories.
+- **Safe when empty** — if a query produces no entity seeds, the lane returns
+  nothing and the RRF result is unchanged.
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  default:
+    rag:
+      entityLane:
+        enabled: true        # OPT-IN (default false) — one-hop associative lane
+        seedCount: 5
+        perEntityCap: 200
+```
+
+### Observations & consolidation (opt-in)
+
+When consolidation is enabled, a background job folds repeatedly-seen facts into
+**observations** — higher-order memories that summarise a cluster of supporting
+entries. Each observation carries:
+
+- a **`proof_count`** and the **`source_ids`** of the memories that support it,
+- a **`confidence`** that decays on a half-life schedule and feeds the
+  `proofAlpha` ranking boost, and
+- a **trust ceiling = `min(sources)`** — an observation can never be more trusted
+  than its least-trusted source, so `external` material cannot launder itself
+  into a `system`-level fact.
+
+Consolidation is **non-destructive** (source memories are kept) and **opt-in
+(default off)** — it is a cost gate because it runs the LLM on a schedule. The
+configuration lives in the [config reference](/reference/config-yaml); this page
+describes the concept.
+
 ## DAG context store
 
-When your agent runs in DAG mode (`contextEngine.version: "dag"`), Comis
+When your agent runs in DAG mode (`contextEngine.version: "dag"`, the **default**
+context engine — full details in
+[Context Management](/context-management)), Comis
 maintains an additional storage layer alongside the regular long-term memory.
 The DAG context store preserves the full conversation history in a structured
 graph -- every message, tool result, and file content is stored as a node, and
@@ -151,7 +314,6 @@ See [Compaction](/agents/compaction) for how DAG compaction works, and
 | `memory.compaction.threshold` | number | `1000` | Number of entries before compaction triggers |
 | `memory.compaction.targetSize` | number | `500` | Maximum entries to keep after compaction |
 | `memory.retention.maxAgeDays` | number | `0` | Maximum age of entries in days (0 = no limit) |
-| `memory.retention.maxEntries` | number | `0` | Maximum total entries (0 = no limit) |
 
 ```yaml title="~/.comis/config.yaml"
 memory:
@@ -163,7 +325,6 @@ memory:
     targetSize: 500
   retention:
     maxAgeDays: 0     # No age limit
-    maxEntries: 0     # No count limit
 ```
 
 <CardGroup cols={2}>
