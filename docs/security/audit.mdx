@@ -161,6 +161,30 @@ Comis automatically scrubs sensitive values from all log output, including audit
 
 Log redaction works alongside audit logging -- audit events record what actions were taken without exposing the sensitive data involved in those actions. For example, an audit event records that an agent accessed a secret named `OPENAI_API_KEY`, but the actual key value never appears in the log.
 
+## Credential Broker Events
+
+The credential broker emits 7 typed events on the daemon event bus. All event payloads are redaction-by-construction — no secret value ever appears in any event field.
+
+| Event | Key payload fields |
+|-------|--------------------|
+| `broker:session_opened` | `sessionId`, `agentId`, `host`, `presetId?`, `timestamp` |
+| `broker:session_closed` | `sessionId`, `agentId`, `durationMs`, `reason`, `timestamp` |
+| `broker:request` | `sessionId`, `host`, `path`, `method`, `timestamp` |
+| `broker:injected` | `sessionId`, `host`, `ruleKind`, `timestamp` |
+| `broker:denied` | `sessionId`, `host`, `reason`, `statusCode`, `timestamp` |
+| `broker:credential_unavailable` | `sessionId`, `secretRef`, `agentId`, `timestamp` |
+| `broker:egress_blocked` | `sessionId`, `targetHostHash` (SHA-256 hex — NOT plaintext host), `timestamp` |
+
+The `broker:egress_blocked` event deliberately carries `targetHostHash` (SHA-256 hex) rather than the plaintext hostname — even blocked egress targets are not logged in plaintext (redaction-by-construction).
+
+The `secret:accessed` event is also emitted by the broker for each per-request SecretManager resolution, separately from the `broker:*` taxonomy. Fields: `secretName`, `agentId`, `outcome` (success/not_found), `timestamp`. This allows you to audit which secrets an agent touched regardless of whether the broker injection succeeded.
+
+<Info>
+Source: `packages/infra/src/credential-broker/broker-events.ts`
+</Info>
+
+For the full broker architecture and configuration, see [Credential Broker →](/security/credential-broker).
+
 ## Configuration
 
 Audit logging is controlled by two settings in your configuration:
