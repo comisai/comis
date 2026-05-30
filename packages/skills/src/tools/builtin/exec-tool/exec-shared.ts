@@ -547,11 +547,7 @@ export function ensureWarmVenvSeed(
   }
 }
 
-/**
- * Build the final environment record for the subprocess by merging:
- *   baseEnv → dataEnv → userEnv → resolvedSecretEnv (last wins on collision).
- * Block-extracted from the createExecTool factory.
- */
+/** Build the subprocess env by merging: baseEnv → dataEnv → userEnv → resolvedSecretEnv → brokerSpawnEnv. */
 export function buildExecEnv(deps: {
   workspacePath: string;
   subprocessEnv?: Record<string, string>;
@@ -559,12 +555,7 @@ export function buildExecEnv(deps: {
   resolvedSecretEnv?: Record<string, string>;
   sandboxConfig?: ExecSandboxConfig;
   logger?: ToolLogger;
-  /**
-   * Broker proxy env for the driven-CLI spawn only.
-   * Merged LAST so it wins over wrapEnv output.
-   * Only the driven-CLI call site passes this.
-   * General exec call sites never pass brokerSpawnEnv (EGRESS-03 invariant).
-   */
+  /** Broker proxy env — driven-CLI spawn only; merged LAST (EGRESS-03). */
   brokerSpawnEnv?: {
     HTTPS_PROXY: string;
     HTTP_PROXY: string;
@@ -599,9 +590,7 @@ export function buildExecEnv(deps: {
     ...(resolvedSecretEnv ?? {}),
   };
   const finalEnv = sandboxConfig?.sandbox.wrapEnv?.(env as Record<string, string>, workspacePath) ?? env;
-  // Merge broker proxy env LAST — driven-CLI spawn only, wins over wrapEnv.
-  // Only the daemon wiring for the driven-CLI call site passes this field.
-  // General exec call sites never pass brokerSpawnEnv (EGRESS-03 invariant).
+  // Broker env LAST — only present for driven-CLI spawns (EGRESS-03).
   if (deps.brokerSpawnEnv) {
     const { HTTPS_PROXY, HTTP_PROXY, NODE_EXTRA_CA_CERTS, placeholders } = deps.brokerSpawnEnv;
     Object.assign(finalEnv, { HTTPS_PROXY, HTTP_PROXY, NODE_EXTRA_CA_CERTS, ...placeholders });
