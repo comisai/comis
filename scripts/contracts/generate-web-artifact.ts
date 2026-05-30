@@ -58,6 +58,12 @@ export const OUT_TS = resolve(WEB_API_DIR, "contracts.generated.ts");
 export const OUT_JSON = resolve(WEB_API_DIR, "contracts.generated.json");
 export const OUT_SIZE = resolve(WEB_API_DIR, "contracts.generated.size.json");
 
+/** Artifact filenames (constant across output dirs). Tests redirect writes to
+ *  a temp dir by passing `outDir`; the committed paths above are the default. */
+const ARTIFACT_TS = "contracts.generated.ts";
+const ARTIFACT_JSON = "contracts.generated.json";
+const ARTIFACT_SIZE = "contracts.generated.size.json";
+
 // ---------------------------------------------------------------------------
 // Codegen result — returned by `runCodegen()` so callers (the entry point and
 // the `generate.test.ts` tests) can introspect the produced artifacts without
@@ -79,10 +85,24 @@ export interface CodegenResult {
  * artifacts for in-process inspection.
  *
  * The function is pure-ish: it writes files but has no side-effects beyond
- * the three OUT_* paths. Returning the artifacts lets the codegen-drift test
- * compare against the on-disk versions without re-running.
+ * the three artifacts under `outDir`. Returning the artifacts lets the
+ * codegen-drift test compare against the in-memory result without re-running
+ * or reading disk.
+ *
+ * `outDir` defaults to the committed `packages/web/src/api` directory so the
+ * CLI entry point and `pnpm contracts:generate` write the real artifacts.
+ * Tests pass a unique temp dir to avoid a cross-project filesystem write/read
+ * race on the shared committed artifacts: `scripts/contracts/generate.test.ts`
+ * and `test/architecture/contract-codegen-drift.test.ts` run in SEPARATE
+ * vitest projects (parallel forks) and both call `runCodegen()` — writing the
+ * same three committed files concurrently would let one test read another's
+ * in-progress write. Redirecting test writes to per-call temp dirs removes
+ * that race surface without changing production codegen behavior.
  */
-export function runCodegen(): CodegenResult {
+export function runCodegen(outDir: string = WEB_API_DIR): CodegenResult {
+  const outTs = resolve(outDir, ARTIFACT_TS);
+  const outJson = resolve(outDir, ARTIFACT_JSON);
+  const outSize = resolve(outDir, ARTIFACT_SIZE);
   // 1. Allowlist gate. Forbidden shapes throw with the contract's method
   //    name + direction + class name; the error bubbles up to the entry point.
   for (const c of API_CONTRACTS_ORDERED) {
@@ -119,12 +139,15 @@ export function runCodegen(): CodegenResult {
   }
 
   // 4. Write JSON sibling artifact. 2-space indent + trailing newline (POSIX).
+  // outJson/outTs/outSize derive from `outDir` (defaults to the committed
+  // WEB_API_DIR); tests pass a temp dir. The path is build-tool-internal, not
+  // attacker-controlled — same sanctioned dynamic-fs pattern used elsewhere.
   const jsonOutput = JSON.stringify(jsonSchemaMap, null, 2) + "\n";
-  writeFileSync(OUT_JSON, jsonOutput);
+  writeFileSync(outJson, jsonOutput); // eslint-disable-line security/detect-non-literal-fs-filename
 
   // 5. Emit + write TS dispatch-table.
   const tsSource = emitDispatchTableTs(jsonSchemaMap as JsonSchemaMap);
-  writeFileSync(OUT_TS, tsSource);
+  writeFileSync(outTs, tsSource); // eslint-disable-line security/detect-non-literal-fs-filename
 
   // 6. Measure size + write report.
   const perContractSchemas: Record<string, { request: unknown; response: unknown }> = {};
@@ -132,7 +155,7 @@ export function runCodegen(): CodegenResult {
     perContractSchemas[method] = { request: entry.request, response: entry.response };
   }
   const sizeReport = measureSizes(tsSource, perContractSchemas);
-  writeFileSync(OUT_SIZE, JSON.stringify(sizeReport, null, 2) + "\n");
+  writeFileSync(outSize, JSON.stringify(sizeReport, null, 2) + "\n"); // eslint-disable-line security/detect-non-literal-fs-filename
 
   return {
     tsSource,

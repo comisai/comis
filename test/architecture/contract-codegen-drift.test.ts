@@ -5,16 +5,28 @@
  * rerunning the generator, this test fails.
  *
  * Test strategy:
- *   1. Run `runCodegen()` in-process — produces a fresh CodegenResult.
- *   2. Read the committed `packages/web/src/api/contracts.generated.*` files.
+ *   1. Read the committed `packages/web/src/api/contracts.generated.*` files.
+ *   2. Run `runCodegen()` into a throwaway temp dir — produces a fresh
+ *      CodegenResult AND the freshly-written bytes, without touching the
+ *      committed artifacts.
  *   3. Compare byte-for-byte. Any mismatch indicates either:
  *      - A contract added/changed without rerunning `pnpm contracts:generate`.
  *      - A non-determinism regression in the codegen pipeline.
  *
+ * Why a temp dir (not the committed paths): `scripts/contracts/generate.test.ts`
+ * is a SEPARATE vitest project that also calls `runCodegen()` (6×). The two
+ * projects run in parallel forks, so if this gate wrote-then-read-back the
+ * shared committed files it would race that test's concurrent writes and
+ * report a spurious drift (catching an in-progress writeFileSync). Writing to
+ * a per-run temp dir removes the gate from that race entirely while asserting
+ * the identical invariant: committed bytes == fresh codegen output.
+ *
  * @module
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   runCodegen,
   OUT_TS,
@@ -24,20 +36,26 @@ import {
 
 describe("contract codegen drift gate", () => {
   it("pnpm contracts:generate is a no-op against the committed artifacts", () => {
-    // Snapshot the committed files BEFORE rerunning codegen.
+    // Snapshot the committed files.
     const committedTs = readFileSync(OUT_TS, "utf8");
     const committedJson = readFileSync(OUT_JSON, "utf8");
     const committedSize = readFileSync(OUT_SIZE, "utf8");
 
-    // Rerun codegen in-process. The result writes the artifacts to disk
-    // (overwriting the snapshot) but we already captured the committed
-    // bytes above.
-    const result = runCodegen();
-
-    // Read the freshly-written files.
-    const generatedTs = readFileSync(OUT_TS, "utf8");
-    const generatedJson = readFileSync(OUT_JSON, "utf8");
-    const generatedSize = readFileSync(OUT_SIZE, "utf8");
+    // Regenerate into a throwaway temp dir so we never touch (or race on) the
+    // committed artifacts. The artifact filenames are constant across dirs.
+    const tmp = mkdtempSync(join(tmpdir(), "comis-codegen-drift-"));
+    let generatedTs: string;
+    let generatedJson: string;
+    let generatedSize: string;
+    let result: ReturnType<typeof runCodegen>;
+    try {
+      result = runCodegen(tmp);
+      generatedTs = readFileSync(join(tmp, "contracts.generated.ts"), "utf8");
+      generatedJson = readFileSync(join(tmp, "contracts.generated.json"), "utf8");
+      generatedSize = readFileSync(join(tmp, "contracts.generated.size.json"), "utf8");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
 
     // The codegen pipeline returns the TS string it wrote — assert disk
     // matches the in-memory result (catches a writeFileSync regression).
@@ -51,8 +69,6 @@ describe("contract codegen drift gate", () => {
     const sizeMatch = committedSize === generatedSize;
 
     if (!tsMatch || !jsonMatch || !sizeMatch) {
-      // Restore the freshly-generated artifacts; the test failure message
-      // tells the developer how to fix.
       const drifted: string[] = [];
       if (!tsMatch) drifted.push("contracts.generated.ts");
       if (!jsonMatch) drifted.push("contracts.generated.json");
@@ -66,11 +82,5 @@ describe("contract codegen drift gate", () => {
     expect(tsMatch).toBe(true);
     expect(jsonMatch).toBe(true);
     expect(sizeMatch).toBe(true);
-
-    // Defensive: restore the committed artifacts even on success (no-op
-    // when match; but guards against partial writes in interrupted runs).
-    if (!tsMatch) writeFileSync(OUT_TS, committedTs);
-    if (!jsonMatch) writeFileSync(OUT_JSON, committedJson);
-    if (!sizeMatch) writeFileSync(OUT_SIZE, committedSize);
   });
 });

@@ -5715,7 +5715,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "string"
         },
         "limit": {
-          "type": "number"
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
         }
       },
       "additionalProperties": false
@@ -5944,7 +5946,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "string"
         },
         "limit": {
-          "type": "number"
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
         }
       },
       "additionalProperties": false
@@ -6099,7 +6103,9 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
           "type": "string"
         },
         "limit": {
-          "type": "number"
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
         }
       },
       "additionalProperties": false

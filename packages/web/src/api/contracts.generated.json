@@ -5593,7 +5593,9 @@
           "type": "string"
         },
         "limit": {
-          "type": "number"
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
         }
       },
       "additionalProperties": false
@@ -5822,7 +5824,9 @@
           "type": "string"
         },
         "limit": {
-          "type": "number"
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
         }
       },
       "additionalProperties": false
@@ -5977,7 +5981,9 @@
           "type": "string"
         },
         "limit": {
-          "type": "number"
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
         }
       },
       "additionalProperties": false
