@@ -459,6 +459,130 @@ describe("createSqliteMemoryEntityStore", () => {
   });
 
   // =====================================================================
+  // OBS-06 — listEntities (scoped entity-graph diagnostic read)
+  //
+  // NON-seed read: list the entities in a single (tenant, agent) scope,
+  // ordered most-mentioned-first, bounded by `limit`. Bakes the SAME
+  // (tenant, agent) isolation as the resolver UNIQUE index + the lane
+  // self-join (ENT-03) — two scopes must NEVER surface each other's rows.
+  // 86-05 (the daemon `memory.entities` handler + CLI) wires this; the
+  // adapter impl is pre-implemented here so 86-05 only adds the handler.
+  // =====================================================================
+
+  describe("listEntities (OBS-06)", () => {
+    const LIST_SCOPE = { tenantId: "tenant_a", agentId: "agent_a" } as const;
+
+    it("returns the scope's entities as EntityRow[], ordered most-mentioned-first, with bookkeeping timestamps", async () => {
+      const m1 = await seedMemory({ id: "m1" });
+      const m2 = await seedMemory({ id: "m2" });
+
+      // "Popular Co" gets two mentions (mention_count = 2); "Quiet Co" gets one.
+      // Use a later `now` on the second mention to prove last_seen is surfaced.
+      const popular = await store.resolveAndLink(m1, "Popular Co", SCOPE_A);
+      await store.resolveAndLink(m2, "Popular Co", { ...SCOPE_A, now: 2_000 });
+      const quiet = await store.resolveAndLink(m1, "Quiet Co", { ...SCOPE_A, now: 1_500 });
+      expect(popular.ok && quiet.ok).toBe(true);
+      if (!popular.ok || !quiet.ok) return;
+
+      const res = await store.listEntities(LIST_SCOPE.agentId, LIST_SCOPE.tenantId, 50);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+
+      // Most-mentioned-first: "Popular Co" (2) before "Quiet Co" (1).
+      expect(res.value.map((e) => e.name)).toEqual(["Popular Co", "Quiet Co"]);
+
+      // EntityRow shape (mirrors the port's EntityRow): id/name/mentionCount +
+      // optional firstSeen/lastSeen as epoch ms (NOT the snake_case DB columns,
+      // and NOT the DB-internal canonical_key — OQ-2).
+      const top = res.value[0];
+      expect(top?.id).toBe(popular.value);
+      expect(top?.name).toBe("Popular Co");
+      expect(top?.mentionCount).toBe(2);
+      expect(top?.firstSeen).toBe(1_000); // first mention's `now`
+      expect(top?.lastSeen).toBe(2_000); // latest mention's `now`
+      expect(JSON.stringify(top)).not.toContain("canonical_key");
+    });
+
+    it("isolates by scope — a cross-(tenant or agent) entity with the SAME name is NOT returned (ENT-03)", async () => {
+      const mine = await seedMemory({ id: "mine", tenantId: "tenant_a", agentId: "agent_a" });
+      const otherTenant = await seedMemory({ id: "ot", tenantId: "tenant_b", agentId: "agent_a" });
+      const otherAgent = await seedMemory({ id: "oa", tenantId: "tenant_a", agentId: "agent_z" });
+
+      await store.resolveAndLink(mine, "Globex", SCOPE_A);
+      await store.resolveAndLink(otherTenant, "Globex", {
+        tenantId: "tenant_b",
+        agentId: "agent_a",
+        now: 1_000,
+      });
+      await store.resolveAndLink(otherAgent, "Globex", {
+        tenantId: "tenant_a",
+        agentId: "agent_z",
+        now: 1_000,
+      });
+
+      // Only the in-scope "Globex" row surfaces — the cross-tenant and
+      // cross-agent rows (same NAME, distinct scoped entity ids) are excluded
+      // by the WHERE tenant_id=? AND agent_id=?.
+      const mineRes = await store.listEntities("agent_a", "tenant_a", 50);
+      expect(mineRes.ok).toBe(true);
+      if (!mineRes.ok) return;
+      expect(mineRes.value).toHaveLength(1);
+      expect(mineRes.value[0]?.name).toBe("Globex");
+
+      // The other agent's scope sees exactly its own one row, not the other two.
+      const otherAgentRes = await store.listEntities("agent_z", "tenant_a", 50);
+      expect(otherAgentRes.ok).toBe(true);
+      if (!otherAgentRes.ok) return;
+      expect(otherAgentRes.value).toHaveLength(1);
+      expect(otherAgentRes.value[0]?.name).toBe("Globex");
+    });
+
+    it("respects `limit`: at most `limit` rows are returned (most-mentioned-first)", async () => {
+      // Three distinct entities; the most-mentioned one must win the cap.
+      const m = await seedMemory({ id: "m" });
+      await store.resolveAndLink(m, "Mercury Labs", SCOPE_A); // 1
+      await store.resolveAndLink(m, "Saturn Foods", SCOPE_A); // 1
+      const top = await store.resolveAndLink(m, "Jupiter Inc", SCOPE_A);
+      await store.resolveAndLink(m, "Jupiter Inc", { ...SCOPE_A, now: 1_200 }); // 2 -> ranks first
+      expect(top.ok).toBe(true);
+      if (!top.ok) return;
+
+      const res = await store.listEntities("agent_a", "tenant_a", 1);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value).toHaveLength(1);
+      expect(res.value[0]?.name).toBe("Jupiter Inc"); // the 2-mention entity
+    });
+
+    it("returns ok([]) for a scope with no entities", async () => {
+      const res = await store.listEntities("agent_a", "tenant_a", 50);
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.value).toEqual([]);
+    });
+
+    it("returns err + logs warn when the entities query fails", async () => {
+      const logger = {
+        info: vi.fn(),
+        warn: vi.fn(),
+        debug: vi.fn(),
+      };
+      const localAdapter = new SqliteMemoryAdapter(memoryConfig);
+      const localDb = localAdapter.getDb();
+      const localStore = createSqliteMemoryEntityStore({ db: localDb, logger });
+      // Drop the table so the SELECT throws.
+      localDb.exec("DROP TABLE memory_entities");
+
+      const res = await localStore.listEntities("agent_a", "tenant_a", 50);
+      expect(res.ok).toBe(false);
+      const warn = logger.warn.mock.calls.find((c) => c[0]?.step === "entity-list");
+      expect(warn).toBeDefined();
+      expect(warn?.[0]).toMatchObject({ step: "entity-list", errorKind: "internal" });
+      expect(warn?.[0]?.err).toBeInstanceOf(Error);
+      localDb.close();
+    });
+  });
+
+  // =====================================================================
   // Error paths + structured logging (cover the catch/log branches)
   // =====================================================================
 
