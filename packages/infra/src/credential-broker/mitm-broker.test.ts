@@ -3364,3 +3364,611 @@ describe("Phase 6 emit-site smoke (RED gate)", () => {
     expect(closedCall![1]).toMatchObject({ durationMs: expect.any(Number), reason: "teardown" });
   });
 });
+
+// ---------------------------------------------------------------------------
+// OBS-02 sentinel helper — scans all log calls + all bus events
+// ---------------------------------------------------------------------------
+function assertNoSentinel(
+  logger: ReturnType<typeof makeMockLogger>,
+  eventBus: ReturnType<typeof createMockEventBus>,
+  sentinel: string,
+): void {
+  for (const call of logger._calls()) {
+    expect(JSON.stringify(call.payload)).not.toContain(sentinel);
+    expect(call.msg).not.toContain(sentinel);
+  }
+  const calls = (eventBus.emit as ReturnType<typeof vi.fn>).mock.calls;
+  for (const [, payload] of calls) {
+    expect(JSON.stringify(payload)).not.toContain(sentinel);
+  }
+}
+
+// ── OBS-01: broker:* event taxonomy assertions ────────────────────────────────
+
+describe("OBS-01 — broker:* event taxonomy", () => {
+  it("broker:session_opened emitted with correct structural fields", async () => {
+    const upstream = await makeUpstreamFixture();
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, `api.anthropic.com:${upstream.port}`);
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+    upstream.server.close();
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    const opened = emitCalls.find(([n]) => n === "broker:session_opened");
+    expect(opened).toBeDefined();
+    expect(opened![1]).toMatchObject({
+      sessionId: expect.any(String),
+      agentId: "agent-1",
+      host: "api.anthropic.com",
+      timestamp: expect.any(Number),
+    });
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("broker:session_closed emitted with durationMs >= 0 and reason: teardown", async () => {
+    const upstream = await makeUpstreamFixture();
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, `api.anthropic.com:${upstream.port}`);
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 150));
+    upstream.server.close();
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    const closed = emitCalls.find(([n]) => n === "broker:session_closed");
+    expect(closed).toBeDefined();
+    expect(closed![1]).toMatchObject({
+      durationMs: expect.any(Number),
+      reason: "teardown",
+      agentId: "agent-1",
+    });
+    expect((closed![1] as { durationMs: number }).durationMs).toBeGreaterThanOrEqual(0);
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("broker:request emitted with correct host/path/method fields (no query in path)", async () => {
+    const upstream = await makeUpstreamFixture();
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, `api.anthropic.com:${upstream.port}`);
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+    upstream.server.close();
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    const req = emitCalls.find(([n]) => n === "broker:request");
+    expect(req).toBeDefined();
+    const reqPayload = req![1] as { host: string; path: string; method: string };
+    expect(reqPayload.host).toBe("api.anthropic.com");
+    expect(reqPayload.path).toBeTypeOf("string");
+    expect(reqPayload.method).toBe("GET");
+    // path must NOT contain query string
+    expect(reqPayload.path).not.toContain("?");
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("broker:request for setParam host: path does NOT contain sentinel and does NOT contain '?'", async () => {
+    const upstream = await makeUpstreamFixture();
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, `finnhub.io:${upstream.port}`);
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/api/v1/quote", { host: "finnhub.io" });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+    upstream.server.close();
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    const req = emitCalls.find(([n]) => n === "broker:request");
+    expect(req).toBeDefined();
+    const reqPath = (req![1] as { path: string }).path;
+    // setParam binding — path at emit time (pre-injection) must NOT include query
+    expect(reqPath).not.toContain("?");
+    expect(reqPath).not.toContain(SENTINEL_SECRET);
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("broker:injected emitted with ruleKind and host (setHeader)", async () => {
+    const upstream = await makeUpstreamFixture();
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, `api.anthropic.com:${upstream.port}`);
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+    upstream.server.close();
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    const injected = emitCalls.find(([n]) => n === "broker:injected");
+    expect(injected).toBeDefined();
+    expect(injected![1]).toMatchObject({
+      host: "api.anthropic.com",
+      ruleKind: "setHeader",
+    });
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("broker:injected emitted with ruleKind:setParam (Finnhub binding)", async () => {
+    const upstream = await makeUpstreamFixture();
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, `finnhub.io:${upstream.port}`);
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/api/v1/quote", { host: "finnhub.io" });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+    upstream.server.close();
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    const injected = emitCalls.find(([n]) => n === "broker:injected");
+    expect(injected).toBeDefined();
+    expect(injected![1]).toMatchObject({ ruleKind: "setParam" });
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("broker:denied with reason:bad_token and statusCode:407", async () => {
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    await new Promise<void>((resolve, reject) => {
+      const s = net.connect(port, "127.0.0.1", () => {
+        s.write(
+          `CONNECT api.anthropic.com:443 HTTP/1.1\r\n` +
+            `Host: api.anthropic.com:443\r\n` +
+            `Proxy-Authorization: Bearer bad-token-xyz\r\n` +
+            `\r\n`,
+        );
+      });
+      let buf = "";
+      s.on("data", (chunk: Buffer) => {
+        buf += chunk.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return;
+        s.destroy();
+        resolve();
+      });
+      s.on("error", reject);
+      setTimeout(() => reject(new Error("timeout")), 3000);
+    });
+    await new Promise<void>((r) => setTimeout(r, 50));
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    const denied = emitCalls.find(([n]) => n === "broker:denied");
+    expect(denied).toBeDefined();
+    expect(denied![1]).toMatchObject({ reason: "bad_token", statusCode: 407 });
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("broker:denied with reason:no_binding and statusCode:403 (unknown host)", async () => {
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, "unknown-host.example.com:443");
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/path");
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    const denied = emitCalls.find(([n]) => n === "broker:denied");
+    expect(denied).toBeDefined();
+    expect(denied![1]).toMatchObject({ reason: "no_binding", statusCode: 403 });
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("broker:credential_unavailable emitted with secretRef and agentId", async () => {
+    const logger = makeMockLogger();
+    const deps = makeDeps({
+      logger: logger as unknown as MitmBrokerDeps["logger"],
+      secretManager: createSecretManager({}), // empty — Anthropic key missing
+    });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, "api.anthropic.com:443");
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    const credUnavail = emitCalls.find(([n]) => n === "broker:credential_unavailable");
+    expect(credUnavail).toBeDefined();
+    expect(credUnavail![1]).toMatchObject({
+      secretRef: expect.any(String),
+      agentId: "agent-1",
+    });
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("broker:egress_blocked emitted with 64-char hex targetHostHash (no plaintext host)", async () => {
+    const unknownHost = "egress-blocked-unknown.example.com";
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, `${unknownHost}:443`);
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/path");
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    const blocked = emitCalls.find(([n]) => n === "broker:egress_blocked");
+    expect(blocked).toBeDefined();
+    const blockedPayload = blocked![1] as Record<string, unknown>;
+    // targetHostHash must be 64-char lowercase hex
+    expect(blockedPayload["targetHostHash"]).toMatch(/^[0-9a-f]{64}$/);
+    // plaintext host must NOT appear in the payload
+    expect(blockedPayload).not.toHaveProperty("host");
+    expect(JSON.stringify(blockedPayload)).not.toContain(unknownHost);
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+});
+
+// ── OBS-02: exhaustive sentinel property test (all 9 paths) ──────────────────
+
+describe("OBS-02 — non-leakage property test (all paths)", () => {
+  it("sentinel never appears — Path 1: happy setHeader (Anthropic)", async () => {
+    const upstream = await makeUpstreamFixture();
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, `api.anthropic.com:${upstream.port}`);
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+    upstream.server.close();
+
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("sentinel never appears — Path 2: happy setParam (Finnhub) + path no '?'", async () => {
+    const upstream = await makeUpstreamFixture();
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, `finnhub.io:${upstream.port}`);
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/api/v1/quote", { host: "finnhub.io" });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+    upstream.server.close();
+
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+
+    // Additionally: broker:request path must not contain query or sentinel
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    const reqEvent = emitCalls.find(([n]) => n === "broker:request");
+    expect(reqEvent).toBeDefined();
+    const reqPath = (reqEvent![1] as { path: string }).path;
+    expect(reqPath).not.toContain("?");
+    expect(reqPath).not.toContain(SENTINEL_SECRET);
+  });
+
+  it("sentinel never appears — Path 3: bad token (407)", async () => {
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    await new Promise<void>((resolve, reject) => {
+      const s = net.connect(port, "127.0.0.1", () => {
+        s.write(
+          `CONNECT api.anthropic.com:443 HTTP/1.1\r\n` +
+            `Host: api.anthropic.com:443\r\n` +
+            `Proxy-Authorization: Bearer invalid-token-obs02\r\n` +
+            `\r\n`,
+        );
+      });
+      let buf = "";
+      s.on("data", (chunk: Buffer) => {
+        buf += chunk.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return;
+        s.destroy();
+        resolve();
+      });
+      s.on("error", reject);
+      setTimeout(() => reject(new Error("timeout")), 3000);
+    });
+    await new Promise<void>((r) => setTimeout(r, 50));
+
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("sentinel never appears — Path 4: no-binding 403 (unknown host)", async () => {
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, "obs02-unknown.example.com:443");
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/path");
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("sentinel never appears — Path 5: path-policy 403", async () => {
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, "policy.example.com:443");
+    expect(statusCode).toBe(200);
+    // /v2/x violates the /v1/* pathPolicy of makePolicyBinding()
+    await sendGetThroughTunnel(socket, "/v2/x", { host: "policy.example.com" });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("sentinel never appears — Path 6: credential-unavailable 502", async () => {
+    const logger = makeMockLogger();
+    const deps = makeDeps({
+      logger: logger as unknown as MitmBrokerDeps["logger"],
+      secretManager: createSecretManager({}), // no secrets — Anthropic key missing
+    });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, "api.anthropic.com:443");
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("sentinel never appears — Path 7: header overflow 400", async () => {
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, "api.anthropic.com:443");
+    expect(statusCode).toBe(200);
+
+    // Send header overflow (> 8192 bytes without the header terminator)
+    const oversizeHeader = "GET /v1/messages HTTP/1.1\r\n" + `X-Overflow: ${"B".repeat(8200)}\r\n`;
+    socket.write(oversizeHeader);
+
+    await new Promise<void>((resolve) => {
+      socket.on("close", () => resolve());
+      socket.on("error", () => resolve());
+      setTimeout(() => resolve(), 2000);
+    });
+    socket.destroy();
+
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("sentinel never appears — Path 8: WebSocket upgrade 501", async () => {
+    const upstream = await makeUpstreamFixture();
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, `api.anthropic.com:${upstream.port}`);
+    expect(statusCode).toBe(200);
+    await sendGetThroughTunnel(socket, "/v1/messages", {
+      Upgrade: "websocket",
+      Connection: "Upgrade",
+      host: "api.anthropic.com",
+    });
+    socket.destroy();
+    await new Promise<void>((r) => setTimeout(r, 100));
+    upstream.server.close();
+
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  });
+
+  it("sentinel never appears — Path 9: body-too-large 413 (finalizer path)", async () => {
+    const upstream = await makeUpstreamFixture();
+    const logger = makeMockLogger();
+    // Binding with awsSigV4 finalizer to trigger body-buffering path
+    const finalizerBinding: BrokerBinding = {
+      secretRef: "ANTHROPIC_API_KEY",
+      hostRules: [
+        {
+          pattern: { kind: "exact", host: "api.anthropic.com" },
+          inject: [{ kind: "setHeader", name: "x-api-key", format: "raw" }],
+          finalizer: { kind: "awsSigV4", region: "us-east-1", service: "execute-api" },
+        },
+      ],
+    };
+    const deps = makeDeps({
+      logger: logger as unknown as MitmBrokerDeps["logger"],
+      bindings: [finalizerBinding],
+    });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-1");
+    const { statusCode, socket } = await connectThroughProxy(port, proxyToken, `api.anthropic.com:${upstream.port}`);
+    expect(statusCode).toBe(200);
+
+    // Send body larger than MAX_BODY_BYTES via sendPostThroughTunnel
+    const oversizeBody = "X".repeat(MAX_BODY_BYTES + 1);
+    const bodyBytes = Buffer.from(oversizeBody, "utf-8");
+    const reqStr =
+      `POST /v1/messages HTTP/1.1\r\n` +
+      `host: api.anthropic.com\r\n` +
+      `content-length: ${bodyBytes.length}\r\n` +
+      `content-type: application/json\r\n` +
+      `\r\n`;
+    socket.write(reqStr);
+    socket.write(bodyBytes);
+
+    await new Promise<void>((resolve) => {
+      socket.on("close", () => resolve());
+      socket.on("error", () => resolve());
+      setTimeout(() => resolve(), 8000);
+    });
+    socket.destroy();
+    upstream.server.close();
+
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+  }, 12_000);
+});
+
+// ── E2E-01: in-process broker end-to-end (macOS-testable) ────────────────────
+
+describe("E2E-01 — in-process broker end-to-end", () => {
+  it("fixture upstream receives real key via broker injection (x-api-key header)", async () => {
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    // Start fixture upstream — the broker will connect to this in-process server
+    const fixture = await makeUpstreamFixture();
+
+    // CONNECT to api.anthropic.com:<FIXTURE_PORT> — broker resolves binding for
+    // api.anthropic.com, then connects to 127.0.0.1:<fixturePort>
+    const { proxyToken } = deps.sessionManager.issueToken("agent-e2e");
+    const { statusCode, socket } = await connectThroughProxy(
+      port,
+      proxyToken,
+      `api.anthropic.com:${fixture.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    try {
+      await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+    } finally {
+      socket.destroy();
+    }
+
+    // Allow upstream to record the request
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    // The real key (SENTINEL_SECRET) must have reached the upstream fixture
+    expect(fixture.receivedHeaders.length).toBeGreaterThan(0);
+    // makeAnthropicBinding injects x-api-key header (setHeader rule)
+    const receivedApiKey = fixture.receivedHeaders[0]?.["x-api-key"];
+    expect(receivedApiKey).toBe(SENTINEL_SECRET);
+    // Confirm the real secret string is present in headers received by the upstream
+    expect(JSON.stringify(fixture.receivedHeaders[0])).toContain(SENTINEL_SECRET);
+
+    // But it must NOT appear in logs or events (dual-polarity assertion — T-06-12)
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+
+    await new Promise<void>((r) => fixture.server.close(() => r()));
+  });
+
+  it("broker:session_opened and broker:session_closed emitted on E2E happy path", async () => {
+    const logger = makeMockLogger();
+    const deps = makeDeps({ logger: logger as unknown as MitmBrokerDeps["logger"] });
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+    const port = await broker.start();
+
+    const fixture = await makeUpstreamFixture();
+
+    const { proxyToken } = deps.sessionManager.issueToken("agent-e2e");
+    const { statusCode, socket } = await connectThroughProxy(
+      port,
+      proxyToken,
+      `api.anthropic.com:${fixture.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    try {
+      await sendGetThroughTunnel(socket, "/v1/messages", { host: "api.anthropic.com" });
+    } finally {
+      socket.destroy();
+    }
+    // Allow close event to propagate → teardownUpstream fires
+    await new Promise<void>((r) => setTimeout(r, 150));
+
+    const emitCalls = (deps.eventBus.emit as ReturnType<typeof vi.fn>).mock.calls as Array<[string, unknown]>;
+    expect(emitCalls.some(([n]) => n === "broker:session_opened")).toBe(true);
+    expect(emitCalls.some(([n]) => n === "broker:session_closed")).toBe(true);
+
+    const closedEvent = emitCalls.find(([n]) => n === "broker:session_closed");
+    expect(closedEvent![1]).toMatchObject({ durationMs: expect.any(Number), reason: "teardown" });
+
+    assertNoSentinel(logger, deps.eventBus, SENTINEL_SECRET);
+
+    await new Promise<void>((r) => fixture.server.close(() => r()));
+  });
+});
