@@ -341,7 +341,7 @@ change anything.
 | `contextEngine.enabled` | boolean | `true` | Master toggle for the context engine |
 | `contextEngine.version` | string | `"dag"` | Context engine mode: `"dag"` (default) or `"pipeline"` (opt-out) |
 | `contextEngine.thinkingKeepTurns` | number | `10` | Recent turns that keep AI reasoning notes (1-50) |
-| `contextEngine.compactionModel` | string | `"anthropic:claude-haiku-4-5-20250929"` | Model used for summarization |
+| `contextEngine.compactionModel` | string | `""` | Model used for summarization (empty = runtime-resolved default) |
 | `contextEngine.evictionMinAge` | number | `15` | Minimum turn age before stale errors are evicted (3-50) |
 | `contextEngine.historyTurns` | number | `15` | Recent user turns to keep in full (3-100) |
 | `contextEngine.historyTurnOverrides` | record | -- | Per-channel turn limits (e.g., `{ dm: 10, group: 5 }`) |
@@ -359,7 +359,7 @@ agents:
   default:
     contextEngine:
       enabled: true
-      # version: "dag"  # Uncomment to enable DAG mode
+      # version: "pipeline"  # DAG is the default; uncomment to opt out to the pipeline engine
       thinkingKeepTurns: 10
       historyTurns: 15
       historyTurnOverrides:
@@ -369,7 +369,7 @@ agents:
       observationTriggerChars: 120000
       compactionCooldownTurns: 5
       compactionPrefixAnchorTurns: 2  # Turns preserved at head for cache prefix stability
-      compactionModel: "anthropic:claude-haiku-4-5-20250929"
+      compactionModel: ""  # empty = runtime-resolved default
 ```
 
 <Note>
