@@ -131,6 +131,10 @@ export interface ToolAssemblyDeps {
   runId?: string;
   /** Tenant ID for multi-tenant deployments. */
   tenantId?: string;
+  /** Daemon data dir (COMIS_DATA_DIR / config.dataDir). Forwarded to
+   *  prompt-assembly so the recall-trace recorder resolves its containment base
+   *  from the SAME source the memory.recall_trace reader uses (WR-02). */
+  dataDir?: string;
 }
 
 /** Result of the tool assembly pipeline. */
@@ -349,6 +353,9 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
     config,
     deps: {
       workspaceDir: deps.workspaceDir,
+      // WR-02: forward the data dir so the recall-trace recorder's base resolves
+      // from the same source as the memory.recall_trace reader.
+      dataDir: deps.dataDir,
       memoryPort: deps.memoryPort,
       reranker: deps.reranker,
       entityStore: deps.entityStore,

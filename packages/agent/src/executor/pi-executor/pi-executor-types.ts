@@ -74,6 +74,11 @@ export interface PiExecutorDeps {
   sessionAdapter: ComisSessionManager;
   // Workspace
   workspaceDir: string;
+  /** Daemon data dir (COMIS_DATA_DIR / config.dataDir). Threaded to
+   *  prompt-assembly via ToolAssemblyDeps so the recall-trace recorder resolves
+   *  its containment base from the SAME source the memory.recall_trace reader
+   *  uses (WR-02). Absent ⇒ ~/.comis. */
+  dataDir?: string;
   // Tools
   customTools: ToolDefinition[];
   /** Convert per-request AgentTool[] to ToolDefinition[] for SDK registration.

@@ -219,13 +219,26 @@ export function clearCacheSafeParams(sessionKey: string): void {
  * (the recorder's null-when-disabled contract), so the default leaves recall unchanged.
  * Extracted as a small helper to keep the recall block legible.
  */
-function buildRecallTrace(
+export function buildRecallTrace(
   cfg: { enabled?: boolean; filePath?: string; maxFileBytes?: number } | undefined,
   agentId: string,
   sessionId: string,
+  // WR-02: resolve the recorder's containment base from the SAME data-dir
+  // source the memory.recall_trace reader uses (handler: `deps.dataDir ??
+  // ~/.comis`). Hardcoding os.homedir()/.comis made the writer and reader point
+  // at different files under a non-default COMIS_DATA_DIR, so the diagnostic
+  // returned nothing. Threaded from the daemon composition root (it is already
+  // available there; mirrors how cacheTrace forwards `config.dataDir` as its
+  // confinedBaseDir).
+  dataDir?: string,
 ): ReturnType<typeof createRecallTrace> {
   if (cfg?.enabled !== true) return null;
-  const confinedBaseDir = cfg.filePath === undefined ? safePath(os.homedir(), ".comis") : undefined;
+  // Match the reader's base EXACTLY: the handler uses `deps.dataDir ??
+  // safePath(os.homedir(), ".comis")` and passes it straight to
+  // resolveRecallTraceFilePath. `dataDir` arrives pre-resolved from the daemon
+  // composition root; the fallback goes through safePath (no path.join).
+  const confinedBaseDir =
+    cfg.filePath === undefined ? (dataDir ?? safePath(os.homedir(), ".comis")) : undefined;
   return createRecallTrace({
     enabled: true,
     agentId,
@@ -245,6 +258,10 @@ export interface PromptAssemblyParams {
   config: PerAgentConfig;
   deps: {
     workspaceDir: string;
+    /** Daemon data dir (COMIS_DATA_DIR / config.dataDir). Forwarded so the
+     *  recall-trace recorder resolves its containment base from the SAME source
+     *  the memory.recall_trace reader uses (WR-02). Absent ⇒ ~/.comis. */
+    dataDir?: string;
     memoryPort?: MemoryPort;
     /** Optional cross-encoder reranker + timers for createMemoryRecall (default-OFF). */
     reranker?: import("@comis/core").RerankerPort;
@@ -698,6 +715,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         deps.recallTraceConfig,
         agentId ?? config.name,
         formatSessionKey(sessionKey),
+        deps.dataDir,
       );
       // Single recall orchestrator (RANK-07): search->fuse->rerank->score->trust-filter
       // ->dedup. Rerank opt-in/default-OFF -> fusion order (RANK-01/03/08). Non-fatal.

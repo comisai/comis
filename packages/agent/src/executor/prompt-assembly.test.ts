@@ -116,7 +116,9 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-import { assembleExecutionPrompt, extractUserLanguage, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, getCacheSafeParams, clearCacheSafeParams, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
+import { assembleExecutionPrompt, extractUserLanguage, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
+import { resolveRecallTraceFilePath } from "@comis/observability";
+import * as nodeOs from "node:os";
 import { formatSessionKey, type SpawnPacket, type MemorySearchResult } from "@comis/core";
 // Real (un-mocked) §7.3 guidance formatter — prompt-assembly pushes its block into
 // the prompt when >=2 memories are surfaced. It is FIXED guidance text, NOT a
@@ -3123,5 +3125,37 @@ describe("computeFeatureFlagHash", () => {
   it("returns 'default' when no feature flags set (feature-flag)", () => {
     const hash = computeFeatureFlagHash({});
     expect(hash).toBe("default");
+  });
+});
+
+describe("buildRecallTrace -- data-dir agreement with the reader (WR-02)", () => {
+  it("resolves the recorder base from the configured dataDir so writer and reader agree", () => {
+    // WR-02: the recorder used to hardcode os.homedir()/.comis as its base
+    // while the memory.recall_trace handler reads from the configured dataDir
+    // (deps.dataDir ?? ~/.comis). Under a non-default COMIS_DATA_DIR the writer
+    // and reader pointed at DIFFERENT files, so the diagnostic returned nothing.
+    // The recorder must resolve its confinedBaseDir from the SAME data-dir
+    // source the reader uses.
+    const customDataDir = `${nodeOs.tmpdir()}/comis-wr02-${Math.random().toString(36).slice(2)}`;
+    const recorder = buildRecallTrace(
+      { enabled: true },
+      "agent-x",
+      "tenant:user:chan",
+      customDataDir,
+    );
+    expect(recorder).not.toBeNull();
+    // The reader resolves the same path from the same dataDir.
+    const readerPath = resolveRecallTraceFilePath({ confinedBaseDir: customDataDir });
+    expect(recorder!.filePath).toBe(readerPath);
+    // And the resolved path is rooted under the custom dataDir (NOT ~/.comis).
+    expect(recorder!.filePath.startsWith(customDataDir)).toBe(true);
+  });
+
+  it("falls back to the home .comis base when no dataDir is supplied (default deployments unaffected)", () => {
+    const recorder = buildRecallTrace({ enabled: true }, "agent-x", "tenant:user:chan");
+    expect(recorder).not.toBeNull();
+    const defaultBase = `${nodeOs.homedir()}/.comis`;
+    const readerPath = resolveRecallTraceFilePath({ confinedBaseDir: defaultBase });
+    expect(recorder!.filePath).toBe(readerPath);
   });
 });
