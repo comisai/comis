@@ -27,7 +27,7 @@ vi.mock("node:fs", async (importOriginal) => {
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
-import { buildExecEnv } from "./exec-shared.js";
+import { buildExecEnv, buildSpawnCommand } from "./exec-shared.js";
 import type { ExecSandboxConfig } from "../sandbox/types.js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -150,5 +150,83 @@ describe("EGRESS-03 — per-spawn proxy env (brokerSpawnEnv)", () => {
     expect(result1).not.toHaveProperty("HTTPS_PROXY");
     expect(result1).not.toHaveProperty("HTTP_PROXY");
     expect(result1).not.toHaveProperty("NODE_EXTRA_CA_CERTS");
+  });
+});
+
+// ── CR-02 RED: buildSpawnCommand must forward network + secureCredentialHome ──
+
+describe("CR-02 — buildSpawnCommand forwards network + secureCredentialHome to buildArgs (EGRESS-01/02 production path)", () => {
+  it("buildSpawnCommand with broker-only + secureCredentialHome config → args contain --unshare-net (EGRESS-01 production wiring)", () => {
+    // Track what SandboxOptions were actually passed to buildArgs
+    let capturedOpts: Record<string, unknown> | undefined;
+    const fakeSandbox = {
+      name: "bwrap",
+      available: () => true,
+      buildArgs: (opts: Record<string, unknown>): string[] => {
+        capturedOpts = opts;
+        // Return minimal args that include --unshare-net when network is broker-only
+        const net = opts["network"] as { mode: string } | undefined;
+        if (net?.mode === "broker-only") return ["/usr/bin/bwrap", "--unshare-net"];
+        return ["/usr/bin/bwrap", "--share-net"];
+      },
+    };
+
+    // ExecSandboxConfig with network + secureCredentialHome
+    const sandboxConfig: ExecSandboxConfig = {
+      sandbox: fakeSandbox as unknown as ExecSandboxConfig["sandbox"],
+      sharedPaths: [],
+      readOnlyPaths: [],
+      configReadOnlyPaths: [],
+      network: { mode: "broker-only", brokerSocketPath: "/run/comis/broker.sock" },
+      secureCredentialHome: true,
+    };
+
+    const result = buildSpawnCommand(
+      "echo hello",
+      "/workspace",
+      sandboxConfig,
+      "/workspace",
+      "/workspace/.tmp",
+    );
+
+    // The resulting args must include --unshare-net (bwrap broker-only profile)
+    expect(result.args).toContain("--unshare-net");
+
+    // capturedOpts must have the network and secureCredentialHome forwarded
+    expect(capturedOpts?.["network"]).toEqual({ mode: "broker-only", brokerSocketPath: "/run/comis/broker.sock" });
+    expect(capturedOpts?.["secureCredentialHome"]).toBe(true);
+  });
+
+  it("buildSpawnCommand without network field → --share-net in args (EGRESS-03 no-regression)", () => {
+    let capturedOpts: Record<string, unknown> | undefined;
+    const fakeSandbox = {
+      name: "bwrap",
+      available: () => true,
+      buildArgs: (opts: Record<string, unknown>): string[] => {
+        capturedOpts = opts;
+        const net = opts["network"] as { mode: string } | undefined;
+        if (net?.mode === "broker-only") return ["/usr/bin/bwrap", "--unshare-net"];
+        return ["/usr/bin/bwrap", "--share-net"];
+      },
+    };
+
+    const sandboxConfig: ExecSandboxConfig = {
+      sandbox: fakeSandbox as unknown as ExecSandboxConfig["sandbox"],
+      sharedPaths: [],
+      readOnlyPaths: [],
+      configReadOnlyPaths: [],
+    };
+
+    const result = buildSpawnCommand(
+      "echo hello",
+      "/workspace",
+      sandboxConfig,
+      "/workspace",
+      "/workspace/.tmp",
+    );
+
+    expect(result.args).toContain("--share-net");
+    expect(capturedOpts?.["network"]).toBeUndefined();
+    expect(capturedOpts?.["secureCredentialHome"]).toBeUndefined();
   });
 });
