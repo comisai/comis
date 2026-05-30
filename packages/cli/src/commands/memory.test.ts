@@ -68,10 +68,18 @@ describe("registerMemoryCommand", () => {
     expect(yesOpt).toBeDefined();
   });
 
-  it("has all four subcommands under memory", () => {
+  it("has all subcommands under memory (incl. OBS-06 diagnostics)", () => {
     const memoryCmd = program.commands.find((c) => c.name() === "memory");
     const subcommands = memoryCmd!.commands.map((c) => c.name()).sort();
-    expect(subcommands).toEqual(["clear", "inspect", "search", "stats"]);
+    expect(subcommands).toEqual([
+      "clear",
+      "entities",
+      "inspect",
+      "observations",
+      "recall-trace",
+      "search",
+      "stats",
+    ]);
   });
 
   it("shows help text for memory command", () => {
@@ -82,6 +90,37 @@ describe("registerMemoryCommand", () => {
     expect(helpText).toContain("inspect");
     expect(helpText).toContain("stats");
     expect(helpText).toContain("clear");
+  });
+
+  // -------------------------------------------------------------------------
+  // OBS-06 diagnostic subcommands — structure + options.
+  // -------------------------------------------------------------------------
+  it("registers recall-trace <session> with --trace-id / --agent / --limit / --format", () => {
+    const memoryCmd = program.commands.find((c) => c.name() === "memory");
+    const cmd = memoryCmd!.commands.find((c) => c.name() === "recall-trace");
+    expect(cmd).toBeDefined();
+    expect(cmd!.options.find((o) => o.long === "--trace-id")).toBeDefined();
+    expect(cmd!.options.find((o) => o.long === "--agent")).toBeDefined();
+    expect(cmd!.options.find((o) => o.long === "--limit")).toBeDefined();
+    expect(cmd!.options.find((o) => o.long === "--format")).toBeDefined();
+  });
+
+  it("registers observations with --agent / --limit / --format", () => {
+    const memoryCmd = program.commands.find((c) => c.name() === "memory");
+    const cmd = memoryCmd!.commands.find((c) => c.name() === "observations");
+    expect(cmd).toBeDefined();
+    expect(cmd!.options.find((o) => o.long === "--agent")).toBeDefined();
+    expect(cmd!.options.find((o) => o.long === "--limit")).toBeDefined();
+    expect(cmd!.options.find((o) => o.long === "--format")).toBeDefined();
+  });
+
+  it("registers entities with --agent / --limit / --format", () => {
+    const memoryCmd = program.commands.find((c) => c.name() === "memory");
+    const cmd = memoryCmd!.commands.find((c) => c.name() === "entities");
+    expect(cmd).toBeDefined();
+    expect(cmd!.options.find((o) => o.long === "--agent")).toBeDefined();
+    expect(cmd!.options.find((o) => o.long === "--limit")).toBeDefined();
+    expect(cmd!.options.find((o) => o.long === "--format")).toBeDefined();
   });
 });
 
