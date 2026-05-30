@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: WR-03 exhaustiveness guard on networkMode union; unreachable at runtime, caught by TypeScript; equivalent to assertNever().
 /**
  * BwrapProvider -- Linux sandbox provider using Bubblewrap (bwrap).
  *
@@ -230,12 +231,17 @@ export class BwrapProvider implements SandboxProvider {
     args.push("--unshare-all");
     if (networkMode === "open") {
       args.push("--share-net");
-    } else {
+    } else if (networkMode === "broker-only") {
       // broker-only: kernel-enforced network namespace; broker reachable via
       // bind-mounted unix socket only. No general internet egress.
       args.push("--unshare-net");
       const { brokerSocketPath } = opts.network as { mode: "broker-only"; brokerSocketPath: string };
       args.push("--bind", brokerSocketPath, brokerSocketPath);
+    } else {
+      // WR-03: exhaustiveness guard — TypeScript will flag this if the
+      // SandboxOptions.network union gains a new member without updating here.
+      const _exhaustive: never = networkMode;
+      throw new Error(`Unhandled network mode: ${String(_exhaustive)}`);
     }
     args.push(
       "--die-with-parent",
