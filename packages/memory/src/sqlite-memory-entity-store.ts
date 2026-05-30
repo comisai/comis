@@ -34,12 +34,17 @@
 
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
-import type { MemoryEntityStore, EntityScope, MemorySearchResult } from "@comis/core";
+import type { MemoryEntityStore, EntityScope, EntityRow, MemorySearchResult } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { normalizeEntityKey, nameSimilarity } from "./entity-resolver.js";
 import { createRowMapper, rowToEntry } from "./row-mapper.js";
-import { MemoryEntityRowSchema, MemoryRowSchema, EntityLaneRowSchema } from "./row-schemas.js";
+import {
+  MemoryEntityRowSchema,
+  MemoryRowSchema,
+  EntityLaneRowSchema,
+  EntityListRowSchema,
+} from "./row-schemas.js";
 
 /** Dice-bigram similarity at/above which a near-duplicate name reuses an
  *  existing entity rather than minting a new one (design §6.2 / ENT-05). */
@@ -64,6 +69,7 @@ export interface MemoryEntityStoreDeps {
 const entityRowMapper = createRowMapper(MemoryEntityRowSchema);
 const memoryRowMapper = createRowMapper(MemoryRowSchema);
 const laneRowMapper = createRowMapper(EntityLaneRowSchema);
+const entityListRowMapper = createRowMapper(EntityListRowSchema);
 
 /**
  * Create the SQLite-backed {@link MemoryEntityStore} adapter over a shared db
@@ -100,6 +106,18 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
   // hydrate self-sufficient (no fail-open if the lane query is ever refactored).
   const hydrateMemory = db.prepare(
     "SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND agent_id = ?",
+  );
+  // OBS-06 diagnostic read: the scoped entity list, most-mentioned-first. The
+  // `WHERE tenant_id = ? AND agent_id = ?` is the SAME load-bearing isolation
+  // boundary (ENT-03) as the resolver SELECT and the lane self-join — two
+  // scopes never surface each other's rows. `canonical_key` is intentionally
+  // NOT projected (DB-internal dedup key, OQ-2). Tie-break on `last_seen DESC`
+  // then `id` so equal mention_count rows have a deterministic order. `LIMIT ?`
+  // bounds the result. Placeholders only — no string-built SQL.
+  const selectEntityList = db.prepare(
+    "SELECT id, canonical_name, mention_count, first_seen, last_seen " +
+      "FROM memory_entities WHERE tenant_id = ? AND agent_id = ? " +
+      "ORDER BY mention_count DESC, last_seen DESC, id LIMIT ?",
   );
 
   return {
@@ -288,6 +306,58 @@ export function createSqliteMemoryEntityStore(deps: MemoryEntityStoreDeps): Memo
             hint: "entity associative lane query failed",
           },
           "Entity lane failed",
+        );
+        return err(error);
+      }
+    },
+
+    async listEntities(
+      agentId: string,
+      tenantId: string,
+      limit: number,
+    ): Promise<Result<EntityRow[], Error>> {
+      const startMs = systemNowMs();
+      try {
+        // Scoped read — the `tenant_id = ? AND agent_id = ?` filter is the
+        // load-bearing isolation boundary (ENT-03), identical in spirit to the
+        // resolver SELECT and the lane self-join: a same-named entity in another
+        // scope is never surfaced. Bound parameters only.
+        const rows = selectEntityList.all(tenantId, agentId, limit);
+
+        const parsed = entityListRowMapper.parseRows(rows);
+        if (!parsed.ok) return err(new Error(parsed.error.message));
+
+        // Map the snake_case DB projection to the camelCase `EntityRow` domain
+        // shape. `first_seen`/`last_seen` are NOT NULL in the schema today, but
+        // `EntityRow` models them optional — spread them only when present so a
+        // future nullable migration degrades to "field absent" rather than
+        // surfacing a 0/NULL as a real timestamp.
+        const entities: EntityRow[] = parsed.value.map((row) => ({
+          id: row.id,
+          name: row.canonical_name,
+          mentionCount: row.mention_count,
+          ...(row.first_seen !== null ? { firstSeen: row.first_seen } : {}),
+          ...(row.last_seen !== null ? { lastSeen: row.last_seen } : {}),
+        }));
+
+        const durationMs = systemNowMs() - startMs;
+        logger?.debug(
+          { step: "entity-list", resultCount: entities.length, durationMs },
+          "Entity list complete",
+        );
+        return ok(entities);
+      } catch (e: unknown) {
+        const durationMs = systemNowMs() - startMs;
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "entity-list",
+            durationMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "entity list query failed — check DB integrity",
+          },
+          "Entity list failed",
         );
         return err(error);
       }

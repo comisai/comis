@@ -133,6 +133,28 @@ export const EntityLaneRowSchema = z.strictObject({
 });
 
 /**
+ * Schema for the `listEntities` diagnostic projection (Phase 86, OBS-06). The
+ * scoped `SELECT id, canonical_name, mention_count, first_seen, last_seen FROM
+ * memory_entities WHERE tenant_id=? AND agent_id=? ORDER BY mention_count DESC`
+ * read. This is a STRICT SUBSET of the `memory_entities` columns: it
+ * deliberately omits `canonical_key` (DB-internal dedup key — OQ-2, never
+ * operator-facing) and the `tenant_id`/`agent_id` scope columns (the WHERE
+ * already pins them). The adapter maps this snake_case row to the camelCase
+ * `EntityRow` domain shape (`@comis/core`) — parsed via `createRowMapper`,
+ * never `as Row[]`.
+ */
+export const EntityListRowSchema = z.strictObject({
+  id: z.string(),
+  /** Display form (first-seen casing) → `EntityRow.name`. */
+  canonical_name: z.string(),
+  mention_count: z.number(),
+  /** Unix timestamp in milliseconds. */
+  first_seen: z.number(),
+  /** Unix timestamp in milliseconds. */
+  last_seen: z.number(),
+});
+
+/**
  * Schema for the `sessions` table.
  * Paired with `SessionRow` exported from `./types.js`.
  */

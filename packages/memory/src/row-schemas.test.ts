@@ -86,6 +86,7 @@ import {
   CountProjectionRowSchema,
   MemoryEntityRowSchema,
   EntityLaneRowSchema,
+  EntityListRowSchema,
 } from "./row-schemas.js";
 
 // =====================================================================
@@ -590,5 +591,28 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
 
   it("EntityLaneRowSchema rejects a non-numeric shared count", () => {
     expect(EntityLaneRowSchema.safeParse({ memory_id: "m2", shared: "two" }).success).toBe(false);
+  });
+
+  it("EntityListRowSchema parses the OBS-06 listEntities projection (no canonical_key)", () => {
+    const sample = {
+      id: "e1",
+      canonical_name: "Acme Corp",
+      mention_count: 4,
+      first_seen: 1700000000000,
+      last_seen: 1700000009000,
+    };
+    expect(EntityListRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("EntityListRowSchema rejects the DB-internal canonical_key column (OQ-2 — strictObject keeps it out of the diagnostic projection)", () => {
+    const sample = {
+      id: "e1",
+      canonical_name: "Acme Corp",
+      canonical_key: "acme corp",
+      mention_count: 4,
+      first_seen: 1700000000000,
+      last_seen: 1700000009000,
+    };
+    expect(EntityListRowSchema.safeParse(sample).success).toBe(false);
   });
 });
