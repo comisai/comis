@@ -1593,6 +1593,25 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryConsolidationStore",
       "ConsolidationCandidate",
       "ConsolidationPlan",
+      // Provider-catalog symbols added in Phase 2 (BROKER-01..03). The broker
+      // in @comis/infra imports resolveBinding, applyInjections, normalizeHost,
+      // BrokerBinding, InjectionRule, HostRule, InjectionInput — all consumed.
+      // pathAllowed is exported for external callers that need to gate requests;
+      // the broker uses resolveBinding (which calls pathAllowed internally).
+      // Broker wiring in the daemon composition root is Phase 3.
+      "pathAllowed",
+      // BrokerBindingConfigSchema: the Zod validator for a single executor.broker
+      // binding entry. Operator-facing config schema; exported on the public
+      // surface for embedders and CLI validation helpers. BrokerBindingConfig (the
+      // inferred type) IS consumed by packages/daemon/src/wiring/
+      // broker-placeholder-builder.ts (satisfies the type-consumer gate).
+      // BrokerBindingConfigSchema (the value, the Zod schema object) has no
+      // cross-package consumer yet — the daemon calls the config system via the
+      // schema-executor.ts registered schema, not by importing the Zod object
+      // directly. Tracked here as a planned-orphan policy entry until a runtime
+      // validation site outside @comis/core emerges (e.g. a CLI `broker validate`
+      // command or a broker health-check handler in Phase 9).
+      "BrokerBindingConfigSchema",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
@@ -1788,6 +1807,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createSystemClock",
       "createSystemEnv",
       "createSystemTimers",
+      // Credential broker (Phase 2) — no in-repo consumer yet.
+      // The daemon composition root wires these in a future phase.
+      "createSessionManager",
+      "SessionManager",
+      "SessionManagerDeps",
+      "IssuedSession",
+      "SessionInfo",
+      "createMitmBroker",
+      "MitmBrokerPort",
+      "MitmBrokerDeps",
+      // CA manager (Phase 3) — no in-repo consumer yet.
+      // The daemon composition root wires caManager into the broker in a future phase.
+      "createNodeCaManager",
+      "NodeCaManagerDeps",
     ])],
     // @comis/memory: baseline orphans tracked here + 5 transient orphans
     // (SessionStore alias + SessionDetailedEntry + 3 Ctx*Row types).

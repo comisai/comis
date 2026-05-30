@@ -87,6 +87,41 @@ The trajectory bus-bridge maps 55 event types from the typed event bus to trajec
 
 The `queue.enqueued` event — which carries `sessionKey`, `mode`, and `queueDepth` — is the trajectory signal that makes the 2026-05-24 duplicate-adapter bug visible from a single `jq` query.
 
+### Credential Broker Events (broker:*)
+
+The credential broker emits 7 typed events. No secret value appears in any event payload. All events carry `sessionId` and `timestamp`. Every log line emitted by the broker also carries `step` (pipeline stage), `traceId`, and `agentId` for structured correlation.
+
+| Event | Key payload fields | Description |
+|-------|--------------------|-|
+| `broker:session_opened` | `sessionId`, `agentId`, `host`, `presetId?` | Driven-CLI session established; single-use proxy token issued |
+| `broker:session_closed` | `sessionId`, `agentId`, `durationMs`, `reason` | Session torn down (`teardown` or `error`) |
+| `broker:request` | `sessionId`, `host`, `path`, `method` | HTTP CONNECT request received from driven CLI |
+| `broker:injected` | `sessionId`, `host`, `ruleKind` | Credential successfully injected into the request |
+| `broker:denied` | `sessionId`, `host`, `reason`, `statusCode` | Request denied fail-closed (see reason codes below) |
+| `broker:credential_unavailable` | `sessionId`, `secretRef`, `agentId` | SecretManager returned undefined; 502 returned, request never forwarded |
+| `broker:egress_blocked` | `sessionId`, `targetHostHash` | Direct egress attempt blocked; `targetHostHash` is SHA-256 hex — the plaintext host is never logged |
+
+**broker:denied reason codes:**
+
+| Reason | HTTP Status | Meaning |
+|--------|-------------|---------|
+| `bad_token` | 407 | Missing, forged, or consumed single-use proxy token |
+| `no_binding` | 403 | Host not in any configured binding |
+| `path_policy` | 403 | Host known but path denied by `pathPolicy` |
+| `malformed_request` | 400 | HTTP request could not be parsed |
+| `body_too_large` | 413 | Request body exceeds 10 MiB |
+| `ws_upgrade_not_supported` | 501 | WebSocket upgrade (not supported in this release) |
+
+The `secret:accessed` event (emitted during broker request handling alongside the `broker:*` events) logs each SecretManager resolution: fields `secretName`, `agentId`, `outcome` (`success` / `not_found`), `timestamp`.
+
+**Redaction-by-construction:** hosts using query-param injection (`setParam` rule kind) never emit a full URL in logs or events. The `broker:egress_blocked` event carries only `targetHostHash` (SHA-256 hex) — never the plaintext blocked host.
+
+Every failure log carries `err`, `errorKind`, and a non-empty `hint`.
+
+<Info>Source: packages/infra/src/credential-broker/broker-events.ts (event schema) + packages/core/src/event-bus/events-infra.ts (type declarations)</Info>
+
+[Credential Broker observability details →](/security/credential-broker)
+
 ---
 
 ## 5. Defense-in-depth Bounding

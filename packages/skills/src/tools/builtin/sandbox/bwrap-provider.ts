@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: WR-03 exhaustiveness guard on networkMode union; unreachable at runtime, caught by TypeScript; equivalent to assertNever().
 /**
  * BwrapProvider -- Linux sandbox provider using Bubblewrap (bwrap).
  *
@@ -63,8 +64,14 @@ export const SYSTEM_RO_PATHS = [
  * user's HOME at startup. These contain no secrets -- git config has
  * author name/email, not credentials (those live in credential helpers
  * or ~/.ssh which is intentionally NOT mounted).
+ *
+ * @param home - User home directory path.
+ * @param secureCredentialHome - When true, omits ~/.claude.json so that no
+ *   credential files are reachable inside the sandbox (EGRESS-02). The
+ *   ~/.claude and ~/.local/share/claude RW binds are gated separately in
+ *   buildArgs via getClaudeCodeRwPaths.
  */
-function getUserRoPaths(home: string): string[] {
+function getUserRoPaths(home: string, secureCredentialHome?: boolean): string[] {
   return [
     safePath(home, ".gitconfig"),
     safePath(home, ".config", "git"),
@@ -76,7 +83,9 @@ function getUserRoPaths(home: string): string[] {
     safePath(home, ".nvm"),
     // claude CLI auth/config at HOME root (not inside ~/.claude/ directory).
     // Without read access, `claude -p` hangs indefinitely producing zero output.
-    safePath(home, ".claude.json"),
+    // Omitted when secureCredentialHome is true (EGRESS-02): no credential files
+    // must be reachable inside the sandbox.
+    ...(secureCredentialHome ? [] : [safePath(home, ".claude.json")]),
   ].filter((p) => existsSync(p));
 }
 
@@ -177,13 +186,19 @@ export class BwrapProvider implements SandboxProvider {
     }
 
     // -- User config paths (read-only) --
-    for (const up of getUserRoPaths(os.homedir())) {
+    // Filtered by secureCredentialHome: when true, ~/.claude.json is omitted
+    // so the single flag gates all credential paths (EGRESS-02).
+    for (const up of getUserRoPaths(os.homedir(), opts.secureCredentialHome)) {
       args.push("--ro-bind", up, up);
     }
 
     // -- claude CLI paths (read-write) --
-    for (const cp of getClaudeCodeRwPaths(os.homedir())) {
-      args.push("--bind", cp, cp);
+    // Omitted entirely when secureCredentialHome is true (EGRESS-02).
+    // This gates ~/.claude and ~/.local/share/claude.
+    if (!opts.secureCredentialHome) {
+      for (const cp of getClaudeCodeRwPaths(os.homedir())) {
+        args.push("--bind", cp, cp);
+      }
     }
 
     // -- Dev tool RW paths (read-write) --
@@ -191,7 +206,16 @@ export class BwrapProvider implements SandboxProvider {
     // overrides the RO bind for ~/.local. MUST come before the discovery
     // readOnlyPaths loop below so caller-supplied RO can't shadow these.
     // Mirror of systemd ReadWritePaths in comis.service.template.
+    //
+    // EGRESS-02 (CR-01 fix): When secureCredentialHome is true, skip
+    // ~/.local/share entirely — a RW bind over the parent directory would
+    // re-expose ~/.local/share/claude through the parent mount even though
+    // getClaudeCodeRwPaths is gated above. Skipping the ~/.local/share bind
+    // is the safest correct option; dev tools can still use workspace-redirected
+    // paths from wrapEnv() (XDG_DATA_HOME, UV_TOOL_DIR, PIPX_HOME, etc.).
+    const localSharePath = safePath(os.homedir(), ".local", "share");
     for (const dp of getDevToolRwPaths(os.homedir())) {
+      if (opts.secureCredentialHome && dp === localSharePath) continue;
       args.push("--bind", dp, dp);
     }
 
@@ -203,9 +227,23 @@ export class BwrapProvider implements SandboxProvider {
     }
 
     // -- Isolation flags --
+    const networkMode = opts.network?.mode ?? "open";
+    args.push("--unshare-all");
+    if (networkMode === "open") {
+      args.push("--share-net");
+    } else if (networkMode === "broker-only") {
+      // broker-only: kernel-enforced network namespace; broker reachable via
+      // bind-mounted unix socket only. No general internet egress.
+      args.push("--unshare-net");
+      const { brokerSocketPath } = opts.network as { mode: "broker-only"; brokerSocketPath: string };
+      args.push("--bind", brokerSocketPath, brokerSocketPath);
+    } else {
+      // WR-03: exhaustiveness guard — TypeScript will flag this if the
+      // SandboxOptions.network union gains a new member without updating here.
+      const _exhaustive: never = networkMode;
+      throw new Error(`Unhandled network mode: ${String(_exhaustive)}`);
+    }
     args.push(
-      "--unshare-all",
-      "--share-net",
       "--die-with-parent",
       "--new-session",
     );

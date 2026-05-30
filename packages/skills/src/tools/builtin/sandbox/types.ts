@@ -24,6 +24,19 @@ export interface SandboxOptions {
   cwd: string;
   /** Temp directory inside workspace for spillover files. */
   tempDir: string;
+  /**
+   * Network isolation mode for the sandbox.
+   * Default undefined/"open" = existing --share-net behaviour (no regression).
+   * "broker-only" = --unshare-net + unix-socket bind for broker-only egress.
+   * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
+   */
+  network?: { mode: "open" } | { mode: "broker-only"; brokerSocketPath: string };
+  /**
+   * When true, omit ~/.claude, ~/.claude.json, and ~/.local/share/claude binds.
+   * Prevents credential files from being reachable inside the sandbox (EGRESS-02).
+   * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
+   */
+  secureCredentialHome?: boolean;
 }
 
 /** Platform-specific sandbox provider (bwrap on Linux, sandbox-exec on macOS). */
@@ -51,4 +64,17 @@ export interface ExecSandboxConfig {
   /** Packages to pip-install into workspace venv on first creation (from execSandbox.warmVenvSeed config).
    *  Undefined means the config field was absent (legacy); empty array means seeding is disabled. */
   warmVenvSeed?: string[];
+  /**
+   * Network isolation mode forwarded to SandboxOptions.network (EGRESS-01/CR-02).
+   * When undefined, the sandbox defaults to "open" (--share-net) — existing behavior.
+   * Set to broker-only for driven-CLI spawns requiring credential injection via the broker.
+   * Phase 6 daemon wiring activates this; Phase 5 only makes the path reachable.
+   */
+  network?: SandboxOptions["network"];
+  /**
+   * When true, omit credential home paths from the sandbox (EGRESS-02/CR-02).
+   * Forwarded to SandboxOptions.secureCredentialHome. Defaults to false/undefined.
+   * Phase 6 daemon wiring activates this; Phase 5 only makes the path reachable.
+   */
+  secureCredentialHome?: boolean;
 }

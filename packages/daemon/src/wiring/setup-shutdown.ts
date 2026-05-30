@@ -17,6 +17,9 @@ import type { HeartbeatRunner, CronScheduler, WakeCoalescer, PerAgentHeartbeatRu
 import type { BrowserService, MediaTempManager } from "@comis/skills";
 import type { SessionResetScheduler } from "@comis/agent";
 import { safePath, systemNowMs, systemSetTimeout, systemClearTimeout, systemClearInterval } from "@comis/core";
+import { withStepTimeout } from "./shutdown-step-timeout.js";
+// Re-export STEP_TIMEOUT_MS so existing imports of it from setup-shutdown.ts continue to work.
+export { STEP_TIMEOUT_MS } from "./shutdown-step-timeout.js";
 import { writeRegularFile } from "@comis/observability";
 import type { ProcessMonitor } from "../process/process-monitor.js";
 import type { RestartContinuationTracker } from "./restart-continuation.js";
@@ -157,50 +160,14 @@ export interface ShutdownDeps {
   /** Stop the channel health monitor (from setupChannelHealthMonitor). */
   stopChannelHealthMonitor?: () => void;
   /** Unsubscribe health budget aggregator. */ unsubscribeHealthAggregator?: () => void;
+  /** Stop the credential broker (TCP + unix socket teardown). Only present when executor.broker is configured. */
+  brokerStop?: () => Promise<void>;
 }
 
 /** All services produced by the shutdown setup phase. */
 export interface ShutdownResult {
   /** Graceful shutdown orchestrator. */
   shutdownHandle: ShutdownHandle;
-}
-
-// ---------------------------------------------------------------------------
-// Per-step timeout helper
-// ---------------------------------------------------------------------------
-
-/** Per-step timeout budget (5s). The outer 30s hard timeout in graceful-shutdown.ts remains unchanged. */
-export const STEP_TIMEOUT_MS = 5_000;
-
-async function withStepTimeout(
-  fn: () => void | Promise<void>,
-  component: string,
-  logger: ComisLogger,
-): Promise<void> {
-  let timer: ReturnType<typeof systemSetTimeout> | undefined;
-  try {
-    await Promise.race([
-      Promise.resolve(fn()),
-      new Promise<never>((_, reject) => {
-        timer = systemSetTimeout(() => reject(new Error(`Shutdown step "${component}" timed out after ${STEP_TIMEOUT_MS}ms`)), STEP_TIMEOUT_MS);
-      }),
-    ]);
-  } catch (err) {
-    logger.warn(
-      {
-        component,
-        timeoutMs: STEP_TIMEOUT_MS,
-        err: err instanceof Error ? err : String(err),
-        hint: `Shutdown step "${component}" hung or failed; continuing with remaining steps`,
-        errorKind: "timeout" as const,
-      },
-      "Shutdown step timed out or failed, continuing",
-    );
-  } finally {
-    // Clear the step timer once the race settles so a fast step does not
-    // leave a dangling 5s timer (≈30 of them per shutdown otherwise).
-    if (timer !== undefined) systemClearTimeout(timer);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +229,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     outputRetentionShutdown,
     stopChannelHealthMonitor,
     unsubscribeHealthAggregator,
+    brokerStop,
   } = deps;
 
   // Inlined graceful-shutdown body: SIGTERM/
@@ -581,19 +549,29 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "media-temp-manager", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "media-temp-manager", daemonLogger);
       }
-      // Drain per-agent background-process registries + disconnect
-      // MCP servers. Previously these ran inside a single
-      // eventBus.on("system:shutdown", ...) closure in setup-tools.ts;
-      // they are now two independent
-      // ShutdownDeps fields. Background processes go before
-      // obs-persistence because subprocess cleanup may emit observability
-      // events into the still-running write buffer.
+      // Drain per-agent background-process registries BEFORE stopping the broker.
+      // Background exec processes use the broker as their egress proxy (HTTPS_PROXY
+      // → broker TCP port). Stopping the broker first would cut their outbound
+      // connections mid-execution. Drain first, then close the broker once no live
+      // clients remain. Background processes go before obs-persistence because
+      // subprocess cleanup may emit observability events into the still-running
+      // write buffer.
       if (shutdownBackgroundProcesses) {
         const stopMs = systemNowMs();
         await withStepTimeout(async () => {
           await shutdownBackgroundProcesses();
           daemonLogger.info({ component: "background-processes", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "background-processes", daemonLogger);
+      }
+      // Stop credential broker (TCP + unix socket). Runs AFTER
+      // shutdownBackgroundProcesses so no live exec processes are proxied through
+      // the broker when its sockets are closed.
+      if (brokerStop) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          await brokerStop();
+          daemonLogger.info({ component: "broker", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "broker", daemonLogger);
       }
       if (mcpClientManagerDisconnectAll) {
         const stopMs = systemNowMs();

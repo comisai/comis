@@ -1,0 +1,386 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * R1 SPIKE GO/NO-GO: This suite is the Phase 5 hard gate.
+ * Status: OUTSTANDING — must be run on the Linux production host class.
+ * Phase 7 containment claims ("non-bypassable", "kernel-locked egress") are
+ * publish-gated on this suite passing on that host class.
+ *
+ * This file MUST compile cleanly on macOS (tsc --noEmit passes).
+ * On macOS the entire describe block is silently skipped — no false failures.
+ * On Linux with bwrap available, all three groups run as live assertions.
+ *
+ * @module
+ */
+
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import * as net from "node:net";
+import { existsSync, unlinkSync } from "node:fs";
+
+import { systemNowMs } from "@comis/core";
+import { BwrapProvider } from "./bwrap-provider.js";
+
+// ---------------------------------------------------------------------------
+// Gate function — mirrors the canRealBwrapSandbox() idiom from exec-tool.test.ts
+// but WITHOUT the opt-in env flag: R1 spike tests use only the local broker
+// (no public network), so no cost-gate is needed.
+// ---------------------------------------------------------------------------
+
+function canEgressIntegrationRun(): boolean {
+  if (process.platform !== "linux") return false;
+  // eslint-disable-next-line no-restricted-syntax -- Integration gate, Linux only
+  const provider = new BwrapProvider();
+  return provider.available();
+}
+
+const egressIntegrationAvailable = canEgressIntegrationRun();
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Minimal bwrap args for a network-isolated namespace (no socket, no workspace). */
+function minimalIsolatedArgs(): string[] {
+  return [
+    "bwrap",
+    "--unshare-all",
+    "--unshare-net",
+    "--ro-bind", "/usr", "/usr",
+    "--ro-bind", "/bin", "/bin",
+    "--symlink", "/usr/lib64", "/lib64",
+    "--proc", "/proc",
+    "--dev", "/dev",
+    "--tmpfs", "/tmp",
+    "--ro-bind", "/etc/passwd", "/etc/passwd",
+    "--ro-bind", "/etc/group", "/etc/group",
+    "--ro-bind", "/etc/nsswitch.conf", "/etc/nsswitch.conf",
+    "--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf",
+    "--ro-bind", "/etc/ssl", "/etc/ssl",
+  ];
+}
+
+/** Build bwrap args that include a unix socket bind-mount. */
+function argsWithSocketBind(socketPath: string): string[] {
+  return [
+    ...minimalIsolatedArgs(),
+    "--bind", socketPath, socketPath,
+  ];
+}
+
+/** Track per-test socket paths for cleanup. */
+const createdSocketPaths: string[] = [];
+
+// ---------------------------------------------------------------------------
+// Main suite — skipped on non-Linux or when bwrap is unavailable
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!egressIntegrationAvailable)(
+  "R1 spike: rootless --unshare-net broker-only egress (Linux only)",
+  () => {
+    // -----------------------------------------------------------------------
+    // Group A: R1 GO criterion 2 — Unix socket bind-mount reachable from inside
+    //          the --unshare-net namespace.
+    // -----------------------------------------------------------------------
+    describe("Group A: unix socket bind-mount is reachable inside --unshare-net namespace", () => {
+      let server: net.Server;
+      let socketPath: string;
+
+      beforeEach(() => {
+        socketPath = `/tmp/comis-egress-test-${systemNowMs()}.sock`;
+        createdSocketPaths.push(socketPath);
+
+        // Create a minimal Node server on the unix socket.
+        // Any connection receives a simple HTTP/1.1 200 response so the test
+        // can confirm data flows through the bind-mounted socket.
+        server = net.createServer((conn) => {
+          conn.on("data", () => {
+            conn.write(
+              "HTTP/1.1 200 OK\r\n" +
+              "Content-Length: 2\r\n" +
+              "Connection: close\r\n" +
+              "\r\n" +
+              "OK",
+            );
+            conn.end();
+          });
+        });
+
+        // Bind the server before spawning bwrap (pitfall 1: file must exist
+        // before the --bind argument is evaluated by bwrap at namespace setup).
+        server.listen(socketPath);
+      });
+
+      afterEach((ctx) => {
+        server?.close();
+        // afterAll handles the final file cleanup; this is just for the server.
+        void ctx;
+      });
+
+      it(
+        "socat CONNECT through bind-mounted unix socket receives a response from the host server",
+        { timeout: 15_000 },
+        () => {
+          // Wait until the socket file actually exists on disk.
+          let waited = 0;
+          while (!existsSync(socketPath) && waited < 2000) {
+            // Busy-wait up to 2 s — server.listen callback not awaited in
+            // beforeEach. In practice the file appears within a few ms.
+            const result = spawnSync("sleep", ["0.05"]);
+            waited += 50;
+            void result;
+          }
+          expect(existsSync(socketPath), "socket file must exist before bwrap spawn").toBe(true);
+
+          const bwrapArgs = argsWithSocketBind(socketPath);
+          // Inside the namespace: use socat to connect to the unix socket and
+          // send a minimal HTTP request. socat must be present on the prod host
+          // class (required by the R1 spike design; same dep as Anthropic sandbox-runtime).
+          const result = spawnSync(
+            bwrapArgs[0],
+            [
+              ...bwrapArgs.slice(1),
+              "socat",
+              "-",
+              `UNIX-CONNECT:${socketPath}`,
+            ],
+            {
+              input: "GET / HTTP/1.1\r\nHost: broker\r\n\r\n",
+              encoding: "utf8",
+              timeout: 15_000,
+            },
+          );
+
+          // GO: socat received a response from the host-side server.
+          // NO-GO: exit != 0 (ENOENT socat, ENOTSOCK, EACCES, or namespace setup failure)
+          expect(
+            result.status,
+            `socat CONNECT to unix socket failed. stderr: ${result.stderr ?? ""}`,
+          ).toBe(0);
+          expect(result.stdout, "expected HTTP 200 response from host server").toContain("200 OK");
+        },
+      );
+    });
+
+    // -----------------------------------------------------------------------
+    // Group B: R1 GO criterion 3 — Direct TCP egress fails inside --unshare-net.
+    //          This is the live proof that --unshare-net actually isolates the
+    //          network namespace (not just the route table).
+    // -----------------------------------------------------------------------
+    describe("Group B: direct TCP egress is blocked inside --unshare-net namespace", () => {
+      it(
+        "curl to an external host inside --unshare-net returns a network-unreachable error",
+        { timeout: 15_000 },
+        () => {
+          const bwrapArgs = minimalIsolatedArgs();
+          const result = spawnSync(
+            bwrapArgs[0],
+            [
+              ...bwrapArgs.slice(1),
+              "curl",
+              "--max-time", "2",
+              "--silent",
+              "--show-error",
+              "https://example.com",
+            ],
+            { encoding: "utf8", timeout: 15_000 },
+          );
+
+          // GO: curl exits non-zero AND stderr/stdout indicates network failure.
+          // Accepted indicators:
+          //   - "Network is unreachable" (ENETUNREACH from kernel)
+          //   - "curl: (6)" (name resolution failure — also acceptable when DNS unreachable)
+          //   - "curl: (7)" (failed to connect — also acceptable)
+          //   - "curl: (28)" (timeout — fallback indicator; less ideal but acceptable)
+          // NO-GO: result.status === 0 (curl succeeded — net namespace not isolated).
+          expect(
+            result.status,
+            "curl MUST fail inside --unshare-net (expected exit != 0; " +
+            `got 0; stdout: ${result.stdout}; stderr: ${result.stderr})`,
+          ).not.toBe(0);
+
+          const combinedOutput = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+          const networkFailureIndicator =
+            combinedOutput.includes("Network is unreachable") ||
+            combinedOutput.includes("curl: (6)") ||
+            combinedOutput.includes("curl: (7)") ||
+            combinedOutput.includes("curl: (28)") ||
+            combinedOutput.includes("Could not resolve") ||
+            combinedOutput.includes("Connection refused");
+
+          expect(
+            networkFailureIndicator,
+            "expected a network-failure indicator in curl output " +
+            `(stdout: ${result.stdout}; stderr: ${result.stderr})`,
+          ).toBe(true);
+        },
+      );
+    });
+
+    // -----------------------------------------------------------------------
+    // Group C: EGRESS-02 live — credential files absent inside the
+    //          secure-profile namespace.
+    //          Uses BwrapProvider.buildArgs() with secureCredentialHome:true
+    //          to generate args via the same production code path.
+    // -----------------------------------------------------------------------
+    describe("Group C: EGRESS-02 — credential files absent inside secure-profile namespace", () => {
+      let provider: BwrapProvider;
+      let sandboxArgs: string[];
+
+      beforeEach(() => {
+        provider = new BwrapProvider();
+        // Construct the bwrap args via the production code path.
+        // brokerSocketPath points to a non-existent socket — this test only
+        // verifies the credential-file absence, not broker connectivity.
+        // We use a path that does NOT exist on disk; the --bind arg for it
+        // should not cause issues because bwrap only binds it if the file
+        // exists... but to avoid bwrap startup failure we use a minimal
+        // custom arg set rather than delegating fully to buildArgs for the
+        // CONNECT portion.
+        sandboxArgs = provider.buildArgs({
+          workspacePath: "/tmp",
+          sharedPaths: [],
+          readOnlyPaths: [],
+          cwd: "/tmp",
+          tempDir: "/tmp",
+          secureCredentialHome: true,
+          network: { mode: "broker-only", brokerSocketPath: "/tmp/nonexistent-broker.sock" },
+        });
+        // Remove the --bind for the nonexistent socket so bwrap doesn't fail
+        // at namespace setup. We splice out the three-tuple
+        // --bind /tmp/nonexistent-broker.sock /tmp/nonexistent-broker.sock.
+        const socketBindIdx = sandboxArgs.findIndex(
+          (a, i) =>
+            a === "--bind" &&
+            sandboxArgs[i + 1] === "/tmp/nonexistent-broker.sock" &&
+            sandboxArgs[i + 2] === "/tmp/nonexistent-broker.sock",
+        );
+        if (socketBindIdx !== -1) {
+          sandboxArgs.splice(socketBindIdx, 3);
+        }
+      });
+
+      it(
+        "cat ~/.claude/.credentials.json returns a non-zero exit code (file absent inside secure sandbox)",
+        { timeout: 15_000 },
+        () => {
+          const homeDir = process.env.HOME ?? "/root";
+          const credFile = `${homeDir}/.claude/.credentials.json`;
+          const result = spawnSync(
+            sandboxArgs[0],
+            [
+              ...sandboxArgs.slice(1),
+              "bash",
+              "-c",
+              `cat "${credFile}"; echo "exit: $?"`,
+            ],
+            { encoding: "utf8", timeout: 15_000 },
+          );
+
+          // GO: cat fails (file not found inside namespace)
+          // NO-GO: file is accessible (credential bind-mount leaked into secure sandbox)
+          // Accept: exit != 0, OR output contains "No such file or directory"
+          const noFile =
+            result.status !== 0 ||
+            (result.stdout ?? "").includes("No such file or directory") ||
+            (result.stderr ?? "").includes("No such file or directory");
+
+          expect(
+            noFile,
+            `~/.claude/.credentials.json MUST be absent inside the secure sandbox. ` +
+            `stdout: ${result.stdout}; stderr: ${result.stderr}; status: ${result.status}`,
+          ).toBe(true);
+        },
+      );
+
+      it(
+        "ls ~/.claude/ returns a non-zero exit code or empty output (directory absent inside secure sandbox)",
+        { timeout: 15_000 },
+        () => {
+          const homeDir = process.env.HOME ?? "/root";
+          const claudeDir = `${homeDir}/.claude`;
+          const result = spawnSync(
+            sandboxArgs[0],
+            [
+              ...sandboxArgs.slice(1),
+              "bash",
+              "-c",
+              `ls "${claudeDir}" 2>&1; echo "status: $?"`,
+            ],
+            { encoding: "utf8", timeout: 15_000 },
+          );
+
+          // GO: ls fails or produces empty output (no dir in namespace)
+          // NO-GO: ls succeeds and lists credential directory contents
+          const dirAbsent =
+            result.status !== 0 ||
+            (result.stdout ?? "").includes("No such file or directory") ||
+            (result.stderr ?? "").includes("No such file or directory");
+
+          expect(
+            dirAbsent,
+            `~/.claude/ directory MUST be absent inside the secure sandbox. ` +
+            `stdout: ${result.stdout}; stderr: ${result.stderr}; status: ${result.status}`,
+          ).toBe(true);
+        },
+      );
+
+      it(
+        "env output inside secure sandbox does not contain ANTHROPIC_API_KEY with a real key value",
+        { timeout: 15_000 },
+        () => {
+          const result = spawnSync(
+            sandboxArgs[0],
+            [
+              ...sandboxArgs.slice(1),
+              "env",
+            ],
+            { encoding: "utf8", timeout: 15_000 },
+          );
+
+          // GO: env exits 0 and ANTHROPIC_API_KEY is absent OR contains only
+          //     the broker-placeholder value (never a real key starting with sk-ant-).
+          // NO-GO: env output contains a real Anthropic API key.
+          expect(result.status, `env command failed: ${result.stderr ?? ""}`).toBe(0);
+
+          const envOutput = result.stdout ?? "";
+          const apiKeyLine = envOutput
+            .split("\n")
+            .find((line) => line.startsWith("ANTHROPIC_API_KEY="));
+
+          if (apiKeyLine) {
+            const keyValue = apiKeyLine.slice("ANTHROPIC_API_KEY=".length);
+            // Real Anthropic keys start with "sk-ant-"; broker-placeholder or
+            // empty values are acceptable.
+            expect(
+              keyValue.startsWith("sk-ant-"),
+              `Real Anthropic API key MUST NOT be present in secure sandbox env. ` +
+              `Found ANTHROPIC_API_KEY with suspicious value (redacted for security).`,
+            ).toBe(false);
+          }
+          // If ANTHROPIC_API_KEY is absent entirely, the test passes trivially.
+        },
+      );
+    });
+
+    // -----------------------------------------------------------------------
+    // afterAll: assert no socket files from this test run remain on disk.
+    // -----------------------------------------------------------------------
+    afterAll(() => {
+      for (const socketPath of createdSocketPaths) {
+        try {
+          if (existsSync(socketPath)) {
+            unlinkSync(socketPath);
+          }
+        } catch {
+          // Best-effort cleanup — ignore ENOENT / permission errors.
+        }
+      }
+      // Verify cleanup was successful.
+      const remaining = createdSocketPaths.filter((p) => existsSync(p));
+      expect(
+        remaining,
+        `Socket files must be cleaned up after test run. Still on disk: ${remaining.join(", ")}`,
+      ).toHaveLength(0);
+    });
+  },
+);

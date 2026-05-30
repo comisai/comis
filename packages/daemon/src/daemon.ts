@@ -97,6 +97,7 @@ import {
   writeMasterKeyIfAbsent,
   preReadSecretsEnabled,
   systemGetEnv,
+  systemNowMs,
   selectOAuthCredentialStore,
   createFileLock,
   type SecretStorePort,
@@ -144,6 +145,7 @@ import {
   buildSkillRegistriesForBundles,
   setupOutputRetention,
   type SetupOutputRetentionHandle,
+  setupBroker,
 } from "./wiring/index.js";
 import {
   createActiveRunRegistry,
@@ -208,6 +210,7 @@ import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
 import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "./wiring/oauth-preflight.js";
 import { emitStartupInvariants } from "./wiring/setup-startup-invariants.js";
+import { buildPlaceholdersFromBindings } from "./wiring/broker-placeholder-builder.js";
 import os from "node:os";
 import { dirname as pathDirname } from "node:path";
 import { inspect } from "node:util";
@@ -996,7 +999,7 @@ function createHotAdd(deps: {
     toolCapabilityPorts, container, daemonLogger,
   } = channels;
   return async (agentId, config) => {
-    const startMs = Date.now();
+    const startMs = systemNowMs();
     if (shutdownRef.value?.isShuttingDown) {
       throw new Error("Cannot hot-add agent during shutdown");
     }
@@ -1012,8 +1015,8 @@ function createHotAdd(deps: {
     }
     skillRegistries.set(agentId, result.skillRegistry);
     toolCapabilityPorts.set(agentId, result.toolCapabilityPort);
-    container.eventBus.emit("agent:hot_added", { agentId, timestamp: Date.now() });
-    daemonLogger.info({ agentId, durationMs: Date.now() - startMs }, "Agent hot-added to running daemon");
+    container.eventBus.emit("agent:hot_added", { agentId, timestamp: systemNowMs() });
+    daemonLogger.info({ agentId, durationMs: systemNowMs() - startMs }, "Agent hot-added to running daemon");
   };
 }
 
@@ -1029,7 +1032,7 @@ function createHotRemove(deps: {
     toolCapabilityPorts, container,
   } = deps.channels;
   return async (agentId) => {
-    const startMs = Date.now();
+    const startMs = systemNowMs();
     // Warn if agent may have active executions.
     // ActiveRunRegistry is keyed by sessionKey, not agentId. Since hot-remove is
     // rare and the registry is small, a coarse size > 0 check is sufficient for v1.
@@ -1056,8 +1059,8 @@ function createHotRemove(deps: {
     piSessionAdapters.delete(agentId);
     skillRegistries.delete(agentId);
     toolCapabilityPorts.delete(agentId);
-    container.eventBus.emit("agent:hot_removed", { agentId, timestamp: Date.now() });
-    daemonLogger.info({ agentId, durationMs: Date.now() - startMs }, "Agent hot-removed from running daemon");
+    container.eventBus.emit("agent:hot_removed", { agentId, timestamp: systemNowMs() });
+    daemonLogger.info({ agentId, durationMs: systemNowMs() - startMs }, "Agent hot-removed from running daemon");
   };
 }
 
@@ -1744,6 +1747,21 @@ async function bootFoundation(
     });
   };
 
+  // 6.5.2. Credential broker (constructed only when executor.broker is configured)
+  const brokerHandle = container.config.executor?.broker
+    ? await setupBroker({
+        dataDir,
+        eventBus: container.eventBus,
+        logger: daemonLogger,
+        clock,
+        timers,
+        secretManager: container.secretManager,
+        bindings: Object.values(container.config.executor.broker.bindings ?? {}),
+        port: container.config.executor.broker.port,
+        socketPath: container.config.executor.broker.socketPath ?? safePath(dataDir, "broker.sock"),
+      })
+    : undefined;
+
   // 6.5.9. Seed bundled skill-creator into user data dir (version-aware).
   // Inlined seedBundledSkillCreator: idempotent — only writes if the
   // destination is missing OR the bundled version is newer.
@@ -1810,6 +1828,7 @@ async function bootFoundation(
     deliveryMirror, startMirrorPrune, shutdownMirror,
     geminiCacheManager,
     backgroundTaskManager, bgNotifyFn,
+    brokerHandle,
   });
 }
 
@@ -2306,6 +2325,23 @@ async function bootChannels(boot: BootContext): Promise<void> {
     getMcpServerEntries: () => container.config.integrations?.mcp?.servers ?? [],
     sandboxProvider, imageGenProvider, backgroundTaskManager,
     sessionTrackerRegistry: handle.sessionTrackerRegistry, getCapabilityPortForAgent,
+    // INTEG-03: broker activation seam. When executor.broker is configured,
+    // thread the broker handle into setupTools so assembleToolsForAgent wires
+    // the exec tool with broker-only network + proxy env + placeholder creds.
+    // When absent (no executor.broker config), brokerContext is undefined and
+    // the exec tool uses the default open-network path (no regression).
+    brokerContext: handle.brokerHandle
+      ? {
+          tcpPort: handle.brokerHandle.tcpPort,
+          socketPath: handle.brokerHandle.socketPath,
+          caPath: handle.brokerHandle.caPath,
+          sessionManager: handle.brokerHandle.sessionManager,
+          placeholders: buildPlaceholdersFromBindings(
+            container.config.executor?.broker?.bindings ?? {},
+            daemonLogger,
+          ),
+        }
+      : undefined,
   });
 
   // 6.6.8. Channels — pass assembleToolsForAgent DIRECTLY (no ref) and
@@ -2761,6 +2797,8 @@ async function bootShutdown(
     stopChannelHealthMonitor: stopChannelHealthMonitor ?? undefined,
     // Thunk reads _healthAggRef.fn at teardown time — populated by emitStartupInvariants.
     unsubscribeHealthAggregator: () => _healthAggRef.fn?.(),
+    // Credential broker teardown (no-op when executor.broker is absent)
+    brokerStop: boot.brokerHandle ? () => boot.brokerHandle!.stop() : undefined,
   });
 
   // Wire shutdown ref for hot-add guard. Cross-stage deferred-ref populate:

@@ -53,3 +53,5 @@ export type {
   SetupOutputRetentionDeps,
   SetupOutputRetentionHandle,
 } from "./setup-output-retention.js";
+export { setupBroker } from "./setup-broker.js";
+export type { BrokerHandle, SetupBrokerDeps } from "./setup-broker.js";

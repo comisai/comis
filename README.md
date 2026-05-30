@@ -79,6 +79,9 @@ Verify: `curl http://localhost:4766/health` → `{"status":"ok"}`. Message your 
 
 **🛡️ Defense in depth — runtime and compile-time.** The LLM is the attack surface. Comis assumes it will be attacked, then makes the abuse expensive: kernel-enforced exec sandboxes (bubblewrap / sandbox-exec), input + output scanning, trust-partitioned memory, per-agent tool restrictions, canary tokens at runtime — paired with **22 ESLint-enforced architectural rules** that block insecure patterns at commit time. Defects don't reach production because they don't reach `main`. [Deep dive →](https://comis.ai/security)
 
+<!-- publish gate: flip to Block 1 post-R1 -->
+**🔑 Credential broker (in progress — network enforcement pending Linux validation).** Comis drives API-key CLIs (Claude Code included) with the key kept out of the sandbox — injected at the network boundary from the daemon's encrypted store, so it's never a readable file, env var, or `/proc` entry inside the sandbox. On Linux, the credentialed sandbox runs with its network namespace isolated (`--unshare-net`), with the broker unix socket as the only bind-mounted network path — making the broker the designed-to-be-only destination. Validation of this kernel-enforcement on the Linux production host class is in progress. [Deep dive →](https://docs.comis.ai/security/credential-broker)
+
 **📦 Supply-chain integrity by default.** Every release is **sigstore-attested via GitHub OIDC**. Workspace packages are bundled with `bundledDependencies` and exact-pinned — no runtime `npm install` of plugins, no transitive surprises, no peer-dependency outages. Comis owns its domain types end-to-end (no external `pi-coding-agent` you can be held hostage by). The supply chain *is* part of the threat model.
 
 **💰 Cost — prompt caching saves 81%.** Dual-prompt architecture, active cache fences, adaptive TTL escalation, sub-agent spawn staggering. **$5.02 vs $26.42** for a 76-call Opus 4.6 session · **94% cache hit rate** on warm turns · **$2.11** for an 8-agent pipeline (788K tokens). [Deep dive →](https://comis.ai/context-management)
@@ -108,6 +111,7 @@ The agent space has split into three camps:
 | Self-hosted, Apache-2.0                                  |    ✅    |        ✅        |partial |    ✅    |   ✅   |
 | Native messaging fan-in (9+ channels)                    |    ✅    |        ❌        |partial |    ✅    |   ✅   |
 | OS-level exec sandbox (kernel-enforced)                  |    ✅    |        ❌        |   ❌   |    ❌    |   ❌   |
+| Credentialed exec — keys never in sandbox (broker-only egress, Linux) |    ✅    |        ❌        |   ❌   |    ❌    |   ❌   |
 | Compile-time security rules (22 ESLint, arch tests)      |    ✅    |        ❌        |   ❌   | limited  |  n/a   |
 | `Result<T,E>` typed errors end-to-end                    |    ✅    |        ❌        |   ❌   |    ❌    |   ❌   |
 | `AsyncLocalStorage` `traceId` across every log + call    |    ✅    |        ❌        |   ❌   |    ❌    |partial |
@@ -130,6 +134,8 @@ The agent space has split into three camps:
 | Telegram, Discord, Slack, WhatsApp, Signal, iMessage, IRC, LINE, Email — text, voice, images, files, threads | Isolated memory, budgets, and tool policies per agent. Sub-agent spawning, sync or fire-and-forget         | SQLite + FTS5 + vector, reranked for relevance (opt-in); entity-linked associative recall; recency-aware conflict resolution; auto-consolidated observations; trust-partitioned (system/learned/external) — all on-device |
 | 🔌 **MCP ecosystem**                                                                                           | 🌐 **Any model, any provider**                                                                             | 🔐 **Encrypted at rest**                                                     |
 | 50+ tool servers — GitHub, Gmail, Notion, databases, browser, shell                                          | Claude, GPT, Gemini, Groq, Ollama, OpenRouter — tool schemas adapt per model                              | API keys + secrets in AES-256-GCM envelope; Pino auto-redacts logs to 3 levels |
+| 🔑 **Credential broker**                                                                                       |                                                                                                            |                                                                              |
+| Drive API-key CLIs — Claude Code included — with the key kept out of the sandbox. Injected at the network boundary from the daemon's encrypted store; audited per request. (Anthropic and Finnhub today.) [Deep dive →](https://docs.comis.ai/security/credential-broker) |                                                                                                            |                                                                              |
 
 [Full feature list →](https://docs.comis.ai)
 
@@ -211,6 +217,43 @@ Kernel-enforced. Linux uses [Bubblewrap](https://github.com/containers/bubblewra
 <br>
 
 API keys and channel credentials are wrapped in an AES-256-GCM envelope before they're written to disk. The Pino logger auto-redacts known secret fields (`apiKey`, `token`, `password`, `secret`, `authorization`, `botToken`, `privateKey`, `cookie`, `webhookSecret`) up to 3 levels deep — a safety net, not a substitute for never logging them in the first place. A `SecretStorePort` abstraction lets you swap the at-rest store later without touching call sites.
+
+</details>
+
+<details>
+<summary><strong>How can an agent use my API key without being able to steal it?</strong></summary>
+
+<br>
+
+You can't keep a secret from a process that runs arbitrary commands in the same namespace — so Comis
+never puts it there. The real key lives only in the daemon's encrypted store (AES-256-GCM, the same
+`SecretManager` that feeds MCP). When the agent drives a credentialed CLI, Comis launches it inside the
+exec sandbox with a **placeholder** key and routes its HTTPS traffic through an in-process broker. The
+broker terminates TLS with its own CA, matches the request against an allow-list, swaps the placeholder
+for the real secret (`x-api-key` / `Authorization: Bearer` / query param), and forwards it. The key is
+never a file, never an env var, never on the wire the sandbox can read.
+
+On Linux, the credentialed sandbox runs with its network namespace isolated (`--unshare-net`) — the broker
+unix socket is the only bind-mounted network path, making the broker the designed-to-be-only destination.
+Validation of this kernel-enforcement on the Linux production host class is in progress.
+
+The broker **fails closed** (no secret → 502, request never forwarded) and audits every session, injection,
+and blocked-egress attempt on the event bus with a `traceId` you can grep.
+
+Today this covers **API-key / bearer / query-param** auth (Anthropic and Finnhub today, more on the
+catalog roadmap). OAuth / subscription-only CLIs are not yet supported. [Deep dive →](https://docs.comis.ai/security/credential-broker)
+
+The `executor.broker` config path is the planned interface; daemon config integration is in progress.
+
+```yaml
+executor:
+  broker:
+    bindings:
+      - preset: anthropic
+        secretRef: ANTHROPIC_EXECUTOR_KEY
+      - preset: finnhub
+        secretRef: FINNHUB_API_KEY
+```
 
 </details>
 

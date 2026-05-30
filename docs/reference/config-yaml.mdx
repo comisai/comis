@@ -2155,6 +2155,64 @@ diagnostics:
 </Accordion>
 
 </AccordionGroup>
+## Credential Broker Bindings (executor.broker)
+
+<Warning>
+**Daemon wiring in progress.** The `executor.broker` binding schema is shipped (`packages/core/src/config/schema-broker.ts`), but the `AppConfigSchema` integration is pending — adding an `executor:` block to `config.yaml` today will fail Zod strict-mode validation. The example below documents the planned config contract; it becomes active once the daemon wiring is integrated.
+</Warning>
+
+```yaml title="~/.comis/config.yaml"
+# executor.broker.bindings — provider-agnostic; presets are optional sugar
+# Note: executor.broker becomes active when daemon config wiring is integrated;
+# the schema is shipped but the AppConfigSchema registration is pending.
+executor:
+  broker:
+    bindings:
+      # Option A: built-in preset — Anthropic (header injection)
+      - preset: anthropic
+        secretRef: ANTHROPIC_EXECUTOR_KEY
+
+      # Option B: built-in preset — Finnhub (query param injection)
+      - preset: finnhub
+        secretRef: FINNHUB_API_KEY
+
+      # Option C: custom binding — any host, no preset required
+      # A binding with no 'inject' defaults to Authorization: Bearer
+      - hostRules:
+          - pattern: { kind: exact, host: my-internal-api.example.com }
+            inject: []    # defaults to Authorization: Bearer
+        secretRef: INTERNAL_API_TOKEN
+
+      # Option D: custom binding with explicit header injection
+      - hostRules:
+          - pattern: { kind: suffix, suffix: .amazonaws.com }
+            inject:
+              - kind: setHeader
+                name: x-amz-security-token
+                format: raw
+        secretRef: AWS_SESSION_TOKEN
+```
+
+**Credential Broker Bindings (executor.broker.bindings[*])**
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `preset` | `string` | one of preset/hostRules | Built-in preset ID (`anthropic`, `finnhub`) — expands to preset's host rules |
+| `hostRules` | `HostRule[]` | one of preset/hostRules | Custom host rules (provider-agnostic) |
+| `secretRef` | `string` | yes | SecretManager key resolved per-request; never cached to disk |
+| `credentialRefs` | `Record<string, string>` | no | Extra refs for multi-field finalizers |
+
+**HostRule fields (hostRules[*]):**
+
+| Key | Type | Required | Description |
+|-----|------|----------|-------------|
+| `pattern` | `{ kind: "exact", host: string } \| { kind: "suffix", suffix: string }` | yes | Host match pattern |
+| `inject` | `InjectionRule[]` | no | Injection rules; empty array defaults to `Authorization: Bearer` |
+| `pathPrefix` | `string` | no | Restrict to requests with this path prefix |
+| `pathPolicy` | `string` | no | Glob pattern for allowed paths |
+| `finalizer` | `object` | no | Post-injection body transform (e.g., `awsSigV4` — no-op in this release) |
+
+For full configuration details and examples, see [Credential Broker →](/security/credential-broker).
 
 ## Related
 

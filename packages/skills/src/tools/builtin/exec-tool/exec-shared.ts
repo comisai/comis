@@ -105,6 +105,10 @@ export function buildSpawnCommand(
       readOnlyPaths: allReadOnlyPaths,
       cwd,
       tempDir,
+      // CR-02: forward network + secureCredentialHome from ExecSandboxConfig to
+      // SandboxOptions (EGRESS-01/02). Undefined = open/unsecured (no regression).
+      network: sandboxConfig.network,
+      secureCredentialHome: sandboxConfig.secureCredentialHome,
     });
     // bwrap handles cwd internally via --chdir; sandbox-exec does not.
     const providerHandlesCwd = sandboxConfig.sandbox.name === "bwrap";
@@ -134,13 +138,7 @@ export function buildSpawnCommand(
 // secretRefs helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Workspace-internal data env resolver. Returns env vars derived from
- * `workspaceDir` so python/matplotlib subprocesses do NOT inherit the
- * daemon's host PATH or cache-dir defaults. Shape mirrors
- * `packages/agent/src/workspace/data-env.ts` verbatim; lifted inline to
- * avoid a cross-package agent import (skills + agent are siblings).
- */
+/** Workspace-local data env — python/matplotlib subprocesses only, not inheriting daemon PATH. */
 function resolveDataEnv(opts: { workspaceDir: string }): Record<string, string> {
   const venvBin = safePath(opts.workspaceDir, "venv", "bin");
   const cacheDir = safePath(opts.workspaceDir, ".cache");
@@ -547,11 +545,7 @@ export function ensureWarmVenvSeed(
   }
 }
 
-/**
- * Build the final environment record for the subprocess by merging:
- *   baseEnv → dataEnv → userEnv → resolvedSecretEnv (last wins on collision).
- * Block-extracted from the createExecTool factory.
- */
+/** Build the subprocess env by merging: baseEnv → dataEnv → userEnv → resolvedSecretEnv → brokerSpawnEnv. */
 export function buildExecEnv(deps: {
   workspacePath: string;
   subprocessEnv?: Record<string, string>;
@@ -559,6 +553,14 @@ export function buildExecEnv(deps: {
   resolvedSecretEnv?: Record<string, string>;
   sandboxConfig?: ExecSandboxConfig;
   logger?: ToolLogger;
+  /** Broker proxy env — driven-CLI spawn only; merged LAST (EGRESS-03). */
+  brokerSpawnEnv?: {
+    HTTPS_PROXY: string;
+    /** HTTP_PROXY intentionally omitted — broker is CONNECT-only (HTTPS). */
+    HTTP_PROXY?: string;
+    NODE_EXTRA_CA_CERTS: string;
+    placeholders: Record<string, string>;
+  };
 }): Record<string, string> {
   const { workspacePath, subprocessEnv, userEnv, resolvedSecretEnv, sandboxConfig, logger } = deps;
   const baseEnv = subprocessEnv ?? (systemEnvSnapshot() as Record<string, string>);
@@ -587,5 +589,11 @@ export function buildExecEnv(deps: {
     ...(resolvedSecretEnv ?? {}),
   };
   const finalEnv = sandboxConfig?.sandbox.wrapEnv?.(env as Record<string, string>, workspacePath) ?? env;
+  // Broker env LAST — driven-CLI spawns only (EGRESS-03). HTTP_PROXY optional (broker is CONNECT-only).
+  if (deps.brokerSpawnEnv) {
+    const { HTTPS_PROXY, HTTP_PROXY, NODE_EXTRA_CA_CERTS, placeholders } = deps.brokerSpawnEnv;
+    Object.assign(finalEnv, { HTTPS_PROXY, NODE_EXTRA_CA_CERTS, ...placeholders });
+    if (HTTP_PROXY !== undefined) Object.assign(finalEnv, { HTTP_PROXY });
+  }
   return finalEnv;
 }

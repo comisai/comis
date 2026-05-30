@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { BackgroundTaskOrigin } from "../domain/background-task-origin.js";
 import type { McpServerEntry } from "../config/schema-integrations.js";
+import type { InjectionRule } from "../security/provider-catalog/index.js";
 
 /**
  * InfraEvents: Config, plugin, hook, auth, diagnostic,
@@ -653,6 +654,71 @@ export interface InfraEvents {
     channelId: string;
     chatId: string;
     removedEmoji: string;
+    timestamp: number;
+  };
+
+  // -------------------------------------------------------------------------
+  // Credential broker events (Phase 1: type declarations; Phase 2: emit sites)
+  // -------------------------------------------------------------------------
+
+  /** Broker resolved a binding for a CONNECT request */
+  "broker:session_opened": {
+    sessionId: string;
+    agentId: string;
+    host: string;
+    presetId?: string;
+    timestamp: number;
+  };
+
+  /** Broker session torn down (normal or error) */
+  "broker:session_closed": {
+    sessionId: string;
+    agentId: string;
+    durationMs: number;
+    reason: "teardown" | "error";
+    timestamp: number;
+  };
+
+  /** Broker received a proxy CONNECT request */
+  "broker:request": {
+    sessionId: string;
+    host: string;
+    path: string;
+    method: string;
+    timestamp: number;
+  };
+
+  /** Broker injected credentials into a request */
+  "broker:injected": {
+    sessionId: string;
+    host: string;
+    /** IN-02: closed union matching InjectionRule["kind"] — not open string */
+    ruleKind: InjectionRule["kind"];
+    timestamp: number;
+  };
+
+  /** Broker denied a request (no binding, bad token, path-policy violation, malformed request, body-size cap exceeded, or WebSocket upgrade attempt) */
+  "broker:denied": {
+    sessionId: string;
+    host: string;
+    reason: "no_binding" | "bad_token" | "path_policy" | "malformed_request" | "body_too_large" | "ws_upgrade_not_supported";
+    statusCode: number;
+    timestamp: number;
+  };
+
+  /** Secret resolution miss — request not forwarded */
+  "broker:credential_unavailable": {
+    sessionId: string;
+    secretRef: string;
+    agentId: string;
+    timestamp: number;
+  };
+
+  /** Egress attempt to non-broker host blocked (broker-only mode) */
+  "broker:egress_blocked": {
+    sessionId: string;
+    /** SHA-256 hex of the target host — never plaintext (OBS-01 redaction) */
+    targetHostHash: string;
     timestamp: number;
   };
 }
