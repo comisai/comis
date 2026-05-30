@@ -316,8 +316,8 @@ describe("INTEG-03 — brokerContext activation seam (T-03-1..T-03-6)", () => {
     expect(sandboxConfig.secureCredentialHome).toBe(true);
   });
 
-  // T-03-2: brokerSpawnEnv.HTTPS_PROXY contains the broker tcpPort
-  it("T-03-2: brokerContext present → brokerSpawnEnv.HTTPS_PROXY contains tcpPort (9999)", async () => {
+  // T-03-2: brokerSpawnEnv.HTTPS_PROXY contains the broker tcpPort; HTTP_PROXY absent (WR-01)
+  it("T-03-2: brokerContext present → brokerSpawnEnv.HTTPS_PROXY contains tcpPort (9999); HTTP_PROXY absent (broker is CONNECT-only)", async () => {
     const brokerCtx = createBrokerContext();
     const deps = createMinimalDeps({ brokerContext: brokerCtx });
 
@@ -327,7 +327,9 @@ describe("INTEG-03 — brokerContext activation seam (T-03-1..T-03-6)", () => {
     const brokerSpawnEnv = execDeps.brokerSpawnEnv as any;
     expect(brokerSpawnEnv).toBeDefined();
     expect(brokerSpawnEnv.HTTPS_PROXY).toBe("http://127.0.0.1:9999");
-    expect(brokerSpawnEnv.HTTP_PROXY).toBe("http://127.0.0.1:9999");
+    // HTTP_PROXY intentionally absent — broker handles only TLS-CONNECT tunnels (HTTPS).
+    // Plain HTTP via HTTP_PROXY is unsupported by the broker.
+    expect(brokerSpawnEnv.HTTP_PROXY).toBeUndefined();
     expect(brokerSpawnEnv.NODE_EXTRA_CA_CERTS).toBe("/tmp/broker-ca.pem");
   });
 

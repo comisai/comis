@@ -592,7 +592,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           brokerSpawnEnv: deps.brokerContext && brokerIssuedSession
             ? {
                 HTTPS_PROXY: `http://127.0.0.1:${deps.brokerContext.tcpPort}`,
-                HTTP_PROXY: `http://127.0.0.1:${deps.brokerContext.tcpPort}`,
+                // HTTP_PROXY intentionally omitted — broker is CONNECT-only (HTTPS).
+                // The broker handles TLS-CONNECT tunnels; plain HTTP via HTTP_PROXY
+                // is unsupported and would produce unexpected routing behavior.
                 NODE_EXTRA_CA_CERTS: deps.brokerContext.caPath,
                 placeholders: {
                   ...deps.brokerContext.placeholders,
