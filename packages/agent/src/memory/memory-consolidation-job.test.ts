@@ -497,3 +497,120 @@ describe("runMemoryConsolidation — singletons left for a future run", () => {
     expect(completeSimple).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// OBS-03 — candidate-missing-embedding degradation signal (the last gap).
+//
+// A ConsolidationCandidate arrives with `embedding === undefined` when
+// sqlite-vec is unavailable (the adapter's LEFT JOIN finds no vec row). The
+// agent-side clusterer then silently degrades that candidate to entity/FTS
+// overlap. RESEARCH's Degradation Signal Audit flags this as the ONE remaining
+// unsignalled degradation: ADD a WARN with errorKind:"precondition" + hint + a
+// COUNT so the operator can see "N candidates clustered without an embedding".
+// errorKind is the closed 10-member union; "precondition" = an unmet
+// precondition for vector clustering. Counts only — never memory content.
+// ---------------------------------------------------------------------------
+describe("runMemoryConsolidation — candidate-missing-embedding signal (OBS-03)", () => {
+  /** Find the WARN (obj,msg) pair carrying errorKind:"precondition". */
+  function preconditionWarn(deps: MemoryConsolidationDeps): Record<string, unknown> | undefined {
+    return ((deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls as Array<[Record<string, unknown>, string]>)
+      .find(([obj]) => obj.errorKind === "precondition")?.[0];
+  }
+
+  it("logs ONE precondition WARN with the missing count when ≥1 candidate has no embedding", async () => {
+    mockMerge("merged");
+    // Two candidates WITH embeddings (so a merge still runs) + two WITHOUT.
+    const store = makeStore([
+      makeCand({ trustLevel: "learned", tags: ["t"] }, [1, 0, 0]),
+      makeCand({ trustLevel: "learned", tags: ["t"] }, [0.999, 0.001, 0]),
+      makeCand({ trustLevel: "learned", tags: ["t"] }), // no embedding
+      makeCand({ trustLevel: "learned", tags: ["t"] }), // no embedding
+    ]);
+    const deps = makeDeps(store);
+    const result = await runMemoryConsolidation(deps);
+    expect(result.ok).toBe(true);
+
+    const warn = preconditionWarn(deps);
+    expect(warn).toBeDefined();
+    // The COUNT is a structured field (queryable), not just buried in the message.
+    expect(warn?.missingEmbedding).toBe(2);
+    expect(warn?.agentId).toBe("test-agent");
+    expect(typeof warn?.hint).toBe("string");
+    // Degradation is queryable — the hint names the fallback path.
+    expect(String(warn?.hint)).toMatch(/embedding/i);
+  });
+
+  it("does NOT log a precondition WARN when ALL candidates have embeddings", async () => {
+    mockMerge("merged");
+    const store = makeStore([
+      makeCand({ trustLevel: "learned", tags: ["t"] }, [1, 0, 0]),
+      makeCand({ trustLevel: "learned", tags: ["t"] }, [0.999, 0.001, 0]),
+    ]);
+    const deps = makeDeps(store);
+    await runMemoryConsolidation(deps);
+    expect(preconditionWarn(deps)).toBeUndefined();
+  });
+
+  it("counts-only — the missing-embedding WARN never carries memory content", async () => {
+    mockMerge("merged");
+    const store = makeStore([
+      makeCand({ trustLevel: "learned", tags: ["t"], content: "SECRET FACT ABOUT ALICE" }),
+      makeCand({ trustLevel: "learned", tags: ["t"], content: "ANOTHER SECRET" }),
+    ]);
+    const deps = makeDeps(store);
+    await runMemoryConsolidation(deps);
+    const warn = preconditionWarn(deps);
+    expect(warn).toBeDefined();
+    const serialized = JSON.stringify(warn);
+    expect(serialized).not.toContain("SECRET FACT ABOUT ALICE");
+    expect(serialized).not.toContain("ANOTHER SECRET");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OBS-05 — per-stage step-tagged INFO logs (cluster / apply) with durationMs.
+//
+// `runMemoryConsolidation` already uses step:"consolidate" on DEBUG skip-logs
+// and emits a final INFO with durationMs, but NO per-stage INFO. ADD
+// step:"cluster" (after clustering, candidate/cluster/sub-cluster counts) and
+// step:"apply" (after a successful apply, observationsCreated) — O(1)/run lines
+// at INFO per AGENTS.md §2.6. Logger-spy assertions only.
+// ---------------------------------------------------------------------------
+describe("runMemoryConsolidation — step-tagged stage logs (OBS-05)", () => {
+  /** The first INFO (obj) carrying the given step tag (or undefined). */
+  function infoWithStep(deps: MemoryConsolidationDeps, step: string): Record<string, unknown> | undefined {
+    return ((deps.logger.info as ReturnType<typeof vi.fn>).mock.calls as Array<[Record<string, unknown>, string]>)
+      .find(([obj]) => obj.step === step)?.[0];
+  }
+
+  it("emits an INFO step:'cluster' with candidate/cluster counts + durationMs", async () => {
+    mockMerge("merged");
+    const store = makeStore([
+      makeCand({ trustLevel: "learned", tags: ["t"] }, [1, 0, 0]),
+      makeCand({ trustLevel: "learned", tags: ["t"] }, [0.999, 0.001, 0]),
+    ]);
+    const deps = makeDeps(store);
+    await runMemoryConsolidation(deps);
+
+    const cluster = infoWithStep(deps, "cluster");
+    expect(cluster).toBeDefined();
+    expect(cluster?.candidates).toBe(2);
+    expect(typeof cluster?.durationMs).toBe("number");
+    expect(cluster?.agentId).toBe("test-agent");
+  });
+
+  it("emits an INFO step:'apply' reporting observationsCreated + durationMs", async () => {
+    mockMerge("merged");
+    const store = makeStore([
+      makeCand({ trustLevel: "learned", tags: ["t"] }, [1, 0, 0]),
+      makeCand({ trustLevel: "learned", tags: ["t"] }, [0.999, 0.001, 0]),
+    ]);
+    const deps = makeDeps(store);
+    await runMemoryConsolidation(deps);
+
+    const apply = infoWithStep(deps, "apply");
+    expect(apply).toBeDefined();
+    expect(apply?.observationsCreated).toBe(1);
+    expect(typeof apply?.durationMs).toBe("number");
+  });
+});
