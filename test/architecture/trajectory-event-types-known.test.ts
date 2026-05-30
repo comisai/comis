@@ -113,6 +113,15 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   // dedupHits) — a maintenance job, not part of an agent turn. Same class as
   // memory:review_completed above.
   "memory:consolidated",
+  // Recall-pipeline diagnostic counters (Phase 86) — counts-only observability
+  // events fed into the recall-trace sidecar + recall-counters store, NOT
+  // turn-level trajectory steps. Same class as memory:consolidated above:
+  //   memory:recalled        — per-recall lane/candidate/final counts.
+  //   memory:reranked         — rerank candidate/hit counts + outcome flags.
+  //   memory:entities_linked — entity resolveAndLink counts (newEntities).
+  "memory:recalled",
+  "memory:reranked",
+  "memory:entities_linked",
 
   // -------------------------------------------------------------------
   // Session-store lifecycle (distinct from session:started/ended which
