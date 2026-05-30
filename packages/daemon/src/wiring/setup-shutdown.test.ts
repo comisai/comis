@@ -741,3 +741,102 @@ describe("setup-shutdown honors §1.4 mode invariants", () => {
     expect(statSync(filePath).mode & 0o777).toBe(0o600);
   });
 });
+
+// ---------------------------------------------------------------------------
+// CR-03 regression: brokerStop must run AFTER shutdownBackgroundProcesses drains
+// (test08-fix)
+//
+// The bug: setup-shutdown.ts stopped the broker (brokerStop) before draining
+// background exec processes (shutdownBackgroundProcesses). Any live exec using
+// the broker proxy (HTTPS_PROXY → broker TCP port) had its connections cut
+// while still running. Fix: reverse the order.
+// ---------------------------------------------------------------------------
+
+describe("CR-03 — brokerStop runs after shutdownBackgroundProcesses (shutdown ordering)", () => {
+  let processOnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    processOnSpy = vi.spyOn(process, "on").mockImplementation(() => process);
+  });
+
+  afterEach(() => {
+    processOnSpy.mockRestore();
+  });
+
+  async function getSetupShutdown() {
+    const mod = await import("./setup-shutdown.js");
+    return mod.setupShutdown;
+  }
+
+  function createCr03Deps(overrides: Partial<ShutdownDeps> = {}): ShutdownDeps {
+    return {
+      logger: createMockLogger() as any,
+      daemonLogger: createMockLogger() as any,
+      processMonitor: { start: vi.fn(), stop: vi.fn() } as any,
+      container: { shutdown: vi.fn(async () => {}) } as any,
+      exitFn: vi.fn(),
+      subAgentRunner: { shutdown: vi.fn(async () => {}) },
+      cronSchedulers: new Map(),
+      resetSchedulers: new Map(),
+      browserServices: new Map(),
+      tokenTracker: { getAll: vi.fn(() => []) } as any,
+      startupTimestamp: Date.now() - 1_000,
+      diagnosticCollector: { dispose: vi.fn() } as any,
+      channelActivityTracker: { dispose: vi.fn() } as any,
+      deliveryTracer: { dispose: vi.fn() } as any,
+      db: { close: vi.fn() },
+      ...overrides,
+    };
+  }
+
+  it("brokerStop runs after shutdownBackgroundProcesses (exec processes drain before broker closes)", async () => {
+    const callOrder: string[] = [];
+
+    const shutdownBackgroundProcesses = vi.fn(async () => {
+      callOrder.push("shutdownBackgroundProcesses");
+    });
+    const brokerStop = vi.fn(async () => {
+      callOrder.push("brokerStop");
+    });
+
+    const deps = createCr03Deps({ shutdownBackgroundProcesses, brokerStop });
+
+    const setupShutdown = await getSetupShutdown();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
+
+    expect(shutdownBackgroundProcesses).toHaveBeenCalled();
+    expect(brokerStop).toHaveBeenCalled();
+
+    const bgIdx = callOrder.indexOf("shutdownBackgroundProcesses");
+    const brokerIdx = callOrder.indexOf("brokerStop");
+
+    // CORRECT ordering: background processes drained BEFORE broker closes
+    expect(bgIdx).toBeGreaterThanOrEqual(0);
+    expect(brokerIdx).toBeGreaterThanOrEqual(0);
+    expect(brokerIdx).toBeGreaterThan(bgIdx);
+  });
+
+  it("brokerStop shutdownOrder value is greater than shutdownBackgroundProcesses shutdownOrder", async () => {
+    const brokerStop = vi.fn(async () => {});
+    const shutdownBackgroundProcesses = vi.fn(async () => {});
+
+    const deps = createCr03Deps({ brokerStop, shutdownBackgroundProcesses });
+
+    const setupShutdown = await getSetupShutdown();
+    const result = setupShutdown(deps);
+    await result.shutdownHandle.trigger("SIGTERM");
+
+    const infoArgs = (deps.daemonLogger.info as ReturnType<typeof vi.fn>).mock.calls
+      .filter((args: any[]) => args[0]?.shutdownOrder !== undefined && args[0]?.component);
+
+    const bgEntry = infoArgs.find((args: any[]) => args[0].component === "background-processes");
+    const brokerEntry = infoArgs.find((args: any[]) => args[0].component === "broker");
+
+    expect(bgEntry).toBeDefined();
+    expect(brokerEntry).toBeDefined();
+
+    // brokerStop shutdownOrder must be higher than background-processes shutdownOrder
+    expect(brokerEntry![0].shutdownOrder).toBeGreaterThan(bgEntry![0].shutdownOrder);
+  });
+});
