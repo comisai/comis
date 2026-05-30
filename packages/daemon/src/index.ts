@@ -30,6 +30,16 @@ export type { AnnouncementDeadLetterQueue, DeadLetterEntry } from "@comis/orches
 export { createContextHandlers } from "./api/context-handlers.js";
 export type { ContextHandlerDeps } from "./api/context-handlers.js";
 
+// Memory handlers: memory + memory-diagnostic (OBS-06/OBS-08) RPC handlers —
+// re-exported so the recall-diagnostics isolation integration test can drive
+// the actual admin-gated memory.observations / memory.entities /
+// memory.recall_stats / memory.recall_trace handlers against the REAL wired
+// scoped stores, proving the cross-scope-leak negative + the EoP admin-reject
+// through the RPC layer (not just the adapter).
+// Consumer: test/integration/security/recall-diagnostics-isolation.test.ts
+export { createMemoryHandlers } from "./api/memory-handlers.js";
+export type { MemoryHandlerDeps } from "./api/memory-handlers.js";
+
 // Agent management RPC handlers — re-exported so the multi-account
 // integration test can drive the actual `agents.update` RPC handler against a
 // shared `agents` map, mirroring the daemon-runtime container.config.agents
