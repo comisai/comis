@@ -727,7 +727,7 @@ describe("memory diagnostic contracts (OBS-06) — admin-scoped", () => {
     ).not.toThrow();
   });
 
-  it("memory.recall_stats: response mirrors RecallCountersSnapshot + derived rerankFallbackRate/recallHitRate", () => {
+  it("returns a recall_stats response mirroring RecallCountersSnapshot with derived rerankFallbackRate and recallHitRate", () => {
     expect(() =>
       MemoryRecallStatsContract.response.parse({
         laneUsage: { fts: 100, vector: 80, entity: 20 },

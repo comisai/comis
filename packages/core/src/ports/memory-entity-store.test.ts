@@ -78,7 +78,7 @@ describe("MemoryEntityStore.listEntities — scoped entity-graph read (OBS-06)",
     }
   });
 
-  it("types listEntities as (agentId, tenantId, limit) => Promise<Result<EntityRow[], Error>>", () => {
+  it("checks listEntities is typed as (agentId, tenantId, limit) => Promise<Result<EntityRow[], Error>>", () => {
     const stub: MemoryEntityStore = {
       resolveAndLink: async (): Promise<Result<string, Error>> => ok("x"),
       associativeLane: async (): Promise<Result<MemorySearchResult[], Error>> => ok([]),
