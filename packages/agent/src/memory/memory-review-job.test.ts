@@ -70,14 +70,25 @@ function makeDeps(overrides: Partial<MemoryReviewDeps> = {}): MemoryReviewDeps {
     // Fixed injected clock — proves clock injection (never Date.now) and makes
     // relative-date resolution deterministic.
     clock: { now: () => NOW, nowDate: () => systemDateFrom(NOW) },
-    logger: {
-      info: vi.fn(),
-      debug: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    },
+    logger: makeLogger(),
     ...overrides,
   };
+}
+
+/**
+ * A logger spy whose `.child()` returns a logger that RE-USES the SAME `info` /
+ * `warn` / `debug` / `error` spies as the parent (so a single assertion target
+ * covers both the parent's pre-existing lines and the submodule child's
+ * stage-tagged lines), while also recording the bindings `.child()` was called
+ * with (so the `submodule:"memory-review"` scope is assertable).
+ */
+function makeLogger() {
+  const info = vi.fn();
+  const debug = vi.fn();
+  const warn = vi.fn();
+  const error = vi.fn();
+  const child = vi.fn(() => ({ info, debug, warn, error, child }));
+  return { info, debug, warn, error, child } as unknown as MemoryReviewDeps["logger"];
 }
 
 function makeSession(key: string, messageCount: number, updatedAt: number = NOW) {
@@ -911,5 +922,202 @@ describe("runMemoryReview", () => {
     expect(resolveAndLink).toHaveBeenCalledTimes(1);
     const scope = (resolveAndLink.mock.calls[0]?.[2]) as { now: number };
     expect(scope.now).toBe(NOW);
+  });
+
+  // -------------------------------------------------------------------------
+  // OBS-05 — per-stage step-tagged INFO logs on a `submodule` child logger.
+  //
+  // The write pipeline must be legible from logs alone (AGENTS.md §2.6): an
+  // INFO carrying `step:"extract"` after parsing, `step:"store"` after the
+  // store loop, and `step:"link"` after entity-linking — each with `durationMs`
+  // and scoped to a `submodule:"memory-review"` child logger. These are O(1)/run
+  // boundary lines → INFO (per-item store/link detail stays DEBUG). Logger-spy
+  // assertions only; behavior (store/emit/watermark) is unchanged.
+  // -------------------------------------------------------------------------
+
+  /** All `(obj,msg)` pairs logged at INFO across parent + child (shared spy). */
+  function infoCalls(deps: MemoryReviewDeps): Array<[Record<string, unknown>, string]> {
+    return (deps.logger.info as Mock).mock.calls as Array<[Record<string, unknown>, string]>;
+  }
+  /** The first INFO whose payload carries the given `step` tag (or undefined). */
+  function infoWithStep(deps: MemoryReviewDeps, step: string): Record<string, unknown> | undefined {
+    return infoCalls(deps).find(([obj]) => obj.step === step)?.[0];
+  }
+
+  it("scopes the stage logs to a submodule:'memory-review' child logger", async () => {
+    const deps = makeDeps();
+    arrangeOneSession(deps);
+    (completeSimple as Mock).mockResolvedValue(structuredResponse({
+      memories: [{ content: "User likes tea", entities: [{ name: "user" }] }],
+    }));
+
+    await runMemoryReview(deps);
+
+    // The job bound a child logger with the canonical submodule scope.
+    expect(deps.logger.child as Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ submodule: "memory-review" }),
+    );
+  });
+
+  it("emits an INFO step:'extract' with the parsed count + durationMs after parsing", async () => {
+    const deps = makeDeps();
+    arrangeOneSession(deps);
+    (completeSimple as Mock).mockResolvedValue(structuredResponse({
+      memories: [
+        { content: "User likes tea", entities: [{ name: "user" }] },
+        { content: "User lives in Berlin", entities: [{ name: "user" }] },
+      ],
+    }));
+
+    await runMemoryReview(deps);
+
+    const extract = infoWithStep(deps, "extract");
+    expect(extract).toBeDefined();
+    expect(extract?.parsed).toBe(2); // two parsed memories
+    expect(typeof extract?.durationMs).toBe("number");
+    expect(extract?.agentId).toBe("test-agent");
+  });
+
+  it("emits an INFO step:'store' reporting the stored count + durationMs", async () => {
+    const deps = makeDeps();
+    arrangeOneSession(deps);
+    (completeSimple as Mock).mockResolvedValue(structuredResponse({
+      memories: [{ content: "User likes tea", entities: [{ name: "user" }] }],
+    }));
+
+    await runMemoryReview(deps);
+
+    const store = infoWithStep(deps, "store");
+    expect(store).toBeDefined();
+    expect(store?.memoriesExtracted).toBe(1);
+    expect(typeof store?.durationMs).toBe("number");
+  });
+
+  it("emits an INFO step:'link' reporting the linked count when entityStore is present", async () => {
+    const resolveAndLink = vi.fn().mockResolvedValue(ok("entity-id"));
+    const deps = makeDeps({ entityStore: makeEntityStore(resolveAndLink) });
+    arrangeOneSession(deps);
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User lives in Berlin","entities":[{"name":"user"},{"name":"Berlin"}]}]}',
+    ));
+
+    await runMemoryReview(deps);
+
+    const link = infoWithStep(deps, "link");
+    expect(link).toBeDefined();
+    expect(link?.entitiesLinked).toBe(2); // two entities resolved+linked
+    expect(typeof link?.durationMs).toBe("number");
+  });
+
+  // -------------------------------------------------------------------------
+  // OBS-04 — memory:entities_linked emit at the resolveAndLink site.
+  //
+  // ONCE per run (guarded by entityStore), counts only — entityCount (total
+  // resolved this run) + newEntities (distinct first-seen names) + durationMs.
+  // NEVER an entity name in the payload (AGENTS.md §2.7). When entityStore is
+  // absent, no emit (Phase-82 behaviour preserved).
+  // -------------------------------------------------------------------------
+
+  /** The single memory:entities_linked payload (or undefined if not emitted). */
+  function linkedPayload(deps: MemoryReviewDeps): Record<string, unknown> | undefined {
+    return (deps.eventBus.emit as Mock).mock.calls.find(
+      (c) => c[0] === "memory:entities_linked",
+    )?.[1] as Record<string, unknown> | undefined;
+  }
+
+  it("emits memory:entities_linked ONCE with entityCount + newEntities + durationMs (counts only)", async () => {
+    const resolveAndLink = vi.fn().mockResolvedValue(ok("entity-id"));
+    const deps = makeDeps({ entityStore: makeEntityStore(resolveAndLink) });
+    arrangeOneSession(deps);
+    // One memory, two DISTINCT entities → entityCount 2, newEntities 2.
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User lives in Berlin","entities":[{"name":"user"},{"name":"Berlin"}]}]}',
+    ));
+
+    await runMemoryReview(deps);
+
+    const emitted = (deps.eventBus.emit as Mock).mock.calls.filter(
+      (c) => c[0] === "memory:entities_linked",
+    );
+    expect(emitted).toHaveLength(1); // exactly once per run
+
+    const payload = linkedPayload(deps)!;
+    expect(payload.agentId).toBe("test-agent");
+    expect(payload.entityCount).toBe(2);
+    expect(payload.newEntities).toBe(2);
+    expect(typeof payload.durationMs).toBe("number");
+    expect(payload.timestamp).toBe(NOW);
+    // Counts only — NEVER an entity name body (AGENTS.md §2.7 / T-86-16).
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain("Berlin");
+    expect(serialized).not.toContain("user");
+  });
+
+  it("counts a repeated entity name once toward newEntities (distinct first-seen derivation)", async () => {
+    const resolveAndLink = vi.fn().mockResolvedValue(ok("entity-id"));
+    const deps = makeDeps({ entityStore: makeEntityStore(resolveAndLink) });
+    // Two sessions, each yielding a memory mentioning "user" — the name recurs.
+    (deps.sessionStore.listDetailed as Mock).mockReturnValue([
+      makeSession("default:user1:ch1", 10, 2000),
+      makeSession("default:user2:ch1", 10, 3000),
+    ]);
+    (deps.sessionStore.loadByFormattedKey as Mock).mockReturnValue({
+      messages: [{ role: "user", content: "hi" }],
+      metadata: {},
+      createdAt: 1000,
+      updatedAt: 2000,
+    });
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[' +
+        '{"content":"User likes tea","entities":[{"name":"user"}]},' +
+        '{"content":"User likes coffee","entities":[{"name":"user"}]}' +
+        ']}',
+    ));
+
+    await runMemoryReview(deps);
+
+    const payload = linkedPayload(deps)!;
+    // Two successful resolveAndLink calls → entityCount 2; but "user" is a single
+    // distinct first-seen name → newEntities 1.
+    expect(payload.entityCount).toBe(2);
+    expect(payload.newEntities).toBe(1);
+  });
+
+  it("does NOT emit memory:entities_linked when entityStore is absent (Phase-82 preserved)", async () => {
+    const deps = makeDeps(); // no entityStore
+    arrangeOneSession(deps);
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User lives in Berlin","entities":[{"name":"user"}]}]}',
+    ));
+
+    await runMemoryReview(deps);
+
+    const emitted = (deps.eventBus.emit as Mock).mock.calls.filter(
+      (c) => c[0] === "memory:entities_linked",
+    );
+    expect(emitted).toHaveLength(0);
+    // The existing review_completed emit is unchanged (still fired).
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "memory:review_completed",
+      expect.objectContaining({ memoriesExtracted: 1 }),
+    );
+  });
+
+  it("does NOT emit memory:entities_linked when no entity was linked (zero count, guarded)", async () => {
+    const resolveAndLink = vi.fn().mockResolvedValue(ok("entity-id"));
+    const deps = makeDeps({ entityStore: makeEntityStore(resolveAndLink) });
+    arrangeOneSession(deps);
+    // A memory with NO entities → resolveAndLink never called → no emit.
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"It is raining","entities":[]}]}',
+    ));
+
+    await runMemoryReview(deps);
+
+    expect(resolveAndLink).not.toHaveBeenCalled();
+    const emitted = (deps.eventBus.emit as Mock).mock.calls.filter(
+      (c) => c[0] === "memory:entities_linked",
+    );
+    expect(emitted).toHaveLength(0);
   });
 });

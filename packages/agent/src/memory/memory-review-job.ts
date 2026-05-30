@@ -79,12 +79,20 @@ export interface MemoryReviewDeps {
    * Plan 04 wires the daemon's `createSystemClock()` adapter here.
    */
   clock: ClockPort;
-  logger: {
-    info(obj: Record<string, unknown>, msg: string): void;
-    debug(obj: Record<string, unknown>, msg: string): void;
-    warn(obj: Record<string, unknown>, msg: string): void;
-    error(obj: Record<string, unknown>, msg: string): void;
-  };
+  logger: ReviewLogger;
+}
+
+/**
+ * The structural logger contract this job needs (a subset of `ComisLogger`).
+ * `child(bindings)` returns the SAME shape so a `submodule`-scoped child logger
+ * (OBS-05) carries the canonical stage logs (AGENTS.md §2.7 contract vs impl).
+ */
+interface ReviewLogger {
+  info(obj: Record<string, unknown>, msg: string): void;
+  debug(obj: Record<string, unknown>, msg: string): void;
+  warn(obj: Record<string, unknown>, msg: string): void;
+  error(obj: Record<string, unknown>, msg: string): void;
+  child(bindings: Record<string, unknown>): ReviewLogger;
 }
 
 // ---------------------------------------------------------------------------
