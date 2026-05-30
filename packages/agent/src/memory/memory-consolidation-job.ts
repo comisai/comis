@@ -209,6 +209,28 @@ export async function runMemoryConsolidation(
     return ok(undefined);
   }
 
+  // OBS-03 (the last degradation gap): a candidate arrives with
+  // `embedding === undefined` when sqlite-vec is unavailable (the adapter's
+  // LEFT JOIN found no vec row). The clusterer then SILENTLY degrades that
+  // candidate to entity/FTS overlap. Surface a queryable, operator-facing
+  // signal — errorKind:"precondition" (an unmet precondition for VECTOR
+  // clustering) + a COUNT + a hint naming the fallback. Counts only — never
+  // candidate content (AGENTS.md §2.7). Non-fatal: the run proceeds (the
+  // clusterer's entity/FTS fallback still produces clusters).
+  const missingEmbedding = candidates.filter((c) => c.embedding === undefined).length;
+  if (missingEmbedding > 0) {
+    logger.warn(
+      {
+        agentId,
+        step: "cluster" as const,
+        errorKind: "precondition" as const,
+        missingEmbedding,
+        hint: `${missingEmbedding} consolidation candidate(s) missing embedding; clustering degraded to entity/FTS overlap`,
+      },
+      "Consolidation candidates missing embedding",
+    );
+  }
+
   // 2. Greedy clustering, then 3. partition into homogeneous sub-clusters
   // (CONS-06). Singletons carry nothing to merge → dropped (left for a future
   // run; SAFE because selection is a state predicate, not a cursor).
@@ -219,6 +241,20 @@ export async function runMemoryConsolidation(
   const subClusters = clusters
     .flatMap((c) => groupByTrustAndTagScope(c))
     .filter((c) => c.length >= 2);
+
+  // OBS-05 CLUSTER stage: report the funnel (candidates → clusters →
+  // mergeable sub-clusters). O(1)/run → INFO.
+  logger.info(
+    {
+      agentId,
+      step: "cluster" as const,
+      candidates: candidates.length,
+      clusters: clusters.length,
+      subClusters: subClusters.length,
+      durationMs: clock.now() - startMs,
+    },
+    "consolidation clustered",
+  );
 
   // 4. Existing observations for the deterministic dedup pre-check (CONS-04).
   // A read failure is NON-FATAL: degrade to "no known duplicates" (we may
@@ -396,6 +432,14 @@ export async function runMemoryConsolidation(
     // note above (no same-run cross-trust content collapse).
     existingKeys.add(key);
   }
+
+  // OBS-05 APPLY stage: report what the merge/apply loop produced. O(1)/run →
+  // INFO (per-cluster skip/dedup detail stays DEBUG via the step:"consolidate"
+  // lines above).
+  logger.info(
+    { agentId, step: "apply" as const, observationsCreated, dedupHits, durationMs: clock.now() - startMs },
+    "consolidation applied",
+  );
 
   eventBus.emit("memory:consolidated", {
     agentId,
