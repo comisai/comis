@@ -17,6 +17,9 @@ import type { HeartbeatRunner, CronScheduler, WakeCoalescer, PerAgentHeartbeatRu
 import type { BrowserService, MediaTempManager } from "@comis/skills";
 import type { SessionResetScheduler } from "@comis/agent";
 import { safePath, systemNowMs, systemSetTimeout, systemClearTimeout, systemClearInterval } from "@comis/core";
+import { withStepTimeout } from "./shutdown-step-timeout.js";
+// Re-export STEP_TIMEOUT_MS so existing imports of it from setup-shutdown.ts continue to work.
+export { STEP_TIMEOUT_MS } from "./shutdown-step-timeout.js";
 import { writeRegularFile } from "@comis/observability";
 import type { ProcessMonitor } from "../process/process-monitor.js";
 import type { RestartContinuationTracker } from "./restart-continuation.js";
@@ -164,44 +167,6 @@ export interface ShutdownDeps {
 export interface ShutdownResult {
   /** Graceful shutdown orchestrator. */
   shutdownHandle: ShutdownHandle;
-}
-
-// ---------------------------------------------------------------------------
-// Per-step timeout helper
-// ---------------------------------------------------------------------------
-
-/** Per-step timeout budget (5s). The outer 30s hard timeout in graceful-shutdown.ts remains unchanged. */
-export const STEP_TIMEOUT_MS = 5_000;
-
-async function withStepTimeout(
-  fn: () => void | Promise<void>,
-  component: string,
-  logger: ComisLogger,
-): Promise<void> {
-  let timer: ReturnType<typeof systemSetTimeout> | undefined;
-  try {
-    await Promise.race([
-      Promise.resolve(fn()),
-      new Promise<never>((_, reject) => {
-        timer = systemSetTimeout(() => reject(new Error(`Shutdown step "${component}" timed out after ${STEP_TIMEOUT_MS}ms`)), STEP_TIMEOUT_MS);
-      }),
-    ]);
-  } catch (err) {
-    logger.warn(
-      {
-        component,
-        timeoutMs: STEP_TIMEOUT_MS,
-        err: err instanceof Error ? err : String(err),
-        hint: `Shutdown step "${component}" hung or failed; continuing with remaining steps`,
-        errorKind: "timeout" as const,
-      },
-      "Shutdown step timed out or failed, continuing",
-    );
-  } finally {
-    // Clear the step timer once the race settles so a fast step does not
-    // leave a dangling 5s timer (≈30 of them per shutdown otherwise).
-    if (timer !== undefined) systemClearTimeout(timer);
-  }
 }
 
 // ---------------------------------------------------------------------------

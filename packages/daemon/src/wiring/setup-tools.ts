@@ -9,7 +9,7 @@
 import { isAbsolute, resolve } from "node:path";
 import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
-import type { ComisLogger, SessionManager, IssuedSession } from "@comis/infra";
+import type { ComisLogger, IssuedSession } from "@comis/infra";
 import {
   SkillsConfigSchema,
   sanitizeLogString,
@@ -74,35 +74,16 @@ import {
   createPlatformToolRegistry,
   type PlatformToolBuildContext,
 } from "@comis/skills/platform-tools";
+// Broker activation seam types. Extracted to setup-broker-activation.ts to
+// keep this file under 800 lines. Re-exported here for backward compatibility
+// (existing imports of BrokerContextDeps from setup-tools.ts still work).
+export type { BrokerContextDeps } from "./setup-broker-activation.js";
+import type { BrokerContextDeps } from "./setup-broker-activation.js";
 
 
 // ---------------------------------------------------------------------------
 // Deps / Result types
 // ---------------------------------------------------------------------------
-
-/**
- * Broker context threaded from daemon bootFoundation into tool assembly.
- * When present: exec tool is assembled with broker-only network isolation,
- * secureCredentialHome, and brokerSpawnEnv (HTTPS_PROXY + placeholder key +
- * single-use token).
- * When absent (undefined): no change to the default open network path (no regression).
- */
-export interface BrokerContextDeps {
-  /** TCP port the broker is listening on (for HTTPS_PROXY env var). */
-  tcpPort: number;
-  /** Unix socket path for broker-only egress (brokerSocketPath in SandboxOptions). */
-  socketPath: string;
-  /** Absolute path to the broker CA cert PEM (NODE_EXTRA_CA_CERTS env var). */
-  caPath: string;
-  /** Session manager for issuing a single-use token per assembleToolsForAgent call. */
-  sessionManager: SessionManager;
-  /**
-   * Placeholder env vars: mapping of env var name -> placeholder string.
-   * e.g. { ANTHROPIC_API_KEY: "comis-broker-placeholder" }
-   * NEVER contains the real secret value — resolved by the broker per-request.
-   */
-  placeholders: Record<string, string>;
-}
 
 /** Dependencies for tool assembly setup. */
 export interface ToolsDeps {
