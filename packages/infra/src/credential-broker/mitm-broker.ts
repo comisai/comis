@@ -150,7 +150,13 @@ function parseInnerRequest(rawHeaders: string): {
     if (colonIdx === -1) continue;
     const name = line.slice(0, colonIdx).trim().toLowerCase();
     const value = line.slice(colonIdx + 1).trim();
-    headers.set(name, value);
+    // CR-03 (EGRESS-04): RFC 7230 §3.2.2 — accumulate multiple values for the
+    // same header name with comma-joining so duplicate Upgrade headers cannot
+    // shadow "websocket" by appearing later in the header list. A simple
+    // Map.set() overwrite would let an attacker bypass the WS guard by sending
+    // 'Upgrade: websocket\r\nUpgrade: x-bypass' (the second value wins).
+    const existing = headers.get(name);
+    headers.set(name, existing !== undefined ? `${existing}, ${value}` : value);
   }
 
   return { method, path, headers };
@@ -431,8 +437,15 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         // Fail closed on WS upgrade — credential injection into WS frames
         // is not supported (WS-01 future). Silent hang would allow a client
         // to open an unmediated tunnel; explicit 501 is the auditable exit.
+        //
+        // CR-03: headers.get("upgrade") now returns a comma-joined string of
+        // ALL Upgrade values (e.g. "websocket, x-decoy" or "x-decoy, websocket").
+        // Split on commas and test every token — a single .toLowerCase() ===
+        // "websocket" check was bypassable by sending a second Upgrade header
+        // that overwrote "websocket" in the original Map.set implementation.
         const upgradeHeader = parsed.headers.get("upgrade");
-        if (upgradeHeader?.toLowerCase() === "websocket") {
+        const upgradeValues = (upgradeHeader ?? "").split(",").map((v) => v.trim().toLowerCase());
+        if (upgradeValues.some((v) => v === "websocket")) {
           log.warn(
             {
               step: "ws-guard",
