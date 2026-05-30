@@ -208,7 +208,7 @@ jq 'select(.step == "consolidate")' ~/.comis/logs/daemon.log
 
 The aggregate outcome of these passes is also emitted as the typed
 `memory:entities_linked` and `memory:consolidated` events — see
-[Observability → Recall events](/operations/observability#15-2-recall-events-direct-emit-not-bridge-mapped).
+[Observability → Memory & Recall Diagnostics](/operations/observability#15-memory-recall-diagnostics).
 
 ### Graceful-degradation WARNs (no silent degradation)
 
@@ -224,7 +224,7 @@ above) — recall never drops to a cheaper path silently:
 
 As with all Comis logs, these never log secrets, message bodies, or absolute
 paths — the per-recall ranking detail lives only in the opt-in, full-sanitized
-[recall-trace artifact](/operations/observability#15-1-the-recall-trace-artifact-opt-in),
+[recall-trace artifact](/operations/observability#15-memory-recall-diagnostics),
 never in `daemon.log`.
 
 ```bash

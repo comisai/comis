@@ -493,6 +493,67 @@ See [Resilience Architecture](/agents/resilience) for how these systems work tog
   </Accordion>
 </AccordionGroup>
 
+## Memory & Recall Issues
+
+Recall is the path that selects which memories enter the prompt. When it surprises you, you do not have to read code — two questions cover almost every case. (The artifacts and events behind this runbook are documented in [Observability → Memory & Recall Diagnostics](/operations/observability#15-memory-recall-diagnostics).)
+
+<AccordionGroup>
+  <Accordion title="Why did recall pick X? (or miss the obvious memory)">
+    **Symptom:** A recall injected a memory you did not expect, or omitted one you did — and you want to see the ranking that produced that result.
+
+    **How to diagnose:**
+
+    1. **Enable the recall trace** (opt-in, default off). Add to `config.yaml`, then reload:
+       ```yaml
+       diagnostics:
+         recallTrace:
+           enabled: true        # opt-in — redacted, bounded (50 MB) JSONL
+       ```
+    2. **Reproduce the surprising recall** (send the message that triggered it).
+    3. **Read the per-memory ranking breakdown** with `--format json`:
+       ```bash
+       node packages/cli/dist/cli.js memory recall-trace <session> --format json
+       ```
+       The JSON record shows, for each candidate: which lanes matched (FTS / vector / entity), the fused order, the pre- and post-rerank scores, the recency / temporal / proof / trust score components, and the **include/exclude reason** for every memory. The table view (omit `--format json`) shows just the correlation keys (`trace`, `session`, `finalCount`, `ts`) for locating the right record first.
+    4. **Cross-reference the trust filter.** If the memory you expected is *excluded*, the reason field will say why — most often a trust-level filter (`includeTrustLevels`) rather than a low score.
+
+    <Info>
+    The recall-trace payload is **full-sanitized** — it records the ranking *structure* and *scores*, never raw memory bodies or query text. There is no toggle to include raw content; see [Observability → Memory & Recall Diagnostics](/operations/observability#15-memory-recall-diagnostics).
+    </Info>
+
+    Turn `recallTrace.enabled` back to `false` once you have the answer — it is a debug-session writer, not a steady-state one.
+  </Accordion>
+
+  <Accordion title="Why is recall slow?">
+    **Symptom:** Recall adds noticeable latency to a turn.
+
+    **How to diagnose, in order:**
+
+    1. **Is the cross-encoder reranker on?** `rag.rerank.enabled` is **opt-in (default `false`)** precisely because the reranker adds latency. If you enabled it, that is the most likely source:
+       ```yaml
+       agents:
+         default:
+           rag:
+             rerank:
+               enabled: true       # the latency source — disable to A/B
+               timeoutMs: 800       # the per-recall budget; fallback fires past this
+       ```
+       Disable it briefly to confirm the latency disappears. On timeout the reranker already falls back to the fusion-ranked order (`memory:reranked.timedOut: true`), so correctness is preserved — but the wait still happens up to `timeoutMs`.
+    2. **First-call reranker model load.** The reranker is a local GGUF loaded on first use. The *first* recall after a restart (with rerank on) pays a one-time model-load cost; steady-state recalls do not. A single slow recall right after startup is expected.
+    3. **Vector index availability.** If the vector lane cannot run, recall falls back to **FTS-only** and logs a WARN with `errorKind` + `hint`. Check for it:
+       ```bash
+       grep '"errorKind"' ~/.comis/logs/daemon.log | grep -i "rerank\|vec\|embed"
+       ```
+       A vec→FTS fallback shows as `memory:recalled.vectorCandidates: 0`.
+
+    **Aggregate health:** the `comis memory stats` recall-counter overlay surfaces the rerank-fallback rate, lane usage, consolidation throughput, and recall hit-rate — a climbing fallback rate means the reranker is timing out across the fleet, not just on one turn:
+    ```bash
+    node packages/cli/dist/cli.js memory stats
+    ```
+    The overlay is best-effort; a daemon that has not wired the counters still renders base stats. See the [CLI reference](/reference/cli#comis-memory) for every `comis memory` subcommand.
+  </Accordion>
+</AccordionGroup>
+
 ## Related Pages
 
 <CardGroup cols={2}>
