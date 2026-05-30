@@ -205,7 +205,16 @@ export class BwrapProvider implements SandboxProvider {
     // overrides the RO bind for ~/.local. MUST come before the discovery
     // readOnlyPaths loop below so caller-supplied RO can't shadow these.
     // Mirror of systemd ReadWritePaths in comis.service.template.
+    //
+    // EGRESS-02 (CR-01 fix): When secureCredentialHome is true, skip
+    // ~/.local/share entirely — a RW bind over the parent directory would
+    // re-expose ~/.local/share/claude through the parent mount even though
+    // getClaudeCodeRwPaths is gated above. Skipping the ~/.local/share bind
+    // is the safest correct option; dev tools can still use workspace-redirected
+    // paths from wrapEnv() (XDG_DATA_HOME, UV_TOOL_DIR, PIPX_HOME, etc.).
+    const localSharePath = safePath(os.homedir(), ".local", "share");
     for (const dp of getDevToolRwPaths(os.homedir())) {
+      if (opts.secureCredentialHome && dp === localSharePath) continue;
       args.push("--bind", dp, dp);
     }
 
