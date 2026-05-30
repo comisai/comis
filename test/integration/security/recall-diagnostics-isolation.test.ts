@@ -58,7 +58,7 @@ import {
   createSqliteMemoryConsolidationStore,
 } from "@comis/memory";
 import { createMemoryHandlers, type MemoryHandlerDeps } from "@comis/daemon";
-import { createMemoryRecall } from "@comis/agent";
+import { createMemoryRecall, buildRecallTrace } from "@comis/agent";
 import { createRecallTrace, RecallTraceEventSchema } from "@comis/observability";
 import type Database from "better-sqlite3";
 import * as fs from "node:fs";
@@ -145,12 +145,16 @@ function makeHandlerDeps(
   consolidationStore: ReturnType<typeof createSqliteMemoryConsolidationStore>,
   tenantId: string,
   defaultAgentId: string,
+  dataDir?: string,
 ): MemoryHandlerDeps {
   return {
     defaultAgentId,
     defaultWorkspaceDir: os.tmpdir(),
     tenantId,
     workspaceDirs: new Map<string, string>(),
+    // WR-01/WR-02: when set, the memory.recall_trace handler reads
+    // <dataDir>/logs/recall-trace.jsonl — the SAME path the recorder writes.
+    ...(dataDir !== undefined ? { dataDir } : {}),
     // memoryApi is required by the slice but the diagnostic handlers under test
     // never touch it — a structural stub that throws if any handler does.
     memoryApi: new Proxy(
@@ -494,5 +498,151 @@ describe("recall-trace redaction (end-to-end, OBS-02)", () => {
     if (!parsed.success) return;
     expect(parsed.data.queryDigest.length).toBeGreaterThan(0);
     expect(parsed.data.ranked.map((r) => r.id)).toContain(memId);
+  });
+});
+
+// ===========================================================================
+// Task 3: recall-trace READ-BACK through the production recorder path (WR-01)
+// ===========================================================================
+
+describe("memory.recall_trace read-back via the REAL production recorder (WR-01)", () => {
+  let adapter: SqliteMemoryAdapter;
+  let db: Database.Database;
+  let dataDir: string;
+
+  const fixedClock: ClockPort = {
+    now: () => 1_700_000_000_000,
+    monotonicNow: () => 0,
+  } as unknown as ClockPort;
+
+  // The scope the recorder writes and the handler filters on.
+  const SESSION_KEY = {
+    tenantId: "tenant_wr01",
+    userId: "user_a",
+    channelId: "chan_1",
+    agentId: "agent_wr01",
+  } as unknown as SessionKey;
+  // The formatted session key the CLI's `recall-trace <session>` selector passes
+  // (tenantId:userId:channelId — formatSessionKey does NOT serialize agentId).
+  const SESSION_KEY_STR = "tenant_wr01:user_a:chan_1";
+
+  beforeEach(() => {
+    adapter = new SqliteMemoryAdapter(memoryConfig, deterministicEmbeddingPort());
+    db = adapter.getDb();
+    dataDir = fs.mkdtempSync(`${os.tmpdir()}/comis-wr01-`);
+  });
+
+  afterEach(() => {
+    db.close();
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  /** Drive a real recall through the PRODUCTION recorder wiring (buildRecallTrace
+   *  → createRecallTrace with the authoritative envelope + dataDir-derived base)
+   *  and createMemoryRecall, writing to <dataDir>/logs/recall-trace.jsonl. */
+  async function recordRealRecall(scope: SessionKey, tenantId: string): Promise<string> {
+    const memId = randomUUID();
+    const stored = await adapter.store(
+      makeEntry({
+        id: memId,
+        tenantId: scope.tenantId as string,
+        agentId: scope.agentId as string,
+        userId: "user_a",
+        content: "a recalled note about the quarterly plan",
+        trustLevel: "learned",
+        createdAt: 1_700_000_000_000,
+      }),
+    );
+    expect(stored.ok).toBe(true);
+
+    // THE PRODUCTION WIRING: buildRecallTrace threads the envelope (sessionKey +
+    // tenantId) and resolves confinedBaseDir from dataDir — exactly as
+    // prompt-assembly does. No hand-written fixture.
+    const recallTrace = buildRecallTrace(
+      { enabled: true },
+      scope.agentId as string,
+      "tenant_wr01:user_a:chan_1".replace("tenant_wr01", scope.tenantId as string),
+      dataDir,
+      {
+        sessionKey: "tenant_wr01:user_a:chan_1".replace("tenant_wr01", scope.tenantId as string),
+        tenantId,
+      },
+    );
+    expect(recallTrace).not.toBeNull();
+    if (recallTrace === null) throw new Error("recorder unexpectedly null");
+
+    const recall = createMemoryRecall(
+      { memoryPort: adapter, clock: fixedClock, logger: noopLogger, recallTrace },
+      {
+        maxResults: 5,
+        minScore: 0,
+        includeTrustLevels: ["system", "learned"],
+        rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 },
+      },
+    );
+    const result = await recall.recall("quarterly plan", scope, scope.agentId as string);
+    expect(result.ok).toBe(true);
+    await recallTrace.flush();
+    return memId;
+  }
+
+  it("returns the recorded trace when read back by session_key (RED on the pre-fix selector)", async () => {
+    const memId = await recordRealRecall(SESSION_KEY, SESSION_KEY.tenantId as string);
+
+    const handlers = createMemoryHandlers(
+      makeHandlerDeps(
+        adapter,
+        // entity/consolidation stores are unused by recall_trace — structural stubs.
+        createSqliteMemoryEntityStore({ db, logger: noopLogger }),
+        createSqliteMemoryConsolidationStore({ db, logger: noopLogger }),
+        SESSION_KEY.tenantId as string,
+        SESSION_KEY.agentId as string,
+        dataDir,
+      ),
+    );
+
+    const resp = (await handlers["memory.recall_trace"]({
+      _trustLevel: "admin",
+      session_key: SESSION_KEY_STR,
+    })) as { records: Array<Record<string, unknown>> };
+
+    // THE WR-01 BINDING ASSERTION: the production recorder's record is RETURNED.
+    // Pre-fix this was [] — the recorder wrote `sessionId` (no `sessionKey`) and
+    // the handler matched only `rec.sessionKey`.
+    expect(resp.records.length).toBeGreaterThan(0);
+    const rec = resp.records[0]!;
+    // The record carries the authoritative scope the envelope wired.
+    expect(rec.sessionKey).toBe(SESSION_KEY_STR);
+    expect(rec.tenantId).toBe(SESSION_KEY.tenantId);
+    expect(rec.agentId).toBe(SESSION_KEY.agentId);
+    // And it references the surfaced memory (the trace is the real recall).
+    expect(JSON.stringify(rec)).toContain(memId);
+  });
+
+  it("does NOT return a recall trace recorded under a DIFFERENT tenant (read-side cross-tenant filter)", async () => {
+    // Record under tenant_wr01, then ask the handler scoped to a DIFFERENT
+    // tenant. WR-01 revived the read-side tenant scope-filter (rec.tenantId),
+    // so the foreign-tenant query returns nothing even though the session_key
+    // string would otherwise match.
+    await recordRealRecall(SESSION_KEY, SESSION_KEY.tenantId as string);
+
+    const handlers = createMemoryHandlers(
+      makeHandlerDeps(
+        adapter,
+        createSqliteMemoryEntityStore({ db, logger: noopLogger }),
+        createSqliteMemoryConsolidationStore({ db, logger: noopLogger }),
+        "tenant_OTHER",
+        SESSION_KEY.agentId as string,
+        dataDir,
+      ),
+    );
+
+    const resp = (await handlers["memory.recall_trace"]({
+      _trustLevel: "admin",
+      session_key: SESSION_KEY_STR,
+    })) as { records: Array<Record<string, unknown>> };
+
+    expect(resp.records).toHaveLength(0);
   });
 });

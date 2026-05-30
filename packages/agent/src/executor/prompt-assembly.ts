@@ -231,6 +231,14 @@ export function buildRecallTrace(
   // available there; mirrors how cacheTrace forwards `config.dataDir` as its
   // confinedBaseDir).
   dataDir?: string,
+  // WR-01: thread the REAL scope into the recorder envelope so on-disk records
+  // carry the authoritative `sessionKey` + `tenantId`. Production wiring used to
+  // pass NO envelope, so records had neither field — the handler's session
+  // selector (rec.sessionKey) and tenant scope-filter (rec.tenantId) were dead
+  // (zero records returned; cross-tenant filter never fired). `agentId` is
+  // already the top-level recorder field, so only sessionKey + tenantId ride the
+  // envelope cluster.
+  envelope?: { readonly sessionKey?: string; readonly tenantId?: string },
 ): ReturnType<typeof createRecallTrace> {
   if (cfg?.enabled !== true) return null;
   // Match the reader's base EXACTLY: the handler uses `deps.dataDir ??
@@ -243,6 +251,7 @@ export function buildRecallTrace(
     enabled: true,
     agentId,
     sessionId,
+    ...(envelope !== undefined ? { envelope } : {}),
     ...(cfg.filePath !== undefined ? { filePath: cfg.filePath } : {}),
     ...(cfg.maxFileBytes !== undefined ? { maxFileBytes: cfg.maxFileBytes } : {}),
     ...(confinedBaseDir !== undefined ? { confinedBaseDir } : {}),
@@ -711,11 +720,18 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       // daemon-wide lifecycle). `eventBus` is the already-in-scope bus (used for
       // memory:injected below) — threading both here keeps memory:recalled/reranked at
       // the canonical one-per-recall site inside createMemoryRecall.
+      // WR-01: pass the authoritative scope envelope so on-disk records carry
+      // `sessionKey` (the formatted key the CLI's recall-trace <session> selector
+      // compares against) AND `tenantId` (the read-side cross-tenant filter).
+      // tenantId comes from the per-agent config tenant, falling back to the
+      // SessionKey's tenant.
+      const recallTraceSessionKey = formatSessionKey(sessionKey);
       const recallTrace = buildRecallTrace(
         deps.recallTraceConfig,
         agentId ?? config.name,
-        formatSessionKey(sessionKey),
+        recallTraceSessionKey,
         deps.dataDir,
+        { sessionKey: recallTraceSessionKey, tenantId: deps.tenantId ?? sessionKey.tenantId },
       );
       // Single recall orchestrator (RANK-07): search->fuse->rerank->score->trust-filter
       // ->dedup. Rerank opt-in/default-OFF -> fusion order (RANK-01/03/08). Non-fatal.

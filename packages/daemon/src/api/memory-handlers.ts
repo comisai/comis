@@ -566,8 +566,16 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
             continue;
           }
           // Selector match: session_key OR trace_id.
+          // WR-01: the production recorder ALWAYS writes `sessionId`
+          // (= formatSessionKey(...)) and writes `sessionKey` only when an
+          // envelope is supplied. `comis memory recall-trace <session>` passes
+          // the formatted session key, so the selector must match it against
+          // the field the recorder actually writes — `sessionKey` when present,
+          // else the always-present `sessionId`. Matching only `rec.sessionKey`
+          // returned ZERO records in production.
+          const recSession = rec.sessionKey ?? rec.sessionId;
           const matchesSelector =
-            (params.session_key !== undefined && rec.sessionKey === params.session_key) ||
+            (params.session_key !== undefined && recSession === params.session_key) ||
             (params.trace_id !== undefined && rec.traceId === params.trace_id);
           if (!matchesSelector) continue;
           // Defense-in-depth scope filter — only when the record carries the

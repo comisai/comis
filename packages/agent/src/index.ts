@@ -245,6 +245,12 @@ export { clearSessionState, wireSessionStateCleanup } from "./executor/session-s
 export { getCacheSafeParams } from "./executor/prompt-assembly.js";
 export type { CacheSafeParams } from "./executor/prompt-assembly.js";
 
+// Recall-trace recorder wiring (Phase 86 / OBS-01/02). Exported so the
+// recall-diagnostics capstone can drive the REAL production recorder path
+// (envelope + dataDir-derived confinedBaseDir) rather than a hand-written
+// fixture, closing the WR-01 read-path gap end-to-end.
+export { buildRecallTrace } from "./executor/prompt-assembly.js";
+
 // MCP disconnect cleanup (clean discovery state on server disconnect/tools_changed)
 export { wireMcpDisconnectCleanup } from "./executor/mcp-disconnect-cleanup.js";
 

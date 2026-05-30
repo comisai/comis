@@ -921,10 +921,15 @@ describe("createMemoryHandlers - OBS-06 diagnostics", () => {
       ).rejects.toThrow(/at least one of session_key|session_key.*trace_id|required/i);
     });
 
-    it("returns records matching session_key from the JSONL artifact", async () => {
+    it("returns records matching session_key against the recorder's sessionId field", async () => {
+      // WR-01: the PRODUCTION recorder ALWAYS writes `sessionId` and only writes
+      // `sessionKey` when an envelope is supplied. These fixtures use the
+      // real-recorder shape (sessionId present), and the selector must match
+      // session_key against it. The old fixtures hand-wrote `sessionKey` — a
+      // field the recorder did not always write — which masked the dead selector.
       const dataDir = writeTraceFile([
-        { ts: "2026-05-29T00:00:00.000Z", sessionKey: "sess-A", traceId: "t-A", agentId: "default", finalCount: 3 },
-        { ts: "2026-05-29T00:01:00.000Z", sessionKey: "sess-B", traceId: "t-B", agentId: "default", finalCount: 1 },
+        { ts: "2026-05-29T00:00:00.000Z", sessionId: "sess-A", traceId: "t-A", agentId: "default", finalCount: 3 },
+        { ts: "2026-05-29T00:01:00.000Z", sessionId: "sess-B", traceId: "t-B", agentId: "default", finalCount: 1 },
       ]);
       const { deps } = makeDiagDeps({ dataDir });
       const handlers = createMemoryHandlers(deps);
@@ -935,7 +940,26 @@ describe("createMemoryHandlers - OBS-06 diagnostics", () => {
       })) as { records: Array<Record<string, unknown>> };
 
       expect(result.records).toHaveLength(1);
-      expect(result.records[0]!.sessionKey).toBe("sess-A");
+      expect(result.records[0]!.sessionId).toBe("sess-A");
+    });
+
+    it("also matches session_key against the envelope-wired sessionKey when present", async () => {
+      // When the agent wires the envelope, the recorder writes BOTH sessionId
+      // AND sessionKey (= the formatted session key). The selector prefers
+      // sessionKey when present (rec.sessionKey ?? rec.sessionId).
+      const dataDir = writeTraceFile([
+        { ts: "t", sessionId: "sess-A", sessionKey: "tenant-1:user:chan", traceId: "t-A", agentId: "default" },
+      ]);
+      const { deps } = makeDiagDeps({ dataDir });
+      const handlers = createMemoryHandlers(deps);
+
+      const result = (await handlers["memory.recall_trace"]!({
+        _trustLevel: "admin",
+        session_key: "tenant-1:user:chan",
+      })) as { records: Array<Record<string, unknown>> };
+
+      expect(result.records).toHaveLength(1);
+      expect(result.records[0]!.sessionKey).toBe("tenant-1:user:chan");
     });
 
     it("matches by trace_id and caps at limit, returning the FIRST limit matches in order (WR-06 early-break)", async () => {
@@ -965,18 +989,19 @@ describe("createMemoryHandlers - OBS-06 diagnostics", () => {
     });
 
     it("scope-filters the artifact read by tenantId/agentId when records carry them", async () => {
+      // Real-recorder shape: sessionId always present; sessionKey + tenantId
+      // present because the agent wired the envelope (WR-01). Same session, two
+      // tenants — the read-side cross-tenant filter excludes the foreign one.
       const dataDir = writeTraceFile([
-        { ts: "t", sessionKey: "sess-A", traceId: "t-A", agentId: "default", tenantId: "tenant-1" },
-        // Same sessionKey but a DIFFERENT tenant on the record — must be excluded
-        // (defense-in-depth scope on the artifact read).
-        { ts: "t", sessionKey: "sess-A", traceId: "t-A", agentId: "default", tenantId: "tenant-OTHER" },
+        { ts: "t", sessionId: "sk-A", sessionKey: "sk-A", traceId: "t-A", agentId: "default", tenantId: "tenant-1" },
+        { ts: "t", sessionId: "sk-A", sessionKey: "sk-A", traceId: "t-A", agentId: "default", tenantId: "tenant-OTHER" },
       ]);
       const { deps } = makeDiagDeps({ dataDir });
       const handlers = createMemoryHandlers(deps);
 
       const result = (await handlers["memory.recall_trace"]!({
         _trustLevel: "admin",
-        session_key: "sess-A",
+        session_key: "sk-A",
       })) as { records: Array<Record<string, unknown>> };
 
       expect(result.records).toHaveLength(1);
@@ -989,7 +1014,7 @@ describe("createMemoryHandlers - OBS-06 diagnostics", () => {
       fs.mkdirSync(logsDir, { recursive: true });
       fs.writeFileSync(
         path.join(logsDir, "recall-trace.jsonl"),
-        `{"ts":"t","sessionKey":"sess-A","traceId":"t-A"}\n{ this is not json\n`,
+        `{"ts":"t","sessionId":"sess-A","traceId":"t-A"}\n{ this is not json\n`,
       );
       const { deps } = makeDiagDeps({ dataDir: dir });
       const handlers = createMemoryHandlers(deps);
