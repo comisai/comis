@@ -1348,12 +1348,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // handler-factory files that share the MemoryApiDeps cluster slice):
       //   - memory-handlers.ts  (8 methods)
       //   - context-handlers.ts (7 methods)
-      // The 15 per-method contracts have in-repo consumers via both
+      // The 19 per-method contracts (8 memory + 4 OBS-06 diagnostics + 7
+      // context as of Phase 86 Plan 05) have in-repo consumers via both
       // handler factories (imports + computed property keys). Only the
-      // per-domain aggregator array MEMORY_CONTRACTS lacks an external
-      // consumer (composed into API_CONTRACTS_ORDERED intra-package —
-      // the walker skips self-imports).
+      // per-domain aggregator arrays MEMORY_CONTRACTS / MEMORY_DIAGNOSTIC_CONTRACTS
+      // lack an external consumer (composed into API_CONTRACTS_ORDERED /
+      // spread into MEMORY_CONTRACTS intra-package — the walker skips
+      // self-imports). MEMORY_DIAGNOSTIC_CONTRACTS is the Phase-86 OBS-06
+      // diagnostic group, now folded into MEMORY_CONTRACTS but still surfaced
+      // on the public barrel for symmetry with the other domain arrays.
       "MEMORY_CONTRACTS",
+      "MEMORY_DIAGNOSTIC_CONTRACTS",
       // Media + image-domain contracts (16 methods spanning 2
       // handler-factory files that share the MediaApiDeps cluster slice):
       //   - media-handlers.ts  (15 methods)
@@ -1852,6 +1857,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // checker counts cross-package barrel consumers only).
       "MemoryEntityRowSchema",
       "EntityLaneRowSchema",
+      // OBS-06 entity-graph diagnostic row schema (Phase 86 / listEntities).
+      // Consumed intra-package by sqlite-memory-entity-store.ts via
+      // createRowMapper; barrel-surfaced like its Phase-83 siblings above.
+      "EntityListRowSchema",
       "SessionRowSchema",
       "SessionRowFromSchema",
       "VecSearchRowSchema",

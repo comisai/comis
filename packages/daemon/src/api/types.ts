@@ -104,6 +104,18 @@ export interface SessionsApiDeps {
  * Dependencies for memory-handlers + context-handlers
  * (memory.read/write/search/embeddingCache, context.recall/expand).
  */
+// @optional-field-count: 15 optional fields — MemoryApiDeps is the shared slice
+// for memory-handlers + context-handlers, so it carries TWO feature-gated dep
+// families: the context-DAG quartet (contextStore/store/config/contextEngineConfig/
+// resolveConversationId/rpcCall — a binary dispatcher gate) AND, as of Phase 86
+// (Plan 05), the OBS-06 memory-diagnostic deps (consolidationStore/entityStore/
+// recallCounters/dataDir — each absent ⇒ the corresponding admin diagnostic is
+// unavailable / zeroed, never a stub). Every optional is a real runtime
+// feature-switch documented row-by-row in packages/daemon/AUDIT-memory.md
+// (the CI architecture test enforces bidirectional parity with this interface);
+// tightening them to required would force every dispatcher call site to
+// fabricate stubs. Splitting the slice would break the structural-subtyping
+// invariant the 27 legacy *HandlerDeps depend on (see ApiDispatchDeps).
 export interface MemoryApiDeps {
   /** memory-handlers + context-handlers read deps.defaultAgentId / deps.tenantId. */
   defaultAgentId: string;

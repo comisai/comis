@@ -40,8 +40,11 @@ describe("memory + context domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("MEMORY_CONTRACTS has exactly 15 entries (8 memory + 7 context)", () => {
-    expect(MEMORY_CONTRACTS.length).toBe(15);
+  it("MEMORY_CONTRACTS has exactly 19 entries (8 memory + 4 OBS-06 diagnostics + 7 context)", () => {
+    // Plan 05 closed the cross-wave seam: the 4 MEMORY_DIAGNOSTIC_CONTRACTS are
+    // now spread in (8 + 4 + 7 = 19), in the same wave that landed their daemon
+    // handlers, so the registry ↔ handler set stays 1:1.
+    expect(MEMORY_CONTRACTS.length).toBe(19);
   });
 
   it("MEMORY_CONTRACTS method names cover every handler-factory method", () => {
@@ -571,7 +574,11 @@ describe("memory diagnostic contracts (OBS-06) — admin-scoped", () => {
     }
   });
 
-  it("the 4 diagnostic contracts are NOT yet in MEMORY_CONTRACTS (cross-wave seam — Plan 05 folds them in)", () => {
+  it("the 4 diagnostic contracts are now IN MEMORY_CONTRACTS (cross-wave seam closed in Plan 05)", () => {
+    // Plan 05 spread ...MEMORY_DIAGNOSTIC_CONTRACTS into MEMORY_CONTRACTS in the
+    // SAME diff that landed the daemon handlers (and removed the
+    // @contract-deferred-handler annotations), so each is now registered and
+    // the contract-handler-parity + bidirectional gates pass with 1:1 parity.
     const registered = new Set(MEMORY_CONTRACTS.map((c) => c.method));
     for (const method of [
       "memory.recall_trace",
@@ -581,8 +588,8 @@ describe("memory diagnostic contracts (OBS-06) — admin-scoped", () => {
     ]) {
       expect(
         registered.has(method),
-        `${method} must stay OUT of MEMORY_CONTRACTS until Plan 05 lands its handler`,
-      ).toBe(false);
+        `${method} must be IN MEMORY_CONTRACTS now that Plan 05 landed its handler`,
+      ).toBe(true);
     }
   });
 
