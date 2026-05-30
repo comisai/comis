@@ -589,29 +589,29 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           daemonLogger.info({ component: "media-temp-manager", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "media-temp-manager", daemonLogger);
       }
-      // Stop credential broker (TCP + unix socket). Early in teardown sequence
-      // because the broker holds open network sockets; close before heavy
-      // subsystem teardown.
-      if (brokerStop) {
-        const stopMs = systemNowMs();
-        await withStepTimeout(async () => {
-          await brokerStop();
-          daemonLogger.info({ component: "broker", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
-        }, "broker", daemonLogger);
-      }
-      // Drain per-agent background-process registries + disconnect
-      // MCP servers. Previously these ran inside a single
-      // eventBus.on("system:shutdown", ...) closure in setup-tools.ts;
-      // they are now two independent
-      // ShutdownDeps fields. Background processes go before
-      // obs-persistence because subprocess cleanup may emit observability
-      // events into the still-running write buffer.
+      // Drain per-agent background-process registries BEFORE stopping the broker.
+      // Background exec processes use the broker as their egress proxy (HTTPS_PROXY
+      // → broker TCP port). Stopping the broker first would cut their outbound
+      // connections mid-execution. Drain first, then close the broker once no live
+      // clients remain. Background processes go before obs-persistence because
+      // subprocess cleanup may emit observability events into the still-running
+      // write buffer.
       if (shutdownBackgroundProcesses) {
         const stopMs = systemNowMs();
         await withStepTimeout(async () => {
           await shutdownBackgroundProcesses();
           daemonLogger.info({ component: "background-processes", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "background-processes", daemonLogger);
+      }
+      // Stop credential broker (TCP + unix socket). Runs AFTER
+      // shutdownBackgroundProcesses so no live exec processes are proxied through
+      // the broker when its sockets are closed.
+      if (brokerStop) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          await brokerStop();
+          daemonLogger.info({ component: "broker", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "broker", daemonLogger);
       }
       if (mcpClientManagerDisconnectAll) {
         const stopMs = systemNowMs();
