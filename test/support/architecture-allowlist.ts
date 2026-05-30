@@ -391,6 +391,18 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     reason: "daemon.ts composition root after stage decomposition collapse. Single file holds main() + 4 small helpers (DEFAULT_CONFIG_PATHS / applyInspectDefaultsForLogging / hardenDataDirPermissions / runPreflightDoctor) + inlined foundation/agents/channels/gateway/shutdown bodies + 30 ex-stage-helper functions. The 5-stage decomposition was removed because its enforcement test (200-LOC-per-stage rule at __tests__/architecture.test.ts:174-382) created more structural overhead than the per-stage cap mitigated. The bootstrap-order assertion (5-stage call sequence + handle chaining contract) was deleted entirely; its runtime invariant is now carried by integration tests — daemon-lifecycle.test.ts:89-99 asserts the 5 startup log lines emit in source order. Composition-root cap raised to 3000L (350L headroom over re-measured 2,700L baseline).",
     removedIn: "deferred",
   },
+  {
+    file: "packages/daemon/src/wiring/setup-tools.ts",
+    lines: 810,
+    reason: "Tool assembly wiring: ToolsDeps + BrokerContextDeps interfaces + setupTools() + assembleToolsForAgent() closure + preprocessMessageText. The 27-line broker activation seam (INTEG-03) tipped the file from 782L to 810L. Split candidate: move BrokerContextDeps + brokerSpawnEnv wiring into setup-broker-activation.ts when Phase 9 adds per-command token issuance.",
+    removedIn: "phase-9",
+  },
+  {
+    file: "packages/daemon/src/wiring/setup-shutdown.ts",
+    lines: 804,
+    reason: "Shutdown wiring: ShutdownDeps (22 optional subsystem fields) + teardown chain (5 ordered phases) + broker/channels/gateway/agents/foundation teardown. Pre-existing 800L+ file; split candidate once ShutdownDeps cluster analysis completes.",
+    removedIn: "deferred",
+  },
   // skills (0 files remaining — exec-tool.ts + exec-security.ts split,
   // web-search-tool.ts + skill-registry.ts split, mcp-client.ts split)
   // core (0 files remaining; api-contracts/workspace.ts +
