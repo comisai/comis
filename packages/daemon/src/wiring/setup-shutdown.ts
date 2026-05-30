@@ -156,6 +156,8 @@ export interface ShutdownDeps {
   /** Stop the channel health monitor (from setupChannelHealthMonitor). */
   stopChannelHealthMonitor?: () => void;
   /** Unsubscribe health budget aggregator. */ unsubscribeHealthAggregator?: () => void;
+  /** Stop the credential broker (TCP + unix socket teardown). Only present when executor.broker is configured. */
+  brokerStop?: () => Promise<void>;
 }
 
 /** All services produced by the shutdown setup phase. */
@@ -260,6 +262,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     outputRetentionShutdown,
     stopChannelHealthMonitor,
     unsubscribeHealthAggregator,
+    brokerStop,
   } = deps;
 
   // Inlined graceful-shutdown body: SIGTERM/
@@ -585,6 +588,16 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           mediaTempManager.stopCleanupInterval();
           daemonLogger.info({ component: "media-temp-manager", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "media-temp-manager", daemonLogger);
+      }
+      // Stop credential broker (TCP + unix socket). Early in teardown sequence
+      // because the broker holds open network sockets; close before heavy
+      // subsystem teardown.
+      if (brokerStop) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          await brokerStop();
+          daemonLogger.info({ component: "broker", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "broker", daemonLogger);
       }
       // Drain per-agent background-process registries + disconnect
       // MCP servers. Previously these ran inside a single

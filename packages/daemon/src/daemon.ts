@@ -144,6 +144,7 @@ import {
   buildSkillRegistriesForBundles,
   setupOutputRetention,
   type SetupOutputRetentionHandle,
+  setupBroker,
 } from "./wiring/index.js";
 import {
   createActiveRunRegistry,
@@ -1725,6 +1726,21 @@ async function bootFoundation(
     });
   };
 
+  // 6.5.2. Credential broker (constructed only when executor.broker is configured)
+  const brokerHandle = container.config.executor?.broker
+    ? await setupBroker({
+        dataDir,
+        eventBus: container.eventBus,
+        logger: daemonLogger,
+        clock,
+        timers,
+        secretManager: container.secretManager,
+        bindings: Object.values(container.config.executor.broker.bindings ?? {}),
+        port: container.config.executor.broker.port,
+        socketPath: container.config.executor.broker.socketPath ?? safePath(dataDir, "broker.sock"),
+      })
+    : undefined;
+
   // 6.5.9. Seed bundled skill-creator into user data dir (version-aware).
   // Inlined seedBundledSkillCreator: idempotent — only writes if the
   // destination is missing OR the bundled version is newer.
@@ -1791,6 +1807,7 @@ async function bootFoundation(
     deliveryMirror, startMirrorPrune, shutdownMirror,
     geminiCacheManager,
     backgroundTaskManager, bgNotifyFn,
+    brokerHandle,
   });
 }
 
@@ -2739,6 +2756,8 @@ async function bootShutdown(
     stopChannelHealthMonitor: stopChannelHealthMonitor ?? undefined,
     // Thunk reads _healthAggRef.fn at teardown time — populated by emitStartupInvariants.
     unsubscribeHealthAggregator: () => _healthAggRef.fn?.(),
+    // Credential broker teardown (no-op when executor.broker is absent)
+    brokerStop: boot.brokerHandle ? () => boot.brokerHandle!.stop() : undefined,
   });
 
   // Wire shutdown ref for hot-add guard. Cross-stage deferred-ref populate:
