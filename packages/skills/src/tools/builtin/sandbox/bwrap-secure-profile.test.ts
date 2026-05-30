@@ -138,6 +138,30 @@ describe("bwrap secure profile — network mode + credential home gating (EGRESS
     expect(args).not.toContain("/home/testuser/.local/share/claude");
   });
 
+  it("secureCredentialHome:true → ~/.local/share parent NOT RW-bound OR masked with tmpfs at claude subpath (CR-01 parent-bind bypass)", () => {
+    // existsSync returns true for ALL paths (worst-case: ~/.local/share/claude exists on disk)
+    vi.mocked(existsSync).mockReturnValue(true);
+
+    const provider = createAvailableProvider();
+    const args = provider.buildArgs(makeOpts({ secureCredentialHome: true }));
+
+    // The credential subpath ~/.local/share/claude must NOT be reachable.
+    // Either the parent ~/.local/share must NOT be RW-bound, OR a tmpfs/empty
+    // mask must exist at the claude subpath AFTER the parent bind.
+    const parentBound = hasBind(args, "--bind", "/home/testuser/.local/share", "/home/testuser/.local/share");
+    const claudeMasked = (() => {
+      // A --tmpfs <path> mask anywhere after the parent bind closes the hole.
+      for (let i = 0; i < args.length - 1; i++) {
+        if (args[i] === "--tmpfs" && args[i + 1] === "/home/testuser/.local/share/claude") return true;
+      }
+      return false;
+    })();
+
+    // Pass if: parent is not bound (safest) OR parent is bound but masked
+    const credentialSubpathIsolated = !parentBound || claudeMasked;
+    expect(credentialSubpathIsolated).toBe(true);
+  });
+
   it("secureCredentialHome:false (default) → ~/.claude present when path exists (no-regression)", () => {
     vi.mocked(existsSync).mockImplementation((p) => {
       const existing = [
