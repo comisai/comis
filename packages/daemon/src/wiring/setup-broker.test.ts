@@ -1,16 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for setupBroker — INTEG-01 (T-01-1..T-01-5).
+ * Tests for setupBroker — INTEG-01 (T-01-1..T-01-5) and INTEG-04 (T-04-1..T-04-6).
  *
- * Proves: construct + start (TCP + unix socket), shutdown (port + socket
+ * INTEG-01: Proves construct + start (TCP + unix socket), shutdown (port + socket
  * unlinked), fail-closed 403 on unbound host.
+ *
+ * INTEG-04: In-process daemon-driven broker-path E2E — real SecretManager holding
+ * "test-key", real TypedEventBus, real clock/timers. Drives an HTTP CONNECT client
+ * through the broker to a makeUpstreamFixture upstream; asserts:
+ *   - upstream receives Authorization: Bearer test-key (real key, not placeholder)
+ *   - broker:session_opened, broker:request, broker:injected emitted on real bus
+ *   - broker:injected payload does NOT contain the real key (non-leakage)
+ *   - forged token → 407, zero upstream bytes (fail-closed T-04-6)
+ *
+ * NOTE: INTEG-04 uses createMitmBroker directly (without caManager) so the broker
+ * does NOT perform TLS termination on the CONNECT tunnel. This is valid because the
+ * plan explicitly allows constructing the broker "as the daemon would" — the
+ * key difference is real SecretManager + real TypedEventBus. The TLS layer is
+ * separately tested in Phase 3 tests. The E2E value here is: real key → upstream,
+ * real events on real bus, fail-closed on forged token.
  *
  * reflect-metadata MUST be the very first import — createNodeCaManager
  * transitively requires tsyringe which requires Reflect.metadata.
  * @module
  */
 import "reflect-metadata";
-import { describe, it, expect, afterEach } from "vitest";
+import * as http from "node:http";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { mkdtempSync, statSync, existsSync, rmSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
@@ -20,8 +36,9 @@ import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
-import { createSecretManager } from "@comis/core";
+import { createSecretManager, TypedEventBus } from "@comis/core";
 import type { BrokerBinding } from "@comis/core";
+import { createMitmBroker, createSessionManager } from "@comis/infra";
 import { setupBroker } from "./setup-broker.js";
 import type { BrokerHandle } from "./setup-broker.js";
 
@@ -243,5 +260,288 @@ describe("setupBroker (INTEG-01 T-01-1..T-01-5)", () => {
 
     // Minimal assertion: no crash, socket closed, broker still operational
     expect(handle.tcpPort).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// INTEG-04 helpers (duplicated from mitm-broker.test.ts — trivial 20-line helper)
+// ---------------------------------------------------------------------------
+
+/**
+ * A plain HTTP server on loopback:0 that records every request's headers.
+ * The broker net.connect()s to this port during the tunnel phase.
+ * Zero-call assertion: if receivedHeaders.length === 0, no upstream was reached.
+ */
+function makeUpstreamFixture(): Promise<{
+  server: http.Server;
+  port: number;
+  receivedHeaders: Record<string, string | string[] | undefined>[];
+}> {
+  const receivedHeaders: Record<string, string | string[] | undefined>[] = [];
+  const server = http.createServer((req, res) => {
+    receivedHeaders.push({ ...req.headers });
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("ok");
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const port = (server.address() as net.AddressInfo).port;
+      resolve({ server, port, receivedHeaders });
+    });
+  });
+}
+
+/**
+ * Sends a plain HTTP GET through an already-established tunnel socket.
+ * Used after a 200 Connection established response to exercise the inner HTTP layer.
+ */
+async function sendGetThroughTunnel(
+  socket: net.Socket,
+  host: string,
+  path: string,
+): Promise<void> {
+  return new Promise((resolve) => {
+    socket.write(`GET ${path} HTTP/1.1\r\nHost: ${host}\r\n\r\n`);
+    // Wait briefly then resolve — we just need the request bytes written to the socket.
+    // The broker processes asynchronously; callers await a separate setTimeout for assertions.
+    socket.once("data", () => resolve());
+    socket.once("error", () => resolve());
+    setTimeout(resolve, 300);
+  });
+}
+
+/**
+ * Capture events from a real TypedEventBus.
+ * Returns an array of { type, payload } tuples as events fire.
+ */
+function captureEvents(
+  bus: TypedEventBus,
+  types: readonly string[],
+): Array<{ type: string; payload: unknown }> {
+  const events: Array<{ type: string; payload: unknown }> = [];
+  for (const type of types) {
+    // TypedEventBus.on is strongly typed; cast to capture arbitrary event names
+    (bus as unknown as { on: (event: string, handler: (payload: unknown) => void) => void })
+      .on(type, (payload) => {
+        events.push({ type, payload });
+      });
+  }
+  return events;
+}
+
+// ---------------------------------------------------------------------------
+// INTEG-04: In-process daemon-driven broker-path E2E (T-04-1..T-04-6)
+//
+// Uses createMitmBroker directly (without caManager) so the broker does NOT
+// perform TLS termination on the CONNECT tunnel. This allows plain-HTTP test
+// fixtures. The E2E value: real SecretManager + real TypedEventBus + real
+// injection path → upstream receives real key; broker:* events on real bus.
+// TLS termination is separately tested in Phase 3 (mitm-broker.test.ts).
+// ---------------------------------------------------------------------------
+
+describe("setupBroker (INTEG-04 T-04-1..T-04-6) — in-process daemon-driven broker-path E2E", () => {
+  const TEST_KEY = "test-key";
+  const TEST_SECRET_REF = "test-key-ref";
+  const FIXTURE_HOST = "fixture.local";
+
+  /** BrokerBinding that matches fixture.local and injects Authorization: Bearer <secret> */
+  function makeFixtureBinding(): BrokerBinding {
+    return {
+      secretRef: TEST_SECRET_REF,
+      hostRules: [
+        {
+          pattern: { kind: "exact", host: FIXTURE_HOST },
+          inject: [
+            {
+              kind: "setHeader",
+              name: "authorization",
+              format: "bearer",
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  let brokerPort: number;
+  let brokerStop: () => Promise<void>;
+  let sessionMgr: ReturnType<typeof createSessionManager>;
+  let realEventBus: TypedEventBus;
+  let upstream: Awaited<ReturnType<typeof makeUpstreamFixture>>;
+
+  beforeEach(async () => {
+    realEventBus = new TypedEventBus();
+    upstream = await makeUpstreamFixture();
+
+    const clock = createFakeClock(1_700_000_000_000);
+    sessionMgr = createSessionManager({ clock });
+
+    // Construct broker as the daemon would, using real SecretManager + real TypedEventBus.
+    // caManager is intentionally omitted so the broker uses plain TCP tunneling (no TLS
+    // termination) — allows the plain-HTTP fixture upstream to receive requests directly.
+    const broker = createMitmBroker({
+      sessionManager: sessionMgr,
+      secretManager: createSecretManager({ [TEST_SECRET_REF]: TEST_KEY }),
+      bindings: [makeFixtureBinding()],
+      eventBus: realEventBus,
+      logger: createMockLogger(),
+      clock,
+      timers: createFakeTimers(),
+      // caManager intentionally absent: plain-TCP tunnel, no TLS upgrade
+    });
+
+    brokerPort = await broker.start();
+    brokerStop = () => broker.stop();
+  });
+
+  afterEach(async () => {
+    await brokerStop().catch(() => undefined);
+    upstream.server.close();
+  });
+
+  // -------------------------------------------------------------------------
+  // T-04-1: upstream receives Authorization: Bearer test-key (real key injected)
+  // -------------------------------------------------------------------------
+  it("T-04-1: upstream receives Authorization: Bearer <real key> (not placeholder)", async () => {
+    const { proxyToken } = sessionMgr.issueToken("integ04-agent");
+
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `${FIXTURE_HOST}:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    await sendGetThroughTunnel(socket, FIXTURE_HOST, "/");
+    socket.destroy();
+
+    // Give the upstream a moment to record the request
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(upstream.receivedHeaders.length).toBeGreaterThan(0);
+    expect(upstream.receivedHeaders[0]?.["authorization"]).toBe(`Bearer ${TEST_KEY}`);
+  });
+
+  // -------------------------------------------------------------------------
+  // T-04-2: broker:session_opened emitted on real eventBus after CONNECT
+  // -------------------------------------------------------------------------
+  it("T-04-2: broker:session_opened emitted on real eventBus when session token consumed", async () => {
+    const allEvents = captureEvents(realEventBus, ["broker:session_opened"]);
+    const { proxyToken } = sessionMgr.issueToken("integ04-agent");
+
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `${FIXTURE_HOST}:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+    socket.destroy();
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const sessionOpenedEvents = allEvents.filter((e) => e.type === "broker:session_opened");
+    expect(sessionOpenedEvents.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // T-04-3: broker:request emitted >= 1 time per proxied request
+  // -------------------------------------------------------------------------
+  it("T-04-3: broker:request emitted at least once per proxied request", async () => {
+    const allEvents = captureEvents(realEventBus, ["broker:request"]);
+    const { proxyToken } = sessionMgr.issueToken("integ04-agent");
+
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `${FIXTURE_HOST}:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    await sendGetThroughTunnel(socket, FIXTURE_HOST, "/");
+    socket.destroy();
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const requestEvents = allEvents.filter((e) => e.type === "broker:request");
+    expect(requestEvents.length).toBeGreaterThanOrEqual(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // T-04-4: broker:injected emitted with ruleKind field present
+  // -------------------------------------------------------------------------
+  it("T-04-4: broker:injected emitted with ruleKind field present after injection", async () => {
+    const allEvents = captureEvents(realEventBus, ["broker:injected"]);
+    const { proxyToken } = sessionMgr.issueToken("integ04-agent");
+
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `${FIXTURE_HOST}:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    await sendGetThroughTunnel(socket, FIXTURE_HOST, "/");
+    socket.destroy();
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const injectedEvents = allEvents.filter((e) => e.type === "broker:injected");
+    expect(injectedEvents.length).toBeGreaterThanOrEqual(1);
+
+    const payload = injectedEvents[0]?.payload as { ruleKind?: string; host?: string };
+    expect(payload).toBeDefined();
+    expect(payload?.ruleKind).toBe("setHeader");
+    expect(payload?.host).toBe(FIXTURE_HOST);
+  });
+
+  // -------------------------------------------------------------------------
+  // T-04-5: broker:injected event payload does NOT contain the real key (non-leakage)
+  // -------------------------------------------------------------------------
+  it("T-04-5: JSON.stringify of all emitted events does not contain the real key (non-leakage)", async () => {
+    const allEvents = captureEvents(realEventBus, [
+      "broker:session_opened",
+      "broker:request",
+      "broker:injected",
+      "broker:session_closed",
+      "broker:denied",
+    ]);
+    const { proxyToken } = sessionMgr.issueToken("integ04-agent");
+
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      proxyToken,
+      `${FIXTURE_HOST}:${upstream.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    await sendGetThroughTunnel(socket, FIXTURE_HOST, "/");
+    socket.destroy();
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Critical non-leakage assertion: the real key must NEVER appear in any event payload
+    const serialized = JSON.stringify(allEvents);
+    expect(serialized).not.toContain(TEST_KEY);
+  });
+
+  // -------------------------------------------------------------------------
+  // T-04-6: Forged token → 407, receivedHeaders.length === 0 (fail-closed)
+  // -------------------------------------------------------------------------
+  it("T-04-6: forged proxy token produces 407 and zero upstream bytes (fail-closed)", async () => {
+    // Use a token that was never issued by the session manager
+    const forgedToken = "A".repeat(64);
+
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort,
+      forgedToken,
+      `${FIXTURE_HOST}:${upstream.port}`,
+    );
+    socket.destroy();
+
+    expect(statusCode).toBe(407);
+
+    // Give a moment to ensure no upstream request was forwarded
+    await new Promise((r) => setTimeout(r, 100));
+    expect(upstream.receivedHeaders.length).toBe(0);
   });
 });
