@@ -367,3 +367,52 @@ describe("setupSingleAgent context-engine mode-switch detection (DAG-05)", () =>
     expect(modeSwitchSource).toContain("pendingModeSwitches.delete(");
   });
 });
+
+// ---------------------------------------------------------------------------
+// OBS-02: recall-trace config threading (Phase 86)
+//
+// The recall-trace recorder + sanitization pipeline are built and proven in
+// isolation, but the daemon never threaded diagnostics.recallTrace into the
+// executor — so buildRecallTrace always received cfg=undefined → returned null
+// → ZERO recall traces were written even with diagnostics.recallTrace.enabled:
+// true. The fix mirrors the EXISTING cacheTraceConfig wiring: a parallel
+// `recallTraceConfig: container.config.diagnostics?.recallTrace` entry inside
+// the createPiExecutor deps object.
+// ---------------------------------------------------------------------------
+
+describe("setupSingleAgent recall-trace config wiring (OBS-02)", () => {
+  const source = readRuntimeSource();
+
+  it("threads container.config.diagnostics.recallTrace into createPiExecutor deps as recallTraceConfig", () => {
+    // Production-wiring regression guard. RED on pre-patch code: the
+    // createPiExecutor deps block carried cacheTraceConfig but NOT
+    // recallTraceConfig, so the recall trace was structurally unreachable
+    // from operator YAML. The assertion is scoped to the deps block (not the
+    // whole file) so a stray comment elsewhere cannot satisfy it.
+    const depsStart = source.indexOf("createPiExecutor(effectiveConfig, {");
+    const depsEnd = source.indexOf("});", depsStart);
+    expect(depsStart).toBeGreaterThan(-1);
+    expect(depsEnd).toBeGreaterThan(depsStart);
+
+    const depsBlock = source.slice(depsStart, depsEnd);
+    expect(depsBlock).toContain("recallTraceConfig");
+    expect(depsBlock).toContain("container.config.diagnostics");
+    // The field reads diagnostics.recallTrace specifically (mirrors the
+    // sibling cacheTraceConfig line which reads diagnostics.cacheTrace).
+    expect(depsBlock).toMatch(
+      /recallTraceConfig:\s*container\.config\.diagnostics\??\.recallTrace/,
+    );
+  });
+
+  it("keeps the cacheTraceConfig wiring intact alongside recallTraceConfig (no regression)", () => {
+    // The two diagnostics threads are siblings; the new wiring must not
+    // displace the existing cache-trace thread.
+    const depsStart = source.indexOf("createPiExecutor(effectiveConfig, {");
+    const depsEnd = source.indexOf("});", depsStart);
+    const depsBlock = source.slice(depsStart, depsEnd);
+    expect(depsBlock).toContain("cacheTraceConfig");
+    expect(depsBlock).toMatch(
+      /cacheTraceConfig:\s*container\.config\.diagnostics\??\.cacheTrace/,
+    );
+  });
+});

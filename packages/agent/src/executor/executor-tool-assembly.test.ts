@@ -510,6 +510,57 @@ describe("assembleTools — full tool pipeline (JIT, prune, snapshot, normalize,
 // Capability index + deferred context
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Recall-trace config passthrough (OBS-02)
+//
+// assembleTools forwards a SUBSET of deps into assembleExecutionPrompt.deps.
+// recallTraceConfig must ride that subset (mirroring dataDir / cacheTraceConfig)
+// so prompt-assembly's buildRecallTrace receives the operator's enable flag.
+// Strategy: assembleExecutionPrompt is mocked at the file top; we assert the
+// `deps` argument it was called with carries the forwarded recallTraceConfig.
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — recall-trace config passthrough to prompt assembly (OBS-02)", () => {
+  it("forwards deps.recallTraceConfig into assembleExecutionPrompt.deps so buildRecallTrace receives the enable flag", async () => {
+    // Production-wiring regression guard for the middle link of the chain:
+    // setup-agents-runtime → PiExecutorDeps → ToolAssemblyDeps →
+    // PromptAssemblyParams.deps.recallTraceConfig → buildRecallTrace.
+    //
+    // RED on pre-patch code: ToolAssemblyDeps had no recallTraceConfig field
+    // and assembleTools never forwarded it, so the prompt-assembly site always
+    // saw deps.recallTraceConfig === undefined → buildRecallTrace returned null
+    // → no recorder, no traces. cacheTraceConfig is the wired sibling.
+    const recallTraceConfig = {
+      enabled: true,
+      filePath: "/tmp/recall-trace-test.jsonl",
+      maxFileBytes: 12_345,
+    };
+    await assembleTools(makeParams({
+      deps: makeDeps({ recallTraceConfig }),
+    }));
+    expect(mocks.assembleExecutionPromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deps: expect.objectContaining({ recallTraceConfig }),
+      }),
+    );
+  });
+
+  it("forwards an enabled-false recallTraceConfig unchanged (opt-out path stays explicit)", async () => {
+    // The default-off contract: when an operator leaves the flag at its
+    // schema default (enabled:false), the same object still threads through so
+    // buildRecallTrace can apply its null-when-disabled gate at the call site.
+    const recallTraceConfig = { enabled: false };
+    await assembleTools(makeParams({
+      deps: makeDeps({ recallTraceConfig }),
+    }));
+    expect(mocks.assembleExecutionPromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deps: expect.objectContaining({ recallTraceConfig }),
+      }),
+    );
+  });
+});
+
 describe("assembleTools — capability-index render result + deferred-context passthrough", () => {
   it("forwards the toolCapabilityPort into buildCapabilityIndexContext and returns its result on the result object", async () => {
     const portStub = createCapabilityPortStub({ isCapabilityIndexEnabled: () => true });
