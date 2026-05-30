@@ -1,0 +1,38 @@
+{
+  "_provenance": "Derived from LoCoMo format (github.com/snap-research/locomo, CC BY-NC 4.0); neutral placeholder content, NOT the real dataset — do not vendor real LoCoMo data (Pitfall 3).",
+  "sample_id": "conv1",
+  "conversation": {
+    "speaker_a": "user_a",
+    "speaker_b": "user_b",
+    "session_1_date_time": "1:00 pm on 8 May, 2023",
+    "session_1": [
+      { "speaker": "user_a", "text": "Neutral placeholder opening line.", "dia_id": "D1:1" },
+      { "speaker": "user_b", "text": "Neutral placeholder reply line.", "dia_id": "D1:2" }
+    ],
+    "session_2_date_time": "9:30 am on 9 May, 2023",
+    "session_2": [
+      { "speaker": "user_a", "text": "Another placeholder message in session two.", "dia_id": "D2:3" },
+      { "speaker": "user_b", "text": "Closing placeholder acknowledgement.", "dia_id": "D2:4" }
+    ]
+  },
+  "qa": [
+    {
+      "question": "What did user_a say in the opening placeholder line?",
+      "answer": "Neutral placeholder opening line.",
+      "evidence": ["D1:1"],
+      "category": 1
+    },
+    {
+      "question": "Did user_a mention an undisclosed placeholder secret?",
+      "answer": "Not mentioned in the conversation.",
+      "category": 5,
+      "adversarial_answer": "Not mentioned in the conversation."
+    },
+    {
+      "question": "Which placeholder topics spanned both sessions?",
+      "answer": "Placeholder messages in session one and session two.",
+      "evidence": ["D2:3", "D1:2"],
+      "category": 2
+    }
+  ]
+}

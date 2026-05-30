@@ -1,0 +1,179 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * UNGATED unit tests for the pure LoCoMo loader (BENCH-01).
+ *
+ * TIER: default CI / fast unit tier (no model, no dataset download, no store).
+ * Runs over the tiny vendored neutral-placeholder fixture in __fixtures__/.
+ *
+ * Cross-plan contracts proven here:
+ * - Blocker-3: each kept qa carries a stable `questionId = `${sample_id}:${qaIdx}``
+ *   over the ORIGINAL (pre-category-5-filter) index, so a skipped item leaves a
+ *   GAP rather than shifting later ids. The harness (88-03) reads it verbatim.
+ * - Round-2: each qa exposes its question text under `query` (NOT `question`),
+ *   uniform with LongMemEval. The UNGATED guard asserts every kept qa has a
+ *   defined, non-empty `query` (catches the undefined-query bug that would
+ *   silently zero the LoCoMo recall lane).
+ */
+
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { loadLocomo, parseLocomoEvidence } from "./locomo-loader.js";
+
+const fixtureDir = dirname(fileURLToPath(import.meta.url));
+const RAW = JSON.parse(
+  readFileSync(join(fixtureDir, "__fixtures__", "locomo-sample.json"), "utf8"),
+) as unknown;
+
+describe("parseLocomoEvidence (D<sess>:<dia> -> dia_id)", () => {
+  it("returns the 2nd colon-segment (dia_id) for each evidence string", () => {
+    expect(parseLocomoEvidence(["D1:5", "D2:3"])).toEqual(["5", "3"]);
+  });
+
+  it("filters out entries without a colon", () => {
+    expect(parseLocomoEvidence(["malformed", "D1:7"])).toEqual(["7"]);
+  });
+
+  it("returns [] for undefined evidence", () => {
+    expect(parseLocomoEvidence(undefined)).toEqual([]);
+  });
+});
+
+describe("loadLocomo (category-5 adversarial items excluded from recall gold)", () => {
+  it("drops the category:5 item, keeping the two real-evidence qa items", () => {
+    const parsed = loadLocomo(RAW);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.qa.length).toBe(2);
+    // none of the kept items is the adversarial "Not mentioned" question
+    for (const q of parsed.value.qa) {
+      expect(q.query).not.toContain("undisclosed placeholder secret");
+    }
+  });
+});
+
+describe("loadLocomo (one dated document per session; qa never in content)", () => {
+  it("emits one doc per session_N with positive epoch-ms createdAt", () => {
+    const parsed = loadLocomo(RAW);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.docs.length).toBe(2);
+    for (const doc of parsed.value.docs) {
+      expect(Number.isInteger(doc.createdAt)).toBe(true);
+      expect(doc.createdAt).toBeGreaterThan(0);
+    }
+  });
+
+  it("never serializes the qa block (answers/evidence) into document content", () => {
+    const parsed = loadLocomo(RAW);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    for (const doc of parsed.value.docs) {
+      expect(doc.content).not.toContain("evidence");
+      expect(doc.content).not.toContain("category");
+      expect(doc.content).not.toContain("Not mentioned");
+    }
+  });
+
+  it("ingests only {speaker,text,dia_id} per turn", () => {
+    const parsed = loadLocomo(RAW);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const turns = JSON.parse(parsed.value.docs[0].content) as Array<Record<string, unknown>>;
+    expect(turns[0]).toEqual({ speaker: "user_a", text: "Neutral placeholder opening line.", dia_id: "D1:1" });
+    expect(Object.keys(turns[0]).sort()).toEqual(["dia_id", "speaker", "text"]);
+  });
+});
+
+describe("loadLocomo (each session doc records its dia_id set)", () => {
+  it("records the dia_ids contained in each session document", () => {
+    const parsed = loadLocomo(RAW);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const byId = new Map(parsed.value.docs.map((d) => [d.sessionId, d.diaIds]));
+    expect(byId.get("session_1")).toEqual(["D1:1", "D1:2"]);
+    expect(byId.get("session_2")).toEqual(["D2:3", "D2:4"]);
+  });
+});
+
+describe("loadLocomo (Blocker-3: stable questionId = `${sample_id}:${qaIdx}`)", () => {
+  it("synthesizes ids over the ORIGINAL pre-filter index (gaps, no collision)", () => {
+    const parsed = loadLocomo(RAW);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const ids = parsed.value.qa.map((q) => q.questionId);
+    // qa[0] kept -> conv1:0 ; qa[1] (category 5) skipped -> gap ; qa[2] kept -> conv1:2
+    expect(ids).toEqual(["conv1:0", "conv1:2"]);
+  });
+
+  it("maps gold dia_ids onto the kept qa via parseLocomoEvidence", () => {
+    const parsed = loadLocomo(RAW);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const first = parsed.value.qa.find((q) => q.questionId === "conv1:0");
+    expect(first?.goldDiaIds).toEqual(["1"]);
+    const third = parsed.value.qa.find((q) => q.questionId === "conv1:2");
+    expect(third?.goldDiaIds).toEqual(["3", "2"]);
+  });
+});
+
+describe("loadLocomo (round-2: question text under `query`, never empty)", () => {
+  it("exposes question text under query (uniform with LongMemEval)", () => {
+    const parsed = loadLocomo(RAW);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const first = parsed.value.qa.find((q) => q.questionId === "conv1:0");
+    expect(first?.query).toBe("What did user_a say in the opening placeholder line?");
+  });
+
+  it("every kept qa item has a defined, non-empty query (ungated guard)", () => {
+    const parsed = loadLocomo(RAW);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    for (const q of parsed.value.qa) {
+      expect(typeof q.query === "string" && q.query.length > 0).toBe(true);
+    }
+  });
+});
+
+describe("loadLocomo (defensive parse of untrusted input)", () => {
+  it("returns err on non-object input", () => {
+    expect(loadLocomo(null).ok).toBe(false);
+    expect(loadLocomo(42).ok).toBe(false);
+  });
+
+  it("returns err when conversation is missing", () => {
+    expect(loadLocomo({ sample_id: "x", qa: [] }).ok).toBe(false);
+  });
+
+  it("returns err when a kept qa has a non-string question (structural mismatch)", () => {
+    const bad = {
+      sample_id: "conv2",
+      conversation: {
+        session_1_date_time: "1:00 pm on 8 May, 2023",
+        session_1: [{ speaker: "user_a", text: "hi", dia_id: "D1:1" }],
+      },
+      qa: [{ answer: "a", evidence: ["D1:1"], category: 1 }],
+    };
+    expect(loadLocomo(bad).ok).toBe(false);
+  });
+
+  it("ignores non-session_N conversation keys (prototype-pollution guard)", () => {
+    const withProto = {
+      sample_id: "conv3",
+      conversation: {
+        __proto__: { polluted: true },
+        speaker_a: "user_a",
+        session_1_date_time: "1:00 pm on 8 May, 2023",
+        session_1: [{ speaker: "user_a", text: "hi", dia_id: "D1:1" }],
+      },
+      qa: [],
+    };
+    const parsed = loadLocomo(withProto);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.docs.length).toBe(1);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+});
