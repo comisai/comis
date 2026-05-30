@@ -793,11 +793,23 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
 
     stop(): Promise<void> {
       return new Promise((resolve) => {
-        // Close Unix socket server and unlink socket file (checker W2 cleanup).
+        // WR-02 fix: destroy ALL tracked sockets FIRST (covers both TCP and Unix
+        // server clients). The original code placed openSockets destruction AFTER
+        // the early-return for !server, so Unix client sockets (tracked in
+        // openSockets via attachServerHandlers) were never destroyed when only
+        // startUnixSocket() was called without start().
+        for (const socket of openSockets) { socket.destroy(); }
+        openSockets.clear();
+        // Destroy in-flight upstream sockets: not captured by the server
+        // "connection" event; without this, stop() leaves them alive.
+        for (const socket of openUpstreamSockets) { socket.destroy(); }
+        openUpstreamSockets.clear();
+
+        // Close Unix socket server and unlink socket file.
         if (unixServer) {
           const uSrv = unixServer;
           unixServer = null;
-          uSrv.close();
+          uSrv.close(); // connections already destroyed above
           if (unixSocketPath) {
             try { unlinkSync(unixSocketPath); } catch { /* already gone — ok */ }
             unixSocketPath = null;
@@ -807,13 +819,6 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         if (!server) { resolve(); return; }
         const srv = server;
         server = null;
-        // Destroy all tracked open client sockets to unblock server.close().
-        for (const socket of openSockets) { socket.destroy(); }
-        openSockets.clear();
-        // Destroy in-flight upstream sockets (WR-03): not captured by the
-        // server "connection" event; without this, stop() leaves them alive.
-        for (const socket of openUpstreamSockets) { socket.destroy(); }
-        openUpstreamSockets.clear();
         srv.close(() => {
           log.info({ step: "stop" }, "NodeMitmBroker stopped");
           resolve();
