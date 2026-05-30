@@ -209,6 +209,7 @@ import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
 import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "./wiring/oauth-preflight.js";
 import { emitStartupInvariants } from "./wiring/setup-startup-invariants.js";
+import { buildPlaceholdersFromBindings } from "./wiring/broker-placeholder-builder.js";
 import os from "node:os";
 import { dirname as pathDirname } from "node:path";
 import { inspect } from "node:util";
@@ -2175,27 +2176,6 @@ async function bootAgents(
 // ---------------------------------------------------------------------------
 
 /**
- * Build the placeholder env-var mapping from binding config for INTEG-03.
- * Maps each binding's env var name (envVarName ?? secretRef) to the placeholder
- * string "comis-broker-placeholder".
- *
- * SECURITY: NEVER calls secretManager.get() — uses only the key NAME for the
- * env var. Real secrets stay in SecretManager and are resolved by the broker
- * per-request at the HTTP header layer.
- *
- * CHECKER B1 (INTEG-03): uses b.envVarName when set (correct for opaque secretRef
- * values like "anthropic-prod-secret"), falls back to b.secretRef only when
- * envVarName is absent and secretRef is already env-var-shaped.
- */
-function buildPlaceholdersFromBindings(
-  bindings: Record<string, import("@comis/core").BrokerBindingConfig>,
-): Record<string, string> {
-  return Object.fromEntries(
-    Object.values(bindings).map((b) => [b.envVarName ?? b.secretRef, "comis-broker-placeholder"]),
-  );
-}
-
-/**
  * bootChannels — channel-runtime startup. Owns:
  *   - sandbox + image generation providers
  *   - per-agent ToolCapabilityPort resolver (inlined factory)
@@ -2336,6 +2316,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
           sessionManager: handle.brokerHandle.sessionManager,
           placeholders: buildPlaceholdersFromBindings(
             container.config.executor?.broker?.bindings ?? {},
+            daemonLogger,
           ),
         }
       : undefined,

@@ -1535,6 +1535,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // the broker uses resolveBinding (which calls pathAllowed internally).
       // Broker wiring in the daemon composition root is Phase 3.
       "pathAllowed",
+      // BrokerBindingConfigSchema: the Zod validator for a single executor.broker
+      // binding entry. Operator-facing config schema; exported on the public
+      // surface for embedders and CLI validation helpers. BrokerBindingConfig (the
+      // inferred type) IS consumed by packages/daemon/src/wiring/
+      // broker-placeholder-builder.ts (satisfies the type-consumer gate).
+      // BrokerBindingConfigSchema (the value, the Zod schema object) has no
+      // cross-package consumer yet — the daemon calls the config system via the
+      // schema-executor.ts registered schema, not by importing the Zod object
+      // directly. Tracked here as a planned-orphan policy entry until a runtime
+      // validation site outside @comis/core emerges (e.g. a CLI `broker validate`
+      // command or a broker health-check handler in Phase 9).
+      "BrokerBindingConfigSchema",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
