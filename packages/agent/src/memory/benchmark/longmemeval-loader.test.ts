@@ -136,4 +136,47 @@ describe("loadLongMemEval (defensive parse of untrusted input)", () => {
     };
     expect(loadLongMemEval(bad).ok).toBe(false);
   });
+
+  const base = {
+    question_id: "q1",
+    question: "q",
+    haystack_sessions: [[{ role: "user", content: "hi" }]],
+    haystack_session_ids: ["s1"],
+    haystack_dates: ["2023/05/20 (Sat) 02:21"],
+    answer_session_ids: ["s1"],
+  };
+
+  it("returns err when question_id is empty", () => {
+    expect(loadLongMemEval({ ...base, question_id: "" }).ok).toBe(false);
+  });
+
+  it("returns err when question text is missing/empty", () => {
+    expect(loadLongMemEval({ ...base, question: "" }).ok).toBe(false);
+  });
+
+  it("returns err when haystack_session_ids is not a string array", () => {
+    expect(loadLongMemEval({ ...base, haystack_session_ids: [1] }).ok).toBe(false);
+  });
+
+  it("returns err when haystack_dates is not a string array", () => {
+    expect(loadLongMemEval({ ...base, haystack_dates: [123] }).ok).toBe(false);
+  });
+
+  it("returns err on a haystack array length mismatch", () => {
+    expect(
+      loadLongMemEval({ ...base, haystack_session_ids: ["s1", "s2"] }).ok,
+    ).toBe(false);
+  });
+
+  it("returns err when answer_session_ids is not a string array", () => {
+    expect(loadLongMemEval({ ...base, answer_session_ids: "s1" }).ok).toBe(false);
+  });
+
+  it("returns err when a haystack session is not an array of turns", () => {
+    expect(loadLongMemEval({ ...base, haystack_sessions: ["not-an-array"] }).ok).toBe(false);
+  });
+
+  it("returns err when a haystack turn is not an object", () => {
+    expect(loadLongMemEval({ ...base, haystack_sessions: [["bad-turn"]] }).ok).toBe(false);
+  });
 });

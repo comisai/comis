@@ -40,6 +40,52 @@ describe("parseLocomoEvidence (D<sess>:<dia> -> dia_id)", () => {
   });
 });
 
+describe("loadLocomo (LoCoMo date-time parsing: 12-hour -> epoch ms)", () => {
+  function diaAt(dateTime: string): unknown {
+    return {
+      sample_id: "c",
+      conversation: {
+        session_1_date_time: dateTime,
+        session_1: [{ speaker: "user_a", text: "hi", dia_id: "D1:1" }],
+      },
+      qa: [],
+    };
+  }
+  function createdAt(dateTime: string): number {
+    const parsed = loadLocomo(diaAt(dateTime));
+    if (!parsed.ok) throw new Error("expected ok");
+    return parsed.value.docs[0].createdAt;
+  }
+
+  it("maps 12:00 am to midnight (hour 0) UTC", () => {
+    expect(createdAt("12:00 am on 8 May, 2023")).toBe(Date.UTC(2023, 4, 8, 0, 0));
+  });
+
+  it("maps 12:30 pm to noon UTC", () => {
+    expect(createdAt("12:30 pm on 8 May, 2023")).toBe(Date.UTC(2023, 4, 8, 12, 30));
+  });
+
+  it("maps an afternoon pm time by adding 12 hours", () => {
+    expect(createdAt("1:00 pm on 8 May, 2023")).toBe(Date.UTC(2023, 4, 8, 13, 0));
+  });
+
+  it("maps a morning am time directly", () => {
+    expect(createdAt("9:30 am on 9 May, 2023")).toBe(Date.UTC(2023, 4, 9, 9, 30));
+  });
+
+  it("returns err on an unknown month name", () => {
+    expect(loadLocomo(diaAt("1:00 pm on 8 Smarch, 2023")).ok).toBe(false);
+  });
+
+  it("returns err on an out-of-range hour", () => {
+    expect(loadLocomo(diaAt("13:00 pm on 8 May, 2023")).ok).toBe(false);
+  });
+
+  it("returns err on a malformed date-time string", () => {
+    expect(loadLocomo(diaAt("sometime yesterday")).ok).toBe(false);
+  });
+});
+
 describe("loadLocomo (category-5 adversarial items excluded from recall gold)", () => {
   it("drops the category:5 item, keeping the two real-evidence qa items", () => {
     const parsed = loadLocomo(RAW);
@@ -175,5 +221,92 @@ describe("loadLocomo (defensive parse of untrusted input)", () => {
     if (!parsed.ok) return;
     expect(parsed.value.docs.length).toBe(1);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("returns err when sample_id is empty", () => {
+    expect(loadLocomo({ sample_id: "", conversation: {}, qa: [] }).ok).toBe(false);
+  });
+
+  it("returns err when a session_N value is not an array", () => {
+    const bad = {
+      sample_id: "c",
+      conversation: { session_1: "not-an-array", session_1_date_time: "1:00 pm on 8 May, 2023" },
+      qa: [],
+    };
+    expect(loadLocomo(bad).ok).toBe(false);
+  });
+
+  it("returns err when a session turn is not an object", () => {
+    const bad = {
+      sample_id: "c",
+      conversation: { session_1: ["bad-turn"], session_1_date_time: "1:00 pm on 8 May, 2023" },
+      qa: [],
+    };
+    expect(loadLocomo(bad).ok).toBe(false);
+  });
+
+  it("returns err when session_N_date_time is missing", () => {
+    const bad = {
+      sample_id: "c",
+      conversation: { session_1: [{ speaker: "user_a", text: "hi", dia_id: "D1:1" }] },
+      qa: [],
+    };
+    expect(loadLocomo(bad).ok).toBe(false);
+  });
+
+  it("returns err when a session date-time is unparseable (propagates)", () => {
+    const bad = {
+      sample_id: "c",
+      conversation: {
+        session_1: [{ speaker: "user_a", text: "hi", dia_id: "D1:1" }],
+        session_1_date_time: "garbage",
+      },
+      qa: [],
+    };
+    expect(loadLocomo(bad).ok).toBe(false);
+  });
+
+  it("returns err when qa is not an array", () => {
+    const bad = {
+      sample_id: "c",
+      conversation: {
+        session_1: [{ speaker: "user_a", text: "hi", dia_id: "D1:1" }],
+        session_1_date_time: "1:00 pm on 8 May, 2023",
+      },
+      qa: "not-an-array",
+    };
+    expect(loadLocomo(bad).ok).toBe(false);
+  });
+
+  it("returns err when a qa item is not an object", () => {
+    const bad = {
+      sample_id: "c",
+      conversation: {
+        session_1: [{ speaker: "user_a", text: "hi", dia_id: "D1:1" }],
+        session_1_date_time: "1:00 pm on 8 May, 2023",
+      },
+      qa: ["bad-qa"],
+    };
+    expect(loadLocomo(bad).ok).toBe(false);
+  });
+
+  it("tolerates a kept qa with no answer + no evidence array (defaults applied)", () => {
+    const ok = {
+      sample_id: "c",
+      conversation: {
+        session_1: [{ speaker: "user_a", text: "hi", dia_id: "D1:1" }],
+        session_1_date_time: "1:00 pm on 8 May, 2023",
+      },
+      qa: [{ question: "q?", category: 1 }],
+    };
+    const parsed = loadLocomo(ok);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.qa[0]).toEqual({
+      questionId: "c:0",
+      query: "q?",
+      answer: "",
+      goldDiaIds: [],
+    });
   });
 });
