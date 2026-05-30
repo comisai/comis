@@ -2175,6 +2175,27 @@ async function bootAgents(
 // ---------------------------------------------------------------------------
 
 /**
+ * Build the placeholder env-var mapping from binding config for INTEG-03.
+ * Maps each binding's env var name (envVarName ?? secretRef) to the placeholder
+ * string "comis-broker-placeholder".
+ *
+ * SECURITY: NEVER calls secretManager.get() — uses only the key NAME for the
+ * env var. Real secrets stay in SecretManager and are resolved by the broker
+ * per-request at the HTTP header layer.
+ *
+ * CHECKER B1 (INTEG-03): uses b.envVarName when set (correct for opaque secretRef
+ * values like "anthropic-prod-secret"), falls back to b.secretRef only when
+ * envVarName is absent and secretRef is already env-var-shaped.
+ */
+function buildPlaceholdersFromBindings(
+  bindings: Record<string, import("@comis/core").BrokerBindingConfig>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.values(bindings).map((b) => [b.envVarName ?? b.secretRef, "comis-broker-placeholder"]),
+  );
+}
+
+/**
  * bootChannels — channel-runtime startup. Owns:
  *   - sandbox + image generation providers
  *   - per-agent ToolCapabilityPort resolver (inlined factory)
@@ -2302,6 +2323,22 @@ async function bootChannels(boot: BootContext): Promise<void> {
     getMcpServerEntries: () => container.config.integrations?.mcp?.servers ?? [],
     sandboxProvider, imageGenProvider, backgroundTaskManager,
     sessionTrackerRegistry: handle.sessionTrackerRegistry, getCapabilityPortForAgent,
+    // INTEG-03: broker activation seam. When executor.broker is configured,
+    // thread the broker handle into setupTools so assembleToolsForAgent wires
+    // the exec tool with broker-only network + proxy env + placeholder creds.
+    // When absent (no executor.broker config), brokerContext is undefined and
+    // the exec tool uses the default open-network path (no regression).
+    brokerContext: handle.brokerHandle
+      ? {
+          tcpPort: handle.brokerHandle.tcpPort,
+          socketPath: handle.brokerHandle.socketPath,
+          caPath: handle.brokerHandle.caPath,
+          sessionManager: handle.brokerHandle.sessionManager,
+          placeholders: buildPlaceholdersFromBindings(
+            container.config.executor?.broker?.bindings ?? {},
+          ),
+        }
+      : undefined,
   });
 
   // 6.6.8. Channels — pass assembleToolsForAgent DIRECTLY (no ref) and

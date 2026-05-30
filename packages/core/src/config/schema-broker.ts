@@ -98,7 +98,21 @@ export type HostRuleConfig = z.infer<typeof HostRuleSchema>;
 
 export const BrokerBindingConfigSchema = z.strictObject({
   hostRules: z.array(HostRuleSchema),
+  /**
+   * Key name in SecretManager (resolved server-side per request). May be an
+   * opaque key name (e.g. "anthropic-prod-secret") — distinct from the env var
+   * name the CLI reads.
+   */
   secretRef: z.string().min(1),
+  /**
+   * CHECKER B1 (INTEG-03): env var name injected as placeholder in the driven-CLI
+   * spawn env (e.g. "ANTHROPIC_API_KEY"). Must be an uppercase identifier.
+   * When absent, falls back to secretRef — only correct when secretRef is already
+   * env-var-shaped (e.g. "ANTHROPIC_API_KEY"). If secretRef is an opaque key name
+   * (e.g. "anthropic-prod-secret"), this field MUST be set explicitly.
+   * NEVER contains the real secret value.
+   */
+  envVarName: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(),
   credentialRefs: z.record(z.string(), z.string()).optional(),
 });
 

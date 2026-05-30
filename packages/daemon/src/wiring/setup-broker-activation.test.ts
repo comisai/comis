@@ -237,6 +237,15 @@ function createBrokerContext(): BrokerContextDeps {
   };
 }
 
+/** Fake SandboxProvider so sandboxCfg is constructed (T-03-1 needs network field). */
+function createFakeSandboxProvider() {
+  return {
+    name: "fake-sandbox",
+    available: vi.fn(() => true),
+    buildArgs: vi.fn(() => ["--fake-sandbox"]),
+  };
+}
+
 async function getSetupTools() {
   const mod = await import("./setup-tools.js");
   return mod.setupTools;
@@ -290,7 +299,8 @@ describe("INTEG-03 — brokerContext activation seam (T-03-1..T-03-6)", () => {
   // T-03-1: sandboxCfg.network.mode === "broker-only" and secureCredentialHome === true
   it("T-03-1: brokerContext present → createExecTool receives sandboxConfig with network.mode === 'broker-only' and secureCredentialHome === true", async () => {
     const brokerCtx = createBrokerContext();
-    const deps = createMinimalDeps({ brokerContext: brokerCtx });
+    // sandboxProvider must be present so sandboxCfg is constructed (guards: enabled === "always" && sandboxProvider)
+    const deps = createMinimalDeps({ brokerContext: brokerCtx, sandboxProvider: createFakeSandboxProvider() as any });
 
     const execDeps = await assembleAndCapture("agent-1", deps);
 

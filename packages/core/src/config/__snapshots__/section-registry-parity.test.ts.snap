@@ -28403,6 +28403,10 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     },
                     "type": "object"
                   },
+                  "envVarName": {
+                    "pattern": "^[A-Z][A-Z0-9_]*$",
+                    "type": "string"
+                  },
                   "hostRules": {
                     "items": {
                       "additionalProperties": false,

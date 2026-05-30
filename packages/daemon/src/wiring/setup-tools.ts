@@ -9,7 +9,7 @@
 import { isAbsolute, resolve } from "node:path";
 import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger, SessionManager, IssuedSession } from "@comis/infra";
 import {
   SkillsConfigSchema,
   sanitizeLogString,
@@ -79,6 +79,30 @@ import {
 // ---------------------------------------------------------------------------
 // Deps / Result types
 // ---------------------------------------------------------------------------
+
+/**
+ * Broker context threaded from daemon bootFoundation into tool assembly.
+ * When present: exec tool is assembled with broker-only network isolation,
+ * secureCredentialHome, and brokerSpawnEnv (HTTPS_PROXY + placeholder key +
+ * single-use token).
+ * When absent (undefined): no change to the default open network path (no regression).
+ */
+export interface BrokerContextDeps {
+  /** TCP port the broker is listening on (for HTTPS_PROXY env var). */
+  tcpPort: number;
+  /** Unix socket path for broker-only egress (brokerSocketPath in SandboxOptions). */
+  socketPath: string;
+  /** Absolute path to the broker CA cert PEM (NODE_EXTRA_CA_CERTS env var). */
+  caPath: string;
+  /** Session manager for issuing a single-use token per assembleToolsForAgent call. */
+  sessionManager: SessionManager;
+  /**
+   * Placeholder env vars: mapping of env var name -> placeholder string.
+   * e.g. { ANTHROPIC_API_KEY: "comis-broker-placeholder" }
+   * NEVER contains the real secret value — resolved by the broker per-request.
+   */
+  placeholders: Record<string, string>;
+}
 
 /** Dependencies for tool assembly setup. */
 export interface ToolsDeps {
@@ -151,6 +175,12 @@ export interface ToolsDeps {
   backgroundTaskManager?: import("@comis/agent").BackgroundTaskManager;
   /** Per-session FileStateTracker pool. Required -- use createSessionTrackerRegistry(). */
   sessionTrackerRegistry: SessionTrackerRegistry<FileStateTracker>;
+  /**
+   * Optional. When present, the exec tool is wired with broker-only network
+   * isolation + secure credential home + proxy env for the driven-CLI spawn.
+   * Absent (undefined) → default open network, no proxy env, no regression.
+   */
+  brokerContext?: BrokerContextDeps;
 }
 
 /** Options for assembleToolsForAgent controlling platform tool selection. */
@@ -505,6 +535,11 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
               readOnlyPaths,
               configReadOnlyPaths: [...skillsConfig.execSandbox.readOnlyAllowPaths, logsDir],
               warmVenvSeed: skillsConfig.execSandbox.warmVenvSeed,
+              // INTEG-03: broker activation (undefined = open/legacy, no regression)
+              network: deps.brokerContext
+                ? { mode: "broker-only" as const, brokerSocketPath: deps.brokerContext.socketPath }
+                : undefined,
+              secureCredentialHome: deps.brokerContext ? true : undefined,
             }
           : undefined;
 
@@ -544,6 +579,16 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           return safePath(sessionDir, "tool-results");
         };
 
+        // INTEG-03: issue single-use session token for the broker proxy auth.
+        // FIXME(INTEG-03): token issued once per assembleToolsForAgent call (per assembly,
+        // not per exec). First exec consumes the token; subsequent calls in the same agent
+        // assembly will receive 407 from the broker.
+        // Path to per-command issuance: thread sessionManager into ExecToolDeps and call
+        // issueToken() inside execute() — tracked as follow-on work.
+        const brokerIssuedSession: IssuedSession | undefined = deps.brokerContext
+          ? deps.brokerContext.sessionManager.issueToken(agentId)
+          : undefined;
+
         tools.push(createExecTool({
           workspacePath: agentWorkspaceDir,
           registry,
@@ -560,6 +605,20 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           // convention.
           toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
           approvalGate,                                      // Soft-stop override path
+          // INTEG-03: broker proxy env — only present when brokerContext wired.
+          // placeholders contain ONLY placeholder strings (never real secret values).
+          // Real secrets are resolved by the broker per-request from SecretManager.
+          brokerSpawnEnv: deps.brokerContext && brokerIssuedSession
+            ? {
+                HTTPS_PROXY: `http://127.0.0.1:${deps.brokerContext.tcpPort}`,
+                HTTP_PROXY: `http://127.0.0.1:${deps.brokerContext.tcpPort}`,
+                NODE_EXTRA_CA_CERTS: deps.brokerContext.caPath,
+                placeholders: {
+                  ...deps.brokerContext.placeholders,
+                  COMIS_BROKER_TOKEN: brokerIssuedSession.proxyToken, // single-use token
+                },
+              }
+            : undefined,
         }));
       }
 
