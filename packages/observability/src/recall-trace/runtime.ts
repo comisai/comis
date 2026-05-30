@@ -205,16 +205,19 @@ export function createRecallTrace(init: RecallTraceInit): RecallTrace | null {
       const writerFailureCount = writer.failureCount();
       if (!state.writeFailureSentinelEmitted && writerFailureCount > 0) {
         state.writeFailureSentinelEmitted = true;
-        writer.write(
-          encodeSentinel(
-            buildSentinel(init, state.seq, {
-              firstDropAt: systemDateFrom(systemNowMs()).toISOString(),
-              droppedEvents: writerFailureCount,
-              droppedBytes: writer.rejectedBytes(),
-              reason: "queued_writer_rejected",
-            }),
-          ),
-        );
+        // WR-07: the sentinel `data` goes through the same
+        // sanitizeForPersistence chokepoint as every per-recall record so the
+        // "no raw value reaches disk" invariant covers control-plane lines too.
+        // (The inline sentinel's current fields are numbers/ISO timestamps, but
+        // sanitizing uniformly keeps the invariant enforced by the code rather
+        // than by the current field contents — see the summary sentinel below.)
+        const inlineData = sanitizeForPersistence({
+          firstDropAt: systemDateFrom(systemNowMs()).toISOString(),
+          droppedEvents: writerFailureCount,
+          droppedBytes: writer.rejectedBytes(),
+          reason: "queued_writer_rejected",
+        }) as Record<string, unknown>;
+        writer.write(encodeSentinel(buildSentinel(init, state.seq, inlineData)));
         state.seq += 1;
       }
 
@@ -261,17 +264,21 @@ export function createRecallTrace(init: RecallTraceInit): RecallTrace | null {
         // Sentinel emit is best-effort — when the underlying failure source
         // is unrecoverable this write fails too; failureCount() continues to
         // surface the truth even when nothing lands.
-        writer.write(
-          encodeSentinel(
-            buildSentinel(init, state.seq, {
-              reason: "queued_writer_rejected",
-              droppedEvents: failureCount,
-              totalDroppedBytes: writer.rejectedBytes(),
-              lifetimeMs: systemNowMs() - state.startedAt,
-              lastError: lastError?.message ?? null,
-            }),
-          ),
-        );
+        //
+        // WR-07: route the sentinel `data` through sanitizeForPersistence
+        // (the SAME chokepoint every per-recall record uses) so the
+        // "no raw value reaches disk" invariant holds for control-plane lines
+        // too. The raw `lastError.message` for an fs append error is the trace
+        // file's own path, and a future error source could embed user/secret
+        // text — both are bounded + redacted here before encodeSentinel.
+        const summaryData = sanitizeForPersistence({
+          reason: "queued_writer_rejected",
+          droppedEvents: failureCount,
+          totalDroppedBytes: writer.rejectedBytes(),
+          lifetimeMs: systemNowMs() - state.startedAt,
+          lastError: lastError?.message ?? null,
+        }) as Record<string, unknown>;
+        writer.write(encodeSentinel(buildSentinel(init, state.seq, summaryData)));
         state.seq += 1;
       }
 
