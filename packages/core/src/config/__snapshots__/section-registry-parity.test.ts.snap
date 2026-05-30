@@ -9706,6 +9706,33 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
+    "immutable": false,
+    "path": "executor",
+    "type": "object"
+  },
+  {
+    "immutable": false,
+    "path": "executor.broker",
+    "type": "object"
+  },
+  {
+    "default": {},
+    "immutable": false,
+    "path": "executor.broker.bindings",
+    "type": "object"
+  },
+  {
+    "default": 0,
+    "immutable": false,
+    "path": "executor.broker.port",
+    "type": "integer"
+  },
+  {
+    "immutable": false,
+    "path": "executor.broker.socketPath",
+    "type": "string"
+  },
+  {
     "default": {
       "allowInsecureHttp": false,
       "corsOrigins": [],
@@ -28355,6 +28382,261 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "showProvider",
         "elapsedMaxMs"
       ],
+      "type": "object"
+    },
+    "executor": {
+      "additionalProperties": false,
+      "properties": {
+        "broker": {
+          "additionalProperties": false,
+          "properties": {
+            "bindings": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "credentialRefs": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "envVarName": {
+                    "pattern": "^[A-Z][A-Z0-9_]*$",
+                    "type": "string"
+                  },
+                  "hostRules": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "finalizer": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "const": "awsSigV4",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ],
+                          "type": "object"
+                        },
+                        "inject": {
+                          "items": {
+                            "oneOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "format": {
+                                    "enum": [
+                                      "raw",
+                                      "bearer"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "const": "setHeader",
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "removeAuthorization": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "name",
+                                  "format"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "format": {
+                                    "enum": [
+                                      "raw",
+                                      "bearer"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "const": "replaceHeader",
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "name",
+                                  "format"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "kind": {
+                                    "const": "removeHeader",
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "name"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "kind": {
+                                    "const": "setParam",
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "name"
+                                ],
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          "type": "array"
+                        },
+                        "pathPolicy": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "pathPrefix": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "pattern": {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "host": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "const": "exact",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "host"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "suffix",
+                                  "type": "string"
+                                },
+                                "suffix": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "suffix"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "staticHeaders": {
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "name": {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "valueRef": {
+                                "minLength": 1,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "valueRef"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "pattern",
+                        "inject"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "secretRef": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "hostRules",
+                  "secretRef"
+                ],
+                "type": "object"
+              },
+              "default": {},
+              "propertyNames": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "port": {
+              "default": 0,
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "socketPath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "port",
+            "bindings"
+          ],
+          "type": "object"
+        }
+      },
       "type": "object"
     },
     "gateway": {

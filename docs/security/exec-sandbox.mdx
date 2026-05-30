@@ -149,6 +149,31 @@ The exec sandbox provides **filesystem isolation only**. It does not restrict ot
 - **sandbox-exec on macOS is deprecated** -- Apple may remove it in a future macOS release; use bubblewrap on Linux for production
 </Info>
 
+## Network Modes and Credential Broker
+
+The exec sandbox supports two network modes via `SandboxOptions.network`:
+
+| Mode | bwrap args | Description |
+|------|-----------|-------------|
+| `open` (default) | `--unshare-all --share-net` | Standard sandbox; full network access |
+| `broker-only` | `--unshare-all --unshare-net --bind <socketPath> <socketPath>` | Driven-CLI sandbox; only the broker unix socket is reachable via bind-mount |
+
+The `broker-only` mode is set automatically for driven API-key CLI spawns. It is not a user-configurable option — the daemon sets it when it launches a credentialed CLI through the broker.
+
+**Secure credential home** (`secureCredentialHome: true`): When set, the following bind mounts are omitted from the sandbox, so credential files are unreachable inside:
+
+- `~/.claude` (read-write bind)
+- `~/.claude.json` (read-only bind)
+- `~/.local/share/claude` (read-write bind)
+
+On Linux, the `broker-only` network mode combines with `secureCredentialHome` so neither the key material nor a direct network path to the key provider is reachable inside the sandbox. Validation of network-level enforcement on the Linux production host class is in progress.
+
+<Info>
+Source: `packages/skills/src/tools/builtin/sandbox/types.ts` · `packages/skills/src/tools/builtin/sandbox/bwrap-provider.ts`
+</Info>
+
+[Credential Broker →](/security/credential-broker)
+
 ## Graph Integration
 
 When an agent runs inside an [execution graph](/agents/execution-graphs) pipeline, the graph's shared directory (`~/.comis/graph-runs/{runId}/`) is automatically mounted read-write inside the sandbox. This allows pipeline nodes to share data files while maintaining filesystem isolation -- each node can read outputs from upstream nodes and write outputs for downstream nodes, but cannot access any other part of the host filesystem.

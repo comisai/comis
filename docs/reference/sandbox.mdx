@@ -317,6 +317,33 @@ Source: `detectSandboxProvider()` in `packages/skills/src/builtin/sandbox/detect
 For the full mount table, attack scope, and configuration walkthrough, see
 [Exec Sandbox](/security/exec-sandbox).
 
+### Network Modes
+
+The exec sandbox supports two network modes, selected via `SandboxOptions.network`:
+
+| Mode | Config value | bwrap args | Description |
+|------|-------------|-----------|-------------|
+| Open (default) | `{ mode: "open" }` or `undefined` | `--unshare-all --share-net` | Standard exec sandbox; full network access |
+| Broker-only | `{ mode: "broker-only", brokerSocketPath: "..." }` | `--unshare-all --unshare-net --bind <path> <path>` | Driven-CLI sandbox; only the broker unix socket is reachable via bind-mount (Linux only) |
+
+`broker-only` mode is set automatically for driven-CLI spawns — it is not configured directly by operators. On Linux it uses `--unshare-net` to remove all network access except the broker unix socket bind-mount. On macOS, `broker-only` mode is not available (bubblewrap requirement); the broker still provides TLS termination and injection, but without network namespace enforcement.
+
+### Secure Credential Home
+
+When `secureCredentialHome: true` is set on the sandbox options (automatically applied for driven-CLI spawns), the following bind mounts are omitted so credential files are unreachable inside the sandbox:
+
+- `~/.claude` (read-write bind removed)
+- `~/.claude.json` (read-only bind removed)
+- `~/.local/share/claude` (read-write bind removed)
+
+This means `cat ~/.claude/.credentials.json` inside the sandbox returns "no such file or directory". The Claude Code CLI cannot read its own credential cache from inside the namespace.
+
+The `broker-only` network mode and `secureCredentialHome` work together as the credential isolation layer for driven-CLI spawns. [Credential Broker →](/security/credential-broker)
+
+<Info>
+Source: `packages/skills/src/tools/builtin/sandbox/types.ts` — `SandboxOptions.network` union; `packages/skills/src/tools/builtin/sandbox/bwrap-provider.ts` — `broker-only` branch at line 234, `secureCredentialHome` bind removal at lines 196–218.
+</Info>
+
 ## Configuration Reference
 
 All sandbox-related configuration fields consolidated:

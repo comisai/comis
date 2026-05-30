@@ -34,6 +34,7 @@ import { StreamingConfigSchema } from "./schema-streaming.js";
 import { TelegramFileRefGuardConfigSchema } from "./schema-telegram-file-guard.js";
 import { ToolingConfigSchema } from "./schema-tooling.js";
 import { WebhooksConfigSchema } from "./schema-webhooks.js";
+import { ExecutorConfigSchema } from "./schema-executor.js";
 
 /**
  * Root application configuration schema.
@@ -133,6 +134,8 @@ export const AppConfigSchema = z.strictObject({
     telegramFileRefGuard: TelegramFileRefGuardConfigSchema.default(() => TelegramFileRefGuardConfigSchema.parse({})),
     /** Tool-first capability layer (v1.1) -- capability clusters, MCP/skill hints, install-detour mode. Operator-only. */
     tooling: ToolingConfigSchema.default(() => ToolingConfigSchema.parse({})),
+    /** Credential-broker executor configuration (INTEG-02 / WIRE-02). */
+    executor: ExecutorConfigSchema.optional(),
   }).superRefine((config, ctx) => {
     // Startup invariant: reject the reserved "default" provider name.
     // "default" collides with PerAgentConfigSchema.provider's schema default

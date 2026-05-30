@@ -138,6 +138,8 @@ export {
   DEFAULT_CLUSTER_CONFIG,
   DEFAULT_BUILTIN_ASSIGNMENTS,
   checkApprovalsConfig,
+  // Broker binding config schema (INTEG-02/03)
+  BrokerBindingConfigSchema,
 } from "../config/index.js";
 
 export type {
@@ -270,4 +272,6 @@ export type {
   // Tooling subtree (capability layer v1.1)
   ToolingConfig,
   OAuthConfig,
+  // Broker binding config type (INTEG-02/03)
+  BrokerBindingConfig,
 } from "../config/index.js";

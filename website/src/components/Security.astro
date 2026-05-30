@@ -26,6 +26,12 @@ const threats = [
     detail: "AES-256 at rest. 18 log redaction rules. Never in tool output, never in chat responses.",
   },
   {
+    threat: "Credential exposure via agentic CLIs",
+    desc: "An agent running shell commands can read any secret in its environment — `cat ~/.claude/.credentials.json`, `env`, `/proc/self/environ`. Handing a key to the agent process means it can steal and exfiltrate it.",
+    answer: "Credential broker.",
+    detail: "The real key never enters the sandbox. It stays in the daemon's encrypted store; the CLI runs with a placeholder. The broker injects the real credential at the TLS network boundary — `cat`/`env`/`/proc` inside the sandbox show nothing. Broker fails closed: no secret → 502, request never forwarded.",
+  },
+  {
     threat: "Unchecked tool access",
     desc: "Agents with shell and file access operating with no oversight.",
     answer: "Approval gates + kernel sandbox.",

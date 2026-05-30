@@ -101,6 +101,13 @@ export {
 export { preReadSecretsEnabled } from "./pre-read-secrets-enabled.js";
 export { BackgroundTasksConfigSchema } from "./schema-background-tasks.js";
 export type { BackgroundTasksConfig } from "./schema-background-tasks.js";
+export { BrokerBindingConfigSchema } from "./schema-broker.js";
+export type { BrokerBindingConfig } from "./schema-broker.js";
+export {
+  ExecutorConfigSchema,
+  ExecutorBrokerConfigSchema,
+} from "./schema-executor.js";
+export type { ExecutorConfig, ExecutorBrokerConfig } from "./schema-executor.js";
 export { OutputRetentionConfigSchema } from "./schema-output-retention.js";
 export type { OutputRetentionConfig, RetentionClass } from "./schema-output-retention.js";
 export { SkillsConfigSchema, PromptSkillsConfigSchema } from "./schema-skills.js";

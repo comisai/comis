@@ -138,6 +138,7 @@ export type {
   McpServerHint,
   SkillHint,
 } from "./tool-capability.js";
+export type { CaManagerPort } from "./ca-manager.js";
 // NOTE: the test-only stub factory in `__test-helpers/` is intentionally NOT
 // re-exported here. It must NEVER appear on this barrel (the architecture-grep
 // test enforces this).

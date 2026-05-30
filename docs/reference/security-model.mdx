@@ -450,6 +450,23 @@ For the complete safe path API, see [Safe Path](/reference/safe-path).
 Source: `safePath()` in `packages/core/src/security/safe-path.ts`
 </Info>
 
+### Credential Broker (Network Layer)
+
+**What it does.** For API-key CLIs driven from the exec sandbox, the credential broker acts as an in-process HTTPS MITM proxy. The real key never enters the sandbox — the broker resolves it per-request from SecretManager and injects it at the TLS boundary. On Linux, the credentialed sandbox runs in `broker-only` network mode, where `--unshare-net` is applied and the broker unix socket is the only bind-mounted network path. Validation of this kernel-enforcement on the Linux production host class is in progress (R1 gate).
+
+The broker is fail-closed: a missing binding returns 403, a missing secret returns 502, and a forged proxy token returns 407. No path forwards the request without a valid credential. All broker activity is audited via `broker:*` events carrying `agentId` and `traceId`.
+
+Network modes (`SandboxOptions.network`):
+
+| Mode | bwrap args | Description |
+|------|-----------|-------------|
+| `open` (default) | `--unshare-all --share-net` | Standard exec sandbox; full network access |
+| `broker-only` | `--unshare-all --unshare-net --bind <socketPath> <socketPath>` | Driven-CLI sandbox; only broker unix socket reachable (Linux only) |
+
+<Info>
+Source: `packages/infra/src/credential-broker/mitm-broker.ts` — fail-closed gates; `packages/skills/src/tools/builtin/sandbox/bwrap-provider.ts` — `broker-only` branch. See [Credential Broker](/security/credential-broker) for the full deep-dive.
+</Info>
+
 ---
 
 ## Output Layer

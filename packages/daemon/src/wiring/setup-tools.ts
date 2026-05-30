@@ -9,7 +9,7 @@
 import { isAbsolute, resolve } from "node:path";
 import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
-import type { ComisLogger } from "@comis/infra";
+import type { ComisLogger, IssuedSession } from "@comis/infra";
 import {
   SkillsConfigSchema,
   sanitizeLogString,
@@ -74,6 +74,11 @@ import {
   createPlatformToolRegistry,
   type PlatformToolBuildContext,
 } from "@comis/skills/platform-tools";
+// Broker activation seam types. Extracted to setup-broker-activation.ts to
+// keep this file under 800 lines. BrokerContextDeps is re-exported here so
+// existing imports of it from setup-tools.ts continue to resolve.
+export type { BrokerContextDeps } from "./setup-broker-activation.js";
+import type { BrokerContextDeps } from "./setup-broker-activation.js";
 
 
 // ---------------------------------------------------------------------------
@@ -151,6 +156,12 @@ export interface ToolsDeps {
   backgroundTaskManager?: import("@comis/agent").BackgroundTaskManager;
   /** Per-session FileStateTracker pool. Required -- use createSessionTrackerRegistry(). */
   sessionTrackerRegistry: SessionTrackerRegistry<FileStateTracker>;
+  /**
+   * Optional. When present, the exec tool is wired with broker-only network
+   * isolation + secure credential home + proxy env for the driven-CLI spawn.
+   * Absent (undefined) → default open network, no proxy env, no regression.
+   */
+  brokerContext?: BrokerContextDeps;
 }
 
 /** Options for assembleToolsForAgent controlling platform tool selection. */
@@ -505,6 +516,11 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
               readOnlyPaths,
               configReadOnlyPaths: [...skillsConfig.execSandbox.readOnlyAllowPaths, logsDir],
               warmVenvSeed: skillsConfig.execSandbox.warmVenvSeed,
+              // INTEG-03: broker activation (undefined = open/legacy, no regression)
+              network: deps.brokerContext
+                ? { mode: "broker-only" as const, brokerSocketPath: deps.brokerContext.socketPath }
+                : undefined,
+              secureCredentialHome: deps.brokerContext ? true : undefined,
             }
           : undefined;
 
@@ -544,6 +560,16 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           return safePath(sessionDir, "tool-results");
         };
 
+        // INTEG-03: issue single-use session token for the broker proxy auth.
+        // FIXME(INTEG-03): token issued once per assembleToolsForAgent call (per assembly,
+        // not per exec). First exec consumes the token; subsequent calls in the same agent
+        // assembly will receive 407 from the broker.
+        // Path to per-command issuance: thread sessionManager into ExecToolDeps and call
+        // issueToken() inside execute() — tracked as follow-on work.
+        const brokerIssuedSession: IssuedSession | undefined = deps.brokerContext
+          ? deps.brokerContext.sessionManager.issueToken(agentId)
+          : undefined;
+
         tools.push(createExecTool({
           workspacePath: agentWorkspaceDir,
           registry,
@@ -560,6 +586,22 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           // convention.
           toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
           approvalGate,                                      // Soft-stop override path
+          // INTEG-03: broker proxy env — only present when brokerContext wired.
+          // placeholders contain ONLY placeholder strings (never real secret values).
+          // Real secrets are resolved by the broker per-request from SecretManager.
+          brokerSpawnEnv: deps.brokerContext && brokerIssuedSession
+            ? {
+                HTTPS_PROXY: `http://127.0.0.1:${deps.brokerContext.tcpPort}`,
+                // HTTP_PROXY intentionally omitted — broker is CONNECT-only (HTTPS).
+                // The broker handles TLS-CONNECT tunnels; plain HTTP via HTTP_PROXY
+                // is unsupported and would produce unexpected routing behavior.
+                NODE_EXTRA_CA_CERTS: deps.brokerContext.caPath,
+                placeholders: {
+                  ...deps.brokerContext.placeholders,
+                  COMIS_BROKER_TOKEN: brokerIssuedSession.proxyToken, // single-use token
+                },
+              }
+            : undefined,
         }));
       }
 

@@ -363,6 +363,32 @@ risk.
     built in. Set `execSandbox.enabled: "never"` to disable (not
     recommended). See [Exec Sandbox](/security/exec-sandbox).
   </Accordion>
+
+  <Accordion title="Credential Broker" icon="key">
+    **Category: Secrets / Network**
+
+    **What it does:** Keeps API keys out of the exec sandbox entirely. When
+    an agent drives an API-key CLI (Claude Code, curl, etc.), the real secret
+    stays in the daemon's encrypted SecretManager store and is injected at the
+    TLS network boundary (HTTPS MITM). The sandbox process sees only a
+    placeholder value -- `cat /proc/self/environ` and `env` reveal nothing
+    useful. Every inject, deny, and blocked-egress event is audited on the
+    event bus with `agentId` and `traceId`. On Linux, the credentialed sandbox
+    runs in `broker-only` network mode where the broker unix socket is the
+    only bind-mounted network path -- making it the designed-to-be-only egress
+    destination for driven-CLI traffic. The broker is fail-closed: no binding
+    or missing secret means the request is refused rather than forwarded.
+
+    **Why it matters:** Even inside a filesystem sandbox, a process can read
+    its own environment variables. The credential broker removes the credential
+    from that environment entirely, so no amount of prompt injection or sandbox
+    escape can extract the real API key from inside the namespace.
+
+    **Do I need to configure it?** Yes -- configure an `executor.broker.bindings`
+    entry for each CLI you want to drive. Two built-in presets ship today:
+    `anthropic` and `finnhub`. Custom `hostRules` cover any other host.
+    See [Credential Broker](/security/credential-broker).
+  </Accordion>
 </AccordionGroup>
 
 ### When a Response Is Sent
