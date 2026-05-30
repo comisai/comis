@@ -150,11 +150,8 @@ function parseInnerRequest(rawHeaders: string): {
     if (colonIdx === -1) continue;
     const name = line.slice(0, colonIdx).trim().toLowerCase();
     const value = line.slice(colonIdx + 1).trim();
-    // CR-03 (EGRESS-04): RFC 7230 §3.2.2 — accumulate multiple values for the
-    // same header name with comma-joining so duplicate Upgrade headers cannot
-    // shadow "websocket" by appearing later in the header list. A simple
-    // Map.set() overwrite would let an attacker bypass the WS guard by sending
-    // 'Upgrade: websocket\r\nUpgrade: x-bypass' (the second value wins).
+    // CR-03: RFC 7230 §3.2.2 comma-join duplicates — prevents Upgrade header
+    // bypass where a second value would overwrite "websocket" via Map.set().
     const existing = headers.get(name);
     headers.set(name, existing !== undefined ? `${existing}, ${value}` : value);
   }
@@ -233,12 +230,8 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
   let unixSocketPath: string | null = null;
   // Track open sockets so stop() can destroy them immediately
   const openSockets = new Set<net.Socket>();
-  // Track upstream (outbound) sockets separately — these are created by
-  // net.connect() and are NOT accepted by the server, so they are not
-  // captured by the server "connection" event. Without tracking them here,
-  // a stop() call leaves in-flight upstream sockets alive, preventing clean
-  // process exit (WR-03). Calling .unref() alone is insufficient for test
-  // environments where we need stop() to be fully synchronous.
+  // Upstream sockets are NOT captured by "connection" (net.connect creates them).
+  // Track them separately so stop() can destroy them for clean exit.
   const openUpstreamSockets = new Set<net.Socket>();
 
   function handleConnect(
@@ -434,15 +427,8 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         );
 
         // ── Step 3.5: WebSocket upgrade guard (EGRESS-04) ────────────────
-        // Fail closed on WS upgrade — credential injection into WS frames
-        // is not supported (WS-01 future). Silent hang would allow a client
-        // to open an unmediated tunnel; explicit 501 is the auditable exit.
-        //
-        // CR-03: headers.get("upgrade") now returns a comma-joined string of
-        // ALL Upgrade values (e.g. "websocket, x-decoy" or "x-decoy, websocket").
-        // Split on commas and test every token — a single .toLowerCase() ===
-        // "websocket" check was bypassable by sending a second Upgrade header
-        // that overwrote "websocket" in the original Map.set implementation.
+        // Fail closed on WS upgrade (WS-01 future). CR-03: split the comma-joined
+        // multi-value Upgrade header so duplicate headers cannot shadow "websocket".
         const upgradeHeader = parsed.headers.get("upgrade");
         const upgradeValues = (upgradeHeader ?? "").split(",").map((v) => v.trim().toLowerCase());
         if (upgradeValues.some((v) => v === "websocket")) {
@@ -641,10 +627,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             requestPath += targetUrl.search;
           }
 
-          // Reconstruct request headers from the finalizer result.
-          // NOTE: WHATWG Headers.forEach iteration is alphabetical (WR-05).
-          // Phase 4 awsSigV4 is a no-op so alphabetical order is acceptable.
-          // FINAL-02 (actual signing) must preserve SignedHeaders-declared order.
+          // Reconstruct request headers from the finalizer result (alphabetical — acceptable for Phase 2/4).
           let requestStr = `${method} ${requestPath} HTTP/1.1\r\n`;
           result.headers.forEach((value, name) => {
             requestStr += `${name}: ${value}\r\n`;
@@ -686,9 +669,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             if (targetUrl.search) {
               requestPath += targetUrl.search;
             }
-            // NOTE: WHATWG Headers.forEach iteration is alphabetical (RFC 7230
-            // normalization). Acceptable for Phase 2/4. FINAL-02 (awsSigV4
-            // signing) must reconstruct in SignedHeaders-declared order (WR-05).
+            // WHATWG Headers.forEach is alphabetical — acceptable for Phase 2/4.
             let requestStr = `${method} ${requestPath} HTTP/1.1\r\n`;
             whatwgHeaders.forEach((value, name) => {
               requestStr += `${name}: ${value}\r\n`;
@@ -772,18 +753,10 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         // Unlink stale socket file before binding (prevents EADDRINUSE).
         try { unlinkSync(socketPath); } catch { /* not present — ok */ }
         unixServer.listen({ path: socketPath }, () => {
-          // WR-01: Restrict the socket file to owner-only (rw-------)  after
-          // listen() creates it. The umask on a typical daemon (0o022) would
-          // yield 0o755 (world-accessible). A world-accessible broker socket
-          // expands the attack surface to all local users — they can attempt
-          // connections and need only a valid token to authenticate. Token auth
-          // is not a substitute for a restrictive socket mode on a shared host.
-          // chmod after listen has a narrow race window (file visible for ~0µs
-          // at 0o777&~umask); acceptable because the socket requires a valid
-          // single-use Bearer token, so a race-winning opener still fails the
-          // auth gate. The best-effort try/catch prevents chmod failure from
-          // blocking startup (e.g., non-POSIX FS in some container runtimes).
-          try { chmodSync(socketPath, 0o600); } catch { /* log but do not fail */ }
+          // WR-01: restrict socket to owner-only (rw-------). The daemon umask
+          // (0o022) would yield 0o755 (world-accessible). Best-effort catch
+          // prevents chmod failure from blocking startup on non-POSIX FS.
+          try { chmodSync(socketPath, 0o600); } catch { /* non-POSIX FS — ok */ }
           unixSocketPath = socketPath;
           log.info({ step: "start-unix", socketPath }, "NodeMitmBroker Unix socket started");
           resolve();
@@ -793,15 +766,10 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
 
     stop(): Promise<void> {
       return new Promise((resolve) => {
-        // WR-02 fix: destroy ALL tracked sockets FIRST (covers both TCP and Unix
-        // server clients). The original code placed openSockets destruction AFTER
-        // the early-return for !server, so Unix client sockets (tracked in
-        // openSockets via attachServerHandlers) were never destroyed when only
-        // startUnixSocket() was called without start().
+        // WR-02: destroy ALL tracked sockets FIRST — before the !server
+        // early-return — so Unix client sockets are always cleaned up.
         for (const socket of openSockets) { socket.destroy(); }
         openSockets.clear();
-        // Destroy in-flight upstream sockets: not captured by the server
-        // "connection" event; without this, stop() leaves them alive.
         for (const socket of openUpstreamSockets) { socket.destroy(); }
         openUpstreamSockets.clear();
 

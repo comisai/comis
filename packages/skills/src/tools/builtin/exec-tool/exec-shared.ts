@@ -105,10 +105,8 @@ export function buildSpawnCommand(
       readOnlyPaths: allReadOnlyPaths,
       cwd,
       tempDir,
-      // CR-02 (EGRESS-01/02): forward network isolation mode and credential home
-      // gating from ExecSandboxConfig → SandboxOptions so the production call
-      // path can actually activate broker-only egress and credential isolation.
-      // Default undefined preserves the existing open/non-gated behavior (no regression).
+      // CR-02: forward network + secureCredentialHome from ExecSandboxConfig to
+      // SandboxOptions (EGRESS-01/02). Undefined = open/unsecured (no regression).
       network: sandboxConfig.network,
       secureCredentialHome: sandboxConfig.secureCredentialHome,
     });
@@ -140,13 +138,7 @@ export function buildSpawnCommand(
 // secretRefs helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Workspace-internal data env resolver. Returns env vars derived from
- * `workspaceDir` so python/matplotlib subprocesses do NOT inherit the
- * daemon's host PATH or cache-dir defaults. Shape mirrors
- * `packages/agent/src/workspace/data-env.ts` verbatim; lifted inline to
- * avoid a cross-package agent import (skills + agent are siblings).
- */
+/** Workspace-local data env — python/matplotlib subprocesses only, not inheriting daemon PATH. */
 function resolveDataEnv(opts: { workspaceDir: string }): Record<string, string> {
   const venvBin = safePath(opts.workspaceDir, "venv", "bin");
   const cacheDir = safePath(opts.workspaceDir, ".cache");
