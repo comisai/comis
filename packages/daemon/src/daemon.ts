@@ -180,6 +180,7 @@ import type { DaemonInstance, DaemonOverrides, BootContext, PermissionCorrection
 import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
+import { wireRecallCounters } from "./observability/recall-counters-wiring.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -1112,11 +1113,20 @@ function buildRpcDispatchDeps(deps: {
     }
     return cachedMcpTokenStore;
   };
+  // OBS-07: stand up the single in-process recall-counter registry and
+  // subscribe it to the memory:* bus events. The snapshot accessor feeds the
+  // memory.recall_stats handler (comis memory stats reads live counters). The
+  // gauge is daemon-lifetime — it resets on restart (Assumption A2).
+  const recallCounters = wireRecallCounters(c.container.eventBus);
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
     defaultWorkspaceDir: c.defaultWorkspaceDir, workspaceDirs: c.workspaceDirs,
     memoryApi: c.memoryApi, memoryAdapter: c.memoryAdapter, embeddingQueue: c.embeddingQueue,
+    // OBS-06 memory-diagnostic deps: the scoped consolidation + entity stores
+    // (provenance + entity-graph reads) and the live recall counters (OBS-07)
+    // for the 4 admin-gated memory.* diagnostic handlers.
+    consolidationStore: c.consolidationStore, entityStore: c.entityStore, recallCounters,
     tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
     sessionStore: g.sessionStoreBridge,
