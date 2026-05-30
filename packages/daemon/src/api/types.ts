@@ -137,6 +137,26 @@ export interface MemoryApiDeps {
   embeddingCacheStats?: () => import("@comis/memory").EmbeddingCacheStats;
   /** Embedding circuit breaker state accessor for memory persistence operations. */
   embeddingCircuitBreakerState?: () => import("@comis/agent").CircuitState;
+  // Memory-diagnostic deps (Phase 86 / OBS-06)
+  /** Consolidation store — the `memory.observations` handler reads provenance
+   *  via `listObservations(agentId, tenantId, limit)` (scoped). Same port type
+   *  setup-memory builds; optional so existing handler tests construct deps
+   *  without it. */
+  consolidationStore?: import("@comis/core").MemoryConsolidationStore;
+  /** Entity store — the `memory.entities` handler reads the entity graph via
+   *  `listEntities(agentId, tenantId, limit)` (ENT-03 scoped). Optional for the
+   *  same backward-compat reason. */
+  entityStore?: import("@comis/core").MemoryEntityStore;
+  /** Live in-process recall counters (OBS-07). The `memory.recall_stats`
+   *  handler reads `snapshot()`; wired from `wireRecallCounters(eventBus)` at
+   *  the composition root. Optional — when unset the handler returns zeroed
+   *  counters (the gauge is process-lifetime, resets on restart). */
+  recallCounters?: { snapshot: () => import("@comis/observability").RecallCountersSnapshot };
+  /** Data directory (e.g. ~/.comis) for the `memory.recall_trace` JSONL read.
+   *  The handler resolves `<dataDir>/logs/recall-trace.jsonl` via
+   *  `resolveRecallTraceFilePath`. Optional — mirrors ObservabilityApiDeps.dataDir;
+   *  defaults to ~/.comis at handler-construction time when omitted. */
+  dataDir?: string;
 }
 
 /**
