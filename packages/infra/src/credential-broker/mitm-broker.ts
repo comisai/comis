@@ -33,7 +33,7 @@
 import * as http from "node:http";
 import * as net from "node:net";
 import * as tls from "node:tls";
-import { unlinkSync } from "node:fs";
+import { chmodSync, unlinkSync } from "node:fs";
 import type {
   TypedEventBus,
   SecretManager,
@@ -772,6 +772,18 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         // Unlink stale socket file before binding (prevents EADDRINUSE).
         try { unlinkSync(socketPath); } catch { /* not present — ok */ }
         unixServer.listen({ path: socketPath }, () => {
+          // WR-01: Restrict the socket file to owner-only (rw-------)  after
+          // listen() creates it. The umask on a typical daemon (0o022) would
+          // yield 0o755 (world-accessible). A world-accessible broker socket
+          // expands the attack surface to all local users — they can attempt
+          // connections and need only a valid token to authenticate. Token auth
+          // is not a substitute for a restrictive socket mode on a shared host.
+          // chmod after listen has a narrow race window (file visible for ~0µs
+          // at 0o777&~umask); acceptable because the socket requires a valid
+          // single-use Bearer token, so a race-winning opener still fails the
+          // auth gate. The best-effort try/catch prevents chmod failure from
+          // blocking startup (e.g., non-POSIX FS in some container runtimes).
+          try { chmodSync(socketPath, 0o600); } catch { /* log but do not fail */ }
           unixSocketPath = socketPath;
           log.info({ step: "start-unix", socketPath }, "NodeMitmBroker Unix socket started");
           resolve();

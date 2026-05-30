@@ -16,7 +16,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import * as http from "node:http";
 import * as net from "node:net";
 import * as tls from "node:tls";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createNodeCaManager } from "./ca-manager.js";
@@ -3162,8 +3162,7 @@ describe("EGRESS-01 — Unix socket listen (startUnixSocket)", () => {
     // Start TCP server (existing API, unchanged)
     await broker.start();
 
-    // Start Unix socket listener (additive new method)
-    // @ts-expect-error — startUnixSocket does not exist on MitmBrokerPort yet (RED phase)
+    // Start Unix socket listener
     await broker.startUnixSocket(socketPath);
 
     // Connect to the Unix socket and send CONNECT without Proxy-Authorization
@@ -3199,6 +3198,26 @@ describe("EGRESS-01 — Unix socket listen (startUnixSocket)", () => {
     expect(existsSync(socketPath)).toBe(false);
 
     // Cleanup temp dir
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("WR-01 — Unix socket file mode is 0o600 (owner-only) after startUnixSocket", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "mitm-broker-mode-"));
+    const socketPath = join(tmpDir, "broker.sock");
+
+    const deps = makeDeps();
+    const broker = createMitmBroker(deps);
+    runningBrokers.push(broker);
+
+    await broker.startUnixSocket(socketPath);
+
+    // Check socket file permissions — must be 0o600 (rw-------)
+    const st = statSync(socketPath);
+    // st.mode contains the file type bits in the high bits; mask to get the permission bits only
+    const perms = st.mode & 0o777;
+    expect(perms).toBe(0o600);
+
+    await broker.stop();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 });
