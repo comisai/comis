@@ -1632,6 +1632,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // these intentional test-only public exports.
       "createMcpHandlers",
       "McpHandlerDeps",
+      // Memory + memory-diagnostic handlers — re-exported so the integration
+      // test at test/integration/security/recall-diagnostics-isolation.test.ts
+      // can drive the real admin-gated memory.observations / memory.entities /
+      // memory.recall_stats / memory.recall_trace handlers against the REAL
+      // wired scoped stores (the OBS-08 cross-scope-leak negative + the EoP
+      // admin-reject through the RPC layer). Same rationale as createMcpHandlers:
+      // the test imports them statically from @comis/daemon, but the
+      // public-export-consumers AST walker only scans packages/*/src/** (NOT
+      // test/), so this orphan list is the canonical place to record these
+      // intentional test-only public exports.
+      "createMemoryHandlers",
+      "MemoryHandlerDeps",
       // _resetSigusr1Timer + _resetMutationFence are PROCESS-WIDE state
       // resets required by any test that exercises the real persistToConfig
       // writer (see persist-to-config.ts:12-43 module-level state docs).
