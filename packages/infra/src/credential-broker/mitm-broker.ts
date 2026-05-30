@@ -49,6 +49,7 @@ import type {
 import { resolveBinding, applyInjections, normalizeHost } from "@comis/core";
 import type { SessionManager, SessionInfo } from "./session-manager.js";
 import { bufferBody, runFinalizer, MAX_BODY_BYTES } from "./finalizer-stage.js";
+import { emitSessionOpened, emitSessionClosed, emitRequest, emitInjected, emitDenied, emitCredentialUnavailable, emitEgressBlocked } from "./broker-events.js";
 
 // ── Max header size for tunnel inner-request parsing (request smuggling prevention) ──
 const MAX_HEADER_BYTES = 8192;
@@ -246,13 +247,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
 
     if (!auth?.startsWith("Bearer ")) {
       log.debug({ step: "auth-gate", host }, "CONNECT missing or non-Bearer auth");
-      deps.eventBus.emit("broker:denied", {
-        sessionId: "unknown",
-        host,
-        reason: "bad_token" as const,
-        statusCode: 407,
-        timestamp: deps.clock.now(),
-      });
+      emitDenied(deps.eventBus, { sessionId: "unknown", host, reason: "bad_token", statusCode: 407, timestamp: deps.clock.now() });
       try {
         clientSocket.write(
           "HTTP/1.1 407 Proxy Authentication Required\r\n" +
@@ -271,13 +266,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
 
     if (!session) {
       log.debug({ step: "auth-gate", host }, "CONNECT invalid or consumed token");
-      deps.eventBus.emit("broker:denied", {
-        sessionId: "unknown",
-        host,
-        reason: "bad_token" as const,
-        statusCode: 407,
-        timestamp: deps.clock.now(),
-      });
+      emitDenied(deps.eventBus, { sessionId: "unknown", host, reason: "bad_token", statusCode: 407, timestamp: deps.clock.now() });
       try {
         clientSocket.write(
           "HTTP/1.1 407 Proxy Authentication Required\r\n" +
@@ -316,6 +305,8 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           { step: "tunnel-open", sessionId, agentId, host },
           "CONNECT tunnel established",
         );
+        const sessionStartedAt = deps.clock.now();
+        emitSessionOpened(deps.eventBus, { sessionId, agentId, host, timestamp: sessionStartedAt });
 
         // ── Step 2.5: TLS upgrade (Phase 3 — when caManager is wired) ───────
         // Pre-flight host check (CR-02 fix): when caManager is wired, verify
@@ -343,13 +334,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
               },
               "Pre-flight host check failed — no binding for host",
             );
-            deps.eventBus.emit("broker:denied", {
-              sessionId,
-              host,
-              reason: "no_binding" as const,
-              statusCode: 403,
-              timestamp: deps.clock.now(),
-            });
+            emitDenied(deps.eventBus, { sessionId, host, reason: "no_binding", statusCode: 403, timestamp: deps.clock.now() });
             destroyWithStatus(clientSocket, "HTTP/1.1 403 Forbidden");
             return;
           }
@@ -387,15 +372,9 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         const tunnelResult = await readTunnelHeaders(innerSocket, _head);
 
         if (tunnelResult === null) {
-          log.debug({ step: "header-parse", sessionId, hint: "Header overflow or parse error; fail closed", errorKind: "validation" as const }, "Inner request header overflow");
+          log.debug({ step: "header-parse", sessionId, agentId, hint: "Header overflow or parse error; fail closed", errorKind: "validation" as const }, "Inner request header overflow");
           // CR-03: malformed_request (not path_policy — avoid misclassification).
-          deps.eventBus.emit("broker:denied", {
-            sessionId,
-            host,
-            reason: "malformed_request" as const,
-            statusCode: 400,
-            timestamp: deps.clock.now(),
-          });
+          emitDenied(deps.eventBus, { sessionId, host, reason: "malformed_request", statusCode: 400, timestamp: deps.clock.now() });
           destroyWithStatus(innerSocket, "HTTP/1.1 400 Bad Request");
           return;
         }
@@ -406,15 +385,9 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
 
         const parsed = parseInnerRequest(rawHeaders);
         if (parsed === null) {
-          log.debug({ step: "header-parse", sessionId, hint: "Malformed inner HTTP request; fail closed", errorKind: "validation" as const }, "Malformed inner request");
+          log.debug({ step: "header-parse", sessionId, agentId, hint: "Malformed inner HTTP request; fail closed", errorKind: "validation" as const }, "Malformed inner request");
           // WR-04: emit audit event on every consumed-token exit path.
-          deps.eventBus.emit("broker:denied", {
-            sessionId,
-            host,
-            reason: "malformed_request" as const,
-            statusCode: 400,
-            timestamp: deps.clock.now(),
-          });
+          emitDenied(deps.eventBus, { sessionId, host, reason: "malformed_request", statusCode: 400, timestamp: deps.clock.now() });
           destroyWithStatus(innerSocket, "HTTP/1.1 400 Bad Request");
           return;
         }
@@ -425,6 +398,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           { step: "inner-request", sessionId, agentId, host, method },
           "Inner HTTP request received",
         );
+        emitRequest(deps.eventBus, { sessionId, host, path, method, timestamp: deps.clock.now() });
 
         // ── Step 3.5: WebSocket upgrade guard (EGRESS-04) ────────────────
         // Fail closed on WS upgrade (WS-01 future). CR-03: split the comma-joined
@@ -443,13 +417,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             },
             "WebSocket upgrade rejected (EGRESS-04)",
           );
-          deps.eventBus.emit("broker:denied", {
-            sessionId,
-            host,
-            reason: "ws_upgrade_not_supported" as const,
-            statusCode: 501,
-            timestamp: deps.clock.now(),
-          });
+          emitDenied(deps.eventBus, { sessionId, host, reason: "ws_upgrade_not_supported", statusCode: 501, timestamp: deps.clock.now() });
           destroyWithStatus(innerSocket, "HTTP/1.1 501 Not Implemented");
           return;
         }
@@ -477,6 +445,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             {
               step: "binding-resolve",
               sessionId,
+              agentId,
               host,
               denialReason,
               errorKind: "precondition" as const,
@@ -484,13 +453,10 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             },
             "Broker binding denied",
           );
-          deps.eventBus.emit("broker:denied", {
-            sessionId,
-            host,
-            reason: denialReason,
-            statusCode: 403,
-            timestamp: deps.clock.now(),
-          });
+          if (denialReason === "no_binding") {
+            emitEgressBlocked(deps.eventBus, { sessionId, host, timestamp: deps.clock.now() });
+          }
+          emitDenied(deps.eventBus, { sessionId, host, reason: denialReason, statusCode: 403, timestamp: deps.clock.now() });
           destroyWithStatus(innerSocket, "HTTP/1.1 403 Forbidden");
           return;
         }
@@ -519,12 +485,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             },
             "Secret not available for broker request",
           );
-          deps.eventBus.emit("broker:credential_unavailable", {
-            sessionId,
-            secretRef: binding.secretRef,
-            agentId,
-            timestamp: deps.clock.now(),
-          });
+          emitCredentialUnavailable(deps.eventBus, { sessionId, secretRef: binding.secretRef, agentId, timestamp: deps.clock.now() });
           destroyWithStatus(innerSocket, "HTTP/1.1 502 Bad Gateway");
           return;
         }
@@ -560,12 +521,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         // Emit broker:injected — ruleKind ONLY, never the secret value
         const primaryRule: InjectionRule | undefined = rule.inject[0];
         const ruleKind: InjectionRule["kind"] = primaryRule !== undefined ? primaryRule.kind : "setHeader";
-        deps.eventBus.emit("broker:injected", {
-          sessionId,
-          host,
-          ruleKind,
-          timestamp: deps.clock.now(),
-        });
+        emitInjected(deps.eventBus, { sessionId, host, ruleKind, timestamp: deps.clock.now() });
 
         log.debug(
           { step: "inject", sessionId, agentId, host, ruleKind },
@@ -578,8 +534,8 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         if (rule.finalizer !== undefined) {
           // Helper: emit broker:denied 413 and destroy the tunnel socket.
           function deny413(hint: string): void {
-            log.debug({ step: "finalizer_body_cap", sessionId, errorKind: "validation" as const, hint }, "Body 413 — fail closed");
-            deps.eventBus.emit("broker:denied", { sessionId, host, reason: "body_too_large" as const, statusCode: 413, timestamp: deps.clock.now() });
+            log.debug({ step: "finalizer_body_cap", sessionId, agentId, errorKind: "validation" as const, hint }, "Body 413 — fail closed");
+            emitDenied(deps.eventBus, { sessionId, host, reason: "body_too_large", statusCode: 413, timestamp: deps.clock.now() });
             destroyWithStatus(innerSocket, "HTTP/1.1 413 Content Too Large");
           }
 
@@ -648,7 +604,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
 
           upstreamSocket.on("error", (err) => {
             log.debug(
-              { step: "upstream", sessionId, err, errorKind: "network" as const, hint: "Upstream connection failed; destroying tunnel" },
+              { step: "upstream", sessionId, agentId, err, errorKind: "network" as const, hint: "Upstream connection failed; destroying tunnel" },
               "Upstream socket error",
             );
             innerSocket.destroy();
@@ -658,6 +614,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
 
           const teardownUpstream = (): void => {
             openUpstreamSockets.delete(upstreamSocket);
+            emitSessionClosed(deps.eventBus, { sessionId, agentId, durationMs: deps.clock.now() - sessionStartedAt, reason: "teardown", timestamp: deps.clock.now() });
             upstreamSocket.destroy();
           };
           innerSocket.on("close", teardownUpstream);
@@ -691,7 +648,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
 
           upstreamSocket.on("error", (err) => {
             log.debug(
-              { step: "upstream", sessionId, err, errorKind: "network" as const, hint: "Upstream connection failed; destroying tunnel" },
+              { step: "upstream", sessionId, agentId, err, errorKind: "network" as const, hint: "Upstream connection failed; destroying tunnel" },
               "Upstream socket error",
             );
             innerSocket.destroy();
@@ -701,6 +658,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
 
           const teardownUpstream = (): void => {
             openUpstreamSockets.delete(upstreamSocket);
+            emitSessionClosed(deps.eventBus, { sessionId, agentId, durationMs: deps.clock.now() - sessionStartedAt, reason: "teardown", timestamp: deps.clock.now() });
             upstreamSocket.destroy();
           };
           innerSocket.on("close", teardownUpstream);
