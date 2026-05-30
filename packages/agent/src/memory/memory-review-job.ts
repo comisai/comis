@@ -261,6 +261,12 @@ function extractResponseText(response: { content?: unknown[] }): string {
 export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<void, Error>> {
   const { config, agentId, tenantId, memoryPort, sessionStore, eventBus, logger, clock } = deps;
   const startTime = clock.now();
+  // OBS-05: scope the per-stage step logs to a `submodule` child logger so an
+  // operator can answer "what did extraction do?" from logs alone (AGENTS.md
+  // §2.6/§2.7). The pre-existing `logger.*` WARN/DEBUG calls are left intact
+  // (their byte-identical strings are guarded by the degradation/forensic
+  // tests); only the new stage INFO lines route through `log`.
+  const log = logger.child({ submodule: "memory-review" });
 
   // Load watermark
   const watermarkPath = safePath(deps.workspacePath, ".memory-review-watermark");
@@ -400,6 +406,13 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     return ok(undefined);
   }
 
+  // OBS-05 EXTRACT stage: the parse succeeded — report the parsed memory count.
+  // O(1)/run boundary line → INFO (per-item store/link detail stays DEBUG).
+  log.info(
+    { agentId, step: "extract" as const, parsed: extraction.memories.length, durationMs: clock.now() - startTime },
+    "extraction parsed",
+  );
+
   // The fixed review session key — structured memories carry no per-message
   // `session` field, so dedup search/store scope to one review-owned key.
   const reviewSessionKey: SessionKey = {
@@ -419,6 +432,17 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
   let memoriesExtracted = 0;
   let duplicatesSkipped = 0;
   const extractedEntities: ExtractedMemoryWithEntities[] = [];
+
+  // OBS-04 (memory:entities_linked): `entitiesLinked` counts SUCCESSFUL
+  // resolveAndLink calls this run; `seenEntityNames` derives `newEntities`.
+  // `resolveAndLink` returns only the resolved id — it does NOT signal
+  // create-vs-reuse, and adding a port method just to surface that is out of
+  // scope (Plan 02/05). We therefore derive `newEntities` CONSERVATIVELY as the
+  // count of DISTINCT entity names first-seen in THIS run (a lower-bound proxy
+  // for "minted a fresh row"): the run's first mention of a name is treated as
+  // new, recurrences as reuse. Counts only ever leave this function — never a name.
+  let entitiesLinked = 0;
+  const seenEntityNames = new Set<string>();
 
   for (const m of extraction.memories) {
     // Per-item resilience (EXTR-05): a single bad memory must `continue`, never
@@ -549,6 +573,12 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
               },
               "Entity resolve/link failed (non-fatal)",
             );
+          } else {
+            // OBS-04 counters: a successful resolve+link. `entitiesLinked` is the
+            // total (the event's `entityCount`); a name's FIRST appearance this
+            // run counts toward `newEntities` (conservative create proxy above).
+            entitiesLinked++;
+            seenEntityNames.add(e.name);
           }
         }
       }
@@ -566,6 +596,32 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
   }
 
   const entitiesExtracted = extractedEntities.reduce((n, e) => n + e.entities.length, 0);
+
+  // OBS-05 STORE stage: report what the per-memory store loop persisted.
+  log.info(
+    { agentId, step: "store" as const, memoriesExtracted, duplicatesSkipped, durationMs: clock.now() - startTime },
+    "memories stored",
+  );
+
+  // OBS-05 LINK stage + OBS-04 emit — only meaningful when the entity-store port
+  // is injected (un-injected ⇒ Phase-82 behaviour: no link work, no event). The
+  // `entitiesLinked > 0` guard keeps a no-entity run silent (no zero-count noise).
+  if (deps.entityStore && entitiesLinked > 0) {
+    const newEntities = seenEntityNames.size;
+    log.info(
+      { agentId, step: "link" as const, entitiesLinked, newEntities, durationMs: clock.now() - startTime },
+      "entities linked",
+    );
+    // OBS-04: counts ONLY — entityCount (total resolved) + newEntities (distinct
+    // first-seen) + durationMs. NEVER an entity name (AGENTS.md §2.7 / T-86-16).
+    eventBus.emit("memory:entities_linked", {
+      agentId,
+      entityCount: entitiesLinked,
+      newEntities,
+      durationMs: clock.now() - startTime,
+      timestamp: clock.now(),
+    });
+  }
 
   // Update watermark per-session (success path — runs on every terminating path).
   for (const session of reviewedSessions) {
