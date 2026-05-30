@@ -297,6 +297,32 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
     // tracks it correctly (avoids anonymous-function coverage gaps).
     clientSocket.on("error", noopErrorHandler);
 
+    // ── Session-closed guard (CR-01 fix) ──────────────────────────────────────
+    // Declared outside the try/catch so both the success path and the catch block
+    // can call it. Ensures broker:session_closed is emitted EXACTLY ONCE for every
+    // connection where broker:session_opened fired — across ALL exit paths.
+    // Guard flag prevents double-emit if both teardownUpstream and an error path
+    // fire concurrently (e.g. upstreamSocket.on("error") destroys innerSocket,
+    // which triggers the "close" listener on innerSocket).
+    // sessionStartedAt is set immediately after emitSessionOpened — the guard
+    // captures it via closure. It is 0 before emitSessionOpened fires (the
+    // outer try/catch path only calls emitSessionClosedOnce after session_opened
+    // has run, so the 0 default is never used in a real payload).
+    let sessionClosedEmitted = false;
+    let sessionStartedAt = 0;
+    const emitSessionClosedOnce = (reason: "teardown" | "error"): void => {
+      if (sessionClosedEmitted) return;
+      sessionClosedEmitted = true;
+      const closedAt = deps.clock.now();
+      emitSessionClosed(deps.eventBus, {
+        sessionId,
+        agentId,
+        durationMs: closedAt - sessionStartedAt,
+        reason,
+        timestamp: closedAt,
+      });
+    };
+
     void (async () => {
       try {
         clientSocket.write("HTTP/1.1 200 Connection established\r\n\r\n");
@@ -305,7 +331,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           { step: "tunnel-open", sessionId, agentId, host },
           "CONNECT tunnel established",
         );
-        const sessionStartedAt = deps.clock.now();
+        sessionStartedAt = deps.clock.now();
         emitSessionOpened(deps.eventBus, { sessionId, agentId, host, timestamp: sessionStartedAt });
 
         // ── Step 2.5: TLS upgrade (Phase 3 — when caManager is wired) ───────
@@ -334,7 +360,9 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
               },
               "Pre-flight host check failed — no binding for host",
             );
+            emitEgressBlocked(deps.eventBus, { sessionId, host, timestamp: deps.clock.now() });
             emitDenied(deps.eventBus, { sessionId, host, reason: "no_binding", statusCode: 403, timestamp: deps.clock.now() });
+            emitSessionClosedOnce("error");
             destroyWithStatus(clientSocket, "HTTP/1.1 403 Forbidden");
             return;
           }
@@ -375,6 +403,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           log.debug({ step: "header-parse", sessionId, agentId, hint: "Header overflow or parse error; fail closed", errorKind: "validation" as const }, "Inner request header overflow");
           // CR-03: malformed_request (not path_policy — avoid misclassification).
           emitDenied(deps.eventBus, { sessionId, host, reason: "malformed_request", statusCode: 400, timestamp: deps.clock.now() });
+          emitSessionClosedOnce("error");
           destroyWithStatus(innerSocket, "HTTP/1.1 400 Bad Request");
           return;
         }
@@ -388,6 +417,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           log.debug({ step: "header-parse", sessionId, agentId, hint: "Malformed inner HTTP request; fail closed", errorKind: "validation" as const }, "Malformed inner request");
           // WR-04: emit audit event on every consumed-token exit path.
           emitDenied(deps.eventBus, { sessionId, host, reason: "malformed_request", statusCode: 400, timestamp: deps.clock.now() });
+          emitSessionClosedOnce("error");
           destroyWithStatus(innerSocket, "HTTP/1.1 400 Bad Request");
           return;
         }
@@ -418,6 +448,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             "WebSocket upgrade rejected (EGRESS-04)",
           );
           emitDenied(deps.eventBus, { sessionId, host, reason: "ws_upgrade_not_supported", statusCode: 501, timestamp: deps.clock.now() });
+          emitSessionClosedOnce("error");
           destroyWithStatus(innerSocket, "HTTP/1.1 501 Not Implemented");
           return;
         }
@@ -457,6 +488,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             emitEgressBlocked(deps.eventBus, { sessionId, host, timestamp: deps.clock.now() });
           }
           emitDenied(deps.eventBus, { sessionId, host, reason: denialReason, statusCode: 403, timestamp: deps.clock.now() });
+          emitSessionClosedOnce("error");
           destroyWithStatus(innerSocket, "HTTP/1.1 403 Forbidden");
           return;
         }
@@ -486,6 +518,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
             "Secret not available for broker request",
           );
           emitCredentialUnavailable(deps.eventBus, { sessionId, secretRef: binding.secretRef, agentId, timestamp: deps.clock.now() });
+          emitSessionClosedOnce("error");
           destroyWithStatus(innerSocket, "HTTP/1.1 502 Bad Gateway");
           return;
         }
@@ -532,10 +565,11 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
         // When rule has no finalizer, keep the existing streaming pipe path.
         // When a finalizer is configured, buffer the full body before upstream.
         if (rule.finalizer !== undefined) {
-          // Helper: emit broker:denied 413 and destroy the tunnel socket.
+          // Helper: emit broker:denied 413, close session, and destroy the tunnel socket.
           function deny413(hint: string): void {
             log.debug({ step: "finalizer_body_cap", sessionId, agentId, errorKind: "validation" as const, hint }, "Body 413 — fail closed");
             emitDenied(deps.eventBus, { sessionId, host, reason: "body_too_large", statusCode: 413, timestamp: deps.clock.now() });
+            emitSessionClosedOnce("error");
             destroyWithStatus(innerSocket, "HTTP/1.1 413 Content Too Large");
           }
 
@@ -551,6 +585,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           // and keep-alive never sends EOF. 411 Length Required.
           const transferEncoding = whatwgHeaders.get("transfer-encoding");
           if (transferEncoding?.toLowerCase().includes("chunked") && declaredContentLength === undefined) {
+            emitSessionClosedOnce("error");
             destroyWithStatus(innerSocket, "HTTP/1.1 411 Length Required");
             return;
           }
@@ -614,7 +649,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
 
           const teardownUpstream = (): void => {
             openUpstreamSockets.delete(upstreamSocket);
-            emitSessionClosed(deps.eventBus, { sessionId, agentId, durationMs: deps.clock.now() - sessionStartedAt, reason: "teardown", timestamp: deps.clock.now() });
+            emitSessionClosedOnce("teardown");
             upstreamSocket.destroy();
           };
           innerSocket.on("close", teardownUpstream);
@@ -658,7 +693,7 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
 
           const teardownUpstream = (): void => {
             openUpstreamSockets.delete(upstreamSocket);
-            emitSessionClosed(deps.eventBus, { sessionId, agentId, durationMs: deps.clock.now() - sessionStartedAt, reason: "teardown", timestamp: deps.clock.now() });
+            emitSessionClosedOnce("teardown");
             upstreamSocket.destroy();
           };
           innerSocket.on("close", teardownUpstream);
@@ -668,6 +703,9 @@ export function createMitmBroker(deps: MitmBrokerDeps): MitmBrokerPort {
           { step: "connect-handler", sessionId, err, errorKind: "internal" as const, hint: "Unexpected error in CONNECT handler; destroying socket" },
           "Unexpected CONNECT handler error",
         );
+        // Only emit session_closed if session_opened already fired (sessionStartedAt > 0).
+        // Guards against the unlikely case of an error before the 200 write completes.
+        if (sessionStartedAt > 0) emitSessionClosedOnce("error");
         clientSocket.destroy();
       }
     })();
