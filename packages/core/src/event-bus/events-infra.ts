@@ -675,7 +675,7 @@ export interface InfraEvents {
     sessionId: string;
     agentId: string;
     durationMs: number;
-    reason: "teardown" | "error" | "expired";
+    reason: "teardown" | "error";
     timestamp: number;
   };
 
@@ -701,7 +701,7 @@ export interface InfraEvents {
   "broker:denied": {
     sessionId: string;
     host: string;
-    reason: "no_binding" | "bad_token" | "path_policy" | "unknown_host" | "malformed_request" | "body_too_large" | "ws_upgrade_not_supported";
+    reason: "no_binding" | "bad_token" | "path_policy" | "malformed_request" | "body_too_large" | "ws_upgrade_not_supported";
     statusCode: number;
     timestamp: number;
   };

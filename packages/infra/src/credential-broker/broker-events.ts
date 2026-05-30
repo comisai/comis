@@ -41,7 +41,7 @@ export function emitSessionClosed(
     sessionId: string;
     agentId: string;
     durationMs: number;
-    reason: "teardown" | "error" | "expired";
+    reason: "teardown" | "error";
     timestamp: number;
   },
 ): void {
@@ -94,7 +94,6 @@ export function emitDenied(
       | "no_binding"
       | "bad_token"
       | "path_policy"
-      | "unknown_host"
       | "malformed_request"
       | "body_too_large"
       | "ws_upgrade_not_supported";

@@ -77,7 +77,7 @@ describe("emitSessionClosed", () => {
   });
 
   it("accepts all reason values", () => {
-    for (const reason of ["teardown", "error", "expired"] as const) {
+    for (const reason of ["teardown", "error"] as const) {
       const eventBus = createMockEventBus();
       emitSessionClosed(eventBus, {
         sessionId: "s3",
@@ -167,7 +167,6 @@ describe("emitDenied", () => {
       "no_binding",
       "bad_token",
       "path_policy",
-      "unknown_host",
       "malformed_request",
       "body_too_large",
       "ws_upgrade_not_supported",
