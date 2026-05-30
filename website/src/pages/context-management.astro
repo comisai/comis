@@ -245,9 +245,14 @@ const realExample = {
         <p class="text-muted text-lg mb-6 max-w-2xl">
           Every conversation is processed through a composable pipeline of 8 categorical stages before each LLM call (10 distinct layer implementations counting signature scrubbing and surrogate guards). Each stage targets a specific source of token waste.
         </p>
-        <p class="text-muted text-sm mb-12 max-w-2xl italic">
+        <p class="text-muted text-sm mb-6 max-w-2xl italic">
           Every stage has a circuit breaker - 3 consecutive failures disables the layer. No single optimization bug can bring down the pipeline.
         </p>
+        <div class="bg-navy-light/80 border border-teal/15 rounded-xl p-5 mb-12 max-w-3xl">
+          <p class="text-muted text-sm leading-relaxed">
+            <span class="text-white font-semibold">DAG is the default.</span> The lossless DAG context engine - full history kept, details recalled on demand via <code class="text-teal text-xs">ctx_search</code> / <code class="text-teal text-xs">ctx_inspect</code> - is the default engine. The classic multi-stage pipeline detailed below is the reversible opt-out mode; operators switch with a single config reload (no restart, fully reversible, no data loss). The same token-budgeting, eviction, masking, and compaction discipline applies in both modes.
+          </p>
+        </div>
 
         <div class="space-y-4">
           {layers.map((layer) => (
