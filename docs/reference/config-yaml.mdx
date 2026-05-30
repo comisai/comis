@@ -114,8 +114,7 @@ memory:
   embeddingModel: "text-embedding-3-small"
   embeddingDimensions: 1536
   retention:
-    maxAgeDays: 365               # Keep one year of memory entries
-    maxEntries: 0                 # 0 = no count limit
+    maxAgeDays: 365               # Keep one year of memory entries (0 = no age limit)
 
 # -- Gateway: HTTP + WebSocket on loopback only ------------------------------
 gateway:
@@ -413,21 +412,21 @@ Per-agent configuration for Gemini explicit CachedContent caching. When enabled,
 
 #### Context Engine (agents.*.contextEngine)
 
-Context engine configuration. Controls the system that manages what your agent sees each turn. Supports two operating modes: **pipeline** (default, the 8-step system) and **dag** (opt-in, lossless DAG with recall tools). See [Compaction](/agents/compaction) for a user-friendly explanation.
+Context engine configuration. Controls the system that manages what your agent sees each turn. Supports two operating modes: **dag** (default, the lossless DAG with recall tools) and **pipeline** (opt-out, the 8-step sequential system). See [Compaction](/agents/compaction) for a user-friendly explanation.
 
 **Core fields**
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `true` | Master toggle for the context engine |
-| `version` | `string` | `"pipeline"` | Operating mode: `"pipeline"` (default) or `"dag"` (lossless DAG with recall tools) |
+| `version` | `string` | `"dag"` | Operating mode: `"dag"` (default, lossless DAG with recall tools) or `"pipeline"` (opt-out, the 8-step sequential system) |
 
 **Shared fields** (both modes)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `thinkingKeepTurns` | `number` | `10` | Recent assistant turns that retain thinking blocks (1-50) |
-| `compactionModel` | `string` | `"anthropic:claude-haiku-4-5-20250929"` | Model used for summarization. Override with a cheaper or faster model if needed. |
+| `compactionModel` | `string` | `""` | Model used for summarization. Empty (the default) means runtime-resolved against the agent's primary provider. Override with a specific cheaper or faster model if needed. |
 | `evictionMinAge` | `number` | `15` | Minimum turn age before stale errors are evicted by the dead content evictor (3-50) |
 
 **Pipeline mode fields** (`version: "pipeline"`)
@@ -803,7 +802,6 @@ SQLite-backed memory system configuration.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `maxAgeDays` | `number` | `0` | Maximum age in days (0 = no limit) |
-| `maxEntries` | `number` | `0` | Maximum total entries (0 = no limit) |
 
 <Info>See [Memory](/agents/memory) and [Search](/agents/search) for how these settings affect agent memory behavior.</Info>
 
