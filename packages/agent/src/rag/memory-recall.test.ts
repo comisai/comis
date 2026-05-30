@@ -1044,9 +1044,17 @@ describe("createMemoryRecall — vec→FTS-only degradation signal (OBS-03 gap)"
       /vector lane unavailable/i.test((c[0] as { hint?: string })?.hint ?? ""),
     );
     expect(vecWarn).toBeUndefined();
-    const rec = records[0] as { vectorLaneActive?: boolean; degradations?: Array<{ kind?: string }> };
+    const rec = records[0] as {
+      vectorLaneActive?: boolean;
+      lanes?: { vector?: number };
+      degradations?: Array<{ kind?: string }>;
+    };
     expect(rec.vectorLaneActive).toBe(true);
     expect((rec.degradations ?? []).some((d) => d.kind === "vec_unavailable")).toBe(false);
+    // WR-04: even with the vector lane ACTIVE, lanes.vector is reported as 0 (honest) —
+    // the MemoryPort fuses vec+fts internally, so the recall layer never sees a real
+    // vector-candidate count and must NOT duplicate the FTS count into the vector lane.
+    expect(rec.lanes?.vector).toBe(0);
   });
 
   it("records a recorder/emit failure NEVER aborts recall (non-fatal observability)", async () => {

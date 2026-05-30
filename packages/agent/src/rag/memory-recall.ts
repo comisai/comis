@@ -189,10 +189,18 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         );
         degradations.push({ kind: "vec_unavailable", errorKind: "dependency", hint });
       }
-      // vectorCandidates is 0 when the lane could not contribute; otherwise the recall
-      // layer cannot distinguish the vector subset from the merged set, so it reports the
-      // merged candidate count as the (upper-bound) vector candidate signal for counters.
-      const vectorCandidates = vectorLaneActive ? ftsCandidates : 0;
+      // WR-04: vectorCandidates is reported as 0 — HONEST until a real per-lane split
+      // exists. The MemoryPort fuses vec+fts internally and returns ONE merged scored
+      // list (no vec-vs-fts breakdown), so the recall layer cannot observe how many of
+      // the candidates came from the vector lane. Reporting the merged count as the
+      // "vector candidate" signal (the old `vectorLaneActive ? ftsCandidates : 0`) made
+      // `laneUsage.vector` a silent DUPLICATE of `laneUsage.fts` on every recall and
+      // inflated the fired-lane count by 1 — an operator-facing metric that implies a
+      // measurement that is not happening. Until the port surfaces a true per-lane
+      // breakdown, report 0; `vectorLaneActive` remains the separate, honest
+      // could-the-lane-contribute signal (OBS-03), and the trace's `lanes.vector`
+      // reflects the same honest 0.
+      const vectorCandidates = 0;
 
       // 2. FUSE (N-lane RRF). The search lane is always present. The entity-associative
       // lane (ENT-02) is composed LAZILY: only when an entity store is injected, the
