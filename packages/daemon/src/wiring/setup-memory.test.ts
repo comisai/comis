@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { TypedEventBus } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 
@@ -88,9 +89,14 @@ vi.mock("@comis/memory", () => ({
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));
-vi.mock("@comis/core", () => ({
-  safePath: mockSafePath,
-}));
+// Preserve the REAL TypedEventBus (the OBS-07 "subscriber is live" test drives a
+// real bus through setupMemory's wireRecallCounters call) while still stubbing
+// safePath. The rest of @comis/core stays as-is so the wiring is exercised end to
+// end against the actual event bus, not a vi.fn() stand-in.
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return { ...actual, safePath: mockSafePath };
+});
 
 const mockCreateCircuitBreaker = vi.hoisted(() => vi.fn(() => ({
   isOpen: vi.fn(() => false),
@@ -796,5 +802,103 @@ describe("setupMemory", () => {
       expect.objectContaining({ db: mockDb }),
     );
     expect(result.consolidationStore).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Recall-counter composition (Phase 86, OBS-07) — wireRecallCounters subscribed
+// at the memory composition site; the shared snapshot reaches the result so the
+// memory.recall_stats handler reads LIVE counters.
+// ---------------------------------------------------------------------------
+
+describe("setupMemory recall-counter wiring (OBS-07)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function getSetupMemory() {
+    const mod = await import("./setup-memory.js");
+    return mod.setupMemory;
+  }
+
+  /** A container whose eventBus is a REAL TypedEventBus so the wired subscriber
+   *  is exercised end to end (emit -> snapshot), not a vi.fn() stub. */
+  function containerWithRealBus(bus: TypedEventBus) {
+    return {
+      config: {
+        memory: {
+          dbPath: "/test/memory.db",
+          embeddingDimensions: 768,
+          rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+          rerankerModelsDir: "models",
+          rerankerGpu: "auto",
+          rerankerThreads: 4,
+        },
+        agents: { default: { rag: { rerank: { enabled: false } } } },
+        embedding: {
+          enabled: false,
+          provider: "local",
+          local: { modelUri: "gte-small", modelsDir: ".models" },
+          openai: { model: "text-embedding-ada-002", dimensions: 1536 },
+          cache: { maxEntries: 1000, persistent: false, persistentMaxEntries: 50000, pruneIntervalMs: 300000 },
+          autoReindex: false,
+          batch: { batchSize: 100, indexOnStartup: false },
+        },
+        dataDir: "/test/data",
+      },
+      secretManager: { get: vi.fn(() => undefined), has: vi.fn(() => false) },
+      eventBus: bus,
+    } as any;
+  }
+
+  it("exposes a recallCounters snapshot accessor on the MemoryResult so the deps reach the live registry", async () => {
+    const bus = new TypedEventBus();
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container: containerWithRealBus(bus),
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // The composition-root glue: the result carries the snapshot accessor the
+    // daemon threads into MemoryApiDeps.recallCounters.
+    expect(result.recallCounters).toBeDefined();
+    expect(result.recallCounters!.snapshot).toBeTypeOf("function");
+    // A fresh registry reads zero before any recall.
+    expect(result.recallCounters!.snapshot().recalls).toBe(0);
+  });
+
+  it("subscribes the recall counters to the live event bus so an emitted memory:recalled is reflected in the snapshot", async () => {
+    const bus = new TypedEventBus();
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container: containerWithRealBus(bus),
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+    expect(result.recallCounters).toBeDefined();
+
+    // Emitting on the SAME bus setupMemory wired must move the shared snapshot —
+    // proving the subscriber is live (not a fresh registry per snapshot call).
+    bus.emit("memory:recalled", {
+      agentId: "a1",
+      sessionKey: "s1",
+      traceId: "t1",
+      lanes: 3,
+      ftsCandidates: 5,
+      vectorCandidates: 4,
+      entityCandidates: 2,
+      finalCount: 3,
+      rerankerAvailable: true,
+      durationMs: 10,
+      timestamp: 1_000,
+    });
+
+    const snap = result.recallCounters!.snapshot();
+    expect(snap.recalls).toBe(1);
+    expect(snap.recallsWithHits).toBe(1);
+    expect(snap.laneUsage).toEqual({ fts: 5, vector: 4, entity: 2 });
   });
 });

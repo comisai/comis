@@ -381,6 +381,11 @@ export interface BootContext {
    *  registerCronEventListeners → runMemoryConsolidation sentinel). NOT the executor recall
    *  path. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). */
   consolidationStore: Awaited<ReturnType<typeof setupMemory>>["consolidationStore"];
+  /** Live recall-counter wiring (Phase 86, OBS-07) — the single
+   *  `wireRecallCounters(eventBus)` subscriber, stood up in setup-memory (the
+   *  composition site that holds the event bus). Threaded into
+   *  MemoryApiDeps.recallCounters so `memory.recall_stats` reads the live gauge. */
+  recallCounters: Awaited<ReturnType<typeof setupMemory>>["recallCounters"];
   maintenanceTick: Awaited<ReturnType<typeof setupMemory>>["maintenanceTick"];
   obsStore: ObservabilityStore | undefined;
   obsPersistence: ObsPersistenceResult | undefined;

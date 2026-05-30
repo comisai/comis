@@ -29,6 +29,10 @@ import {
   createSqliteMemoryConsolidationStore,
   type MemoryApi,
 } from "@comis/memory";
+import {
+  wireRecallCounters,
+  type RecallCountersWiring,
+} from "../observability/recall-counters-wiring.js";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -79,6 +83,14 @@ export interface MemoryResult {
    *  (composition root) is the only place this @comis/memory adapter and the @comis/agent
    *  `runMemoryConsolidation` job are joined — the agent receives the port TYPE only. */
   consolidationStore: import("@comis/core").MemoryConsolidationStore;
+  /** Live in-process recall-counter wiring (Phase 86, OBS-07). The single
+   *  `wireRecallCounters(container.eventBus)` subscriber is stood up HERE — the
+   *  memory composition site that already holds the event bus — so there is ONE
+   *  shared registry for the daemon lifetime (resets on restart, Assumption A2).
+   *  The daemon threads this `{ snapshot }` into `MemoryApiDeps.recallCounters`
+   *  so the `memory.recall_stats` handler reads the SAME live counters the
+   *  `memory:*` bus events feed (NOT a fresh registry per call). */
+  recallCounters: RecallCountersWiring;
   /** Dispose callback for the reranker's native context (ranking ctx -> model -> llama).
    *  Registered in the daemon shutdown path; undefined when no reranker was built. */
   disposeReranker?: () => Promise<void>;
@@ -266,6 +278,18 @@ export async function setupMemory(deps: {
   // edge — the architecture-graph cut is preserved).
   const consolidationStore = createSqliteMemoryConsolidationStore({ db, logger: memoryLogger });
 
+  // 6.5.2d. Recall-counter composition (Phase 86, OBS-07). Stand up the SINGLE
+  // in-process recall-counter registry and subscribe it to the `memory:*` bus
+  // events HERE — the memory composition site already holds `container.eventBus`,
+  // so this is the natural composition root for the counters (it lives alongside
+  // the stores the diagnostic handlers read). The daemon threads the returned
+  // `{ snapshot }` into `MemoryApiDeps.recallCounters`, so the `memory.recall_stats`
+  // handler reads the SAME live registry the agent's `memory:recalled` /
+  // `memory:reranked` (and the consolidation job's `memory:consolidated`) events
+  // feed — never a fresh registry per call. The gauge is daemon-lifetime (resets
+  // on restart, Assumption A2). Counts only ever cross the bus (AGENTS.md §2.7).
+  const recallCounters = wireRecallCounters(container.eventBus);
+
   // 6.5.3. Wire caching: L1(L2(provider)) when persistent, L1(provider) otherwise
   let cachedPort: EmbeddingPort | undefined;
   let embeddingCacheStats: (() => import("@comis/memory").EmbeddingCacheStats) | undefined;
@@ -390,6 +414,7 @@ export async function setupMemory(deps: {
     disposeReranker,
     entityStore,
     consolidationStore,
+    recallCounters,
     maintenanceTick,
   };
 }

@@ -180,7 +180,6 @@ import type { DaemonInstance, DaemonOverrides, BootContext, PermissionCorrection
 import { createEmptyBootContext } from "./daemon-types.js";
 export type { DaemonInstance, DaemonOverrides } from "./daemon-types.js";
 import { setupObsPersistence } from "./observability/obs-persistence-wiring.js";
-import { wireRecallCounters } from "./observability/recall-counters-wiring.js";
 import { setupDeliveryQueueLogging } from "./observability/delivery-queue-logger.js";
 import { createContextPipelineCollector } from "./observability/context-pipeline-collector.js";
 import { createLogLevelManager, expandTilde } from "./observability/log-infra.js";
@@ -1113,11 +1112,12 @@ function buildRpcDispatchDeps(deps: {
     }
     return cachedMcpTokenStore;
   };
-  // OBS-07: stand up the single in-process recall-counter registry and
-  // subscribe it to the memory:* bus events. The snapshot accessor feeds the
+  // OBS-07: the single in-process recall-counter registry is stood up once in
+  // setup-memory (the composition site that holds the event bus) and threaded
+  // here on the boot context. The snapshot accessor feeds the
   // memory.recall_stats handler (comis memory stats reads live counters). The
   // gauge is daemon-lifetime — it resets on restart (Assumption A2).
-  const recallCounters = wireRecallCounters(c.container.eventBus);
+  const recallCounters = c.recallCounters;
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
@@ -1668,7 +1668,7 @@ async function bootFoundation(
     disposeEmbedding, cachedPort, memoryAdapter, db,
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
-    rerankerPort, disposeReranker, entityStore, consolidationStore,
+    rerankerPort, disposeReranker, entityStore, consolidationStore, recallCounters,
   } = await setupMemory({ container, memoryLogger, clock });
 
   // Observability persistence (dual-write to SQLite). obsStore +
@@ -1804,7 +1804,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, rerankerPort, disposeReranker, entityStore, consolidationStore, maintenanceTick,
+    embeddingCircuitBreakerState, rerankerPort, disposeReranker, entityStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence, contextStore,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
