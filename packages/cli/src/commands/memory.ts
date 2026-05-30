@@ -15,6 +15,10 @@ import {
   ContextInspectContract,
   MemoryStatsContract,
   MemoryFlushContract,
+  MemoryRecallTraceContract,
+  MemoryObservationsContract,
+  MemoryEntitiesContract,
+  MemoryRecallStatsContract,
 } from "@comis/core";
 import { callTyped, withClient } from "../client/rpc-client.js";
 import { success, error, info, warn, json } from "../output/format.js";
@@ -168,16 +172,21 @@ export function registerMemoryCommand(program: Command): void {
       }
     });
 
-  // memory stats
+  // memory stats — the single operator stats view. Folds in the OBS-07
+  // recall counters (lane usage + rerank-fallback rate + consolidation
+  // throughput + recall hit-rate) alongside the base memory.stats, so an
+  // operator sees one combined view (cleaner than a separate `recall-stats`
+  // subcommand). The recall-counter overlay is BEST-EFFORT: a daemon that has
+  // not wired the counters (or rejects the admin call) still renders base stats.
   memory
     .command("stats")
     .description("Display memory statistics")
     .option("--format <format>", "Output format (detail|json)", "detail")
     .action(async (options: { format: string }) => {
       try {
-        // Routed via MemoryStatsContract — the daemon's
-        // memory-statistics surface. Response is a loose record; the
-        // values matter, not the precise shape.
+        // Routed via MemoryStatsContract — the daemon's memory-statistics
+        // surface. Response is a loose record; the values matter, not the
+        // precise shape.
         const result = await withSpinner("Fetching memory stats...", () =>
           withClient(async (client) => {
             return await callTyped(client, MemoryStatsContract, {});
@@ -190,8 +199,19 @@ export function registerMemoryCommand(program: Command): void {
           return;
         }
 
+        // Best-effort recall-counter overlay (OBS-07). Failures (counters not
+        // wired, non-admin caller) are swallowed — base stats still render.
+        let recallStats: Record<string, unknown> | undefined;
+        try {
+          recallStats = (await withClient(async (client) =>
+            callTyped(client, MemoryRecallStatsContract, {}),
+          )) as unknown as Record<string, unknown>;
+        } catch {
+          recallStats = undefined;
+        }
+
         if (options.format === "json") {
-          json(stats);
+          json(recallStats ? { ...stats, recallStats } : stats);
           return;
         }
 
@@ -200,10 +220,165 @@ export function registerMemoryCommand(program: Command): void {
           formatStatsValue(value),
         ]);
 
+        // Append the recall counters + derived rates to the same key-value view.
+        if (recallStats) {
+          for (const [key, value] of Object.entries(recallStats)) {
+            pairs.push([chalk.bold(formatStatsKey(key)), formatStatsValue(value)]);
+          }
+        }
+
         renderKeyValue(pairs);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         error(`Failed to fetch memory stats: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // memory recall-trace <session> — inspect a session's recall trace (OBS-06).
+  memory
+    .command("recall-trace <session>")
+    .description("Inspect a session's hybrid-recall trace (admin)")
+    .option("--trace-id <id>", "Filter by trace id instead of / alongside the session")
+    .option("--agent <agentId>", "Scope to a specific agent")
+    .option("--limit <n>", "Maximum records to return", "200")
+    .option("--format <format>", "Output format (table|json)", "table")
+    .action(
+      async (
+        session: string,
+        options: { traceId?: string; agent?: string; limit: string; format: string },
+      ) => {
+        try {
+          const result = await withSpinner("Fetching recall trace...", () =>
+            withClient(async (client) =>
+              callTyped(client, MemoryRecallTraceContract, {
+                session_key: session,
+                ...(options.traceId !== undefined ? { trace_id: options.traceId } : {}),
+                ...(options.agent !== undefined ? { agent_id: options.agent } : {}),
+                limit: Number(options.limit),
+              }),
+            ),
+          );
+
+          const records = (result.records ?? []) as Array<Record<string, unknown>>;
+          if (records.length === 0) {
+            info("No recall-trace records found");
+            return;
+          }
+
+          if (options.format === "json") {
+            json(records);
+            return;
+          }
+
+          // Table view: the correlation keys + the final-count summary. The
+          // full per-record ranking detail is available via --format json.
+          renderTable(
+            ["#", "Trace", "Session", "Final", "When"],
+            records.map((r, i) => [
+              String(i + 1),
+              String(r.traceId ?? "-"),
+              String(r.sessionKey ?? "-"),
+              String(r.finalCount ?? "-"),
+              String(r.ts ?? "-"),
+            ]),
+          );
+          info(`${records.length} record${records.length === 1 ? "" : "s"} found`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          error(`Failed to fetch recall trace: ${msg}`);
+          process.exit(1);
+        }
+      },
+    );
+
+  // memory observations — list observation provenance (OBS-06).
+  memory
+    .command("observations")
+    .description("List observation provenance (sources + history) (admin)")
+    .option("--agent <agentId>", "Scope to a specific agent")
+    .option("--limit <n>", "Maximum observations to return", "50")
+    .option("--format <format>", "Output format (table|json)", "table")
+    .action(async (options: { agent?: string; limit: string; format: string }) => {
+      try {
+        const result = await withSpinner("Fetching observations...", () =>
+          withClient(async (client) =>
+            callTyped(client, MemoryObservationsContract, {
+              ...(options.agent !== undefined ? { agent_id: options.agent } : {}),
+              limit: Number(options.limit),
+            }),
+          ),
+        );
+
+        const observations = (result.observations ?? []) as Array<Record<string, unknown>>;
+        if (observations.length === 0) {
+          info("No observations found");
+          return;
+        }
+
+        if (options.format === "json") {
+          json(observations);
+          return;
+        }
+
+        renderTable(
+          ["ID", "Content", "Proofs", "Sources"],
+          observations.map((o) => [
+            String(o.id ?? "-"),
+            truncate(String(o.content ?? ""), 60),
+            String(o.proofCount ?? "-"),
+            Array.isArray(o.sourceIds) ? (o.sourceIds as string[]).join(", ") : "-",
+          ]),
+        );
+        info(`${observations.length} observation${observations.length === 1 ? "" : "s"} found`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        error(`Failed to fetch observations: ${msg}`);
+        process.exit(1);
+      }
+    });
+
+  // memory entities — list the agent's entity graph (OBS-06).
+  memory
+    .command("entities")
+    .description("List an agent's entity graph, most-mentioned-first (admin)")
+    .option("--agent <agentId>", "Scope to a specific agent")
+    .option("--limit <n>", "Maximum entities to return", "100")
+    .option("--format <format>", "Output format (table|json)", "table")
+    .action(async (options: { agent?: string; limit: string; format: string }) => {
+      try {
+        const result = await withSpinner("Fetching entity graph...", () =>
+          withClient(async (client) =>
+            callTyped(client, MemoryEntitiesContract, {
+              ...(options.agent !== undefined ? { agent_id: options.agent } : {}),
+              limit: Number(options.limit),
+            }),
+          ),
+        );
+
+        const entities = (result.entities ?? []) as Array<Record<string, unknown>>;
+        if (entities.length === 0) {
+          info("No entities found");
+          return;
+        }
+
+        if (options.format === "json") {
+          json(entities);
+          return;
+        }
+
+        renderTable(
+          ["ID", "Name", "Mentions"],
+          entities.map((e) => [
+            String(e.id ?? "-"),
+            String(e.name ?? "-"),
+            String(e.mentionCount ?? "-"),
+          ]),
+        );
+        info(`${entities.length} entit${entities.length === 1 ? "y" : "ies"} found`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        error(`Failed to fetch entities: ${msg}`);
         process.exit(1);
       }
     });
