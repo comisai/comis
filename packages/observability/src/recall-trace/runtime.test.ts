@@ -228,6 +228,48 @@ describe("createRecallTrace -- THE MANDATORY OBS-02 redaction proof", () => {
   });
 });
 
+describe("createRecallTrace -- scope envelope is authoritative (WR-03)", () => {
+  it("a payload carrying stray agentId/traceId/tenantId NEVER overrides the scope envelope", async () => {
+    // WR-03: buildEvent must apply the scope/envelope identifiers LAST so a
+    // (buggy/future) producer that places an agentId / traceId / tenantId key
+    // in the record cannot clobber the authoritative scope id the read-side
+    // scope-filter (WR-01) trusts. Pre-fix, the payload was merged ON TOP of
+    // the envelope, so these stray keys would win.
+    const filePath = join(tmpDir, "scope-authoritative.jsonl");
+    const trace = createRecallTrace({
+      enabled: true,
+      filePath,
+      agentId: "authoritative-agent",
+      sessionId: "authoritative-session",
+      envelope: { sessionKey: "authoritative-sk", tenantId: "authoritative-tenant" },
+    });
+    expect(trace).not.toBeNull();
+    trace!.recordRecall({
+      ...cleanRecord(),
+      // Stray scope-identifier keys a misbehaving producer might stuff in.
+      agentId: "ATTACKER-AGENT",
+      traceId: "ATTACKER-TRACE",
+      tenantId: "ATTACKER-TENANT",
+      sessionKey: "ATTACKER-SK",
+      sessionId: "ATTACKER-SESSION",
+    });
+    await trace!.flush();
+
+    const records = readRecords(filePath);
+    expect(records).toHaveLength(1);
+    const rec = records[0]!;
+    // The authoritative envelope identifiers win — the payload did NOT clobber them.
+    expect(rec.agentId).toBe("authoritative-agent");
+    expect(rec.sessionId).toBe("authoritative-session");
+    expect(rec.traceId).toBe("authoritative-session"); // resolveTraceId falls back to sessionId
+    expect(rec.sessionKey).toBe("authoritative-sk");
+    expect(rec.tenantId).toBe("authoritative-tenant");
+    // The attacker values appear NOWHERE on the record.
+    const serialized = JSON.stringify(rec);
+    expect(serialized).not.toContain("ATTACKER");
+  });
+});
+
 describe("createRecallTrace -- bounded payload", () => {
   it("an oversize preview (> 32 KB) becomes the {__bounded__} sentinel, not a silent drop", async () => {
     const trace = makeTrace({});

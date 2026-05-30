@@ -315,22 +315,28 @@ function buildEvent(
 ): RecallTraceEvent {
   const ts = systemDateFrom(systemNowMs()).toISOString();
   const traceId = resolveTraceId(init.sessionId);
-  const envelope: Record<string, unknown> = {
-    traceSchema: "comis-recall-trace",
-    schemaVersion: 1,
-    ts,
-    seq,
-    agentId: init.agentId,
-    sessionId: init.sessionId,
-    traceId,
-  };
+  // WR-03: merge the sanitized payload FIRST, then assign the scope/envelope
+  // identifiers LAST so they ALWAYS win. The scope ids (agentId, sessionId,
+  // traceId, sessionKey, tenantId, runId) are authoritative — the read-side
+  // scope-filter (WR-01) trusts them — so a (buggy/future) producer that places
+  // a same-named key in the record must NOT be able to clobber them. The old
+  // order (envelope first, payload merged on top) left the invariant enforced
+  // only by the current contents of buildRecallRecord rather than by the code.
+  const envelope: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (v !== undefined) envelope[k] = v;
+  }
+  envelope.traceSchema = "comis-recall-trace";
+  envelope.schemaVersion = 1;
+  envelope.ts = ts;
+  envelope.seq = seq;
+  envelope.agentId = init.agentId;
+  envelope.sessionId = init.sessionId;
+  envelope.traceId = traceId;
   const env = init.envelope;
   if (env?.sessionKey !== undefined) envelope.sessionKey = env.sessionKey;
   if (env?.tenantId !== undefined) envelope.tenantId = env.tenantId;
   if (env?.runId !== undefined) envelope.runId = env.runId;
-  for (const [k, v] of Object.entries(payload)) {
-    if (v !== undefined) envelope[k] = v;
-  }
   return envelope as RecallTraceEvent;
 }
 
