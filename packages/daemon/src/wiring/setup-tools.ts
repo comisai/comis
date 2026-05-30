@@ -75,8 +75,8 @@ import {
   type PlatformToolBuildContext,
 } from "@comis/skills/platform-tools";
 // Broker activation seam types. Extracted to setup-broker-activation.ts to
-// keep this file under 800 lines. Re-exported here for backward compatibility
-// (existing imports of BrokerContextDeps from setup-tools.ts still work).
+// keep this file under 800 lines. BrokerContextDeps is re-exported here so
+// existing imports of it from setup-tools.ts continue to resolve.
 export type { BrokerContextDeps } from "./setup-broker-activation.js";
 import type { BrokerContextDeps } from "./setup-broker-activation.js";
 

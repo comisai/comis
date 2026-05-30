@@ -3,7 +3,8 @@
  * Broker activation seam types for tool assembly (INTEG-03).
  *
  * Extracted from setup-tools.ts to keep setup-tools.ts under 800 lines.
- * Re-exported from setup-tools.ts for backward compatibility.
+ * setup-tools.ts re-exports BrokerContextDeps so existing call sites that
+ * import from setup-tools.js continue to resolve the type.
  *
  * Phase 9 follow-on: per-command token issuance will expand this module with
  * the full broker-activation wiring (brokerSpawnEnv construction, issueToken
