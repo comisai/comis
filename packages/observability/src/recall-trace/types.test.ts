@@ -47,6 +47,7 @@ function makeValidRecord(): Record<string, unknown> {
           temporal: 1.0,
           proof: 1.2,
           trust: 1.0,
+          usefulness: 1.0,
           final: 1.32,
         },
         preview: "a short safe preview",
@@ -80,6 +81,28 @@ describe("RecallTraceEventSchema -- well-formed record", () => {
     };
     const parsed = RecallTraceEventSchema.safeParse(record);
     expect(parsed.success).toBe(true);
+  });
+
+  it("requires the usefulness factor on the score breakdown (FEED-03 — the 5th factor)", () => {
+    // The breakdown is the FIVE multiplicative factors now. A breakdown carrying
+    // `usefulness: number` parses; one MISSING `usefulness` must FAIL — proving the
+    // schema was extended (pre-FEED-03 the field was absent and this would pass).
+    const withUsefulness = makeValidRecord();
+    expect(RecallTraceEventSchema.safeParse(withUsefulness).success).toBe(true);
+    expect(
+      (
+        (withUsefulness.ranked as Array<Record<string, unknown>>)[0]!.breakdown as Record<
+          string,
+          unknown
+        >
+      ).usefulness,
+    ).toBe(1.0);
+
+    const missingUsefulness = makeValidRecord();
+    const b = (missingUsefulness.ranked as Array<Record<string, unknown>>)[0]!
+      .breakdown as Record<string, unknown>;
+    delete b.usefulness;
+    expect(RecallTraceEventSchema.safeParse(missingUsefulness).success).toBe(false);
   });
 });
 

@@ -18,7 +18,7 @@
  * `nowMs` is injected (deps.clock.now()), never Date.now().
  */
 
-import type { MemorySearchResult, TrustLevel } from "@comis/core";
+import type { MemorySearchResult, TrustLevel, UsefulnessSignal } from "@comis/core";
 import { describe, it, expect } from "vitest";
 import { score, scoreWithBreakdown, type ScoringAlphas, type ScoreBreakdown } from "./score.js";
 
@@ -30,6 +30,7 @@ const ZERO_ALPHAS: ScoringAlphas = {
   temporalAlpha: 0,
   proofAlpha: 0,
   trustAlpha: 0,
+  usefulnessAlpha: 0,
 };
 
 /** Build a neutral-placeholder result; allow injecting the typed ranking fields. */
@@ -405,5 +406,159 @@ describe("scoreWithBreakdown — per-memory factor breakdown (OBS-01)", () => {
     expect(input[0]?.score).toBe(snapshotScore);
     // the input result object must not carry a breakdown (additive on a NEW object).
     expect((input[0] as unknown as { breakdown?: unknown }).breakdown).toBeUndefined();
+  });
+});
+
+describe("scoreWithBreakdown — usefulnessFactor (FEED-03, the 5th bounded factor)", () => {
+  /** Build a usefulnessById map carrying a single signal for `id`. */
+  function uMap(id: string, sig: UsefulnessSignal): ReadonlyMap<string, UsefulnessSignal> {
+    return new Map([[id, sig]]);
+  }
+
+  it("keeps the usefulness factor EXACTLY 1.0 when the signal is absent, even at usefulnessAlpha=1.0 (byte-identity)", () => {
+    // The headline neutral-when-absent CONTRACT (a memory with no usefulness signal). With
+    // usefulnessById undefined the centered sub-signal is 0.5 → factor exactly 1.0 even at
+    // the maximal alpha — the boosted score equals the no-usefulness baseline and the
+    // breakdown.usefulness field is 1.0. This MUST stay green (the default-off guarantee).
+    const input = [makeResult("u", { base: 0.5, trustLevel: "learned", createdAt: NOW })];
+    const alphas: ScoringAlphas = { ...ZERO_ALPHAS, usefulnessAlpha: 1.0 };
+    // No 4th arg → usefulnessById undefined.
+    const noArg = scoreWithBreakdown(input, alphas, NOW);
+    // Baseline: every alpha 0 (no factor at all).
+    const baseline = scoreWithBreakdown(input, ZERO_ALPHAS, NOW);
+    const b = noArg[0]?.breakdown as ScoreBreakdown;
+    expect(b.usefulness).toBeCloseTo(1.0, 10);
+    expect(noArg[0]?.score).toBeCloseTo(baseline[0]?.score ?? NaN, 10);
+  });
+
+  it("keeps the usefulness factor 1.0 when the map omits the memory's id, even at usefulnessAlpha=1.0", () => {
+    // A present-but-incomplete map (the absent-id-omitted Map readUsefulness returns):
+    // a memory whose id is NOT a key gets usefulnessNorm(undefined) → 0.5 → factor 1.0.
+    const input = [makeResult("missing", { base: 0.5, createdAt: NOW })];
+    const other = uMap("someoneElse", { usedCount: 9, ignoredCount: 0 });
+    const out = scoreWithBreakdown(input, { ...ZERO_ALPHAS, usefulnessAlpha: 1.0 }, NOW, other);
+    const b = out[0]?.breakdown as ScoreBreakdown;
+    expect(b.usefulness).toBeCloseTo(1.0, 10);
+  });
+
+  it("BOOSTS a proven-useful memory: used-rate 1.0 (5 used / 0 ignored) → usefulness factor > 1", () => {
+    const input = [makeResult("proven", { base: 0.5, createdAt: NOW })];
+    const out = scoreWithBreakdown(
+      input,
+      { ...ZERO_ALPHAS, usefulnessAlpha: 0.1 },
+      NOW,
+      uMap("proven", { usedCount: 5, ignoredCount: 0 }),
+    );
+    const b = out[0]?.breakdown as ScoreBreakdown;
+    // usedRate 1.0 → norm 1.0 → factor 1 + 0.1*(1.0-0.5) = 1.05.
+    expect(b.usefulness).toBeGreaterThan(1);
+    expect(b.usefulness).toBeCloseTo(1.05, 10);
+  });
+
+  it("DEMOTES a recalled-but-ignored memory: used-rate 0.0 (0 used / 5 ignored) → usefulness factor < 1", () => {
+    const input = [makeResult("ignored", { base: 0.5, createdAt: NOW })];
+    const out = scoreWithBreakdown(
+      input,
+      { ...ZERO_ALPHAS, usefulnessAlpha: 0.1 },
+      NOW,
+      uMap("ignored", { usedCount: 0, ignoredCount: 5 }),
+    );
+    const b = out[0]?.breakdown as ScoreBreakdown;
+    // usedRate 0.0 → norm 0.0 → factor 1 + 0.1*(0.0-0.5) = 0.95.
+    expect(b.usefulness).toBeLessThan(1);
+    expect(b.usefulness).toBeCloseTo(0.95, 10);
+  });
+
+  it("keeps the usefulness factor 1.0 when total resolved is 0 (0 used / 0 ignored — never resolved)", () => {
+    const input = [makeResult("fresh", { base: 0.5, createdAt: NOW })];
+    const out = scoreWithBreakdown(
+      input,
+      { ...ZERO_ALPHAS, usefulnessAlpha: 1.0 },
+      NOW,
+      uMap("fresh", { usedCount: 0, ignoredCount: 0 }),
+    );
+    const b = out[0]?.breakdown as ScoreBreakdown;
+    expect(b.usefulness).toBeCloseTo(1.0, 10);
+  });
+
+  it("BOUNDED (Pitfall 5): a high-base + high-trust memory still out-ranks a low-base 'proven-useful' one at the DEFAULT alphas", () => {
+    // The regression analog: feedback cannot overturn trust-first / a real relevance gap.
+    // - `relevant`: high base (0.9) + system trust, NO usefulness signal.
+    // - `proven`:   low base (0.5) + learned trust, used-rate 1.0 (maximally proven-useful).
+    // At DEFAULT alphas (usefulnessAlpha ≈ 0.1, the bounded knob) the small usefulness
+    // boost on `proven` cannot close the base+trust gap → `relevant` still ranks first.
+    const DEFAULT_ALPHAS: ScoringAlphas = {
+      recencyAlpha: 0.2,
+      temporalAlpha: 0.2,
+      proofAlpha: 0.1,
+      trustAlpha: 0.1,
+      usefulnessAlpha: 0.1,
+    };
+    const relevant = makeResult("relevant", { base: 0.9, trustLevel: "system", createdAt: NOW });
+    const proven = makeResult("proven", { base: 0.5, trustLevel: "learned", createdAt: NOW });
+    const useful = uMap("proven", { usedCount: 1000, ignoredCount: 0 }); // even 1000× used
+    const out = scoreWithBreakdown([proven, relevant], DEFAULT_ALPHAS, NOW, useful);
+    expect(out[0]?.entry.id).toBe("relevant");
+    expect(out[1]?.entry.id).toBe("proven");
+    expect(out[0]?.score ?? 0).toBeGreaterThan(out[1]?.score ?? 0);
+  });
+
+  it("folds usefulness into the 5-factor product: final === base * recency * temporal * proof * trust * usefulness", () => {
+    const alphas: ScoringAlphas = {
+      recencyAlpha: 0.3,
+      temporalAlpha: 0.2,
+      proofAlpha: 0.4,
+      trustAlpha: 0.1,
+      usefulnessAlpha: 0.1,
+    };
+    const input = [
+      makeResult("m", {
+        base: 0.7,
+        trustLevel: "system",
+        createdAt: NOW - 5 * DAY_MS,
+        occurredAt: NOW - 2 * DAY_MS,
+        proofCount: 40,
+        confidence: 0.8,
+      }),
+    ];
+    const out = scoreWithBreakdown(input, alphas, NOW, uMap("m", { usedCount: 4, ignoredCount: 1 }));
+    const b = out[0]?.breakdown as ScoreBreakdown;
+    expect(b.usefulness).not.toBeCloseTo(1.0, 6); // a real signal is present (used-rate 0.8)
+    expect(b.final).toBeCloseTo(
+      b.base * b.recency * b.temporal * b.proof * b.trust * b.usefulness,
+      10,
+    );
+    expect(out[0]?.score).toBeCloseTo(b.final, 10);
+  });
+
+  it("ranks a proven-useful memory above a recalled-but-ignored one at equal base/trust/recency", () => {
+    // Pure usefulness reorder: identical base/trust/createdAt, only the usefulness signal
+    // differs (one proven-useful, one ignored). With only usefulnessAlpha live, the proven
+    // memory must out-rank the ignored one — the read-side payoff of the feedback loop.
+    const a = makeResult("provenA", { base: 0.5, trustLevel: "learned", createdAt: NOW });
+    const b = makeResult("ignoredB", { base: 0.5, trustLevel: "learned", createdAt: NOW });
+    const u = new Map<string, UsefulnessSignal>([
+      ["provenA", { usedCount: 5, ignoredCount: 0 }],
+      ["ignoredB", { usedCount: 0, ignoredCount: 5 }],
+    ]);
+    const out = scoreWithBreakdown([b, a], { ...ZERO_ALPHAS, usefulnessAlpha: 0.1 }, NOW, u);
+    expect(out[0]?.entry.id).toBe("provenA");
+    expect(out[1]?.entry.id).toBe("ignoredB");
+  });
+
+  it("score() forwards usefulnessById and produces the SAME ordering as scoreWithBreakdown (additive)", () => {
+    const alphas: ScoringAlphas = { ...ZERO_ALPHAS, usefulnessAlpha: 0.1, recencyAlpha: 0.2 };
+    const a = makeResult("provenA", { base: 0.5, createdAt: NOW });
+    const b = makeResult("ignoredB", { base: 0.5, createdAt: NOW });
+    const u = new Map<string, UsefulnessSignal>([
+      ["provenA", { usedCount: 5, ignoredCount: 0 }],
+      ["ignoredB", { usedCount: 0, ignoredCount: 5 }],
+    ]);
+    const plain = score([b, a], alphas, NOW, u);
+    const withB = scoreWithBreakdown([b, a], alphas, NOW, u);
+    expect(plain.map((r) => r.entry.id)).toEqual(withB.map((r) => r.entry.id));
+    for (let i = 0; i < plain.length; i++) {
+      expect(plain[i]?.score).toBeCloseTo(withB[i]?.score ?? NaN, 10);
+    }
   });
 });
