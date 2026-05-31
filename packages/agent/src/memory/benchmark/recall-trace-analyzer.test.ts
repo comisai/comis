@@ -173,6 +173,14 @@ describe("argsortDiffers (pure descending-order permutation comparison)", () => 
     expect(argsortDiffers([0.9, 0.5], [0.8, 0.4])).toBe(false);
   });
 
+  it("breaks ties by original index so equal scores never spuriously register as differing", () => {
+    // Equal scores in both arrays: the index-ascending tie-break keeps the
+    // relative order identical, so no reorder is reported.
+    expect(argsortDiffers([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])).toBe(false);
+    // A genuine reorder of a set with ties is still detected.
+    expect(argsortDiffers([0.5, 0.5, 0.9], [0.9, 0.5, 0.5])).toBe(true);
+  });
+
   it("returns false for two empty arrays", () => {
     expect(argsortDiffers([], [])).toBe(false);
   });
