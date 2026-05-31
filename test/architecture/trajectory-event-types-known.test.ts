@@ -119,9 +119,14 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   //   memory:recalled        — per-recall lane/candidate/final counts.
   //   memory:reranked         — rerank candidate/hit counts + outcome flags.
   //   memory:entities_linked — entity resolveAndLink counts (newEntities).
+  //   memory:recall_used     — FEED-01 recall-usage attribution: used/ignored
+  //     memory ids + counts, consumed by the daemon write-back subscriber
+  //     (setup-memory-usefulness-wiring.ts → MemoryUsefulnessStore.recordUsage),
+  //     NOT a turn-level trajectory step.
   "memory:recalled",
   "memory:reranked",
   "memory:entities_linked",
+  "memory:recall_used",
 
   // -------------------------------------------------------------------
   // Session-store lifecycle (distinct from session:started/ended which
