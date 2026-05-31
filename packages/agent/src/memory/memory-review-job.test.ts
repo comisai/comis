@@ -521,6 +521,37 @@ describe("runMemoryReview", () => {
     expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9100);
   });
 
+  // -------------------------------------------------------------------------
+  // EXTRACT-02 — selectivity rubric verified on a fixture (stubbed LLM).
+  // The prompt rubric (✅ durable / ❌ filler) is a MODEL instruction (Task 1);
+  // here we prove the JOB faithfully routes a GIVEN selective payload — a
+  // durable fact is stored. Deterministic because the completion port is
+  // injected/stubbed. This is DISTINCT from the dangerous-command / jailbreak
+  // SECURITY classifiers above: the filler drop is the model's job per the
+  // rubric, NOT a post-extraction filter; the stub models that output.
+  // -------------------------------------------------------------------------
+  it("stores the durable fact from a durable+filler selectivity fixture (EXTRACT-02)", async () => {
+    const deps = makeDeps();
+    arrangeOneSession(deps, 9800);
+    // A model that APPLIED the ✅/❌ rubric would emit only the durable fact and
+    // drop the greeting. We assert the durable fact survives the job end-to-end.
+    (completeSimple as Mock).mockResolvedValue(structuredResponse({
+      memories: [
+        { content: "User prefers dark roast coffee", entities: [{ name: "user" }] },
+      ],
+    }));
+
+    const result = await runMemoryReview(deps);
+    expect(result.ok).toBe(true);
+
+    const storedContents = (deps.memoryPort.store as Mock).mock.calls.map((c) => c[0].content);
+    expect(storedContents).toContain("User prefers dark roast coffee");
+    expect(deps.eventBus.emit).toHaveBeenCalledWith(
+      "memory:review_completed",
+      expect.objectContaining({ memoriesExtracted: 1 }),
+    );
+  });
+
   it("downgrades trust to external for a memory matching a jailbreak pattern (warn → store external)", async () => {
     const deps = makeDeps();
     arrangeOneSession(deps, 9200);
