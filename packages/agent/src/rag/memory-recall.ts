@@ -715,7 +715,11 @@ function captureRecallObservability(
   const laneCount =
     (ctx.ftsCandidates > 0 ? 1 : 0) +
     (ctx.vectorCandidates > 0 ? 1 : 0) +
-    (ctx.entityCandidates > 0 ? 1 : 0);
+    (ctx.entityCandidates > 0 ? 1 : 0) +
+    // I1: include the temporal lane so the counts-only memory:recalled event no longer
+    // under-reports the active lane count by one when the temporal lane contributes. The
+    // rich recall-trace record already counts lanes.temporal (:575); this aligns the event.
+    (ctx.temporalCandidates > 0 ? 1 : 0);
   try {
     deps.eventBus.emit("memory:recalled", {
       agentId: ctx.agentId ?? "default",
