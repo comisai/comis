@@ -792,13 +792,70 @@ describe("RagConfigSchema.lanes", () => {
   });
 
   it("rejects an unknown key inside lanes (strictObject)", () => {
-    const result = RagConfigSchema.safeParse({ lanes: { temporal: { weight: 1 } } });
+    // `temporal` is now a VALID sub-lane (LANES-02) — use a genuinely-unknown key.
+    const result = RagConfigSchema.safeParse({ lanes: { bogusLane: { weight: 1 } } });
     expect(result.success).toBe(false);
   });
 
   it("rejects an unknown key inside a single lane (strictObject)", () => {
     const result = RagConfigSchema.safeParse({ lanes: { fts: { weight: 1, bogus: 2 } } });
     expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RagConfigSchema.lanes.temporal (Phase-95/LANES-02: the temporal-spread lane,
+// opt-in / default-OFF — mirrors rag.entityLane; default windowDays:7)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.lanes.temporal", () => {
+  it("defaults the temporal lane OFF with weight 1.0 / windowDays 7 (byte-identical to before this plan when absent)", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Default-OFF: no agent gets the temporal-spread lane without an explicit opt-in
+      // (a wrong default ships dormant — no surprise ranking change on upgrade, T-95-07).
+      expect(result.data.lanes.temporal.enabled).toBe(false);
+      expect(result.data.lanes.temporal.weight).toBe(1.0);
+      expect(result.data.lanes.temporal.windowDays).toBe(7);
+    }
+  });
+
+  it("accepts an explicit temporal opt-in (enabled:true + tuned weight + windowDays)", () => {
+    const result = RagConfigSchema.safeParse({
+      lanes: { temporal: { enabled: true, weight: 2.0, windowDays: 30 } },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.lanes.temporal.enabled).toBe(true);
+      expect(result.data.lanes.temporal.weight).toBe(2.0);
+      expect(result.data.lanes.temporal.windowDays).toBe(30);
+    }
+  });
+
+  it("rejects a negative temporal weight (z.number().min(0) — no negative RRF term; T-95-08)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { temporal: { weight: -0.1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a zero / negative windowDays (z.number().int().positive() — no empty window; T-95-08)", () => {
+    expect(RagConfigSchema.safeParse({ lanes: { temporal: { windowDays: 0 } } }).success).toBe(false);
+    expect(RagConfigSchema.safeParse({ lanes: { temporal: { windowDays: -7 } } }).success).toBe(false);
+  });
+
+  it("rejects a non-integer windowDays (z.number().int())", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { temporal: { windowDays: 7.5 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown key inside temporal (strictObject)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { temporal: { bogus: 1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a zero temporal weight at the boundary (min(0) inclusive — the lane contributes nothing)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { temporal: { weight: 0 } } });
+    expect(result.success).toBe(true);
   });
 });
 
@@ -885,9 +942,12 @@ describe("RagConfigSchema.feedback", () => {
       expect(result.data.entityLane.seedCount).toBe(5);
       expect(result.data.entityLane.perEntityCap).toBe(200);
       expect(result.data.entityLane.weight).toBe(1.0);
-      // lanes sub-object (LANES-01 parity defaults).
+      // lanes sub-object (LANES-01 parity defaults + LANES-02 temporal default-OFF).
       expect(result.data.lanes.fts.weight).toBe(1.0);
       expect(result.data.lanes.vector.weight).toBe(1.5);
+      expect(result.data.lanes.temporal.enabled).toBe(false);
+      expect(result.data.lanes.temporal.weight).toBe(1.0);
+      expect(result.data.lanes.temporal.windowDays).toBe(7);
     }
   });
 });

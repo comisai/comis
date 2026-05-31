@@ -40,8 +40,18 @@ import type { MemorySearchResult, TrustLevel, UsefulnessSignal } from "@comis/co
  * - `"lanes"`     — Phase 95: the un-fused FTS/vector split (LANES-01) — default-weight
  *   {fts:1.0, vector:1.5} lanes reproduce today's pre-fused order (the parity guard);
  *   a tuned vector weight reorders (proving the weights are live).
+ * - `"temporal-spread"` — Phase 95: the temporal-spread lane (LANES-02) — a memory near
+ *   the seed's event time, surfaced by the temporal lane as a 4th fusion lane, lifts
+ *   recall@1 over a lexical distractor fusion ranked first.
  */
-export type EvalGroup = "reranking" | "temporal" | "entity" | "feedback" | "proof" | "lanes";
+export type EvalGroup =
+  | "reranking"
+  | "temporal"
+  | "entity"
+  | "feedback"
+  | "proof"
+  | "lanes"
+  | "temporal-spread";
 
 /**
  * One labeled eval query: the candidate pool a ranker sees plus the
@@ -424,6 +434,70 @@ export const ENTITY_EVAL_FIXTURES: EvalQuery[] = [
  * lane rank 1 so RRF lifts them over the lexical distractor. PURE — no DB, no I/O.
  */
 export function entityLane(q: EvalQuery): MemorySearchResult[] {
+  const relevant = new Set(q.relevantIds);
+  return q.candidates.filter((c) => relevant.has(c.entry.id));
+}
+
+/**
+ * `"temporal-spread"` group (Phase 95, LANES-02) scored against the temporal lane MODELED
+ * as a 2nd fusion lane (recall-eval.test.ts). Kept in a SEPARATE exported array from the
+ * prior groups so their assertions stay untouched and green.
+ *
+ * LIFT HEADROOM (mirrors the entity doc-block; T-83-19). Each query pairs a lexically-
+ * strong DISTRACTOR carrying a HIGHER fusion `score` against the RELEVANT memory — one
+ * whose event time is NEAR the seed's `occurredAt` — carrying a LOWER fusion `score`.
+ * Single-lane `fuse()` is order-preserving, so the fusion-only baseline ranks the
+ * distractor at rank 1 and MISSES the relevant id at recall@1. Adding the temporal lane
+ * (the near-seed neighbour, surfaced FIRST) as a 2nd fusion lane sums the relevant id's
+ * two RRF terms over the distractor's single term and lifts it to rank 1 — the measurable
+ * LANES-02 figure. The lift test also asserts `baseline.recallAt1 < 1` (a no-op fixture
+ * that fusion already nailed would leave nothing to measure).
+ *
+ * THE TEMPORAL-LANE SEAM. This is the FIXTURE model of the live `spreadLane` (the windowed
+ * occurred_at read): given the seed memories' event times, it surfaces OTHER memories near
+ * those times. {@link temporalLane} builds that lane from each fixture's `relevantIds` (the
+ * near-seed neighbour), relevant-first — PURE, no DB, so the lift is reproducible from the
+ * fixtures alone.
+ *
+ * Determinism (AGENTS.md §2.5): neutral placeholders + stable ids `ts1`, `ts2`, … No real
+ * identities, no network, no `Date.now`/`Math.random`.
+ */
+export const TEMPORAL_SPREAD_EVAL_FIXTURES: EvalQuery[] = [
+  {
+    group: "temporal-spread",
+    query: "what happened around the launch",
+    candidates: [
+      // Lexical distractor: high fusion score, far in time — fusion rank 1.
+      candidate("ts1", "user_a wrote a long status update", 0.9),
+      // Relevant: near the seed's event time, lower fusion score — fusion rank 2 (missed @1).
+      candidate("ts2", "the launch retro noted three follow-ups", 0.5),
+      candidate("ts3", "user_a prefers dark mode", 0.25),
+    ],
+    relevantIds: ["ts2"],
+  },
+  {
+    group: "temporal-spread",
+    query: "context around the incident",
+    candidates: [
+      // Lexical distractor: high fusion score, far in time — fusion rank 1.
+      candidate("ts4", "user_a filed an unrelated ticket", 0.88),
+      // Relevant: near the seed's event time, lower fusion score — fusion rank 2 (missed @1).
+      candidate("ts5", "the incident postmortem flagged a config drift", 0.5),
+      candidate("ts6", "user_a scheduled a sync", 0.2),
+    ],
+    relevantIds: ["ts5"],
+  },
+];
+
+/**
+ * The MODELED temporal-spread lane for a fixture — the near-seed neighbour(s) surfaced
+ * FIRST, ready to fuse as a 2nd {@link import("../../rag/fuse.js").FusionLane}. This is the
+ * fixture stand-in for the live `spreadLane`'s output (the windowed occurred_at read): the
+ * memories near the seed's event time. Here those are exactly the fixture's `relevantIds`
+ * (the near-seed memory), placed at lane rank 1 so RRF lifts them over the lexical
+ * distractor. PURE — no DB, no I/O.
+ */
+export function temporalLane(q: EvalQuery): MemorySearchResult[] {
   const relevant = new Set(q.relevantIds);
   return q.candidates.filter((c) => relevant.has(c.entry.id));
 }

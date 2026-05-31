@@ -28,7 +28,7 @@ function makeValidRecord(): Record<string, unknown> {
     sessionId: "sid-1",
     traceId: "sid-1",
     queryDigest: "a".repeat(64),
-    lanes: { fts: 5, vector: 3, entity: 2 },
+    lanes: { fts: 5, vector: 3, entity: 2, temporal: 1 },
     vectorLaneActive: true,
     fusedOrder: ["m-1", "m-2", "m-3"],
     rerank: {
@@ -67,9 +67,24 @@ describe("RecallTraceEventSchema -- well-formed record", () => {
       expect(parsed.data.traceSchema).toBe("comis-recall-trace");
       expect(parsed.data.schemaVersion).toBe(1);
       expect(parsed.data.lanes.vector).toBe(3);
+      // LANES-02: the lanes cluster carries the temporal candidate count (append-only).
+      expect(parsed.data.lanes.temporal).toBe(1);
       expect(parsed.data.rerank.outcome).toBe("ran");
       expect(parsed.data.ranked[0]!.reason).toBe("included");
     }
+  });
+
+  it("requires the temporal lane count on the lanes cluster (LANES-02 — the 4th lane)", () => {
+    // The lanes cluster gained `temporal` (append-only). A record carrying it parses; one
+    // MISSING `temporal` must FAIL — proving the schema was extended (pre-LANES-02 the
+    // field was absent and a record omitting it would have passed).
+    const withTemporal = makeValidRecord();
+    expect(RecallTraceEventSchema.safeParse(withTemporal).success).toBe(true);
+
+    const missingTemporal = makeValidRecord();
+    const lanes = missingTemporal.lanes as Record<string, unknown>;
+    delete lanes.temporal;
+    expect(RecallTraceEventSchema.safeParse(missingTemporal).success).toBe(false);
   });
 
   it("parses an optional envelope cluster (sessionKey, tenantId, runId)", () => {
@@ -155,7 +170,7 @@ describe("RecallTraceEvent -- z.infer type-level invariant", () => {
       sessionId: "s",
       traceId: "s",
       queryDigest: "d",
-      lanes: { fts: 1, vector: 0, entity: 0 },
+      lanes: { fts: 1, vector: 0, entity: 0, temporal: 0 },
       vectorLaneActive: false,
       fusedOrder: ["m-1"],
       rerank: { outcome: "fell_back", candidateCount: 1 },

@@ -27,6 +27,7 @@ import type {
   MemorySearchResult,
   MemorySearchOptions,
   MemoryEntityStore,
+  MemoryTemporalStore,
   MemoryUsefulnessStore,
   UsefulnessSignal,
   RerankerPort,
@@ -62,6 +63,7 @@ function makeResult(
     createdAt?: number;
     base?: number;
     content?: string;
+    occurredAt?: number;
   } = {},
 ): MemorySearchResult {
   const entry: Record<string, unknown> = {
@@ -74,6 +76,9 @@ function makeResult(
     source: { who: "agent" },
     tags: [],
     createdAt: opts.createdAt ?? NOW,
+    // The temporal lane seeds on entry.occurredAt — set it only when provided so the
+    // no-seed gate (occurredAt absent on every top hit) is exercisable (Pitfall 6).
+    ...(opts.occurredAt !== undefined ? { occurredAt: opts.occurredAt } : {}),
   };
   return {
     entry: entry as unknown as MemorySearchResult["entry"],
@@ -1460,5 +1465,239 @@ describe("createMemoryRecall — two-lane build from searchLanes (LANES-01)", ()
     // preserves its 0.15 score and no post-fuse minScore strips it on the fallback path.
     expect(got.value.map((r) => r.entry.id)).toEqual(["a"]);
     expect(got.value[0]?.score).toBeCloseTo(0.15, 5);
+  });
+});
+
+// ===========================================================================
+// LANES-02: the temporal-spread lane — the 4th fused lane (default-OFF).
+// ===========================================================================
+
+/** Milliseconds per day — for authoring occurredAt offsets in the temporal tests. */
+const TEMP_DAY = 86_400_000;
+
+/**
+ * A controllable MemoryTemporalStore stub. `spreadLane` returns a canned Result and
+ * records every call (seedOccurredAts + scope + windowMs + cap) so the gate / scope /
+ * not-called invariants are assertable. Mirrors {@link fakeEntityStore}.
+ */
+function fakeTemporalStore(laneResult: Result<MemorySearchResult[], Error>): {
+  store: MemoryTemporalStore;
+  calls: {
+    seedOccurredAts: number[];
+    scope: { tenantId: string; agentId: string };
+    windowMs: number;
+    cap: number;
+  }[];
+} {
+  const calls: {
+    seedOccurredAts: number[];
+    scope: { tenantId: string; agentId: string };
+    windowMs: number;
+    cap: number;
+  }[] = [];
+  const store: MemoryTemporalStore = {
+    async spreadLane(seedOccurredAts, scope, windowMs, cap) {
+      calls.push({ seedOccurredAts, scope, windowMs, cap });
+      return laneResult;
+    },
+  };
+  return { store, calls };
+}
+
+describe("createMemoryRecall — temporal-spread lane (LANES-02)", () => {
+  // Boosts neutralized so the FUSION verdict (not score() boosts) orders the output —
+  // the temporal-lane RRF contribution is then the only thing under test.
+  const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
+  const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
+  const TEMPORAL_ON = { enabled: true, weight: 1.0, windowDays: 7 };
+  const TEMPORAL_OFF = { enabled: false, weight: 1.0, windowDays: 7 };
+  const SEED_T = 100 * TEMP_DAY;
+
+  /**
+   * The pre-temporal-lane fused output (fts + vector, no temporal lane) — exactly what
+   * the default-OFF / no-seed / err paths must reproduce verbatim (the ENT-04 no-op).
+   */
+  function baseLaneReference(
+    fts: MemorySearchResult[],
+    vector: MemorySearchResult[],
+  ): string[] {
+    const lanes = [] as Parameters<typeof fuse>[0];
+    if (fts.length > 0) lanes.push({ results: fts, weight: 1.0 });
+    if (vector.length > 0) lanes.push({ results: vector, weight: 1.5 });
+    const fused = fuse(lanes);
+    const scored = score(fused, NEUTRAL, NOW);
+    const allowed = new Set<TrustLevel>(["system", "learned"]);
+    return deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel))).map(
+      (r) => r.entry.id,
+    );
+  }
+
+  it("LANE ON: a near-seed memory (from the temporal store, absent from search) appears in the fused output + trace lanes.temporal counts it", async () => {
+    // Base lanes: a strong seed carrying occurredAt + a WEAK non-temporal hit. Without the
+    // temporal lane, fusion ranks [seed, weak] and `nearSeed` is absent entirely.
+    const fts = [
+      makeResult("seed", { base: 0.9, occurredAt: SEED_T }),
+      makeResult("weak", { base: 0.2 }),
+    ];
+    // The temporal store returns ONE near-seed memory NOT in the base lanes, rank-1.
+    const { store, calls } = fakeTemporalStore(
+      ok([makeResult("nearSeed", { base: 0.99, occurredAt: SEED_T + 1 * TEMP_DAY })]),
+    );
+    const { recallTrace, records } = recordingRecallTrace();
+    const recall = recallWithObs(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        temporalStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+        recallTrace,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: { ...PARITY_LANES, temporal: TEMPORAL_ON },
+      } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const ids = got.value.map((r) => r.entry.id);
+    // The temporal lane flipped it in: nearSeed is present in the fused output.
+    expect(ids).toContain("nearSeed");
+    // Lane invoked once, lazily, with the seed times (only the hit carrying occurredAt),
+    // the recall scope, windowMs = windowDays*DAY, and a cap.
+    expect(calls.length).toBe(1);
+    expect(calls[0]?.seedOccurredAts).toEqual([SEED_T]);
+    expect(calls[0]?.scope).toEqual({ tenantId: "tenant_x", agentId: "agent_y" });
+    expect(calls[0]?.windowMs).toBe(7 * TEMP_DAY);
+    // The trace lanes cluster reports the temporal candidate count (= lane length).
+    const rec = records[0] as { lanes?: { temporal?: number } };
+    expect(rec.lanes?.temporal).toBe(1);
+  });
+
+  it("DEFAULT-OFF BYTE-IDENTITY: temporal.enabled=false → spreadLane NEVER called → output identical to the pre-temporal-lane fused path", async () => {
+    const fts = [
+      makeResult("a", { base: 0.9, occurredAt: SEED_T }),
+      makeResult("b", { base: 0.4, occurredAt: SEED_T }),
+    ];
+    const vector = [makeResult("b", { base: 0.5 }), makeResult("c", { base: 0.3 })];
+    // The store WOULD return a memory IF called — proving the disabled guard, not an empty lane.
+    const { store, calls } = fakeTemporalStore(
+      ok([makeResult("nearSeed", { base: 0.99, occurredAt: SEED_T + 1 * TEMP_DAY })]),
+    );
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector }),
+        temporalStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: { ...PARITY_LANES, temporal: TEMPORAL_OFF },
+      } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // The load-bearing neutrality: spreadLane is NEVER called when off (the spy proves it).
+    expect(calls.length).toBe(0);
+    // Byte-identical to the pre-temporal-lane fused path (the ENT-04 no-op reused).
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
+    expect(got.value.map((r) => r.entry.id)).not.toContain("nearSeed");
+  });
+
+  it("NO TEMPORAL CONFIG: an absent `lanes.temporal` → spreadLane NEVER called (byte-identical to before this plan)", async () => {
+    const fts = [makeResult("a", { base: 0.9, occurredAt: SEED_T })];
+    const { store, calls } = fakeTemporalStore(ok([makeResult("nearSeed", { base: 0.99, occurredAt: SEED_T })]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        temporalStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      // lanes carries ONLY fts/vector (the 95-01 shape) — no temporal sub-object.
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0);
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("NO-SEED GATE: when the top base hits all LACK occurredAt → spreadLane NOT called (Pitfall 6 — no event time to spread from)", async () => {
+    // None of the base hits carry occurredAt → seedTimes is empty → the lane is skipped
+    // even though it is ENABLED.
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const { store, calls } = fakeTemporalStore(ok([makeResult("nearSeed", { base: 0.99, occurredAt: SEED_T })]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        temporalStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: { ...PARITY_LANES, temporal: TEMPORAL_ON },
+      } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0); // no query when there are no seed times
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("NO temporalStore: an undefined store → no temporal lane, output identical to the base lanes", async () => {
+    const fts = [makeResult("a", { base: 0.9, occurredAt: SEED_T })];
+    const recall = createMemoryRecall(
+      { memoryPort: fakeLaneMemoryPort({ fts, vector: [] }), clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: { ...PARITY_LANES, temporal: TEMPORAL_ON },
+      } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("NON-FATAL: a spreadLane that returns err → recall WARNs and ranks WITHOUT the temporal lane (never fails)", async () => {
+    const fts = [
+      makeResult("a", { base: 0.9, occurredAt: SEED_T }),
+      makeResult("b", { base: 0.4, occurredAt: SEED_T }),
+    ];
+    const warns: Record<string, unknown>[] = [];
+    const capturingLogger = {
+      ...noopLogger,
+      warn: (obj: Record<string, unknown>) => {
+        warns.push(obj);
+      },
+    } as unknown as ComisLogger;
+    const { store } = fakeTemporalStore(err(new Error("temporal SQL exploded")));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        temporalStore: store,
+        clock: fixedClock,
+        logger: capturingLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: { ...PARITY_LANES, temporal: TEMPORAL_ON },
+      } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    // The search/base lanes already succeeded — recall never fails because the temporal
+    // lane failed; it WARNs and ranks WITHOUT the lane (the base order is preserved).
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+    const warn = warns.find((w) => typeof w.hint === "string" && /temporal/.test(String(w.hint)));
+    expect(warn).toBeDefined();
+    expect(warn?.errorKind).toBe("internal");
   });
 });

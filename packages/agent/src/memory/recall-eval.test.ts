@@ -30,10 +30,12 @@ import {
   TEMPORAL_EVAL_FIXTURES,
   TEMPORAL_TRUST_EVAL_FIXTURES,
   ENTITY_EVAL_FIXTURES,
+  TEMPORAL_SPREAD_EVAL_FIXTURES,
   FEEDBACK_EVAL_FIXTURES,
   PROOF_EVAL_FIXTURES,
   LANES_EVAL_FIXTURES,
   entityLane,
+  temporalLane,
   ftsLane,
   vectorLane,
   preFusedOrder,
@@ -285,6 +287,59 @@ describe("entity-association lift (recall@1 over fusion baseline)", () => {
     // entity lane's work, not fuse()'s rank rebasing on a fixture that already favored
     // the relevant id.
     const report = compareRankings(ENTITY_EVAL_FIXTURES, fusionFn, neutralFn);
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
+    expect(report.mrrLift, JSON.stringify(report)).toBe(0);
+  });
+});
+
+// UNGATED temporal-spread lift (LANES-02, the per-phase temporal-spread figure).
+// Deterministic pure fusion math — NO live DB, NO spreadLane port, NO model. The temporal
+// lane is MODELED here as a 2nd fuse() lane built from the fixtures (the near-seed neighbour
+// subset surfaced first via `temporalLane(q)`), so the lift is reproducible from the
+// fixtures alone. The temporal lane (added as a 2nd fusion lane) must score a strictly
+// positive recall@1 gain over the prior (fusion-only) baseline on the "temporal-spread"
+// group, and a NEUTRAL guard (an EMPTY 2nd lane → RRF unchanged → zero lift) attributes the
+// gain to the temporal lane — not to fuse()'s rank rebasing alone (mirrors the entity-lane
+// T-83-19 guard).
+describe("temporal-spread lift (recall@1 over fusion baseline)", () => {
+  const fusionFn = (q: EvalQuery): MemorySearchResult[] =>
+    fuse([{ results: q.candidates, weight: 1 }]);
+  // Temporal lane MODELED as a 2nd fusion lane: the near-seed neighbour subset for this
+  // query, relevant-first. RRF sums the relevant id's two lane terms over the distractor's
+  // single term → the relevant memory is lifted to rank 1.
+  const withLaneFn = (q: EvalQuery): MemorySearchResult[] =>
+    fuse([
+      { results: q.candidates, weight: 1 },
+      { results: temporalLane(q), weight: 1 },
+    ]);
+  // NEUTRAL guard ranker: the same two-lane shape but the temporal lane is EMPTY, so RRF
+  // sees only the candidates lane and the fused order collapses back to fusion order.
+  const neutralFn = (q: EvalQuery): MemorySearchResult[] =>
+    fuse([
+      { results: q.candidates, weight: 1 },
+      { results: [], weight: 1 },
+    ]);
+
+  it("carries a non-empty temporal-spread fixture group", () => {
+    expect(TEMPORAL_SPREAD_EVAL_FIXTURES.length).toBeGreaterThan(0);
+    expect(TEMPORAL_SPREAD_EVAL_FIXTURES.every((q) => q.group === "temporal-spread")).toBe(true);
+  });
+
+  it("scores a strictly positive recall@1 lift over the fusion-only baseline", () => {
+    const report = compareRankings(TEMPORAL_SPREAD_EVAL_FIXTURES, fusionFn, withLaneFn);
+    // Headroom: fusion mis-ranks the lexical distractor to rank 1 (a no-op fixture that
+    // fusion already nailed would leave nothing to measure).
+    expect(report.baseline.recallAt1, JSON.stringify(report)).toBeLessThan(1);
+    // The LANES-02 per-phase figure: the temporal lane is a MEASURABLE recall@1 gain.
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThan(0);
+    // No regression: the temporal lane never lowers recall@1 below fusion.
+    expect(report.reranked.recallAt1, JSON.stringify(report)).toBeGreaterThanOrEqual(
+      report.baseline.recallAt1,
+    );
+  });
+
+  it("yields ZERO lift with an EMPTY temporal lane (the gain is attributable to the temporal lane)", () => {
+    const report = compareRankings(TEMPORAL_SPREAD_EVAL_FIXTURES, fusionFn, neutralFn);
     expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
     expect(report.mrrLift, JSON.stringify(report)).toBe(0);
   });
