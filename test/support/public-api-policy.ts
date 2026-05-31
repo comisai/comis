@@ -1856,6 +1856,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // The constructor-deps SHAPE type is part of its public API but is referenced only via
       // inline objects — baseline orphan (mirror MemoryEntityStoreDeps / MemoryUsefulnessStoreDeps).
       "MemoryTemporalStoreDeps",
+      // Causal-edge store (Phase 96-01, EXTRACT-03). createSqliteMemoryCausalStore is the sole
+      // MemoryCausalStore adapter. This plan (Wave 1) is PURE/ungated — NO daemon wiring yet —
+      // so the FACTORY is a TEMPORARY orphan: Plan 96-03 wires it into the daemon composition
+      // root (setup-memory) and REMOVES this entry (the 95-02 factory-orphan dance). The
+      // constructor-deps SHAPE type is referenced only via inline objects — PERMANENT baseline
+      // orphan (mirror MemoryEntityStoreDeps / MemoryTemporalStoreDeps).
+      "createSqliteMemoryCausalStore",
+      "MemoryCausalStoreDeps",
       // Consolidation store (Phase 84-02). createSqliteMemoryConsolidationStore is the sole
       // MemoryConsolidationStore adapter; the daemon composition root constructs it on the
       // memory adapter's db handle in Plan 84-05 (setup-memory) — so the FACTORY has a
@@ -1927,6 +1935,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // checker counts cross-package barrel consumers only).
       "MemoryEntityRowSchema",
       "EntityLaneRowSchema",
+      // Causal one-hop edge-lookup row schema (Phase 96-01, EXTRACT-03). Consumed
+      // intra-package by sqlite-memory-causal-store.ts via createRowMapper;
+      // barrel-surfaced through `export *` so tracked here like its Phase-83 siblings.
+      "CausalLaneRowSchema",
       // Recall-utility usefulness row schema (Phase 93-01, FEED-02). Consumed
       // intra-package by sqlite-memory-usefulness-store.ts via createRowMapper;
       // barrel-surfaced through `export *` so tracked here like the sibling row

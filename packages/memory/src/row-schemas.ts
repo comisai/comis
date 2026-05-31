@@ -150,6 +150,22 @@ export const EntityLaneRowSchema = z.strictObject({
 });
 
 /**
+ * Schema for the causal one-hop edge-lookup projection (Phase 96, EXTRACT-03;
+ * RESEARCH Pattern 3). The scoped UNION over `memory_causal_edges` returns, per
+ * counterpart memory, the linked memory id (the cause/effect counterpart of a
+ * seed, EITHER direction) and the edge `confidence`. `tenant_id`/`agent_id` are
+ * NOT projected — the WHERE already pins them (mirrors `EntityLaneRowSchema`'s
+ * minimal projection). Parsed via `createRowMapper` in the adapter — never
+ * `as Row[]`.
+ */
+export const CausalLaneRowSchema = z.strictObject({
+  /** The cause/effect counterpart memory id of a seed (drives the hydrate). */
+  linked: z.string(),
+  /** The edge confidence (REAL) — drives confidence-desc intra-lane ordering. */
+  confidence: z.number(),
+});
+
+/**
  * Schema for the `listEntities` diagnostic projection (Phase 86, OBS-06). The
  * scoped `SELECT id, canonical_name, mention_count, first_seen, last_seen FROM
  * memory_entities WHERE tenant_id=? AND agent_id=? ORDER BY mention_count DESC`

@@ -57,6 +57,16 @@ export type { MemoryEntityStoreDeps } from "./sqlite-memory-entity-store.js";
 export { createSqliteMemoryTemporalStore } from "./sqlite-memory-temporal-store.js";
 export type { MemoryTemporalStoreDeps } from "./sqlite-memory-temporal-store.js";
 
+// Causal-edge recall store (sole MemoryCausalStore impl; Phase 96, EXTRACT-03).
+// Owns the edge write (effectText -> scoped FTS top-1 -> INSERT OR IGNORE a
+// directed cause->effect edge over the additive `memory_causal_edges` table) +
+// the scoped one-hop UNION read lane. The daemon (composition root, Plan 96-03)
+// constructs it on the memory adapter's db handle; the MemoryCausalStore port
+// TYPE lives in @comis/core (the agent↛memory cut — the extraction write path and
+// the recall read path consume the type only).
+export { createSqliteMemoryCausalStore } from "./sqlite-memory-causal-store.js";
+export type { MemoryCausalStoreDeps } from "./sqlite-memory-causal-store.js";
+
 // Memory consolidation store (sole MemoryConsolidationStore impl; Phase 84).
 // Owns the scoped, state-predicate (consolidated_at IS NULL) candidate selection
 // + the atomic applyConsolidation transaction. The daemon (Plan 05) constructs
