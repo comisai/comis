@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import type { MemorySearchResult } from "@comis/core";
+import type { MemorySearchResult, UsefulnessSignal } from "@comis/core";
 import {
   recallAtK,
   meanReciprocalRank,
@@ -30,7 +30,9 @@ import {
   TEMPORAL_EVAL_FIXTURES,
   TEMPORAL_TRUST_EVAL_FIXTURES,
   ENTITY_EVAL_FIXTURES,
+  FEEDBACK_EVAL_FIXTURES,
   entityLane,
+  usefulnessByIdFor,
   EVAL_NOW,
   type EvalQuery,
 } from "./__fixtures__/recall-eval-fixtures.js";
@@ -342,6 +344,135 @@ describe("trust-first contradiction lift (recall@1 over fusion baseline)", () =>
     // Mirror the sibling lift tests' dual guard (WR-01): recallAt1Lift === 0 alone equals full
     // rank-1 invariance only while each T1/T2 fixture has 2 candidates; the MRR guard pins
     // no-reorder BELOW rank 1 too, so a future 3+-candidate sub-rank-1 reorder still trips it.
+    expect(report.mrrLift, JSON.stringify(report)).toBe(0);
+  });
+});
+
+// UNGATED recall-utility feedback lift (FEED-04, the per-phase feedback figure). The
+// repeat-query scenario: a memory the agent USED at turn 1 (usedCount >= 1, ignoredCount 0)
+// is offered again at a turn-2 repeat query carrying the LOWER fusion score (a distractor with
+// no/negative usefulness carries the HIGHER fusion score). Ranked through the LIVE score()
+// usefulness lever (usefulnessAlpha>0, every other alpha 0; the FEED-03 fifth factor), the
+// proven-useful memory must be lifted to rank 1 — the recall layer LEARNS from outcomes (the
+// leapfrog vs Hindsight's dead access_count). Three guards prove the gain is attributable to
+// feedback, not to the fixture or the map's mere presence:
+//   - usefulnessAlpha:0 (signal supplied, weight 0) → usefulnessFactor ≡ 1.0 → ZERO lift.
+//   - NO usefulnessById arg (the default-off / absent-signal path) → usefulnessNorm(undefined)
+//     0.5 → factor exactly 1.0 even at a HIGH alpha → ZERO lift (the score.ts #1 byte-identity
+//     guard, exercised end-to-end through the eval).
+//   - the feedback ranker over an EXISTING group (no usefulness map) → ZERO lift / no regression.
+// Deterministic pure math (fixed-epoch EVAL_NOW; no model, no LLM judge) — runs in default
+// `pnpm test`. Mirrors the CONTRA-02 trust dual-guard (recall-eval.test.ts trustAlpha:0 above).
+describe("recall-utility feedback lift (recall@1 over fusion baseline)", () => {
+  // Phase-80 baseline: single-lane fuse() is order-preserving → fusion order = the
+  // candidates' base/score order (the distractor with the HIGHER base first by design).
+  const fusionFn = (q: EvalQuery): MemorySearchResult[] =>
+    fuse([{ results: q.candidates, weight: 1 }]);
+  // Usefulness boost ISOLATED: usefulnessAlpha>0, every other alpha 0 — the only signal moving
+  // the ranking is the per-memory used-rate, supplied via the usefulnessById map handed to
+  // score() (NOT a new EvalQuery field — the cut stays clean).
+  const feedbackFn = (q: EvalQuery): MemorySearchResult[] =>
+    score(
+      q.candidates,
+      { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0.5 },
+      EVAL_NOW,
+      usefulnessByIdFor(q),
+    );
+  // NEUTRAL guard: same map supplied, but usefulnessAlpha 0 → usefulnessFactor ≡ 1.0, so the
+  // boosted order collapses back to the base (= fusion) order. The gain is the WEIGHT's work.
+  const feedbackNeutralFn = (q: EvalQuery): MemorySearchResult[] =>
+    score(
+      q.candidates,
+      { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
+      EVAL_NOW,
+      usefulnessByIdFor(q),
+    );
+  // DEFAULT-OFF / absent-signal guard: a HIGH usefulnessAlpha but NO usefulnessById arg (4th arg
+  // omitted) → every usefulnessNorm(undefined) is 0.5 → usefulnessFactor exactly 1.0 → ZERO lift.
+  // This is the score.ts #1 byte-identity guard proven end-to-end through the eval.
+  const feedbackNoSignalFn = (q: EvalQuery): MemorySearchResult[] =>
+    score(
+      q.candidates,
+      { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0.5 },
+      EVAL_NOW,
+    );
+
+  it("carries a non-empty feedback fixture group (all group 'feedback')", () => {
+    expect(FEEDBACK_EVAL_FIXTURES.length).toBeGreaterThan(0);
+    expect(FEEDBACK_EVAL_FIXTURES.every((q) => q.group === "feedback")).toBe(true);
+  });
+
+  it("lifts a turn-1-used memory to recall@1 over the fusion baseline (the repeat-query gain)", () => {
+    const report = compareRankings(FEEDBACK_EVAL_FIXTURES, fusionFn, feedbackFn);
+    // Headroom: fusion ranks the higher-base distractor @1 (a no-op fixture that fusion already
+    // nailed would leave nothing to measure).
+    expect(report.baseline.recallAt1, JSON.stringify(report)).toBeLessThan(1);
+    // The FEED-04 figure: the proven-useful memory is rescued to rank 1 on the repeat query.
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThan(0);
+    // No regression: the usefulness boost never lowers recall@1 below fusion.
+    expect(report.reranked.recallAt1, JSON.stringify(report)).toBeGreaterThanOrEqual(
+      report.baseline.recallAt1,
+    );
+  });
+
+  it("yields ZERO lift at usefulnessAlpha 0 (the gain is attributable to feedback)", () => {
+    // Signal supplied but weighted 0 → factor 1.0 → fusion order. So the positive lift above is
+    // the usefulness boost's work, not a fixture that trivially favors the relevant id.
+    const report = compareRankings(FEEDBACK_EVAL_FIXTURES, fusionFn, feedbackNeutralFn);
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
+    expect(report.mrrLift, JSON.stringify(report)).toBe(0);
+  });
+
+  it("yields ZERO lift with NO usefulness signal even at a high alpha (default-off byte-identity)", () => {
+    // The score.ts #1 guard end-to-end: an absent usefulnessById → usefulnessNorm(undefined) 0.5
+    // → usefulnessFactor exactly 1.0 at ANY alpha → no reorder. This is the default-off path
+    // (feedback.enabled=false → recall never reads the signal → usefulnessById undefined).
+    const report = compareRankings(FEEDBACK_EVAL_FIXTURES, fusionFn, feedbackNoSignalFn);
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
+    expect(report.mrrLift, JSON.stringify(report)).toBe(0);
+  });
+
+  it("does NOT disturb the existing reranking group (zero regression)", () => {
+    // The existing RECALL_EVAL_FIXTURES carry no usefulness map → usefulnessByIdFor returns an
+    // empty map → every factor 1.0 → no reorder. Feedback must leave the prior groups byte-stable.
+    const report = compareRankings(RECALL_EVAL_FIXTURES, fusionFn, feedbackFn);
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
+    expect(report.mrrLift, JSON.stringify(report)).toBe(0);
+  });
+});
+
+// CONSOLIDATED default-off byte-identity (FEED-04 seam c, Pitfall 6). The recall-utility
+// feedback loop is opt-in (rag.feedback.enabled default false, Plan 93-04 schema). When OFF the
+// path is byte-behavior-identical to v2.6 via FOUR flag-gated guards, each pinned by a
+// characterization in the plan it shipped in:
+//   #1 score.ts — usefulnessNorm(undefined) === 0.5 → usefulnessFactor exactly 1.0 at any alpha
+//      (93-03 score.test.ts; re-proven end-to-end by feedbackNoSignalFn above).
+//   #2 memory-recall.ts — flag-off OR no store OR empty ranked → the readUsefulness call is
+//      SKIPPED → usefulnessById stays undefined → neutral factor (93-03 memory-recall.test.ts).
+//   #3 executor-post-execution.ts — flag-off → turn-end attribution + memory:recall_used emit
+//      are SKIPPED → no event (93-02 executor-post-execution.test.ts).
+//   #4 setup-memory-usefulness-wiring.ts — feedbackEnabled() false → the subscriber no-ops →
+//      no recordUsage write (93-02 setup-memory-usefulness-wiring.test.ts).
+// The test below NAMES the byte-identity contract over the feedback fixtures; the four guards
+// above pin each gate at its site.
+describe("default-off feedback recall is byte-identical to the pre-feedback fusion path", () => {
+  const fusionFn = (q: EvalQuery): MemorySearchResult[] =>
+    fuse([{ results: q.candidates, weight: 1 }]);
+  // The DEFAULT config path: feedback.enabled=false → memory-recall.ts skips the readUsefulness
+  // call → usefulnessById is undefined at the scoring pass. Model that here as score() with NO
+  // 4th arg (even at a high alpha, to prove the neutrality is the absent signal's, not a 0 alpha).
+  const defaultOffFn = (q: EvalQuery): MemorySearchResult[] =>
+    score(
+      q.candidates,
+      { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1, usefulnessAlpha: 0.5 },
+      EVAL_NOW,
+    );
+
+  it("ranks identically to fusion over the feedback fixtures (no read → neutral factor)", () => {
+    // With feedback off the usefulness signal is never read; over these all-`learned`,
+    // same-createdAt fixtures the remaining factors are uniform → the order is the fusion order.
+    const report = compareRankings(FEEDBACK_EVAL_FIXTURES, fusionFn, defaultOffFn);
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
     expect(report.mrrLift, JSON.stringify(report)).toBe(0);
   });
 });
