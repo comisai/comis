@@ -192,6 +192,38 @@ describe("SqliteMemoryAdapter", () => {
       expect(row.memory_type).toBe("semantic");
     });
 
+    it("persists a non-semantic memoryType carried on the entry (LANES-03)", async () => {
+      // The classified memoryType arrives as a first-class MemoryEntry field — the
+      // adapter must write it verbatim, NOT collapse it to the 'semantic' default.
+      const entry = makeEntry({ memoryType: "episodic" });
+      await adapter.store(entry);
+
+      const row = adapter
+        .getDb()
+        .prepare("SELECT memory_type FROM memories WHERE id = ?")
+        .get(entry.id) as { memory_type: string };
+
+      expect(row.memory_type).toBe("episodic");
+    });
+
+    it("round-trips memoryType back through search (read-back is the classified type)", async () => {
+      const entry = makeEntry({ content: "user prefers tabs over spaces", memoryType: "procedural" });
+      await adapter.store(entry);
+
+      const found = await adapter.search(
+        { tenantId: "default", agentId: "default", userId: "user-1" },
+        "tabs spaces",
+        { limit: 5 },
+      );
+      expect(found.ok).toBe(true);
+      if (found.ok) {
+        const hit = found.value.find((r) => r.entry.id === entry.id);
+        expect(hit).toBeDefined();
+        // rowToEntry surfaces the stored classification, not the 'semantic' default.
+        expect((hit?.entry as { memoryType?: string }).memoryType).toBe("procedural");
+      }
+    });
+
     it("returns error for duplicate ID", async () => {
       const entry = makeEntry();
       await adapter.store(entry);

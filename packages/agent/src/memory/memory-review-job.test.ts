@@ -316,6 +316,59 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
+  // LANES-03 — persist the LLM-classified memoryType (no longer dropped to 'semantic')
+  // -------------------------------------------------------------------------
+
+  it("threads the classified memoryType onto the stored entry (episodic)", async () => {
+    const deps = makeDeps();
+    arrangeOneSession(deps);
+    (completeSimple as Mock).mockResolvedValue(structuredResponse({
+      memories: [
+        { content: "User moved to Berlin last March", entities: [{ name: "user" }], memoryType: "episodic" },
+      ],
+    }));
+
+    await runMemoryReview(deps);
+
+    const storeCall = (deps.memoryPort.store as Mock).mock.calls[0]?.[0];
+    expect(storeCall).toBeDefined();
+    // Today this drops to the adapter's 'semantic' default (the field is never set).
+    expect(storeCall.memoryType).toBe("episodic");
+  });
+
+  it("threads a procedural classification through (proves the real value, not a hardcode)", async () => {
+    const deps = makeDeps();
+    arrangeOneSession(deps);
+    (completeSimple as Mock).mockResolvedValue(structuredResponse({
+      memories: [
+        { content: "To deploy, run pnpm validate then push", entities: [], memoryType: "procedural" },
+      ],
+    }));
+
+    await runMemoryReview(deps);
+
+    const storeCall = (deps.memoryPort.store as Mock).mock.calls[0]?.[0];
+    expect(storeCall).toBeDefined();
+    expect(storeCall.memoryType).toBe("procedural");
+  });
+
+  it("defaults memoryType to 'semantic' when the LLM omits it (StructuredMemorySchema default)", async () => {
+    const deps = makeDeps();
+    arrangeOneSession(deps);
+    (completeSimple as Mock).mockResolvedValue(structuredResponse({
+      memories: [{ content: "User enjoys hiking", entities: [{ name: "user" }] }],
+    }));
+
+    await runMemoryReview(deps);
+
+    const storeCall = (deps.memoryPort.store as Mock).mock.calls[0]?.[0];
+    expect(storeCall).toBeDefined();
+    // No memoryType in the LLM output → StructuredMemorySchema.default("semantic")
+    // backs it, so the persisted value is 'semantic' (not undefined).
+    expect(storeCall.memoryType).toBe("semantic");
+  });
+
+  // -------------------------------------------------------------------------
   // Dedup (reused) — fed structured output
   // -------------------------------------------------------------------------
 

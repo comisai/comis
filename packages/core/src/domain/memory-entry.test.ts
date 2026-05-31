@@ -231,6 +231,41 @@ describe("MemoryEntry", () => {
       expect(result.ok).toBe(false);
     });
   });
+
+  describe("memoryType field (LANES-03 — persisted classification)", () => {
+    it("accepts MemoryEntry with an explicit memoryType", () => {
+      const result = parseMemoryEntry(validEntry({ memoryType: "episodic" }));
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.memoryType).toBe("episodic");
+      }
+    });
+
+    it("MemoryEntry without memoryType still parses (the field is optional — additive)", () => {
+      const result = parseMemoryEntry(validEntry());
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.memoryType).toBeUndefined();
+      }
+    });
+
+    it("accepts all valid memoryType values (mirrors the column CHECK set)", () => {
+      for (const memoryType of [
+        "working",
+        "episodic",
+        "semantic",
+        "procedural",
+      ] as const) {
+        const result = parseMemoryEntry(validEntry({ memoryType }));
+        expect(result.ok).toBe(true);
+      }
+    });
+
+    it("rejects an out-of-set memoryType value (the enum guards the CHECK constraint)", () => {
+      const result = parseMemoryEntry(validEntry({ memoryType: "bogus" }));
+      expect(result.ok).toBe(false);
+    });
+  });
 });
 
 describe("ExtractedEntitySchema", () => {
