@@ -66,6 +66,57 @@ describe("analyzeRecallTrace (rerank-lift-realized)", () => {
     expect(view.rerankLiftRealized).toBe(0);
     expect(Number.isNaN(view.rerankLiftRealized)).toBe(false);
   });
+
+  it("does NOT count a ran recall with unequal pre/post score lengths as realized lift (WR-04)", () => {
+    // WR-04: preScores/postScores are independently optional with NO cross-field
+    // length invariant in the schema. A malformed producer emitting mismatched
+    // lengths must NOT inflate rerankLiftRealized — a length mismatch is
+    // malformed input, not an observed reordering. Pre-patch, argsortDiffers
+    // returns true on a length mismatch and the "ran" path counted it as lift.
+    const mismatched = JSON.stringify({
+      traceSchema: "comis-recall-trace",
+      schemaVersion: 1,
+      ts: "2026-05-31T00:00:00.000Z",
+      seq: 0,
+      agentId: "bench",
+      sessionId: "s",
+      traceId: "t",
+      queryDigest: "d",
+      lanes: { fts: 2, vector: 0, entity: 0 },
+      vectorLaneActive: true,
+      fusedOrder: ["m1", "m2"],
+      rerank: { outcome: "ran", candidateCount: 2, preScores: [0.9], postScores: [0.9, 0.1] },
+      ranked: [{ id: "m1", reason: "included" }],
+      durationMs: 1,
+    });
+    const view = analyzeRecallTrace(mismatched);
+    expect(view.rerankRan).toBe(1);
+    // 1 ran recall, 0 realized lift (the mismatch is excluded from the numerator).
+    expect(view.rerankLiftRealized).toBe(0);
+  });
+
+  it("does NOT count a ran recall with an empty pre/post score pair as realized lift (WR-04)", () => {
+    // Equal-length but empty arrays reorder nothing observable — excluded too.
+    const emptyScores = JSON.stringify({
+      traceSchema: "comis-recall-trace",
+      schemaVersion: 1,
+      ts: "2026-05-31T00:00:00.000Z",
+      seq: 0,
+      agentId: "bench",
+      sessionId: "s",
+      traceId: "t",
+      queryDigest: "d",
+      lanes: { fts: 1, vector: 0, entity: 0 },
+      vectorLaneActive: true,
+      fusedOrder: ["m1"],
+      rerank: { outcome: "ran", candidateCount: 0, preScores: [], postScores: [] },
+      ranked: [{ id: "m1", reason: "included" }],
+      durationMs: 1,
+    });
+    const view = analyzeRecallTrace(emptyScores);
+    expect(view.rerankRan).toBe(1);
+    expect(view.rerankLiftRealized).toBe(0);
+  });
 });
 
 describe("analyzeRecallTrace (trust-filtered + deduped rates)", () => {
