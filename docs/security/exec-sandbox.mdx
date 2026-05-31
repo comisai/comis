@@ -166,7 +166,7 @@ The `broker-only` mode is set automatically for driven API-key CLI spawns. It is
 - `~/.claude.json` (read-only bind)
 - `~/.local/share/claude` (read-write bind)
 
-On Linux, the `broker-only` network mode combines with `secureCredentialHome` so neither the key material nor a direct network path to the key provider is reachable inside the sandbox. Validation of network-level enforcement on the Linux production host class is in progress.
+On Linux, the `broker-only` network mode combines with `secureCredentialHome` so neither the key material nor a direct network path to the key provider is reachable inside the sandbox. Network-level enforcement (`--unshare-net`) is validated on the Linux production host class: direct egress from inside the namespace fails, while the bound broker socket stays reachable.
 
 <Info>
 Source: `packages/skills/src/tools/builtin/sandbox/types.ts` · `packages/skills/src/tools/builtin/sandbox/bwrap-provider.ts`

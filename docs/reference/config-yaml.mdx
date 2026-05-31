@@ -2035,14 +2035,13 @@ observability:
 
 ## Credential Broker Bindings (executor.broker)
 
-<Warning>
-**Daemon wiring in progress.** The `executor.broker` binding schema is shipped (`packages/core/src/config/schema-broker.ts`), but the `AppConfigSchema` integration is pending — adding an `executor:` block to `config.yaml` today will fail Zod strict-mode validation. The example below documents the planned config contract; it becomes active once the daemon wiring is integrated.
-</Warning>
+<Info>
+The `executor.broker` block is wired into the daemon (`AppConfigSchema` → `setupBroker`): adding it to `config.yaml` starts the broker at boot — a TCP listener plus a `0600` unix socket at `~/.comis/broker.sock`.
+</Info>
 
 ```yaml title="~/.comis/config.yaml"
 # executor.broker.bindings — provider-agnostic; presets are optional sugar
-# Note: executor.broker becomes active when daemon config wiring is integrated;
-# the schema is shipped but the AppConfigSchema registration is pending.
+# The broker starts at daemon boot whenever an executor.broker block is present.
 executor:
   broker:
     bindings:
