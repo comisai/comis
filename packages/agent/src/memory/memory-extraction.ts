@@ -54,12 +54,16 @@ For each fact, output an object: { "content", "occurredAt"?, "entities", "memory
   expressions ("yesterday", "last month", "two weeks ago") to an ABSOLUTE ISO 8601 timestamp.
   Omit "occurredAt" entirely if no event time is implied.
 - "entities": the people, things, and topics the fact mentions. ALWAYS include "user" when the
-  fact is about the user.
+  fact is about the user. Resolve coreferences: replace pronouns and generic references
+  ("she", "my boss", "the project") with the concrete canonical name they refer to
+  ("Dana", "Acme"), and use the SAME canonical spelling for every mention so repeat
+  references fold together. Omit an entity you cannot concretely name.
 - "memoryType": one of working|episodic|semantic|procedural (default semantic).
 
-✅ Extract: stable preferences, identity facts, durable relationships, commitments with dates.
-❌ Do NOT extract: one-off chit-chat, transient state, system/assistant messages, or anything
-   already obvious.
+✅ Extract durable facts: stable preferences, identity facts, durable relationships,
+   dated commitments, decisions.
+❌ Skip filler: greetings, acknowledgements, transient mood, one-off chit-chat or logistics,
+   system/assistant messages, or anything already obvious or restating an earlier fact.
 
 RESPOND IN THE SAME LANGUAGE AS THE CONVERSATION. If the conversation is in Spanish, the
 "content" must be in Spanish.
