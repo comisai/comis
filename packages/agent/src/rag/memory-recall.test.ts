@@ -1259,3 +1259,206 @@ describe("createMemoryRecall — vec→FTS-only degradation signal (OBS-03 gap)"
     expect(got.value.map((r) => r.entry.id)).toEqual(["a"]);
   });
 });
+
+// ── LANES-01: the 2-lane build from searchLanes ───────────────────────────
+//
+// When the injected MemoryPort exposes searchLanes, recall builds TWO lanes
+// (fts + vector) from it, routes them through fuse() with the operator weights
+// cfg.lanes.{fts,vector}.weight, re-applies minScore POST-fuse, and reports the
+// TRUE per-lane counts (vectorCandidates = vectorLane.length, no longer 0). When
+// searchLanes is ABSENT, recall falls back to the single-lane search() path
+// verbatim (graceful degrade — the vectorCandidates-0 honest value).
+
+/** A MemoryPort exposing BOTH search() and searchLanes(); records the opts it saw. */
+function fakeLaneMemoryPort(
+  lanes: { fts: MemorySearchResult[]; vector: MemorySearchResult[] },
+  capture?: { laneOpts?: MemorySearchOptions; searchOpts?: MemorySearchOptions },
+): MemoryPort {
+  return {
+    async search(_key: SessionKey, _query: string, opts?: MemorySearchOptions) {
+      if (capture) capture.searchOpts = opts;
+      // The single-lane fallback would return the fts lane (the merged list stand-in).
+      return ok(lanes.fts);
+    },
+    async searchLanes(_key: SessionKey, _query: string, opts?: MemorySearchOptions) {
+      if (capture) capture.laneOpts = opts;
+      return ok(lanes);
+    },
+  } as unknown as MemoryPort;
+}
+
+describe("createMemoryRecall — two-lane build from searchLanes (LANES-01)", () => {
+  // Boosts neutralized so the FUSION verdict (not score() boosts) orders the output.
+  const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
+  const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
+
+  /** Today's pre-fused order via computeRRF(fts,vec,1.0,1.5) (k=60). The parity reference. */
+  function preFused(fts: string[], vector: string[], wFts = 1.0, wVec = 1.5): string[] {
+    const k = 60;
+    const merged = new Map<string, number>();
+    fts.forEach((id, i) => merged.set(id, (merged.get(id) ?? 0) + wFts / (k + (i + 1))));
+    vector.forEach((id, i) => merged.set(id, (merged.get(id) ?? 0) + wVec / (k + (i + 1))));
+    return Array.from(merged.entries()).sort((a, b) => b[1] - a[1]).map(([id]) => id);
+  }
+
+  it("PARITY: default weights {fts:1.0,vector:1.5} reproduce today's pre-fused order byte-for-byte", async () => {
+    // Lanes that DISAGREE so fusion is non-trivial: fts leads L1, vector leads L2.
+    const fts = ["L1", "L2", "L3"].map((id) => makeResult(id, { base: 1 }));
+    const vector = ["L2", "L1", "L4"].map((id) => makeResult(id, { base: 1 }));
+    const port = fakeLaneMemoryPort({ fts, vector });
+    const recall = createMemoryRecall(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(
+      preFused(["L1", "L2", "L3"], ["L2", "L1", "L4"]),
+    );
+  });
+
+  it("a TUNED weight reorders vs the parity defaults (the weights are LIVE)", async () => {
+    // fts leads L1, vector leads L2. At parity {1.0,1.5} the vector lane wins (L2 first).
+    // Tuning FTS to DOMINATE flips the leader to L1 — proving the weights flow through.
+    const fts = ["L1", "L2"].map((id) => makeResult(id, { base: 1 }));
+    const vector = ["L2", "L1"].map((id) => makeResult(id, { base: 1 }));
+    const port = fakeLaneMemoryPort({ fts, vector });
+    const parity = createMemoryRecall(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const parityGot = await parity.recall("q", SESSION_KEY, "default");
+    expect(parityGot.ok && parityGot.value[0]?.entry.id).toBe("L2"); // vector dominates at defaults
+    const tuned = createMemoryRecall(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { fts: { weight: 5.0 }, vector: { weight: 0.1 } } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await tuned.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // FTS dominates → the FTS lane's rank-1 (L1) leads (DIFFERENT from the parity L2).
+    expect(got.value[0]?.entry.id).toBe("L1");
+  });
+
+  it("does NOT pass minScore into searchLanes (the lanes are pre-filter)", async () => {
+    const fts = [makeResult("a", { base: 1 })];
+    const vector = [makeResult("b", { base: 1 })];
+    const capture: { laneOpts?: MemorySearchOptions } = {};
+    const port = fakeLaneMemoryPort({ fts, vector }, capture);
+    const recall = createMemoryRecall(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, minScore: 0.5, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("q", SESSION_KEY, "default");
+    expect(capture.laneOpts?.minScore).toBeUndefined();
+  });
+
+  it("re-applies minScore AFTER fuse() (a sub-minScore fused item is dropped)", async () => {
+    // Two single-occurrence lane items. With weights 1.0/1.5 and k=60, the fused
+    // normalized scores are below 0.5; a minScore of 0.5 must drop BOTH post-fuse.
+    const fts = [makeResult("a", { base: 1 })];
+    const vector = [makeResult("b", { base: 1 })];
+    const port = fakeLaneMemoryPort({ fts, vector });
+    const recall = createMemoryRecall(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, minScore: 0.9, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // Both fused scores < 0.9 → dropped by the post-fuse minScore re-application.
+    expect(got.value).toHaveLength(0);
+  });
+
+  it("FTS-only (empty vector lane) → DROP the empty lane → single-lane identity (FTS order/scores preserved)", async () => {
+    // searchLanes returns a NON-empty fts lane + EMPTY vector lane. The recall layer
+    // must DROP the empty lane so a lone FTS lane hits fuse()'s single-lane pass-through
+    // (NOT the multi-lane rank-ramp). minScore low so nothing is filtered.
+    const fts = [
+      makeResult("f1", { base: 0.42, trustLevel: "learned", createdAt: NOW }),
+      makeResult("f2", { base: 0.2, trustLevel: "learned", createdAt: NOW }),
+    ];
+    const port = fakeLaneMemoryPort({ fts, vector: [] });
+    const recall = createMemoryRecall(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, minScore: 0, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // Single-lane identity: exact FTS order AND the adapter scores preserved (NOT a rank-ramp).
+    expect(got.value.map((r) => r.entry.id)).toEqual(["f1", "f2"]);
+    expect(got.value[0]?.score).toBeCloseTo(0.42, 5);
+    expect(got.value[1]?.score).toBeCloseTo(0.2, 5);
+  });
+
+  it("reports the TRUE vectorCandidates (= vectorLane.length, no longer 0) in the recall-trace", async () => {
+    const fts = [makeResult("a", { base: 1 }), makeResult("b", { base: 1 })];
+    const vector = [makeResult("b", { base: 1 }), makeResult("c", { base: 1 }), makeResult("d", { base: 1 })];
+    const { recallTrace, records } = recordingRecallTrace();
+    const recall = recallWithObs(
+      { memoryPort: fakeLaneMemoryPort({ fts, vector }), clock: fixedClock, logger: noopLogger, recallTrace },
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("q", SESSION_KEY, "agent_z");
+    const rec = records[0] as { lanes?: { fts?: number; vector?: number } };
+    expect(rec.lanes?.fts).toBe(2); // fts lane length
+    expect(rec.lanes?.vector).toBe(3); // TRUE vector lane length (NOT 0)
+  });
+
+  it("emits memory:recalled with the TRUE vectorCandidates when searchLanes is used", async () => {
+    const fts = [makeResult("a", { base: 1 })];
+    const vector = [makeResult("b", { base: 1 }), makeResult("c", { base: 1 })];
+    const { eventBus, emits } = recordingEventBus();
+    const recall = recallWithObs(
+      { memoryPort: fakeLaneMemoryPort({ fts, vector }), clock: fixedClock, logger: noopLogger, eventBus },
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("q", SESSION_KEY, "agent_z");
+    const recalled = emits.find((e) => e.event === "memory:recalled");
+    expect((recalled?.payload as { vectorCandidates?: number })?.vectorCandidates).toBe(2);
+  });
+
+  it("FALLBACK: a search-only MemoryPort (no searchLanes) behaves exactly as today (single-lane, vectorCandidates 0)", async () => {
+    const input = [
+      makeResult("a", { base: 0.9, trustLevel: "learned", createdAt: NOW }),
+      makeResult("b", { base: 0.4, trustLevel: "learned", createdAt: NOW }),
+    ];
+    const capture: { opts?: MemorySearchOptions } = {};
+    // fakeMemoryPort has NO searchLanes → the absent-method fallback path.
+    const { recallTrace, records } = recordingRecallTrace();
+    const recall = recallWithObs(
+      { memoryPort: fakeMemoryPort(input, capture), clock: fixedClock, logger: noopLogger, recallTrace },
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // Single-lane order preserved + minScore was applied IN search() (passed through).
+    expect(got.value.map((r) => r.entry.id)).toEqual(["a", "b"]);
+    expect(capture.opts?.minScore).toBe(0.1);
+    // The split is not observable on the fallback path → vectorCandidates honest 0.
+    const rec = records[0] as { lanes?: { vector?: number } };
+    expect(rec.lanes?.vector).toBe(0);
+  });
+
+  it("FALLBACK: minScore is NOT double-applied (search() applied it; the post-fuse re-application is gated to searchLanes)", async () => {
+    // On the fallback path search() already filtered by minScore. The recall layer must
+    // NOT re-apply minScore post-fuse (that would be a double filter). Model: search()
+    // returns items whose adapter scores are ABOVE minScore but BELOW what a fresh fuse
+    // rank-ramp would assign — proving no second minScore pass strips them.
+    const input = [makeResult("a", { base: 0.15, trustLevel: "learned", createdAt: NOW })];
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
+      baseConfig({ scoring: NEUTRAL, minScore: 0.1, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // The 0.15-scored item (above 0.1, passed search()) survives — single-lane pass-through
+    // preserves its 0.15 score and no post-fuse minScore strips it on the fallback path.
+    expect(got.value.map((r) => r.entry.id)).toEqual(["a"]);
+    expect(got.value[0]?.score).toBeCloseTo(0.15, 5);
+  });
+});

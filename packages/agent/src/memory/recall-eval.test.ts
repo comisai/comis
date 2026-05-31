@@ -32,7 +32,11 @@ import {
   ENTITY_EVAL_FIXTURES,
   FEEDBACK_EVAL_FIXTURES,
   PROOF_EVAL_FIXTURES,
+  LANES_EVAL_FIXTURES,
   entityLane,
+  ftsLane,
+  vectorLane,
+  preFusedOrder,
   usefulnessByIdFor,
   EVAL_NOW,
   type EvalQuery,
@@ -595,5 +599,58 @@ describe.skipIf(!RERANKER_MODEL)("recall lift (real model)", () => {
       report.reranked.recallAt1,
       JSON.stringify(report),
     ).toBeGreaterThan(report.baseline.recallAt1);
+  });
+});
+
+// LANES-01 lane-split PARITY (the load-bearing regression guard). Today the memory
+// adapter pre-fuses fts+vector via computeRRF(fts,vec,1.0,1.5) (k=60). After the unfuse,
+// the agent builds two lanes and routes them through fuse() (k=60, same formula). The
+// guard: with DEFAULT weights {fts:1.0, vector:1.5}, the 2-lane fused order is BYTE-FOR-BYTE
+// identical to today's pre-fused order; a TUNED vector weight reorders (the weights are live).
+describe("lane-split parity (default weights reproduce today's pre-fused order)", () => {
+  it("carries a non-empty lanes fixture group with disagreeing lane orders", () => {
+    expect(LANES_EVAL_FIXTURES.length).toBeGreaterThan(0);
+    expect(LANES_EVAL_FIXTURES.every((q) => q.group === "lanes")).toBe(true);
+    // The two lanes must DISAGREE on at least one fixture (else fusion is trivial).
+    expect(LANES_EVAL_FIXTURES.some((q) => q.fts[0] !== q.vector[0])).toBe(true);
+  });
+
+  it("default-weight {fts:1.0, vector:1.5} fuse() == today's computeRRF pre-fused order BYTE-FOR-BYTE", () => {
+    for (const q of LANES_EVAL_FIXTURES) {
+      const fused = fuse([
+        { results: ftsLane(q), weight: 1.0 },
+        { results: vectorLane(q), weight: 1.5 },
+      ]).map((r) => r.entry.id);
+      const expected = preFusedOrder(q, 1.0, 1.5);
+      expect(fused, `${q.query}: fuse() must reproduce computeRRF order`).toEqual(expected);
+    }
+  });
+
+  it("a TUNED weight produces a DIFFERENT order on at least one fixture (weights are live)", () => {
+    // The parity defaults {1.0,1.5} already let the vector lane's rank-1 (L2) lead LQ1
+    // (vector weight 1.5 > fts 1.0). Tuning FTS to DOMINATE flips the leader to the FTS
+    // lane's rank-1 (L1) — a DIFFERENT order, proving the weights are live (not cosmetic).
+    const lq1 = LANES_EVAL_FIXTURES.find((q) => q.query === "deploy runbook")!;
+    const parity = fuse([
+      { results: ftsLane(lq1), weight: 1.0 },
+      { results: vectorLane(lq1), weight: 1.5 },
+    ]).map((r) => r.entry.id);
+    expect(parity[0]).toBe("L2"); // vector dominates at the parity defaults
+    const tuned = fuse([
+      { results: ftsLane(lq1), weight: 5.0 },
+      { results: vectorLane(lq1), weight: 0.1 },
+    ]).map((r) => r.entry.id);
+    expect(tuned).not.toEqual(parity);
+    // With FTS dominating, the FTS lane's rank-1 (L1) leads the tuned order.
+    expect(tuned[0]).toBe("L1");
+  });
+
+  it("an EMPTY vector lane dropped before fuse() preserves the FTS order (single-lane identity)", () => {
+    // FTS-only degrade: a lone non-empty FTS lane must hit fuse()'s single-lane pass-through
+    // (order + score preserved), NOT the multi-lane rank-ramp. The recall layer DROPS empty
+    // lanes; here we model that by passing only the non-empty lane.
+    const q = LANES_EVAL_FIXTURES[0]!;
+    const ftsOnly = fuse([{ results: ftsLane(q), weight: 1.0 }]).map((r) => r.entry.id);
+    expect(ftsOnly).toEqual(q.fts); // exact FTS order, no rebasing
   });
 });

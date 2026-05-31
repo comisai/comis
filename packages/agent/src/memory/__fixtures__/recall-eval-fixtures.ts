@@ -37,8 +37,11 @@ import type { MemorySearchResult, TrustLevel, UsefulnessSignal } from "@comis/co
  * - `"feedback"`  — Phase 93: recall-utility feedback loop repeat-query lift (FEED-04).
  * - `"proof"`     — Phase 94: fold-into-existing proof accrual (FOLD-03) — a cross-run-corroborated
  *   observation out-ranks a one-off mention via the LIVE proofAlpha factor.
+ * - `"lanes"`     — Phase 95: the un-fused FTS/vector split (LANES-01) — default-weight
+ *   {fts:1.0, vector:1.5} lanes reproduce today's pre-fused order (the parity guard);
+ *   a tuned vector weight reorders (proving the weights are live).
  */
-export type EvalGroup = "reranking" | "temporal" | "entity" | "feedback" | "proof";
+export type EvalGroup = "reranking" | "temporal" | "entity" | "feedback" | "proof" | "lanes";
 
 /**
  * One labeled eval query: the candidate pool a ranker sees plus the
@@ -610,3 +613,83 @@ export const PROOF_EVAL_FIXTURES: EvalQuery[] = [
     relevantIds: ["p-proven2"],
   },
 ];
+
+/**
+ * Phase-95 lane-split fixtures (LANES-01) — the `"lanes"` group proving the un-fused
+ * FTS/vector split. Unlike the prior groups (one candidate pool), each lanes fixture
+ * carries the TWO ranked id lists a real `searchLanes` returns: `fts` (BM25 rank order)
+ * and `vector` (KNN distance order). The candidate `pool` is the FULL set so the EvalQuery
+ * contract holds, but the lane modeling (below) is what's under test.
+ *
+ * THE PARITY GUARD (the load-bearing characterization). Today `hybridSearch` pre-fuses fts
+ * + vector via `computeRRF(fts, vec, 1.0, 1.5)` (k=60) INSIDE the memory adapter and returns
+ * ONE order. After LANES-01 the agent builds two lanes and routes them through `fuse()`
+ * (k=60, same formula). Because `fuse([{fts,1.0},{vec,1.5}])` is byte-identical math to
+ * `computeRRF(fts,vec,1.0,1.5)`, the default-weight fused order MUST equal today's pre-fused
+ * order id-for-id — the regression guard. A TUNED fixture (vector weight raised) shows a
+ * DIFFERENT order, proving the weights are live (not cosmetic).
+ *
+ * The lanes are authored so fts and vector DISAGREE on order (id `L1` leads FTS, `L2` leads
+ * vector), making the fusion non-trivial — a single-lane-only fixture would prove nothing.
+ *
+ * Determinism (AGENTS.md §2.5): neutral placeholders + stable ids `L1`, `L2`, … No real
+ * identities, no network, no `Date.now`/`Math.random`.
+ *
+ * - LQ1 ("deploy runbook") — FTS ranks [L1, L2, L3]; vector ranks [L2, L1, L4]. The shared
+ *   L1/L2 accrue both lanes' RRF terms; at {1.0,1.5} vector's weight tips L2 over L1.
+ * - LQ2 ("incident postmortem") — FTS [L5, L6]; vector [L6, L7]. L6 (in both) wins.
+ */
+export interface LanesEvalQuery {
+  group: "lanes";
+  query: string;
+  /** The FTS lane ids in BM25 rank order (rank 1 = first). */
+  fts: string[];
+  /** The vector lane ids in KNN distance order (rank 1 = first). */
+  vector: string[];
+}
+
+export const LANES_EVAL_FIXTURES: LanesEvalQuery[] = [
+  {
+    group: "lanes",
+    query: "deploy runbook",
+    fts: ["L1", "L2", "L3"],
+    vector: ["L2", "L1", "L4"],
+  },
+  {
+    group: "lanes",
+    query: "incident postmortem",
+    fts: ["L5", "L6"],
+    vector: ["L6", "L7"],
+  },
+];
+
+/** Build a bare ranked MemorySearchResult list (rank order = array order) from ids. */
+function laneFromIds(ids: string[]): MemorySearchResult[] {
+  return ids.map((id, i) => candidate(id, `lane content for ${id}`, 1 / (i + 1)));
+}
+
+/** The FTS lane for a lanes fixture, as a ranked MemorySearchResult list. */
+export function ftsLane(q: LanesEvalQuery): MemorySearchResult[] {
+  return laneFromIds(q.fts);
+}
+
+/** The vector lane for a lanes fixture, as a ranked MemorySearchResult list. */
+export function vectorLane(q: LanesEvalQuery): MemorySearchResult[] {
+  return laneFromIds(q.vector);
+}
+
+/**
+ * Today's pre-fused order for a lanes fixture — the reference the default-weight 2-lane
+ * `fuse()` MUST reproduce. Re-derives `computeRRF(fts, vec, weightFts, weightVec)` (k=60,
+ * hybrid-search.ts:205-246) and the sort: the EXACT math the memory adapter ran before
+ * LANES-01. PURE — no DB, no I/O; the parity is reproducible from the fixtures alone.
+ */
+export function preFusedOrder(q: LanesEvalQuery, weightFts = 1.0, weightVec = 1.5): string[] {
+  const k = 60;
+  const merged = new Map<string, number>();
+  q.fts.forEach((id, i) => merged.set(id, (merged.get(id) ?? 0) + weightFts / (k + (i + 1))));
+  q.vector.forEach((id, i) => merged.set(id, (merged.get(id) ?? 0) + weightVec / (k + (i + 1))));
+  return Array.from(merged.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([id]) => id);
+}

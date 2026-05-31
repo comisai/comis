@@ -751,6 +751,58 @@ describe("RagConfigSchema.scoring", () => {
 });
 
 // ---------------------------------------------------------------------------
+// RagConfigSchema.lanes (Phase-95/LANES-01: per-lane RRF weights, the PARITY
+// guard — fts 1.0 / vector 1.5 reproduce today's hardcoded hybrid-search weights)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.lanes", () => {
+  it("defaults the per-lane weights to the PARITY guard {fts:1.0, vector:1.5}", () => {
+    // These are the EXACT weights hybrid-search.ts hardcoded (computeRRF 1.0/1.5),
+    // so default-weight fusion reproduces today's ranking byte-for-byte.
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.lanes.fts.weight).toBe(1.0);
+      expect(result.data.lanes.vector.weight).toBe(1.5);
+    }
+  });
+
+  it("accepts operator-tuned weights (the lanes are tunable)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { fts: { weight: 0.5 }, vector: { weight: 3.0 } } });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.lanes.fts.weight).toBe(0.5);
+      expect(result.data.lanes.vector.weight).toBe(3.0);
+    }
+  });
+
+  it("rejects a negative fts weight (z.number().min(0) — a negative term could invert RRF; T-95-02)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { fts: { weight: -0.1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a negative vector weight (z.number().min(0))", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { vector: { weight: -1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a zero weight at the boundary (min(0) inclusive)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { fts: { weight: 0 }, vector: { weight: 0 } } });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an unknown key inside lanes (strictObject)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { temporal: { weight: 1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown key inside a single lane (strictObject)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { fts: { weight: 1, bogus: 2 } } });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // RagConfigSchema.feedback (Phase-93/FEED-04: recall-utility feedback loop,
 // opt-in / default-OFF — mirrors rag.entityLane)
 // ---------------------------------------------------------------------------
@@ -833,6 +885,9 @@ describe("RagConfigSchema.feedback", () => {
       expect(result.data.entityLane.seedCount).toBe(5);
       expect(result.data.entityLane.perEntityCap).toBe(200);
       expect(result.data.entityLane.weight).toBe(1.0);
+      // lanes sub-object (LANES-01 parity defaults).
+      expect(result.data.lanes.fts.weight).toBe(1.0);
+      expect(result.data.lanes.vector.weight).toBe(1.5);
     }
   });
 });
