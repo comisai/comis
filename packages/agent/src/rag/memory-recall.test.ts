@@ -1323,6 +1323,42 @@ describe("createMemoryRecall — two-lane build from searchLanes (LANES-01)", ()
     );
   });
 
+  it("W1 FULL-SET PARITY: at DEFAULT config the returned SET (count + ids + order) equals v2.6's maxResults-capped search() result, not just its head ordering", async () => {
+    // W1 (load-bearing): v2.6's search() → hybridSearch() sliced the FTS+vector fused
+    // union to options.limit (= maxResults) BEFORE returning (hybrid-search.ts:374), so
+    // recall() returned AT MOST maxResults entries. The LANES-01 unfuse moved the fusion
+    // into fuse() but DROPPED that cap — searchLanes returns both lanes un-truncated, the
+    // distinct union can exceed maxResults, and finalRanked was never re-capped (the only
+    // slice(0,maxResults) is trace-only). prompt-assembly feeds the full uncapped set to
+    // an injector that caps by CHARACTERS, not count → more memories injected than v2.6.
+    //
+    // This pins the FULL returned set (count AND ids AND order) to v2.6's behavior:
+    //   v2.6 = preFused(fts, vector).slice(0, maxResults)
+    // RED on the un-capped code (returns the full 7-id union); GREEN once the FTS+vector
+    // base is capped to maxResults before scoring (mirroring hybridSearch's slice).
+    const ftsIds = ["L1", "L2", "L3", "L4", "L5"];
+    const vecIds = ["L2", "L1", "L4", "L6", "L7"];
+    const fts = ftsIds.map((id) => makeResult(id, { base: 1 }));
+    const vector = vecIds.map((id) => makeResult(id, { base: 1 }));
+    const port = fakeLaneMemoryPort({ fts, vector });
+    const MAX = 3;
+    const recall = createMemoryRecall(
+      { memoryPort: port, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      // minScore 0 isolates the COUNT cap from the minScore filter: every fused id clears
+      // 0, so the ONLY thing that can trim the 7-id union to 3 is the maxResults cap.
+      baseConfig({ scoring: NEUTRAL, minScore: 0, maxResults: MAX, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // v2.6 baseline: hybridSearch fused then sliced to limit=maxResults.
+    const v26Capped = preFused(ftsIds, vecIds).slice(0, MAX);
+    expect(v26Capped).toHaveLength(MAX); // sanity: the union really exceeds maxResults
+    // FULL set: count AND ids AND order — NOT a slice(0, oldOrder.length) of a longer list.
+    expect(got.value).toHaveLength(MAX);
+    expect(got.value.map((r) => r.entry.id)).toEqual(v26Capped);
+  });
+
   it("a TUNED weight reorders vs the parity defaults (the weights are LIVE)", async () => {
     // fts leads L1, vector leads L2. At parity {1.0,1.5} the vector lane wins (L2 first).
     // Tuning FTS to DOMINATE flips the leader to L1 — proving the weights flow through.
