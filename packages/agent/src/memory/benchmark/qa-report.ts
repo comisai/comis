@@ -68,6 +68,49 @@ export interface ScoringAlphas {
 }
 
 /**
+ * BASE-01 (v2.8 Phase 98) cost block: mean tokens/query for the answer + judge
+ * roles, plus the combined total and (optionally) the provider-reported USD cost.
+ *
+ * SECURITY: pure numbers only — no model identity, no key. Recorded by copying
+ * field-by-field (never spreading the input config), so this block cannot smuggle
+ * a credential into the persisted manifest (Test 8 in qa-report.test.ts re-asserts
+ * the secret-omission gate with this block populated).
+ */
+export interface BenchmarkCost {
+  /** Mean answer-LLM tokens per question (across the valid questions). */
+  answerTokensPerQuery: number;
+  /** Mean judge-LLM tokens per question (across the valid questions). */
+  judgeTokensPerQuery: number;
+  /** Mean total (answer + judge) tokens per question. */
+  totalTokensPerQuery: number;
+  /** Summed answer-LLM USD cost across the run (optional; provider-reported). */
+  answerCostUsd?: number;
+  /** Summed judge-LLM USD cost across the run (optional; provider-reported). */
+  judgeCostUsd?: number;
+}
+
+/**
+ * BASE-01 (v2.8 Phase 98) latency block: p50/p95 wall-clock latency (ms) for the
+ * recall, answer, and judge segments, plus the end-to-end (recall+answer+judge)
+ * per-question total. Captured in the harness via real `performance.now()` deltas
+ * (NOT the injected fake clock — that exists to neutralize recency scoring and
+ * would read constant).
+ *
+ * SECURITY: pure numbers only — same structural no-secret guarantee as
+ * {@link BenchmarkCost}.
+ */
+export interface BenchmarkLatency {
+  recallP50Ms: number;
+  recallP95Ms: number;
+  answerP50Ms: number;
+  answerP95Ms: number;
+  judgeP50Ms: number;
+  judgeP95Ms: number;
+  endToEndP50Ms: number;
+  endToEndP95Ms: number;
+}
+
+/**
  * The BENCH-04 reproducibility object. Records WHAT built/answered/judged
  * (model identities), the dataset, the recall defaults, and the accuracy results
  * (carrying `invalid` + `validTotal` per the corrected denominator) -- with no
@@ -105,6 +148,16 @@ export interface BenchmarkReport {
   results: AccuracyResult;
   /** The harness version tag (e.g. "phase-89-v1"). */
   harnessVersion: string;
+  /**
+   * BASE-01 tokens/query (answer + judge). Present only when the run measured it;
+   * omitted byte-identically otherwise (mirrors `dataset.sha256`).
+   */
+  cost?: BenchmarkCost;
+  /**
+   * BASE-01 wall-clock latency (recall/answer/judge/end-to-end, p50/p95). Present
+   * only when the run measured it; omitted byte-identically otherwise.
+   */
+  latency?: BenchmarkLatency;
 }
 
 /**
@@ -125,6 +178,10 @@ export interface BenchmarkReportConfig {
   dataset: BenchmarkReport["dataset"];
   defaults: BenchmarkReport["defaults"];
   harnessVersion: string;
+  /** BASE-01 tokens/query block (optional — present only when measured). */
+  cost?: BenchmarkCost;
+  /** BASE-01 latency block (optional — present only when measured). */
+  latency?: BenchmarkLatency;
 }
 
 /** Rebuild a model role as a fresh identity-only record (drops any extra fields). */
@@ -182,6 +239,36 @@ function pickDataset(d: BenchmarkReport["dataset"]): BenchmarkReport["dataset"] 
 }
 
 /**
+ * Rebuild the cost block field-by-field (never spreads the input config), keeping
+ * the optional USD fields only when present. Pure numbers in -> pure numbers out;
+ * no path from a config secret to the output (module no-secret doctrine).
+ */
+function pickCost(c: BenchmarkCost): BenchmarkCost {
+  const base: BenchmarkCost = {
+    answerTokensPerQuery: c.answerTokensPerQuery,
+    judgeTokensPerQuery: c.judgeTokensPerQuery,
+    totalTokensPerQuery: c.totalTokensPerQuery,
+  };
+  if (c.answerCostUsd !== undefined) base.answerCostUsd = c.answerCostUsd;
+  if (c.judgeCostUsd !== undefined) base.judgeCostUsd = c.judgeCostUsd;
+  return base;
+}
+
+/** Rebuild the latency block field-by-field (never spreads the input config). */
+function pickLatency(l: BenchmarkLatency): BenchmarkLatency {
+  return {
+    recallP50Ms: l.recallP50Ms,
+    recallP95Ms: l.recallP95Ms,
+    answerP50Ms: l.answerP50Ms,
+    answerP95Ms: l.answerP95Ms,
+    judgeP50Ms: l.judgeP50Ms,
+    judgeP95Ms: l.judgeP95Ms,
+    endToEndP50Ms: l.endToEndP50Ms,
+    endToEndP95Ms: l.endToEndP95Ms,
+  };
+}
+
+/**
  * Build the reproducible {@link BenchmarkReport} from the run config, the
  * accuracy metrics, and an injected `nowMs`.
  *
@@ -215,5 +302,11 @@ export function buildBenchmarkReport(
     },
     results: metrics,
     harnessVersion: config.harnessVersion,
+    // BASE-01 cost/latency: appended STRUCTURALLY (mirror pickDataset) -- the key
+    // exists only when the run measured it, so an unmeasured run is byte-identical
+    // to the pre-BASE-01 report. Copied field-by-field (pickCost/pickLatency),
+    // never spreading the config, consistent with the module no-secret doctrine.
+    ...(config.cost !== undefined ? { cost: pickCost(config.cost) } : {}),
+    ...(config.latency !== undefined ? { latency: pickLatency(config.latency) } : {}),
   };
 }
