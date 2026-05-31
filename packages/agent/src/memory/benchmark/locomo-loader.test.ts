@@ -94,6 +94,21 @@ describe("loadLocomo (LoCoMo date-time parsing: 12-hour -> epoch ms)", () => {
     expect(loadLocomo(diaAt("13:00 pm on 8 May, 2023")).ok).toBe(false);
   });
 
+  it("returns err on an out-of-range day instead of rolling over (WR-01 / IN-01)", () => {
+    // IN-01 / WR-01: parseLocomoDate bounded hour/minute but NOT day, so a day
+    // like 99 rolled into a later month via Date.UTC. The day must be range-
+    // checked (1-31) like the other components and return err when OOR.
+    expect(loadLocomo(diaAt("1:00 pm on 99 May, 2023")).ok).toBe(false); // day 99
+    expect(loadLocomo(diaAt("1:00 pm on 0 May, 2023")).ok).toBe(false); // day 0
+    expect(loadLocomo(diaAt("1:00 pm on 32 May, 2023")).ok).toBe(false); // day 32
+  });
+
+  it("returns err on a day that rolls over within a valid month (WR-01 round-trip)", () => {
+    // Feb 30 is numerically in-range but rolls into March — the round-trip
+    // guard must reject it.
+    expect(loadLocomo(diaAt("1:00 pm on 30 February, 2023")).ok).toBe(false);
+  });
+
   it("returns err on a malformed date-time string", () => {
     expect(loadLocomo(diaAt("sometime yesterday")).ok).toBe(false);
   });

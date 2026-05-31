@@ -101,6 +101,26 @@ describe("parseHaystackDate (YYYY/MM/DD (Day) HH:MM -> epoch ms)", () => {
     const r = parseHaystackDate("2023-05-20 02:21");
     expect(r.ok).toBe(false);
   });
+
+  it("returns err on out-of-range components instead of rolling over (WR-01)", () => {
+    // WR-01: Date.UTC silently rolls over out-of-range-but-numeric components
+    // (month 13 -> next year, day 45, hour 99). The regex's \d{2} classes accept
+    // them, so the parser MUST range-check and return err rather than emit a
+    // plausible-but-wrong epoch. The Number.isNaN guard never fires for these.
+    expect(parseHaystackDate("2023/13/45 (XXX) 99:99").ok).toBe(false); // every field OOR
+    expect(parseHaystackDate("2023/13/20 (Sat) 02:21").ok).toBe(false); // month 13
+    expect(parseHaystackDate("2023/05/99 (Sat) 02:21").ok).toBe(false); // day 99
+    expect(parseHaystackDate("2023/05/20 (Sat) 24:00").ok).toBe(false); // hour 24
+    expect(parseHaystackDate("2023/05/20 (Sat) 02:60").ok).toBe(false); // minute 60
+    expect(parseHaystackDate("2023/00/20 (Sat) 02:21").ok).toBe(false); // month 00
+    expect(parseHaystackDate("2023/05/00 (Sat) 02:21").ok).toBe(false); // day 00
+  });
+
+  it("returns err on a day that rolls over within a valid month (WR-01 round-trip)", () => {
+    // Feb 30 is numerically in-range (day 1-31) but rolls into March — the
+    // round-trip guard must reject it.
+    expect(parseHaystackDate("2023/02/30 (Thu) 02:21").ok).toBe(false);
+  });
 });
 
 describe("loadLongMemEval (records answer session ids for gold resolution)", () => {
