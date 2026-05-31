@@ -85,8 +85,10 @@ export type RecallDegradationKind = (typeof RECALL_DEGRADATION_KINDS)[number];
 
 /**
  * Per-memory score breakdown (OBS-01). Pure numbers — no redaction concern.
- * `final` is the product of `base` and the four multiplicative factors
- * (recency/temporal/proof/trust) surfaced from `score.ts` in Plan 03.
+ * `final` is the product of `base` and the FIVE multiplicative factors
+ * (recency/temporal/proof/trust/usefulness) surfaced from `score.ts`. The
+ * `usefulness` factor is the FEED-03 read-side payoff of the recall-utility
+ * feedback loop (1.0 when the per-memory usefulness signal is absent).
  */
 const RecallScoreBreakdownSchema = z.object({
   base: z.number(),
@@ -94,6 +96,7 @@ const RecallScoreBreakdownSchema = z.object({
   temporal: z.number(),
   proof: z.number(),
   trust: z.number(),
+  usefulness: z.number(),
   final: z.number(),
 });
 

@@ -84,8 +84,20 @@ export const RagConfigSchema = z.strictObject({
         proofAlpha: z.number().min(0).max(1).default(0.1),
         /** Trust-level boost weight + tie-break (RANK-06). */
         trustAlpha: z.number().min(0).max(1).default(0.1),
+        /** Usefulness boost weight (Phase-93/FEED-03; the SINGLE canonical usefulness knob —
+         *  the recall-utility feedback loop reads `rag.scoring.usefulnessAlpha`, NOT a knob on
+         *  `rag.feedback`). Bounded small (same magnitude as trust/proof) so a proven-useful
+         *  memory is boosted but CANNOT overturn trust-first ordering — Pitfall 5. Neutral
+         *  (factor 1.0) whenever the per-memory usefulness signal is absent. */
+        usefulnessAlpha: z.number().min(0).max(1).default(0.1),
       })
-      .default(() => ({ recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 })),
+      .default(() => ({
+        recencyAlpha: 0.2,
+        temporalAlpha: 0.2,
+        proofAlpha: 0.1,
+        trustAlpha: 0.1,
+        usefulnessAlpha: 0.1,
+      })),
     /** One-hop entity-associative lane (ENT-02). Default-OFF; the daemon enables it once
      *  the entity store is wired (Phase-83 Plan 05). Empty/disabled -> RRF unchanged (ENT-04). */
     entityLane: z

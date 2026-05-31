@@ -46,7 +46,7 @@
  * @module
  */
 
-import type { MemorySearchResult, TrustLevel } from "@comis/core";
+import type { MemorySearchResult, TrustLevel, UsefulnessSignal } from "@comis/core";
 
 /** Milliseconds per day, for the recency age computation. */
 const DAY_MS = 86_400_000;
@@ -55,13 +55,14 @@ const DAY_MS = 86_400_000;
 const TIE_EPSILON = 1e-9;
 
 /**
- * Per-memory multiplicative score breakdown (OBS-01). The four factors are the
+ * Per-memory multiplicative score breakdown (OBS-01). The five factors are the
  * EXACT multiplicands score() folds into the boosted score, surfaced so the recall
  * trace can record WHY a memory ranked where it did. Pure numbers — no redaction
  * concern (RESEARCH: the breakdown is safe to persist). Invariant:
- *   final === base * recency * temporal * proof * trust
+ *   final === base * recency * temporal * proof * trust * usefulness
  * A neutral sub-signal contributes a factor of exactly 1.0 (recency/temporal/proof/
- * trust are each centered on 0.5), so a raw memory's proof + temporal factors are 1.0.
+ * trust/usefulness are each centered on 0.5), so a raw memory's proof + temporal +
+ * usefulness factors are 1.0.
  */
 export interface ScoreBreakdown {
   /** The un-boosted relevance score (`result.score ?? 0`). */
@@ -74,7 +75,9 @@ export interface ScoreBreakdown {
   proof: number;
   /** Trust factor `1 + trustAlpha * (trustWeight(level) - 0.5)`. */
   trust: number;
-  /** The boosted score = base × recency × temporal × proof × trust. */
+  /** Usefulness factor `1 + usefulnessAlpha * (usefulnessNorm - 0.5)` (FEED-03); 1.0 when the signal is absent. */
+  usefulness: number;
+  /** The boosted score = base × recency × temporal × proof × trust × usefulness. */
   final: number;
 }
 
@@ -91,6 +94,13 @@ export interface ScoringAlphas {
   proofAlpha: number;
   /** Trust-level boost weight + tie-break (RANK-06). */
   trustAlpha: number;
+  /**
+   * Usefulness boost weight (FEED-03; bounded, same small magnitude as trust/proof so it
+   * CANNOT overturn trust-first — Pitfall 5). The single canonical knob: it traces to
+   * `rag.scoring.usefulnessAlpha` (no second knob on `rag.feedback`). Centered on a 0.5
+   * used-rate, so an absent signal contributes a factor of exactly 1.0 at any alpha.
+   */
+  usefulnessAlpha: number;
 }
 
 /** Comis trust ladder: system 1.0 / learned 0.5 / external 0.0. */
@@ -188,6 +198,23 @@ function decayedProof(entry: MemorySearchResult["entry"], nowMs: number): number
 }
 
 /**
+ * Usefulness norm (FEED-03), the read-side payoff of the recall-utility feedback loop:
+ * the per-memory used-RATE mapped onto the same 0.5-centered axis as the other sub-signals.
+ *   - ABSENT signal (no map, or the id is not a key) → 0.5 → neutral 1.0 factor (the
+ *     byte-identity guarantee: a memory with no usefulness history is never reordered).
+ *   - total resolved (used + ignored) of 0 → 0.5 → neutral (recalled-but-never-attributed).
+ *   - else the used-RATE `usedCount / (usedCount + ignoredCount)` in [0,1] (Pitfall 5: a
+ *     RATE, NOT raw counts — a memory "used" 1000× cannot explode the factor; the bounded
+ *     `usefulnessAlpha` then keeps the boost from overturning trust-first).
+ */
+function usefulnessNorm(sig: UsefulnessSignal | undefined): number {
+  if (sig === undefined) return 0.5; // absent → neutral 1.0 factor
+  const total = sig.usedCount + sig.ignoredCount;
+  if (total === 0) return 0.5; // never resolved → neutral
+  return sig.usedCount / total; // used-rate in [0,1] (bounded — never raw counts)
+}
+
+/**
  * Deterministic comparator shared by {@link score} and {@link scoreWithBreakdown}:
  * sort descending by boosted score, then resolve an EXACT relevance tie by trust
  * (RANK-06: system > learned > external). Pulled out so both entry points sort
@@ -205,8 +232,14 @@ function compareBoosted(a: MemorySearchResult, b: MemorySearchResult): number {
  * Apply the multiplicative boost stack to each result's base score AND surface the
  * per-memory factor breakdown (OBS-01), then sort identically to {@link score} (the
  * shared {@link compareBoosted}). Each returned object is a NEW result carrying
- * `breakdown = { base, recency, temporal, proof, trust, final }` where the four factors
- * are the exact multiplicands and `final === base * recency * temporal * proof * trust`.
+ * `breakdown = { base, recency, temporal, proof, trust, usefulness, final }` where the
+ * five factors are the exact multiplicands and
+ * `final === base * recency * temporal * proof * trust * usefulness`.
+ *
+ * `usefulnessById` (FEED-03, optional) carries the per-memory usefulness signal read from
+ * the FEED-02 store. ABSENT (undefined, or an id not in the map) → usefulnessNorm 0.5 →
+ * usefulness factor exactly 1.0, so the default-off path is byte-identical to v2.6
+ * (`MemorySearchResult` is unchanged — the signal rides this side map, not the result).
  *
  * This is the canonical scoring path; {@link score} delegates here and strips the
  * breakdown, so the two produce byte-identical orderings + scores (the additive contract
@@ -216,6 +249,7 @@ export function scoreWithBreakdown(
   results: MemorySearchResult[],
   alphas: ScoringAlphas,
   nowMs: number,
+  usefulnessById?: ReadonlyMap<string, UsefulnessSignal>,
 ): ScoredWithBreakdown[] {
   const boosted: ScoredWithBreakdown[] = results.map((result) => {
     const base = result.score ?? 0;
@@ -225,7 +259,11 @@ export function scoreWithBreakdown(
     // half-life confidence (CONS-08). Raw memory → decayedProof 0.5 → proofFactor 1.0.
     const proofFactor = 1 + alphas.proofAlpha * (decayedProof(result.entry, nowMs) - 0.5);
     const trustFactor = 1 + alphas.trustAlpha * (trustWeight(result.entry.trustLevel) - 0.5);
-    const next = base * recencyFactor * temporalFactor * proofFactor * trustFactor;
+    // Usefulness boost (FEED-03): the used-rate centered on 0.5, bounded by usefulnessAlpha.
+    // Absent signal → usefulnessNorm 0.5 → usefulnessFactor exactly 1.0 (byte-identity).
+    const usefulnessFactor =
+      1 + alphas.usefulnessAlpha * (usefulnessNorm(usefulnessById?.get(result.entry.id)) - 0.5);
+    const next = base * recencyFactor * temporalFactor * proofFactor * trustFactor * usefulnessFactor;
     return {
       ...result,
       score: next,
@@ -235,6 +273,7 @@ export function scoreWithBreakdown(
         temporal: temporalFactor,
         proof: proofFactor,
         trust: trustFactor,
+        usefulness: usefulnessFactor,
         final: next,
       },
     };
@@ -247,20 +286,25 @@ export function scoreWithBreakdown(
 /**
  * Apply the multiplicative boost stack to each result's base score, then sort
  * descending with a deterministic equal-relevance trust tie-break (RANK-06:
- * system > learned > external). All four sub-signals (recency, temporal, proof+decay,
- * trust) are LIVE; each is centered on 0.5 so an absent signal contributes a factor of
- * exactly 1.0 (the proof signal's no-reorder-when-absent contract — a raw memory with no
- * proofCount/confidence is never reordered). Returns a NEW array of NEW result objects
- * (the input and its objects are never mutated); `result.score` carries the boosted value.
+ * system > learned > external). All five sub-signals (recency, temporal, proof+decay,
+ * trust, usefulness) are LIVE; each is centered on 0.5 so an absent signal contributes a
+ * factor of exactly 1.0 (the no-reorder-when-absent contract — a raw memory with no
+ * proofCount/confidence/usefulness is never reordered). Returns a NEW array of NEW result
+ * objects (the input and its objects are never mutated); `result.score` carries the boosted
+ * value.
  *
- * Delegates to {@link scoreWithBreakdown} and strips the breakdown so this signature +
- * behavior stay byte-identical for the non-trace callers (the rerank pool/tail scoring
- * and the global fused-order pass in memory-recall.ts).
+ * Delegates to {@link scoreWithBreakdown} (forwarding the optional FEED-03 `usefulnessById`)
+ * and strips the breakdown so this signature + behavior stay byte-identical for the
+ * non-trace callers (the rerank pool/tail scoring and the global fused-order pass in
+ * memory-recall.ts).
  */
 export function score(
   results: MemorySearchResult[],
   alphas: ScoringAlphas,
   nowMs: number,
+  usefulnessById?: ReadonlyMap<string, UsefulnessSignal>,
 ): MemorySearchResult[] {
-  return scoreWithBreakdown(results, alphas, nowMs).map(({ breakdown: _breakdown, ...rest }) => rest);
+  return scoreWithBreakdown(results, alphas, nowMs, usefulnessById).map(
+    ({ breakdown: _breakdown, ...rest }) => rest,
+  );
 }

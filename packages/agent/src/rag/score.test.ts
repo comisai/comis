@@ -317,6 +317,7 @@ describe("scoreWithBreakdown — per-memory factor breakdown (OBS-01)", () => {
       temporalAlpha: 0.2,
       proofAlpha: 0.4,
       trustAlpha: 0.1,
+      usefulnessAlpha: 0,
     };
     const input = [
       makeResult("m", {
@@ -332,8 +333,10 @@ describe("scoreWithBreakdown — per-memory factor breakdown (OBS-01)", () => {
     expect(out).toHaveLength(1);
     const b = out[0]?.breakdown as ScoreBreakdown;
     expect(b).toBeDefined();
-    // final === base * each factor (the four returned values ARE the factors).
-    expect(b.final).toBeCloseTo(b.base * b.recency * b.temporal * b.proof * b.trust, 10);
+    // final === base * each factor (the five returned values ARE the factors; usefulness
+    // is 1.0 here — no signal map passed — so the four-factor product still reconstructs).
+    expect(b.usefulness).toBeCloseTo(1.0, 10);
+    expect(b.final).toBeCloseTo(b.base * b.recency * b.temporal * b.proof * b.trust * b.usefulness, 10);
     // and `score` on the result carries that same final value.
     expect(out[0]?.score).toBeCloseTo(b.final, 10);
     // base is the un-boosted relevance score.
@@ -381,6 +384,7 @@ describe("scoreWithBreakdown — per-memory factor breakdown (OBS-01)", () => {
       temporalAlpha: 0.2,
       proofAlpha: 0.1,
       trustAlpha: 0.1,
+      usefulnessAlpha: 0,
     };
     const input = [
       makeResult("a", { base: 0.9, trustLevel: "learned", createdAt: NOW - 10 * DAY_MS }),
