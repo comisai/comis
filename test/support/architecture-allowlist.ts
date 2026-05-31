@@ -356,6 +356,12 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "deferred",
   },
   {
+    file: "packages/agent/src/rag/memory-recall.ts",
+    lines: 843,
+    reason: "The single recall orchestrator (RANK-07): one function composing search → 5 fused RRF lanes (fts/vector/entity/temporal/causal) → rerank → score → trust-filter → dedup, plus the observability capture tail. Crossed 800 at Phase 96 (EXTRACT-03) when the 5th (causal) lane + its append-only trace count landed (was 772 pre-plan). The 5 lane blocks are intentionally inline + uniform (each ~20-60L: a gate, a scoped seed-extract, the injected-port call, an err-non-fatal WARN) — extracting one lane would fragment the shared seedPool/lanes[]/laneCandidates closure across the recall hot path and break the tier-for-tier symmetry that makes the default-OFF byte-identity auditable. The block is tight (mirrors the temporal block exactly). Defer a holistic lane-extraction refactor (all 5 → a lane-registry) to a dedicated pass; internal velocity only.",
+    removedIn: "deferred",
+  },
+  {
     file: "packages/agent/src/executor/tool-deferral.ts",
     lines: 1035,
     reason: "Executor-adjacent file (1,035L re-measured; +2L drift from prior measurement); BM25/cosine ranking algorithm conceptually separate from deferral orchestration; split sensible but not urgent (default-defer)",
@@ -1921,7 +1927,7 @@ export const testNamingAllowlist: readonly TestNamingAllowlistEntry[] = [
   { file: "packages/core/src/config/schema-agent-model.test.ts", line: 54, kind: "it", text: "parses valid input", reason: "Captured(min-length=18); shrink in follow-on work"},
   { file: "packages/core/src/config/schema-agent-model.test.ts", line: 104, kind: "it", text: "allows empty object", reason: "Captured(min-length=19); shrink in follow-on work"},
   { file: "packages/core/src/config/schema-agent-model.test.ts", line: 240, kind: "it", text: "rejects zero values", reason: "Captured(min-length=19); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-agent.test.ts", line: 1044, kind: "it", text: "rejects empty id", reason: "Captured(min-length=16); shrink in follow-on work; line re-synced after Phase 95 rag.lanes + rag.lanes.temporal inserts"},
+  { file: "packages/core/src/config/schema-agent.test.ts", line: 1088, kind: "it", text: "rejects empty id", reason: "Captured(min-length=16); shrink in follow-on work; line re-synced after Phase 95 rag.lanes + rag.lanes.temporal inserts, then Phase 96 rag.lanes.causal insert"},
   // NOTE: line numbers re-synced after Phase 85 Plan 01 flipped the version
   // default (pipeline -> dag) and inserted the opt-out parse test, shifting
   // every it() below the `version` describe by +2 lines (85-05). The former

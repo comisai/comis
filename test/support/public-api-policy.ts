@@ -1856,13 +1856,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // The constructor-deps SHAPE type is part of its public API but is referenced only via
       // inline objects — baseline orphan (mirror MemoryEntityStoreDeps / MemoryUsefulnessStoreDeps).
       "MemoryTemporalStoreDeps",
-      // Causal-edge store (Phase 96-01, EXTRACT-03). createSqliteMemoryCausalStore is the sole
-      // MemoryCausalStore adapter. This plan (Wave 1) is PURE/ungated — NO daemon wiring yet —
-      // so the FACTORY is a TEMPORARY orphan: Plan 96-03 wires it into the daemon composition
-      // root (setup-memory) and REMOVES this entry (the 95-02 factory-orphan dance). The
-      // constructor-deps SHAPE type is referenced only via inline objects — PERMANENT baseline
-      // orphan (mirror MemoryEntityStoreDeps / MemoryTemporalStoreDeps).
-      "createSqliteMemoryCausalStore",
+      // Causal-edge store (Phase 96, EXTRACT-03). createSqliteMemoryCausalStore is the sole
+      // MemoryCausalStore adapter; the daemon composition root constructs it on the memory
+      // adapter's db handle in Plan 96-03 (setup-memory) — so the FACTORY has a production
+      // consumer (the temporary 96-01 orphan entry was REMOVED here, the 95-02 factory-orphan
+      // dance). The constructor-deps SHAPE type is part of its public API but is referenced only
+      // via inline objects — PERMANENT baseline orphan (mirror MemoryEntityStoreDeps /
+      // MemoryTemporalStoreDeps).
       "MemoryCausalStoreDeps",
       // Consolidation store (Phase 84-02). createSqliteMemoryConsolidationStore is the sole
       // MemoryConsolidationStore adapter; the daemon composition root constructs it on the

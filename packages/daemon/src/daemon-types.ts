@@ -387,6 +387,12 @@ export interface BootContext {
    *  on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until an operator
    *  enables `agents.<id>.rag.lanes.temporal.enabled` (default OFF). */
   temporalStore: Awaited<ReturnType<typeof setupMemory>>["temporalStore"];
+  /** Causal store (Phase 96, EXTRACT-03) — threaded into setupAgents (the executor recall read
+   *  path → createMemoryRecall, the 5th causal lane) AND the cron-review write path
+   *  (registerCronEventListeners → runMemoryReview → linkCausal). Built in setup-memory on the
+   *  shared db; injected as the port TYPE (agent↛memory cut). Dormant until an operator enables
+   *  `agents.<id>.rag.lanes.causal.enabled` (default OFF); the write guards on extracted causes. */
+  causalStore: Awaited<ReturnType<typeof setupMemory>>["causalStore"];
   /** Usefulness store (Phase 93, FEED-03) — threaded into setupAgents (the executor recall
    *  read path → createMemoryRecall) + exposed to the memory.* diagnostic deps alongside its
    *  siblings. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory

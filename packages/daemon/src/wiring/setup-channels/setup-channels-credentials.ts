@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryConsolidationStore, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry } from "@comis/agent";
@@ -49,6 +49,12 @@ export interface CronEventListenerDeps {
    *  Absent => Phase-82 behaviour (entities emitted but not persisted). Built in
    *  setup-memory on the SAME db handle the memory adapter owns. */
   entityStore?: MemoryEntityStore;
+  /** Causal store (Phase 96, EXTRACT-03). Threaded into runMemoryReview so each
+   *  successfully-stored memory's extracted cause->effect pairs are linked via linkCausal
+   *  (memory_causal_edges), scoped to the entry's (tenantId, agentId) in SQL — load-bearing
+   *  isolation (T-96-11). Absent => Phase-91 behaviour (causes parsed but not persisted). Built
+   *  in setup-memory on the SAME db handle the memory adapter owns; the port TYPE (agent↛memory cut). */
+  causalStore?: MemoryCausalStore;
   /** Consolidation store (Phase 84, CONS-07). Threaded into runMemoryConsolidation by the
    *  opt-in `__MEMORY_CONSOLIDATION__` sentinel below. Built in setup-memory on the SAME db
    *  handle the memory adapter owns; injected as the port TYPE (agent↛memory cut). Absent =>
@@ -154,6 +160,10 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         // is scoped to (tenantId, agentId) in SQL — load-bearing isolation (ENT-03).
         // Absent (older config / store not built) => Phase-82 emit-only behaviour.
         entityStore: deps.entityStore,
+        // Phase 96 (EXTRACT-03): link each stored memory's extracted cause->effect pairs via
+        // linkCausal. Scoped to (tenantId, agentId) in SQL (T-96-11). Absent => Phase-91
+        // emit-only behaviour (causes parsed, no edge written).
+        causalStore: deps.causalStore,
         logger: reviewLogger,
       });
 

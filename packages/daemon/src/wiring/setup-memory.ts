@@ -30,6 +30,7 @@ import {
   createSqliteMemoryConsolidationStore,
   createSqliteMemoryUsefulnessStore,
   createSqliteMemoryTemporalStore,
+  createSqliteMemoryCausalStore,
   type MemoryApi,
 } from "@comis/memory";
 import {
@@ -92,6 +93,16 @@ export interface MemoryResult {
    *  threads this port into the recall read path. The agent receives the port TYPE only
    *  (the agent↛memory cut). */
   temporalStore: import("@comis/core").MemoryTemporalStore;
+  /** Causal store (Phase 96, EXTRACT-03). The SOLE adapter for the segregated
+   *  `MemoryCausalStore` port (linkCausal WRITE + causalLane READ) — built UNCONDITIONALLY on
+   *  the SAME shared `db` handle as the memory adapter (so memory_causal_edges + memories share
+   *  one FK-enabled connection — the ON DELETE CASCADE fires — and the (tenant, agent) isolation
+   *  scope is consistent). No model/IO cost, so it is always present; the causal lane stays
+   *  dormant until an operator opts in via `agents.<id>.rag.lanes.causal.enabled` (default OFF),
+   *  and the agent-side write guards on extracted causes. Threaded into BOTH the recall read
+   *  path (setup-agents-*) AND the cron-review write path (setup-channels-*). The agent receives
+   *  the port TYPE only (the agent↛memory cut). */
+  causalStore: import("@comis/core").MemoryCausalStore;
   /** Consolidation store (Phase 84, CONS-01..07). The SOLE adapter for the segregated
    *  `MemoryConsolidationStore` port — built UNCONDITIONALLY on the SAME shared `db` handle
    *  as the memory adapter + entity store (so the observation columns, the `(tenant, agent)`
@@ -375,6 +386,17 @@ export async function setupMemory(deps: {
   // (default OFF). Composition-root join — the agent receives the port TYPE only.
   const temporalStore = createSqliteMemoryTemporalStore({ db, logger: memoryLogger });
 
+  // 6.5.2b''. Causal store (Phase 96, EXTRACT-03). Built on the SAME shared `db` handle the
+  // memory adapter owns — so memory_causal_edges + memories share one FK-enabled connection
+  // (the ON DELETE CASCADE on both edge endpoints fires) and the (tenant, agent) isolation
+  // scope is consistent with the memory rows the edges link. Always constructed (no model/IO
+  // cost); the causal lane stays dormant until an operator enables `agents.<id>.rag.lanes.causal.
+  // enabled` (default OFF), and the agent-side linkCausal write guards on extracted causes.
+  // Composition-root join — the agent receives the port TYPE only (the agent↛memory cut). This
+  // SAME store is threaded into BOTH the recall read path (setup-agents-*) AND the cron-review
+  // write path (setup-channels-*).
+  const causalStore = createSqliteMemoryCausalStore({ db, logger: memoryLogger });
+
   // 6.5.2c. Consolidation store (Phase 84). Built on the SAME `db` handle the memory
   // adapter owns — NOT a second Database — so the observation columns (proof_count /
   // source_ids / consolidated_at / confidence / history) and the memories table share
@@ -558,6 +580,7 @@ export async function setupMemory(deps: {
     disposeReranker,
     entityStore,
     temporalStore,
+    causalStore,
     consolidationStore,
     usefulnessStore,
     recallCounters,

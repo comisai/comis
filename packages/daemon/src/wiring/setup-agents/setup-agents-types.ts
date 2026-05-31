@@ -80,6 +80,11 @@ export interface SingleAgentDeps {
    *  db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator enables
    *  `agents.<id>.rag.lanes.temporal.enabled` (default OFF). */
   temporalStore?: import("@comis/core").MemoryTemporalStore;
+  /** Causal store (Phase 96, EXTRACT-03). Threaded into each per-agent createPiExecutor
+   *  (the executor recall read path -> createMemoryRecall, the 5th causal lane). Built in
+   *  setup-memory on the shared db handle; the segregated port TYPE (agent↛memory cut). Dormant
+   *  until an operator enables `agents.<id>.rag.lanes.causal.enabled` (default OFF). */
+  causalStore?: import("@comis/core").MemoryCausalStore;
   /** Usefulness store (Phase 93, FEED-03). Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the
    *  shared db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator
