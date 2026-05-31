@@ -150,36 +150,54 @@ flowchart LR
     E --> F["DEDUP"]
 ```
 
-1. **SEARCH** -- each retrieval lane runs: the FTS5 keyword lane, the vector
-   (meaning) lane when embeddings exist, and the optional entity lane. See
-   [Search](/agents/search).
+1. **SEARCH** -- each retrieval lane runs. The FTS5 keyword lane and the vector
+   (meaning) lane are now **two independent, operator-weighted RRF lanes**
+   (`rag.lanes.fts.weight`, default `1.0`; `rag.lanes.vector.weight`, default
+   `1.5` — the parity defaults reproduce the v2.6 ranking byte-for-byte). On top
+   of those two base lanes, three further lanes are fused in **only when enabled**
+   — the entity lane, the temporal-spread lane, and the causal lane (all
+   **default-OFF**). See [Search](/agents/search).
 2. **FUSE** -- the lanes are merged with **Reciprocal Rank Fusion (RRF, `k=60`)**.
    Fusion order — *not* reranking — is the default recall ordering.
-3. **RERANK** *(opt-in, default skipped)* -- when enabled, a cross-encoder
-   re-scores the top fused candidates. Off by default, so the all-default
-   config never reaches this stage.
+3. **RERANK** *(locally-gated; auto-on only when the reranker model is already
+   present)* -- when active, a cross-encoder re-scores the top fused candidates.
+   On a fresh all-default install the model is absent, so this stage is skipped
+   and recall stays on the fusion order.
 4. **SCORE** -- multiplicative boosts are applied to the reranked-or-fused score:
-   recency, temporal proximity, proof count, and trust (the `rag.scoring.*`
-   alphas below).
+   recency, temporal proximity, proof count, and trust — plus a usefulness factor
+   when the recall-utility feedback loop is on (the `rag.scoring.*` alphas below).
 5. **TRUST-FILTER** -- memories whose trust level is not in `includeTrustLevels`
    are dropped (`external` excluded by default).
 6. **DEDUP** -- near-duplicates are collapsed by content fingerprint, and the
    result is trimmed to `maxResults` / `maxContextChars`.
 
-The recall **core is always on** (as long as `rag.enabled` is `true`); the
-reranking, entity-lane, and consolidation features layered on top of it are each
-**opt-in** and described below.
+The recall **core is always on** (as long as `rag.enabled` is `true`). Layered on
+top of it, each **opt-in** and described below: locally-gated reranking; the
+entity, temporal-spread, and causal lanes; the recall-utility feedback factor; and
+consolidation.
 
-### Reranking (opt-in)
+### Reranking (locally-gated, default-on)
 
 Reranking re-scores the fused candidates with a **cross-encoder** — a model that
 reads the query and a candidate *together* and judges their relevance directly,
 which is more accurate than the bi-encoder similarity used for the vector lane
 (see [Embeddings](/agents/embeddings#embedder-vs-reranker) for the distinction).
 
-- **Default `false`** — reranking is opt-in. The Phase-79 latency measurement
-  (~777ms p95 at 40 candidates) exceeds the per-turn budget, so fusion (RRF) is
-  the default recall order.
+- **Locally-gated default-on** — reranking turns **ON automatically when the
+  `bge-reranker-v2-m3` GGUF already resolves locally** (and within the latency
+  budget), and stays **OFF on a fresh all-default install** (no model file
+  present). The on-disk schema default of `rag.rerank.enabled` is still `false`;
+  the "default-on" is the daemon's *effective-config* resolution — it consults a
+  no-download presence probe at startup and enables rerank only when the model is
+  already there. Explicit `rag.rerank.enabled: true | false` still wins both
+  directions: force-on triggers the one-time download, force-off is honored even
+  when the model is present.
+- **Zero download out of the box (the supply-chain invariant)** — a fresh
+  all-default install performs **zero** reranker-model download at startup; the
+  ~606 MB GGUF is fetched only when an agent **explicitly** enables rerank. The
+  presence probe never reaches the download path, which **decouples default-on
+  from the download** (the v2.7 change vs the old "stay opt-in to avoid the
+  download").
 - **On-device, zero new dependency** — the reranker is a local GGUF model
   (`bge-reranker-v2-m3`, Q8_0 quantization) run through the same `node-llama-cpp`
   runtime that already powers local embeddings. No external API call, no new
@@ -189,15 +207,14 @@ which is more accurate than the bi-encoder similarity used for the vector lane
 - **Degrades gracefully** — if the reranker is unavailable or the timeout fires,
   recall falls back to the fusion-ranked order. Recall never fails because of
   reranking.
-- **Nothing downloaded until you enable it** — the all-default (rerank-off)
-  configuration never builds the reranker and never downloads the ~606 MB GGUF.
 
 ```yaml title="~/.comis/config.yaml"
 agents:
   default:
     rag:
       rerank:
-        enabled: true        # OPT-IN (default false) — cross-encoder re-scoring
+        enabled: true        # force on (downloads the model if absent).
+                             # OMIT to auto-enable only when the model is present.
         maxCandidates: 40
         timeoutMs: 800
 memory:
@@ -231,12 +248,15 @@ Comis distinguishes two timestamps on every memory:
 - **`created_at`** -- when Comis *recorded* it (record time).
 
 When two memories contradict each other, the conflict is resolved **at read
-time**: the **latest-recorded** memory is treated as authoritative. Comis never
-averages or sums conflicting values, and it is **non-destructive** — the older
-record is never deleted, so both conflicting memories are still returned and the
-agent can see the history. `temporalAlpha` boosts memories by event-time
-proximity when `occurred_at` is present and stays **neutral when it is absent**,
-so memories without an event time are neither penalised nor favoured.
+time, by trust tier first**: the higher-trust memory wins
+(**`system > learned > external`**) — **even when it is older**. Recency only
+breaks ties **among equal-trust memories**, so it is no longer the primary
+conflict resolver. Comis never averages or sums conflicting values, and it is
+**non-destructive** — the older record is never deleted, so both conflicting
+memories are still returned and the agent can see the history. `temporalAlpha`
+still **orders pure timelines** by event-time proximity when `occurred_at` is
+present and stays **neutral when it is absent**, so memories without an event
+time are neither penalised nor favoured.
 
 <Note>
   Temporal correctness here is read-time conflict resolution. Comis does not
@@ -264,6 +284,35 @@ agents:
         enabled: true        # OPT-IN (default false) — one-hop associative lane
         seedCount: 5
         perEntityCap: 200
+```
+
+### Recall-utility feedback loop (opt-in)
+
+Comis can **learn which recalled memories actually got used** and fold that signal
+back into ranking — boosting memories that have proven useful, demoting ones that
+were recalled but ignored. This is **opt-in and default-OFF**; with the loop off,
+recall is byte-identical to v2.6 (no read, no emit, no extra factor).
+
+- **Default `false`** (`rag.feedback.enabled`) — the single master toggle. When
+  **on**, after each turn Comis attributes which recalled memories were actually
+  used or cited, persists a durable per-memory usefulness signal (strictly scoped
+  to the current `(tenant, agent)`), and folds a **bounded** multiplicative
+  usefulness factor into the SCORE stage. The factor is neutral (1.0) whenever a
+  memory has no usefulness signal yet.
+- **Bounded so it cannot overturn trust.** The magnitude is
+  `rag.scoring.usefulnessAlpha` (default `0.1`) — deliberately small (same
+  magnitude as the trust and proof boosts) so a proven-useful memory is lifted but
+  **cannot overturn trust-first ordering**. The magnitude lives only on
+  `rag.scoring`; there is no `usefulnessAlpha` knob under `rag.feedback`.
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  default:
+    rag:
+      feedback:
+        enabled: true        # OPT-IN (default false) — learn from recall outcomes
+      scoring:
+        usefulnessAlpha: 0.1 # magnitude of the usefulness boost (bounded small)
 ```
 
 ### Observations & consolidation (opt-in)
