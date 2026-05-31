@@ -471,6 +471,8 @@ export interface AgentEvents {
     observationsCreated: number;
     /** Clusters skipped because an equivalent observation already existed (CONS-04). */
     dedupHits: number;
+    /** Observations grown by folding new corroborating sources into them (FOLD-01). */
+    foldsApplied: number;
     durationMs: number;
     timestamp: number;
   };

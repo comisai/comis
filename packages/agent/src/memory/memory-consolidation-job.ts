@@ -49,6 +49,7 @@ import {
   clusterByEntityThenEmbedding,
   groupByTrustAndTagScope,
   minTrust,
+  minTrustLevel,
   deterministicDedupKey,
   contentSimilarity,
 } from "./memory-consolidation-clustering.js";
@@ -203,6 +204,7 @@ export async function runMemoryConsolidation(
       clustersProcessed: 0,
       observationsCreated: 0,
       dedupHits: 0,
+      foldsApplied: 0,
       durationMs: clock.now() - startMs,
       timestamp: clock.now(),
     });
@@ -292,6 +294,9 @@ export async function runMemoryConsolidation(
   let clustersProcessed = 0;
   let observationsCreated = 0;
   let dedupHits = 0;
+  // FOLD-01: corroborating clusters folded into an existing observation (proof
+  // accrual) instead of creating a second one. Counts only (the event field).
+  let foldsApplied = 0;
 
   for (const cluster of subClusters) {
     // CONS-02: the trust CEILING — computed in CODE, never the LLM.
@@ -351,23 +356,79 @@ export async function runMemoryConsolidation(
       continue;
     }
 
-    // CONS-04 SECONDARY dedup: a DIFFERENT source set expressing the SAME fact.
-    // Compare the merged content ONLY against PRIOR-RUN observations of the SAME
-    // trust level (`priorObservations`, never observations minted earlier in
-    // THIS run): cross-trust content collapse would violate the trust-scope
-    // separation (CONS-06) — two distinct trust scopes are distinct
-    // observations even with identical text. Same-run exact-source re-hits are
-    // already caught by the primary source-id key above.
-    const contentDup = priorObservations.some(
+    // The injected-clock epoch ms shared by BOTH the fold branch and the create
+    // path below (one read per cluster — never Date.now). Used for the fold
+    // plan's `now` (consolidated_at on the new sources + history.changedAt) and
+    // for the created observation's `createdAt`.
+    const now = clock.now();
+
+    // FOLD-01 — the fold-vs-create decision (the converted SECONDARY content
+    // dedup). A DIFFERENT source set expressing the SAME fact as a PRIOR-RUN
+    // observation of the SAME trust level: instead of skipping (Phase-84) or
+    // creating a duplicate, FOLD the truly-new sources into that observation so
+    // proof accrues across runs. We match ONLY same-trust prior observations
+    // (`priorObservations`, never same-run mints): cross-trust content collapse
+    // would launder trust / violate the scope separation (CONS-06) — a
+    // cross-trust corroboration falls through to CREATE a distinct observation.
+    // Same-run exact-source re-hits are already caught by the PRIMARY source-id
+    // key above (so a fully-folded source set is idempotent by construction).
+    const foldTarget = priorObservations.find(
       (obs) =>
         obs.trustLevel === trust &&
         contentSimilarity(parsed.content, obs.content) >= config.dedupThreshold,
     );
-    if (contentDup) {
-      dedupHits++;
-      logger.debug({ agentId, step: "consolidate" }, "Dedup hit (content similar to existing observation) — skipping");
+    if (foldTarget) {
+      // Idempotency pre-filter: only ids NOT already in the target's source set.
+      // An empty diff means this corroboration is already folded → SKIP (the
+      // adapter's UNION-cardinality is the authoritative backstop, but the job
+      // avoids the redundant round-trip). Counts as a dedup hit.
+      const existingSet = new Set(foldTarget.sourceIds ?? []);
+      const trulyNew = sourceIds.filter((id) => !existingSet.has(id));
+      if (trulyNew.length === 0) {
+        dedupHits++;
+        logger.debug({ agentId, step: "consolidate" }, "Dedup hit (content match, no truly-new sources) — skipping");
+        continue;
+      }
+      // Trust ceiling carried forward in CODE (anti-laundering): the fold can
+      // only LOWER trust. Same-trust target → a no-op (defense-in-depth).
+      const foldTrust = minTrustLevel(foldTarget.trustLevel, trust);
+      // Half-life refresh: restart the decay clock so the new proof actually
+      // moves ranking (RESEARCH Pitfall 3) — occurredAt = max(existing, cluster).
+      const refreshedOccurredAt = Math.max(
+        foldTarget.occurredAt ?? foldTarget.createdAt,
+        maxOccurredAt(cluster),
+      );
+      const folded = await fromPromise(
+        consolidationStore.foldIntoExisting({
+          targetObservationId: foldTarget.id,
+          newSourceIds: trulyNew,
+          trustLevel: foldTrust,
+          confidence: 1,
+          occurredAt: refreshedOccurredAt,
+          content: parsed.content,
+          tenantId,
+          now,
+        }),
+      );
+      if (!folded.ok || !folded.value.ok) {
+        logger.warn(
+          {
+            agentId,
+            errorKind: "dependency" as const,
+            hint: "foldIntoExisting failed/rejected — sources left unconsolidated for retry next run",
+          },
+          "Failed to fold consolidation (non-fatal)",
+        );
+        continue;
+      }
+      foldsApplied++;
+      // Index the GROWN source-id key so a later same-run cluster with that exact
+      // (now-unioned) source set dedups via the primary key (exact-source guard).
+      existingKeys.add(deterministicDedupKey([...(foldTarget.sourceIds ?? []), ...trulyNew]));
+      logger.debug({ agentId, step: "consolidate" }, "Folded corroboration into existing observation");
       continue;
     }
+    // else: fall through to the UNCHANGED Phase-84 CREATE path below.
 
     // Defense-in-depth on the LLM-produced text (AGENTS.md §2.2): scan BEFORE
     // store. `critical` → skip; `warn` → downgrade trust toward external (never
@@ -390,7 +451,6 @@ export async function runMemoryConsolidation(
     const effectiveTrust: TrustLevel = verdict.severity === "warn" ? "external" : trust;
 
     const source: MemorySource = { who: "system", channel: "memory-consolidation" };
-    const now = clock.now();
     const observation: MemoryEntry = {
       id: randomUUID(),
       tenantId,
@@ -437,7 +497,7 @@ export async function runMemoryConsolidation(
   // INFO (per-cluster skip/dedup detail stays DEBUG via the step:"consolidate"
   // lines above).
   logger.info(
-    { agentId, step: "apply" as const, observationsCreated, dedupHits, durationMs: clock.now() - startMs },
+    { agentId, step: "apply" as const, observationsCreated, dedupHits, foldsApplied, durationMs: clock.now() - startMs },
     "consolidation applied",
   );
 
@@ -446,12 +506,13 @@ export async function runMemoryConsolidation(
     clustersProcessed,
     observationsCreated,
     dedupHits,
+    foldsApplied,
     durationMs: clock.now() - startMs,
     timestamp: clock.now(),
   });
 
   logger.info(
-    { agentId, clustersProcessed, observationsCreated, dedupHits, durationMs: clock.now() - startMs },
+    { agentId, clustersProcessed, observationsCreated, dedupHits, foldsApplied, durationMs: clock.now() - startMs },
     "Memory consolidation completed",
   );
 
