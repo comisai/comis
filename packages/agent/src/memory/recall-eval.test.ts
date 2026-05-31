@@ -28,6 +28,7 @@ import {
 import {
   RECALL_EVAL_FIXTURES,
   TEMPORAL_EVAL_FIXTURES,
+  TEMPORAL_TRUST_EVAL_FIXTURES,
   ENTITY_EVAL_FIXTURES,
   entityLane,
   EVAL_NOW,
@@ -279,6 +280,65 @@ describe("entity-association lift (recall@1 over fusion baseline)", () => {
     const report = compareRankings(ENTITY_EVAL_FIXTURES, fusionFn, neutralFn);
     expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
     expect(report.mrrLift, JSON.stringify(report)).toBe(0);
+  });
+});
+
+// UNGATED trust-first contradiction lift (CONTRA-02, the per-phase trust figure). The
+// `temporal` group's TRUST case: a NEWER LOW-trust claim carries the HIGHER fusion score
+// (it would win on recency/lexical alone) and an OLDER HIGHER-trust fact carries the LOWER
+// fusion score. Ranked through the EXISTING score() trust lever (trustAlpha>0, every other
+// alpha 0; score.ts UNCHANGED — trustWeight system 1.0 / learned 0.5 / external 0.0), the
+// higher-trust fact must be lifted to rank 1 — a newer low-trust claim does NOT supersede an
+// older higher-trust fact (the Hindsight latest-mentioned-wins anti-pattern). A NEUTRAL guard
+// (trustAlpha 0 → trustFactor ≡ 1.0) attributes the gain to TRUST, and a dedicated
+// zero-regression assertion proves trust-first does NOT disturb the existing recency-only
+// T1/T2 cases (all `learned` → uniform trust boost → no reorder). Deterministic pure math
+// (fixed-epoch EVAL_NOW; no model, no LLM judge) — runs in the default `pnpm test`.
+describe("trust-first contradiction lift (recall@1 over fusion baseline)", () => {
+  // Phase-80 baseline: single-lane fuse() is order-preserving → fusion order = the
+  // candidates' base/score order (the newer LOW-trust claim first by design).
+  const fusionFn = (q: EvalQuery): MemorySearchResult[] =>
+    fuse([{ results: q.candidates, weight: 1 }]);
+  // Trust boost ISOLATED: trustAlpha>0, every other alpha 0 — so the only signal moving the
+  // ranking is the trust tier (system > learned > external via score.ts trustWeight).
+  const trustFn = (q: EvalQuery): MemorySearchResult[] =>
+    score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0.5 }, EVAL_NOW);
+  // NEUTRAL guard ranker: same score() path but trustAlpha 0 → trustFactor ≡ 1.0, so the
+  // boosted order collapses back to the base (= fusion) order.
+  const neutralFn = (q: EvalQuery): MemorySearchResult[] =>
+    score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 }, EVAL_NOW);
+
+  it("carries a non-empty trust fixture group (all group 'temporal')", () => {
+    expect(TEMPORAL_TRUST_EVAL_FIXTURES.length).toBeGreaterThan(0);
+    expect(TEMPORAL_TRUST_EVAL_FIXTURES.every((q) => q.group === "temporal")).toBe(true);
+  });
+
+  it("ranks the older higher-trust fact above the newer lower-trust claim at recall@1", () => {
+    const report = compareRankings(TEMPORAL_TRUST_EVAL_FIXTURES, fusionFn, trustFn);
+    // Headroom: fusion ranks the newer LOW-trust claim @1 (Pitfall 2 — a no-op fixture that
+    // fusion already nailed would leave nothing to measure).
+    expect(report.baseline.recallAt1, JSON.stringify(report)).toBeLessThan(1);
+    // The CONTRA-02 trust figure: trust rescues the higher-trust fact to rank 1.
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThan(0);
+    // No regression: the trust boost never lowers recall@1 below fusion.
+    expect(report.reranked.recallAt1, JSON.stringify(report)).toBeGreaterThanOrEqual(
+      report.baseline.recallAt1,
+    );
+  });
+
+  it("yields ZERO lift at trustAlpha 0 (the gain is attributable to trust)", () => {
+    // Neutral guard: with the trust signal off, score()'s remaining mechanics produce the
+    // fusion order → no lift. So the positive lift above is the trust boost's work.
+    const report = compareRankings(TEMPORAL_TRUST_EVAL_FIXTURES, fusionFn, neutralFn);
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
+    expect(report.mrrLift, JSON.stringify(report)).toBe(0);
+  });
+
+  it("does NOT disturb the existing recency-only temporal cases (zero regression)", () => {
+    // The existing T1/T2 cases are all `learned` → a uniform trust boost factor → no reorder.
+    // Trust-first must leave the pure recency cases byte-stable in ranking (success criterion 2).
+    const report = compareRankings(TEMPORAL_EVAL_FIXTURES, fusionFn, trustFn);
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
   });
 });
 

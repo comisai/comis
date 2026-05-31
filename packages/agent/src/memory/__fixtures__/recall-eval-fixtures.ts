@@ -26,7 +26,7 @@
  * @module
  */
 
-import type { MemorySearchResult } from "@comis/core";
+import type { MemorySearchResult, TrustLevel } from "@comis/core";
 
 /**
  * Phase group tag for an eval query. Lets subsequent phases append fixtures
@@ -105,6 +105,32 @@ function temporalCandidate(
     entry: {
       ...base.entry,
       occurredAt: opts.occurredAt,
+      ...(opts.createdAt !== undefined ? { createdAt: opts.createdAt } : {}),
+    },
+  };
+}
+
+/**
+ * Like {@link candidate}, but sets the trust tier EXPLICITLY for the `"temporal"` trust
+ * case (CONTRA-02) — `candidate()` hardcodes `trustLevel: "learned"`, so a trust-first
+ * fixture needs `system`/`external` entries. Mirrors `score.test.ts`'s opts-driven
+ * `makeResult` (a `trustLevel` param). `createdAt` is an optional epoch-ms offset from
+ * {@link EVAL_NOW} (the newer claim at EVAL_NOW, the older fact earlier) — set so the case
+ * is honest about recency even though the trust ranker (`trustAlpha>0`, recencyAlpha 0)
+ * does not read it. PURE — no `Date.now`/`Math.random`.
+ */
+function trustCandidate(
+  id: string,
+  content: string,
+  score: number,
+  opts: { trustLevel: TrustLevel; createdAt?: number },
+): MemorySearchResult {
+  const base = candidate(id, content, score);
+  return {
+    ...base,
+    entry: {
+      ...base.entry,
+      trustLevel: opts.trustLevel,
       ...(opts.createdAt !== undefined ? { createdAt: opts.createdAt } : {}),
     },
   };
@@ -220,6 +246,73 @@ export const TEMPORAL_EVAL_FIXTURES: EvalQuery[] = [
       temporalCandidate("t4", "user_a started at Globex", 0.68, { occurredAt: EVAL_NOW }),
     ],
     relevantIds: ["t4"],
+  },
+];
+
+/**
+ * Phase-90 trust-first contradiction fixtures (CONTRA-02) — the `"temporal"` group's TRUST
+ * case, scored against the EXISTING trust lever (`score()` with `trustAlpha>0`, plan 01;
+ * score.ts UNCHANGED). Kept in a SEPARATE exported array from {@link TEMPORAL_EVAL_FIXTURES}
+ * (Pitfall 1) so the Phase-81 temporal-group lift/neutral assertions over T1/T2 stay
+ * byte-untouched and green (the documented zero-regression discipline).
+ *
+ * THE TRUST LEAPFROG (vs Hindsight's latest-mentioned-wins). Each query pairs a NEWER
+ * LOW-trust claim carrying the HIGHER fusion `score` (it would win on recency/lexical alone)
+ * against an OLDER HIGHER-trust fact carrying the LOWER fusion `score`. Because single-lane
+ * `fuse()` is order-preserving, the fusion-only baseline ranks the newer low-trust claim at
+ * rank 1 and MISSES the higher-trust id at recall@1 (Pitfall 2 — the distractor is given the
+ * headroom so the trust lever has work to do). Ranking through `score(..., { trustAlpha:0.5 })`
+ * (system 1.0 / learned 0.5 / external 0.0; recencyAlpha 0 so `createdAt` does NOT move the
+ * order) lifts the higher-trust fact to rank 1: a newer low-trust claim does NOT supersede an
+ * older higher-trust fact. `relevantIds` = the HIGHER-trust id.
+ *
+ * Worked math (trustFactor = 1 + 0.5·(trustWeight−0.5); all other alphas 0):
+ *   external 0.85 → 0.85·0.75 = 0.6375;  system 0.60 → 0.60·1.25 = 0.75 → system wins.
+ *
+ * Determinism (AGENTS.md §2.5): neutral placeholders + stable ids `tt1`, `tt2`, … No real
+ * identities, no network, no `Date.now`/`Math.random`. `createdAt` offsets from {@link EVAL_NOW}.
+ *
+ * - TT1 ("what is user_a's mailing address") — the newer [external] "5 Elm Street" (tt1,
+ *   base 0.85, recorded now) would beat the older [system] "12 Oak Avenue" (tt2, base 0.60,
+ *   recorded ~200d ago) on fusion; trust rescues the [system] fact tt2 to rank 1.
+ * - TT2 ("what is user_a's phone number") — the newer [external] "555-0100" (tt3, base 0.80,
+ *   recorded now) precedes the older [system] "555-0199" (tt4, base 0.62, recorded ~150d ago)
+ *   in fusion order; trust rescues the [system] fact tt4.
+ */
+export const TEMPORAL_TRUST_EVAL_FIXTURES: EvalQuery[] = [
+  {
+    group: "temporal",
+    query: "what is user_a's mailing address",
+    candidates: [
+      // NEWER, LOW-trust, HIGHER base — fusion rank 1 (would win on recency/lexical alone).
+      trustCandidate("tt1", "user_a's address is 5 Elm Street", 0.85, {
+        trustLevel: "external",
+        createdAt: EVAL_NOW,
+      }),
+      // OLDER, HIGHER-trust, LOWER base — fusion rank 2 (missed @1); trust must rescue it.
+      trustCandidate("tt2", "user_a's address is 12 Oak Avenue", 0.6, {
+        trustLevel: "system",
+        createdAt: EVAL_NOW - 200 * DAY,
+      }),
+    ],
+    relevantIds: ["tt2"],
+  },
+  {
+    group: "temporal",
+    query: "what is user_a's phone number",
+    candidates: [
+      // NEWER, LOW-trust, HIGHER base — fusion rank 1.
+      trustCandidate("tt3", "user_a's phone number is 555-0100", 0.8, {
+        trustLevel: "external",
+        createdAt: EVAL_NOW,
+      }),
+      // OLDER, HIGHER-trust, LOWER base — fusion rank 2 (missed @1); trust must rescue it.
+      trustCandidate("tt4", "user_a's phone number is 555-0199", 0.62, {
+        trustLevel: "system",
+        createdAt: EVAL_NOW - 150 * DAY,
+      }),
+    ],
+    relevantIds: ["tt4"],
   },
 ];
 
