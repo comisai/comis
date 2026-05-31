@@ -554,6 +554,34 @@ export interface AgentEvents {
     timestamp: number;
   };
 
+  /**
+   * Recall-usage attribution complete for one turn (Phase 93 / FEED-01). MINIMAL
+   * payload — counts + memory IDS only, NEVER memory content, the agent
+   * response, or the query (AGENTS.md §2.7, matching the whole memory:* family).
+   * The overlap heuristic (recall-attribution.ts) reads memory content in-process
+   * at the turn-end site and discards it; only the resulting ids cross the bus.
+   *
+   * Emit site: `postExecution` in
+   * `packages/agent/src/executor/executor-post-execution.ts` (Plan 93-02),
+   * flag-gated on `rag.feedback.enabled` (default OFF → no emit). The daemon
+   * subscriber (setup-memory-usefulness-wiring.ts) writes the signal through the
+   * FEED-02 `MemoryUsefulnessStore.recordUsage` port.
+   */
+  "memory:recall_used": {
+    agentId: string;
+    sessionKey?: string;
+    traceId: string;
+    /** Opaque memory uuids attributed as USED this turn — ids only, never bodies. */
+    usedIds: string[];
+    /** Opaque memory uuids recalled but NOT used — ids only. */
+    ignoredIds: string[];
+    /** == usedIds.length (parity with the counts-only family). */
+    usedCount: number;
+    /** == ignoredIds.length. */
+    ignoredCount: number;
+    timestamp: number;
+  };
+
   /** First graph subagent LLM turn confirmed a cache prefix write.
    *  Graph coordinator uses this as spawn gate for remaining nodes. */
   "cache:graph_prefix_written": {
