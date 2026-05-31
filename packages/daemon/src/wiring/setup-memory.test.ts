@@ -100,6 +100,16 @@ const mockCreateSqliteMemoryUsefulnessStore = vi.hoisted(() => vi.fn(() => ({
 const mockCreateSqliteMemoryTemporalStore = vi.hoisted(() => vi.fn(() => ({
   spreadLane: vi.fn(async () => ({ ok: true, value: [] })),
 })));
+// Causal store factory (Phase 96, EXTRACT-03) — mocked so setup wires it without a real DB.
+// setupMemory builds this on the shared db handle (mirror the entity/temporal/consolidation/
+// usefulness stores); without the mock entry the @comis/memory factory is undefined and EVERY
+// setup call throws `createSqliteMemoryCausalStore is not a function` (the MEMORY.md
+// "setup-memory mock" gate — Pitfall 4). Both port methods are stubbed (the read causalLane +
+// the write linkCausal — one segregated port, both halves).
+const mockCreateSqliteMemoryCausalStore = vi.hoisted(() => vi.fn(() => ({
+  linkCausal: vi.fn(async () => ({ ok: true, value: 0 })),
+  causalLane: vi.fn(async () => ({ ok: true, value: [] })),
+})));
 
 vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
@@ -117,6 +127,7 @@ vi.mock("@comis/memory", () => ({
   createSqliteMemoryConsolidationStore: mockCreateSqliteMemoryConsolidationStore,
   createSqliteMemoryUsefulnessStore: mockCreateSqliteMemoryUsefulnessStore,
   createSqliteMemoryTemporalStore: mockCreateSqliteMemoryTemporalStore,
+  createSqliteMemoryCausalStore: mockCreateSqliteMemoryCausalStore,
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));
@@ -1066,6 +1077,32 @@ describe("setupMemory", () => {
       expect.objectContaining({ db: mockDb }),
     );
     expect(result.temporalStore).toBeDefined();
+  });
+
+  it("builds the causal store on the SAME shared db handle and returns it (Phase 96, EXTRACT-03)", async () => {
+    const container = createMinimalContainer(); // all-default config (causal lane OFF)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // Built UNCONDITIONALLY (no opt-in gate at build time — only the lane push in
+    // memory-recall.ts is gated on rag.lanes.causal.enabled, default OFF, and the agent-side
+    // linkCausal write guards on m.causes). Without the mock-map entry this call throws
+    // "createSqliteMemoryCausalStore is not a function" (Pitfall 4).
+    expect(mockCreateSqliteMemoryCausalStore).toHaveBeenCalledOnce();
+    // The SOLE adapter must share the memory adapter's db handle (the same mockDb the
+    // entity/temporal/consolidation/usefulness stores receive) — NOT a second Database. This
+    // keeps the (tenant, agent) isolation scope + the memory_id ON DELETE CASCADE consistent
+    // with the memory rows the edges link, AND means the read lane + the cron-review write
+    // share one FK-enabled connection.
+    expect(mockCreateSqliteMemoryCausalStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb }),
+    );
+    expect(result.causalStore).toBeDefined();
   });
 });
 
