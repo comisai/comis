@@ -112,6 +112,20 @@ export const RagConfigSchema = z.strictObject({
         weight: z.number().min(0).default(1.0),
       })
       .default(() => ({ enabled: false, seedCount: 5, perEntityCap: 200, weight: 1.0 })),
+    /** Recall-utility feedback loop (FEED-04). Default-OFF; the daemon enables the write-back
+     *  + the score factor only when on. Off => byte-identical to v2.6 (no read, no emit, no
+     *  factor — the read-path in memory-recall.ts, the turn-end emit in
+     *  executor-post-execution.ts, and the daemon write-back subscriber all gate on this flag). */
+    feedback: z
+      .strictObject({
+        /** Default-OFF. The SINGLE master toggle. When on: turn-end attribution emits
+         *  memory:recall_used, the daemon writes the usefulness signal, and recall folds the
+         *  usefulnessFactor. The magnitude is rag.scoring.usefulnessAlpha (NOT duplicated here —
+         *  one canonical knob, no drift). A `.strictObject` so a stray `usefulnessAlpha` here is
+         *  REJECTED at parse, structurally enforcing the single-knob invariant. */
+        enabled: z.boolean().default(false),
+      })
+      .default(() => ({ enabled: false })),
   });
 
 export type RagConfig = z.infer<typeof RagConfigSchema>;

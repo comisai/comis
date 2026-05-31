@@ -1081,6 +1081,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
         "seedCount": 5,
         "weight": 1
       },
+      "feedback": {
+        "enabled": false
+      },
       "includeTrustLevels": [
         "system",
         "learned"
@@ -1146,6 +1149,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.rag.entityLane.weight",
     "type": "number"
+  },
+  {
+    "default": {
+      "enabled": false
+    },
+    "immutable": true,
+    "path": "agents.rag.feedback",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.rag.feedback.enabled",
+    "type": "boolean"
   },
   {
     "default": [
@@ -6892,6 +6909,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
             "perEntityCap": 200,
             "seedCount": 5,
             "weight": 1
+          },
+          "feedback": {
+            "enabled": false
           },
           "includeTrustLevels": [
             "system",
@@ -14925,6 +14945,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "seedCount": 5,
           "weight": 1
         },
+        "feedback": {
+          "enabled": false
+        },
         "includeTrustLevels": [
           "system",
           "learned"
@@ -14987,6 +15010,22 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "seedCount",
             "perEntityCap",
             "weight"
+          ],
+          "type": "object"
+        },
+        "feedback": {
+          "additionalProperties": false,
+          "default": {
+            "enabled": false
+          },
+          "properties": {
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled"
           ],
           "type": "object"
         },
@@ -15122,7 +15161,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "includeTrustLevels",
         "rerank",
         "scoring",
-        "entityLane"
+        "entityLane",
+        "feedback"
       ],
       "type": "object"
     },
@@ -23934,6 +23974,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "seedCount": 5,
                 "weight": 1
               },
+              "feedback": {
+                "enabled": false
+              },
               "includeTrustLevels": [
                 "system",
                 "learned"
@@ -23996,6 +24039,22 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "seedCount",
                   "perEntityCap",
                   "weight"
+                ],
+                "type": "object"
+              },
+              "feedback": {
+                "additionalProperties": false,
+                "default": {
+                  "enabled": false
+                },
+                "properties": {
+                  "enabled": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
                 ],
                 "type": "object"
               },
@@ -24131,7 +24190,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "includeTrustLevels",
               "rerank",
               "scoring",
-              "entityLane"
+              "entityLane",
+              "feedback"
             ],
             "type": "object"
           },
@@ -25387,6 +25447,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "perEntityCap": 200,
               "seedCount": 5,
               "weight": 1
+            },
+            "feedback": {
+              "enabled": false
             },
             "includeTrustLevels": [
               "system",
