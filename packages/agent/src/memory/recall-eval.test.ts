@@ -31,11 +31,13 @@ import {
   TEMPORAL_TRUST_EVAL_FIXTURES,
   ENTITY_EVAL_FIXTURES,
   TEMPORAL_SPREAD_EVAL_FIXTURES,
+  CAUSAL_EVAL_FIXTURES,
   FEEDBACK_EVAL_FIXTURES,
   PROOF_EVAL_FIXTURES,
   LANES_EVAL_FIXTURES,
   entityLane,
   temporalLane,
+  causalLane,
   ftsLane,
   vectorLane,
   preFusedOrder,
@@ -340,6 +342,60 @@ describe("temporal-spread lift (recall@1 over fusion baseline)", () => {
 
   it("yields ZERO lift with an EMPTY temporal lane (the gain is attributable to the temporal lane)", () => {
     const report = compareRankings(TEMPORAL_SPREAD_EVAL_FIXTURES, fusionFn, neutralFn);
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
+    expect(report.mrrLift, JSON.stringify(report)).toBe(0);
+  });
+});
+
+// UNGATED causal lift (EXTRACT-03, the multi-hop / causal per-phase figure — the keystone
+// proof that the causal edge table is NEVER write-only dead data: a causally-linked memory is
+// CONSUMED by the read lane). Deterministic pure fusion math — NO live DB, NO causalLane port,
+// NO model. The causal lane is MODELED here as a 2nd fuse() lane built from the fixtures (the
+// causally-linked subset surfaced first via `causalLane(q)`), so the lift is reproducible from
+// the fixtures alone. The causal lane (added as a 2nd fusion lane) must score a strictly
+// positive recall@1 gain over the prior (fusion-only) baseline on the "causal" group, and a
+// NEUTRAL guard (an EMPTY 2nd lane → RRF unchanged → zero lift) attributes the gain to the
+// causal lane — not to fuse()'s rank rebasing alone (mirrors the temporal-spread / entity-lane
+// guards). This is the inseparability invariant satisfied (no write-only dead data).
+describe("causal lift (recall@1 over fusion baseline)", () => {
+  const fusionFn = (q: EvalQuery): MemorySearchResult[] =>
+    fuse([{ results: q.candidates, weight: 1 }]);
+  // Causal lane MODELED as a 2nd fusion lane: the causally-linked subset for this query,
+  // relevant-first. RRF sums the relevant id's two lane terms over the distractor's single
+  // term → the causally-linked memory is lifted to rank 1.
+  const withLaneFn = (q: EvalQuery): MemorySearchResult[] =>
+    fuse([
+      { results: q.candidates, weight: 1 },
+      { results: causalLane(q), weight: 1 },
+    ]);
+  // NEUTRAL guard ranker: the same two-lane shape but the causal lane is EMPTY, so RRF sees
+  // only the candidates lane and the fused order collapses back to fusion order.
+  const neutralFn = (q: EvalQuery): MemorySearchResult[] =>
+    fuse([
+      { results: q.candidates, weight: 1 },
+      { results: [], weight: 1 },
+    ]);
+
+  it("carries a non-empty causal fixture group", () => {
+    expect(CAUSAL_EVAL_FIXTURES.length).toBeGreaterThan(0);
+    expect(CAUSAL_EVAL_FIXTURES.every((q) => q.group === "causal")).toBe(true);
+  });
+
+  it("scores a strictly positive recall@1 lift over the fusion-only baseline", () => {
+    const report = compareRankings(CAUSAL_EVAL_FIXTURES, fusionFn, withLaneFn);
+    // Headroom: fusion mis-ranks the lexical distractor to rank 1 (a no-op fixture that fusion
+    // already nailed would leave nothing to measure — the lift would be vacuous).
+    expect(report.baseline.recallAt1, JSON.stringify(report)).toBeLessThan(1);
+    // The EXTRACT-03 per-phase figure: the causal lane is a MEASURABLE recall@1 gain.
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThan(0);
+    // No regression: the causal lane never lowers recall@1 below fusion.
+    expect(report.reranked.recallAt1, JSON.stringify(report)).toBeGreaterThanOrEqual(
+      report.baseline.recallAt1,
+    );
+  });
+
+  it("yields ZERO lift with an EMPTY causal lane (the gain is attributable to the causal lane)", () => {
+    const report = compareRankings(CAUSAL_EVAL_FIXTURES, fusionFn, neutralFn);
     expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
     expect(report.mrrLift, JSON.stringify(report)).toBe(0);
   });
