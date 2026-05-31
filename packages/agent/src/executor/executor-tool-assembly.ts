@@ -80,6 +80,9 @@ export interface ToolAssemblyDeps {
   /** Optional entity-associative store (ENT-02), threaded into prompt-assembly's
    *  createMemoryRecall. TYPE-only from @comis/core (the agent↛memory build cut). */
   entityStore?: import("@comis/core").MemoryEntityStore;
+  /** Optional usefulness store (FEED-03), threaded into prompt-assembly's createMemoryRecall.
+   *  TYPE-only from @comis/core (the agent↛memory build cut). */
+  usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
   /** Timer port for the rerank wall-clock deadline (createMemoryRecall). */
   timers?: import("@comis/core").TimerPort;
   hookRunner?: HookRunner;
@@ -374,6 +377,7 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       memoryPort: deps.memoryPort,
       reranker: deps.reranker,
       entityStore: deps.entityStore,
+      usefulnessStore: deps.usefulnessStore,
       timers: deps.timers,
       hookRunner: deps.hookRunner,
       secretManager: deps.secretManager,

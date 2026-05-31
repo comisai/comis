@@ -277,6 +277,9 @@ export interface PromptAssemblyParams {
     /** Optional entity-associative store for createMemoryRecall's entity lane (ENT-02;
      *  default-OFF via config.rag.entityLane). TYPE-only (the agent↛memory build cut). */
     entityStore?: import("@comis/core").MemoryEntityStore;
+    /** Optional usefulness store for createMemoryRecall's usefulness read (FEED-03;
+     *  default-OFF via config.rag.feedback). TYPE-only (the agent↛memory build cut). */
+    usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
     timers?: import("@comis/core").TimerPort;
     hookRunner?: HookRunner;
     secretManager?: SecretManager;
@@ -744,11 +747,19 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       );
       // Single recall orchestrator (RANK-07): search->fuse->rerank->score->trust-filter
       // ->dedup. Rerank opt-in/default-OFF -> fusion order (RANK-01/03/08). Non-fatal.
+      // FEED-03: the recall-utility feedback toggle. The `rag.feedback` schema field lands in
+      // Plan 93-04, so read it through a structural widening that compiles against today's
+      // strict RagConfig (optional-chaining → off when absent; correct once 93-04 adds it).
+      // The boost MAGNITUDE is the single canonical `rag.scoring.usefulnessAlpha` (passed via
+      // `scoring` below) — there is NO alpha on `feedback`.
+      const ragFeedback = (config.rag as typeof config.rag & { feedback?: { enabled: boolean } })
+        .feedback;
       const recall = createMemoryRecall(
         {
           memoryPort: deps.memoryPort,
           reranker: deps.reranker,
           entityStore: deps.entityStore,
+          usefulnessStore: deps.usefulnessStore,
           timers: deps.timers,
           clock: deps.clock,
           logger,
@@ -762,6 +773,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           rerank: config.rag.rerank,
           scoring: config.rag.scoring,
           entityLane: config.rag.entityLane,
+          ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
         },
       );
       const recalled = await recall.recall(msg.text, sessionKey, agentId);

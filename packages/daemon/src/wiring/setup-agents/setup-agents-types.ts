@@ -75,6 +75,11 @@ export interface SingleAgentDeps {
    *  shared db handle; the entity lane stays dormant until an operator enables
    *  `agents.<id>.rag.entityLane.enabled` (default OFF). */
   entityStore?: import("@comis/core").MemoryEntityStore;
+  /** Usefulness store (Phase 93, FEED-03). Threaded into each per-agent createPiExecutor
+   *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the
+   *  shared db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator
+   *  enables `agents.<id>.rag.feedback.enabled` (default OFF). */
+  usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */

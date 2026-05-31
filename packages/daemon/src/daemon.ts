@@ -1130,8 +1130,10 @@ function buildRpcDispatchDeps(deps: {
     memoryApi: c.memoryApi, memoryAdapter: c.memoryAdapter, embeddingQueue: c.embeddingQueue,
     // OBS-06 memory-diagnostic deps: the scoped consolidation + entity stores
     // (provenance + entity-graph reads) and the live recall counters (OBS-07)
-    // for the 4 admin-gated memory.* diagnostic handlers.
-    consolidationStore: c.consolidationStore, entityStore: c.entityStore, recallCounters,
+    // for the 4 admin-gated memory.* diagnostic handlers. usefulnessStore (Phase 93,
+    // FEED-03) is exposed here alongside its siblings (dormant until a diagnostic reads it).
+    consolidationStore: c.consolidationStore, entityStore: c.entityStore,
+    usefulnessStore: c.usefulnessStore, recallCounters,
     tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
     sessionStore: g.sessionStoreBridge,
@@ -1673,7 +1675,7 @@ async function bootFoundation(
     disposeEmbedding, cachedPort, memoryAdapter, db,
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
-    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, consolidationStore, recallCounters,
+    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, usefulnessStore, consolidationStore, recallCounters,
   } = await setupMemory({ container, memoryLogger, clock });
 
   // Observability persistence (dual-write to SQLite). obsStore +
@@ -1824,7 +1826,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, consolidationStore, recallCounters, maintenanceTick,
+    embeddingCircuitBreakerState, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, usefulnessStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence, contextStore,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
@@ -1876,6 +1878,7 @@ async function bootAgents(
     rerankerPort, // built in setup-memory; threaded into setupAgents -> createPiExecutor
     rerankerModelPresent, // Phase 92: model-present probe result; threaded into setupAgents -> per-agent effective rerank precedence (same value as the build gate)
     entityStore, // Phase 83: threaded into setupAgents -> createPiExecutor (recall read path) + the cron review (write path)
+    usefulnessStore, // Phase 93 (FEED-03): threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the recall usefulness read path); dormant until rag.feedback.enabled
     contextStore,
     activeRunRegistry, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, geminiCacheManager,
@@ -2012,7 +2015,7 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts,
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, usefulnessStore, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,
