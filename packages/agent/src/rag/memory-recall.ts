@@ -31,6 +31,8 @@ import type {
   MemoryPort,
   MemorySearchResult,
   MemoryEntityStore,
+  MemoryUsefulnessStore,
+  UsefulnessSignal,
   RerankerPort,
   TrustLevel,
   TimerPort,
@@ -72,6 +74,15 @@ export interface MemoryRecallDeps {
    * the concrete adapter (Plan 05).
    */
   entityStore?: MemoryEntityStore;
+  /**
+   * Optional usefulness store (FEED-03). When present AND cfg.feedback.enabled, recall does a
+   * bulk read of the per-memory signal for the ranked ids and folds the used-rate into the
+   * usefulnessFactor in score.ts. Absent or flag-off -> no read, usefulnessById stays
+   * undefined, every usefulnessNorm(undefined) -> factor 1.0 (byte-identical to v2.6).
+   * TYPE-only from @comis/core — the agent never imports the memory package (the agent↛memory
+   * build cut); the daemon injects the concrete adapter (Plan 03 wiring).
+   */
+  usefulnessStore?: MemoryUsefulnessStore;
   /** Timer port for the rerank wall-clock deadline. Absent -> no timeout wrap. */
   timers?: TimerPort;
   /** Wall-clock reads for the recency boost (never Date.now()). */
@@ -116,6 +127,15 @@ export interface MemoryRecallConfig {
    * absent -> no entity lane. Default-OFF (`enabled: false`) -> RRF unchanged (ENT-04).
    */
   entityLane?: { enabled: boolean; seedCount: number; perEntityCap: number; weight: number };
+  /**
+   * Recall-utility feedback toggle (FEED-03; sourced from RagConfig.feedback). The toggle
+   * ONLY — there is NO usefulnessAlpha here. The boost MAGNITUDE is the single canonical
+   * `rag.scoring.usefulnessAlpha` (on {@link MemoryRecallConfig.scoring}, exactly like the
+   * other alphas), so there is no second knob and no drift. Optional so a caller predating
+   * the field (or the daemon before Plan 03 wiring) leaves it absent -> off (no read). The
+   * primary default-off guard is skipping the read entirely, so the alpha is irrelevant off.
+   */
+  feedback?: { enabled: boolean };
 }
 
 /** The recall orchestrator surface — a single `recall` method. */
@@ -253,6 +273,39 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // Stage-2 snapshot: the post-fuse id order (the fused ranking before rerank/score).
       const fusedOrder = ranked.map((r) => r.entry.id);
 
+      // FEED-03: read the per-memory usefulness signal (flag-gated), then fold its used-rate
+      // into the usefulnessFactor in score.ts (boost proven-useful, demote recalled-but-
+      // ignored). DEFAULT-OFF BYTE-IDENTITY (Pitfall 6 #2): when feedback is OFF, no store is
+      // injected, or there are no candidates, this block is SKIPPED — no query runs,
+      // usefulnessById stays undefined, and every usefulnessNorm(undefined) -> factor 1.0, so
+      // the scoring below is byte-identical to v2.6. A FAILED read is NON-FATAL (T-93-14):
+      // we WARN and rank WITHOUT the signal — recall never fails because usefulness read failed.
+      // The signal rides this side map into scoreWithBreakdown (MemorySearchResult unchanged).
+      // TYPE-only port (the agent↛memory cut) — the daemon injects the concrete adapter.
+      let usefulnessById: ReadonlyMap<string, UsefulnessSignal> | undefined;
+      if (cfg.feedback?.enabled === true && deps.usefulnessStore !== undefined && ranked.length > 0) {
+        const ids = ranked.map((r) => r.entry.id);
+        // Scope mirrors memoryPort.search / the entity lane: tenant from the session key,
+        // agent from the recall arg (else the session key's agent, else "default").
+        const scope = {
+          tenantId: sessionKey.tenantId,
+          agentId: agentId ?? sessionKey.agentId ?? "default",
+        };
+        const u = await deps.usefulnessStore.readUsefulness(ids, scope);
+        if (u.ok) {
+          usefulnessById = u.value;
+        } else {
+          deps.logger.warn(
+            {
+              agentId,
+              errorKind: "internal" as const,
+              hint: "usefulness read failed; ranking without the signal",
+            },
+            "usefulness read fallback",
+          );
+        }
+      }
+
       // Rerank-outcome capture (stage 3). Default is "fell_back" — the value used whenever
       // a rerank stage was NOT attempted OR degraded to fusion order. It flips to "ran" on
       // the success branch and "timed_out" on the TimeoutError catch. `rerankAttempted`
@@ -322,8 +375,9 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
               pool.map((r, i) => ({ ...r, score: scored.value[i] ?? 0 })),
               cfg.scoring,
               deps.clock.now(),
+              usefulnessById,
             );
-            const scoredTail = scoreWithBreakdown(tail, cfg.scoring, deps.clock.now());
+            const scoredTail = scoreWithBreakdown(tail, cfg.scoring, deps.clock.now(), usefulnessById);
             for (const r of rerankedPool) breakdownById.set(r.entry.id, r.breakdown);
             for (const r of scoredTail) breakdownById.set(r.entry.id, r.breakdown);
             ranked = rerankedPool.concat(scoredTail);
@@ -378,7 +432,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       //    the Task-1 characterization), so using it here is behavior-preserving — it just
       //    additionally yields the per-memory breakdowns the trace records.
       if (!rerankApplied) {
-        const scored = scoreWithBreakdown(ranked, cfg.scoring, deps.clock.now());
+        const scored = scoreWithBreakdown(ranked, cfg.scoring, deps.clock.now(), usefulnessById);
         for (const r of scored) breakdownById.set(r.entry.id, r.breakdown);
         ranked = scored;
       }

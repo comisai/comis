@@ -52,6 +52,7 @@ const DEFAULT_ALPHAS: ScoringAlphas = {
   temporalAlpha: 0.2,
   proofAlpha: 0.1,
   trustAlpha: 0.1,
+  usefulnessAlpha: 0.1,
 };
 
 function makeResult(
@@ -363,7 +364,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
       // turn trust/recency boosts off so the CE inversion is unambiguous
       baseConfig({
         rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
-        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
+        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
       }),
     );
     const got = await recall.recall("q", SESSION_KEY);
@@ -388,7 +389,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
       { memoryPort: fakeMemoryPort(input), reranker: port, timers: timers.port, clock: fixedClock, logger },
       baseConfig({
         rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 50 },
-        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
+        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
       }),
     );
     const promise = recall.recall("q", SESSION_KEY);
@@ -420,7 +421,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
         includeTrustLevels: ["system", "learned"],
         rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
         // recency neutral (equal createdAt); trust boost on so system wins.
-        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0.1 },
+        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0.1, usefulnessAlpha: 0 },
       }),
     );
     const got = await recall.recall("q", SESSION_KEY);
@@ -445,7 +446,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
       { memoryPort: fakeMemoryPort(input), reranker: port, timers: fakeTimers().port, clock: fixedClock, logger: noopLogger },
       baseConfig({
         rerank: { enabled: true, maxCandidates: 2, minResults: 1, timeoutMs: 800 },
-        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
+        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
       }),
     );
     const got = await recall.recall("q", SESSION_KEY);
@@ -482,7 +483,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
       baseConfig({
         rerank: { enabled: true, maxCandidates: 2, minResults: 1, timeoutMs: 800 },
         // boosts off so the pool-before-tail partition is the only thing under test.
-        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
+        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
       }),
     );
     const got = await recall.recall("q", SESSION_KEY);
@@ -512,7 +513,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
       { memoryPort: fakeMemoryPort(input), reranker: port, clock: fixedClock, logger: noopLogger },
       baseConfig({
         rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
-        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
+        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
       }),
     );
     const got = await recall.recall("q", SESSION_KEY);
@@ -545,7 +546,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
         rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
         // boosts off → boosted score is exactly the CE score, so the ONLY thing that
         // can order the equal-CE/equal-trust pool is the explicit index tie-break.
-        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
+        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 },
       }),
     );
     const got = await recall.recall("q", SESSION_KEY);
@@ -580,7 +581,7 @@ describe("createMemoryRecall — orchestrator composition", () => {
 describe("createMemoryRecall — entity associative lane (ENT-02/ENT-04)", () => {
   // Boosts neutralized so the FUSION verdict (not score() boosts) is what orders the
   // output — the entity-lane RRF contribution is then the only thing under test.
-  const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 };
+  const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
   const ENABLED_LANE = { enabled: true, seedCount: 5, perEntityCap: 200, weight: 1.0 };
   const DISABLED_LANE = { enabled: false, seedCount: 5, perEntityCap: 200, weight: 1.0 };
 
