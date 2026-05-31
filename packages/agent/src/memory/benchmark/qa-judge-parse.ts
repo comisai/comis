@@ -12,7 +12,10 @@
  * also emits a JSON object followed by trailing commentary, `correct: yes`,
  * fenced JSON, or a `correct=no` token (Pitfall 1; PATTERNS Correction #2). The
  * order is:
- *   1. strip markdown code fences (same regex as the analog),
+ *   1. strip markdown code fences via `stripCodeFences` -- broadens the analog's
+ *      lowercase-`json`-only regex to remove ANY `[a-zA-Z]*` language tag,
+ *      case-insensitively (` ```JSON `, ` ```python `), so the fenced verdict
+ *      reaches the primary JSON path below instead of the brace-scan fallback,
  *   2. JSON.parse the whole string inside try/catch; a boolean `correct` wins,
  *   3. else JSON.parse the FIRST balanced `{...}` substring (JSON + trailing prose),
  *   4. else a bounded `correct\s*[:=]\s*"?(true|yes|false|no)"?` regex,
@@ -58,7 +61,7 @@ export interface JudgeVerdict {
  * denominator in `qa-accuracy.ts`), NOT to score it wrong.
  */
 export function parseJudgeVerdict(text: string): JudgeVerdict | undefined {
-  const cleaned = text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+  const cleaned = stripCodeFences(text);
   // 1. whole-string JSON, then the first balanced {...} object (JSON + trailing prose).
   for (const candidate of [cleaned, firstJsonObject(cleaned)]) {
     if (candidate === undefined) continue;
@@ -71,6 +74,26 @@ export function parseJudgeVerdict(text: string): JudgeVerdict | undefined {
     return { correct: /true|yes/i.test(m[1] ?? ""), reasoning: cleaned.slice(0, 200) };
   }
   return undefined; // -> counted as `invalid` (qa-accuracy.ts denominator), NEVER as wrong
+}
+
+/**
+ * Strip markdown code-fence delimiters (with any language tag) from judge text,
+ * leaving the inner payload trimmed.
+ *
+ * The opening fence may carry ANY language tag, in any case -- judges emit
+ * ` ```json `, ` ```JSON `, ` ```python `, etc. The tag pattern is `[a-zA-Z]*`
+ * (a non-nested, anchored-to-the-fence quantifier), so an uppercase/other-language
+ * tag is removed and the cleaned text begins with the JSON object -- letting the
+ * PRIMARY whole-string `JSON.parse` path (parseJudgeVerdict step 2) succeed rather
+ * than relying on the `firstJsonObject` brace-scan fallback. The closing ` ``` ` is
+ * then removed and the result trimmed.
+ *
+ * ReDoS-safe: both replacements use single-character classes with one non-nested
+ * `*` quantifier -- a single linear pass, no catastrophic backtracking (the loaders'
+ * ReDoS convention -- longmemeval-loader.ts:101). TOTAL: `String.replace` never throws.
+ */
+export function stripCodeFences(text: string): string {
+  return text.replace(/```[a-zA-Z]*\n?/g, "").replace(/```/g, "").trim();
 }
 
 /** Parse a JSON string and return a verdict iff it carries a boolean `correct`. */
