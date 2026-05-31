@@ -66,6 +66,27 @@ describe("buildGoldMap (multiple refs union into one Set)", () => {
   });
 });
 
+describe("buildGoldMap (WR-02/WR-03: session-qualified refs resolve to distinct docs)", () => {
+  it("resolves two questions whose gold refs share a dia index to DISTINCT uuids", () => {
+    // With the fixed loader, gold refs carry the session prefix ("D1:1" vs
+    // "D2:1") and the side-map is keyed by that SAME full form. The two refs are
+    // distinct keys, so the resolver returns distinct session uuids. Under the
+    // old index-only key both refs would collapse to "1" -> a single uuid (the
+    // last-ingested session), silently zeroing one session's lane.
+    const goldRefs = new Map([
+      ["collide:0", new Set(["D1:1"])],
+      ["collide:1", new Set(["D2:1"])],
+    ]);
+    const sideMap = new Map([
+      ["D1:1", "uuid-session-1"],
+      ["D2:1", "uuid-session-2"],
+    ]);
+    const result = buildGoldMap(goldRefs, sideMap);
+    expect(result.get("collide:0")).toEqual(new Set(["uuid-session-1"]));
+    expect(result.get("collide:1")).toEqual(new Set(["uuid-session-2"]));
+  });
+});
+
 describe("buildGoldMap (empty input)", () => {
   it("returns an empty map for empty inputs (never throws)", () => {
     expect(buildGoldMap(new Map(), new Map()).size).toBe(0);

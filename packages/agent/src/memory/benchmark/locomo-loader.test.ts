@@ -20,19 +20,32 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadLocomo, parseLocomoEvidence } from "./locomo-loader.js";
+import { buildGoldMap } from "./gold-map.js";
 
 const fixtureDir = dirname(fileURLToPath(import.meta.url));
 const RAW = JSON.parse(
   readFileSync(join(fixtureDir, "__fixtures__", "locomo-sample.json"), "utf8"),
 ) as unknown;
 
-describe("parseLocomoEvidence (D<sess>:<dia> -> dia_id)", () => {
-  it("returns the 2nd colon-segment (dia_id) for each evidence string", () => {
-    expect(parseLocomoEvidence(["D1:5", "D2:3"])).toEqual(["5", "3"]);
+describe("parseLocomoEvidence (D<sess>:<dia> -> session-qualified ref)", () => {
+  it("returns the FULL session-qualified ref for each evidence string (WR-02)", () => {
+    // WR-02: the session prefix MUST be preserved end-to-end so two sessions
+    // sharing a dia index never collide. Keying on the bare 2nd segment
+    // ("5","3") silently overwrites the gold side-map; the full ref is unique
+    // by construction.
+    expect(parseLocomoEvidence(["D1:5", "D2:3"])).toEqual(["D1:5", "D2:3"]);
   });
 
   it("filters out entries without a colon", () => {
-    expect(parseLocomoEvidence(["malformed", "D1:7"])).toEqual(["7"]);
+    expect(parseLocomoEvidence(["malformed", "D1:7"])).toEqual(["D1:7"]);
+  });
+
+  it("drops a degenerate entry with an empty dia segment (WR-02: no colliding empty key)", () => {
+    // "D1:" / "D2:" parse to an empty dia segment; under the old bare-segment
+    // logic both became "" and collided on a single side-map key. They must be
+    // dropped so they cannot collapse two sessions onto one empty key.
+    expect(parseLocomoEvidence(["D1:", "D2:"])).toEqual([]);
+    expect(parseLocomoEvidence(["D1:", "D1:7"])).toEqual(["D1:7"]);
   });
 
   it("returns [] for undefined evidence", () => {
@@ -143,6 +156,71 @@ describe("loadLocomo (each session doc records its dia_id set)", () => {
   });
 });
 
+describe("loadLocomo (WR-02/WR-03: session-qualified gold refs never collide cross-session)", () => {
+  // Two sessions whose dia indices COLLIDE on the bare 2nd segment ("1" in both
+  // D1:1 and D2:1). Under the old index-only key the side-map would overwrite
+  // session_1's uuid with session_2's, silently zeroing a lane. With the full
+  // session-qualified ref the two gold refs ("D1:1" vs "D2:1") are distinct and
+  // resolve to DISTINCT documents. This is an UNGATED proof (no model, no store):
+  // it builds the side-map exactly as the harness does (keyed by doc.diaIds) and
+  // resolves the gold through buildGoldMap.
+  const COLLIDING = {
+    sample_id: "collide",
+    conversation: {
+      session_1_date_time: "1:00 pm on 8 May, 2023",
+      session_1: [{ speaker: "user_a", text: "first", dia_id: "D1:1" }],
+      session_2_date_time: "1:00 pm on 9 May, 2023",
+      session_2: [{ speaker: "user_b", text: "second", dia_id: "D2:1" }],
+    },
+    qa: [
+      { question: "from session one?", answer: "first", evidence: ["D1:1"], category: 1 },
+      { question: "from session two?", answer: "second", evidence: ["D2:1"], category: 1 },
+    ],
+  };
+
+  it("emits distinct diaIds carrying the session prefix per session", () => {
+    const parsed = loadLocomo(COLLIDING);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const byId = new Map(parsed.value.docs.map((d) => [d.sessionId, d.diaIds]));
+    expect(byId.get("session_1")).toEqual(["D1:1"]);
+    expect(byId.get("session_2")).toEqual(["D2:1"]);
+  });
+
+  it("resolves two sessions sharing a dia index to DISTINCT gold ids (WR-02)", () => {
+    const parsed = loadLocomo(COLLIDING);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const { docs, qa } = parsed.value;
+
+    // Build the side-map the way the harness does: one uuid per ingested doc,
+    // keyed by the doc's (full) dia refs. With the bug, doc.diaIds would have
+    // been parsed to a bare "1" on BOTH docs and the second set() would clobber
+    // the first.
+    const ingestedIdByRef = new Map<string, string>();
+    const uuidBySession = new Map<string, string>();
+    let n = 0;
+    for (const doc of docs) {
+      const uuid = `uuid-${n++}`;
+      uuidBySession.set(doc.sessionId, uuid);
+      for (const ref of doc.diaIds) ingestedIdByRef.set(ref, uuid);
+    }
+    // Both gold keys must survive — no empty/colliding key.
+    expect(ingestedIdByRef.size).toBe(2);
+
+    const goldRefs = new Map<string, Set<string>>();
+    for (const item of qa) goldRefs.set(item.questionId, new Set(item.goldDiaIds));
+    const goldMap = buildGoldMap(goldRefs, ingestedIdByRef);
+
+    const sess1Uuid = uuidBySession.get("session_1");
+    const sess2Uuid = uuidBySession.get("session_2");
+    expect(sess1Uuid).not.toBe(sess2Uuid);
+    // q[0] -> session_1's doc; q[1] -> session_2's doc; NOT the same id.
+    expect([...(goldMap.get("collide:0") ?? [])]).toEqual([sess1Uuid]);
+    expect([...(goldMap.get("collide:1") ?? [])]).toEqual([sess2Uuid]);
+  });
+});
+
 describe("loadLocomo (Blocker-3: stable questionId = `${sample_id}:${qaIdx}`)", () => {
   it("synthesizes ids over the ORIGINAL pre-filter index (gaps, no collision)", () => {
     const parsed = loadLocomo(RAW);
@@ -153,14 +231,16 @@ describe("loadLocomo (Blocker-3: stable questionId = `${sample_id}:${qaIdx}`)", 
     expect(ids).toEqual(["conv1:0", "conv1:2"]);
   });
 
-  it("maps gold dia_ids onto the kept qa via parseLocomoEvidence", () => {
+  it("maps gold dia_ids onto the kept qa via parseLocomoEvidence (full session-qualified refs, WR-02)", () => {
     const parsed = loadLocomo(RAW);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
+    // WR-02: gold refs carry the session prefix so they key the side-map by the
+    // SAME full form as doc.diaIds — `evidence: ["D1:1"]` -> `["D1:1"]`.
     const first = parsed.value.qa.find((q) => q.questionId === "conv1:0");
-    expect(first?.goldDiaIds).toEqual(["1"]);
+    expect(first?.goldDiaIds).toEqual(["D1:1"]);
     const third = parsed.value.qa.find((q) => q.questionId === "conv1:2");
-    expect(third?.goldDiaIds).toEqual(["3", "2"]);
+    expect(third?.goldDiaIds).toEqual(["D2:3", "D1:2"]);
   });
 });
 
