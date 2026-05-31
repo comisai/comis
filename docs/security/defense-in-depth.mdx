@@ -375,8 +375,9 @@ risk.
     useful. Every inject, deny, and blocked-egress event is audited on the
     event bus with `agentId` and `traceId`. On Linux, the credentialed sandbox
     runs in `broker-only` network mode where the broker unix socket is the
-    only bind-mounted network path -- making it the designed-to-be-only egress
-    destination for driven-CLI traffic. The broker is fail-closed: no binding
+    only bind-mounted network path -- making it the only reachable egress
+    destination for driven-CLI traffic (kernel-enforced; validated on the Linux
+    production host class). The broker is fail-closed: no binding
     or missing secret means the request is refused rather than forwarded.
 
     **Why it matters:** Even inside a filesystem sandbox, a process can read

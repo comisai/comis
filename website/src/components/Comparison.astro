@@ -5,7 +5,7 @@ const rows = [
   { label: "Prompt injection", them: "No detection", us: "65 patterns across 8 categories, weighted scoring", win: true },
   { label: "Memory safety", them: "Single trust level, poisonable", us: "Trust-partitioned - your words vs. the internet's", win: true },
   { label: "Secrets", them: "Plaintext in config, leaked in logs", us: "AES-256 encrypted, 18 redaction rules", win: true },
-  { label: "Credentialed exec — keys never in sandbox", them: "Relies on agent volunteering to use HTTPS_PROXY; bypass is possible", us: "Broker-only network namespace (Linux, R1 in progress); key never enters the sandbox; fails closed without the key", win: true },
+  { label: "Credentialed exec — keys never in sandbox", them: "Relies on agent volunteering to use HTTPS_PROXY; bypass is possible", us: "Broker-only network namespace (Linux, kernel-enforced); key never enters the sandbox; fails closed without the key", win: true },
   { label: "Tool access", them: "Unchecked - full shell by default", us: "Approval gates, per-agent tool policies, OS-level exec sandbox", win: true },
   { label: "Skill safety", them: "Install and hope", us: "Allowlists, scope isolation", win: true },
   { label: "Network safety", them: "No SSRF protection", us: "Private network + metadata endpoints blocked", win: true },

@@ -79,8 +79,7 @@ Verify: `curl http://localhost:4766/health` → `{"status":"ok"}`. Message your 
 
 **🛡️ Defense in depth — runtime and compile-time.** The LLM is the attack surface. Comis assumes it will be attacked, then makes the abuse expensive: kernel-enforced exec sandboxes (bubblewrap / sandbox-exec), input + output scanning, trust-partitioned memory, per-agent tool restrictions, canary tokens at runtime — paired with **22 ESLint-enforced architectural rules** that block insecure patterns at commit time. Defects don't reach production because they don't reach `main`. [Deep dive →](https://comis.ai/security)
 
-<!-- publish gate: flip to Block 1 post-R1 -->
-**🔑 Credential broker (in progress — network enforcement pending Linux validation).** Comis drives API-key CLIs (Claude Code included) with the key kept out of the sandbox — injected at the network boundary from the daemon's encrypted store, so it's never a readable file, env var, or `/proc` entry inside the sandbox. On Linux, the credentialed sandbox runs with its network namespace isolated (`--unshare-net`), with the broker unix socket as the only bind-mounted network path — making the broker the designed-to-be-only destination. Validation of this kernel-enforcement on the Linux production host class is in progress. [Deep dive →](https://docs.comis.ai/security/credential-broker)
+**🔑 Credential broker — keys never enter the sandbox.** Comis drives API-key CLIs (Claude Code included) with the key kept out of the sandbox — injected at the network boundary from the daemon's encrypted store, so it's never a readable file, env var, or `/proc` entry inside the sandbox. On Linux the credentialed sandbox runs with its network namespace isolated (`--unshare-net`), and the broker unix socket is the only bind-mounted network path — so the broker is the only reachable egress, kernel-enforced and **validated on the Linux production host class**. [Deep dive →](https://docs.comis.ai/security/credential-broker)
 
 **📦 Supply-chain integrity by default.** Every release is **sigstore-attested via GitHub OIDC**. Workspace packages are bundled with `bundledDependencies` and exact-pinned — no runtime `npm install` of plugins, no transitive surprises, no peer-dependency outages. Comis owns its domain types end-to-end (no external `pi-coding-agent` you can be held hostage by). The supply chain *is* part of the threat model.
 
@@ -234,8 +233,9 @@ for the real secret (`x-api-key` / `Authorization: Bearer` / query param), and f
 never a file, never an env var, never on the wire the sandbox can read.
 
 On Linux, the credentialed sandbox runs with its network namespace isolated (`--unshare-net`) — the broker
-unix socket is the only bind-mounted network path, making the broker the designed-to-be-only destination.
-Validation of this kernel-enforcement on the Linux production host class is in progress.
+unix socket is the only bind-mounted network path, so the broker is the only reachable egress. This
+kernel-enforcement is validated on the Linux production host class (rootless bubblewrap): direct egress
+from inside the namespace fails, while the bound broker socket stays reachable.
 
 The broker **fails closed** (no secret → 502, request never forwarded) and audits every session, injection,
 and blocked-egress attempt on the event bus with a `traceId` you can grep.
@@ -243,7 +243,7 @@ and blocked-egress attempt on the event bus with a `traceId` you can grep.
 Today this covers **API-key / bearer / query-param** auth (Anthropic and Finnhub today, more on the
 catalog roadmap). OAuth / subscription-only CLIs are not yet supported. [Deep dive →](https://docs.comis.ai/security/credential-broker)
 
-The `executor.broker` config path is the planned interface; daemon config integration is in progress.
+Add an `executor.broker` block to `config.yaml` and the broker starts at daemon boot (TCP + a `0600` unix socket).
 
 ```yaml
 executor:

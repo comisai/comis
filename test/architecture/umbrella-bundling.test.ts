@@ -193,6 +193,81 @@ describe("umbrella-bundling -- bidirectional 5-way alignment vs bundledDependenc
     ).toEqual({ missing: [], extras: [] });
   });
 
+  // Dimension 6 — umbrella dependency closure vs bundled backend packages.
+  //
+  // The bundled @comis/* packages ship WITHOUT their own node_modules — they
+  // resolve every third-party import against the umbrella's FLAT top-level
+  // node_modules. Therefore the umbrella's `dependencies` MUST be a superset of
+  // every bundled backend package's third-party (non-@comis) runtime deps, at a
+  // version the workspace package declares. A dep declared by a workspace
+  // package but absent here is a publish-time landmine: it resolves via pnpm
+  // hoisting in the dev monorepo and CRASHES the installed daemon with
+  // ERR_MODULE_NOT_FOUND. This is exactly how the credential broker shipped a
+  // boot-breaking gap (reflect-metadata / @peculiar/x509 / tsyringe were
+  // declared in @comis/infra + @comis/daemon but never added to the umbrella).
+  //
+  // `web` is excluded (NAMESPACED_PACKAGES already drops it): it is
+  // frontend-bundled — `vite build` inlines lit / @dagrejs/dagre into the
+  // client assets, so they are never require()d from the Node runtime.
+  it("umbrella dependencies are a superset of every bundled backend package's third-party runtime deps", () => {
+    const umbrella = readUmbrellaPackageJson() as unknown as {
+      dependencies?: Record<string, string>;
+    };
+    const umbrellaDeps = umbrella.dependencies ?? {};
+
+    // dep -> set of versions declared by the backend bundled packages
+    const required = new Map<string, Set<string>>();
+    for (const pkg of NAMESPACED_PACKAGES) {
+      const path = resolve(REPO_ROOT, `packages/${pkg}/package.json`);
+      const json = JSON.parse(readFileSync(path, "utf8")) as {
+        dependencies?: Record<string, string>;
+      };
+      for (const [dep, version] of Object.entries(json.dependencies ?? {})) {
+        if (dep.startsWith("@comis/")) continue;
+        if (!required.has(dep)) required.set(dep, new Set());
+        required.get(dep)?.add(version);
+      }
+    }
+
+    const missing: string[] = [];
+    const mismatched: string[] = [];
+    for (const [dep, versions] of [...required].sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    )) {
+      const have = umbrellaDeps[dep];
+      if (have === undefined) {
+        missing.push(`${dep} (need ${[...versions].join("|")})`);
+      } else if (!versions.has(have)) {
+        mismatched.push(
+          `${dep}: umbrella=${have}, workspace=${[...versions].join("|")}`,
+        );
+      }
+    }
+
+    expect(
+      { missing, mismatched },
+      formatViolations({
+        description:
+          "Umbrella comisai/package.json dependencies must include every third-party runtime dep of the bundled backend @comis/* packages (version-matched). A missing dep crashes the installed daemon with ERR_MODULE_NOT_FOUND even though the hoisted dev monorepo masks it.",
+        violations: [
+          ...missing.map((m) => ({
+            file: "packages/comis/package.json",
+            line: 0,
+            snippet: `missing dependency: ${m}`,
+          })),
+          ...mismatched.map((m) => ({
+            file: "packages/comis/package.json",
+            line: 0,
+            snippet: `version mismatch: ${m}`,
+          })),
+        ],
+        suggestedFix:
+          "Add each missing dependency to packages/comis/package.json:dependencies, exact-pinned to the version the workspace package declares, then run pnpm install to refresh the lockfile.",
+        designRef: "umbrella-bundling — dependency closure (Dimension 6)",
+      }),
+    ).toEqual({ missing: [], mismatched: [] });
+  });
+
   it("sanity: at least 12 namespaced packages", () => {
     expect(
       NAMESPACED_PACKAGES.length,

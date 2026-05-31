@@ -156,6 +156,13 @@ ENV COMIS_WITH_XVFB="${COMIS_WITH_XVFB}" \
     COMIS_DATA_DIR=/home/comis/.comis \
     COMIS_GATEWAY_HOST=0.0.0.0
 
+# Ensure the daemon data dir exists and is owned by comis BEFORE the VOLUME
+# declaration. install.sh --no-init does not create ~/.comis, so without this
+# Docker auto-creates the VOLUME mountpoint as root and the unprivileged comis
+# daemon cannot write ~/.comis/.env -> FATAL EACCES at boot. The main Dockerfile
+# does this explicitly for the same reason.
+RUN mkdir -p /home/comis/.comis && chown -R comis:comis /home/comis/.comis
+
 # Drop to the comis user the installer created.
 USER comis
 WORKDIR /home/comis
