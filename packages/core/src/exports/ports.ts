@@ -33,6 +33,7 @@ export type {
   MemoryConsolidationStore,
   ConsolidationCandidate,
   ConsolidationPlan,
+  ConsolidationFoldPlan,
   ContextStorePort,
   ContextEngineStore,
   ContextAdminStore,

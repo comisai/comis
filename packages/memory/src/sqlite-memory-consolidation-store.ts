@@ -69,6 +69,7 @@ import type {
   MemoryConsolidationStore,
   ConsolidationCandidate,
   ConsolidationPlan,
+  ConsolidationFoldPlan,
   MemoryEntry,
 } from "@comis/core";
 import { systemNowMs } from "@comis/core";
@@ -181,6 +182,30 @@ export function createSqliteMemoryConsolidationStore(
   // never removed (CONS-05).
   const markConsolidated = db.prepare(
     "UPDATE memories SET consolidated_at = ? WHERE id = ? AND tenant_id = ?",
+  );
+
+  // --- Fold statements (Phase 94, FOLD-01/02) — the dual of the create path ---
+
+  // Read the EXISTING observation to grow, INSIDE the fold transaction. Scoped on
+  // (tenant_id) + `proof_count IS NOT NULL` so the target MUST be an observation
+  // in the caller's tenant — a cross-tenant id OR a raw (proof_count NULL) row
+  // misses → fail-closed err (T-94-04), nothing mutated.
+  const selectObservationById = db.prepare(
+    "SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND proof_count IS NOT NULL",
+  );
+
+  // Grow the observation in place (partial-column UPDATE — NOT a full-row replace
+  // via the create-path insert helper). `content = COALESCE(?, content)` makes an
+  // omitted content a true no-op on the column → the `memories_au AFTER UPDATE OF
+  // content` FTS trigger does not re-index a proof-only fold (RESEARCH Pitfall 6,
+  // schema.ts:284). `trust_level = ?` writes plan.trustLevel VERBATIM — the
+  // adapter never recomputes/raises trust (the min ceiling is computed upstream
+  // in 94-02; the adapter has no path to RAISE, T-94-01). Scoped on (tenant_id) +
+  // `proof_count IS NOT NULL` (defense-in-depth — the same predicate as the read).
+  const growObservation = db.prepare(
+    "UPDATE memories SET proof_count = ?, source_ids = ?, history = ?, confidence = ?, " +
+      "occurred_at = ?, trust_level = ?, content = COALESCE(?, content), updated_at = ? " +
+      "WHERE id = ? AND tenant_id = ? AND proof_count IS NOT NULL",
   );
 
   return {
@@ -313,6 +338,109 @@ export function createSqliteMemoryConsolidationStore(
             hint: "applyConsolidation transaction failed — rolled back, no partial state",
           },
           "Consolidation apply failed",
+        );
+        return err(error);
+      }
+    },
+
+    async foldIntoExisting(
+      plan: ConsolidationFoldPlan,
+    ): Promise<Result<MemoryEntry, Error>> {
+      const startMs = systemNowMs();
+      try {
+        // ONE transaction (FOLD-02): grow the EXISTING observation AND mark every
+        // new source consolidated_at in a single unit. better-sqlite3's
+        // transaction callable auto-ROLLBACKs on ANY throw, so a failure in EITHER
+        // the grow OR a source-mark reverts BOTH — no torn observation, no orphan
+        // mark. `grown` is captured inside so the read-back reflects the committed
+        // state. The mark + history use `plan.now` (the injected clock); systemNowMs
+        // below is only the durationMs metric (globals rule).
+        let grown: MemoryEntry | undefined;
+        const tx = db.transaction(() => {
+          // (a) Read the target INSIDE the tx — must be an observation in scope.
+          //     A cross-tenant id OR a raw (proof_count NULL) row misses → throw →
+          //     ROLLBACK → err (fail-closed, T-94-04). Parsed via the row mapper
+          //     (the sanctioned typed-read path — untyped-sqlite gate).
+          const targetRaw = selectObservationById.get(plan.targetObservationId, plan.tenantId);
+          const parsedTarget = memoryRowMapper.parseOptionalRow(targetRaw);
+          if (!parsedTarget.ok) throw new Error(parsedTarget.error.message);
+          if (!parsedTarget.value) {
+            throw new Error("fold target not found — not an observation in scope");
+          }
+          const target = rowToEntry(parsedTarget.value);
+
+          // (b) IDEMPOTENCY backstop (FOLD-02): proof_count := |UNION(existing, new)|
+          //     — a SET-cardinality recompute via `new Set(...)`, NEVER a blind +=.
+          //     Re-folding already-present sources leaves the count unchanged.
+          const union = [...new Set([...(target.sourceIds ?? []), ...plan.newSourceIds])];
+          const newProofCount = union.length;
+
+          // (c) Non-destructive history (CONS-05): append the prior content ONLY
+          //     when the fold actually CHANGES content (a proof-only fold appends
+          //     nothing → no FTS churn, no history noise — Pitfall 6 / T-94-06).
+          const history = [...(target.history ?? [])];
+          if (plan.content !== undefined && plan.content !== target.content) {
+            history.push({ previousContent: target.content, changedAt: plan.now });
+          }
+
+          // (d) Grow the row: UNIONed proof_count + source_ids, appended history,
+          //     refreshed confidence + occurred_at (half-life clock reset), trust
+          //     written VERBATIM (never raised — T-94-01), content COALESCE-d
+          //     (omit = unchanged). source_ids/history persist as JSON TEXT.
+          growObservation.run(
+            newProofCount,
+            JSON.stringify(union),
+            JSON.stringify(history),
+            plan.confidence,
+            plan.occurredAt,
+            plan.trustLevel,
+            plan.content ?? null, // null → COALESCE keeps existing content (no FTS re-index)
+            plan.now, // updated_at (record time of the fold)
+            plan.targetObservationId,
+            plan.tenantId,
+          );
+
+          // (e) Mark every NEW source consolidated_at — scoped, fail-closed,
+          //     non-destructive (sets consolidated_at only; never deletes).
+          for (const id of plan.newSourceIds) {
+            markConsolidated.run(plan.now, id, plan.tenantId);
+          }
+
+          // (f) Read the grown row back (same scoped statement) so the returned
+          //     entry reflects the committed state.
+          const grownRaw = selectObservationById.get(plan.targetObservationId, plan.tenantId);
+          const parsedGrown = memoryRowMapper.parseOptionalRow(grownRaw);
+          if (!parsedGrown.ok) throw new Error(parsedGrown.error.message);
+          if (!parsedGrown.value) throw new Error("grown observation vanished post-fold");
+          grown = rowToEntry(parsedGrown.value);
+        });
+        tx(); // throws → automatic ROLLBACK; nothing committed (no torn grow, no orphan mark)
+
+        const durationMs = systemNowMs() - startMs;
+        logger?.debug(
+          {
+            step: "consolidation-fold",
+            durationMs,
+            targetObservationId: plan.targetObservationId,
+            newSourceCount: plan.newSourceIds.length,
+            proofCount: grown?.proofCount,
+          },
+          "Consolidation fold applied (observation grown + new sources marked)",
+        );
+        // grown is always set on the COMMIT path (set in step (f) before tx() returns).
+        return ok(grown!);
+      } catch (e: unknown) {
+        const durationMs = systemNowMs() - startMs;
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "consolidation-fold",
+            durationMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "fold transaction failed — rolled back, no partial state",
+          },
+          "Consolidation fold failed",
         );
         return err(error);
       }
