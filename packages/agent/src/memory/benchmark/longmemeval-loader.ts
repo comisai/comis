@@ -48,9 +48,14 @@ export interface LongMemEvalParsed {
   docs: LongMemEvalDoc[];
   /**
    * Question text under `query` (uniform with LocomoParsed.qa[].query) so the
-   * harness reads `q.query` across BOTH datasets.
+   * harness reads `q.query` across BOTH datasets, PLUS the judge's two separate
+   * channels (BENCH-03): `category` (the LongMemEval `question_type`, used to
+   * select the per-category judge rubric) and `answer` (the gold answer the
+   * judge grades against). Both are carried HERE on the question-list channel
+   * ONLY — never in `docs[].content` (the anti-leak invariant, T-89-01-01): the
+   * gold is read directly by the judge and is never ingested into the store.
    */
-  questions: Array<{ questionId: string; query: string }>;
+  questions: Array<{ questionId: string; query: string; category: string; answer: string }>;
   /** questionId -> set of dataset answer_session_ids (session-level gold, A2). */
   answerSessionIdsByQuestion: Map<string, Set<string>>;
 }
@@ -155,6 +160,14 @@ export function loadLongMemEval(raw: unknown): Result<LongMemEvalParsed, Error> 
   if (typeof query !== "string" || query.length === 0) {
     return err(new Error("LongMemEval item missing question text"));
   }
+  // BENCH-03 judge channels — read defensively (ASVS V5; the loader is TOTAL
+  // over untrusted JSON and never throws on a missing/hostile field). The gold
+  // `answer` guard is copied verbatim from locomo-loader.ts:260; `category`
+  // (the `question_type`) gets a string type-guard with a literal "unknown"
+  // fallback so an absent/non-string field degrades to the DEFAULT judge rubric
+  // rather than throwing. Both stay on the questions[] channel (never content).
+  const answer = typeof raw.answer === "string" ? raw.answer : "";
+  const category = typeof raw.question_type === "string" ? raw.question_type : "unknown";
   const sessions = raw.haystack_sessions;
   if (!Array.isArray(sessions)) {
     return err(new Error("LongMemEval item missing haystack_sessions"));
@@ -201,7 +214,7 @@ export function loadLongMemEval(raw: unknown): Result<LongMemEvalParsed, Error> 
 
   return ok({
     docs,
-    questions: [{ questionId, query }],
+    questions: [{ questionId, query, category, answer }],
     answerSessionIdsByQuestion,
   });
 }

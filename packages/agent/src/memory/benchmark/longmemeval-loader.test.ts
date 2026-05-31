@@ -129,15 +129,32 @@ describe("loadLongMemEval (BENCH-03: judge category + gold answer side-channel)"
     expect(noType.value.questions[0].answer).toBe("");
   });
 
-  it("ANTI-LEAK: the gold answer never appears in any docs[].content (T-89-01-01)", () => {
+  it("ANTI-LEAK: category/answer are NOT spliced into docs[].content (T-89-01-01)", () => {
+    // The invariant is that the new `category`/`answer` side-channels stay on
+    // the questions[] channel and are NEVER concatenated into doc.content —
+    // content must remain byte-identical to JSON.stringify(stripHasAnswer(turns)).
+    // (Note: the gold-answer PHRASE legitimately occurs inside the haystack
+    // conversation — that is the benchmark working as designed, the answer is
+    // recallable from the haystack — so a naive "gold substring absent from
+    // content" check is wrong. The real guard is "no side-channel injection".)
     const parsed = loadLongMemEval(RAW);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     const goldAnswer = parsed.value.questions[0].answer;
+    const category = parsed.value.questions[0].category;
     expect(goldAnswer.length).toBeGreaterThan(0);
-    // category/answer live ONLY on the questions[] channel; content is still
-    // JSON.stringify(stripHasAnswer(turns)) — gold must never re-enter doc.content.
-    expect(parsed.value.docs.every((d) => !d.content.includes(goldAnswer))).toBe(true);
+    // Reconstruct the expected content directly from the fixture turns and assert
+    // each doc.content matches exactly — proving neither `answer` nor `category`
+    // (nor the dropped `has_answer` flag) was folded in.
+    const rawObj = RAW as { haystack_sessions: Array<Array<Record<string, unknown>>> };
+    parsed.value.docs.forEach((doc, i) => {
+      const expected = JSON.stringify(stripHasAnswer(rawObj.haystack_sessions[i]));
+      expect(doc.content).toBe(expected);
+      expect(doc.content).not.toContain("has_answer");
+      expect(doc.content).not.toContain(`"category"`);
+      // The category token "single-session-user" is loader metadata, never content.
+      expect(doc.content).not.toContain(category);
+    });
   });
 });
 
