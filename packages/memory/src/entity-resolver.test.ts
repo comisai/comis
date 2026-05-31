@@ -50,6 +50,21 @@ describe("normalizeEntityKey — Unicode canonical-key folding", () => {
     const key = normalizeEntityKey("  Globex Corp  ");
     expect(normalizeEntityKey(key)).toBe(key);
   });
+
+  it("folds two coreference-resolved name variants onto ONE canonical key (EXTRACT-01 dedup fold)", () => {
+    // EXTRACT-01: coreference supplies cleaner entities[].name strings ("she"/"my boss" -> "Alice").
+    // Even if the model emits slightly different surface forms before settling on a canonical
+    // spelling, they must fold to the SAME (tenant, agent, canonical_key) row — the exact-key
+    // reuse short-circuit at sqlite-memory-entity-store.ts:165-172. No downstream change makes
+    // this happen; it is purely the canonical-key transform the resolver already keys on.
+    const canonical = normalizeEntityKey("Alice");
+    expect(normalizeEntityKey("alice")).toBe(canonical);
+    expect(normalizeEntityKey("  Alice  ")).toBe(canonical);
+    expect(normalizeEntityKey("ALICE")).toBe(canonical);
+    expect(normalizeEntityKey("Alíce")).toBe(canonical); // accented variant -> same NFKD key
+    expect(canonical).toBe("alice");
+    expect(canonical.length).toBeGreaterThan(0); // a real name, never the empty-key guard (:144-151)
+  });
 });
 
 // =====================================================================
