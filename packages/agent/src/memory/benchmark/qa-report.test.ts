@@ -115,6 +115,53 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
     expect(serialized).toContain("claude-sonnet");
   });
 
+  it("Test 3b (THE SECURITY GATE, WR-01): a credential-bearing local modelUri is sanitized -- no userinfo / auth query param reaches JSON.stringify(report)", () => {
+    // modelUri is a free-form z.string() (HF URI or local path). An authenticated
+    // weights endpoint can embed a credential in BOTH userinfo (`user:token@`) AND
+    // an auth-bearing query param (`?token=...`). Both must be stripped structurally,
+    // exactly as apiKey/Bearer/base_url already are -- the report is written via
+    // writeRegularFile, OUTSIDE Pino's redaction net.
+    const configWithUriSecret = {
+      ...cleanConfig(),
+      models: {
+        ...cleanConfig().models,
+        embedding: { provider: "local" as const, modelUri: "https://user:sk-uri-secret@host/bge?token=tok-embed-secret" },
+        reranker: { provider: "local" as const, modelUri: "https://svc:hf_rerankerpw@host/rerank?access_token=tok-rr-secret&api_key=key-rr" },
+      },
+    };
+    const report = buildBenchmarkReport(configWithUriSecret, sampleMetrics(), NOW_MS);
+    const serialized = JSON.stringify(report);
+    // Neither the userinfo credential nor the auth query-param value survives.
+    expect(serialized).not.toContain("sk-uri-secret");
+    expect(serialized).not.toContain("hf_rerankerpw");
+    expect(serialized).not.toContain("tok-embed-secret");
+    expect(serialized).not.toContain("tok-rr-secret");
+    expect(serialized).not.toContain("key-rr");
+    expect(serialized).not.toContain("token=");
+    expect(serialized).not.toContain("access_token");
+    expect(serialized).not.toContain("api_key");
+    // The non-secret identity anchor (scheme + host + path) IS retained for reproducibility.
+    expect(report.models.embedding.modelUri).toContain("host/bge");
+    expect(report.models.embedding.modelUri).toMatch(/^https:\/\//);
+    expect(serialized).not.toContain("user:sk");
+    expect(serialized).not.toContain("svc:hf");
+  });
+
+  it("Test 3c (WR-01): a plain local path / authority-less scheme modelUri is preserved verbatim (it carries no credential)", () => {
+    const cfg = cleanConfig();
+    const cfgPaths = {
+      ...cfg,
+      models: {
+        ...cfg.models,
+        embedding: { provider: "local" as const, modelUri: "/home/op/models/bge-small.gguf" },
+        reranker: { provider: "local" as const, modelUri: "hf:BAAI/bge-reranker-base" },
+      },
+    };
+    const report = buildBenchmarkReport(cfgPaths, sampleMetrics(), NOW_MS);
+    expect(report.models.embedding.modelUri).toBe("/home/op/models/bge-small.gguf");
+    expect(report.models.reranker.modelUri).toBe("hf:BAAI/bge-reranker-base");
+  });
+
   it("Test 4: timestamp is an ISO string derived from the injected clock (deterministic); results mirror aggregateAccuracy", () => {
     const metrics = sampleMetrics();
     const report = buildBenchmarkReport(cleanConfig(), metrics, NOW_MS);
