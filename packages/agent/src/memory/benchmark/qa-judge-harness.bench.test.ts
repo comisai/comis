@@ -80,8 +80,8 @@ import { completeSimple, getModel } from "@earendil-works/pi-ai";
 // VALUE obs import (fine in a .test.ts) -- the confined report writer.
 import { writeRegularFile } from "@comis/observability";
 // RELATIVE Plan 01 loaders (consumed verbatim; the loaders own field shapes).
-import { loadLongMemEval } from "./longmemeval-loader.js";
-import { loadLocomo } from "./locomo-loader.js";
+import { loadLongMemEvalDataset } from "./longmemeval-loader.js";
+import { loadLocomoDataset } from "./locomo-loader.js";
 // RELATIVE Plan 01 prompt builders (the system/user answer split + the per-category judge rubric).
 import { ANSWER_SYSTEM_PROMPT, formatAnswerContext, buildAnswerPrompt } from "./qa-answer-prompt.js";
 import { buildJudgePrompt } from "./qa-judge-prompt.js";
@@ -219,9 +219,16 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
   // The ingest-once structural witness (BENCH-03 SC-3): store-call count vs doc count.
   let storedCount = 0;
   let docCount = 0;
-  // The live recall pipeline + the unified question list (built once in beforeAll).
-  let recall: ReturnType<typeof createMemoryRecall> | undefined;
-  let unifiedQuestions: Array<{ questionId: string; query: string; answer: string; category?: string }> = [];
+  // Per-question answerables, built ONCE in beforeAll: recall (LLM-free) runs THERE,
+  // per item against its own store, and the formatted context is captured so the gated
+  // it body only drives the answer + judge LLMs (never recall).
+  let answerables: Array<{
+    questionId: string;
+    query: string;
+    category: string;
+    goldAnswer: string;
+    context: string;
+  }> = [];
   let reportDir = "";
   let datasetSha = "";
   let datasetItemCount = 0;
@@ -232,23 +239,26 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
   const haveJudge = !!JUDGE_PROVIDER && !!JUDGE_MODEL && !!JUDGE_API_KEY;
 
   beforeAll(async () => {
-    // 1. DATASETS -- tiny vendored fixtures by default; full operator haystack when set.
-    //    Capture raw bytes for the reproducibility sha256 (computed HERE; Correction #5).
+    // 1. DATASETS -- FULL arrays (the public sets); a single-object vendored fixture is
+    //    accepted as a one-element array. Capture raw bytes for the reproducibility
+    //    sha256. Each item/sample is an INDEPENDENT (haystack, question) pair, ingested
+    //    into ITS OWN store below (the standard protocol; merging haystacks across items
+    //    would add cross-item distractor noise the benchmark never intended).
     const lmeRead = readDataset("./__fixtures__/longmemeval-sample.json", "longmemeval.json");
     const locomoRead = readDataset("./__fixtures__/locomo-sample.json", "locomo.json");
-    const lmeResult = loadLongMemEval(lmeRead.parsed);
-    expect(lmeResult.ok, "LongMemEval fixture parses").toBe(true);
-    const locomoResult = loadLocomo(locomoRead.parsed);
-    expect(locomoResult.ok, "LoCoMo fixture parses").toBe(true);
+    const lmeResult = loadLongMemEvalDataset(lmeRead.parsed);
+    expect(lmeResult.ok, "LongMemEval dataset parses").toBe(true);
+    const locomoResult = loadLocomoDataset(locomoRead.parsed);
+    expect(locomoResult.ok, "LoCoMo dataset parses").toBe(true);
     if (!lmeResult.ok || !locomoResult.ok) return;
-    const lme = lmeResult.value;
-    const locomo = locomoResult.value;
+    const lmeItems = lmeResult.value;
+    const locomoItems = locomoResult.value;
 
     // Reproducibility hash over BOTH dataset byte streams (identity only; no secret).
     datasetSha = createHash("sha256").update(lmeRead.raw).update(locomoRead.raw).digest("hex");
 
-    // 2. EMBEDDING PROVIDER -- only when LLAMA_MODEL_PATH is set; else honest FTS-only
-    //    (dims=4, the vector lane does not contribute). DUPLICATED from the sibling.
+    // 2. EMBEDDING PROVIDER -- built ONCE; only when LLAMA_MODEL_PATH is set, else honest
+    //    FTS-only (dims=4, the vector lane does not contribute).
     let embed: Awaited<ReturnType<typeof createEmbeddingProvider>> | undefined;
     let dims = 4;
     if (LLAMA_MODEL_PATH !== undefined && LLAMA_MODEL_PATH.length > 0) {
@@ -260,59 +270,10 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
     }
     embeddingEnabled = !!embed?.ok;
 
-    // 3. REAL STORE -- a fresh tmp DB (NOT ~/.comis). 2nd ctor arg present only when the
-    //    embedding provider built -> the vector lane contributes; omitted -> FTS-only.
+    // 3. SHARED reranker (built ONCE, reused across every per-item store); the report
+    //    output dir is resolved once.
     const dir = mkdtempSync(join(tmpdir(), "comis-qa-bench-"));
     reportDir = resolveReportDir(dir);
-    const adapter = new SqliteMemoryAdapter(
-      makeBenchConfig(join(dir, "qa-bench.db"), dims),
-      embed?.ok ? embed.value : undefined,
-    );
-
-    // 4. INGEST ONCE (DUPLICATED VERBATIM from retrieval-harness.bench.test.ts:199-236).
-    //    A fresh `randomUUID()` per doc (NEVER the dataset ref). The gold answer/category
-    //    are NOT touched here -- they ride the question-list channel only (anti-leak).
-    docCount = lme.docs.length + locomo.docs.length;
-    for (const doc of lme.docs) {
-      const id = randomUUID();
-      const stored = await adapter.store({
-        id,
-        tenantId: "default",
-        agentId: "bench",
-        userId: "user_a",
-        content: doc.content,
-        trustLevel: "learned",
-        source: { who: "bench" },
-        tags: ["bench"],
-        createdAt: doc.createdAt,
-      });
-      expect(stored.ok, "LongMemEval doc stored").toBe(true);
-      if (stored.ok) storedCount++;
-    }
-    for (const doc of locomo.docs) {
-      const id = randomUUID();
-      const stored = await adapter.store({
-        id,
-        tenantId: "default",
-        agentId: "bench",
-        userId: "user_a",
-        content: doc.content,
-        trustLevel: "learned",
-        source: { who: "bench" },
-        tags: ["bench"],
-        createdAt: doc.createdAt,
-      });
-      expect(stored.ok, "LoCoMo doc stored").toBe(true);
-      if (stored.ok) storedCount++;
-    }
-
-    // 5. LIVE RECALL -- createMemoryRecall with PRODUCTION-REPRESENTATIVE defaults
-    //    (RESEARCH Open-Q2: trust/recency/temporal/proof alphas AS SHIPPED, NOT the
-    //    Phase-88 all-zero -- QA accuracy must reflect the defaults being measured;
-    //    they are recorded in the report's `defaults` block). Values verified against
-    //    schema-agent-prompt.ts (maxResults 5, minScore 0.1,
-    //    includeTrustLevels ["system","learned"], rerank default-OFF, scoring alphas
-    //    0.2/0.2/0.1/0.1). The reranker lane lights up only when its GGUF is provided.
     const reranker =
       LLAMA_RERANKER_MODEL_PATH !== undefined && LLAMA_RERANKER_MODEL_PATH.length > 0
         ? await createLocalRerankerProvider({
@@ -323,40 +284,94 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
         : undefined;
     const rerankerPort = reranker?.ok ? reranker.value : undefined;
 
-    recall = createMemoryRecall(
-      {
-        memoryPort: adapter,
-        clock: createFakeClock(BENCH_NOW),
-        timers: createFakeTimers(BENCH_NOW),
-        logger: createMockLogger(),
-        ...(rerankerPort ? { reranker: rerankerPort } : {}),
-      } as MemoryRecallDeps,
-      {
-        maxResults: 5,
-        minScore: 0.1,
-        includeTrustLevels: ["system", "learned"],
-        rerank: {
-          enabled: !!rerankerPort,
-          maxCandidates: 40,
-          minResults: 1,
-          timeoutMs: 800,
+    // A fresh recall pipeline bound to ONE item's store, with PRODUCTION-REPRESENTATIVE
+    // defaults (alphas AS SHIPPED -- QA accuracy must reflect the measured defaults;
+    // recorded in the report's `defaults` block): maxResults 5 / minScore 0.1 /
+    // includeTrustLevels ["system","learned"] / rerank on only when its GGUF is present.
+    const makeRecall = (port: SqliteMemoryAdapter) =>
+      createMemoryRecall(
+        {
+          memoryPort: port,
+          clock: createFakeClock(BENCH_NOW),
+          timers: createFakeTimers(BENCH_NOW),
+          logger: createMockLogger(),
+          ...(rerankerPort ? { reranker: rerankerPort } : {}),
+        } as MemoryRecallDeps,
+        {
+          maxResults: 5,
+          minScore: 0.1,
+          includeTrustLevels: ["system", "learned"],
+          rerank: { enabled: !!rerankerPort, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+          scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 },
         },
-        // Production-representative alphas (schema defaults) -- recorded in the report.
-        scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 },
-      },
-    );
+      );
 
-    // 6. ONE unified question list. LongMemEval questions carry the GAP `category` +
-    //    `answer`; LoCoMo qa carry `answer` but NO `category` (the W3 case handled in
-    //    the it body). Both carry { questionId, query }, so reading q.query is uniform.
-    unifiedQuestions = [...lme.questions, ...locomo.qa];
-    datasetItemCount = unifiedQuestions.length;
+    // 4. INGEST + RECALL per item, each in its OWN store. A fresh randomUUID per doc
+    //    (NEVER the dataset ref). The gold answer/category ride the answerable channel
+    //    only -- NEVER ingested (anti-leak). Recall (LLM-free) runs HERE; the formatted
+    //    context is captured so the gated it body only drives the answer + judge LLMs.
+    let storeIdx = 0;
+    const ingestItem = async (
+      docs: Array<{ content: string; createdAt: number }>,
+    ): Promise<SqliteMemoryAdapter> => {
+      docCount += docs.length;
+      const adapter = new SqliteMemoryAdapter(
+        makeBenchConfig(join(dir, `qa-${storeIdx++}.db`), dims),
+        embed?.ok ? embed.value : undefined,
+      );
+      for (const doc of docs) {
+        const stored = await adapter.store({
+          id: randomUUID(),
+          tenantId: "default",
+          agentId: "bench",
+          userId: "user_a",
+          content: doc.content,
+          trustLevel: "learned",
+          source: { who: "bench" },
+          tags: ["bench"],
+          createdAt: doc.createdAt,
+        });
+        expect(stored.ok, "doc stored").toBe(true);
+        if (stored.ok) storedCount++;
+      }
+      return adapter;
+    };
+
+    for (const lme of lmeItems) {
+      const adapter = await ingestItem(lme.docs);
+      const recall = makeRecall(adapter);
+      for (const q of lme.questions) {
+        const r = await recall.recall(q.query, BENCH_SESSION_KEY);
+        const ranked: MemorySearchResult[] = r.ok ? r.value : [];
+        answerables.push({
+          questionId: q.questionId,
+          query: q.query,
+          category: q.category, // LongMemEval question_type -> per-category judge rubric
+          goldAnswer: q.answer,
+          context: formatAnswerContext(ranked),
+        });
+      }
+      adapter.close();
+    }
+    for (const locomo of locomoItems) {
+      const adapter = await ingestItem(locomo.docs);
+      const recall = makeRecall(adapter);
+      for (const qa of locomo.qa) {
+        const r = await recall.recall(qa.query, BENCH_SESSION_KEY);
+        const ranked: MemorySearchResult[] = r.ok ? r.value : [];
+        answerables.push({
+          questionId: qa.questionId,
+          query: qa.query,
+          category: "locomo", // LoCoMo qa carry NO category -> the DEFAULT (LoCoMo) rubric
+          goldAnswer: qa.answer,
+          context: formatAnswerContext(ranked),
+        });
+      }
+      adapter.close();
+    }
+    datasetItemCount = answerables.length;
 
     await rerankerPort?.dispose?.();
-    // NOTE: adapter is intentionally NOT closed here -- the per-question recall in the
-    // it.skipIf body reads from it. It is closed at the end of that body.
-    // (When the provider-backed it is skipped, the tmp DB is reaped with the tmp dir.)
-    (globalThis as Record<string, unknown>).__qaBenchAdapter = adapter;
   }, 120_000);
 
   it.skipIf(!haveAnswer || !haveJudge)(
@@ -378,24 +393,16 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
 
       const verdicts: CategorizedVerdict[] = [];
 
-      for (const q of unifiedQuestions) {
-        // category extraction (W3 -- LoCoMo qa[] has NO `category`, so `q.category` is
-        // undefined for LoCoMo and buildJudgePrompt(category: string, ...) would TS-error):
-        // LongMemEval qa carry the Plan-01 GAP `category`; LoCoMo fall to the literal
-        // "locomo", an unknown key that routes to buildJudgePrompt's DEFAULT (LoCoMo) rubric.
-        const category = 'category' in q ? (q as { category: string }).category : "locomo";
-        const goldAnswer = q.answer;
-
-        // RECALL (reuse -- NOT a new search path). Empty/failed -> [] (formatAnswerContext
-        // emits its sentinel; the answer LLM is told "say you don't know").
-        const recalled = recall ? await recall.recall(q.query, BENCH_SESSION_KEY) : undefined;
-        const ranked: MemorySearchResult[] = recalled?.ok ? recalled.value : [];
-        const context = formatAnswerContext(ranked);
+      for (const a of answerables) {
+        // category + goldAnswer + the recalled `context` were all resolved per item in
+        // beforeAll (recall is LLM-free and ran against each item's OWN store). Only the
+        // answer + judge LLMs run in this gated body. `a.category` is the LongMemEval
+        // question_type, or the literal "locomo" -> buildJudgePrompt's DEFAULT rubric.
 
         // If a model lane failed to resolve, this question is INVALID (excluded from
         // the denominator), NOT wrong. Continue (non-fatal).
         if (!answerModel || !judgeModel) {
-          verdicts.push({ category, correct: false, invalid: true });
+          verdicts.push({ category: a.category, correct: false, invalid: true });
           continue;
         }
 
@@ -414,7 +421,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
             {
               systemPrompt: ANSWER_SYSTEM_PROMPT,
               messages: [
-                { role: "user" as const, content: buildAnswerPrompt(q.query, context), timestamp: Date.now() },
+                { role: "user" as const, content: buildAnswerPrompt(a.query, a.context), timestamp: Date.now() },
               ],
             },
             { apiKey: ANSWER_API_KEY, temperature: 0.0, maxTokens: 4096, signal: answerController.signal },
@@ -436,7 +443,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
               messages: [
                 {
                   role: "user" as const,
-                  content: buildJudgePrompt(category, q.query, goldAnswer, modelAnswer),
+                  content: buildJudgePrompt(a.category, a.query, a.goldAnswer, modelAnswer),
                   timestamp: Date.now(),
                 },
               ],
@@ -452,8 +459,8 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
         const verdict = parseJudgeVerdict(judgeText);
         verdicts.push(
           verdict === undefined
-            ? { category, correct: false, invalid: true }
-            : { category, correct: verdict.correct, invalid: false },
+            ? { category: a.category, correct: false, invalid: true }
+            : { category: a.category, correct: verdict.correct, invalid: false },
         );
       }
 
@@ -534,12 +541,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
       // The report must carry NO secret substring (T-89-03-03) -- the ONLY allowed
       // occurrence of these tokens in this file is inside this negation.
       expect(reportJson).not.toMatch(/apiKey|sk-|Bearer/);
-
-      // Close the bench store now that all per-question recalls are done.
-      const adapter = (globalThis as Record<string, unknown>).__qaBenchAdapter as
-        | { close?: () => void }
-        | undefined;
-      adapter?.close?.();
+      // (Per-item bench stores were already closed in beforeAll; nothing to close here.)
     },
     600_000,
   );

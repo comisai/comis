@@ -19,13 +19,31 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { loadLocomo, parseLocomoEvidence } from "./locomo-loader.js";
+import { loadLocomo, loadLocomoDataset, parseLocomoEvidence } from "./locomo-loader.js";
 import { buildGoldMap } from "./gold-map.js";
 
 const fixtureDir = dirname(fileURLToPath(import.meta.url));
 const RAW = JSON.parse(
   readFileSync(join(fixtureDir, "__fixtures__", "locomo-sample.json"), "utf8"),
 ) as unknown;
+
+describe("loadLocomoDataset (full-dataset per-sample iteration)", () => {
+  it("parses an ARRAY of samples into one parsed result per sample", () => {
+    const r = loadLocomoDataset([RAW, RAW]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.length).toBe(2);
+  });
+  it("accepts a SINGLE sample object as a one-element array (fixture back-compat)", () => {
+    const r = loadLocomoDataset(RAW);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.length).toBe(1);
+  });
+  it("fails fast naming the offending index when a sample is malformed", () => {
+    const r = loadLocomoDataset([RAW, { not: "valid" }]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.message).toContain("sample 1");
+  });
+});
 
 describe("parseLocomoEvidence (D<sess>:<dia> -> session-qualified ref)", () => {
   it("returns the FULL session-qualified ref for each evidence string (WR-02)", () => {

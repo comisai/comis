@@ -271,3 +271,29 @@ export function loadLocomo(raw: unknown): Result<LocomoParsed, Error> {
 
   return ok({ docs, qa });
 }
+
+/**
+ * Load a FULL LoCoMo dataset (BENCH-01, full-set half). The public `locomo10.json` is
+ * an ARRAY of samples; a single sample object is also accepted (back-compat with the
+ * vendored single-sample fixture). Each sample is parsed by {@link loadLocomo}.
+ *
+ * Each sample is an INDEPENDENT conversation — the harness ingests each into its OWN
+ * store. Merging samples would cross-pollinate distractors the benchmark never
+ * intended (breaking comparability), so this loader only SEPARATES the samples;
+ * per-sample isolation is the harness's job.
+ *
+ * Fail-fast: a malformed sample returns `err` NAMING its index. TOTAL over untrusted
+ * input (never throws): defers every field check to the per-sample parser.
+ */
+export function loadLocomoDataset(raw: unknown): Result<LocomoParsed[], Error> {
+  const samples = Array.isArray(raw) ? raw : [raw];
+  const out: LocomoParsed[] = [];
+  for (let i = 0; i < samples.length; i++) {
+    const parsed = loadLocomo(samples[i]);
+    if (!parsed.ok) {
+      return err(new Error(`LoCoMo sample ${i}: ${parsed.error.message}`));
+    }
+    out.push(parsed.value);
+  }
+  return ok(out);
+}

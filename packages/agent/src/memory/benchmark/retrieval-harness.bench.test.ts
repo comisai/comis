@@ -59,8 +59,8 @@ import { scoreRanking } from "../recall-eval.js";
 import type { EvalQuery } from "../__fixtures__/recall-eval-fixtures.js";
 // RELATIVE Plan 01 loaders + gold-map (consumed verbatim — NO field-rename, NO
 // questionId synthesis in the harness; the loaders own those).
-import { loadLongMemEval } from "./longmemeval-loader.js";
-import { loadLocomo } from "./locomo-loader.js";
+import { loadLongMemEvalDataset } from "./longmemeval-loader.js";
+import { loadLocomoDataset } from "./locomo-loader.js";
 import { buildGoldMap } from "./gold-map.js";
 // RELATIVE Plan 02 analyzer (the optional quality-view tie-in, step 8).
 import { analyzeRecallTrace } from "./recall-trace-analyzer.js";
@@ -152,19 +152,23 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
   let traceFile = "";
 
   beforeAll(async () => {
-    // 1. DATASETS — tiny vendored fixtures by default; full operator haystack when set.
-    const lmeResult = loadLongMemEval(
+    // 1. DATASETS — FULL arrays (the public sets); a single-object vendored fixture
+    //    is accepted as a one-element array. Each item/sample is an INDEPENDENT
+    //    (haystack, question) pair and is ingested into ITS OWN store below (the
+    //    standard protocol — merging haystacks across items would add cross-item
+    //    distractor noise the benchmark never intended, breaking comparability).
+    const lmeResult = loadLongMemEvalDataset(
       readDataset("./__fixtures__/longmemeval-sample.json", "longmemeval.json"),
     );
-    expect(lmeResult.ok, "LongMemEval fixture parses").toBe(true);
-    const locomoResult = loadLocomo(
+    expect(lmeResult.ok, "LongMemEval dataset parses").toBe(true);
+    const locomoResult = loadLocomoDataset(
       readDataset("./__fixtures__/locomo-sample.json", "locomo.json"),
     );
-    expect(locomoResult.ok, "LoCoMo fixture parses").toBe(true);
+    expect(locomoResult.ok, "LoCoMo dataset parses").toBe(true);
     if (!lmeResult.ok || !locomoResult.ok) return;
-    const lme = lmeResult.value;
-    const locomo = locomoResult.value;
-    locomoQuestionIds = new Set(locomo.qa.map((q) => q.questionId));
+    const lmeItems = lmeResult.value;
+    const locomoItems = locomoResult.value;
+    locomoQuestionIds = new Set(locomoItems.flatMap((s) => s.qa.map((q) => q.questionId)));
 
     // 2. EMBEDDING PROVIDER — only when LLAMA_MODEL_PATH is set; else honest FTS-only
     // (dims=4, no 2nd ctor arg -> the vector lane does not contribute; A6).
@@ -178,80 +182,10 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
       if (embed.ok) dims = embed.value.dimensions;
     }
 
-    // 3. REAL STORE — a fresh tmp DB (NOT ~/.comis). 2nd ctor arg present only when the
-    // embedding provider built -> the vector lane contributes; omitted -> FTS-only.
+    // 3. SHARED providers — built ONCE and reused across every per-item store. The
+    // recall-trace is ONE JSONL accumulating all items' recalls (the analyzer folds it
+    // whole). createRecallTrace returns null when COMIS_DISABLE_RECALL_TRACE=1 -> null-check.
     const dir = mkdtempSync(join(tmpdir(), "comis-bench-"));
-    const adapter = new SqliteMemoryAdapter(
-      makeBenchConfig(join(dir, "bench.db"), dims),
-      embed?.ok ? embed.value : undefined,
-    );
-
-    // 4. INGEST (Patterns B + C) + record the datasetRef -> uuid side-map BEFORE
-    // buildGoldMap, so the gold map resolves to REAL ingested ids (Pitfall 6 / Blocker-3).
-    //   - LongMemEval: key by doc.sessionId (gold refs = answer_session_ids, same form).
-    //   - LoCoMo: key by the SESSION-QUALIFIED dia ref (doc.diaIds, the full
-    //     "D<sess>:<dia>" form), the SAME form the loader emits for
-    //     qa[].goldDiaIds. Keying on the bare dia index would let two sessions
-    //     sharing an index silently overwrite each other and zero a lane (WR-02);
-    //     the full ref is unique by construction so both sides key identically.
-    const ingestedIdByRef = new Map<string, string>();
-
-    for (const doc of lme.docs) {
-      const id = randomUUID(); // NEVER the dataset ref (z.guid() rejects "session_0002")
-      const stored = await adapter.store({
-        id,
-        tenantId: "default",
-        agentId: "bench",
-        userId: "user_a",
-        content: doc.content,
-        trustLevel: "learned",
-        source: { who: "bench" },
-        tags: ["bench"],
-        createdAt: doc.createdAt,
-      });
-      expect(stored.ok, "LongMemEval doc stored").toBe(true);
-      ingestedIdByRef.set(doc.sessionId, id);
-    }
-
-    for (const doc of locomo.docs) {
-      const id = randomUUID();
-      const stored = await adapter.store({
-        id,
-        tenantId: "default",
-        agentId: "bench",
-        userId: "user_a",
-        content: doc.content,
-        trustLevel: "learned",
-        source: { who: "bench" },
-        tags: ["bench"],
-        createdAt: doc.createdAt,
-      });
-      expect(stored.ok, "LoCoMo doc stored").toBe(true);
-      // Key on the full session-qualified dia ref ("D2:3") verbatim — the SAME
-      // form the loader emits for qa[].goldDiaIds, so the buildGoldMap lookup
-      // resolves (see comment above; WR-02).
-      for (const ref of doc.diaIds) {
-        ingestedIdByRef.set(ref, id);
-      }
-    }
-
-    // GOLD REFS (entirely loader-provided — the harness synthesizes NOTHING):
-    //   - LongMemEval: questionId -> Set<sessionId> from answerSessionIdsByQuestion.
-    //   - LoCoMo: questionId (the loader already synthesized it over the pre-filter
-    //     index per 88-01 Task 2) -> goldDiaIds. The harness reads qa.questionId
-    //     verbatim and never re-derives it from sample_id + the qa index.
-    const loaderGoldRefs = new Map<string, Set<string>>();
-    for (const [questionId, sessionIds] of lme.answerSessionIdsByQuestion) {
-      loaderGoldRefs.set(questionId, new Set(sessionIds));
-    }
-    for (const qa of locomo.qa) {
-      loaderGoldRefs.set(qa.questionId, new Set(qa.goldDiaIds));
-    }
-    const goldByQuestion = buildGoldMap(loaderGoldRefs, ingestedIdByRef);
-
-    // 5. LIVE RECALL — inject a tmp-filePath recall-trace so the analyzer tie-in reads a
-    // deterministic, isolated artifact (NOT the daemon-wide ~/.comis file; Open-Q2).
-    // createRecallTrace returns null when COMIS_DISABLE_RECALL_TRACE=1 -> null-check.
     traceFile = join(dir, "bench-recall-trace.jsonl");
     const trace = createRecallTrace({
       enabled: true,
@@ -259,7 +193,6 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
       agentId: "bench",
       sessionId: "bench",
     });
-
     const reranker =
       LLAMA_RERANKER_MODEL_PATH !== undefined && LLAMA_RERANKER_MODEL_PATH.length > 0
         ? await createLocalRerankerProvider({
@@ -270,46 +203,125 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
         : undefined;
     const rerankerPort = reranker?.ok ? reranker.value : undefined;
 
-    const recall = createMemoryRecall(
-      {
-        memoryPort: adapter,
-        clock: createFakeClock(BENCH_NOW),
-        timers: createFakeTimers(BENCH_NOW),
-        logger: createMockLogger(),
-        ...(rerankerPort ? { reranker: rerankerPort } : {}),
-        ...(trace ? { recallTrace: trace } : {}),
-      } as MemoryRecallDeps,
-      {
-        maxResults: 10,
-        minScore: 0,
-        includeTrustLevels: ["learned", "system"],
-        rerank: { enabled: !!rerankerPort, maxCandidates: 20, minResults: 2, timeoutMs: 5000 },
-        // alphas 0 -> clean recall@k (no recency/temporal/proof/trust boost noise).
-        scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
-      },
-    );
+    // A fresh recall pipeline bound to ONE item's store (alphas 0 -> clean recall@k;
+    // shares the embed/reranker/trace). Re-created per item because it binds the adapter.
+    const makeRecall = (port: SqliteMemoryAdapter) =>
+      createMemoryRecall(
+        {
+          memoryPort: port,
+          clock: createFakeClock(BENCH_NOW),
+          timers: createFakeTimers(BENCH_NOW),
+          logger: createMockLogger(),
+          ...(rerankerPort ? { reranker: rerankerPort } : {}),
+          ...(trace ? { recallTrace: trace } : {}),
+        } as MemoryRecallDeps,
+        {
+          maxResults: 10,
+          minScore: 0,
+          includeTrustLevels: ["learned", "system"],
+          rerank: { enabled: !!rerankerPort, maxCandidates: 20, minResults: 2, timeoutMs: 5000 },
+          scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
+        },
+      );
 
-    // 6. ONE explicit unified question list. Both shapes carry { questionId, query }
-    // (LongMemEval LongMemEvalParsed.questions[]; LoCoMo LocomoParsed.qa[] after 88-01's
-    // question->query rename), so reading q.query is uniform across BOTH datasets.
-    const questions = [...lme.questions, ...locomo.qa];
-    for (const q of questions) {
-      const r = await recall.recall(q.query, BENCH_SESSION_KEY);
-      // Memoize by the UNIQUE questionId (collision-proof; see rankedByQuestion comment).
-      rankedByQuestion.set(q.questionId, r.ok ? r.value : []);
-      queries.push({
-        group: "reranking",
-        query: q.query,
-        candidates: [], // unused by scoreRanking (the rankFn is supplied)
-        relevantIds: [...(goldByQuestion.get(q.questionId) ?? new Set<string>())],
-        questionId: q.questionId,
-      });
+    // 4. Recall every question of ONE item against ITS store, resolving gold through
+    // that item's OWN datasetRef -> uuid side-map. Gold refs (sessionId / "D<sess>:<dia>")
+    // are unique only WITHIN an item, so buildGoldMap MUST run per item (WR-02 — a global
+    // map would let two items' identical refs collide and zero a lane). The questionIds
+    // are globally unique, so memoizing/accumulating across items is collision-proof.
+    const recallItem = async (
+      port: SqliteMemoryAdapter,
+      questions: Array<{ questionId: string; query: string }>,
+      goldRefsByQuestion: Map<string, Set<string>>,
+      ingestedIdByRef: Map<string, string>,
+    ): Promise<void> => {
+      const recall = makeRecall(port);
+      const goldByQuestion = buildGoldMap(goldRefsByQuestion, ingestedIdByRef);
+      for (const q of questions) {
+        const r = await recall.recall(q.query, BENCH_SESSION_KEY);
+        rankedByQuestion.set(q.questionId, r.ok ? r.value : []);
+        queries.push({
+          group: "reranking",
+          query: q.query,
+          candidates: [], // unused by scoreRanking (the rankFn is supplied)
+          relevantIds: [...(goldByQuestion.get(q.questionId) ?? new Set<string>())],
+          questionId: q.questionId,
+        });
+      }
+    };
+
+    let storeIdx = 0;
+    // 5a. LongMemEval items — each an INDEPENDENT store (fresh tmp DB, ingest its OWN
+    // haystack, key the side-map on doc.sessionId = the answer_session_ids gold form).
+    // A fresh randomUUID per doc (NEVER the dataset ref — z.guid() rejects "session_0002").
+    for (const lme of lmeItems) {
+      const adapter = new SqliteMemoryAdapter(
+        makeBenchConfig(join(dir, `lme-${storeIdx++}.db`), dims),
+        embed?.ok ? embed.value : undefined,
+      );
+      const ingestedIdByRef = new Map<string, string>();
+      for (const doc of lme.docs) {
+        const id = randomUUID();
+        const stored = await adapter.store({
+          id,
+          tenantId: "default",
+          agentId: "bench",
+          userId: "user_a",
+          content: doc.content,
+          trustLevel: "learned",
+          source: { who: "bench" },
+          tags: ["bench"],
+          createdAt: doc.createdAt,
+        });
+        expect(stored.ok, "LongMemEval doc stored").toBe(true);
+        ingestedIdByRef.set(doc.sessionId, id);
+      }
+      const goldRefs = new Map<string, Set<string>>();
+      for (const [questionId, sessionIds] of lme.answerSessionIdsByQuestion) {
+        goldRefs.set(questionId, new Set(sessionIds));
+      }
+      await recallItem(adapter, lme.questions, goldRefs, ingestedIdByRef);
+      adapter.close();
+    }
+
+    // 5b. LoCoMo samples — each an INDEPENDENT store. Key the side-map on the FULL
+    // session-qualified dia ref ("D2:3") verbatim — the SAME form the loader emits for
+    // qa[].goldDiaIds, so buildGoldMap resolves (WR-02).
+    for (const locomo of locomoItems) {
+      const adapter = new SqliteMemoryAdapter(
+        makeBenchConfig(join(dir, `locomo-${storeIdx++}.db`), dims),
+        embed?.ok ? embed.value : undefined,
+      );
+      const ingestedIdByRef = new Map<string, string>();
+      for (const doc of locomo.docs) {
+        const id = randomUUID();
+        const stored = await adapter.store({
+          id,
+          tenantId: "default",
+          agentId: "bench",
+          userId: "user_a",
+          content: doc.content,
+          trustLevel: "learned",
+          source: { who: "bench" },
+          tags: ["bench"],
+          createdAt: doc.createdAt,
+        });
+        expect(stored.ok, "LoCoMo doc stored").toBe(true);
+        for (const ref of doc.diaIds) {
+          ingestedIdByRef.set(ref, id);
+        }
+      }
+      const goldRefs = new Map<string, Set<string>>();
+      for (const qa of locomo.qa) {
+        goldRefs.set(qa.questionId, new Set(qa.goldDiaIds));
+      }
+      await recallItem(adapter, locomo.qa, goldRefs, ingestedIdByRef);
+      adapter.close();
     }
 
     // Flush the recall-trace so the analyzer tie-in can read a complete JSONL.
     await trace?.flushAndClose?.();
     await rerankerPort?.dispose?.();
-    adapter.close();
   }, 120_000);
 
   // The sync rankFn reads the same questionId memo (the closure keys on questionId).

@@ -10,6 +10,7 @@
 .env.*
 !.env.example
 !.env.docker.example
+scripts/bench-memory.env
 
 # Comis-specific ignores
 node_modules/

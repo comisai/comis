@@ -218,3 +218,32 @@ export function loadLongMemEval(raw: unknown): Result<LongMemEvalParsed, Error> 
     answerSessionIdsByQuestion,
   });
 }
+
+/**
+ * Load a FULL LongMemEval dataset (BENCH-01, full-set half). The public file is an
+ * ARRAY of question items; a single item object is also accepted (back-compat with
+ * the vendored single-item fixture). Each item is parsed by {@link loadLongMemEval}.
+ *
+ * Each item is an INDEPENDENT `(haystack, question)` pair — the harness ingests each
+ * into its OWN store (the standard LongMemEval protocol). Merging haystacks across
+ * items would add cross-item distractor noise the benchmark never intended, inflating
+ * difficulty and breaking comparability with published numbers — so this loader only
+ * SEPARATES the items; per-item isolation is the harness's job.
+ *
+ * Fail-fast: a malformed item returns `err` NAMING its index (an operator fixes the
+ * data rather than silently benchmarking on a subset — a silently-dropped item would
+ * over/under-state the published number). TOTAL over untrusted input (never throws):
+ * defers every field check to the per-item parser.
+ */
+export function loadLongMemEvalDataset(raw: unknown): Result<LongMemEvalParsed[], Error> {
+  const items = Array.isArray(raw) ? raw : [raw];
+  const out: LongMemEvalParsed[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const parsed = loadLongMemEval(items[i]);
+    if (!parsed.ok) {
+      return err(new Error(`LongMemEval item ${i}: ${parsed.error.message}`));
+    }
+    out.push(parsed.value);
+  }
+  return ok(out);
+}

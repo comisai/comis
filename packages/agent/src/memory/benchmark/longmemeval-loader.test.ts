@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
   loadLongMemEval,
+  loadLongMemEvalDataset,
   stripHasAnswer,
   parseHaystackDate,
 } from "./longmemeval-loader.js";
@@ -25,6 +26,24 @@ const fixtureDir = dirname(fileURLToPath(import.meta.url));
 const RAW = JSON.parse(
   readFileSync(join(fixtureDir, "__fixtures__", "longmemeval-sample.json"), "utf8"),
 ) as unknown;
+
+describe("loadLongMemEvalDataset (full-dataset per-item iteration)", () => {
+  it("parses an ARRAY of items into one parsed result per item", () => {
+    const r = loadLongMemEvalDataset([RAW, RAW]);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.length).toBe(2);
+  });
+  it("accepts a SINGLE item object as a one-element array (fixture back-compat)", () => {
+    const r = loadLongMemEvalDataset(RAW);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.length).toBe(1);
+  });
+  it("fails fast naming the offending index when an item is malformed", () => {
+    const r = loadLongMemEvalDataset([RAW, { not: "a valid item" }]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.message).toContain("item 1");
+  });
+});
 
 describe("loadLongMemEval (eval-integrity: no has_answer leakage)", () => {
   it("emits documents whose content never contains the substring has_answer", () => {
