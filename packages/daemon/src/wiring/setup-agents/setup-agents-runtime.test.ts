@@ -416,3 +416,74 @@ describe("setupSingleAgent recall-trace config wiring (OBS-02)", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 92: per-agent effective rag.rerank.enabled precedence (RERANK-01) +
+// the modelPresent threading daemon -> registry -> types -> runtime (Pitfall 4).
+// ---------------------------------------------------------------------------
+
+describe("setupSingleAgent rerank auto-on precedence (RERANK-01)", () => {
+  const source = readRuntimeSource();
+  const typesSource = readFileSync(
+    join(__dirname, "setup-agents-types.ts"),
+    "utf-8",
+  );
+  const registrySource = readFileSync(
+    join(__dirname, "setup-agents-registry.ts"),
+    "utf-8",
+  );
+  // The composition root threads the SAME modelPresent boolean setup-memory
+  // computed; daemon.ts wires it into the setupAgents call.
+  const daemonSource = readFileSync(
+    join(__dirname, "..", "..", "daemon.ts"),
+    "utf-8",
+  );
+
+  it("imports resolveEffectiveRerank from ./setup-agents-tooling.js", () => {
+    // The pure precedence fn lives beside its sibling resolveAgentModel (Plan 01).
+    expect(source).toMatch(
+      /import\s*\{[^}]*resolveEffectiveRerank[^}]*\}\s*from\s*"\.\/setup-agents-tooling\.js"/s,
+    );
+  });
+
+  it("computes effectiveConfig.rag.rerank.enabled via resolveEffectiveRerank (spread preserves siblings)", () => {
+    const fnStart = source.indexOf("export async function setupSingleAgent(");
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnBody = source.slice(fnStart);
+    // The rag spread must nest correctly so maxCandidates/minResults/timeoutMs
+    // survive and only `enabled` is overridden by the precedence call.
+    expect(fnBody).toContain(
+      "rerank: { ...agentConfig.rag.rerank, enabled: resolveEffectiveRerank(",
+    );
+  });
+
+  it("reads the explicit signal from the RAW pre-parse config, NOT the zod-defaulted parse (Pitfall 1)", () => {
+    const fnStart = source.indexOf("export async function setupSingleAgent(");
+    const fnBody = source.slice(fnStart);
+    // RawAgentConfig.rag?.rerank?.enabled is `undefined` when unset; the parsed
+    // agentConfig.rag.rerank.enabled is ALWAYS a concrete boolean (.default(false)),
+    // which would erase the unset signal and never auto-on. Must read raw.
+    expect(fnBody).toContain("rawAgentConfig.rag?.rerank?.enabled");
+    // And it feeds the threaded modelPresent (deps.rerankerModelPresent).
+    const callStart = fnBody.indexOf("enabled: resolveEffectiveRerank(");
+    const callSlice = fnBody.slice(callStart, callStart + 140);
+    expect(callSlice).toContain("rawAgentConfig.rag?.rerank?.enabled");
+    expect(callSlice).toContain("deps.rerankerModelPresent");
+  });
+
+  it("still writes the effective config back to container.config.agents[agentId] (downstream contract)", () => {
+    // The precedence must flow through the EXISTING write-back, not mutate
+    // agentConfig in place — downstream consumers read container.config.agents.
+    expect(source).toContain("container.config.agents[agentId] = effectiveConfig");
+  });
+
+  it("threads rerankerModelPresent through SingleAgentDeps, AgentsArgs, the build literal, and daemon.ts (Pitfall 4: one source)", () => {
+    // SingleAgentDeps interface carries it (beside rerankerPort).
+    expect(typesSource).toContain("rerankerModelPresent");
+    // AgentsArgs carries it AND the SingleAgentDeps build literal forwards it.
+    expect(registrySource).toContain("rerankerModelPresent");
+    expect(registrySource).toContain("rerankerModelPresent: deps.rerankerModelPresent");
+    // daemon.ts destructures it off the setupMemory result AND passes it to setupAgents.
+    expect(daemonSource).toContain("rerankerModelPresent");
+  });
+});
