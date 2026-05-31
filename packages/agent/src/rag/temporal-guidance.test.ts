@@ -38,11 +38,14 @@ function makeResult(id: string, content: string): MemorySearchResult {
 
 const PHRASES = [
   "## Using these memories over time",
-  "most recently RECORDED one is authoritative",
+  // Trust-FIRST (CONTRA-01): the higher-trust memory wins a conflict even when it is OLDER.
+  "the higher-TRUST memory wins even if older",
+  "a [system] memory outranks a [learned] or [external] one even if older",
+  // Recency is SECONDARY — only a tie-break among equal-trust memories.
+  "among equal-trust memories, the most recently RECORDED one wins",
   "do NOT average or sum",
   "order by when events OCCURRED",
   "say so rather than guess",
-  "a [system] memory outranks a [learned] one",
 ];
 
 describe("buildTemporalGuidanceBlock — read-time §7.3 contradiction guidance", () => {
