@@ -35,6 +35,12 @@ export type { OpenAIEmbeddingProviderOptions } from "./embedding-provider-openai
 export { createLocalRerankerProvider } from "./reranker-provider-local.js";
 export type { LocalRerankerProviderOptions } from "./reranker-provider-local.js";
 
+// No-download reranker model-presence probe (Phase 92, RERANK-01/RERANK-02).
+// resolveModelFile({ download: false }) + existsSync; never the SOLE download
+// site (createLocalRerankerProvider stays that). The daemon composition root
+// (Plan 02) consults it to drive the locally-gated default-on rerank decision.
+export { rerankerModelPresent } from "./reranker-model-present.js";
+
 // Entity-associative recall store (sole MemoryEntityStore impl; Phase 83).
 // Owns the resolve/link write path + the scoped one-hop self-join read lane.
 // The daemon (Plan 05) constructs it on the memory adapter's db handle; the
