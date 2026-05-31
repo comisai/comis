@@ -77,6 +77,11 @@ const mockCreateSqliteMemoryConsolidationStore = vi.hoisted(() => vi.fn(() => ({
   listConsolidationCandidates: vi.fn(async () => ({ ok: true, value: [] })),
   listObservations: vi.fn(async () => ({ ok: true, value: [] })),
   applyConsolidation: vi.fn(async () => ({ ok: true, value: undefined })),
+  // Phase 94 (FOLD-01): the port gained foldIntoExisting; without this stub the
+  // mock no longer satisfies the MemoryConsolidationStore surface and every
+  // setupMemory test that touches the store throws `foldIntoExisting is not a
+  // function` (the MEMORY.md "setup-memory mock" gate).
+  foldIntoExisting: vi.fn(async () => ({ ok: true, value: undefined })),
 })));
 // Usefulness store factory (Phase 93, FEED-02) — mocked so setup wires it without a real
 // DB. setupMemory builds this on the shared db handle (mirror the entity + consolidation

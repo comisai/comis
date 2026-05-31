@@ -466,6 +466,458 @@ describe("createSqliteMemoryConsolidationStore", () => {
   });
 
   // =====================================================================
+  // Task 2 (Phase 94) — foldIntoExisting (the proof-accrual dual of
+  // applyConsolidation): grow an EXISTING observation atomically + idempotently
+  // instead of creating a second one (FOLD-01/02). The load-bearing invariants:
+  //   - GROW: proof_count → |UNION(existing.source_ids, newSourceIds)|, source_ids
+  //     UNIONed, content/history appended on a content-changing fold, sources marked.
+  //   - IDEMPOTENT (FOLD-02): re-folding the same/overlapping sources is a no-op
+  //     (set-cardinality recompute, NEVER a blind +=).
+  //   - TRUST VERBATIM (anti-laundering): the adapter writes plan.trustLevel
+  //     exactly — a fold can never RAISE trust (the min ceiling is computed in 94-02).
+  //   - REFRESH (half-life): occurred_at + confidence are reset on a fold.
+  //   - CONTENT COALESCE: content omitted → unchanged (no FTS churn); new content → updated.
+  //   - ATOMIC ROLLBACK: a mid-fold throw rolls back BOTH the grow and the marks (err, never throws).
+  //   - SCOPE: a cross-tenant / missing target → err, nothing mutated.
+  //   - NON-DESTRUCTIVE: a fold creates NO new row (memoriesCount unchanged) + deletes nothing.
+  // =====================================================================
+
+  describe("foldIntoExisting", () => {
+    /** Read proof_count for an observation id. */
+    function proofCountOf(id: string): number | null {
+      const row = db.prepare("SELECT proof_count FROM memories WHERE id = ?").get(id) as
+        | { proof_count: number | null }
+        | undefined;
+      return row ? row.proof_count : null;
+    }
+
+    /** Read + parse the JSON source_ids column for an id. */
+    function sourceIdsOf(id: string): string[] | null {
+      const row = db.prepare("SELECT source_ids FROM memories WHERE id = ?").get(id) as
+        | { source_ids: string | null }
+        | undefined;
+      if (!row || row.source_ids === null) return null;
+      return JSON.parse(row.source_ids) as string[];
+    }
+
+    /** Read trust_level for an id. */
+    function trustLevelOf(id: string): string | undefined {
+      const row = db.prepare("SELECT trust_level FROM memories WHERE id = ?").get(id) as
+        | { trust_level: string }
+        | undefined;
+      return row?.trust_level;
+    }
+
+    /** Read occurred_at for an id. */
+    function occurredAtOf(id: string): number | null {
+      const row = db.prepare("SELECT occurred_at FROM memories WHERE id = ?").get(id) as
+        | { occurred_at: number | null }
+        | undefined;
+      return row ? row.occurred_at : null;
+    }
+
+    /** Read confidence for an id. */
+    function confidenceOf(id: string): number | null {
+      const row = db.prepare("SELECT confidence FROM memories WHERE id = ?").get(id) as
+        | { confidence: number | null }
+        | undefined;
+      return row ? row.confidence : null;
+    }
+
+    /** Read + parse the JSON history column for an id. */
+    function historyOf(id: string): { previousContent: string; changedAt: number }[] {
+      const row = db.prepare("SELECT history FROM memories WHERE id = ?").get(id) as
+        | { history: string | null }
+        | undefined;
+      if (!row || row.history === null) return [];
+      return JSON.parse(row.history) as { previousContent: string; changedAt: number }[];
+    }
+
+    /**
+     * Seed an EXISTING observation (proof_count IS NOT NULL) directly via the
+     * production store path, then seed its source rows. Returns the observation
+     * id. The observation's own id is its row id; source_ids point at the seeded
+     * raws.
+     */
+    async function seedObservation(
+      sourceIds: string[],
+      overrides: Partial<MemoryEntry> = {},
+    ): Promise<string> {
+      return seedMemory({
+        content: overrides.content ?? "an observation",
+        createdAt: overrides.createdAt ?? 2_000,
+        proofCount: overrides.proofCount ?? sourceIds.length,
+        sourceIds,
+        confidence: overrides.confidence ?? 0.9,
+        ...(overrides.occurredAt !== undefined ? { occurredAt: overrides.occurredAt } : {}),
+        ...(overrides.trustLevel !== undefined ? { trustLevel: overrides.trustLevel } : {}),
+        ...overrides,
+      });
+    }
+
+    it("RED 1 (GROW): folding a new source grows proof_count, UNIONs source_ids, marks the new source consolidated_at", async () => {
+      const s1 = crypto.randomUUID();
+      const s2 = crypto.randomUUID();
+      const obs = await seedObservation([s1, s2], { proofCount: 2 });
+      const s3 = await seedMemory({ content: "new corroborating source", createdAt: 300 });
+
+      const res = await store.foldIntoExisting({
+        targetObservationId: obs,
+        newSourceIds: [s3],
+        trustLevel: "learned",
+        confidence: 1,
+        occurredAt: 9_000,
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+
+      // proof_count grew to the UNION cardinality (3), source_ids UNIONed.
+      expect(proofCountOf(obs)).toBe(3);
+      expect(sourceIdsOf(obs)).toEqual([s1, s2, s3]);
+      // The new source is marked consolidated_at == now (folded in atomically).
+      expect(consolidatedAtOf(s3)).toBe(5_000);
+      // The returned grown entry reflects the DB state.
+      expect(res.value.id).toBe(obs);
+      expect(res.value.proofCount).toBe(3);
+      expect(res.value.sourceIds).toEqual([s1, s2, s3]);
+    });
+
+    it("RED 2 (IDEMPOTENT, FOLD-02): re-folding the SAME source is a no-op — proof_count UNCHANGED (set-cardinality, never blind +=)", async () => {
+      const s1 = crypto.randomUUID();
+      const s2 = crypto.randomUUID();
+      const obs = await seedObservation([s1, s2], { proofCount: 2 });
+      const s3 = await seedMemory({ content: "source three", createdAt: 300 });
+
+      const plan = {
+        targetObservationId: obs,
+        newSourceIds: [s3],
+        trustLevel: "learned" as const,
+        confidence: 1,
+        occurredAt: 9_000,
+        tenantId: TENANT_A,
+        now: 5_000,
+      };
+      // First fold grows to 3.
+      expect((await store.foldIntoExisting(plan)).ok).toBe(true);
+      expect(proofCountOf(obs)).toBe(3);
+      expect(sourceIdsOf(obs)).toEqual([s1, s2, s3]);
+
+      // Re-fold the SAME source — a blind += would bump to 4; the union recompute
+      // keeps it at 3 (s3 is already present).
+      expect((await store.foldIntoExisting(plan)).ok).toBe(true);
+      expect(proofCountOf(obs)).toBe(3);
+      expect(sourceIdsOf(obs)).toEqual([s1, s2, s3]);
+    });
+
+    it("RED 2b (IDEMPOTENT overlap): folding [s2, s3] where s2 is already present grows by ONE — union cardinality", async () => {
+      const s1 = crypto.randomUUID();
+      const s2 = crypto.randomUUID();
+      const obs = await seedObservation([s1, s2], { proofCount: 2 });
+      const s3 = await seedMemory({ content: "source three", createdAt: 300 });
+
+      const res = await store.foldIntoExisting({
+        targetObservationId: obs,
+        newSourceIds: [s2, s3], // s2 overlaps the existing set
+        trustLevel: "learned",
+        confidence: 1,
+        occurredAt: 9_000,
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(res.ok).toBe(true);
+      // |UNION([s1,s2],[s2,s3])| = |{s1,s2,s3}| = 3, NOT 4.
+      expect(proofCountOf(obs)).toBe(3);
+      expect(sourceIdsOf(obs)).toEqual([s1, s2, s3]);
+    });
+
+    it("RED 3 (TRUST VERBATIM, anti-laundering): the adapter writes plan.trustLevel exactly — a learned plan into a system observation NEVER raises trust", async () => {
+      const s1 = crypto.randomUUID();
+      const obs = await seedObservation([s1], { proofCount: 1, trustLevel: "system" });
+      const s2 = await seedMemory({ content: "low-trust source", createdAt: 300, trustLevel: "external" });
+
+      // The job computed min(system, external) = external; here prove the adapter
+      // writes what it is handed (it never RAISES). We hand it "learned" and assert
+      // it lands verbatim — never the higher "system".
+      const res = await store.foldIntoExisting({
+        targetObservationId: obs,
+        newSourceIds: [s2],
+        trustLevel: "learned",
+        confidence: 1,
+        occurredAt: 9_000,
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(res.ok).toBe(true);
+      expect(trustLevelOf(obs)).toBe("learned"); // written verbatim, never raised to "system"
+    });
+
+    it("RED 4 (REFRESH, half-life): a fold resets occurred_at + confidence so the decay clock restarts", async () => {
+      const s1 = crypto.randomUUID();
+      const obs = await seedObservation([s1], {
+        proofCount: 1,
+        occurredAt: 1_000, // OLD event time
+        confidence: 0.5, // decayed
+      });
+      const s2 = await seedMemory({ content: "fresh source", createdAt: 300 });
+
+      const res = await store.foldIntoExisting({
+        targetObservationId: obs,
+        newSourceIds: [s2],
+        trustLevel: "learned",
+        confidence: 1, // refreshed
+        occurredAt: 99_000, // newer event time
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(res.ok).toBe(true);
+      expect(occurredAtOf(obs)).toBe(99_000);
+      expect(confidenceOf(obs)).toBe(1);
+    });
+
+    it("RED 5 (CONTENT COALESCE — omit): folding with content omitted leaves content unchanged and appends NO history (no FTS churn)", async () => {
+      const s1 = crypto.randomUUID();
+      const obs = await seedObservation([s1], { proofCount: 1, content: "original observation text" });
+      const s2 = await seedMemory({ content: "another source", createdAt: 300 });
+
+      const res = await store.foldIntoExisting({
+        targetObservationId: obs,
+        newSourceIds: [s2],
+        trustLevel: "learned",
+        confidence: 1,
+        occurredAt: 9_000,
+        tenantId: TENANT_A,
+        now: 5_000,
+        // content omitted
+      });
+      expect(res.ok).toBe(true);
+      expect(contentOf(obs)).toBe("original observation text"); // unchanged
+      expect(historyOf(obs)).toHaveLength(0); // proof-only fold appends no history
+    });
+
+    it("RED 5b (CONTENT COALESCE — provided): folding with new content updates content AND appends the prior content to history", async () => {
+      const s1 = crypto.randomUUID();
+      const obs = await seedObservation([s1], { proofCount: 1, content: "original observation text" });
+      const s2 = await seedMemory({ content: "re-summarized source", createdAt: 300 });
+
+      const res = await store.foldIntoExisting({
+        targetObservationId: obs,
+        newSourceIds: [s2],
+        trustLevel: "learned",
+        confidence: 1,
+        occurredAt: 9_000,
+        content: "re-summarized observation text",
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(res.ok).toBe(true);
+      expect(contentOf(obs)).toBe("re-summarized observation text");
+      const hist = historyOf(obs);
+      expect(hist).toHaveLength(1);
+      expect(hist[0]?.previousContent).toBe("original observation text");
+      expect(hist[0]?.changedAt).toBe(5_000); // plan.now (injected clock)
+    });
+
+    it("RED 6 (ATOMIC ROLLBACK): a source-mark throw mid-fold rolls back the grow — proof_count UNCHANGED, source unmarked, returns err (never throws)", async () => {
+      const s1 = crypto.randomUUID();
+      const obs = await seedObservation([s1, crypto.randomUUID()], { proofCount: 2 });
+      const s3 = await seedMemory({ content: "new source", createdAt: 300 });
+      const proofBefore = proofCountOf(obs);
+
+      // Monkeypatch db.prepare so the source-mark UPDATE throws on execution. This
+      // proves the observation GROW (which runs first) rolls back when the LATER
+      // inner write fails — i.e. both live in one transaction.
+      const realPrepare = db.prepare.bind(db);
+      const spy = (sql: string) => {
+        const stmt = realPrepare(sql);
+        if (/UPDATE memories SET consolidated_at/.test(sql)) {
+          return {
+            ...stmt,
+            run: () => {
+              throw new Error("injected source-mark failure");
+            },
+          } as unknown as ReturnType<typeof realPrepare>;
+        }
+        return stmt;
+      };
+      // @ts-expect-error -- test-only monkeypatch of the prepared-statement factory
+      db.prepare = spy;
+
+      try {
+        const spyStore = createSqliteMemoryConsolidationStore({ db });
+        const res = await spyStore.foldIntoExisting({
+          targetObservationId: obs,
+          newSourceIds: [s3],
+          trustLevel: "learned",
+          confidence: 1,
+          occurredAt: 9_000,
+          tenantId: TENANT_A,
+          now: 5_000,
+        });
+        expect(res.ok).toBe(false); // returns err, never throws
+      } finally {
+        db.prepare = realPrepare;
+      }
+
+      // ROLLBACK: the grow reverted (proof_count unchanged) and s3 was NOT marked.
+      expect(proofCountOf(obs)).toBe(proofBefore);
+      expect(consolidatedAtOf(s3)).toBeNull();
+      expect(rowExists(s3)).toBe(true); // the source itself is untouched
+    });
+
+    it("RED 7 (NON-DESTRUCTIVE): a fold creates NO new row and deletes nothing — memoriesCount unchanged", async () => {
+      const s1 = crypto.randomUUID();
+      const obs = await seedObservation([s1], { proofCount: 1 });
+      const s2 = await seedMemory({ content: "extra source", createdAt: 300 });
+      const before = memoriesCount();
+
+      const res = await store.foldIntoExisting({
+        targetObservationId: obs,
+        newSourceIds: [s2],
+        trustLevel: "learned",
+        confidence: 1,
+        occurredAt: 9_000,
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(res.ok).toBe(true);
+      // No new observation row created (a fold GROWS an existing one); nothing deleted.
+      expect(memoriesCount()).toBe(before);
+      expect(rowExists(obs)).toBe(true);
+      expect(rowExists(s2)).toBe(true);
+    });
+
+    it("RED 8 (SCOPE, fail-closed): a fold with a wrong tenantId misses the target → err, nothing mutated", async () => {
+      const s1 = crypto.randomUUID();
+      const obs = await seedObservation([s1], { proofCount: 1 });
+      const s2 = await seedMemory({ content: "cross-tenant fold source", createdAt: 300 });
+      const proofBefore = proofCountOf(obs);
+
+      const res = await store.foldIntoExisting({
+        targetObservationId: obs,
+        newSourceIds: [s2],
+        trustLevel: "learned",
+        confidence: 1,
+        occurredAt: 9_000,
+        tenantId: "tenant_b", // WRONG tenant — the target SELECT misses
+        now: 5_000,
+      });
+      expect(res.ok).toBe(false); // fold target not found in scope
+      // Nothing mutated: the observation's proof_count is unchanged, s2 not marked.
+      expect(proofCountOf(obs)).toBe(proofBefore);
+      expect(consolidatedAtOf(s2)).toBeNull();
+    });
+
+    it("RED 9 (target must be an observation): a fold targeting a RAW (proof_count NULL) row misses → err", async () => {
+      const raw = await seedMemory({ content: "a raw, not an observation", createdAt: 100 });
+      const s2 = await seedMemory({ content: "source", createdAt: 300 });
+
+      const res = await store.foldIntoExisting({
+        targetObservationId: raw, // proof_count IS NULL → not a fold target
+        newSourceIds: [s2],
+        trustLevel: "learned",
+        confidence: 1,
+        occurredAt: 9_000,
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(res.ok).toBe(false);
+      expect(consolidatedAtOf(s2)).toBeNull();
+    });
+
+    it("logs a step:'consolidation-fold' DEBUG on success", async () => {
+      const s1 = crypto.randomUUID();
+      const obs = await seedObservation([s1], { proofCount: 1 });
+      const s2 = await seedMemory({ content: "src", createdAt: 300 });
+      const warns: { obj: Record<string, unknown>; msg: string }[] = [];
+      const debugs: { obj: Record<string, unknown>; msg: string }[] = [];
+      const logger = {
+        info: () => {},
+        warn: (obj: Record<string, unknown>, msg: string) => warns.push({ obj, msg }),
+        debug: (obj: Record<string, unknown>, msg: string) => debugs.push({ obj, msg }),
+      };
+      const s = createSqliteMemoryConsolidationStore({ db, logger });
+      const r = await s.foldIntoExisting({
+        targetObservationId: obs,
+        newSourceIds: [s2],
+        trustLevel: "learned",
+        confidence: 1,
+        occurredAt: 9_000,
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(r.ok).toBe(true);
+      expect(debugs.some((d) => d.obj.step === "consolidation-fold")).toBe(true);
+    });
+
+    it("logs a step:'consolidation-fold' WARN on a transaction failure (never throws)", async () => {
+      const s1 = crypto.randomUUID();
+      const obs = await seedObservation([s1], { proofCount: 1 });
+      const s2 = await seedMemory({ content: "src", createdAt: 300 });
+      const warns: { obj: Record<string, unknown>; msg: string }[] = [];
+      const logger = {
+        info: () => {},
+        warn: (obj: Record<string, unknown>, msg: string) => warns.push({ obj, msg }),
+        debug: () => {},
+      };
+      const realPrepare = db.prepare.bind(db);
+      const spy = (sql: string) => {
+        const stmt = realPrepare(sql);
+        if (/UPDATE memories SET consolidated_at/.test(sql)) {
+          return {
+            ...stmt,
+            run: () => {
+              throw new Error("injected mark failure");
+            },
+          } as unknown as ReturnType<typeof realPrepare>;
+        }
+        return stmt;
+      };
+      // @ts-expect-error -- test-only monkeypatch of the prepared-statement factory
+      db.prepare = spy;
+      try {
+        const s = createSqliteMemoryConsolidationStore({ db, logger });
+        const r = await s.foldIntoExisting({
+          targetObservationId: obs,
+          newSourceIds: [s2],
+          trustLevel: "learned",
+          confidence: 1,
+          occurredAt: 9_000,
+          tenantId: TENANT_A,
+          now: 5_000,
+        });
+        expect(r.ok).toBe(false);
+        expect(warns.some((w) => w.obj.step === "consolidation-fold")).toBe(true);
+      } finally {
+        db.prepare = realPrepare;
+      }
+    });
+
+    it("does NOT regress the Phase-84 create path: applyConsolidation still creates a fresh observation", async () => {
+      const s1 = await seedMemory({ content: "source 1", createdAt: 100 });
+      const s2 = await seedMemory({ content: "source 2", createdAt: 200 });
+      const obs = makeEntry({
+        content: "created observation",
+        createdAt: 2_000,
+        proofCount: 2,
+        sourceIds: [s1, s2],
+        confidence: 0.9,
+      });
+      const before = memoriesCount();
+      const res = await store.applyConsolidation({
+        observation: obs,
+        markConsolidated: [s1, s2],
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(res.ok).toBe(true);
+      expect(memoriesCount()).toBe(before + 1); // create still adds a row
+      expect(proofCountOf(obs.id)).toBe(2);
+    });
+  });
+
+  // =====================================================================
   // Error paths — every read/apply degrades to err (NEVER throws), and the
   // canonical step-tagged WARN fires. Proves the Result boundary (T-84-01:
   // a damaged DB never crashes the consolidation cron) and covers the
