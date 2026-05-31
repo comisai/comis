@@ -31,6 +31,7 @@ import {
   TEMPORAL_TRUST_EVAL_FIXTURES,
   ENTITY_EVAL_FIXTURES,
   FEEDBACK_EVAL_FIXTURES,
+  PROOF_EVAL_FIXTURES,
   entityLane,
   usefulnessByIdFor,
   EVAL_NOW,
@@ -436,6 +437,74 @@ describe("recall-utility feedback lift (recall@1 over fusion baseline)", () => {
     // The existing RECALL_EVAL_FIXTURES carry no usefulness map → usefulnessByIdFor returns an
     // empty map → every factor 1.0 → no reorder. Feedback must leave the prior groups byte-stable.
     const report = compareRankings(RECALL_EVAL_FIXTURES, fusionFn, feedbackFn);
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
+    expect(report.mrrLift, JSON.stringify(report)).toBe(0);
+  });
+});
+
+// UNGATED proof-accrual lift (FOLD-03, the per-phase proof figure). The cross-run
+// corroboration scenario: a fact corroborated across MULTIPLE consolidation runs (a high
+// proofCount, freshly re-corroborated → recent occurredAt, confidence 1) is offered against a
+// ONE-OFF mention (a raw with no proofCount → neutral) carrying the HIGHER fusion score. Ranked
+// through the LIVE score() proof lever (proofAlpha>0, every other alpha 0; the CONS-08 proof log
+// curve × confidence half-life — score.ts UNCHANGED), the corroborated observation must be lifted
+// to rank 1 — accrued proof OUT-RANKS a one-off mention (HINDSIGHT_VS_COMIS.md N2 PARITY: the
+// fold path grows proof_count, and this proves the read side rewards it). Three guards prove the
+// gain is attributable to proofAlpha, not to the fixture:
+//   - proofAlpha:0 (proofCount present, weight 0) → proofFactor ≡ 1.0 → ZERO lift (the dual guard).
+//   - equal-proof — covered by the neutral guard: with the weight off the higher-base one-off stays
+//     at rank 1, so the lift is the proof boost's work, not a fixture that trivially favors the id.
+//   - the proof ranker over the EXISTING reranking group (no proofCount → proofNorm 0.5 → factor
+//     1.0) → ZERO lift / no regression.
+// Deterministic pure math (fixed-epoch EVAL_NOW; no model, no LLM judge) — runs in default
+// `pnpm test`. Mirrors the CONTRA-02 trust + FEED-04 feedback dual-guards above.
+describe("proof-accrual lift (recall@1 over fusion baseline)", () => {
+  // Phase-80 baseline: single-lane fuse() is order-preserving → fusion order = the
+  // candidates' base/score order (the higher-base one-off mention first by design).
+  const fusionFn = (q: EvalQuery): MemorySearchResult[] =>
+    fuse([{ results: q.candidates, weight: 1 }]);
+  // Proof boost ISOLATED: proofAlpha>0, every other alpha 0 — the only signal moving the ranking
+  // is the per-observation decayedProof (proofNorm log curve × confidence half-life over occurredAt,
+  // score.ts:166-198). The corroboration signal rides each candidate's entry (proofCount/confidence/
+  // occurredAt) — NOT a side map (unlike feedback) and NOT a new EvalQuery field (the cut stays clean).
+  const proofFn = (q: EvalQuery): MemorySearchResult[] =>
+    score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0.5, trustAlpha: 0, usefulnessAlpha: 0 }, EVAL_NOW);
+  // NEUTRAL guard: same score() path but proofAlpha 0 → proofFactor ≡ 1.0, so the boosted order
+  // collapses back to the base (= fusion) order. The gain is the WEIGHT's work, not the fixture's.
+  const neutralFn = (q: EvalQuery): MemorySearchResult[] =>
+    score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 }, EVAL_NOW);
+
+  it("carries a non-empty proof fixture group (all group 'proof')", () => {
+    expect(PROOF_EVAL_FIXTURES.length).toBeGreaterThan(0);
+    expect(PROOF_EVAL_FIXTURES.every((q) => q.group === "proof")).toBe(true);
+  });
+
+  it("lifts a cross-run-corroborated observation to recall@1 over the fusion baseline (proof out-ranks a one-off)", () => {
+    const report = compareRankings(PROOF_EVAL_FIXTURES, fusionFn, proofFn);
+    // Headroom: fusion ranks the higher-base one-off mention @1 (a no-op fixture that fusion already
+    // nailed would leave nothing to measure).
+    expect(report.baseline.recallAt1, JSON.stringify(report)).toBeLessThan(1);
+    // The FOLD-03 figure: the corroborated observation is rescued to rank 1 — accrued proof wins.
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBeGreaterThan(0);
+    // No regression: the proof boost never lowers recall@1 below fusion.
+    expect(report.reranked.recallAt1, JSON.stringify(report)).toBeGreaterThanOrEqual(
+      report.baseline.recallAt1,
+    );
+  });
+
+  it("yields ZERO lift at proofAlpha 0 (the gain is attributable to proof)", () => {
+    // The dual guard: with the proof signal off, score()'s remaining mechanics produce the fusion
+    // order → no lift. So the positive lift above is the proof boost's work, not a fixture that
+    // trivially favors the relevant id.
+    const report = compareRankings(PROOF_EVAL_FIXTURES, fusionFn, neutralFn);
+    expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
+    expect(report.mrrLift, JSON.stringify(report)).toBe(0);
+  });
+
+  it("does NOT disturb the existing reranking group (zero regression)", () => {
+    // The existing RECALL_EVAL_FIXTURES carry no proofCount → proofNorm 0.5 → every proof factor 1.0
+    // → no reorder. Proof-accrual must leave the prior groups byte-stable in ranking.
+    const report = compareRankings(RECALL_EVAL_FIXTURES, fusionFn, proofFn);
     expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
     expect(report.mrrLift, JSON.stringify(report)).toBe(0);
   });
