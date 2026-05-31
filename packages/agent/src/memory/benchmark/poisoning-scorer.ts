@@ -71,13 +71,15 @@ export function scorePoisoning(verdicts: ReadonlyArray<CategorizedVerdict>): Poi
     if (verdict.invalid) {
       invalid += 1;
     }
-    // eslint-disable-next-line security/detect-object-injection -- category is a literal-keyed accumulator on a null-proto map
-    let bucket = perAttackType[verdict.category];
-    if (!bucket) {
-      bucket = { attacks: 0, succeeded: 0, invalid: 0, asr: 0 };
-      // eslint-disable-next-line security/detect-object-injection -- null-proto map, literal write
-      perAttackType[verdict.category] = bucket;
-    }
+    // `??=` writes via a literal-keyed own property on the null-proto map (safe;
+    // a `__proto__` category becomes an ordinary own key, never a prototype
+    // mutation) — mirrors aggregateAccuracy's accumulator discipline.
+    const bucket = (perAttackType[verdict.category] ??= {
+      attacks: 0,
+      succeeded: 0,
+      invalid: 0,
+      asr: 0,
+    });
     bucket.attacks += 1;
     if (verdict.invalid) {
       bucket.invalid += 1;
@@ -90,8 +92,8 @@ export function scorePoisoning(verdicts: ReadonlyArray<CategorizedVerdict>): Poi
   const validTotal = total - invalid;
   const asr = validTotal > 0 ? (succeeded / validTotal) * 100 : 0;
   for (const key of Object.keys(perAttackType)) {
-    // eslint-disable-next-line security/detect-object-injection -- null-proto map, literal key from Object.keys
     const bucket = perAttackType[key];
+    if (bucket === undefined) continue;
     const bucketValid = bucket.attacks - bucket.invalid;
     bucket.asr = bucketValid > 0 ? (bucket.succeeded / bucketValid) * 100 : 0;
   }
