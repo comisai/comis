@@ -522,22 +522,33 @@ describe("runMemoryReview", () => {
   });
 
   // -------------------------------------------------------------------------
-  // EXTRACT-02 — selectivity rubric verified on a fixture (stubbed LLM).
-  // The prompt rubric (✅ durable / ❌ filler) is a MODEL instruction (Task 1);
-  // here we prove the JOB faithfully routes a GIVEN selective payload — a
-  // durable fact is stored. Deterministic because the completion port is
-  // injected/stubbed. This is DISTINCT from the dangerous-command / jailbreak
-  // SECURITY classifiers above: the filler drop is the model's job per the
-  // rubric, NOT a post-extraction filter; the stub models that output.
+  // EXTRACT-02 — the JOB is NOT a post-extraction selectivity filter.
+  //
+  // The ✅ durable / ❌ filler rubric is a MODEL instruction; whether the model
+  // drops the greeting is asserted at the PROMPT level (memory-extraction.test.ts
+  // "Extract durable facts" / "Skip filler" lead-ins). What we pin HERE is the
+  // complementary contract: when the extractor returns a payload that mixes a
+  // durable fact with a clean, schema-valid filler item, the job stores BOTH and
+  // counts BOTH — it applies NO selectivity gate of its own (the only per-item
+  // gates are validateMemoryWrite security + dedup search, both exercised
+  // elsewhere). This is distinct from the single-item store-path test ("stores
+  // when memoryPort.search returns no matches"): that proves a lone durable fact
+  // routes to store; this proves the job would NOT silently swallow part of the
+  // model's already-selected output if a future change wrongly bolted a filler
+  // filter onto the job. Both items are `clean` per validateMemoryWrite ("ok
+  // thanks!" has no suspicious/dangerous/secret pattern) and search returns no
+  // match, so the honest expectation is two stores, not one.
   // -------------------------------------------------------------------------
-  it("stores the durable fact from a durable+filler selectivity fixture (EXTRACT-02)", async () => {
+  it("stores BOTH a durable fact AND a clean filler item — the job applies no selectivity filter (EXTRACT-02)", async () => {
     const deps = makeDeps();
     arrangeOneSession(deps, 9800);
-    // A model that APPLIED the ✅/❌ rubric would emit only the durable fact and
-    // drop the greeting. We assert the durable fact survives the job end-to-end.
+    // Mixed payload: a durable fact + a filler-shaped greeting. Selectivity is the
+    // model's job (the prompt's ✅/❌ rubric, asserted at the prompt level), NOT
+    // the job's — so a job handed both clean, non-duplicate items stores both.
     (completeSimple as Mock).mockResolvedValue(structuredResponse({
       memories: [
         { content: "User prefers dark roast coffee", entities: [{ name: "user" }] },
+        { content: "ok thanks!", entities: [] }, // filler-shaped but schema-valid + clean
       ],
     }));
 
@@ -545,10 +556,14 @@ describe("runMemoryReview", () => {
     expect(result.ok).toBe(true);
 
     const storedContents = (deps.memoryPort.store as Mock).mock.calls.map((c) => c[0].content);
-    expect(storedContents).toContain("User prefers dark roast coffee");
+    // The job does NOT filler-filter: BOTH clean, non-duplicate items reach store.
+    // (Dropping the greeting is the model's job and is NOT — must not be — asserted
+    // here; bolting such a filter onto the job would flip memoriesExtracted to 1
+    // and fail this guard.)
+    expect(storedContents).toEqual(["User prefers dark roast coffee", "ok thanks!"]);
     expect(deps.eventBus.emit).toHaveBeenCalledWith(
       "memory:review_completed",
-      expect.objectContaining({ memoriesExtracted: 1 }),
+      expect.objectContaining({ memoriesExtracted: 2 }),
     );
   });
 
