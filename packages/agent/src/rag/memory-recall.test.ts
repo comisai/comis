@@ -1610,6 +1610,36 @@ describe("createMemoryRecall — temporal-spread lane (LANES-02)", () => {
     expect(rec.lanes?.temporal).toBe(1);
   });
 
+  it("I1: the memory:recalled `lanes` count INCLUDES the temporal lane when it contributes (no off-by-one under-report)", async () => {
+    // I1 (observability): the counts-only memory:recalled event's `lanes` summed fts+vector+
+    // entity but OMITTED temporal, so an active+contributing temporal lane was under-reported
+    // by one (the rich recall-trace record DID count lanes.temporal, so the two diverged).
+    // FTS-only base (1 lane) + a contributing temporal lane (1 lane) → 2 active lanes.
+    // RED on the pre-fix laneCount (emits 1, temporal omitted); GREEN once temporal is added.
+    const fts = [makeResult("seed", { base: 0.9, occurredAt: SEED_T })];
+    const { store } = fakeTemporalStore(
+      ok([makeResult("nearSeed", { base: 0.99, occurredAt: SEED_T + 1 * TEMP_DAY })]),
+    );
+    const { eventBus, emits } = recordingEventBus();
+    const recall = recallWithObs(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        temporalStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+        eventBus,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: { ...PARITY_LANES, temporal: TEMPORAL_ON },
+      } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const recalled = emits.find((e) => e.event === "memory:recalled");
+    // 2 active lanes: fts (1) + temporal (1). The pre-fix code emitted 1 (temporal omitted).
+    expect((recalled?.payload as { lanes?: number })?.lanes).toBe(2);
+  });
+
   it("DEFAULT-OFF BYTE-IDENTITY: temporal.enabled=false → spreadLane NEVER called → output identical to the pre-temporal-lane fused path", async () => {
     const fts = [
       makeResult("a", { base: 0.9, occurredAt: SEED_T }),
