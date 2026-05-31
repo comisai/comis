@@ -12,6 +12,7 @@ import type { MemoryEntry, TrustLevel } from "@comis/core";
 import type { ConsolidationCandidate } from "@comis/core";
 import {
   minTrust,
+  minTrustLevel,
   cosine,
   clusterByEntityThenEmbedding,
   groupByTrustAndTagScope,
@@ -78,6 +79,44 @@ describe("minTrust — the privilege-escalation guard (CONS-02)", () => {
     const b = minTrust([makeEntry({ trustLevel: "system" }), makeEntry({ trustLevel: "external" })]);
     expect(a).toBe("external");
     expect(b).toBe("external");
+  });
+});
+
+describe("minTrustLevel — the 2-arg fold trust CEILING (FOLD-01, the escalation guard on the fold path)", () => {
+  it("returns the LESS-trusted of the two — a fold can only LOWER trust", () => {
+    expect(minTrustLevel("system", "learned")).toBe("learned");
+    expect(minTrustLevel("system", "external")).toBe("external");
+    expect(minTrustLevel("learned", "external")).toBe("external");
+  });
+
+  it("is symmetric — argument order does not change the ceiling", () => {
+    expect(minTrustLevel("learned", "system")).toBe("learned");
+    expect(minTrustLevel("external", "system")).toBe("external");
+    expect(minTrustLevel("external", "learned")).toBe("external");
+  });
+
+  it("returns the level itself when both inputs are equal", () => {
+    expect(minTrustLevel("system", "system")).toBe("system");
+    expect(minTrustLevel("learned", "learned")).toBe("learned");
+    expect(minTrustLevel("external", "external")).toBe("external");
+  });
+
+  it("anti-laundering: NO argument order ever raises trust above the more-trusted input (all 9 pairs)", () => {
+    const rank: Record<TrustLevel, number> = { system: 0, learned: 1, external: 2 };
+    const levels: TrustLevel[] = ["system", "learned", "external"];
+    for (const a of levels) {
+      for (const b of levels) {
+        const out = minTrustLevel(a, b);
+        // The result is one of the two inputs.
+        expect([a, b]).toContain(out);
+        // And it is never MORE trusted (lower rank) than the LESS-trusted input —
+        // i.e. it equals the less-trusted (higher-rank) of the pair.
+        const lessTrusted = rank[a] >= rank[b] ? a : b;
+        expect(out).toBe(lessTrusted);
+        // Defensively: it never outranks (is never more trusted than) either input.
+        expect(rank[out]).toBeGreaterThanOrEqual(Math.min(rank[a], rank[b]));
+      }
+    }
   });
 });
 
