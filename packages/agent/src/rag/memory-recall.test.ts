@@ -27,6 +27,8 @@ import type {
   MemorySearchResult,
   MemorySearchOptions,
   MemoryEntityStore,
+  MemoryUsefulnessStore,
+  UsefulnessSignal,
   RerankerPort,
   SessionKey,
   TrustLevel,
@@ -763,6 +765,178 @@ describe("createMemoryRecall — entity associative lane (ENT-02/ENT-04)", () =>
     if (!got.ok) return;
     // fell back to the search lane only -> single-lane fuse, unchanged.
     expect(got.value.map((r) => r.entry.id)).toEqual(singleLaneReference(input));
+    // WARN with a structured errorKind + hint.
+    expect(warn).toHaveBeenCalled();
+    const warnArg = warn.mock.calls.find(
+      (c) => typeof (c[0] as { errorKind?: string })?.errorKind === "string" && (c[0] as { hint?: string })?.hint,
+    );
+    expect(warnArg).toBeDefined();
+  });
+});
+
+describe("createMemoryRecall — usefulness signal read-path (FEED-03)", () => {
+  // Boosts neutralized EXCEPT usefulnessAlpha so the usefulness factor is the only thing
+  // that can reorder the output — the read-path effect is then isolated.
+  const USEFULNESS_ONLY = {
+    recencyAlpha: 0,
+    temporalAlpha: 0,
+    proofAlpha: 0,
+    trustAlpha: 0,
+    usefulnessAlpha: 0.1,
+  };
+  const FLAG_ON = { enabled: true };
+  const FLAG_OFF = { enabled: false };
+
+  /**
+   * A controllable MemoryUsefulnessStore stub. `readUsefulness` returns a canned Result and
+   * records every call (ids + scope). `recordUsage` is the unused write-path half.
+   */
+  function fakeUsefulnessStore(readResult: Result<Map<string, UsefulnessSignal>, Error>): {
+    store: MemoryUsefulnessStore;
+    readUsefulness: ReturnType<typeof vi.fn>;
+  } {
+    const readUsefulness = vi.fn(async () => readResult);
+    const store = {
+      async recordUsage() {
+        return ok(undefined);
+      },
+      readUsefulness,
+    } as unknown as MemoryUsefulnessStore;
+    return { store, readUsefulness };
+  }
+
+  it("flag ON + store present + results: readUsefulness called once with the ranked ids + (tenant, agent) scope", async () => {
+    const input = [
+      makeResult("m1", { base: 0.9, trustLevel: "learned", createdAt: NOW }),
+      makeResult("m2", { base: 0.4, trustLevel: "learned", createdAt: NOW }),
+    ];
+    const { store, readUsefulness } = fakeUsefulnessStore(
+      ok(new Map([["m1", { usedCount: 3, ignoredCount: 0 }]])),
+    );
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        usefulnessStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: USEFULNESS_ONLY, feedback: FLAG_ON } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // Read once, with the fused ranked ids and the recall scope.
+    expect(readUsefulness).toHaveBeenCalledTimes(1);
+    const [ids, scope] = readUsefulness.mock.calls[0] as [string[], { tenantId: string; agentId: string }];
+    expect([...ids].sort()).toEqual(["m1", "m2"]);
+    expect(scope).toEqual({ tenantId: "tenant_x", agentId: "agent_y" });
+  });
+
+  it("flag ON: a proven-useful memory ranks ABOVE its base-only position when relevance is close", async () => {
+    // m2 has a marginally lower base than m1 but is proven-useful (used-rate 1.0); m1 is
+    // recalled-but-ignored (used-rate 0.0). With only usefulnessAlpha live and a close base
+    // gap, the usefulness factor flips m2 above m1.
+    const input = [
+      makeResult("m1", { base: 0.51, trustLevel: "learned", createdAt: NOW }),
+      makeResult("m2", { base: 0.5, trustLevel: "learned", createdAt: NOW }),
+    ];
+    const { store } = fakeUsefulnessStore(
+      ok(
+        new Map<string, UsefulnessSignal>([
+          ["m1", { usedCount: 0, ignoredCount: 5 }],
+          ["m2", { usedCount: 5, ignoredCount: 0 }],
+        ]),
+      ),
+    );
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        usefulnessStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: USEFULNESS_ONLY, feedback: FLAG_ON } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const ids = got.value.map((r) => r.entry.id);
+    expect(ids.indexOf("m2")).toBeLessThan(ids.indexOf("m1"));
+  });
+
+  it("flag OFF: readUsefulness NOT called; output byte-identical to the no-usefulness path", async () => {
+    const input = [
+      makeResult("m1", { base: 0.5, trustLevel: "learned", createdAt: NOW }),
+      makeResult("m2", { base: 0.5, trustLevel: "learned", createdAt: NOW }),
+    ];
+    // If consulted, this map would flip m2 above m1 — proving the OFF guard, not an empty read.
+    const { store, readUsefulness } = fakeUsefulnessStore(
+      ok(new Map<string, UsefulnessSignal>([["m2", { usedCount: 9, ignoredCount: 0 }]])),
+    );
+    // Reference: the same pipeline with usefulnessAlpha live but NO signal (factor neutral).
+    const fused = fuse([{ results: input, weight: 1.0 }]);
+    const scored = score(fused, USEFULNESS_ONLY, NOW); // no usefulnessById -> neutral
+    const allowed = new Set<TrustLevel>(["system", "learned"]);
+    const expected = deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel))).map(
+      (r) => r.entry.id,
+    );
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        usefulnessStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: USEFULNESS_ONLY, feedback: FLAG_OFF } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(readUsefulness).not.toHaveBeenCalled();
+    expect(got.value.map((r) => r.entry.id)).toEqual(expected);
+  });
+
+  it("no usefulnessStore: an undefined store -> read obviously not done, neutral (no flip)", async () => {
+    const input = [
+      makeResult("m1", { base: 0.51, trustLevel: "learned", createdAt: NOW }),
+      makeResult("m2", { base: 0.5, trustLevel: "learned", createdAt: NOW }),
+    ];
+    const recall = createMemoryRecall(
+      { memoryPort: fakeMemoryPort(input), clock: fixedClock, logger: noopLogger },
+      baseConfig({ scoring: USEFULNESS_ONLY, feedback: FLAG_ON } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // No store -> neutral factor -> base order preserved (m1 > m2).
+    const ids = got.value.map((r) => r.entry.id);
+    expect(ids).toEqual(["m1", "m2"]);
+  });
+
+  it("failed read NON-FATAL: readUsefulness err -> WARN(errorKind+hint) + rank WITHOUT the signal (recall succeeds)", async () => {
+    const input = [
+      makeResult("m1", { base: 0.51, trustLevel: "learned", createdAt: NOW }),
+      makeResult("m2", { base: 0.5, trustLevel: "learned", createdAt: NOW }),
+    ];
+    const warn = vi.fn();
+    const logger = { ...noopLogger, warn } as unknown as ComisLogger;
+    // The store would flip m2 above m1 IF the read succeeded — but it errs.
+    const { store } = fakeUsefulnessStore(err(new Error("usefulness read exploded")));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        usefulnessStore: store,
+        clock: fixedClock,
+        logger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: USEFULNESS_ONLY, feedback: FLAG_ON } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    // recall NEVER fails because the usefulness read failed.
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // Ranked WITHOUT the signal -> neutral -> base order preserved (m1 > m2).
+    expect(got.value.map((r) => r.entry.id)).toEqual(["m1", "m2"]);
     // WARN with a structured errorKind + hint.
     expect(warn).toHaveBeenCalled();
     const warnArg = warn.mock.calls.find(
