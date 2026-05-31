@@ -5,10 +5,11 @@
  * constant string — iff >=2 memories are surfaced for a query, else `undefined`.
  *
  * The block is INJECTED TEXT that tells the agent HOW to resolve a surfaced contradiction
- * (the most recently RECORDED memory is authoritative; never average/sum; at equal recency
- * the higher-TRUST memory wins; order a timeline by when events OCCURRED). It does NOT
- * mutate memories and it does NOT resolve the contradiction in code — resolution is the
- * LLM's job, guided by this text (non-destructive, TEMP-03).
+ * TRUST-FIRST, recency-SECOND (CONTRA-01): when two memories conflict, the higher-TRUST
+ * memory wins EVEN WHEN it is older (system > learned > external); recency only breaks ties
+ * among EQUAL-trust memories; never average/sum; order a timeline by when events OCCURRED.
+ * It does NOT mutate memories and it does NOT resolve the contradiction in code — resolution
+ * is the LLM's job, guided by this text (non-destructive, TEMP-03).
  *
  * Imports ONLY @comis/core types — the agent-package production source must not import the
  * memory package (architecture.test.ts "agent -> memory cut"). Mirrors score.ts: a pure
@@ -30,18 +31,19 @@
 import type { MemorySearchResult } from "@comis/core";
 
 /**
- * The design-§7.3 read-time temporal contradiction guidance block, VERBATIM. A fixed
- * constant — references memory METADATA semantics (recorded time, occurred time, trust)
- * in prose; it does NOT echo or interpolate any memory CONTENT (prompt-injection safe).
- * The final bullet states the equal-recency trust tie-break (TEMP-04).
+ * The read-time temporal contradiction guidance block (CONTRA-01: TRUST-FIRST,
+ * recency-SECOND), VERBATIM. A fixed constant — references memory METADATA semantics
+ * (recorded time, occurred time, trust tier) in prose; it does NOT echo or interpolate
+ * any memory CONTENT (prompt-injection safe). The FIRST conflict bullet asserts
+ * trust-primacy (the higher-trust memory wins a conflict even if older); recency appears
+ * only as a tie-break among EQUAL-trust memories (TEMP-04).
  */
 const TEMPORAL_GUIDANCE = `## Using these memories over time
-- Each memory shows when it was recorded and (if known) when the event occurred.
-- If two conflict about the same thing, the most recently RECORDED one is authoritative; treat older
-  conflicting statements as superseded — do NOT average or sum.
+- Each memory shows when it was recorded, (if known) when the event occurred, and its trust tier ([system] > [learned] > [external]).
+- If two conflict about the same thing, the higher-TRUST memory wins even if older — a [system] memory outranks a [learned] or [external] one even if older; treat the lower-trust conflicting statement as superseded — do NOT average or sum.
+- Only break ties between equal-trust memories by recency: among equal-trust memories, the most recently RECORDED one wins.
 - For a timeline, order by when events OCCURRED, not when they were recorded.
-- If equally recent and still disagreeing, say so rather than guess.
-- Tie-break by trust: a [system] memory outranks a [learned] one of equal recency.`;
+- If still disagreeing at equal trust and equal recency, say so rather than guess.`;
 
 /**
  * Phase-81 baseline (Option A, RESEARCH.md Open Q5 RESOLVED): the co-retrieved recall set
