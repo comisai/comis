@@ -20,6 +20,7 @@ import type {
   TrustLevel,
   ConsolidationCandidate,
   ConsolidationPlan,
+  ConsolidationFoldPlan,
   MemoryConsolidationStore,
 } from "@comis/core";
 
@@ -89,21 +90,48 @@ function makeConfig(overrides: Partial<MemoryConsolidationConfig> = {}): MemoryC
 
 interface StubStore extends MemoryConsolidationStore {
   applied: ConsolidationPlan[];
+  /** Captures every fold-vs-create FOLD decision (the plan the job hands the port). */
+  foldCalls: ConsolidationFoldPlan[];
 }
 
-/** A stub store capturing applyConsolidation plans + serving fixed candidates/observations. */
+/**
+ * A stub store capturing applyConsolidation plans (the CREATE path) AND
+ * foldIntoExisting plans (the FOLD path), serving fixed candidates/observations.
+ * The `observations` array doubles as both the dedup pre-check snapshot
+ * (`listObservations`) and the fold-target pool.
+ */
 function makeStore(
   candidates: ConsolidationCandidate[],
   observations: MemoryEntry[] = [],
 ): StubStore {
   const applied: ConsolidationPlan[] = [];
+  const foldCalls: ConsolidationFoldPlan[] = [];
+  const byId = new Map(observations.map((o) => [o.id, o]));
   return {
     applied,
+    foldCalls,
     listConsolidationCandidates: vi.fn().mockResolvedValue(ok(candidates)),
     listObservations: vi.fn().mockResolvedValue(ok(observations)),
     applyConsolidation: vi.fn(async (plan: ConsolidationPlan) => {
       applied.push(plan);
       return ok(plan.observation);
+    }),
+    foldIntoExisting: vi.fn(async (plan: ConsolidationFoldPlan) => {
+      foldCalls.push(plan);
+      // Return the GROWN observation (the adapter's contract): the target with a
+      // UNIONed source set + the refreshed trust/confidence/occurredAt/content.
+      const target = byId.get(plan.targetObservationId);
+      const unioned = [...new Set([...(target?.sourceIds ?? []), ...plan.newSourceIds])];
+      const grown: MemoryEntry = {
+        ...(target ?? makeEntry({ id: plan.targetObservationId })),
+        trustLevel: plan.trustLevel,
+        confidence: plan.confidence,
+        occurredAt: plan.occurredAt,
+        sourceIds: unioned,
+        proofCount: unioned.length,
+        ...(plan.content !== undefined ? { content: plan.content } : {}),
+      };
+      return ok(grown);
     }),
   };
 }
@@ -265,6 +293,247 @@ describe("runMemoryConsolidation — deterministic dedup pre-check (CONS-04)", (
     };
     expect(payload.dedupHits).toBe(1);
     expect(payload.observationsCreated).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FOLD-01 — the fold-vs-create decision (the secondary content-dedup seam,
+// converted from a SKIP into a FOLD).
+//
+// When a merged cluster's content matches a SAME-TRUST PRIOR-RUN observation
+// (>= dedupThreshold) AND the cluster carries source ids NOT already in that
+// observation, the job FOLDs the truly-new sources into it (growing proof)
+// instead of creating a second observation — via consolidationStore
+// .foldIntoExisting (the port TYPE from 94-01). Otherwise it falls through to
+// the UNCHANGED Phase-84 create path.
+//
+// Headline guards:
+//   - FOLD ON CONTENT MATCH: same-trust + content-similar + NEW sources → one
+//     fold with the right plan (target id, truly-new sources, min ceiling,
+//     confidence 1, refreshed occurredAt); no create; observationsCreated flat;
+//     foldsApplied increments.
+//   - IDEMPOTENCY PRE-FILTER: a content match whose sourceIds already cover the
+//     cluster → trulyNew empty → SKIP (dedupHit), no fold.
+//   - CROSS-TRUST → NO FOLD: a content match against a DIFFERENT-trust obs is
+//     filtered out → no fold, falls through to CREATE (scope separation).
+//   - TRUST-CEILING-DOWN: the fold plan's trustLevel is minTrustLevel(obs,
+//     cluster) (never above the more-trusted input).
+//   - EVENT: memory:consolidated carries foldsApplied (counts-only).
+// ---------------------------------------------------------------------------
+describe("runMemoryConsolidation — fold-vs-create decision (FOLD-01)", () => {
+  /** Read the memory:consolidated payload off the eventBus spy. */
+  function consolidatedPayload(deps: MemoryConsolidationDeps): {
+    observationsCreated: number;
+    dedupHits: number;
+    foldsApplied: number;
+  } {
+    const emit = deps.eventBus.emit as ReturnType<typeof vi.fn>;
+    return emit.mock.calls.find((c) => c[0] === "memory:consolidated")?.[1] as {
+      observationsCreated: number;
+      dedupHits: number;
+      foldsApplied: number;
+    };
+  }
+
+  it("FOLDS a same-trust content match into the existing observation (truly-new sources, min ceiling, confidence 1, refreshed occurredAt) — no create", async () => {
+    // The merged content equals the prior observation's content → similarity 1.
+    mockMerge("alice prefers tea");
+    // Prior-run observation: same trust, content match, sourceIds {old1} — the
+    // cluster's {new1,new2} are NOT a subset, so the PRIMARY source-id key does
+    // NOT match (no skip) and the content match routes to a FOLD.
+    const old1 = nextId();
+    const obs = makeEntry({
+      content: "alice prefers tea",
+      trustLevel: "learned",
+      proofCount: 1,
+      sourceIds: [old1],
+      occurredAt: 1000,
+    });
+    const new1 = nextId();
+    const new2 = nextId();
+    const store = makeStore(
+      [
+        makeCand({ id: new1, trustLevel: "learned", tags: ["t"], occurredAt: 5000 }, [1, 0, 0]),
+        makeCand({ id: new2, trustLevel: "learned", tags: ["t"], occurredAt: 8000 }, [0.999, 0.001, 0]),
+      ],
+      [obs],
+    );
+    const deps = makeDeps(store);
+    const result = await runMemoryConsolidation(deps);
+    expect(result.ok).toBe(true);
+
+    // Exactly one fold, no create.
+    expect(store.foldCalls).toHaveLength(1);
+    expect(store.applied).toHaveLength(0);
+
+    const fold = store.foldCalls[0];
+    expect(fold.targetObservationId).toBe(obs.id);
+    // Only the truly-new ids (old1 already in the target → excluded).
+    expect([...fold.newSourceIds].sort()).toEqual([new1, new2].sort());
+    expect(fold.newSourceIds).not.toContain(old1);
+    // Same-trust fold → ceiling is a no-op (learned).
+    expect(fold.trustLevel).toBe("learned");
+    // Deterministic refresh.
+    expect(fold.confidence).toBe(1);
+    // occurredAt refreshed to max(existing 1000, max(newSources 5000,8000)) = 8000.
+    expect(fold.occurredAt).toBe(8000);
+    expect(fold.tenantId).toBe("default");
+    expect(fold.now).toBe(NOW);
+
+    const payload = consolidatedPayload(deps);
+    expect(payload.foldsApplied).toBe(1);
+    expect(payload.observationsCreated).toBe(0);
+  });
+
+  it("IDEMPOTENCY PRE-FILTER: a content match whose sourceIds already cover the cluster → no fold (dedup skip)", async () => {
+    mockMerge("alice prefers tea");
+    const a = nextId();
+    const b = nextId();
+    // The observation already carries BOTH cluster ids (a superset). The cluster
+    // {a,b} differs from the obs source set {a,b,extra} so the PRIMARY key does
+    // not match (routes to the secondary content match), but trulyNew is empty.
+    const extra = nextId();
+    const obs = makeEntry({
+      content: "alice prefers tea",
+      trustLevel: "learned",
+      proofCount: 3,
+      sourceIds: [a, b, extra],
+    });
+    const store = makeStore(
+      [
+        makeCand({ id: a, trustLevel: "learned", tags: ["t"] }, [1, 0, 0]),
+        makeCand({ id: b, trustLevel: "learned", tags: ["t"] }, [0.999, 0.001, 0]),
+      ],
+      [obs],
+    );
+    const deps = makeDeps(store);
+    const result = await runMemoryConsolidation(deps);
+    expect(result.ok).toBe(true);
+    // Nothing new to fold → skip, no fold call, no create.
+    expect(store.foldCalls).toHaveLength(0);
+    expect(store.applied).toHaveLength(0);
+    const payload = consolidatedPayload(deps);
+    expect(payload.dedupHits).toBe(1);
+    expect(payload.foldsApplied).toBe(0);
+    expect(payload.observationsCreated).toBe(0);
+  });
+
+  it("CROSS-TRUST → NO FOLD: a content match against a DIFFERENT-trust observation is filtered out → CREATE fires (scope separation, anti-laundering)", async () => {
+    mockMerge("alice prefers tea");
+    // The prior observation is SYSTEM-trust; the cluster is LEARNED-trust with
+    // identical content. The same-trust filter rejects it as a fold target → the
+    // learned cluster CREATEs a separate observation (never folds into system).
+    const old1 = nextId();
+    const obs = makeEntry({
+      content: "alice prefers tea",
+      trustLevel: "system",
+      proofCount: 1,
+      sourceIds: [old1],
+    });
+    const store = makeStore(
+      [
+        makeCand({ trustLevel: "learned", tags: ["t"] }, [1, 0, 0]),
+        makeCand({ trustLevel: "learned", tags: ["t"] }, [0.999, 0.001, 0]),
+      ],
+      [obs],
+    );
+    const deps = makeDeps(store);
+    const result = await runMemoryConsolidation(deps);
+    expect(result.ok).toBe(true);
+    // No fold across trust; a NEW learned observation is created instead.
+    expect(store.foldCalls).toHaveLength(0);
+    expect(store.applied).toHaveLength(1);
+    expect(store.applied[0].observation.trustLevel).toBe("learned");
+    const payload = consolidatedPayload(deps);
+    expect(payload.foldsApplied).toBe(0);
+    expect(payload.observationsCreated).toBe(1);
+  });
+
+  it("TRUST-CEILING-DOWN (defense-in-depth): the fold plan's trustLevel never exceeds the more-trusted input", async () => {
+    // Same-trust fold (the only fold path) — assert the plan trust equals the
+    // shared trust and is never raised. (Cross-trust never reaches a fold, proven
+    // above; this guards the ceiling computation on the path that DOES fold.)
+    mockMerge("bob lives in berlin");
+    const old1 = nextId();
+    const obs = makeEntry({
+      content: "bob lives in berlin",
+      trustLevel: "learned",
+      proofCount: 1,
+      sourceIds: [old1],
+    });
+    const store = makeStore(
+      [
+        makeCand({ trustLevel: "learned", tags: ["t"] }, [1, 0, 0]),
+        makeCand({ trustLevel: "learned", tags: ["t"] }, [0.999, 0.001, 0]),
+      ],
+      [obs],
+    );
+    const deps = makeDeps(store);
+    await runMemoryConsolidation(deps);
+    expect(store.foldCalls).toHaveLength(1);
+    const rank: Record<TrustLevel, number> = { system: 0, learned: 1, external: 2 };
+    // The plan trust is never MORE trusted (lower rank) than the obs trust.
+    expect(rank[store.foldCalls[0].trustLevel]).toBeGreaterThanOrEqual(rank[obs.trustLevel]);
+    expect(store.foldCalls[0].trustLevel).toBe("learned");
+  });
+
+  it("CREATE STILL FIRES: a cluster with NO matching prior observation runs the unchanged create path", async () => {
+    mockMerge("a totally novel fact");
+    // A prior observation with UNRELATED content → no content match → create.
+    const obs = makeEntry({
+      content: "something entirely unrelated about quarks",
+      trustLevel: "learned",
+      proofCount: 1,
+      sourceIds: [nextId()],
+    });
+    const store = makeStore(
+      [
+        makeCand({ trustLevel: "learned", tags: ["t"] }, [1, 0, 0]),
+        makeCand({ trustLevel: "learned", tags: ["t"] }, [0.999, 0.001, 0]),
+      ],
+      [obs],
+    );
+    const deps = makeDeps(store);
+    await runMemoryConsolidation(deps);
+    expect(store.foldCalls).toHaveLength(0);
+    expect(store.applied).toHaveLength(1);
+    const payload = consolidatedPayload(deps);
+    expect(payload.observationsCreated).toBe(1);
+    expect(payload.foldsApplied).toBe(0);
+  });
+
+  it("a failed/rejected fold is non-fatal: the run returns ok, foldsApplied does not increment, and a WARN fires", async () => {
+    mockMerge("alice prefers tea");
+    const obs = makeEntry({
+      content: "alice prefers tea",
+      trustLevel: "learned",
+      proofCount: 1,
+      sourceIds: [nextId()],
+    });
+    const store = makeStore(
+      [
+        makeCand({ trustLevel: "learned", tags: ["t"] }, [1, 0, 0]),
+        makeCand({ trustLevel: "learned", tags: ["t"] }, [0.999, 0.001, 0]),
+      ],
+      [obs],
+    );
+    // The port rejects the fold (inner Result.err) — non-fatal.
+    (store.foldIntoExisting as ReturnType<typeof vi.fn>).mockResolvedValue(
+      err(new Error("fold target vanished")),
+    );
+    const deps = makeDeps(store);
+    const result = await runMemoryConsolidation(deps);
+    expect(result.ok).toBe(true);
+    expect(store.applied).toHaveLength(0);
+    expect(deps.logger.warn).toHaveBeenCalled();
+    expect(consolidatedPayload(deps).foldsApplied).toBe(0);
+  });
+
+  it("emits foldsApplied:0 on the empty-candidates early return (additive counts-only field)", async () => {
+    const store = makeStore([]);
+    const deps = makeDeps(store);
+    await runMemoryConsolidation(deps);
+    expect(consolidatedPayload(deps).foldsApplied).toBe(0);
   });
 });
 
