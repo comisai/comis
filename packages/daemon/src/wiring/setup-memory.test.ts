@@ -796,6 +796,37 @@ describe("setupMemory", () => {
     );
   });
 
+  it("does NOT throw into startup when an explicit-on agent hits a safePath rejection on the build path (WR-02)", async () => {
+    // WR-02: when someAgentExplicitOn is true, shouldBuild is true even though the probe's
+    // safePath threw (rerankerModelsDir left undefined). The build block then re-invokes
+    // safePath with the SAME args that just threw. On the OLD code that re-invoke is
+    // UNCAUGHT and propagates into daemon startup. safePath throws on EVERY call here, so
+    // both the probe AND the build re-invoke reject — the fix must catch the build-path
+    // rejection and degrade to a WARN + no port (recall falls back to fusion), never throw.
+    mockSafePath.mockImplementation(() => {
+      throw new Error("Path traversal blocked");
+    });
+    const container = createMinimalContainer({
+      agents: { researcher: { rag: { rerank: { enabled: true } } } },
+      rawAgentRerankEnabled: new Map<string, boolean | undefined>([["researcher", true]]),
+    });
+    const memoryLogger = createMockLogger();
+    const setupMemory = await getSetupMemory();
+
+    // The load-bearing assertion: setupMemory resolves (no throw into bootstrap).
+    const result = await setupMemory({
+      container,
+      memoryLogger: memoryLogger as any,
+      clock: testClock,
+    });
+
+    // Degrades cleanly: no port built, recall falls back to fusion.
+    expect(result.rerankerPort).toBeUndefined();
+    expect(result.rerankerModelPresent).toBe(false);
+    // Restore the default safePath behavior for subsequent tests.
+    mockSafePath.mockImplementation((...parts: string[]) => parts.join("/"));
+  });
+
   it("skips the probe entirely when no reranker model is configured (modelPresent=false)", async () => {
     // Unconfigured reranker (undefined modelUri) → there is nothing to probe; treat as
     // absent without calling the probe or computing safePath (the structurally-off path).

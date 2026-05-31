@@ -281,30 +281,49 @@ export async function setupMemory(deps: {
       : "Reranker model absent -> no download",
   );
   if (shouldBuildReranker) {
-    const rr = await createLocalRerankerProvider({
-      modelUri: memoryConfig.rerankerModel,
-      // Reuse the dir the probe resolved (T-92-06: one shared value). It is only
-      // unset on the explicit-opt-in path when the probe's safePath threw — recompute
-      // there so the operator's opt-in still gets the same root-confined resolution
-      // (matching the pre-Phase-92 behavior where the factory owned this safePath call).
-      modelsDir: rerankerModelsDir ?? safePath(container.config.dataDir || ".", memoryConfig.rerankerModelsDir || "models"),
-      gpu: memoryConfig.rerankerGpu,
-      threads: memoryConfig.rerankerThreads,
-    });
-    if (rr.ok) {
-      // Capture the resolved port so the dispose closure has a non-nullable
-      // reference (no `rerankerPort!.dispose!()` non-null clusters; AGENTS.md).
-      const port = rr.value;
-      rerankerPort = port;
-      disposeReranker = port.dispose
-        ? async () => { await port.dispose?.(); }
-        : undefined;
-      memoryLogger.debug({ model: memoryConfig.rerankerModel }, "Reranker provider initialized");
+    // Resolve the build models dir ONCE, inside a guard (WR-02). Reuse the dir the probe
+    // resolved (T-92-06: one shared value); it is only unset on the explicit-opt-in path
+    // when the probe's safePath threw — recompute there so the operator's opt-in gets the
+    // same root-confined resolution. CRITICAL: that recompute uses the SAME args that just
+    // threw on the probe, so without this guard it would throw AGAIN — now UNCAUGHT —
+    // propagating into daemon startup. Catch it and degrade to the same WARN + fusion the
+    // auto-on path uses (recall falls back to fusion order, RANK-03), never crash boot.
+    let modelsDirForBuild: string | undefined;
+    if (rerankerModelsDir !== undefined) {
+      modelsDirForBuild = rerankerModelsDir;
     } else {
-      memoryLogger.warn(
-        { err: rr.error.message, hint: "Reranker model unavailable; recall will use fusion order", errorKind: "dependency" as const },
-        "Reranker provider unavailable",
-      );
+      try {
+        modelsDirForBuild = safePath(container.config.dataDir || ".", memoryConfig.rerankerModelsDir || "models");
+      } catch (e) {
+        modelsDirForBuild = undefined;
+        memoryLogger.warn(
+          { err: String(e), hint: "Set memory.dataDir to an absolute path so the reranker models dir resolves; recall will use fusion order", errorKind: "config" as const },
+          "Reranker build skipped (models dir unresolved)",
+        );
+      }
+    }
+    if (modelsDirForBuild !== undefined) {
+      const rr = await createLocalRerankerProvider({
+        modelUri: memoryConfig.rerankerModel,
+        modelsDir: modelsDirForBuild,
+        gpu: memoryConfig.rerankerGpu,
+        threads: memoryConfig.rerankerThreads,
+      });
+      if (rr.ok) {
+        // Capture the resolved port so the dispose closure has a non-nullable
+        // reference (no `rerankerPort!.dispose!()` non-null clusters; AGENTS.md).
+        const port = rr.value;
+        rerankerPort = port;
+        disposeReranker = port.dispose
+          ? async () => { await port.dispose?.(); }
+          : undefined;
+        memoryLogger.debug({ model: memoryConfig.rerankerModel }, "Reranker provider initialized");
+      } else {
+        memoryLogger.warn(
+          { err: rr.error.message, hint: "Reranker model unavailable; recall will use fusion order", errorKind: "dependency" as const },
+          "Reranker provider unavailable",
+        );
+      }
     }
   }
 
