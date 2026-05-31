@@ -47,6 +47,16 @@ describe("STRUCTURED_PROMPT instruction invariants", () => {
     expect(STRUCTURED_PROMPT).toContain("✅");
     expect(STRUCTURED_PROMPT).toContain("❌");
   });
+
+  it("instructs the model to resolve coreferences (pronouns / generic refs) to a canonical entity name (EXTRACT-01)", () => {
+    expect(STRUCTURED_PROMPT).toMatch(/coreference|pronoun|refers to/i);
+    expect(STRUCTURED_PROMPT).toMatch(/canonical/i);
+  });
+
+  it("states an explicit selectivity rubric: extract durable facts, skip filler (EXTRACT-02)", () => {
+    expect(STRUCTURED_PROMPT).toMatch(/durable/i);
+    expect(STRUCTURED_PROMPT).toMatch(/filler|skip/i);
+  });
 });
 
 describe("parseExtractionResult is total and zod-gated (EXTR-01/05)", () => {
