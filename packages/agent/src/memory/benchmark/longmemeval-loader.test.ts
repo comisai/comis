@@ -54,7 +54,7 @@ describe("stripHasAnswer (drops has_answer and any non-{role,content} key)", () 
 });
 
 describe("loadLongMemEval (one dated document per haystack session)", () => {
-  it("emits one doc per session with a positive epoch-ms createdAt and carried ids", () => {
+  it("emits one doc per session with a positive epoch-ms createdAt and the session id", () => {
     const parsed = loadLongMemEval(RAW);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
@@ -65,7 +65,10 @@ describe("loadLongMemEval (one dated document per haystack session)", () => {
     for (const doc of docs) {
       expect(Number.isInteger(doc.createdAt)).toBe(true);
       expect(doc.createdAt).toBeGreaterThan(0);
-      expect(doc.questionId).toBe("q_example_1");
+      // IN-02: the per-doc questionId is dead (the harness keys on sessionId and
+      // resolves gold via answerSessionIdsByQuestion / questions[]). The doc no
+      // longer carries it, so the contract is not overstated.
+      expect("questionId" in doc).toBe(false);
     }
     // session 1 (earlier date) < session 2 (later date)
     expect(docs[0].createdAt).toBeLessThan(docs[1].createdAt);
