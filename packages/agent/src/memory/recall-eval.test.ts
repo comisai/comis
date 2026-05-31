@@ -31,13 +31,11 @@ import {
   TEMPORAL_TRUST_EVAL_FIXTURES,
   ENTITY_EVAL_FIXTURES,
   TEMPORAL_SPREAD_EVAL_FIXTURES,
-  CAUSAL_EVAL_FIXTURES,
   FEEDBACK_EVAL_FIXTURES,
   PROOF_EVAL_FIXTURES,
   LANES_EVAL_FIXTURES,
   entityLane,
   temporalLane,
-  causalLane,
   ftsLane,
   vectorLane,
   preFusedOrder,
@@ -45,6 +43,9 @@ import {
   EVAL_NOW,
   type EvalQuery,
 } from "./__fixtures__/recall-eval-fixtures.js";
+// Phase-96 causal fixtures live in a sibling module (split out at the 800-line cap); imported
+// directly (NOT via a parent re-export) to avoid an intra-package import cycle.
+import { CAUSAL_EVAL_FIXTURES, causalLane } from "./__fixtures__/recall-eval-fixtures-causal.js";
 import { fuse } from "../rag/fuse.js";
 import { score } from "../rag/score.js";
 // GATED import (test-only; agent->memory cut excludes *.test.ts).

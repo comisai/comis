@@ -356,12 +356,6 @@ export const fileSizeAllowlist: readonly FileSizeAllowlistEntry[] = [
     removedIn: "deferred",
   },
   {
-    file: "packages/agent/src/rag/memory-recall.ts",
-    lines: 843,
-    reason: "The single recall orchestrator (RANK-07): one function composing search → 5 fused RRF lanes (fts/vector/entity/temporal/causal) → rerank → score → trust-filter → dedup, plus the observability capture tail. Crossed 800 at Phase 96 (EXTRACT-03) when the 5th (causal) lane + its append-only trace count landed (was 772 pre-plan). The 5 lane blocks are intentionally inline + uniform (each ~20-60L: a gate, a scoped seed-extract, the injected-port call, an err-non-fatal WARN) — extracting one lane would fragment the shared seedPool/lanes[]/laneCandidates closure across the recall hot path and break the tier-for-tier symmetry that makes the default-OFF byte-identity auditable. The block is tight (mirrors the temporal block exactly). Defer a holistic lane-extraction refactor (all 5 → a lane-registry) to a dedicated pass; internal velocity only.",
-    removedIn: "deferred",
-  },
-  {
     file: "packages/agent/src/executor/tool-deferral.ts",
     lines: 1035,
     reason: "Executor-adjacent file (1,035L re-measured; +2L drift from prior measurement); BM25/cosine ranking algorithm conceptually separate from deferral orchestration; split sensible but not urgent (default-defer)",

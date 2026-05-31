@@ -52,6 +52,7 @@ import { ok, withTimeout, TimeoutError, type Result } from "@comis/shared";
 import { fuse, type FusionLane } from "./fuse.js";
 import { scoreWithBreakdown, type ScoringAlphas, type ScoreBreakdown } from "./score.js";
 import { deduplicateResults } from "./rag-retriever.js";
+import { appendCausalLane } from "./recall-causal-lane.js";
 import {
   buildRecallRecord,
   recallQueryDigest,
@@ -86,13 +87,10 @@ export interface MemoryRecallDeps {
    */
   temporalStore?: MemoryTemporalStore;
   /**
-   * Optional causal store (EXTRACT-03). When present AND cfg.lanes.causal.enabled, the read
-   * path queries `causalLane(seedIds, scope, cap)` for memories causally linked (cause↔effect)
-   * to the top base hits and fuses them as a 5th lane. Absent / disabled / no seeds -> no causal
-   * lane (graceful; RRF unchanged — the ENT-04 no-op). TYPE-only from @comis/core — the agent
-   * never imports the memory package (the agent↛memory build cut); the daemon injects the
-   * concrete adapter (the composition root). The SAME store the cron-review write path injects
-   * for linkCausal — one segregated port, both halves.
+   * Optional causal store (EXTRACT-03). When present AND cfg.lanes.causal.enabled, the read path
+   * queries `causalLane` (in appendCausalLane) for memories causally linked to the top base hits
+   * and fuses them as a 5th lane; absent / disabled / no seeds -> no causal lane (RRF unchanged).
+   * TYPE-only (the agent↛memory cut); the daemon injects the SAME store the write path uses for linkCausal.
    */
   causalStore?: MemoryCausalStore;
   /**
@@ -159,11 +157,8 @@ export interface MemoryRecallConfig {
      * Optional so a caller predating the field leaves it absent -> no temporal lane.
      */
     temporal?: { enabled: boolean; weight: number; windowDays: number };
-    /**
-     * Causal one-hop lane knobs (EXTRACT-03; from RagConfig.lanes.causal). Default-OFF
-     * (`enabled:false`) -> the lane is never pushed -> RRF unchanged (the ENT-04 no-op).
-     * Optional so a caller predating the field leaves it absent -> no causal lane.
-     */
+    /** Causal one-hop lane knobs (EXTRACT-03; from RagConfig.lanes.causal). Default-OFF
+     *  (`enabled:false`) -> the lane is never pushed -> RRF unchanged (the ENT-04 no-op). */
     causal?: { enabled: boolean; weight: number };
   };
   /**
@@ -415,51 +410,13 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         }
       }
 
-      // 2c. CAUSAL lane (EXTRACT-03) — the 5th fused lane, APPENDED after the temporal lane
-      // (order: fts, vector, entity, temporal, causal). Composed LAZILY, exactly like the
-      // entity/temporal lanes: only when a causal store is injected, the lane is enabled, AND
-      // the search produced seeds. The store's scoped one-hop edge lookup returns OTHER memories
-      // causally linked (cause↔effect) to the seeds (hydrated, confidence-first), which fuse()
-      // rebases onto the shared RRF rank scale so a causally-linked memory can outrank a
-      // non-linked one.
-      //
-      // DEFAULT-OFF BYTE-IDENTITY (T-96-10): with `enabled:false` (the default) this block is
-      // SKIPPED — causalLane is NEVER called, no 5th lane is pushed, and the fused output is
-      // byte-identical to the pre-causal-lane path (the ENT-04 no-op reused). Every other no-op
-      // path (no store / no seeds / empty lane) falls through identically. A lane err is
-      // NON-FATAL — recall never fails because the causal lane failed; we WARN and rank WITHOUT
-      // it. The lane SQL lives in the memory package behind the injected MemoryCausalStore port —
-      // this file imports the TYPE only (the agent↛memory build cut).
+      // 2c. CAUSAL lane (EXTRACT-03) — the 5th fused lane (fts, vector, entity, temporal, causal),
+      // in appendCausalLane (full contract + DEFAULT-OFF byte-identity T-96-10 there). The
+      // precondition gate is HERE so the off path stays synchronous (no extra microtask).
       const cl = cfg.lanes?.causal;
       if (cl?.enabled === true && deps.causalStore !== undefined && seedPool.length > 0) {
         const seedIds = seedPool.slice(0, cfg.entityLane?.seedCount ?? 5).map((r) => r.entry.id);
-        if (seedIds.length > 0) {
-          // Scope mirrors the entity/temporal lanes / memoryPort.search: tenant from the session
-          // key, agent from the recall arg (else the session key's agent, else "default"). The
-          // lane's WHERE enforces this in SQL — the load-bearing isolation (T-96-11).
-          const scope = {
-            tenantId: sessionKey.tenantId,
-            agentId: agentId ?? sessionKey.agentId ?? "default",
-          };
-          const laneRes = await deps.causalStore.causalLane(seedIds, scope, cfg.maxResults);
-          if (laneRes.ok) {
-            // The ENT-04 no-op: an empty lane pushes nothing -> fuse() ranking unchanged.
-            if (laneRes.value.length > 0) {
-              lanes.push({ results: laneRes.value, weight: cl.weight });
-              causalCandidates = laneRes.value.length; // stage-1 lane-count snapshot
-            }
-          } else {
-            deps.logger.warn(
-              {
-                agentId,
-                seedCount: seedIds.length,
-                errorKind: "internal" as const,
-                hint: "causal lane failed; using other lanes only",
-              },
-              "causal lane fallback",
-            );
-          }
-        }
+        causalCandidates = await appendCausalLane(lanes, deps.causalStore, cl.weight, cfg.maxResults, seedIds, sessionKey, agentId, deps.logger);
       }
       // FUSE the base lane (already capped + minScore-filtered) with any entity/temporal
       // lanes. minScore is NOT re-applied here: v2.6 filtered minScore exactly once on the

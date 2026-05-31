@@ -45,6 +45,8 @@ import { fuse } from "./fuse.js";
 import { score, type ScoringAlphas } from "./score.js";
 import { deduplicateResults } from "./rag-retriever.js";
 import { createMemoryRecall, type MemoryRecallConfig } from "./memory-recall.js";
+import { appendCausalLane } from "./recall-causal-lane.js";
+import type { FusionLane } from "./fuse.js";
 
 const NOW = 1_700_000_000_000;
 const SESSION_KEY = "telegram:chat_1:user_a" as unknown as SessionKey;
@@ -1960,5 +1962,49 @@ describe("createMemoryRecall — causal lane (EXTRACT-03)", () => {
     const warn = warns.find((w) => typeof w.hint === "string" && /causal/.test(String(w.hint)));
     expect(warn).toBeDefined();
     expect(warn?.errorKind).toBe("internal");
+  });
+});
+
+// Direct unit coverage of appendCausalLane (the extracted helper). The recall-pipeline tests
+// above exercise the err / empty / push paths through createMemoryRecall; this covers the
+// helper's defensive empty-seedIds early-return, which the call site (which gates on a non-empty
+// seedPool → non-empty seedIds) cannot reach — keeping every helper branch covered.
+describe("appendCausalLane (the extracted 5th-lane helper)", () => {
+  function causalStoreReturning(r: Result<MemorySearchResult[], Error>): MemoryCausalStore {
+    return {
+      async linkCausal() {
+        return ok(0);
+      },
+      async causalLane() {
+        return r;
+      },
+    };
+  }
+
+  it("returns 0 and pushes nothing when seedIds is empty (the defensive early-return)", async () => {
+    const lanes: FusionLane[] = [{ results: [makeResult("base")], weight: 1.0 }];
+    let called = false;
+    const store: MemoryCausalStore = {
+      async linkCausal() {
+        return ok(0);
+      },
+      async causalLane() {
+        called = true;
+        return ok([]);
+      },
+    };
+    const count = await appendCausalLane(lanes, store, 1.0, 5, [], SESSION_KEY_OBJ, "agent_y", noopLogger);
+    expect(count).toBe(0);
+    expect(called).toBe(false); // never queried with no seeds
+    expect(lanes.length).toBe(1); // unchanged
+  });
+
+  it("pushes the lane + returns the count on a non-empty result", async () => {
+    const lanes: FusionLane[] = [{ results: [makeResult("base")], weight: 1.0 }];
+    const store = causalStoreReturning(ok([makeResult("linked1"), makeResult("linked2")]));
+    const count = await appendCausalLane(lanes, store, 2.0, 5, ["seed"], SESSION_KEY_OBJ, "agent_y", noopLogger);
+    expect(count).toBe(2);
+    expect(lanes.length).toBe(2);
+    expect(lanes[1]?.weight).toBe(2.0);
   });
 });
