@@ -894,6 +894,143 @@ describe("createSqliteMemoryConsolidationStore", () => {
       }
     });
 
+    // =====================================================================
+    // FOLD-03 end-to-end: the WRITE→READ chain on real rows. Seed an observation,
+    // fold a new source via the (94-01) adapter, read back the GROWN proof_count +
+    // refreshed occurred_at, and prove the grown observation's PROOF SIGNAL out-ranks
+    // a one-off raw — cross-run accrual verified end-to-end (the fold path actually
+    // feeds the read-side proof boost). The canonical score()-level FOLD-03 proof is
+    // PROOF_EVAL_FIXTURES in recall-eval.test.ts (Plan 94-03 Task 1); this test proves
+    // the WRITE side (fold) feeds that signal on real rows.
+    //
+    // The proof signal is asserted INLINE: the agent↛memory architecture cut
+    // (`memory: {shared, core}` — architecture-graph.test.ts) FORBIDS importing
+    // `score` from @comis/agent here, so the LIVE score.ts proof curve is MIRRORED
+    // verbatim below (score.ts:156-198). Importing @comis/agent would invert the cut.
+    // =====================================================================
+    describe("fold-then-score accrual (cross-run, end-to-end)", () => {
+      const DAY_MS = 86_400_000;
+      const HALF_LIFE_DAYS = 30;
+      /**
+       * MIRRORS the LIVE score.ts proof curve verbatim (score.ts:156-198) — the agent↛memory
+       * cut forbids importing it. proofNorm = clamp(0.5 + ln(proofCount)/10); confidenceFactor
+       * = confidence·0.5^(ageDays/30) over occurredAt (createdAt fallback); decayedProof =
+       * 0.5 + (proofNorm − 0.5)·confidenceFactor. A raw (no proofCount) → proofNorm 0.5 →
+       * decayedProof 0.5 (neutral) regardless of confidence/age.
+       */
+      function proofSignal(
+        e: { proofCount?: number; confidence?: number; occurredAt?: number; createdAt: number },
+        nowMs: number,
+      ): number {
+        const proofNorm =
+          typeof e.proofCount === "number"
+            ? Math.min(1, Math.max(0, 0.5 + Math.log(e.proofCount) / 10))
+            : 0.5;
+        const conf =
+          typeof e.confidence === "number"
+            ? e.confidence *
+              Math.pow(0.5, Math.max(0, (nowMs - (e.occurredAt ?? e.createdAt)) / DAY_MS) / HALF_LIFE_DAYS)
+            : 1;
+        return 0.5 + (proofNorm - 0.5) * conf; // decayedProof — score.ts:196-198
+      }
+
+      it("grows proof_count + refreshes occurred_at on a real fold, and the grown observation out-ranks a one-off raw", async () => {
+        // Seed an observation O corroborated by 2 prior-run sources, with an OLD occurred_at.
+        const s1 = crypto.randomUUID();
+        const s2 = crypto.randomUUID();
+        const recentMs = 100_000; // the "fresh" fold time (the read clock)
+        const oldOccurredAt = 1_000; // O's stale event time before the fold
+        const obs = await seedObservation([s1, s2], {
+          proofCount: 2,
+          confidence: 1,
+          occurredAt: oldOccurredAt,
+          content: "the billing service uses postgres",
+        });
+        // A NEW raw source s3 (a third run corroborating the same fact).
+        const s3 = await seedMemory({ content: "billing runs on postgres", createdAt: 90_000 });
+        // A ONE-OFF raw R (no proofCount → neutral proof signal) — the thing the grown obs must out-rank.
+        const oneOffId = await seedMemory({ content: "user_a guessed billing might use mongo", createdAt: 95_000 });
+
+        // FOLD s3 into O via the live 94-01 adapter (the WRITE side of cross-run accrual).
+        const res = await store.foldIntoExisting({
+          targetObservationId: obs,
+          newSourceIds: [s3],
+          trustLevel: "learned",
+          confidence: 1,
+          occurredAt: recentMs, // half-life refresh — the decay clock restarts
+          content: "the billing service uses postgres",
+          tenantId: TENANT_A,
+          now: recentMs,
+        });
+        expect(res.ok).toBe(true);
+        if (!res.ok) return;
+
+        // READ-BACK: the grown + refreshed state (exercises the 94-01 fold on real rows).
+        expect(proofCountOf(obs)).toBe(3); // 2 prior + 1 new (UNION cardinality)
+        expect(occurredAtOf(obs)).toBe(recentMs); // refreshed from the stale 1_000
+        expect(confidenceOf(obs)).toBe(1);
+        // The returned grown entry reflects the committed DB state.
+        expect(res.value.proofCount).toBe(3);
+        expect(res.value.occurredAt).toBe(recentMs);
+
+        // ACCRUAL OUT-RANKS (the FOLD-03 chain): the grown observation's proof signal exceeds the
+        // one-off raw's. The read clock is `recentMs`, so the freshly-refreshed occurred_at keeps
+        // the proof boost non-decayed (half-life would otherwise erode an OLD observation's gain).
+        const grown = res.value;
+        const grownSignal = proofSignal(
+          {
+            ...(grown.proofCount !== undefined ? { proofCount: grown.proofCount } : {}),
+            ...(grown.confidence !== undefined ? { confidence: grown.confidence } : {}),
+            ...(grown.occurredAt !== undefined ? { occurredAt: grown.occurredAt } : {}),
+            createdAt: grown.createdAt,
+          },
+          recentMs,
+        );
+        // The one-off raw: proofCount absent → neutral 0.5 (read its createdAt back; occurredAt absent).
+        const oneOffSignal = proofSignal({ createdAt: 95_000 }, recentMs);
+        expect(oneOffSignal).toBe(0.5); // neutral by construction (no proof)
+        expect(grownSignal).toBeGreaterThan(oneOffSignal); // accrued proof out-ranks the one-off
+        // Sanity: the grown signal is strictly above neutral (proofCount 3 → proofNorm > 0.5, fresh).
+        expect(grownSignal).toBeGreaterThan(0.5);
+        // Guard the one-off id is a real, distinct raw row (not folded into the observation).
+        expect(oneOffId).not.toBe(obs);
+        expect(proofCountOf(oneOffId)).toBeNull();
+      });
+
+      it("a SECOND fold (a 4th run) accrues further — proof_count keeps growing across runs", async () => {
+        // Model "multiple runs" as sequential folds: 2 → 3 → 4, each a distinct corroborating source.
+        const s1 = crypto.randomUUID();
+        const obs = await seedObservation([s1], { proofCount: 1, confidence: 1, occurredAt: 1_000 });
+        const s2 = await seedMemory({ content: "run-2 source", createdAt: 50_000 });
+        const s3 = await seedMemory({ content: "run-3 source", createdAt: 60_000 });
+
+        const fold = (newSourceIds: string[], occurredAt: number, now: number) =>
+          store.foldIntoExisting({
+            targetObservationId: obs,
+            newSourceIds,
+            trustLevel: "learned" as const,
+            confidence: 1,
+            occurredAt,
+            tenantId: TENANT_A,
+            now,
+          });
+
+        expect((await fold([s2], 50_000, 50_000)).ok).toBe(true);
+        expect(proofCountOf(obs)).toBe(2); // run 2: 1 → 2
+
+        const r3 = await fold([s3], 60_000, 60_000);
+        expect(r3.ok).toBe(true);
+        if (!r3.ok) return;
+        expect(proofCountOf(obs)).toBe(3); // run 3: 2 → 3 (cross-run accrual)
+
+        // The proof signal rose monotonically with proof_count (proofNorm log curve is increasing).
+        const signalAt = (proofCount: number) =>
+          proofSignal({ proofCount, confidence: 1, occurredAt: 60_000, createdAt: 2_000 }, 60_000);
+        expect(signalAt(3)).toBeGreaterThan(signalAt(2));
+        expect(signalAt(2)).toBeGreaterThan(signalAt(1));
+      });
+    });
+
     it("does NOT regress the Phase-84 create path: applyConsolidation still creates a fresh observation", async () => {
       const s1 = await seedMemory({ content: "source 1", createdAt: 100 });
       const s2 = await seedMemory({ content: "source 2", createdAt: 200 });
