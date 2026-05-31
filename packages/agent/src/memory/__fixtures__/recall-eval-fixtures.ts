@@ -35,8 +35,10 @@ import type { MemorySearchResult, TrustLevel, UsefulnessSignal } from "@comis/co
  * - `"temporal"`  — Phase 81: temporal-contradiction / recency.
  * - `"entity"`    — Phase 83: entity-association.
  * - `"feedback"`  — Phase 93: recall-utility feedback loop repeat-query lift (FEED-04).
+ * - `"proof"`     — Phase 94: fold-into-existing proof accrual (FOLD-03) — a cross-run-corroborated
+ *   observation out-ranks a one-off mention via the LIVE proofAlpha factor.
  */
-export type EvalGroup = "reranking" | "temporal" | "entity" | "feedback";
+export type EvalGroup = "reranking" | "temporal" | "entity" | "feedback" | "proof";
 
 /**
  * One labeled eval query: the candidate pool a ranker sees plus the
@@ -133,6 +135,34 @@ function trustCandidate(
       ...base.entry,
       trustLevel: opts.trustLevel,
       ...(opts.createdAt !== undefined ? { createdAt: opts.createdAt } : {}),
+    },
+  };
+}
+
+/**
+ * Like {@link candidate}, but sets the proof-accrual signal for the `"proof"` group (FOLD-03) —
+ * `proofCount`/`confidence`/`occurredAt` ride DIRECTLY on the candidate's entry (NO side-map, unlike
+ * the feedback group; NO new {@link EvalQuery} field — the cut stays clean). These are exactly the
+ * fields the LIVE score.ts proof factor reads (`proofNorm`/`confidenceFactor`/`decayedProof`,
+ * score.ts:166-198): a one-off mention OMITS `proofCount` (→ `proofNorm` 0.5 → neutral 1.0 factor);
+ * a cross-run-corroborated observation sets `proofCount: N` (the UNIONed source-set cardinality the
+ * fold path grows), `confidence: 1`, and a recent `occurredAt` (the half-life-refreshed event time)
+ * so `decayedProof ≈ proofNorm` and the boost is non-decayed. PURE — no `Date.now`/`Math.random`.
+ */
+function proofCandidate(
+  id: string,
+  content: string,
+  score: number,
+  opts: { proofCount?: number; confidence?: number; occurredAt?: number },
+): MemorySearchResult {
+  const base = candidate(id, content, score);
+  return {
+    ...base,
+    entry: {
+      ...base.entry,
+      ...(opts.proofCount !== undefined ? { proofCount: opts.proofCount } : {}),
+      ...(opts.confidence !== undefined ? { confidence: opts.confidence } : {}),
+      ...(opts.occurredAt !== undefined ? { occurredAt: opts.occurredAt } : {}),
     },
   };
 }
@@ -497,3 +527,86 @@ export function usefulnessByIdFor(q: EvalQuery): ReadonlyMap<string, UsefulnessS
   }
   return out;
 }
+
+/**
+ * Phase-94 proof-accrual fixtures (FOLD-03) — the `"proof"` group, the cross-run-corroboration
+ * scenario scored against the LIVE proof lever (`score()` with `proofAlpha>0`; the CONS-08 proof
+ * log curve × confidence half-life — score.ts:166-198 UNCHANGED, proofAlpha is already live since
+ * Phase 84). Kept in a SEPARATE exported array from the prior groups' fixtures so their assertions
+ * stay untouched and green (the documented zero-regression discipline, Pitfall 1).
+ *
+ * THE PROOF-ACCRUAL PAYOFF (HINDSIGHT_VS_COMIS.md N2 PARITY). A fact corroborated across MULTIPLE
+ * consolidation runs accrues proof and OUT-RANKS a one-off mention. The fold path (94-01/94-02)
+ * grows `proof_count` via the UNIONed source-set cardinality + refreshes `occurredAt`/`confidence`;
+ * this group proves the read side rewards that accrual. Each query pairs a ONE-OFF mention (a raw,
+ * `proofCount` ABSENT → `proofNorm` 0.5 → neutral 1.0 factor) carrying the HIGHER fusion `score`
+ * against a CORROBORATED observation (`proofCount = N` across runs, `confidence: 1`, recent
+ * `occurredAt` = EVAL_NOW) carrying the LOWER fusion `score`. Because single-lane `fuse()` is
+ * order-preserving, the fusion-only baseline ranks the higher-base one-off at rank 1 and MISSES the
+ * corroborated id at recall@1 (the headroom). The proof boost
+ * (`proofFactor = 1 + proofAlpha·(decayedProof − 0.5)`, score.ts) then lifts the corroborated
+ * observation to rank 1. `relevantIds` = the corroborated observation's id.
+ *
+ * The proof signal is NOT a field on {@link EvalQuery} and NOT a side map (unlike feedback) — it
+ * rides each candidate's `entry` via {@link proofCandidate} (`proofCount`/`confidence`/`occurredAt`),
+ * exactly the typed MemoryEntry fields the live scorer reads. Keeps the EvalQuery cut clean.
+ *
+ * Worked math (proofFactor = 1 + 0.5·(decayedProof − 0.5); proofAlpha 0.5, occurredAt EVAL_NOW so
+ * confidenceFactor = 1·0.5^0 = 1 → decayedProof = proofNorm; all other alphas 0):
+ *   P1 one-off:      base 0.62, no proofCount → proofNorm 0.5 → factor 1.0 → 0.62
+ *      corroborated: base 0.60, proofCount 50 → proofNorm = clamp(0.5 + ln(50)/10) ≈ 0.891
+ *                    → factor 1 + 0.5·(0.891 − 0.5) ≈ 1.196 → 0.60·1.196 ≈ 0.717 > 0.62 → wins recall@1.
+ *      (0.62 > 0.60 so fusion ranks the one-off @1 — the headroom.)
+ *   P2 one-off:      base 0.64, no proofCount → 0.64
+ *      corroborated: base 0.58, proofCount 40 → proofNorm = clamp(0.5 + ln(40)/10) ≈ 0.869
+ *                    → factor ≈ 1.184 → 0.58·1.184 ≈ 0.687 > 0.64 → wins recall@1.
+ *
+ * Determinism (AGENTS.md §2.5): neutral placeholders + stable ids `p-oneoff*`/`p-proven*`. No real
+ * identities, no network, no `Date.now`/`Math.random`. `createdAt` is uniform EVAL_NOW (so the lift
+ * is attributable to the proof axis, not an incidental recency edge — recencyAlpha is 0 regardless).
+ *
+ * - P1 ("what database does the billing service use") — the cross-run "corroborated-fact" case: the
+ *   one-off "user_a guessed the billing service might use mongo" (p-oneoff1, base 0.62, no proof)
+ *   outscores the corroborated "the billing service uses postgres on example.com" (p-proven1, base
+ *   0.60, proofCount 50 across runs, occurred now) in fusion order; the proof boost rescues p-proven1.
+ * - P2 ("what's the team's standup time") — same shape: the one-off "user_a thought standup was at
+ *   noon once" (p-oneoff2, base 0.64, no proof) precedes the corroborated "the team standup is at
+ *   9am daily per example.com" (p-proven2, base 0.58, proofCount 40, occurred now); the boost
+ *   rescues p-proven2.
+ */
+export const PROOF_EVAL_FIXTURES: EvalQuery[] = [
+  {
+    group: "proof",
+    query: "what database does the billing service use",
+    candidates: [
+      // One-off mention: HIGHER fusion score, NO proofCount (→ proofNorm 0.5, neutral) — fusion rank 1.
+      proofCandidate("p-oneoff1", "user_a guessed the billing service might use mongo", 0.62, {}),
+      // Corroborated across runs: LOWER fusion score, proofCount 50 + recent occurredAt — fusion rank 2
+      // (missed @1); the proof boost rescues it.
+      proofCandidate("p-proven1", "the billing service uses postgres on example.com", 0.6, {
+        proofCount: 50,
+        confidence: 1,
+        occurredAt: EVAL_NOW,
+      }),
+      proofCandidate("p-noise1", "user_a prefers dark mode in the app", 0.3, {}),
+    ],
+    relevantIds: ["p-proven1"],
+  },
+  {
+    group: "proof",
+    query: "what's the team's standup time",
+    candidates: [
+      // One-off mention: HIGHER fusion score, NO proofCount — fusion rank 1.
+      proofCandidate("p-oneoff2", "user_a thought standup was at noon once", 0.64, {}),
+      // Corroborated across runs: LOWER fusion score, proofCount 40 + recent occurredAt — fusion rank 2
+      // (missed @1); the proof boost rescues it.
+      proofCandidate("p-proven2", "the team standup is at 9am daily per example.com", 0.58, {
+        proofCount: 40,
+        confidence: 1,
+        occurredAt: EVAL_NOW,
+      }),
+      proofCandidate("p-noise2", "user_a scheduled a sync for next week", 0.25, {}),
+    ],
+    relevantIds: ["p-proven2"],
+  },
+];
