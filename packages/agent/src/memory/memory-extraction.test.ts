@@ -53,9 +53,15 @@ describe("STRUCTURED_PROMPT instruction invariants", () => {
     expect(STRUCTURED_PROMPT).toMatch(/canonical/i);
   });
 
-  it("states an explicit selectivity rubric: extract durable facts, skip filler (EXTRACT-02)", () => {
-    expect(STRUCTURED_PROMPT).toMatch(/durable/i);
-    expect(STRUCTURED_PROMPT).toMatch(/filler|skip/i);
+  it("states an explicit selectivity rubric: 'Extract durable facts' / 'Skip filler' lead-ins (EXTRACT-02)", () => {
+    // Pin the EXACT phase-91 rubric lead-ins, not the incidental pre-91 wording.
+    // The bare /durable/i half passed on the PRE-91 prompt too (its ✅ list already
+    // read "durable relationships"), so it did not prove the EXTRACT-02 move from a
+    // generic "Extract:" header to the "Extract durable facts:" / "Skip filler:"
+    // rubric. Asserting the lead-in phrases flips RED if a future edit reverts the
+    // explicit rubric while leaving "durable relationships" buried in a list.
+    expect(STRUCTURED_PROMPT).toMatch(/Extract durable facts/i); // new ✅ lead-in
+    expect(STRUCTURED_PROMPT).toMatch(/Skip filler/i); // new ❌ lead-in
   });
 });
 
