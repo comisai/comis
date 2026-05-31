@@ -200,4 +200,103 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
     expect(report.dataset.sha256).toBeUndefined();
     expect(report.dataset.name).toBe("longmemeval-s");
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // BASE-01 (v2.8 Phase 98): the manifest must also carry tokens/query (cost) +
+  // latency (p50/p95). RED-first — these assert fields the pre-patch builder does
+  // not yet produce. Mirrors the dataset.sha256 optional-field pattern above:
+  // additive, byte-identity when omitted, and structurally secret-free (pure
+  // numbers) so the Test-3/3b security gate still holds with them populated.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** A representative cost block (tokens/query, answer + judge). */
+  function sampleCost() {
+    return {
+      answerTokensPerQuery: 812.5,
+      judgeTokensPerQuery: 143,
+      totalTokensPerQuery: 955.5,
+      answerCostUsd: 0.0123,
+      judgeCostUsd: 0.0009,
+    };
+  }
+
+  /** A representative latency block (recall/answer/judge/end-to-end, p50/p95). */
+  function sampleLatency() {
+    return {
+      recallP50Ms: 12.3,
+      recallP95Ms: 48.1,
+      answerP50Ms: 1840,
+      answerP95Ms: 5210,
+      judgeP50Ms: 420,
+      judgeP95Ms: 980,
+      endToEndP50Ms: 2272.3,
+      endToEndP95Ms: 6238.1,
+    };
+  }
+
+  it("Test 5 (BASE-01): records cost.tokensPerQuery (answer + judge) as numbers when the config carries a cost block", () => {
+    const cfg = { ...cleanConfig(), cost: sampleCost() };
+    const report = buildBenchmarkReport(cfg, sampleMetrics(), NOW_MS);
+    expect(report.cost).toBeDefined();
+    expect(typeof report.cost?.answerTokensPerQuery).toBe("number");
+    expect(typeof report.cost?.judgeTokensPerQuery).toBe("number");
+    expect(report.cost?.answerTokensPerQuery).toBe(812.5);
+    expect(report.cost?.judgeTokensPerQuery).toBe(143);
+    expect(report.cost?.totalTokensPerQuery).toBe(955.5);
+    expect(report.cost?.answerCostUsd).toBe(0.0123);
+    expect(report.cost?.judgeCostUsd).toBe(0.0009);
+  });
+
+  it("Test 6 (BASE-01): records latency p50/p95 (recall/answer/judge/end-to-end) as numbers when the config carries a latency block", () => {
+    const cfg = { ...cleanConfig(), latency: sampleLatency() };
+    const report = buildBenchmarkReport(cfg, sampleMetrics(), NOW_MS);
+    expect(report.latency).toBeDefined();
+    expect(typeof report.latency?.recallP50Ms).toBe("number");
+    expect(typeof report.latency?.endToEndP50Ms).toBe("number");
+    expect(report.latency?.recallP50Ms).toBe(12.3);
+    expect(report.latency?.recallP95Ms).toBe(48.1);
+    expect(report.latency?.answerP50Ms).toBe(1840);
+    expect(report.latency?.answerP95Ms).toBe(5210);
+    expect(report.latency?.judgeP50Ms).toBe(420);
+    expect(report.latency?.judgeP95Ms).toBe(980);
+    expect(report.latency?.endToEndP50Ms).toBe(2272.3);
+    expect(report.latency?.endToEndP95Ms).toBe(6238.1);
+  });
+
+  it("Test 7 (BASE-01): omits cost AND latency cleanly when absent from the config (byte-identity for an unmeasured run)", () => {
+    const report: BenchmarkReport = buildBenchmarkReport(cleanConfig(), sampleMetrics(), NOW_MS);
+    expect(report.cost).toBeUndefined();
+    expect(report.latency).toBeUndefined();
+    // The serialized manifest carries no `cost`/`latency` keys at all when unmeasured.
+    const serialized = JSON.stringify(report);
+    expect(serialized).not.toContain("\"cost\"");
+    expect(serialized).not.toContain("\"latency\"");
+  });
+
+  it("Test 8 (THE SECURITY GATE, BASE-01): the secret-omission gate still holds with cost + latency populated alongside a secret-bearing config", () => {
+    // Even with the new numeric fields populated, a secret-bearing model config must
+    // NOT leak into JSON.stringify(report). cost/latency are pure numbers — structurally
+    // secret-free — so they cannot reopen the Test-3/3b hole.
+    const cfg = {
+      ...cleanConfig(),
+      models: {
+        extraction: { provider: "openai", modelId: "gpt-4o-mini", apiKey: "sk-secret-extract-key" },
+        answer: { provider: "openai", modelId: "gpt-4o", apiKey: "sk-secret-answer-key", base_url: "https://api.example.com" },
+        judge: { provider: "anthropic", modelId: "claude-sonnet", apiKey: "Bearer-secret-judge-token" },
+        embedding: { provider: "local" as const, modelUri: "https://user:sk-uri-secret@host/bge?token=tok-embed-secret" },
+        reranker: { provider: "local" as const, modelUri: "llama:bge-reranker" },
+      },
+      cost: sampleCost(),
+      latency: sampleLatency(),
+    };
+    const report = buildBenchmarkReport(cfg, sampleMetrics(), NOW_MS);
+    const serialized = JSON.stringify(report);
+    expect(serialized).not.toMatch(/apiKey|sk-|Bearer/);
+    expect(serialized).not.toContain("base_url");
+    expect(serialized).not.toContain("tok-embed-secret");
+    expect(serialized).not.toContain("token=");
+    // The new numeric fields ARE present (proves they were recorded, not dropped).
+    expect(report.cost?.answerTokensPerQuery).toBe(812.5);
+    expect(report.latency?.endToEndP50Ms).toBe(2272.3);
+  });
 });
