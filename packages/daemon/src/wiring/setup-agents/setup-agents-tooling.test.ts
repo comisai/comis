@@ -11,7 +11,7 @@
 
 import { describe, it, expect } from "vitest";
 import { getModels, getProviders, type KnownProvider } from "@earendil-works/pi-ai";
-import { resolveAgentModel } from "./setup-agents-tooling.js";
+import { resolveAgentModel, resolveEffectiveRerank } from "./setup-agents-tooling.js";
 
 describe("resolveAgentModel", () => {
   // Behavioral assertions: avoid pinning literal model IDs (which would
@@ -145,5 +145,42 @@ describe("resolveAgentModel", () => {
     expect(result.provider).toBe("openrouter");
     expect(result.model).not.toMatch(/^claude-/);
     expect(getModels("openrouter").find((m) => m.id === result.model)).toBeDefined();
+  });
+});
+
+describe("resolveEffectiveRerank", () => {
+  // Phase 92, RERANK-01/RERANK-02. The full 2x3 truth table for the pure
+  // precedence fn: the explicit operator value (true | false | undefined-if-unset)
+  // crossed with the model-present probe result. Explicit ALWAYS wins both
+  // directions; unset (undefined) falls through to the presence signal.
+
+  it.each([
+    // [explicit, present, expected, why]
+    [true, true, true, "explicit true wins when model present"],
+    [true, false, true, "explicit true wins even when model absent (opt-in download case)"],
+    [false, true, false, "explicit false wins even when model present (operator force-off)"],
+    [false, false, false, "explicit false wins when model absent"],
+    [undefined, true, true, "unset -> auto-on iff model present (RERANK-01)"],
+    [undefined, false, false, "unset + absent -> off (RERANK-02 fresh-install posture)"],
+  ] as const)(
+    "resolveEffectiveRerank(%s, %s) === %s — %s",
+    (explicit, present, expected) => {
+      expect(resolveEffectiveRerank(explicit, present)).toBe(expected);
+    },
+  );
+
+  it("explicit true returns true regardless of presence (explicit wins, on-direction)", () => {
+    expect(resolveEffectiveRerank(true, true)).toBe(true);
+    expect(resolveEffectiveRerank(true, false)).toBe(true);
+  });
+
+  it("explicit false returns false regardless of presence (explicit wins, off-direction)", () => {
+    expect(resolveEffectiveRerank(false, true)).toBe(false);
+    expect(resolveEffectiveRerank(false, false)).toBe(false);
+  });
+
+  it("unset (undefined) mirrors the model-present signal exactly (auto-on gate)", () => {
+    expect(resolveEffectiveRerank(undefined, true)).toBe(true);
+    expect(resolveEffectiveRerank(undefined, false)).toBe(false);
   });
 });
