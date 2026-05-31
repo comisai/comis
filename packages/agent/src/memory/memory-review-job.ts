@@ -525,6 +525,11 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       source: memorySource,
       tags: ["auto-review", ...config.autoTags],
       sourceType: "conversation",
+      // Persist the LLM-classified memory class (P95/LANES-03) instead of dropping it
+      // to the adapter's 'semantic' fallback. `m.memoryType` is ALWAYS present post-parse
+      // (StructuredMemorySchema.memoryType has `.default("semantic")`), so the persisted
+      // value is the real classification.
+      memoryType: m.memoryType,
       createdAt: clock.now(),
       ...(occurredAt !== undefined ? { occurredAt } : {}),
     };

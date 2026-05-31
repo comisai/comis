@@ -79,7 +79,10 @@ export class SqliteMemoryAdapter implements MemoryPort {
   async store(entry: MemoryEntry): Promise<Result<MemoryEntry, Error>> {
     const startMs = systemNowMs();
     try {
-      const memoryType = (entry as MemoryEntry & { memoryType?: string }).memoryType ?? "semantic";
+      // memoryType is a first-class optional MemoryEntry field (P95/LANES-03). The
+      // `?? "semantic"` fallback is belt-and-braces: an omitting write still satisfies
+      // the column's NOT NULL DEFAULT 'semantic' CHECK.
+      const memoryType = entry.memoryType ?? "semantic";
 
       const vecAvailable = this.vecAvailable;
       const tx = this.db.transaction(() => {

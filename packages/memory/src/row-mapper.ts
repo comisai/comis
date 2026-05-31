@@ -75,11 +75,11 @@ function spreadParsedJson<K extends string, V>(
 // ── Row Conversion ───────────────────────────────────────────────────
 
 /** Convert a MemoryRow (DB row) to a MemoryEntry (domain type).
- *  The returned object includes a non-schema `memoryType` property
- *  so that RPC handlers can surface the DB-level memory_type column
- *  without modifying the strict MemoryEntry Zod schema.
+ *  `memoryType` is a first-class optional field on MemoryEntry (P95/LANES-03);
+ *  the DB column's CHECK constraint guarantees `row.memory_type` is in the enum set,
+ *  so it maps straight onto the typed field (no intersection widening needed).
  */
-export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry & { memoryType?: string } {
+export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry {
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -106,7 +106,9 @@ export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry & 
     ...(row.updated_at !== null ? { updatedAt: row.updated_at } : {}),
     ...(row.expires_at !== null ? { expiresAt: row.expires_at } : {}),
     ...(embedding ? { embedding } : {}),
-    memoryType: row.memory_type,
+    // DB CHECK(memory_type IN ('working','episodic','semantic','procedural')) guarantees
+    // the in-set value; cast to the enum mirrors the trust_level mapping above.
+    memoryType: row.memory_type as MemoryEntry["memoryType"],
   };
 }
 

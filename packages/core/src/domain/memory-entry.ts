@@ -61,6 +61,14 @@ export const MemoryEntrySchema = z.strictObject({
     taintLevel: z.enum(["clean", "wrapped", "raw"]).optional(),
     /** Type of source that produced this entry */
     sourceType: z.enum(["system", "conversation", "tool", "web", "api", "unknown"]).optional(),
+    /**
+     * Cognitive memory class (P95/LANES-03), classified by the extractor
+     * ({@link StructuredMemorySchema.memoryType}, `.default("semantic")`). Persisted to the
+     * `memories.memory_type` column (`NOT NULL DEFAULT 'semantic' CHECK(...)`). Additive
+     * `.optional()`: an omitting write still defaults to 'semantic' (the column DEFAULT +
+     * the adapter's `?? "semantic"` fallback), so existing rows + callers are unaffected.
+     */
+    memoryType: z.enum(["working", "episodic", "semantic", "procedural"]).optional(),
   });
 
 export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
