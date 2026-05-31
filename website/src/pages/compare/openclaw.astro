@@ -309,7 +309,7 @@ const contextRows: Row[] = [
   {
     label: "Memory search",
     comis:
-      "SQLite + FTS5 + sqlite-vec. Hybrid search via reciprocal rank fusion. Trust-partitioned (system/learned/external). RAG retriever injects memories with provenance annotations and trust-level tags. Budget-capped injection with per-query maxChars. Prompt injection sanitization on retrieved content.",
+      "SQLite + FTS5 + sqlite-vec. Hybrid search via reciprocal rank fusion across tunable lanes, with an on-device cross-encoder reranker that turns on automatically when its model is present (zero download out of the box). Trust-first recall (system/learned/external): contradictions resolve by trust first, then recency, without deleting history. Repeated facts consolidate into corroborated observations whose proof accrues across runs, and an opt-in feedback loop lets recall learn from which memories actually got used. RAG retriever injects memories with provenance annotations and trust-level tags. Budget-capped injection with per-query maxChars. Prompt injection sanitization on retrieved content.",
     openclaw:
       "SQLite + FTS5 + vector embeddings (OpenAI, Gemini, Voyage, Mistral, Ollama). Hybrid search with configurable weights (vector 0.7, text 0.3). MMR diversity reranking (lambda 0.7). Temporal decay with 30-day half-life. Batch API for providers that support it. Max 6 results, min score 0.35. Community 12-layer architecture adds facts.db (770+ facts with Hebbian activation/decay), file-vec index, and LightRAG GraphRAG (4,909 entities, 6,089 relations).",
     verdict: "tie",

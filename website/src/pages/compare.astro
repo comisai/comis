@@ -103,7 +103,7 @@ const architectureRows = [
   {
     label: "Memory",
     them: "Session-based or simple key-value storage. Lost between restarts.",
-    us: "Persistent semantic memory with SQLite + FTS5 + vector search. Survives restarts. Trust-partitioned. RAG retrieval with provenance annotations.",
+    us: "Persistent semantic memory with SQLite + FTS5 + vector search. Survives restarts. Trust-first recall with on-device reranking (auto-on when present, zero download out of the box), tunable fusion lanes, proof-accruing observations, and an opt-in feedback loop. Trust-partitioned, with provenance annotations.",
     verdict: "comis",
   },
   {
