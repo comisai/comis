@@ -9,7 +9,7 @@
 import { isAbsolute, resolve } from "node:path";
 import type { AppContainer, SkillsConfig, ApprovalGate, WrapExternalContentOptions, SessionKey, ToolCapabilityPort, McpServerEntry } from "@comis/core";
 import { enterConfigMutationFence, leaveConfigMutationFence } from "../api/shared/persist-to-config.js";
-import type { ComisLogger, IssuedSession } from "@comis/infra";
+import type { ComisLogger } from "@comis/infra";
 import {
   SkillsConfigSchema,
   sanitizeLogString,
@@ -78,7 +78,7 @@ import {
 // keep this file under 800 lines. BrokerContextDeps is re-exported here so
 // existing imports of it from setup-tools.ts continue to resolve.
 export type { BrokerContextDeps } from "./setup-broker-activation.js";
-import type { BrokerContextDeps } from "./setup-broker-activation.js";
+import { buildBrokerSpawnEnv, type BrokerContextDeps } from "./setup-broker-activation.js";
 
 
 // ---------------------------------------------------------------------------
@@ -560,16 +560,6 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           return safePath(sessionDir, "tool-results");
         };
 
-        // INTEG-03: issue single-use session token for the broker proxy auth.
-        // FIXME(INTEG-03): token issued once per assembleToolsForAgent call (per assembly,
-        // not per exec). First exec consumes the token; subsequent calls in the same agent
-        // assembly will receive 407 from the broker.
-        // Path to per-command issuance: thread sessionManager into ExecToolDeps and call
-        // issueToken() inside execute() — tracked as follow-on work.
-        const brokerIssuedSession: IssuedSession | undefined = deps.brokerContext
-          ? deps.brokerContext.sessionManager.issueToken(agentId)
-          : undefined;
-
         tools.push(createExecTool({
           workspacePath: agentWorkspaceDir,
           registry,
@@ -587,21 +577,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
           toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
           approvalGate,                                      // Soft-stop override path
           // INTEG-03: broker proxy env — only present when brokerContext wired.
-          // placeholders contain ONLY placeholder strings (never real secret values).
-          // Real secrets are resolved by the broker per-request from SecretManager.
-          brokerSpawnEnv: deps.brokerContext && brokerIssuedSession
-            ? {
-                HTTPS_PROXY: `http://127.0.0.1:${deps.brokerContext.tcpPort}`,
-                // HTTP_PROXY intentionally omitted — broker is CONNECT-only (HTTPS).
-                // The broker handles TLS-CONNECT tunnels; plain HTTP via HTTP_PROXY
-                // is unsupported and would produce unexpected routing behavior.
-                NODE_EXTRA_CA_CERTS: deps.brokerContext.caPath,
-                placeholders: {
-                  ...deps.brokerContext.placeholders,
-                  COMIS_BROKER_TOKEN: brokerIssuedSession.proxyToken, // single-use token
-                },
-              }
-            : undefined,
+          // Issues the single-use token + builds the placeholder/CA/proxy env;
+          // extracted to setup-broker-activation.ts (buildBrokerSpawnEnv).
+          brokerSpawnEnv: buildBrokerSpawnEnv(deps.brokerContext, agentId),
         }));
       }
 
@@ -642,6 +620,19 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         if (groupTools) {
           for (const t of groupTools) allowedNames.add(t);
         }
+      }
+      // §8.1 fix (DAG-02): in DAG mode, force-include the ctx_* recall tools
+      // regardless of the restricted profile. Without this, a masked DAG tool
+      // result ("...Use ctx_inspect to view.") has no recovery path -- no
+      // profile lists ctx_* (tool-policy.ts), so a restricted-profile DAG agent
+      // would be told to call a tool it cannot reach. Gated strictly on
+      // version === "dag" (ctx_* are dead/confusing in pipeline mode -- no DAG
+      // RPC backing) and unions ONLY the two recall groups (V4: no widening
+      // beyond group:context + group:context_expand). The builtinTools ceiling
+      // below still runs AFTER and still wins for exec/process/browser.
+      if (agentConfig?.contextEngine?.version === "dag") {
+        for (const t of TOOL_GROUPS["group:context"] ?? []) allowedNames.add(t);
+        for (const t of TOOL_GROUPS["group:context_expand"] ?? []) allowedNames.add(t);
       }
       platformToolProvider = () => agentPlatformTools().filter(t => allowedNames.has(t.name));
     } else {

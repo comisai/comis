@@ -71,8 +71,15 @@ export function createHybridMemoryInjector(opts?: {
       if (topScore >= inlineMinScore) {
         // Format top-1 as inline memory
         const date = systemDateFrom(top.entry.createdAt).toISOString().split("T")[0];
+        // Surface the EVENT date only when present (P81/TEMP-05); absent → the inline
+        // string is byte-identical to the Phase-80 recorded-only format. systemDateFrom
+        // (not new Date) keeps the wall-clock globals banned (globals.test.ts).
+        const occurred =
+          typeof top.entry.occurredAt === "number"
+            ? `, occurred ${systemDateFrom(top.entry.occurredAt).toISOString().split("T")[0]}`
+            : "";
         const sanitized = sanitizeToolOutput(top.entry.content);
-        const inlineMemory = `\n[Relevant context from memory: ${sanitized} (recorded ${date})]\n`;
+        const inlineMemory = `\n[Relevant context from memory: ${sanitized} (recorded ${date}${occurred})]\n`;
 
         // Format remaining results for system prompt
         const remaining = results.slice(1);

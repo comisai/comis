@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -178,6 +178,21 @@ export interface ChannelsDeps {
   defaultWorkspaceDir?: string;
   /** Memory adapter for storing media file references. */
   memoryAdapter?: MemoryPort;
+  /** Entity-associative store (Phase 83) — forwarded to registerCronEventListeners so
+   *  runMemoryReview (the write path) populates entity links after each successful store.
+   *  Built in setup-memory on the shared db handle. */
+  entityStore?: MemoryEntityStore;
+  /** Causal store (Phase 96, EXTRACT-03) — forwarded to registerCronEventListeners so
+   *  runMemoryReview (the write path) links cause->effect edges via linkCausal after each
+   *  successful store. Built in setup-memory on the shared db handle; injected as the port
+   *  TYPE (agent↛memory cut). */
+  causalStore?: MemoryCausalStore;
+  /** Consolidation store (Phase 84, CONS-07) — forwarded to registerCronEventListeners so
+   *  the opt-in __MEMORY_CONSOLIDATION__ sentinel runs runMemoryConsolidation with the
+   *  injected store. Built in setup-memory on the shared db handle; injected as the port
+   *  TYPE (agent↛memory cut). Absent => the consolidation sentinel cannot run (the cron is
+   *  off-by-default anyway, so a default-config agent never reaches it). */
+  consolidationStore?: MemoryConsolidationStore;
   /** Default tenant ID for memory storage. */
   tenantId?: string;
   /** Embedding queue for new memory entries (optional). */
@@ -316,12 +331,16 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     sessionManager,
     sessionStore: deps.sessionStore,
     logger,
+    clock: deps.clock,
     adaptersByType,
     deliveryService,
     assembleToolsForAgent: deps.assembleToolsForAgent,
     transcriber,
     workspaceDirs: deps.workspaceDirs,
     memoryAdapter: deps.memoryAdapter,
+    entityStore: deps.entityStore,
+    causalStore: deps.causalStore,
+    consolidationStore: deps.consolidationStore,
     tenantId: deps.tenantId,
     piSessionAdapters: deps.piSessionAdapters,
     cronExecutionTrackers: deps.cronExecutionTrackers,

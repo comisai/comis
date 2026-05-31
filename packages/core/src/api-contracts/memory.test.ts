@@ -27,6 +27,11 @@ import {
   ContextTreeContract,
   ContextSearchByConversationContract,
   MEMORY_CONTRACTS,
+  MemoryRecallTraceContract,
+  MemoryObservationsContract,
+  MemoryEntitiesContract,
+  MemoryRecallStatsContract,
+  MEMORY_DIAGNOSTIC_CONTRACTS,
 } from "./memory.js";
 import { INTERNAL_FIELD_NAMES } from "./internals.js";
 
@@ -35,8 +40,11 @@ describe("memory + context domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("MEMORY_CONTRACTS has exactly 15 entries (8 memory + 7 context)", () => {
-    expect(MEMORY_CONTRACTS.length).toBe(15);
+  it("MEMORY_CONTRACTS has exactly 19 entries (8 memory + 4 OBS-06 diagnostics + 7 context)", () => {
+    // Plan 05 closed the cross-wave seam: the 4 MEMORY_DIAGNOSTIC_CONTRACTS are
+    // now spread in (8 + 4 + 7 = 19), in the same wave that landed their daemon
+    // handlers, so the registry ↔ handler set stays 1:1.
+    expect(MEMORY_CONTRACTS.length).toBe(19);
   });
 
   it("MEMORY_CONTRACTS method names cover every handler-factory method", () => {
@@ -540,5 +548,252 @@ describe("memory + context domain contracts", () => {
         ],
       }),
     ).not.toThrow();
+  });
+});
+
+// ===========================================================================
+// Phase 86 (OBS-06) — admin-scoped memory diagnostic RPC contracts.
+//
+// Interface-first: these four contracts ship here so Plan 05 (daemon handlers
+// + CLI) has the request/response shapes in hand. They are grouped in their
+// OWN `MEMORY_DIAGNOSTIC_CONTRACTS` array and are deliberately NOT yet folded
+// into `MEMORY_CONTRACTS` (the registry that feeds `API_CONTRACTS`): the
+// bidirectional 1:1 + contract-handler-parity architecture tests require every
+// API_CONTRACTS entry to have a MIGRATED daemon handler, so registering them
+// before Plan 05's handlers exist would RED-gate the whole repo between waves.
+// Plan 05 spreads MEMORY_DIAGNOSTIC_CONTRACTS into MEMORY_CONTRACTS in the same
+// diff that lands the handlers — keeping the registry↔handler set 1:1 at all
+// times. See the SUMMARY "Cross-wave seam" note.
+// ===========================================================================
+
+describe("memory diagnostic contracts (OBS-06) — admin-scoped", () => {
+  it("MEMORY_DIAGNOSTIC_CONTRACTS has exactly 4 entries, all admin-scoped", () => {
+    expect(MEMORY_DIAGNOSTIC_CONTRACTS.length).toBe(4);
+    for (const c of MEMORY_DIAGNOSTIC_CONTRACTS) {
+      expect(c.scopes, `${c.method} must be admin-gated`).toEqual(["admin"]);
+    }
+  });
+
+  it("the 4 diagnostic contracts are now IN MEMORY_CONTRACTS (cross-wave seam closed in Plan 05)", () => {
+    // Plan 05 spread ...MEMORY_DIAGNOSTIC_CONTRACTS into MEMORY_CONTRACTS in the
+    // SAME diff that landed the daemon handlers (and removed the
+    // @contract-deferred-handler annotations), so each is now registered and
+    // the contract-handler-parity + bidirectional gates pass with 1:1 parity.
+    const registered = new Set(MEMORY_CONTRACTS.map((c) => c.method));
+    for (const method of [
+      "memory.recall_trace",
+      "memory.observations",
+      "memory.entities",
+      "memory.recall_stats",
+    ]) {
+      expect(
+        registered.has(method),
+        `${method} must be IN MEMORY_CONTRACTS now that Plan 05 landed its handler`,
+      ).toBe(true);
+    }
+  });
+
+  it("no diagnostic contract request schema declares any INTERNAL_FIELD_NAMES key", () => {
+    const internalSet = new Set(INTERNAL_FIELD_NAMES);
+    for (const contract of MEMORY_DIAGNOSTIC_CONTRACTS) {
+      const shape = (contract.request as unknown as { shape?: Record<string, unknown> }).shape;
+      if (!shape) continue;
+      for (const key of Object.keys(shape)) {
+        expect(
+          internalSet.has(key),
+          `${contract.method}: request must not declare internal field "${key}"`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // memory.recall_trace
+  // -------------------------------------------------------------------------
+
+  it("memory.recall_trace: method + admin scope", () => {
+    expect(MemoryRecallTraceContract.method).toBe("memory.recall_trace");
+    expect(MemoryRecallTraceContract.scopes).toEqual(["admin"]);
+  });
+
+  it("memory.recall_trace: request accepts session_key OR trace_id plus optional scoping (at-least-one enforced in handler)", () => {
+    // Both modelled optional (the "at least one" rule is enforced in the
+    // Plan 05 handler, mirroring obs.trace.search's messageId/traceId pattern).
+    expect(() =>
+      MemoryRecallTraceContract.request.parse({ session_key: "t1:u1:c1" }),
+    ).not.toThrow();
+    expect(() =>
+      MemoryRecallTraceContract.request.parse({ trace_id: "trace-1" }),
+    ).not.toThrow();
+    expect(() =>
+      MemoryRecallTraceContract.request.parse({
+        trace_id: "trace-1",
+        tenant_id: "t1",
+        agent_id: "a1",
+        limit: 25,
+      }),
+    ).not.toThrow();
+    // An empty object parses (the handler raises the at-least-one error).
+    expect(() => MemoryRecallTraceContract.request.parse({})).not.toThrow();
+  });
+
+  it("memory.recall_trace: rejects a non-integer, negative, or oversized limit (WR-05 bounded limit)", () => {
+    // WR-05: the diagnostic `limit` must be a positive integer with a sane cap
+    // (defense-in-depth — a malformed bound used to flow straight into the
+    // file scan / `LIMIT ?`). A small positive integer still parses.
+    expect(() =>
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: 50 }),
+    ).not.toThrow();
+    // Non-integer is rejected at parse time.
+    expect(() =>
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: 3.5 }),
+    ).toThrow();
+    // Negative / zero is rejected.
+    expect(() =>
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: -1 }),
+    ).toThrow();
+    expect(() =>
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: 0 }),
+    ).toThrow();
+    // Oversized (beyond the cap) is rejected.
+    expect(() =>
+      MemoryRecallTraceContract.request.parse({ trace_id: "t", limit: 1_000_000_000 }),
+    ).toThrow();
+  });
+
+  it("memory.observations / memory.entities: reject a non-integer or oversized limit (WR-05 bounded limit)", () => {
+    // The two SQL-backed diagnostics thread `limit` straight into `LIMIT ?`,
+    // so the same positive-integer-with-cap fence applies to them.
+    expect(() =>
+      MemoryObservationsContract.request.parse({ limit: 3.5 }),
+    ).toThrow();
+    expect(() =>
+      MemoryObservationsContract.request.parse({ limit: 1_000_000_000 }),
+    ).toThrow();
+    expect(() =>
+      MemoryEntitiesContract.request.parse({ limit: -5 }),
+    ).toThrow();
+    expect(() =>
+      MemoryEntitiesContract.request.parse({ limit: 1_000_000_000 }),
+    ).toThrow();
+  });
+
+  it("memory.recall_trace: response carries records[] of loose forward-compat JSONL rows", () => {
+    expect(() =>
+      MemoryRecallTraceContract.response.parse({
+        records: [
+          { schemaVersion: 1, traceId: "t", lanes: { fts: 3 } },
+          { schemaVersion: 1, traceId: "t", rerank: { fellBack: false } },
+        ],
+      }),
+    ).not.toThrow();
+    expect(() => MemoryRecallTraceContract.response.parse({ records: [] })).not.toThrow();
+    expect(() => MemoryRecallTraceContract.response.parse({})).toThrow();
+  });
+
+  // -------------------------------------------------------------------------
+  // memory.observations
+  // -------------------------------------------------------------------------
+
+  it("memory.observations: method + admin scope + optional scoping request", () => {
+    expect(MemoryObservationsContract.method).toBe("memory.observations");
+    expect(MemoryObservationsContract.scopes).toEqual(["admin"]);
+    expect(() => MemoryObservationsContract.request.parse({})).not.toThrow();
+    expect(() =>
+      MemoryObservationsContract.request.parse({ tenant_id: "t1", agent_id: "a1", limit: 10 }),
+    ).not.toThrow();
+  });
+
+  it("memory.observations: response observations[] carries provenance preview fields", () => {
+    expect(() =>
+      MemoryObservationsContract.response.parse({
+        observations: [
+          {
+            id: "obs-1",
+            content: "preview",
+            proofCount: 3,
+            sourceIds: ["mem-1", "mem-2"],
+            confidence: 0.8,
+            consolidatedAt: 1_700_000_000_000,
+            createdAt: 1_700_000_000_000,
+          },
+          // optional provenance fields may be absent
+          { id: "obs-2", content: "preview2", createdAt: 1_700_000_000_001 },
+        ],
+      }),
+    ).not.toThrow();
+    // id + content + createdAt are required.
+    expect(() =>
+      MemoryObservationsContract.response.parse({ observations: [{ id: "obs-1" }] }),
+    ).toThrow();
+  });
+
+  // -------------------------------------------------------------------------
+  // memory.entities
+  // -------------------------------------------------------------------------
+
+  it("memory.entities: method + admin scope + optional scoping request", () => {
+    expect(MemoryEntitiesContract.method).toBe("memory.entities");
+    expect(MemoryEntitiesContract.scopes).toEqual(["admin"]);
+    expect(() => MemoryEntitiesContract.request.parse({})).not.toThrow();
+    expect(() =>
+      MemoryEntitiesContract.request.parse({ tenant_id: "t1", agent_id: "a1", limit: 50 }),
+    ).not.toThrow();
+  });
+
+  it("memory.entities: response entities[] carries id, name, mentionCount + optional firstSeen/lastSeen", () => {
+    expect(() =>
+      MemoryEntitiesContract.response.parse({
+        entities: [
+          { id: "ent-1", name: "alice", mentionCount: 7, firstSeen: 1, lastSeen: 2 },
+          { id: "ent-2", name: "bob", mentionCount: 1 },
+        ],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      MemoryEntitiesContract.response.parse({ entities: [{ id: "ent-1", name: "x" }] }),
+    ).toThrow();
+  });
+
+  // -------------------------------------------------------------------------
+  // memory.recall_stats
+  // -------------------------------------------------------------------------
+
+  it("memory.recall_stats: method + admin scope + optional scoping request", () => {
+    expect(MemoryRecallStatsContract.method).toBe("memory.recall_stats");
+    expect(MemoryRecallStatsContract.scopes).toEqual(["admin"]);
+    expect(() => MemoryRecallStatsContract.request.parse({})).not.toThrow();
+    expect(() =>
+      MemoryRecallStatsContract.request.parse({ tenant_id: "t1", agent_id: "a1" }),
+    ).not.toThrow();
+  });
+
+  it("returns a recall_stats response mirroring RecallCountersSnapshot with derived rerankFallbackRate and recallHitRate", () => {
+    expect(() =>
+      MemoryRecallStatsContract.response.parse({
+        laneUsage: { fts: 100, vector: 80, entity: 20 },
+        rerankRuns: 50,
+        rerankFallbacks: 5,
+        consolidationClusters: 12,
+        observationsCreated: 30,
+        recalls: 60,
+        recallsWithHits: 48,
+        rerankFallbackRate: 0.1,
+        recallHitRate: 0.8,
+      }),
+    ).not.toThrow();
+    // laneUsage and the derived rates are required.
+    expect(() =>
+      MemoryRecallStatsContract.response.parse({
+        rerankRuns: 0,
+        rerankFallbacks: 0,
+        consolidationClusters: 0,
+        observationsCreated: 0,
+        recalls: 0,
+        recallsWithHits: 0,
+        rerankFallbackRate: 0,
+        recallHitRate: 0,
+      }),
+    ).toThrow();
   });
 });

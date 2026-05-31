@@ -5581,6 +5581,68 @@
       "admin"
     ]
   },
+  "memory.entities": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "mentionCount": {
+                "type": "number"
+              },
+              "firstSeen": {
+                "type": "number"
+              },
+              "lastSeen": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "mentionCount"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "entities"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "memory.export": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5748,6 +5810,206 @@
     },
     "scopes": [
       "rpc"
+    ]
+  },
+  "memory.observations": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "observations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              },
+              "proofCount": {
+                "type": "number"
+              },
+              "sourceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "confidence": {
+                "type": "number"
+              },
+              "consolidatedAt": {
+                "type": "number"
+              },
+              "createdAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "content",
+              "createdAt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "observations"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "memory.recall_stats": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "laneUsage": {
+          "type": "object",
+          "properties": {
+            "fts": {
+              "type": "number"
+            },
+            "vector": {
+              "type": "number"
+            },
+            "entity": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "fts",
+            "vector",
+            "entity"
+          ],
+          "additionalProperties": false
+        },
+        "rerankRuns": {
+          "type": "number"
+        },
+        "rerankFallbacks": {
+          "type": "number"
+        },
+        "consolidationClusters": {
+          "type": "number"
+        },
+        "observationsCreated": {
+          "type": "number"
+        },
+        "recalls": {
+          "type": "number"
+        },
+        "recallsWithHits": {
+          "type": "number"
+        },
+        "rerankFallbackRate": {
+          "type": "number"
+        },
+        "recallHitRate": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "laneUsage",
+        "rerankRuns",
+        "rerankFallbacks",
+        "consolidationClusters",
+        "observationsCreated",
+        "recalls",
+        "recallsWithHits",
+        "rerankFallbackRate",
+        "recallHitRate"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
+  "memory.recall_trace": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "session_key": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "records": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        }
+      },
+      "required": [
+        "records"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
     ]
   },
   "memory.search_files": {

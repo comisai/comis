@@ -284,6 +284,92 @@ describe("MessagingEvents payload structure", () => {
     expect(received.timestamp).toBe(now);
   });
 
+  it("context:dag_compacted delivers DAG compaction metrics (sibling shape)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const now = Date.now();
+    const payload: EventMap["context:dag_compacted"] = {
+      conversationId: "conv-1",
+      agentId: "agent-1",
+      sessionKey: "default:user1:channel1",
+      leafSummariesCreated: 3,
+      condensedSummariesCreated: 1,
+      maxDepthReached: 2,
+      totalSummariesCreated: 4,
+      durationMs: 120,
+      timestamp: now,
+    };
+
+    bus.on("context:dag_compacted", handler);
+    bus.emit("context:dag_compacted", payload);
+
+    expect(handler).toHaveBeenCalledOnce();
+    const received = handler.mock.calls[0]![0] as EventMap["context:dag_compacted"];
+    expect(received.conversationId).toBe("conv-1");
+    expect(received.totalSummariesCreated).toBe(4);
+  });
+
+  // DAG-05 (type half): context:mode_switched carries the switch DIRECTION
+  // (closed "pipeline" | "dag" union) plus the one-time import COST
+  // (fullImport / importedCount / durationMs) + correlation ids. Mirrors
+  // context:dag_compacted (identifiers + counts + durations only — NO message
+  // text). Emitted from the @comis/agent DAG reconciliation seam in Plan 04.
+  it("context:mode_switched payload shape: direction union + import cost", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const now = Date.now();
+    const payload: EventMap["context:mode_switched"] = {
+      from: "pipeline",
+      to: "dag",
+      conversationId: "conv-1",
+      agentId: "agent-1",
+      sessionKey: "default:user1:channel1",
+      fullImport: true,
+      importedCount: 42,
+      durationMs: 85,
+      timestamp: now,
+    };
+
+    bus.on("context:mode_switched", handler);
+    bus.emit("context:mode_switched", payload);
+
+    expect(handler).toHaveBeenCalledOnce();
+    const received = handler.mock.calls[0]![0] as EventMap["context:mode_switched"];
+    expect(received.from).toBe("pipeline");
+    expect(received.to).toBe("dag");
+    expect(received.conversationId).toBe("conv-1");
+    expect(received.agentId).toBe("agent-1");
+    expect(received.sessionKey).toBe("default:user1:channel1");
+    expect(received.fullImport).toBe(true);
+    expect(received.importedCount).toBe(42);
+    expect(received.durationMs).toBe(85);
+    expect(received.timestamp).toBe(now);
+  });
+
+  it("context:mode_switched accepts the reverse direction (dag -> pipeline, incremental)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["context:mode_switched"] = {
+      from: "dag",
+      to: "pipeline",
+      conversationId: "conv-2",
+      agentId: "agent-2",
+      sessionKey: "default:user2:channel2",
+      fullImport: false,
+      importedCount: 0,
+      durationMs: 3,
+      timestamp: Date.now(),
+    };
+
+    bus.on("context:mode_switched", handler);
+    bus.emit("context:mode_switched", payload);
+
+    const received = handler.mock.calls[0]![0] as EventMap["context:mode_switched"];
+    expect(received.from).toBe("dag");
+    expect(received.to).toBe("pipeline");
+    expect(received.fullImport).toBe(false);
+  });
+
   it("type safety: @ts-expect-error for missing required fields", () => {
     const bus = new TypedEventBus();
 
@@ -292,6 +378,51 @@ describe("MessagingEvents payload structure", () => {
 
     // @ts-expect-error - missing content in message:sent
     bus.emit("message:sent", { channelId: "c1", messageId: "m1" });
+  });
+
+  // DAG-05 closed-union guard (T-85-10): from/to are the literal
+  // "pipeline" | "dag" union — an arbitrary string is a COMPILE error, not a
+  // runtime discriminator. These @ts-expect-error lines fail to compile if the
+  // member is ever widened to `string`.
+  it("type safety: context:mode_switched from/to reject non-union strings", () => {
+    const bus = new TypedEventBus();
+
+    bus.emit("context:mode_switched", {
+      // @ts-expect-error - "nope" is not a member of the "pipeline" | "dag" union
+      from: "nope",
+      to: "dag",
+      conversationId: "conv-1",
+      agentId: "agent-1",
+      sessionKey: "default:user1:channel1",
+      fullImport: true,
+      importedCount: 1,
+      durationMs: 1,
+      timestamp: Date.now(),
+    });
+
+    bus.emit("context:mode_switched", {
+      from: "pipeline",
+      // @ts-expect-error - "legacy" is not a member of the "pipeline" | "dag" union
+      to: "legacy",
+      conversationId: "conv-1",
+      agentId: "agent-1",
+      sessionKey: "default:user1:channel1",
+      fullImport: true,
+      importedCount: 1,
+      durationMs: 1,
+      timestamp: Date.now(),
+    });
+
+    // @ts-expect-error - missing the from/to direction fields entirely
+    bus.emit("context:mode_switched", {
+      conversationId: "conv-1",
+      agentId: "agent-1",
+      sessionKey: "default:user1:channel1",
+      fullImport: true,
+      importedCount: 1,
+      durationMs: 1,
+      timestamp: Date.now(),
+    });
   });
 });
 

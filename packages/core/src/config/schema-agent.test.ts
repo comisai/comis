@@ -631,6 +631,372 @@ describe("RagConfigSchema", () => {
 });
 
 // ---------------------------------------------------------------------------
+// RagConfigSchema.rerank (Phase-79: cross-encoder reranking, default-OFF)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.rerank", () => {
+  it("defaults reranking OFF with the Phase-79 candidate cap, timeout, and minResults", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Phase-79 DECISION: reranking is opt-in (~777ms p95 @40 exceeds budget).
+      expect(result.data.rerank.enabled).toBe(false);
+      expect(result.data.rerank.maxCandidates).toBe(40);
+      expect(result.data.rerank.minResults).toBe(1);
+      expect(result.data.rerank.timeoutMs).toBe(800);
+    }
+  });
+
+  it("leaves the existing RagConfig defaults untouched when rerank/scoring are added", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(true);
+      expect(result.data.maxResults).toBe(5);
+      expect(result.data.maxContextChars).toBe(4000);
+      expect(result.data.minScore).toBe(0.1);
+      expect(result.data.includeTrustLevels).toEqual(["system", "learned"]);
+    }
+  });
+
+  it("rejects a negative maxCandidates (positive-int bound)", () => {
+    const result = RagConfigSchema.safeParse({ rerank: { maxCandidates: -1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a non-integer maxCandidates", () => {
+    const result = RagConfigSchema.safeParse({ rerank: { maxCandidates: 1.5 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown key inside rerank (strictObject)", () => {
+    const result = RagConfigSchema.safeParse({ rerank: { unknownKey: 1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a partial rerank override and fills the rest from defaults", () => {
+    const result = RagConfigSchema.safeParse({ rerank: { enabled: true } });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.rerank.enabled).toBe(true);
+      expect(result.data.rerank.maxCandidates).toBe(40);
+      expect(result.data.rerank.timeoutMs).toBe(800);
+      expect(result.data.rerank.minResults).toBe(1);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RagConfigSchema.scoring (recency/temporal/proof/trust boosts, 0..1 alphas)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.scoring", () => {
+  it("defaults the four scoring alphas to small in-range weights", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scoring.recencyAlpha).toBe(0.2);
+      expect(result.data.scoring.temporalAlpha).toBe(0.2);
+      expect(result.data.scoring.proofAlpha).toBe(0.1);
+      expect(result.data.scoring.trustAlpha).toBe(0.1);
+    }
+  });
+
+  it("defaults the SINGLE canonical usefulnessAlpha to 0.1 next to the other alphas (FEED-04)", () => {
+    // The recall-utility feedback loop reads `rag.scoring.usefulnessAlpha` — the ONE
+    // magnitude knob, alongside recency/temporal/proof/trust. `rag.feedback` carries only
+    // the on/off toggle (no duplicate alpha — the W2 single-knob invariant).
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scoring.usefulnessAlpha).toBe(0.1);
+    }
+  });
+
+  it("rejects a usefulnessAlpha above 1 (out of [0,1])", () => {
+    const result = RagConfigSchema.safeParse({ scoring: { usefulnessAlpha: 1.5 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a negative usefulnessAlpha (out of [0,1])", () => {
+    const result = RagConfigSchema.safeParse({ scoring: { usefulnessAlpha: -0.1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an alpha above 1 (recencyAlpha out of [0,1])", () => {
+    const result = RagConfigSchema.safeParse({ scoring: { recencyAlpha: 1.5 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a negative alpha (trustAlpha out of [0,1])", () => {
+    const result = RagConfigSchema.safeParse({ scoring: { trustAlpha: -0.1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts alphas at the 0 and 1 boundaries", () => {
+    const lo = RagConfigSchema.safeParse({
+      scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 },
+    });
+    expect(lo.success).toBe(true);
+    const hi = RagConfigSchema.safeParse({
+      scoring: { recencyAlpha: 1, temporalAlpha: 1, proofAlpha: 1, trustAlpha: 1 },
+    });
+    expect(hi.success).toBe(true);
+  });
+
+  it("rejects an unknown key inside scoring (strictObject)", () => {
+    const result = RagConfigSchema.safeParse({ scoring: { bogusAlpha: 0.5 } });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RagConfigSchema.lanes (Phase-95/LANES-01: per-lane RRF weights, the PARITY
+// guard — fts 1.0 / vector 1.5 reproduce today's hardcoded hybrid-search weights)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.lanes", () => {
+  it("defaults the per-lane weights to the PARITY guard {fts:1.0, vector:1.5}", () => {
+    // These are the EXACT weights hybrid-search.ts hardcoded (computeRRF 1.0/1.5),
+    // so default-weight fusion reproduces today's ranking byte-for-byte.
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.lanes.fts.weight).toBe(1.0);
+      expect(result.data.lanes.vector.weight).toBe(1.5);
+    }
+  });
+
+  it("accepts operator-tuned weights (the lanes are tunable)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { fts: { weight: 0.5 }, vector: { weight: 3.0 } } });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.lanes.fts.weight).toBe(0.5);
+      expect(result.data.lanes.vector.weight).toBe(3.0);
+    }
+  });
+
+  it("rejects a negative fts weight (z.number().min(0) — a negative term could invert RRF; T-95-02)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { fts: { weight: -0.1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a negative vector weight (z.number().min(0))", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { vector: { weight: -1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a zero weight at the boundary (min(0) inclusive)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { fts: { weight: 0 }, vector: { weight: 0 } } });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an unknown key inside lanes (strictObject)", () => {
+    // `temporal` is now a VALID sub-lane (LANES-02) — use a genuinely-unknown key.
+    const result = RagConfigSchema.safeParse({ lanes: { bogusLane: { weight: 1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown key inside a single lane (strictObject)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { fts: { weight: 1, bogus: 2 } } });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RagConfigSchema.lanes.temporal (Phase-95/LANES-02: the temporal-spread lane,
+// opt-in / default-OFF — mirrors rag.entityLane; default windowDays:7)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.lanes.temporal", () => {
+  it("defaults the temporal lane OFF with weight 1.0 / windowDays 7 (byte-identical to before this plan when absent)", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Default-OFF: no agent gets the temporal-spread lane without an explicit opt-in
+      // (a wrong default ships dormant — no surprise ranking change on upgrade, T-95-07).
+      expect(result.data.lanes.temporal.enabled).toBe(false);
+      expect(result.data.lanes.temporal.weight).toBe(1.0);
+      expect(result.data.lanes.temporal.windowDays).toBe(7);
+    }
+  });
+
+  it("accepts an explicit temporal opt-in (enabled:true + tuned weight + windowDays)", () => {
+    const result = RagConfigSchema.safeParse({
+      lanes: { temporal: { enabled: true, weight: 2.0, windowDays: 30 } },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.lanes.temporal.enabled).toBe(true);
+      expect(result.data.lanes.temporal.weight).toBe(2.0);
+      expect(result.data.lanes.temporal.windowDays).toBe(30);
+    }
+  });
+
+  it("rejects a negative temporal weight (z.number().min(0) — no negative RRF term; T-95-08)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { temporal: { weight: -0.1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a zero / negative windowDays (z.number().int().positive() — no empty window; T-95-08)", () => {
+    expect(RagConfigSchema.safeParse({ lanes: { temporal: { windowDays: 0 } } }).success).toBe(false);
+    expect(RagConfigSchema.safeParse({ lanes: { temporal: { windowDays: -7 } } }).success).toBe(false);
+  });
+
+  it("rejects a non-integer windowDays (z.number().int())", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { temporal: { windowDays: 7.5 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown key inside temporal (strictObject)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { temporal: { bogus: 1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a zero temporal weight at the boundary (min(0) inclusive — the lane contributes nothing)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { temporal: { weight: 0 } } });
+    expect(result.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RagConfigSchema.lanes.causal (Phase-96/EXTRACT-03: the causal one-hop recall
+// lane, opt-in / default-OFF — the exact temporal-lane sibling; no windowDays)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.lanes.causal", () => {
+  it("defaults the causal lane OFF with weight 1.0 (byte-identical to before this plan when absent)", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Default-OFF: no agent gets the causal lane without an explicit opt-in (a wrong
+      // default ships dormant — no surprise ranking change on upgrade, T-96-10).
+      expect(result.data.lanes.causal.enabled).toBe(false);
+      expect(result.data.lanes.causal.weight).toBe(1.0);
+    }
+  });
+
+  it("accepts an explicit causal opt-in (enabled:true + tuned weight)", () => {
+    const result = RagConfigSchema.safeParse({
+      lanes: { causal: { enabled: true, weight: 2.0 } },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.lanes.causal.enabled).toBe(true);
+      expect(result.data.lanes.causal.weight).toBe(2.0);
+    }
+  });
+
+  it("rejects a negative causal weight (z.number().min(0) — no negative RRF term; T-95-08)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { causal: { weight: -1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown key inside causal (strictObject)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { causal: { bogus: 1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a zero causal weight at the boundary (min(0) inclusive — the lane contributes nothing)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { causal: { weight: 0 } } });
+    expect(result.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RagConfigSchema.feedback (Phase-93/FEED-04: recall-utility feedback loop,
+// opt-in / default-OFF — mirrors rag.entityLane)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.feedback", () => {
+  it("defaults the feedback loop OFF (opt-in — byte-identical to v2.6 when absent)", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // FEED-04: the master toggle defaults false. No agent gets the feedback loop
+      // (turn-end attribution + write-back + the recall usefulnessFactor) without an
+      // explicit opt-in — no surprise ranking change on upgrade (T-93-15).
+      expect(result.data.feedback.enabled).toBe(false);
+    }
+  });
+
+  it("exposes ONLY the enabled toggle — no usefulnessAlpha on feedback (single-knob invariant)", () => {
+    // The magnitude knob lives at rag.scoring.usefulnessAlpha (the value score.ts reads),
+    // NOT here. `feedback` is the on/off switch only — a stray alpha must not silently
+    // shadow the canonical one (W2). `.strictObject` enforces this structurally.
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(Object.keys(result.data.feedback)).toEqual(["enabled"]);
+      expect(
+        (result.data.feedback as { usefulnessAlpha?: number }).usefulnessAlpha,
+      ).toBeUndefined();
+    }
+  });
+
+  it("rejects a stray usefulnessAlpha inside feedback (strictObject enforces single-knob)", () => {
+    // An operator who mistakenly adds feedback.usefulnessAlpha gets a parse error, not a
+    // silent no-op — the single canonical knob is rag.scoring.usefulnessAlpha.
+    const result = RagConfigSchema.safeParse({ feedback: { enabled: true, usefulnessAlpha: 0.5 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown key inside feedback (strictObject)", () => {
+    const result = RagConfigSchema.safeParse({ feedback: { bogusKey: 1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts an explicit feedback.enabled: true (the opt-in path)", () => {
+    const result = RagConfigSchema.safeParse({ feedback: { enabled: true } });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.feedback.enabled).toBe(true);
+      // Even opted-in, feedback still carries no alpha (the knob stays on scoring).
+      expect(
+        (result.data.feedback as { usefulnessAlpha?: number }).usefulnessAlpha,
+      ).toBeUndefined();
+    }
+  });
+
+  it("is additive — every pre-existing RagConfig default is unchanged when feedback is added", () => {
+    // Snapshot the existing defaults (rerank/scoring/entityLane + the top-level fields) so a
+    // regression on any of them trips here, not silently downstream (the schema-cascade class).
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Top-level defaults.
+      expect(result.data.enabled).toBe(true);
+      expect(result.data.maxResults).toBe(5);
+      expect(result.data.maxContextChars).toBe(4000);
+      expect(result.data.minScore).toBe(0.1);
+      expect(result.data.includeTrustLevels).toEqual(["system", "learned"]);
+      // rerank sub-object (default-OFF, Phase-79).
+      expect(result.data.rerank.enabled).toBe(false);
+      expect(result.data.rerank.maxCandidates).toBe(40);
+      expect(result.data.rerank.minResults).toBe(1);
+      expect(result.data.rerank.timeoutMs).toBe(800);
+      // scoring sub-object (the five canonical alphas).
+      expect(result.data.scoring.recencyAlpha).toBe(0.2);
+      expect(result.data.scoring.temporalAlpha).toBe(0.2);
+      expect(result.data.scoring.proofAlpha).toBe(0.1);
+      expect(result.data.scoring.trustAlpha).toBe(0.1);
+      expect(result.data.scoring.usefulnessAlpha).toBe(0.1);
+      // entityLane sub-object (default-OFF, the FEED-04 analog).
+      expect(result.data.entityLane.enabled).toBe(false);
+      expect(result.data.entityLane.seedCount).toBe(5);
+      expect(result.data.entityLane.perEntityCap).toBe(200);
+      expect(result.data.entityLane.weight).toBe(1.0);
+      // lanes sub-object (LANES-01 parity defaults + LANES-02 temporal default-OFF).
+      expect(result.data.lanes.fts.weight).toBe(1.0);
+      expect(result.data.lanes.vector.weight).toBe(1.5);
+      expect(result.data.lanes.temporal.enabled).toBe(false);
+      expect(result.data.lanes.temporal.weight).toBe(1.0);
+      expect(result.data.lanes.temporal.windowDays).toBe(7);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // BootstrapConfigSchema
 // ---------------------------------------------------------------------------
 

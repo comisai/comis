@@ -26,7 +26,6 @@ import type {
   DeliveryMirrorPort,
   ModelOperationType,
   ToolCapabilityPort,
-  TrustLevel,
 } from "@comis/core";
 import {
   wrapExternalContent,
@@ -41,6 +40,7 @@ import type { ComisLogger } from "@comis/core";
 import {
   buildSystemPromptReport,
   persistSystemPromptReport,
+  createRecallTrace,
   type BootstrapFileForReport,
   type ResolvedToolForReport,
 } from "@comis/observability";
@@ -67,8 +67,9 @@ import {
   type TrustDisplayMode,
   type SystemPromptBlocks,
 } from "../bootstrap/index.js";
-import { deduplicateResults } from "../rag/rag-retriever.js";
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
+import { createMemoryRecall } from "../rag/memory-recall.js";
+import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
 import { BOOTSTRAP_BUDGET_WARN_PERCENT, CHARS_PER_TOKEN_RATIO } from "../context-engine/index.js";
 import { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "../workspace/boot-file.js";
 import { detectOnboardingState } from "../workspace/onboarding-detector.js";
@@ -209,6 +210,54 @@ export function clearCacheSafeParams(sessionKey: string): void {
   sessionCacheSafeParams.delete(sessionKey);
 }
 
+/**
+ * Construct the recall-trace recorder from `diagnostics.recallTrace` config, mirroring
+ * how `createCacheTrace` is wired in pi-executor: the `enabled` gate, the optional
+ * `filePath` override, and the `confinedBaseDir` (the daemon containment base —
+ * `~/.comis` — for ancestor-symlink rejection, applied only when no explicit path is set,
+ * exactly like cacheTrace). Returns `null` when config is absent or `enabled: false`
+ * (the recorder's null-when-disabled contract), so the default leaves recall unchanged.
+ * Extracted as a small helper to keep the recall block legible.
+ */
+export function buildRecallTrace(
+  cfg: { enabled?: boolean; filePath?: string; maxFileBytes?: number } | undefined,
+  agentId: string,
+  sessionId: string,
+  // WR-02: resolve the recorder's containment base from the SAME data-dir
+  // source the memory.recall_trace reader uses (handler: `deps.dataDir ??
+  // ~/.comis`). Hardcoding os.homedir()/.comis made the writer and reader point
+  // at different files under a non-default COMIS_DATA_DIR, so the diagnostic
+  // returned nothing. Threaded from the daemon composition root (it is already
+  // available there; mirrors how cacheTrace forwards `config.dataDir` as its
+  // confinedBaseDir).
+  dataDir?: string,
+  // WR-01: thread the REAL scope into the recorder envelope so on-disk records
+  // carry the authoritative `sessionKey` + `tenantId`. Production wiring used to
+  // pass NO envelope, so records had neither field — the handler's session
+  // selector (rec.sessionKey) and tenant scope-filter (rec.tenantId) were dead
+  // (zero records returned; cross-tenant filter never fired). `agentId` is
+  // already the top-level recorder field, so only sessionKey + tenantId ride the
+  // envelope cluster.
+  envelope?: { readonly sessionKey?: string; readonly tenantId?: string },
+): ReturnType<typeof createRecallTrace> {
+  if (cfg?.enabled !== true) return null;
+  // Match the reader's base EXACTLY: the handler uses `deps.dataDir ??
+  // safePath(os.homedir(), ".comis")` and passes it straight to
+  // resolveRecallTraceFilePath. `dataDir` arrives pre-resolved from the daemon
+  // composition root; the fallback goes through safePath (no path.join).
+  const confinedBaseDir =
+    cfg.filePath === undefined ? (dataDir ?? safePath(os.homedir(), ".comis")) : undefined;
+  return createRecallTrace({
+    enabled: true,
+    agentId,
+    sessionId,
+    ...(envelope !== undefined ? { envelope } : {}),
+    ...(cfg.filePath !== undefined ? { filePath: cfg.filePath } : {}),
+    ...(cfg.maxFileBytes !== undefined ? { maxFileBytes: cfg.maxFileBytes } : {}),
+    ...(confinedBaseDir !== undefined ? { confinedBaseDir } : {}),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -218,7 +267,26 @@ export interface PromptAssemblyParams {
   config: PerAgentConfig;
   deps: {
     workspaceDir: string;
+    /** Daemon data dir (COMIS_DATA_DIR / config.dataDir). Forwarded so the
+     *  recall-trace recorder resolves its containment base from the SAME source
+     *  the memory.recall_trace reader uses (WR-02). Absent ⇒ ~/.comis. */
+    dataDir?: string;
     memoryPort?: MemoryPort;
+    /** Optional cross-encoder reranker + timers for createMemoryRecall (default-OFF). */
+    reranker?: import("@comis/core").RerankerPort;
+    /** Optional entity-associative store for createMemoryRecall's entity lane (ENT-02;
+     *  default-OFF via config.rag.entityLane). TYPE-only (the agent↛memory build cut). */
+    entityStore?: import("@comis/core").MemoryEntityStore;
+    /** Optional temporal-spread store for createMemoryRecall's 4th lane (LANES-02;
+     *  default-OFF via config.rag.lanes.temporal). TYPE-only (the agent↛memory build cut). */
+    temporalStore?: import("@comis/core").MemoryTemporalStore;
+    /** Optional causal store for createMemoryRecall's 5th lane (EXTRACT-03;
+     *  default-OFF via config.rag.lanes.causal). TYPE-only (the agent↛memory build cut). */
+    causalStore?: import("@comis/core").MemoryCausalStore;
+    /** Optional usefulness store for createMemoryRecall's usefulness read (FEED-03;
+     *  default-OFF via config.rag.feedback). TYPE-only (the agent↛memory build cut). */
+    usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
+    timers?: import("@comis/core").TimerPort;
     hookRunner?: HookRunner;
     secretManager?: SecretManager;
     envelopeConfig?: EnvelopeConfig;
@@ -242,6 +310,19 @@ export interface PromptAssemblyParams {
     documentationConfig?: import("@comis/core").DocumentationConfig;
     /** Event bus for sender:trust_resolved audit events. */
     eventBus?: TypedEventBus;
+    /**
+     * Recall-trace writer configuration (Phase 86 / OBS-01/02). Forwarded from
+     * AppConfig.diagnostics.recallTrace by daemon wiring (mirrors cacheTraceConfig).
+     * When omitted or `enabled: false`, the recall-trace recorder is null
+     * (createRecallTrace returns null), so createMemoryRecall captures nothing and
+     * behaves exactly as before — recall-trace is OPT-IN (default-off). The recorder
+     * has NO raw-content slot; every payload is full-sanitized before disk (OBS-02).
+     */
+    recallTraceConfig?: {
+      readonly enabled?: boolean;
+      readonly filePath?: string;
+      readonly maxFileBytes?: number;
+    };
     /** Spawn packet for sub-agent context injection.
      *  Threaded from ExecutionOverrides; used for system prompt template. */
     spawnPacket?: SpawnPacket;
@@ -428,6 +509,11 @@ export interface ExecutionPromptResult {
   dynamicPreamble: string;
   /** Top-1 RAG memory for inline injection adjacent to user message. */
   inlineMemory?: string;
+  /** Recalled memories (id + content) for FEED-01 turn-end attribution. Content is
+   *  used IN-PROCESS by the overlap heuristic at postExecution and is NEVER
+   *  logged/emitted — only the resulting ids cross the bus. Rides the RESULT object
+   *  (like inlineMemory), NOT assemblerParams, so the cache-fence invariant holds. */
+  recalledMemories?: ReadonlyArray<{ id: string; content: string }>;
 }
 
 export async function assembleExecutionPrompt(params: PromptAssemblyParams): Promise<ExecutionPromptResult> {
@@ -567,7 +653,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       "Using parent cache prefix (model/provider match)",
     );
 
-    return { systemPrompt: parentCache.frozenSystemPrompt, systemPromptBlocks: parentCache.frozenSystemPromptBlocks, dynamicPreamble, inlineMemory: undefined };
+    return { systemPrompt: parentCache.frozenSystemPrompt, systemPromptBlocks: parentCache.frozenSystemPromptBlocks, dynamicPreamble, inlineMemory: undefined, recalledMemories: undefined };
   }
 
   // 1. Resolve promptMode
@@ -630,79 +716,138 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     bootstrapFilesForReport = bootstrapFiles;
   }
 
-  // 3. RAG retrieval via hybrid memory injector (non-fatal)
-  // Top-1 result goes inline with user message for maximum LLM attention;
-  // remaining results go into the dynamic preamble (same location as before).
+  // 3. RAG recall via createMemoryRecall + hybrid memory injector (non-fatal).
+  // `memorySections` = prompt content (retrieved sections + §7.3 guidance block when
+  // present); the `retrieved*` accumulators are telemetry truth — retrieved memory
+  // only, excluding the fixed guidance block (WR-02).
   let memorySections: string[] = [];
   let inlineMemory: string | undefined;
+  // FEED-01: id + content of the recalled memories, surfaced on the result so the
+  // turn-end hook (executor-post-execution.ts) can attribute used-vs-ignored from
+  // the agent response. Stays in-process — only ids/counts ever leave the agent.
+  let recalledMemories: ReadonlyArray<{ id: string; content: string }> | undefined;
+  let retrievedSectionsChars = 0;
+  let retrievedRagHits = 0;
   if (deps.memoryPort && config.rag?.enabled && !params.skipRag) {
     const ragStart = deps.clock.now();
     try {
-      logger.debug({ agentId, queryLength: msg.text.length }, "RAG search started");
-      const searchResults = await deps.memoryPort.search(sessionKey, msg.text, {
-        limit: config.rag.maxResults,
-        minScore: config.rag.minScore,
-        agentId,
-      });
+      // Recall-trace recorder (OBS-01/02), null-when-disabled (default-off). Constructed
+      // per assembly but shares a daemon-wide queued writer by path (the recorder's
+      // registry contract), so recordRecall is fire-and-forget — no per-recall
+      // flushAndClose (that would tear down the shared writer; mirrors the cacheTrace
+      // daemon-wide lifecycle). `eventBus` is the already-in-scope bus (used for
+      // memory:injected below) — threading both here keeps memory:recalled/reranked at
+      // the canonical one-per-recall site inside createMemoryRecall.
+      // WR-01: pass the authoritative scope envelope so on-disk records carry
+      // `sessionKey` (the formatted key the CLI's recall-trace <session> selector
+      // compares against) AND `tenantId` (the read-side cross-tenant filter).
+      // tenantId comes from the per-agent config tenant, falling back to the
+      // SessionKey's tenant.
+      const recallTraceSessionKey = formatSessionKey(sessionKey);
+      const recallTrace = buildRecallTrace(
+        deps.recallTraceConfig,
+        agentId ?? config.name,
+        recallTraceSessionKey,
+        deps.dataDir,
+        { sessionKey: recallTraceSessionKey, tenantId: deps.tenantId ?? sessionKey.tenantId },
+      );
+      // Single recall orchestrator (RANK-07): search->fuse->rerank->score->trust-filter
+      // ->dedup. Rerank opt-in/default-OFF -> fusion order (RANK-01/03/08). Non-fatal.
+      // FEED-03: the recall-utility feedback toggle. The `rag.feedback` schema field lands in
+      // Plan 93-04, so read it through a structural widening that compiles against today's
+      // strict RagConfig (optional-chaining → off when absent; correct once 93-04 adds it).
+      // The boost MAGNITUDE is the single canonical `rag.scoring.usefulnessAlpha` (passed via
+      // `scoring` below) — there is NO alpha on `feedback`.
+      const ragFeedback = (config.rag as typeof config.rag & { feedback?: { enabled: boolean } })
+        .feedback;
+      const recall = createMemoryRecall(
+        {
+          memoryPort: deps.memoryPort,
+          reranker: deps.reranker,
+          entityStore: deps.entityStore,
+          temporalStore: deps.temporalStore,
+          causalStore: deps.causalStore,
+          usefulnessStore: deps.usefulnessStore,
+          timers: deps.timers,
+          clock: deps.clock,
+          logger,
+          ...(recallTrace !== null ? { recallTrace } : {}),
+          ...(deps.eventBus !== undefined ? { eventBus: deps.eventBus } : {}),
+        },
+        {
+          maxResults: config.rag.maxResults,
+          minScore: config.rag.minScore,
+          includeTrustLevels: config.rag.includeTrustLevels,
+          rerank: config.rag.rerank,
+          scoring: config.rag.scoring,
+          lanes: config.rag.lanes,
+          entityLane: config.rag.entityLane,
+          ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
+        },
+      );
+      const recalled = await recall.recall(msg.text, sessionKey, agentId);
 
-      if (searchResults.ok && searchResults.value.length > 0) {
-        // Post-filter by allowed trust levels
-        const allowedTrustLevels = new Set<TrustLevel>(config.rag.includeTrustLevels);
-        const filtered = searchResults.value.filter(r => allowedTrustLevels.has(r.entry.trustLevel));
+      if (recalled.ok && recalled.value.length > 0) {
+        // Hybrid split: top-1 inline with user message, rest in dynamic preamble.
+        const ranked = recalled.value;
+        // FEED-01: capture id + content for turn-end attribution (in-process only).
+        recalledMemories = ranked.map((r) => ({ id: r.entry.id, content: r.entry.content }));
+        const injector = createHybridMemoryInjector({
+          onSuspiciousContent: deps.onSuspiciousContent,
+        });
+        const injection = injector.split(ranked, config.rag.maxContextChars);
 
-        // Deduplicate near-identical content
-        const deduped = deduplicateResults(filtered);
+        inlineMemory = injection.inlineMemory;
+        // WR-02: own the array — `injection.systemPromptSections` is what telemetry
+        // reads, so pushing the guidance block into an alias of it would inflate
+        // retrieved-memory metrics. Snapshot RETRIEVED-only char + RAG-hit counts
+        // BEFORE the push so charsInjected/ragHits stay consistent with hitCount.
+        memorySections = [...injection.systemPromptSections];
+        retrievedSectionsChars = memorySections.reduce((sum, s) => sum + s.length, 0);
+        retrievedRagHits = memorySections.length + (inlineMemory ? 1 : 0);
 
-        if (deduped.length > 0) {
-          // Hybrid split: top-1 inline with user message, rest in dynamic preamble
-          const injector = createHybridMemoryInjector({
-            onSuspiciousContent: deps.onSuspiciousContent,
-          });
-          const injection = injector.split(deduped, config.rag.maxContextChars);
+        // Read-time contradiction guidance (TEMP-02/03/04): inject the §7.3 block when
+        // >=2 surfaced memories are co-retrieved for the same query. Pure formatter; no
+        // deletion, no content echo. Phase 83 tightens the >=2 gate with entity overlap.
+        // FIXED guidance text, NOT a retrieved memory — excluded from telemetry above.
+        const temporalGuidance = buildTemporalGuidanceBlock(ranked);
+        if (temporalGuidance) memorySections.push(temporalGuidance);
 
-          inlineMemory = injection.inlineMemory;
-          memorySections = injection.systemPromptSections;
-
-          // Emit memory:injected observability event so the trajectory bridge
-          // can record one line per RAG injection. Fires only on turns where
-          // the injector actually produced content (inline OR sections) —
-          // no-injection turns produce no event. Best-effort: any failure in
-          // the emit is swallowed via try/catch so it never aborts assembly.
-          if (deps.eventBus) {
-            try {
-              const charsInjected =
-                (injection.inlineMemory?.length ?? 0) +
-                injection.systemPromptSections.reduce((sum, s) => sum + s.length, 0);
-              const trustTags = Array.from(
-                new Set(deduped.map((r) => r.entry.trustLevel)),
-              );
-              deps.eventBus.emit("memory:injected", {
-                agentId: agentId ?? config.name,
-                sessionKey: formatSessionKey(sessionKey),
-                traceId: tryGetContext()?.traceId ?? formatSessionKey(sessionKey),
-                hitCount: deduped.length,
-                charsInjected,
-                trustTags,
-                timestamp: systemNowMs(),
-              });
-            } catch (emitErr) {
-              logger.debug(
-                {
-                  err: emitErr,
-                  hint: "memory:injected emit failed; trajectory will miss this turn's RAG record",
-                  errorKind: "internal" as const,
-                },
-                "Failed to emit memory:injected",
-              );
-            }
+        // Emit memory:injected observability event so the trajectory bridge
+        // can record one line per RAG injection. Fires only on turns where
+        // the injector actually produced content (inline OR sections) —
+        // no-injection turns produce no event. Best-effort: any failure in
+        // the emit is swallowed via try/catch so it never aborts assembly.
+        if (deps.eventBus) {
+          try {
+            // WR-02: retrieved memory only (inline + retrieved sections), never
+            // the guidance block — keeps charsInjected consistent with hitCount.
+            const charsInjected = (injection.inlineMemory?.length ?? 0) + retrievedSectionsChars;
+            const trustTags = Array.from(new Set(ranked.map((r) => r.entry.trustLevel)));
+            deps.eventBus.emit("memory:injected", {
+              agentId: agentId ?? config.name,
+              sessionKey: formatSessionKey(sessionKey),
+              traceId: tryGetContext()?.traceId ?? formatSessionKey(sessionKey),
+              hitCount: ranked.length,
+              charsInjected,
+              trustTags,
+              timestamp: systemNowMs(),
+            });
+          } catch (emitErr) {
+            logger.debug(
+              {
+                err: emitErr,
+                hint: "memory:injected emit failed; trajectory will miss this turn's RAG record",
+                errorKind: "internal" as const,
+              },
+              "Failed to emit memory:injected",
+            );
           }
         }
-        logger.debug({ agentId, resultCount: deduped.length, durationMs: deps.clock.now() - ragStart }, "RAG search complete");
-      } else {
-        logger.debug({ agentId, resultCount: 0, durationMs: deps.clock.now() - ragStart }, "RAG search complete");
       }
+      logger.debug({ agentId, resultCount: recalled.ok ? recalled.value.length : 0, durationMs: deps.clock.now() - ragStart }, "RAG recall complete");
     } catch (err) {
-      logger.warn({ agentId, err, durationMs: deps.clock.now() - ragStart, hint: "RAG search failed — agent will proceed without memory context", errorKind: "dependency" as const }, "RAG retrieval failed (non-fatal)");
+      logger.warn({ agentId, err, durationMs: deps.clock.now() - ragStart, hint: "RAG recall failed — agent will proceed without memory context", errorKind: "dependency" as const }, "RAG recall failed (non-fatal)");
     }
   }
 
@@ -967,19 +1112,16 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         bootstrapFiles: reportBootstrapFiles,
         tools: reportTools,
         policyFilteredToolNames: deps.policyFilteredToolNames,
-        // The memoryInjection block must reflect every memory component of
-        // the assembled prompt (inline + system-prompt sections). The
-        // previous predicate dropped the block entirely when only RAG
-        // sections were injected (inlineMemory === undefined). The `?? 0`
-        // on inlineMemory.length is load-bearing for the sections-only
-        // branch now that the outer predicate can be true with inlineMemory
-        // undefined.
+        // memoryInjection reflects RETRIEVED memory only (inline + retrieved
+        // sections). The predicate gates on injected content (memorySections
+        // includes the §7.3 guidance block); the COUNTS use the retrieved-only
+        // accumulators (WR-02) so they never tally the fixed guidance text. The
+        // `?? 0` on inlineMemory.length is load-bearing for the sections-only
+        // branch (the outer predicate can be true with inlineMemory undefined).
         memoryInjection: (inlineMemory !== undefined || memorySections.length > 0)
           ? {
-              ragHits: memorySections.length + (inlineMemory ? 1 : 0),
-              charsInjected:
-                (inlineMemory?.length ?? 0) +
-                memorySections.reduce((s, m) => s + m.length, 0),
+              ragHits: retrievedRagHits,
+              charsInjected: (inlineMemory?.length ?? 0) + retrievedSectionsChars,
               trustTags: [],
             }
           : undefined,
@@ -1281,5 +1423,5 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     }
   }
 
-  return { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory };
+  return { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory, recalledMemories };
 }

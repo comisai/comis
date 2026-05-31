@@ -97,6 +97,22 @@ const STATS_DATA = {
   byMemoryType: "conversation: 100, extraction: 50",
 };
 
+/**
+ * Recall-counter snapshot (+ derived rates) for `memory stats`/`recall_stats`
+ * tests. Matches MemoryRecallStatsContract.response.
+ */
+const RECALL_STATS_DATA = {
+  laneUsage: { fts: 10, vector: 4, entity: 2 },
+  rerankRuns: 4,
+  rerankFallbacks: 1,
+  consolidationClusters: 3,
+  observationsCreated: 6,
+  recalls: 8,
+  recallsWithHits: 6,
+  rerankFallbackRate: 0.25,
+  recallHitRate: 0.75,
+};
+
 // ── memory search table output ──────────────────────────────────
 
 describe("memory search table output", () => {
@@ -438,9 +454,11 @@ describe("memory stats display", () => {
     exitSpy = createProcessExitSpy();
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
-      // memory.stats is the actual daemon stats surface.
+      // memory.stats is the base daemon stats surface; memory.recall_stats is
+      // the OBS-07 recall-counter overlay that `comis memory stats` now folds in.
       const mockClient = createMockRpcClient()
         .onCall("memory.stats", STATS_DATA)
+        .onCall("memory.recall_stats", RECALL_STATS_DATA)
         .build();
       return fn(mockClient);
     });
@@ -483,6 +501,7 @@ describe("memory stats --format json", () => {
     vi.mocked(withClient).mockImplementation(async (fn) => {
       const mockClient = createMockRpcClient()
         .onCall("memory.stats", STATS_DATA)
+        .onCall("memory.recall_stats", RECALL_STATS_DATA)
         .build();
       return fn(mockClient);
     });
@@ -521,9 +540,11 @@ describe("memory stats empty", () => {
     exitSpy = createProcessExitSpy();
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
-      // Empty record = no stats.
+      // Empty record = no stats. recall_stats is stubbed too (best-effort
+      // overlay), but the empty base stats short-circuits to the info message.
       const mockClient = createMockRpcClient()
         .onCall("memory.stats", {})
+        .onCall("memory.recall_stats", RECALL_STATS_DATA)
         .build();
       return fn(mockClient);
     });
@@ -913,5 +934,244 @@ describe("memory commands handle daemon offline", () => {
     expect(exitSpy.spy).toHaveBeenCalledWith(1);
     const errOutput = getSpyOutput(consoleSpy.error);
     expect(errOutput).toContain("Failed to clear memory");
+  });
+});
+
+// ===========================================================================
+// OBS-06 diagnostic subcommands — dispatch + render behavior.
+// ===========================================================================
+
+// ── memory recall-trace dispatches MemoryRecallTraceContract ────────────────
+
+describe("memory recall-trace dispatch", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+  let callSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    callSpy = vi.fn().mockResolvedValue({
+      records: [{ ts: "t", sessionKey: "sess-A", traceId: "t-A", finalCount: 3 }],
+    });
+    vi.mocked(withClient).mockImplementation(async (fn) => fn({ call: callSpy, close: vi.fn() }));
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("dispatches memory.recall_trace with session_key + parsed options", async () => {
+    const program = createTestProgram();
+    registerMemoryCommand(program);
+
+    await program.parseAsync([
+      "node", "test", "memory", "recall-trace", "sess-A",
+      "--trace-id", "t-A", "--agent", "agent-x", "--limit", "50",
+    ]);
+
+    expect(callSpy).toHaveBeenCalledWith("memory.recall_trace", {
+      session_key: "sess-A",
+      trace_id: "t-A",
+      agent_id: "agent-x",
+      limit: 50,
+    });
+  });
+
+  it("supports --format json (raw passthrough of records)", async () => {
+    const program = createTestProgram();
+    registerMemoryCommand(program);
+
+    await program.parseAsync([
+      "node", "test", "memory", "recall-trace", "sess-A", "--format", "json",
+    ]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    const parsed = JSON.parse(output) as Array<Record<string, unknown>>;
+    expect(parsed[0]!.sessionKey).toBe("sess-A");
+  });
+
+  it("exits 1 with descriptive error when the RPC fails", async () => {
+    vi.mocked(withClient).mockRejectedValue(new Error("Admin access required for memory recall trace"));
+    const program = createTestProgram();
+    registerMemoryCommand(program);
+
+    try {
+      await program.parseAsync(["node", "test", "memory", "recall-trace", "sess-A"]);
+    } catch (e) {
+      expect((e as Error).message).toBe("process.exit called");
+    }
+    expect(exitSpy.spy).toHaveBeenCalledWith(1);
+  });
+});
+
+// ── memory observations dispatches MemoryObservationsContract ───────────────
+
+describe("memory observations dispatch", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+  let callSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    callSpy = vi.fn().mockResolvedValue({
+      observations: [
+        { id: "obs-1", content: "preview", proofCount: 3, sourceIds: ["s1"], createdAt: 1 },
+      ],
+    });
+    vi.mocked(withClient).mockImplementation(async (fn) => fn({ call: callSpy, close: vi.fn() }));
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("dispatches memory.observations with --agent + --limit", async () => {
+    const program = createTestProgram();
+    registerMemoryCommand(program);
+
+    await program.parseAsync([
+      "node", "test", "memory", "observations", "--agent", "agent-y", "--limit", "25",
+    ]);
+
+    expect(callSpy).toHaveBeenCalledWith("memory.observations", {
+      agent_id: "agent-y",
+      limit: 25,
+    });
+  });
+
+  it("renders id / content-preview / proofCount in table output", async () => {
+    const program = createTestProgram();
+    registerMemoryCommand(program);
+
+    await program.parseAsync(["node", "test", "memory", "observations"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("obs-1");
+    expect(output).toContain("preview");
+    expect(output).toContain("3");
+  });
+});
+
+// ── memory entities dispatches MemoryEntitiesContract ───────────────────────
+
+describe("memory entities dispatch", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+  let callSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    callSpy = vi.fn().mockResolvedValue({
+      entities: [{ id: "ent-1", name: "Globex", mentionCount: 5 }],
+    });
+    vi.mocked(withClient).mockImplementation(async (fn) => fn({ call: callSpy, close: vi.fn() }));
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("dispatches memory.entities with --agent + --limit", async () => {
+    const program = createTestProgram();
+    registerMemoryCommand(program);
+
+    await program.parseAsync([
+      "node", "test", "memory", "entities", "--agent", "agent-z", "--limit", "10",
+    ]);
+
+    expect(callSpy).toHaveBeenCalledWith("memory.entities", {
+      agent_id: "agent-z",
+      limit: 10,
+    });
+  });
+
+  it("renders id / name / mentionCount in table output", async () => {
+    const program = createTestProgram();
+    registerMemoryCommand(program);
+
+    await program.parseAsync(["node", "test", "memory", "entities"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("ent-1");
+    expect(output).toContain("Globex");
+    expect(output).toContain("5");
+  });
+});
+
+// ── memory stats folds in the recall counters (OBS-07) ──────────────────────
+
+describe("memory stats recall-counter overlay", () => {
+  let consoleSpy: ReturnType<typeof createConsoleSpy>;
+  let exitSpy: ReturnType<typeof createProcessExitSpy>;
+  let callSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.mocked(withClient).mockReset();
+    consoleSpy = createConsoleSpy();
+    exitSpy = createProcessExitSpy();
+    callSpy = vi.fn().mockImplementation(async (method: string) => {
+      if (method === "memory.stats") return STATS_DATA;
+      if (method === "memory.recall_stats") return RECALL_STATS_DATA;
+      throw new Error(`Unexpected RPC call: ${method}`);
+    });
+    vi.mocked(withClient).mockImplementation(async (fn) => fn({ call: callSpy, close: vi.fn() }));
+  });
+
+  afterEach(() => {
+    consoleSpy.restore();
+    exitSpy.restore();
+  });
+
+  it("calls BOTH memory.stats and memory.recall_stats", async () => {
+    const program = createTestProgram();
+    registerMemoryCommand(program);
+
+    await program.parseAsync(["node", "test", "memory", "stats"]);
+
+    const methods = callSpy.mock.calls.map((c) => c[0] as string);
+    expect(methods).toContain("memory.stats");
+    expect(methods).toContain("memory.recall_stats");
+  });
+
+  it("surfaces lane usage + rerank-fallback rate + recall hit rate in --format json", async () => {
+    const program = createTestProgram();
+    registerMemoryCommand(program);
+
+    await program.parseAsync(["node", "test", "memory", "stats", "--format", "json"]);
+
+    const output = getSpyOutput(consoleSpy.log);
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    const recall = parsed.recallStats as Record<string, unknown>;
+    expect(recall).toBeDefined();
+    expect(recall.laneUsage).toEqual({ fts: 10, vector: 4, entity: 2 });
+    expect(recall.rerankFallbackRate).toBe(0.25);
+    expect(recall.recallHitRate).toBe(0.75);
+  });
+
+  it("still renders base stats when memory.recall_stats fails (best-effort overlay)", async () => {
+    callSpy = vi.fn().mockImplementation(async (method: string) => {
+      if (method === "memory.stats") return STATS_DATA;
+      throw new Error("Admin access required for memory recall stats");
+    });
+    vi.mocked(withClient).mockImplementation(async (fn) => fn({ call: callSpy, close: vi.fn() }));
+
+    const program = createTestProgram();
+    registerMemoryCommand(program);
+
+    await program.parseAsync(["node", "test", "memory", "stats"]);
+
+    // Base stats still rendered; the recall overlay is silently skipped.
+    const output = getSpyOutput(consoleSpy.log);
+    expect(output).toContain("Total Entries");
+    expect(exitSpy.spy).not.toHaveBeenCalled();
   });
 });

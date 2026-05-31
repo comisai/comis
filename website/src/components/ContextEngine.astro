@@ -68,9 +68,9 @@ const highlights = [
     desc: "Full structured summary with quality validation, filtered summarization, or guaranteed count-only note. Never fails.",
   },
   {
-    stat: "Depth-aware DAG",
-    label: "Next-gen compression",
-    desc: "A directed acyclic graph with hierarchical summarization: operational detail, session summaries, phase summaries, and durable project memory.",
+    stat: "DAG by default",
+    label: "Lossless context engine",
+    desc: "The depth-aware DAG engine is now the default: a directed acyclic graph with hierarchical summarization (operational detail, session summaries, phase summaries, durable project memory) that keeps full history and recalls detail on demand via ctx_search / ctx_inspect. The classic multi-stage pipeline is the reversible opt-out - switch with one config reload, no restart, no data loss.",
   },
   {
     stat: "Circuit breakers",
@@ -103,8 +103,8 @@ const highlights = [
           </svg>
         </div>
         <div>
-          <p class="text-white font-semibold">Context Pipeline</p>
-          <p class="text-muted text-sm">Runs before every LLM call. Each layer is fault-isolated.</p>
+          <p class="text-white font-semibold">Context Engine</p>
+          <p class="text-muted text-sm">The lossless DAG engine is the default; the classic pipeline below is the reversible opt-out. Runs before every LLM call. Each layer is fault-isolated.</p>
         </div>
       </div>
 
@@ -144,9 +144,9 @@ const highlights = [
     <div class="mt-16 bg-navy-light/50 border border-white/5 rounded-xl p-8">
       <div class="flex flex-col md:flex-row gap-8">
         <div class="flex-1">
-          <h3 class="text-lg font-semibold text-white mb-3">Persistent memory with semantic search</h3>
+          <h3 class="text-lg font-semibold text-white mb-3">Persistent memory that recalls the right thing</h3>
           <p class="text-muted leading-relaxed">
-            SQLite + FTS5 full-text search with vector embeddings for semantic recall. Trust-partitioned memory ensures external content can never overwrite your agent's learned knowledge. RAG retrieval pulls relevant memories into every conversation with provenance annotations and trust-level filtering.
+            SQLite + FTS5 full-text search and vector embeddings fuse across lanes for recall. An optional cross-encoder reranker re-reads candidates against the actual question for relevance; an optional entity lane brings back associatively related memories. Read-time temporal resolution answers with what's currently true without deleting history, repeated facts can consolidate into evidence-backed observations, and recall is trust-partitioned and trust-ranked so external content can never overwrite learned knowledge - all on-device.
           </p>
         </div>
         <div class="flex-1">

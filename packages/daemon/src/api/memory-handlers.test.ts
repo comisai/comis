@@ -662,3 +662,369 @@ describe("memory.store - write validation", () => {
     expect(result.stored).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 86 / OBS-06 — the 4 admin-gated, (tenant,agent)-scoped diagnostic
+// handlers: memory.recall_trace / .observations / .entities / .recall_stats.
+// ---------------------------------------------------------------------------
+
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
+/** Build deps carrying the diagnostic ports/accessors (scoped capture spies). */
+function makeDiagDeps(
+  overrides?: Partial<MemoryHandlerDeps>,
+): {
+  deps: MemoryHandlerDeps;
+  listObservations: ReturnType<typeof vi.fn>;
+  listEntities: ReturnType<typeof vi.fn>;
+} {
+  const listObservations = vi.fn(async () => ({
+    ok: true as const,
+    value: [
+      {
+        id: "obs-1",
+        content: "x".repeat(2000), // long body — handler must truncate the preview
+        createdAt: 1_000,
+        proofCount: 3,
+        sourceIds: ["s1", "s2"],
+        confidence: 0.8,
+        consolidatedAt: 2_000,
+      },
+    ],
+  }));
+  const listEntities = vi.fn(async () => ({
+    ok: true as const,
+    value: [
+      { id: "ent-1", name: "Globex", mentionCount: 5, firstSeen: 100, lastSeen: 900 },
+    ],
+  }));
+
+  const base = makeDeps({
+    tenantId: "tenant-1",
+    defaultAgentId: "default",
+    consolidationStore: { listObservations } as never,
+    entityStore: { listEntities } as never,
+    recallCounters: {
+      snapshot: () => ({
+        laneUsage: { fts: 10, vector: 4, entity: 2 },
+        rerankRuns: 4,
+        rerankFallbacks: 1,
+        consolidationClusters: 3,
+        observationsCreated: 6,
+        recalls: 8,
+        recallsWithHits: 6,
+      }),
+    },
+    ...overrides,
+  });
+  return { deps: base, listObservations, listEntities };
+}
+
+describe("createMemoryHandlers - OBS-06 diagnostics", () => {
+  // -------------------------------------------------------------------------
+  // Admin gate (T-86-19) — every diagnostic rejects a non-admin caller FIRST.
+  // -------------------------------------------------------------------------
+  describe("admin gate", () => {
+    it("memory.recall_trace rejects a non-admin caller", async () => {
+      const { deps } = makeDiagDeps();
+      const handlers = createMemoryHandlers(deps);
+      await expect(
+        handlers["memory.recall_trace"]!({ session_key: "s1", _trustLevel: "viewer" }),
+      ).rejects.toThrow(/Admin access required/);
+    });
+
+    it("memory.observations rejects a non-admin caller", async () => {
+      const { deps, listObservations } = makeDiagDeps();
+      const handlers = createMemoryHandlers(deps);
+      await expect(
+        handlers["memory.observations"]!({ _trustLevel: "viewer" }),
+      ).rejects.toThrow(/Admin access required/);
+      // Gate is BEFORE the query — the scoped read never ran.
+      expect(listObservations).not.toHaveBeenCalled();
+    });
+
+    it("memory.entities rejects a non-admin caller", async () => {
+      const { deps, listEntities } = makeDiagDeps();
+      const handlers = createMemoryHandlers(deps);
+      await expect(
+        handlers["memory.entities"]!({ _trustLevel: "viewer" }),
+      ).rejects.toThrow(/Admin access required/);
+      expect(listEntities).not.toHaveBeenCalled();
+    });
+
+    it("memory.recall_stats rejects a non-admin caller", async () => {
+      const { deps } = makeDiagDeps();
+      const handlers = createMemoryHandlers(deps);
+      await expect(
+        handlers["memory.recall_stats"]!({ _trustLevel: "viewer" }),
+      ).rejects.toThrow(/Admin access required/);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // memory.observations — provenance via listObservations, scoped + truncated.
+  // -------------------------------------------------------------------------
+  describe("memory.observations", () => {
+    it("returns provenance rows scoped to deps.tenantId when no tenant_id param", async () => {
+      const { deps, listObservations } = makeDiagDeps();
+      const handlers = createMemoryHandlers(deps);
+
+      const result = (await handlers["memory.observations"]!({
+        _trustLevel: "admin",
+        agent_id: "agent-x",
+        limit: 25,
+      })) as { observations: Array<Record<string, unknown>> };
+
+      // Scope is NEVER widened — tenantId falls back to deps.tenantId.
+      expect(listObservations).toHaveBeenCalledWith("agent-x", "tenant-1", 25);
+      expect(result.observations).toHaveLength(1);
+      const obs = result.observations[0]!;
+      expect(obs.id).toBe("obs-1");
+      expect(obs.proofCount).toBe(3);
+      expect(obs.sourceIds).toEqual(["s1", "s2"]);
+      expect(obs.confidence).toBe(0.8);
+      expect(obs.consolidatedAt).toBe(2_000);
+      expect(obs.createdAt).toBe(1_000);
+    });
+
+    it("truncates the content preview to <=500 chars (never the full body)", async () => {
+      const { deps } = makeDiagDeps();
+      const handlers = createMemoryHandlers(deps);
+
+      const result = (await handlers["memory.observations"]!({
+        _trustLevel: "admin",
+      })) as { observations: Array<{ content: string }> };
+
+      expect(result.observations[0]!.content.length).toBeLessThanOrEqual(500);
+    });
+
+    it("honors an explicit tenant_id and the default agent + limit", async () => {
+      const { deps, listObservations } = makeDiagDeps();
+      const handlers = createMemoryHandlers(deps);
+
+      await handlers["memory.observations"]!({
+        _trustLevel: "admin",
+        tenant_id: "tenant-explicit",
+      });
+
+      // Default agent (deps.defaultAgentId) + default limit (50) applied.
+      expect(listObservations).toHaveBeenCalledWith("default", "tenant-explicit", 50);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // memory.entities — entity graph via listEntities, scoped.
+  // -------------------------------------------------------------------------
+  describe("memory.entities", () => {
+    it("returns the entity graph scoped to (tenant, agent)", async () => {
+      const { deps, listEntities } = makeDiagDeps();
+      const handlers = createMemoryHandlers(deps);
+
+      const result = (await handlers["memory.entities"]!({
+        _trustLevel: "admin",
+        agent_id: "agent-y",
+        limit: 30,
+      })) as { entities: Array<Record<string, unknown>> };
+
+      expect(listEntities).toHaveBeenCalledWith("agent-y", "tenant-1", 30);
+      expect(result.entities).toHaveLength(1);
+      const ent = result.entities[0]!;
+      expect(ent).toEqual({
+        id: "ent-1",
+        name: "Globex",
+        mentionCount: 5,
+        firstSeen: 100,
+        lastSeen: 900,
+      });
+    });
+
+    it("applies the default agent + default limit (100)", async () => {
+      const { deps, listEntities } = makeDiagDeps();
+      const handlers = createMemoryHandlers(deps);
+
+      await handlers["memory.entities"]!({ _trustLevel: "admin" });
+
+      expect(listEntities).toHaveBeenCalledWith("default", "tenant-1", 100);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // memory.recall_stats — counter snapshot + derived rates.
+  // -------------------------------------------------------------------------
+  describe("memory.recall_stats", () => {
+    it("returns the snapshot plus derived rerankFallbackRate + recallHitRate", async () => {
+      const { deps } = makeDiagDeps();
+      const handlers = createMemoryHandlers(deps);
+
+      const result = (await handlers["memory.recall_stats"]!({
+        _trustLevel: "admin",
+      })) as {
+        laneUsage: { fts: number; vector: number; entity: number };
+        rerankRuns: number;
+        rerankFallbacks: number;
+        rerankFallbackRate: number;
+        recalls: number;
+        recallsWithHits: number;
+        recallHitRate: number;
+        consolidationClusters: number;
+        observationsCreated: number;
+      };
+
+      expect(result.laneUsage).toEqual({ fts: 10, vector: 4, entity: 2 });
+      expect(result.rerankFallbackRate).toBeCloseTo(1 / 4); // 1 fallback / 4 runs
+      expect(result.recallHitRate).toBeCloseTo(6 / 8); // 6 hits / 8 recalls
+      expect(result.consolidationClusters).toBe(3);
+      expect(result.observationsCreated).toBe(6);
+    });
+
+    it("returns zeroed counters + 0 rates when recallCounters is unset", async () => {
+      const { deps } = makeDiagDeps({ recallCounters: undefined });
+      const handlers = createMemoryHandlers(deps);
+
+      const result = (await handlers["memory.recall_stats"]!({
+        _trustLevel: "admin",
+      })) as {
+        recalls: number;
+        rerankRuns: number;
+        rerankFallbackRate: number;
+        recallHitRate: number;
+      };
+
+      expect(result.recalls).toBe(0);
+      expect(result.rerankRuns).toBe(0);
+      // Divide-by-zero guarded → 0 on a fresh/unwired process.
+      expect(result.rerankFallbackRate).toBe(0);
+      expect(result.recallHitRate).toBe(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // memory.recall_trace — JSONL artifact read, scope-filtered + bounded.
+  // -------------------------------------------------------------------------
+  describe("memory.recall_trace", () => {
+    function writeTraceFile(records: Array<Record<string, unknown>>): string {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "recall-trace-test-"));
+      const logsDir = path.join(dir, "logs");
+      fs.mkdirSync(logsDir, { recursive: true });
+      const file = path.join(logsDir, "recall-trace.jsonl");
+      fs.writeFileSync(file, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+      return dir;
+    }
+
+    it("requires at least one of session_key / trace_id", async () => {
+      const { deps } = makeDiagDeps();
+      const handlers = createMemoryHandlers(deps);
+      await expect(
+        handlers["memory.recall_trace"]!({ _trustLevel: "admin" }),
+      ).rejects.toThrow(/at least one of session_key|session_key.*trace_id|required/i);
+    });
+
+    it("returns records matching session_key against the recorder's sessionId field", async () => {
+      // WR-01: the PRODUCTION recorder ALWAYS writes `sessionId` and only writes
+      // `sessionKey` when an envelope is supplied. These fixtures use the
+      // real-recorder shape (sessionId present), and the selector must match
+      // session_key against it. The old fixtures hand-wrote `sessionKey` — a
+      // field the recorder did not always write — which masked the dead selector.
+      const dataDir = writeTraceFile([
+        { ts: "2026-05-29T00:00:00.000Z", sessionId: "sess-A", traceId: "t-A", agentId: "default", finalCount: 3 },
+        { ts: "2026-05-29T00:01:00.000Z", sessionId: "sess-B", traceId: "t-B", agentId: "default", finalCount: 1 },
+      ]);
+      const { deps } = makeDiagDeps({ dataDir });
+      const handlers = createMemoryHandlers(deps);
+
+      const result = (await handlers["memory.recall_trace"]!({
+        _trustLevel: "admin",
+        session_key: "sess-A",
+      })) as { records: Array<Record<string, unknown>> };
+
+      expect(result.records).toHaveLength(1);
+      expect(result.records[0]!.sessionId).toBe("sess-A");
+    });
+
+    it("also matches session_key against the envelope-wired sessionKey when present", async () => {
+      // When the agent wires the envelope, the recorder writes BOTH sessionId
+      // AND sessionKey (= the formatted session key). The selector prefers
+      // sessionKey when present (rec.sessionKey ?? rec.sessionId).
+      const dataDir = writeTraceFile([
+        { ts: "t", sessionId: "sess-A", sessionKey: "tenant-1:user:chan", traceId: "t-A", agentId: "default" },
+      ]);
+      const { deps } = makeDiagDeps({ dataDir });
+      const handlers = createMemoryHandlers(deps);
+
+      const result = (await handlers["memory.recall_trace"]!({
+        _trustLevel: "admin",
+        session_key: "tenant-1:user:chan",
+      })) as { records: Array<Record<string, unknown>> };
+
+      expect(result.records).toHaveLength(1);
+      expect(result.records[0]!.sessionKey).toBe("tenant-1:user:chan");
+    });
+
+    it("matches by trace_id and caps at limit, returning the FIRST limit matches in order (WR-06 early-break)", async () => {
+      // WR-06: four matching records, limit 2 → the handler returns the FIRST
+      // two in forward (chronological) order and early-BREAKS the scan (it no
+      // longer walks the whole file with `continue`). Distinct seq values make
+      // the forward-order + first-N identity observable.
+      const dataDir = writeTraceFile([
+        { ts: "t", seq: 0, sessionId: "s", traceId: "t-X", agentId: "default" },
+        { ts: "t", seq: 1, sessionId: "s", traceId: "t-X", agentId: "default" },
+        { ts: "t", seq: 2, sessionId: "s", traceId: "t-X", agentId: "default" },
+        { ts: "t", seq: 3, sessionId: "s", traceId: "t-X", agentId: "default" },
+      ]);
+      const { deps } = makeDiagDeps({ dataDir });
+      const handlers = createMemoryHandlers(deps);
+
+      const result = (await handlers["memory.recall_trace"]!({
+        _trustLevel: "admin",
+        trace_id: "t-X",
+        limit: 2,
+      })) as { records: Array<Record<string, unknown>> };
+
+      expect(result.records).toHaveLength(2);
+      // The returned set is the FIRST two matches in forward order — the
+      // early-break preserves correctness (does not skip to a later window).
+      expect(result.records.map((r) => r.seq)).toEqual([0, 1]);
+    });
+
+    it("scope-filters the artifact read by tenantId/agentId when records carry them", async () => {
+      // Real-recorder shape: sessionId always present; sessionKey + tenantId
+      // present because the agent wired the envelope (WR-01). Same session, two
+      // tenants — the read-side cross-tenant filter excludes the foreign one.
+      const dataDir = writeTraceFile([
+        { ts: "t", sessionId: "sk-A", sessionKey: "sk-A", traceId: "t-A", agentId: "default", tenantId: "tenant-1" },
+        { ts: "t", sessionId: "sk-A", sessionKey: "sk-A", traceId: "t-A", agentId: "default", tenantId: "tenant-OTHER" },
+      ]);
+      const { deps } = makeDiagDeps({ dataDir });
+      const handlers = createMemoryHandlers(deps);
+
+      const result = (await handlers["memory.recall_trace"]!({
+        _trustLevel: "admin",
+        session_key: "sk-A",
+      })) as { records: Array<Record<string, unknown>> };
+
+      expect(result.records).toHaveLength(1);
+      expect(result.records[0]!.tenantId).toBe("tenant-1");
+    });
+
+    it("skips malformed JSONL lines without throwing", async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "recall-trace-test-"));
+      const logsDir = path.join(dir, "logs");
+      fs.mkdirSync(logsDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(logsDir, "recall-trace.jsonl"),
+        `{"ts":"t","sessionId":"sess-A","traceId":"t-A"}\n{ this is not json\n`,
+      );
+      const { deps } = makeDiagDeps({ dataDir: dir });
+      const handlers = createMemoryHandlers(deps);
+
+      const result = (await handlers["memory.recall_trace"]!({
+        _trustLevel: "admin",
+        session_key: "sess-A",
+      })) as { records: Array<Record<string, unknown>> };
+
+      expect(result.records).toHaveLength(1);
+    });
+  });
+});

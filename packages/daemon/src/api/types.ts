@@ -104,6 +104,18 @@ export interface SessionsApiDeps {
  * Dependencies for memory-handlers + context-handlers
  * (memory.read/write/search/embeddingCache, context.recall/expand).
  */
+// @optional-field-count: 15 optional fields — MemoryApiDeps is the shared slice
+// for memory-handlers + context-handlers, so it carries TWO feature-gated dep
+// families: the context-DAG quartet (contextStore/store/config/contextEngineConfig/
+// resolveConversationId/rpcCall — a binary dispatcher gate) AND, as of Phase 86
+// (Plan 05), the OBS-06 memory-diagnostic deps (consolidationStore/entityStore/
+// recallCounters/dataDir — each absent ⇒ the corresponding admin diagnostic is
+// unavailable / zeroed, never a stub). Every optional is a real runtime
+// feature-switch documented row-by-row in packages/daemon/AUDIT-memory.md
+// (the CI architecture test enforces bidirectional parity with this interface);
+// tightening them to required would force every dispatcher call site to
+// fabricate stubs. Splitting the slice would break the structural-subtyping
+// invariant the 27 legacy *HandlerDeps depend on (see ApiDispatchDeps).
 export interface MemoryApiDeps {
   /** memory-handlers + context-handlers read deps.defaultAgentId / deps.tenantId. */
   defaultAgentId: string;
@@ -137,6 +149,26 @@ export interface MemoryApiDeps {
   embeddingCacheStats?: () => import("@comis/memory").EmbeddingCacheStats;
   /** Embedding circuit breaker state accessor for memory persistence operations. */
   embeddingCircuitBreakerState?: () => import("@comis/agent").CircuitState;
+  // Memory-diagnostic deps (Phase 86 / OBS-06)
+  /** Consolidation store — the `memory.observations` handler reads provenance
+   *  via `listObservations(agentId, tenantId, limit)` (scoped). Same port type
+   *  setup-memory builds; optional so existing handler tests construct deps
+   *  without it. */
+  consolidationStore?: import("@comis/core").MemoryConsolidationStore;
+  /** Entity store — the `memory.entities` handler reads the entity graph via
+   *  `listEntities(agentId, tenantId, limit)` (ENT-03 scoped). Optional for the
+   *  same backward-compat reason. */
+  entityStore?: import("@comis/core").MemoryEntityStore;
+  /** Live in-process recall counters (OBS-07). The `memory.recall_stats`
+   *  handler reads `snapshot()`; wired from `wireRecallCounters(eventBus)` at
+   *  the composition root. Optional — when unset the handler returns zeroed
+   *  counters (the gauge is process-lifetime, resets on restart). */
+  recallCounters?: { snapshot: () => import("@comis/observability").RecallCountersSnapshot };
+  /** Data directory (e.g. ~/.comis) for the `memory.recall_trace` JSONL read.
+   *  The handler resolves `<dataDir>/logs/recall-trace.jsonl` via
+   *  `resolveRecallTraceFilePath`. Optional — mirrors ObservabilityApiDeps.dataDir;
+   *  defaults to ~/.comis at handler-construction time when omitted. */
+  dataDir?: string;
 }
 
 /**
@@ -184,8 +216,10 @@ export interface ChannelsApiDeps {
 export interface AgentsApiDeps {
   // Agent management
   suspendedAgents: Set<string>;
-  /** Hot-add callback passed through to agent handlers for runtime agent creation without restart. */
-  hotAdd?: (agentId: string, config: PerAgentConfig) => Promise<void>;
+  /** Hot-add callback passed through to agent handlers for runtime agent creation without restart.
+   *  `rawRerankEnabled` is the RAW (pre-Zod-default) rag.rerank.enabled from the RPC input so the
+   *  hot-added agent's effective-rerank precedence distinguishes unset from explicit-off (CR-01). */
+  hotAdd?: (agentId: string, config: PerAgentConfig, rawRerankEnabled?: boolean | undefined) => Promise<void>;
   /** Hot-remove callback passed through to agent handlers for runtime agent deletion without restart. */
   hotRemove?: (agentId: string) => Promise<void>;
   // Model management

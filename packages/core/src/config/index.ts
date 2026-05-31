@@ -38,6 +38,10 @@ export type { VerbosityConfig, VerbosityLevel, VerbosityOverride } from "./schem
 export { MemoryReviewConfigSchema } from "./schema-memory-review.js";
 export type { MemoryReviewConfig } from "./schema-memory-review.js";
 
+// Memory consolidation schema (Phase 84)
+export { MemoryConsolidationConfigSchema } from "./schema-memory-consolidation.js";
+export type { MemoryConsolidationConfig } from "./schema-memory-consolidation.js";
+
 // Agent schemas: model selection, session lifecycle, context engine, context guard, agent features
 export {
   AgentConfigSchema,

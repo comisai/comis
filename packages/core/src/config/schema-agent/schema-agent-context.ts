@@ -177,8 +177,8 @@ export const ContextEngineConfigSchema = z.strictObject({
 
   /** Master toggle for the context engine pipeline (enabled by default). */
   enabled: z.boolean().default(true),
-  /** Operating mode: "pipeline" for sequential layer composition, "dag" for graph-based context management. */
-  version: z.enum(["pipeline", "dag"]).default("pipeline"),
+  /** Operating mode: "pipeline" for sequential layer composition, "dag" for graph-based context management. DAG is the first-class default; set "pipeline" to opt out. */
+  version: z.enum(["pipeline", "dag"]).default("dag"),
 
   // --- Shared (both modes) ---
 

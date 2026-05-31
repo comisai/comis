@@ -17,6 +17,11 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type {
   TypedEventBus,
   MemoryPort,
+  MemoryEntityStore,
+  MemoryTemporalStore,
+  MemoryCausalStore,
+  MemoryUsefulnessStore,
+  RerankerPort,
   HookRunner,
   SecretManager,
   EnvelopeConfig,
@@ -72,6 +77,11 @@ export interface PiExecutorDeps {
   sessionAdapter: ComisSessionManager;
   // Workspace
   workspaceDir: string;
+  /** Daemon data dir (COMIS_DATA_DIR / config.dataDir). Threaded to
+   *  prompt-assembly via ToolAssemblyDeps so the recall-trace recorder resolves
+   *  its containment base from the SAME source the memory.recall_trace reader
+   *  uses (WR-02). Absent ⇒ ~/.comis. */
+  dataDir?: string;
   // Tools
   customTools: ToolDefinition[];
   /** Convert per-request AgentTool[] to ToolDefinition[] for SDK registration.
@@ -82,6 +92,30 @@ export interface PiExecutorDeps {
   agentDir: string;
   // Optional
   memoryPort?: MemoryPort;
+  /** Optional cross-encoder reranker. Built in the daemon (setup-memory) only when an
+   *  agent enables rerank; threaded into prompt-assembly's createMemoryRecall via
+   *  ToolAssemblyDeps. Absent -> recall keeps fusion order (RANK-03). */
+  reranker?: RerankerPort;
+  /** Optional entity-associative store (ENT-02). Built in the daemon (Plan 05) on the
+   *  shared memory db handle; threaded into prompt-assembly's createMemoryRecall via
+   *  ToolAssemblyDeps. Absent -> no entity lane (recall RRF unchanged). TYPE-only from
+   *  @comis/core — the agent never imports the memory package (the agent↛memory cut). */
+  entityStore?: MemoryEntityStore;
+  /** Optional temporal-spread store (LANES-02). Built in the daemon on the shared memory db
+   *  handle; threaded into prompt-assembly's createMemoryRecall via ToolAssemblyDeps. Absent or
+   *  flag-off -> no temporal lane (recall RRF unchanged). TYPE-only from @comis/core — the agent
+   *  never imports the memory package (the agent↛memory cut). */
+  temporalStore?: MemoryTemporalStore;
+  /** Optional causal store (EXTRACT-03). Built in the daemon on the shared memory db handle;
+   *  threaded into prompt-assembly's createMemoryRecall via ToolAssemblyDeps. Absent or flag-off
+   *  -> no causal lane (recall RRF unchanged). TYPE-only from @comis/core — the agent never
+   *  imports the memory package (the agent↛memory cut). */
+  causalStore?: MemoryCausalStore;
+  /** Optional usefulness store (FEED-03). Built in the daemon on the shared memory db handle;
+   *  threaded into prompt-assembly's createMemoryRecall via ToolAssemblyDeps. Absent or flag-off
+   *  -> no usefulness read (recall scoring unchanged). TYPE-only from @comis/core — the agent
+   *  never imports the memory package (the agent↛memory cut). */
+  usefulnessStore?: MemoryUsefulnessStore;
   hookRunner?: HookRunner;
   // System prompt config
   outboundMediaEnabled?: boolean;
@@ -165,6 +199,17 @@ export interface PiExecutorDeps {
   contextStore?: import("@comis/core").ContextEngineStore;
   /** Raw database handle for DAG transactions. */
   db?: unknown;
+  /**
+   * DAG-05: one-shot consumer of a pending engine-mode switch for this agent.
+   * Threaded from the daemon rebuild seam (setup-agents-runtime.ts) through
+   * setupContextEngine into the DAG engine, which calls it at the reconcile
+   * seam to emit context:mode_switched once and clear the pending flag. Returns
+   * undefined when there is no pending switch (e.g. a brand-new DAG-default
+   * conversation). Optional — non-DAG and test paths are unaffected.
+   */
+  consumePendingModeSwitch?: (
+    agentId: string,
+  ) => { from: "pipeline" | "dag"; to: "pipeline" | "dag" } | undefined;
   /** Tenant ID for conversation creation. */
   tenantId?: string;
   /** Delivery mirror port for session mirroring injection. */
@@ -244,6 +289,22 @@ export interface PiExecutorDeps {
     readonly includeMessages?: boolean;
     readonly includePrompt?: boolean;
     readonly includeSystem?: boolean;
+  };
+  /**
+   * Recall-trace writer configuration (Phase 86 / OBS-02). Forwarded from
+   * AppConfig.diagnostics.recallTrace by daemon wiring, EXACTLY mirroring the
+   * cacheTraceConfig thread above. Threaded onward via ToolAssemblyDeps into
+   * PromptAssemblyParams.deps.recallTraceConfig, where buildRecallTrace reads
+   * the `enabled` gate. When omitted or `enabled: false`, buildRecallTrace
+   * returns null and createMemoryRecall captures nothing (recall-trace is
+   * OPT-IN, default-off). There is intentionally NO raw-content slot (unlike
+   * cacheTrace's includeMessages/includeSystem): the recorder always
+   * full-sanitizes before disk (OBS-02).
+   */
+  recallTraceConfig?: {
+    readonly enabled?: boolean;
+    readonly filePath?: string;
+    readonly maxFileBytes?: number;
   };
   /**
    * ObservabilityStore for SystemPromptReport SQLite

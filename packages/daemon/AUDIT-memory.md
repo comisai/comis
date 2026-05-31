@@ -2,9 +2,9 @@
 
 **Generated:** 2026-05-12
 **Status:** FINAL
-**Interface source:** `packages/daemon/src/api/types.ts:105–139`
-**Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 18 (7 required + 11 optional + 0 stale-fallback)
+**Interface source:** `packages/daemon/src/api/types.ts:105–160`
+**Construction site:** `packages/daemon/src/daemon.ts` (`buildRpcDispatchDeps`)
+**Field count:** 22 (7 required + 15 optional + 0 stale-fallback)
 **Location:** Co-located with the `@comis/daemon` package. `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from npm tarball.
 
 ## Field Classification
@@ -31,6 +31,10 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | rpcCall | optional | ctx_recall cannot self-dispatch session.spawn (`context-handlers.ts:258`); grant creation succeeds but the spawn step is skipped | packages/daemon/src/api/types.ts:134 |
 | embeddingCacheStats | optional | memory.embeddingCache RPC returns null stats; dashboard/obs surfaces show "no data" | packages/daemon/src/api/types.ts:137 |
 | embeddingCircuitBreakerState | optional | memory persistence operations cannot report breaker state; obs.diagnostics returns null for this field | packages/daemon/src/api/types.ts:139 |
+| consolidationStore | optional | memory.observations throws "consolidation store not wired" (`memory-handlers.ts` diagnostic handler); the provenance diagnostic is unavailable until setup-memory threads the store | packages/daemon/src/api/types.ts:146 |
+| entityStore | optional | memory.entities throws "entity store not wired"; the entity-graph diagnostic is unavailable until setup-memory threads the store | packages/daemon/src/api/types.ts:150 |
+| recallCounters | optional | memory.recall_stats returns a zeroed counter snapshot (the gauge is process-lifetime; absent ⇒ no live counts) when wireRecallCounters has not been wired | packages/daemon/src/api/types.ts:155 |
+| dataDir | optional | memory.recall_trace resolves the JSONL artifact under ~/.comis by default (safePath fallback) when no explicit data dir is threaded | packages/daemon/src/api/types.ts:160 |
 
 ## Removed Fields (stale-fallback — deleted)
 
@@ -39,7 +43,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 ## Summary
 
 - **Pre-audit count:** 18
-- **Final count:** 18 (7 required + 11 optional)
+- **Final count:** 22 (7 required + 15 optional) — +4 OBS-06 diagnostic deps (Phase 86 Plan 05: consolidationStore, entityStore, recallCounters, dataDir)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

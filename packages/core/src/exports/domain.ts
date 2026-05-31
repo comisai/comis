@@ -11,6 +11,11 @@ export {
   TrustLevelSchema,
   MemorySourceSchema,
   MemoryEntrySchema,
+  // Structured extraction (Phase 82 — EXTR-01) + Phase-83 domain target
+  ExtractedEntitySchema,
+  StructuredMemorySchema,
+  MemoryExtractionResultSchema,
+  MemoryEntitySchema,
   // AgentResponse
   ToolCallSchema,
   TokenUsageSchema,
@@ -87,6 +92,12 @@ export type {
   NormalizedMessage,
   TrustLevel,
   MemoryEntry,
+  // Structured extraction (Phase 82) + Phase-83 domain target
+  MemorySource,
+  ExtractedEntity,
+  StructuredMemory,
+  MemoryExtractionResult,
+  MemoryEntity,
   ToolCall,
   TokenUsage,
   AgentResponse,

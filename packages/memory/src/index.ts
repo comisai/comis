@@ -30,6 +30,60 @@ export type { EmbeddingProviderOptions } from "./embedding-provider-factory.js";
 export { createOpenAIEmbeddingProvider } from "./embedding-provider-openai.js";
 export type { OpenAIEmbeddingProviderOptions } from "./embedding-provider-openai.js";
 
+// Local cross-encoder reranker provider (sole RerankerPort impl; GGUF via
+// node-llama-cpp). Consumed by the daemon composition root in Plan 04.
+export { createLocalRerankerProvider } from "./reranker-provider-local.js";
+export type { LocalRerankerProviderOptions } from "./reranker-provider-local.js";
+
+// No-download reranker model-presence probe (Phase 92, RERANK-01/RERANK-02).
+// resolveModelFile({ download: false }) + existsSync; never the SOLE download
+// site (createLocalRerankerProvider stays that). The daemon composition root
+// (Plan 02) consults it to drive the locally-gated default-on rerank decision.
+export { rerankerModelPresent } from "./reranker-model-present.js";
+
+// Entity-associative recall store (sole MemoryEntityStore impl; Phase 83).
+// Owns the resolve/link write path + the scoped one-hop self-join read lane.
+// The daemon (Plan 05) constructs it on the memory adapter's db handle; the
+// MemoryEntityStore port TYPE itself lives in @comis/core (not re-exported here).
+export { createSqliteMemoryEntityStore } from "./sqlite-memory-entity-store.js";
+export type { MemoryEntityStoreDeps } from "./sqlite-memory-entity-store.js";
+
+// Temporal-spread recall store (sole MemoryTemporalStore impl; Phase 95, LANES-02).
+// Owns the windowed read over the EXISTING `memories.occurred_at` column — given the
+// seed memories' event times, surfaces OTHER memories near those times (NO new table).
+// The daemon (composition root) constructs it on the memory adapter's db handle; the
+// MemoryTemporalStore port TYPE lives in @comis/core (the agent↛memory cut — the recall
+// read path consumes the type only).
+export { createSqliteMemoryTemporalStore } from "./sqlite-memory-temporal-store.js";
+export type { MemoryTemporalStoreDeps } from "./sqlite-memory-temporal-store.js";
+
+// Causal-edge recall store (sole MemoryCausalStore impl; Phase 96, EXTRACT-03).
+// Owns the edge write (effectText -> scoped FTS top-1 -> INSERT OR IGNORE a
+// directed cause->effect edge over the additive `memory_causal_edges` table) +
+// the scoped one-hop UNION read lane. The daemon (composition root, Plan 96-03)
+// constructs it on the memory adapter's db handle; the MemoryCausalStore port
+// TYPE lives in @comis/core (the agent↛memory cut — the extraction write path and
+// the recall read path consume the type only).
+export { createSqliteMemoryCausalStore } from "./sqlite-memory-causal-store.js";
+export type { MemoryCausalStoreDeps } from "./sqlite-memory-causal-store.js";
+
+// Memory consolidation store (sole MemoryConsolidationStore impl; Phase 84).
+// Owns the scoped, state-predicate (consolidated_at IS NULL) candidate selection
+// + the atomic applyConsolidation transaction. The daemon (Plan 05) constructs
+// it on the memory adapter's db handle; the MemoryConsolidationStore port TYPE
+// lives in @comis/core (the agent↛memory cut — the job imports the type only).
+export { createSqliteMemoryConsolidationStore } from "./sqlite-memory-consolidation-store.js";
+export type { MemoryConsolidationStoreDeps } from "./sqlite-memory-consolidation-store.js";
+
+// Recall-utility usefulness store (sole MemoryUsefulnessStore impl; Phase 93,
+// FEED-02). Owns the idempotent used/ignored upsert (scoped to the
+// (tenant, agent, memory_id) PK) + the scoped absent-id-omitted bulk read. The
+// daemon (composition root) constructs it on the memory adapter's db handle; the
+// MemoryUsefulnessStore port TYPE lives in @comis/core (the agent↛memory cut —
+// the recall scoring path consumes the type only).
+export { createSqliteMemoryUsefulnessStore } from "./sqlite-memory-usefulness-store.js";
+export type { MemoryUsefulnessStoreDeps } from "./sqlite-memory-usefulness-store.js";
+
 // Embedding cache (LRU content-hash cache decorator)
 export { createCachedEmbeddingPort } from "./embedding-cache-lru.js";
 export type { EmbeddingCacheOptions, EmbeddingCacheStats } from "./embedding-cache-lru.js";

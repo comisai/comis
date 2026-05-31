@@ -102,6 +102,7 @@ export interface ShutdownDeps {
   db: { close: () => void; pragma: (source: string) => unknown };
   /** Coordinated embedding dispose callback: L1 -> L2 flush -> provider dispose */
   disposeEmbedding?: () => Promise<void>;
+  disposeReranker?: () => Promise<void>;  // reranker native ctx dispose; undefined when off
   /** Per-agent skill watcher handles for shutdown cleanup. */
   skillWatcherHandles?: Map<string, { close: () => Promise<void> }>;
   /** Approval gate for cleanup of pending timers */
@@ -205,6 +206,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
     backgroundIndexingPromise,
     db,
     disposeEmbedding,
+    disposeReranker,
     skillWatcherHandles,
     approvalGate,
     secretStore,
@@ -317,14 +319,7 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
         const stopMs = systemNowMs();
         await withStepTimeout(async () => {
           await trajectoryRegistry.closeAll();
-          daemonLogger.info(
-            {
-              component: "trajectory-registry",
-              durationMs: systemNowMs() - stopMs,
-              shutdownOrder: ++shutdownOrder,
-            },
-            "Component stopped",
-          );
+          daemonLogger.info({ component: "trajectory-registry", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "trajectory-registry", daemonLogger);
       }
 
@@ -620,6 +615,13 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
           await disposeEmbedding();
           daemonLogger.info({ component: "embedding-cache", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
         }, "embedding-cache", daemonLogger);
+      }
+      if (disposeReranker) {
+        const stopMs = systemNowMs();
+        await withStepTimeout(async () => {
+          await disposeReranker();  // reranker native context: ranking ctx -> model -> llama
+          daemonLogger.info({ component: "reranker", durationMs: systemNowMs() - stopMs, shutdownOrder: ++shutdownOrder }, "Component stopped");
+        }, "reranker", daemonLogger);
       }
       // Destroy audit aggregator timers
       if (auditAggregator) {

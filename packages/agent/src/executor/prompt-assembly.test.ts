@@ -19,6 +19,8 @@ const {
   mockDeduplicateResults,
   mockHybridSplit,
   mockCreateHybridMemoryInjector,
+  mockRecall,
+  mockCreateMemoryRecall,
   mockReadFile,
   mockIsBootContentEffectivelyEmpty,
   mockDetectOnboardingState,
@@ -38,6 +40,12 @@ const {
   mockDeduplicateResults: vi.fn((results: any[]) => results),
   mockHybridSplit: vi.fn().mockReturnValue({ inlineMemory: undefined, systemPromptSections: ["rag-section-1"] }),
   mockCreateHybridMemoryInjector: vi.fn(),
+  // createMemoryRecall(...).recall(...) is mocked: prompt-assembly's job is to call
+  // recall and feed its ranked output to the injector + emit memory:injected. The
+  // recall pipeline internals (fuse/rerank/score/trust-filter/dedup) are covered by
+  // memory-recall.test.ts; here recall is a controllable seam returning Result<...>.
+  mockRecall: vi.fn(),
+  mockCreateMemoryRecall: vi.fn(),
   mockReadFile: vi.fn().mockRejectedValue(new Error("ENOENT")),
   mockIsBootContentEffectivelyEmpty: vi.fn().mockReturnValue(true),
   mockDetectOnboardingState: vi.fn().mockResolvedValue(false),
@@ -46,6 +54,8 @@ const {
 
 // Wire mockCreateHybridMemoryInjector to return an object with mockHybridSplit
 mockCreateHybridMemoryInjector.mockReturnValue({ split: mockHybridSplit });
+// Wire createMemoryRecall(...) to return { recall: mockRecall }.
+mockCreateMemoryRecall.mockReturnValue({ recall: mockRecall });
 
 vi.mock("../bootstrap/index.js", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -72,6 +82,10 @@ vi.mock("../rag/rag-retriever.js", () => ({
 
 vi.mock("../rag/hybrid-memory-injector.js", () => ({
   createHybridMemoryInjector: mockCreateHybridMemoryInjector,
+}));
+
+vi.mock("../rag/memory-recall.js", () => ({
+  createMemoryRecall: mockCreateMemoryRecall,
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -102,8 +116,15 @@ vi.mock("node:os", async (importOriginal) => {
   };
 });
 
-import { assembleExecutionPrompt, extractUserLanguage, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, getCacheSafeParams, clearCacheSafeParams, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
-import { formatSessionKey, type SpawnPacket } from "@comis/core";
+import { assembleExecutionPrompt, extractUserLanguage, clearSessionToolNameSnapshot, clearSessionBootstrapFileSnapshot, clearSessionPromptSkillsXmlSnapshot, getCacheSafeParams, clearCacheSafeParams, buildRecallTrace, type PromptAssemblyParams, type CacheSafeParams } from "./prompt-assembly.js";
+import { resolveRecallTraceFilePath } from "@comis/observability";
+import * as nodeOs from "node:os";
+import { formatSessionKey, type SpawnPacket, type MemorySearchResult } from "@comis/core";
+// Real (un-mocked) §7.3 guidance formatter — prompt-assembly pushes its block into
+// the prompt when >=2 memories are surfaced. It is FIXED guidance text, NOT a
+// retrieved memory, so it must NOT inflate retrieved-memory telemetry (WR-02):
+// charsInjected / ragHits count retrieved memory only, never the guidance block.
+import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
 import { createSpawnPacketBuilder } from "../spawn/spawn-packet-builder.js";
 // Fixture stub for the capability-index gate. Default returns `false` so
 // existing tests stay on the legacy gate-off path (byte-identical baseline).
@@ -201,6 +222,10 @@ describe("assembleExecutionPrompt", () => {
     mockDeduplicateResults.mockImplementation((results: any[]) => results);
     mockHybridSplit.mockReturnValue({ inlineMemory: undefined, systemPromptSections: ["rag-section-1"] });
     mockCreateHybridMemoryInjector.mockReturnValue({ split: mockHybridSplit });
+    // createMemoryRecall(...).recall(...) default: empty ranked result (ok). RAG tests
+    // override mockRecall per case to drive the ranked output the injector consumes.
+    mockCreateMemoryRecall.mockReturnValue({ recall: mockRecall });
+    mockRecall.mockResolvedValue({ ok: true, value: [] });
     mockReadFile.mockRejectedValue(new Error("ENOENT"));
     mockIsBootContentEffectivelyEmpty.mockReturnValue(true);
     mockDetectOnboardingState.mockResolvedValue(false);
@@ -253,7 +278,7 @@ describe("assembleExecutionPrompt", () => {
   // -----------------------------------------------------------------
   // 4. RAG retrieval via hybrid memory injector (Task 229)
   // -----------------------------------------------------------------
-  it("invokes hybrid memory injector when memoryPort and rag.enabled are set", async () => {
+  it("routes recall output to the hybrid memory injector when memoryPort and rag.enabled are set", async () => {
     const mockSearchResult = {
       entry: { id: "m1", tenantId: "t", content: "Test memory", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },
       score: 0.85,
@@ -262,14 +287,19 @@ describe("assembleExecutionPrompt", () => {
       search: vi.fn().mockResolvedValue({ ok: true, value: [mockSearchResult] }),
       store: vi.fn(),
     } as any;
+    // recall returns the ranked, trust-filtered, deduped result the injector consumes.
+    mockRecall.mockResolvedValue({ ok: true, value: [mockSearchResult] });
     const params = makeParams({
       config: makeConfig({ rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 } }),
       deps: { workspaceDir: "/workspace", memoryPort },
     });
     const result = await assembleExecutionPrompt(params);
 
-    expect(memoryPort.search).toHaveBeenCalledOnce();
+    // recall is the single orchestrator (RANK-07); prompt-assembly no longer searches inline.
+    expect(mockCreateMemoryRecall).toHaveBeenCalledOnce();
+    expect(mockRecall).toHaveBeenCalledOnce();
     expect(mockCreateHybridMemoryInjector).toHaveBeenCalledOnce();
+    // The injector consumes recall's ranked output (not a raw search result).
     expect(mockHybridSplit).toHaveBeenCalledWith([mockSearchResult], 5000);
     // RAG relocated to dynamic preamble, not system prompt
     const call = mockAssembleRichSystemPrompt.mock.calls[0][0];
@@ -295,6 +325,8 @@ describe("assembleExecutionPrompt", () => {
       search: vi.fn().mockResolvedValue({ ok: true, value: mockSearchResults }),
       store: vi.fn(),
     } as any;
+    // recall returns both ranked results -> hitCount/trustTags computed from them.
+    mockRecall.mockResolvedValue({ ok: true, value: mockSearchResults });
     const emit = vi.fn();
     const eventBus = { emit, on: vi.fn(), off: vi.fn(), once: vi.fn(), listenerCount: vi.fn().mockReturnValue(0) } as any;
     // Hybrid split: inline memory present, plus a non-empty system section.
@@ -313,7 +345,19 @@ describe("assembleExecutionPrompt", () => {
     expect(memoryEmit, "memory:injected emit must fire when injection produces content").toBeTruthy();
     const payload = memoryEmit![1];
     expect(payload.hitCount).toBe(2);
+    // WR-02: ranked.length === 2 -> the §7.3 guidance block IS injected into the
+    // prompt, but it is FIXED guidance text, NOT a retrieved memory. The
+    // memory:injected telemetry must count retrieved memory ONLY (inline +
+    // retrieved sections) and must NOT include the guidance-block length —
+    // otherwise charsInjected disagrees with hitCount about what "injected"
+    // means. Pin that charsInjected reflects ONLY the retrieved memory.
+    const guidanceLen = buildTemporalGuidanceBlock(mockSearchResults as unknown as MemorySearchResult[])!.length;
+    expect(guidanceLen, "guard: the §7.3 block must be non-empty for this assertion to bite").toBeGreaterThan(0);
     expect(payload.charsInjected).toBe("[inline rag chunk]".length + "section body".length);
+    // Consistency with hitCount: charsInjected must NOT carry the guidance block.
+    expect(payload.charsInjected).not.toBe(
+      "[inline rag chunk]".length + "section body".length + guidanceLen,
+    );
     expect(new Set(payload.trustTags)).toEqual(new Set(["learned", "system"]));
     expect(typeof payload.timestamp).toBe("number");
     expect(typeof payload.traceId).toBe("string");
@@ -342,10 +386,12 @@ describe("assembleExecutionPrompt", () => {
   // -----------------------------------------------------------------
   // 5. RAG failure is non-fatal
   // -----------------------------------------------------------------
-  it("does not throw when RAG retrieval fails", async () => {
+  it("does not throw when recall throws (non-fatal try/catch preserved)", async () => {
     const memoryPort = {
-      search: vi.fn().mockRejectedValue(new Error("RAG boom")),
+      search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
     } as any;
+    // recall throwing must be swallowed by the surrounding non-fatal try/catch.
+    mockRecall.mockRejectedValue(new Error("RAG boom"));
     const params = makeParams({
       config: makeConfig({ rag: { enabled: true } }),
       deps: { workspaceDir: "/workspace", memoryPort },
@@ -356,9 +402,24 @@ describe("assembleExecutionPrompt", () => {
     // memorySections fallback to empty
     const call = mockAssembleRichSystemPrompt.mock.calls[0][0];
     expect(call.additionalSections).toEqual([]);
-    // RAG failed, so nothing injected into dynamic preamble either
+    // recall failed, so nothing injected into dynamic preamble either
     expect(result.dynamicPreamble).not.toContain("rag-section");
     expect(result.inlineMemory).toBeUndefined();
+  });
+
+  it("does not inject when recall returns an err Result (non-fatal degrade)", async () => {
+    const memoryPort = {
+      search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+    } as any;
+    mockRecall.mockResolvedValue({ ok: false, error: new Error("search failed in recall") });
+    const params = makeParams({
+      config: makeConfig({ rag: { enabled: true } }),
+      deps: { workspaceDir: "/workspace", memoryPort },
+    });
+    const result = await assembleExecutionPrompt(params);
+
+    expect(result.inlineMemory).toBeUndefined();
+    expect(mockCreateHybridMemoryInjector).not.toHaveBeenCalled();
   });
 
   // -----------------------------------------------------------------
@@ -559,6 +620,15 @@ describe("assembleExecutionPrompt", () => {
       }),
       store: vi.fn(),
     } as any;
+    mockRecall.mockResolvedValue({
+      ok: true,
+      value: [
+        {
+          entry: { id: "m1", tenantId: "t", content: "memory entry", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },
+          score: 0.9,
+        },
+      ],
+    });
     mockHybridSplit.mockReturnValueOnce({
       inlineMemory: undefined,
       systemPromptSections: [sectionBody],
@@ -596,6 +666,60 @@ describe("assembleExecutionPrompt", () => {
     expect(parsed.memoryInjection.ragHits).toBe(1);
     expect(parsed.memoryInjection.charsInjected).toBe(sectionBody.length);
     expect(parsed.memoryInjection.trustTags).toEqual([]);
+  });
+
+  it("WR-02 SystemPromptReport.memoryInjection excludes the §7.3 guidance block from ragHits/charsInjected", async () => {
+    // >=2 surfaced memories -> the §7.3 temporal-guidance block IS pushed into
+    // the prompt. The persisted report's ragHits/charsInjected must count the
+    // RETRIEVED memory ONLY (the one inline + one section here), NOT the fixed
+    // guidance text. Pre-fix this over-counted: ragHits tallied the guidance
+    // block as a RAG hit (2 sections -> ragHits 3 incl. inline) and
+    // charsInjected included the block's length.
+    const sectionBody = "RAG section body for report path";
+    const ranked = [
+      {
+        entry: { id: "m1", tenantId: "t", content: "Inline pick", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },
+        score: 0.9,
+      },
+      {
+        entry: { id: "m2", tenantId: "t", content: "Section pick", createdAt: Date.now(), tags: [], trustLevel: "learned", source: { channel: "test" } },
+        score: 0.8,
+      },
+    ];
+    const memoryPort = {
+      search: vi.fn().mockResolvedValue({ ok: true, value: ranked }),
+      store: vi.fn(),
+    } as any;
+    mockRecall.mockResolvedValue({ ok: true, value: ranked });
+    // Inline top-1 + one retrieved section; guidance block appended by source.
+    mockHybridSplit.mockReturnValueOnce({
+      inlineMemory: "[inline rag chunk]",
+      systemPromptSections: [sectionBody],
+    });
+
+    const insertSystemPromptReport = vi.fn();
+    const observabilityStore = { insertSystemPromptReport };
+    const params = makeParams({
+      config: makeConfig({
+        rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 },
+      }),
+      deps: { workspaceDir: "/workspace", observabilityStore: observabilityStore as any, memoryPort },
+    });
+    await assembleExecutionPrompt(params);
+
+    const guidanceLen = buildTemporalGuidanceBlock(ranked as unknown as MemorySearchResult[])!.length;
+    expect(guidanceLen, "guard: the §7.3 block must be non-empty for this assertion to bite").toBeGreaterThan(0);
+
+    expect(insertSystemPromptReport).toHaveBeenCalledTimes(1);
+    const parsed = JSON.parse(insertSystemPromptReport.mock.calls[0]![0].reportJson);
+    expect(parsed.memoryInjection).toBeDefined();
+    // 1 inline + 1 retrieved section = 2 retrieved components. The guidance
+    // block must NOT bump this to 3.
+    expect(parsed.memoryInjection.ragHits).toBe(2);
+    expect(parsed.memoryInjection.charsInjected).toBe("[inline rag chunk]".length + sectionBody.length);
+    expect(parsed.memoryInjection.charsInjected).not.toBe(
+      "[inline rag chunk]".length + sectionBody.length + guidanceLen,
+    );
   });
 
   // -----------------------------------------------------------------
@@ -1408,6 +1532,7 @@ describe("assembleExecutionPrompt", () => {
         search: vi.fn().mockResolvedValue({ ok: true, value: [mockSearchResult] }),
         store: vi.fn(),
       } as any;
+      mockRecall.mockResolvedValue({ ok: true, value: [mockSearchResult] });
       const params = makeParams({
         config: makeConfig({ rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 } }),
         deps: { workspaceDir: "/workspace", memoryPort },
@@ -1854,6 +1979,7 @@ describe("assembleExecutionPrompt", () => {
       const memoryPort = {
         search: vi.fn().mockResolvedValue({ ok: true, value: [result1] }),
       } as any;
+      mockRecall.mockResolvedValue({ ok: true, value: [result1] });
       mockHybridSplit.mockReturnValue({
         inlineMemory: "\n[Relevant context: User prefers dark mode]\n",
         systemPromptSections: [],
@@ -1873,6 +1999,7 @@ describe("assembleExecutionPrompt", () => {
       const memoryPort = {
         search: vi.fn().mockResolvedValue({ ok: true, value: [result1] }),
       } as any;
+      mockRecall.mockResolvedValue({ ok: true, value: [result1] });
       mockHybridSplit.mockReturnValue({
         inlineMemory: undefined,
         systemPromptSections: ["## Relevant Memories\n- some section"],
@@ -1899,26 +2026,30 @@ describe("assembleExecutionPrompt", () => {
       expect(memoryPort.search).not.toHaveBeenCalled();
     });
 
-    it("filters results by trust level before passing to hybrid injector", async () => {
+    it("passes the recall-ranked (trust-filtered) output to the hybrid injector", async () => {
+      // Trust filtering is now recall's responsibility (covered by memory-recall.test.ts);
+      // prompt-assembly forwards exactly what recall returns. Here recall already excluded
+      // the external entry, so only the learned result reaches the injector.
       const learnedResult = makeSearchResult("Learned memory", 0.9, "learned");
-      const externalResult = makeSearchResult("External memory", 0.95, "external");
       const memoryPort = {
-        search: vi.fn().mockResolvedValue({ ok: true, value: [externalResult, learnedResult] }),
+        search: vi.fn().mockResolvedValue({ ok: true, value: [learnedResult] }),
       } as any;
+      mockRecall.mockResolvedValue({ ok: true, value: [learnedResult] });
       const params = makeParams({
         config: makeConfig({ rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 } }),
         deps: { workspaceDir: "/workspace", memoryPort },
       });
       await assembleExecutionPrompt(params);
 
-      // deduplicateResults receives only the learned result (external filtered out)
-      expect(mockDeduplicateResults).toHaveBeenCalledWith([learnedResult]);
+      // The injector consumes recall's ranked output verbatim.
+      expect(mockHybridSplit).toHaveBeenCalledWith([learnedResult], 5000);
     });
 
-    it("skips hybrid injector when search returns no results", async () => {
+    it("skips hybrid injector when recall returns no results", async () => {
       const memoryPort = {
         search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
       } as any;
+      mockRecall.mockResolvedValue({ ok: true, value: [] });
       const params = makeParams({
         config: makeConfig({ rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 } }),
         deps: { workspaceDir: "/workspace", memoryPort },
@@ -1929,10 +2060,11 @@ describe("assembleExecutionPrompt", () => {
       expect(result.inlineMemory).toBeUndefined();
     });
 
-    it("skips hybrid injector when search result is not ok", async () => {
+    it("skips hybrid injector when recall result is not ok", async () => {
       const memoryPort = {
-        search: vi.fn().mockResolvedValue({ ok: false, error: "search failed" }),
+        search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
       } as any;
+      mockRecall.mockResolvedValue({ ok: false, error: new Error("recall failed") });
       const params = makeParams({
         config: makeConfig({ rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 } }),
         deps: { workspaceDir: "/workspace", memoryPort },
@@ -2993,5 +3125,37 @@ describe("computeFeatureFlagHash", () => {
   it("returns 'default' when no feature flags set (feature-flag)", () => {
     const hash = computeFeatureFlagHash({});
     expect(hash).toBe("default");
+  });
+});
+
+describe("buildRecallTrace -- data-dir agreement with the reader (WR-02)", () => {
+  it("resolves the recorder base from the configured dataDir so writer and reader agree", () => {
+    // WR-02: the recorder used to hardcode os.homedir()/.comis as its base
+    // while the memory.recall_trace handler reads from the configured dataDir
+    // (deps.dataDir ?? ~/.comis). Under a non-default COMIS_DATA_DIR the writer
+    // and reader pointed at DIFFERENT files, so the diagnostic returned nothing.
+    // The recorder must resolve its confinedBaseDir from the SAME data-dir
+    // source the reader uses.
+    const customDataDir = `${nodeOs.tmpdir()}/comis-wr02-${Math.random().toString(36).slice(2)}`;
+    const recorder = buildRecallTrace(
+      { enabled: true },
+      "agent-x",
+      "tenant:user:chan",
+      customDataDir,
+    );
+    expect(recorder).not.toBeNull();
+    // The reader resolves the same path from the same dataDir.
+    const readerPath = resolveRecallTraceFilePath({ confinedBaseDir: customDataDir });
+    expect(recorder!.filePath).toBe(readerPath);
+    // And the resolved path is rooted under the custom dataDir (NOT ~/.comis).
+    expect(recorder!.filePath.startsWith(customDataDir)).toBe(true);
+  });
+
+  it("falls back to the home .comis base when no dataDir is supplied (default deployments unaffected)", () => {
+    const recorder = buildRecallTrace({ enabled: true }, "agent-x", "tenant:user:chan");
+    expect(recorder).not.toBeNull();
+    const defaultBase = `${nodeOs.homedir()}/.comis`;
+    const readerPath = resolveRecallTraceFilePath({ confinedBaseDir: defaultBase });
+    expect(recorder!.filePath).toBe(readerPath);
   });
 });

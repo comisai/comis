@@ -164,6 +164,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "PendingUpdate",
       "GreetingGeneratorDeps",
       "MemoryReviewDeps",
+      // Consolidation job Deps (Phase 84-03). runMemoryConsolidation is consumed by the
+      // daemon (Plan 84-05, setup-channels-credentials __MEMORY_CONSOLIDATION__ sentinel),
+      // but it is called with an inline object, so the named Deps SHAPE type has no
+      // production consumer — baseline orphan (mirror MemoryReviewDeps).
+      "MemoryConsolidationDeps",
       "formatMemorySection",
       "CommandQueueDeps",
       "QueueStats",
@@ -288,6 +293,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createHybridMemoryInjector",
       "HybridMemoryInjector",
       "HybridMemoryInjection",
+      // Recall orchestrator (Phase 80). Consumed internally by prompt-assembly via a
+      // direct relative import; exported for the Phase-80/05 eval harness + external
+      // recall composition. Baseline orphan until the eval harness lands its consumer.
+      "createMemoryRecall",
+      "MemoryRecall",
+      "MemoryRecallDeps",
+      "MemoryRecallConfig",
       "normalizeToolSchema",
       "normalizeToolSchemas",
       "PROVIDER_UNSUPPORTED_KEYWORDS",
@@ -401,6 +413,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "sweepResultFiles",
       "buildAnnouncementMessage",
       "deliverFailureNotification",
+      // buildRecallTrace (Phase 86 OBS-02 gap-closure): consumed by the
+      // recall-diagnostics-isolation integration test (the OBS-02 e2e
+      // redaction proof + OBS-08 cross-scope-leak negative drive the real
+      // recorder through the @comis/agent barrel — see
+      // test/integration/security/recall-diagnostics-isolation.test.ts:61).
+      // The public-export-consumers AST walker only scans packages/*/src/**
+      // (NOT test/), so that cross-package consumer doesn't satisfy the gate.
+      // The production consumer is intra-package (prompt-assembly.ts threads
+      // the same envelope), which the walker skips as a self-import. Mirrors
+      // the createMemoryHandlers / MEMORY_DIAGNOSTIC_CONTRACTS precedent from
+      // Phase 86. Keep the barrel export — the integration test needs it via
+      // the bare `@comis/agent` import.
+      "buildRecallTrace",
     ])],
     // @comis/channels: baseline orphans tracked here. The 5 delivery
     // helpers + the Markdown IR pipeline (incl. telegram-file-ref-guard)
@@ -688,6 +713,25 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "TrustLevelSchema",
       "MemorySourceSchema",
       "MemoryEntrySchema",
+      // Structured-extraction (Phase 82, EXTR-01) + entity (Phase 83) domain
+      // types. MemoryEntity is the Phase-83 entity import target; the
+      // extraction LLM-output types describe the shape @comis/agent's
+      // parseExtractionResult validates. These 6 (3 schemas + 3 inferred
+      // types) are consumed intra-core (memory-entry.ts builds the
+      // MemoryExtractionResult chain from them) + are downstream-facing public
+      // domain API surface, but carry NO cross-package value/type import by
+      // name yet — the checker counts cross-package barrel consumers only.
+      // (MemoryExtractionResultSchema + MemoryExtractionResult are NOT listed:
+      // @comis/agent's parseExtractionResult imports both from @comis/core, so
+      // they have a real cross-package consumer.) Mirrors the @comis/memory
+      // row-schema / Phase-80 reranker baseline-orphan precedent. Shrink each
+      // as a real cross-package consumer lands.
+      "ExtractedEntitySchema",
+      "StructuredMemorySchema",
+      "MemoryEntitySchema",
+      "ExtractedEntity",
+      "StructuredMemory",
+      "MemoryEntity",
       "ToolCallSchema",
       "TokenUsageSchema",
       "AgentResponseSchema",
@@ -1055,6 +1099,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "VerbosityOverrideSchema",
       "OutputRetentionConfigSchema",
       "MemoryReviewConfigSchema",
+      // Per-agent consolidation config schema (Phase 84-04). Wired into PerAgentConfig
+      // (schema-agent-runtime) WITHIN @comis/core; the daemon (Plan 84-05) consumes the
+      // INFERRED config TYPE, not the schema value. The schema value therefore has no
+      // out-of-package consumer — baseline orphan (mirror MemoryReviewConfigSchema).
+      "MemoryConsolidationConfigSchema",
       "ProvidersConfigSchema",
       "UserModelSchema",
       "ModelCostSchema",
@@ -1312,12 +1361,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // handler-factory files that share the MemoryApiDeps cluster slice):
       //   - memory-handlers.ts  (8 methods)
       //   - context-handlers.ts (7 methods)
-      // The 15 per-method contracts have in-repo consumers via both
+      // The 19 per-method contracts (8 memory + 4 OBS-06 diagnostics + 7
+      // context as of Phase 86 Plan 05) have in-repo consumers via both
       // handler factories (imports + computed property keys). Only the
-      // per-domain aggregator array MEMORY_CONTRACTS lacks an external
-      // consumer (composed into API_CONTRACTS_ORDERED intra-package —
-      // the walker skips self-imports).
+      // per-domain aggregator arrays MEMORY_CONTRACTS / MEMORY_DIAGNOSTIC_CONTRACTS
+      // lack an external consumer (composed into API_CONTRACTS_ORDERED /
+      // spread into MEMORY_CONTRACTS intra-package — the walker skips
+      // self-imports). MEMORY_DIAGNOSTIC_CONTRACTS is the Phase-86 OBS-06
+      // diagnostic group, now folded into MEMORY_CONTRACTS but still surfaced
+      // on the public barrel for symmetry with the other domain arrays.
       "MEMORY_CONTRACTS",
+      "MEMORY_DIAGNOSTIC_CONTRACTS",
       // Media + image-domain contracts (16 methods spanning 2
       // handler-factory files that share the MediaApiDeps cluster slice):
       //   - media-handlers.ts  (15 methods)
@@ -1528,6 +1582,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "computeReachableToolNames",
       "RequiredToolsUnreachableError",
       "UnreachableToolEntry",
+      // ── v2.6 Memory consolidation (Phase 84 — interface-first foundation) ──
+      // The segregated MemoryConsolidationStore port + its DTOs are the
+      // contract the consolidation adapter (Plan 02, @comis/memory), job
+      // (Plan 03, @comis/agent), and daemon wiring (Plan 05) depend on
+      // existing first (the same interface-first pattern as MemoryEntityStore,
+      // whose own consumers landed across Phase 83's plans). Shipped on the
+      // @comis/core barrel now; the in-repo consumers land in Plans 02-05.
+      // Shrink each entry as it gains a real consumer.
+      "MemoryConsolidationStore",
+      "ConsolidationCandidate",
+      "ConsolidationPlan",
       // Provider-catalog symbols added in Phase 2 (BROKER-01..03). The broker
       // in @comis/infra imports resolveBinding, applyInjections, normalizeHost,
       // BrokerBinding, InjectionRule, HostRule, InjectionInput — all consumed.
@@ -1599,6 +1664,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // these intentional test-only public exports.
       "createMcpHandlers",
       "McpHandlerDeps",
+      // Memory + memory-diagnostic handlers — re-exported so the integration
+      // test at test/integration/security/recall-diagnostics-isolation.test.ts
+      // can drive the real admin-gated memory.observations / memory.entities /
+      // memory.recall_stats / memory.recall_trace handlers against the REAL
+      // wired scoped stores (the OBS-08 cross-scope-leak negative + the EoP
+      // admin-reject through the RPC layer). Same rationale as createMcpHandlers:
+      // the test imports them statically from @comis/daemon, but the
+      // public-export-consumers AST walker only scans packages/*/src/** (NOT
+      // test/), so this orphan list is the canonical place to record these
+      // intentional test-only public exports.
+      "createMemoryHandlers",
+      "MemoryHandlerDeps",
       // _resetSigusr1Timer + _resetMutationFence are PROCESS-WIDE state
       // resets required by any test that exercises the real persistToConfig
       // writer (see persist-to-config.ts:12-43 module-level state docs).
@@ -1763,6 +1840,42 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "EmbeddingProviderOptions",
       "createOpenAIEmbeddingProvider",
       "OpenAIEmbeddingProviderOptions",
+      // Reranker provider options type (Phase 80). createLocalRerankerProvider is
+      // consumed by the daemon (setup-memory); the options type is part of its public
+      // API surface — baseline orphan until an external/test consumer references it.
+      "LocalRerankerProviderOptions",
+      // Entity-associative recall store (Phase 83-02). createSqliteMemoryEntityStore
+      // is the sole MemoryEntityStore adapter; the daemon composition root constructs
+      // it on the memory adapter's db handle in Plan 83-05 (setup-memory). Surfaced
+      // here ahead of that wiring — baseline orphans until the daemon consumer lands.
+      "createSqliteMemoryEntityStore",
+      "MemoryEntityStoreDeps",
+      // Temporal-spread store (Phase 95-02, LANES-02). createSqliteMemoryTemporalStore is the
+      // sole MemoryTemporalStore adapter; the daemon composition root constructs it on the
+      // memory adapter's db handle (setup-memory) — so the FACTORY has a production consumer.
+      // The constructor-deps SHAPE type is part of its public API but is referenced only via
+      // inline objects — baseline orphan (mirror MemoryEntityStoreDeps / MemoryUsefulnessStoreDeps).
+      "MemoryTemporalStoreDeps",
+      // Causal-edge store (Phase 96, EXTRACT-03). createSqliteMemoryCausalStore is the sole
+      // MemoryCausalStore adapter; the daemon composition root constructs it on the memory
+      // adapter's db handle in Plan 96-03 (setup-memory) — so the FACTORY has a production
+      // consumer (the temporary 96-01 orphan entry was REMOVED here, the 95-02 factory-orphan
+      // dance). The constructor-deps SHAPE type is part of its public API but is referenced only
+      // via inline objects — PERMANENT baseline orphan (mirror MemoryEntityStoreDeps /
+      // MemoryTemporalStoreDeps).
+      "MemoryCausalStoreDeps",
+      // Consolidation store (Phase 84-02). createSqliteMemoryConsolidationStore is the sole
+      // MemoryConsolidationStore adapter; the daemon composition root constructs it on the
+      // memory adapter's db handle in Plan 84-05 (setup-memory) — so the FACTORY has a
+      // production consumer. The constructor-deps SHAPE type is part of its public API but
+      // is referenced only via inline objects — baseline orphan (mirror MemoryEntityStoreDeps).
+      "MemoryConsolidationStoreDeps",
+      // Recall-utility usefulness store (Phase 93-01, FEED-02). createSqliteMemoryUsefulnessStore
+      // is the sole MemoryUsefulnessStore adapter; the daemon composition root constructs it on
+      // the memory adapter's db handle (setup-memory) — so the FACTORY has a production consumer.
+      // The constructor-deps SHAPE type is part of its public API but is referenced only via
+      // inline objects — baseline orphan (mirror MemoryEntityStoreDeps / MemoryConsolidationStoreDeps).
+      "MemoryUsefulnessStoreDeps",
       "EmbeddingCacheOptions",
       "EmbeddingCacheStats",
       "SqliteEmbeddingCacheOptions",
@@ -1816,6 +1929,25 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // Public-row schemas + inferred types (5 × 2 = 10 entries):
       "MemoryRowSchema",
       "MemoryRowFromSchema",
+      // Entity-association row schemas (Phase 83-01). Consumed intra-package by
+      // sqlite-memory-entity-store.ts (Plan 83-02) via createRowMapper; surfaced
+      // through `export *` so tracked here like the sibling row schemas (the
+      // checker counts cross-package barrel consumers only).
+      "MemoryEntityRowSchema",
+      "EntityLaneRowSchema",
+      // Causal one-hop edge-lookup row schema (Phase 96-01, EXTRACT-03). Consumed
+      // intra-package by sqlite-memory-causal-store.ts via createRowMapper;
+      // barrel-surfaced through `export *` so tracked here like its Phase-83 siblings.
+      "CausalLaneRowSchema",
+      // Recall-utility usefulness row schema (Phase 93-01, FEED-02). Consumed
+      // intra-package by sqlite-memory-usefulness-store.ts via createRowMapper;
+      // barrel-surfaced through `export *` so tracked here like the sibling row
+      // schemas (the checker counts cross-package barrel consumers only).
+      "MemoryUsefulnessRowSchema",
+      // OBS-06 entity-graph diagnostic row schema (Phase 86 / listEntities).
+      // Consumed intra-package by sqlite-memory-entity-store.ts via
+      // createRowMapper; barrel-surfaced like its Phase-83 siblings above.
+      "EntityListRowSchema",
       "SessionRowSchema",
       "SessionRowFromSchema",
       "VecSearchRowSchema",

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { MemoryEntry, MemoryConfig, SessionKey, EmbeddingPort } from "@comis/core";
 import type { Result } from "@comis/shared";
-import { ok } from "@comis/shared";
+import { ok, err } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { chmodSync, existsSync } from "node:fs";
 import { isVecAvailable } from "./schema.js";
@@ -190,6 +190,38 @@ describe("SqliteMemoryAdapter", () => {
         .get(entry.id) as { memory_type: string };
 
       expect(row.memory_type).toBe("semantic");
+    });
+
+    it("persists a non-semantic memoryType carried on the entry (LANES-03)", async () => {
+      // The classified memoryType arrives as a first-class MemoryEntry field — the
+      // adapter must write it verbatim, NOT collapse it to the 'semantic' default.
+      const entry = makeEntry({ memoryType: "episodic" });
+      await adapter.store(entry);
+
+      const row = adapter
+        .getDb()
+        .prepare("SELECT memory_type FROM memories WHERE id = ?")
+        .get(entry.id) as { memory_type: string };
+
+      expect(row.memory_type).toBe("episodic");
+    });
+
+    it("round-trips memoryType back through search (read-back is the classified type)", async () => {
+      const entry = makeEntry({ content: "user prefers tabs over spaces", memoryType: "procedural" });
+      await adapter.store(entry);
+
+      const found = await adapter.search(
+        { tenantId: "default", agentId: "default", userId: "user-1" },
+        "tabs spaces",
+        { limit: 5 },
+      );
+      expect(found.ok).toBe(true);
+      if (found.ok) {
+        const hit = found.value.find((r) => r.entry.id === entry.id);
+        expect(hit).toBeDefined();
+        // rowToEntry surfaces the stored classification, not the 'semantic' default.
+        expect((hit?.entry as { memoryType?: string }).memoryType).toBe("procedural");
+      }
     });
 
     it("returns error for duplicate ID", async () => {
@@ -810,5 +842,225 @@ describe("SqliteMemoryAdapter", () => {
         rm(tmpDir, { recursive: true, force: true });
       }
     });
+  });
+});
+
+// ── searchLanes — the un-fused FTS/vector split (LANES-01) ────────────────
+//
+// searchLanes surfaces the FTS-ranked and vector-ranked candidate lists
+// SEPARATELY (NO computeRRF inside the adapter, NO minScore — both move to the
+// agent's fuse() / recall layer). The LOAD-BEARING parity guard: fusing the two
+// returned lanes at the OLD hardcoded weights {fts:1.0, vector:1.5} via the same
+// k=60 RRF math reproduces today's `search()` (= hybridSearch) id order
+// byte-for-byte. These tests pin: (a) parity, (b) no in-adapter minScore, (c) the
+// limit*2 over-fetch pool, (d) the FTS-only (zero-length-embedding) degrade.
+
+/**
+ * In-test re-derivation of the OLD hybrid-search RRF (hybrid-search.ts:205-246,
+ * 309-322): k=60, weightFts 1.0 / weightVec 1.5, normalize by (Σw)/(k+1). Used to
+ * prove that fusing searchLanes' two lists reproduces the pre-fused order. The two
+ * input lists are already in rank order (rank = index+1).
+ */
+function fuseLanesParity(
+  fts: Array<{ id: string }>,
+  vector: Array<{ id: string }>,
+  weightFts = 1.0,
+  weightVec = 1.5,
+): string[] {
+  const k = 60;
+  const merged = new Map<string, number>();
+  fts.forEach((r, i) => merged.set(r.id, (merged.get(r.id) ?? 0) + weightFts / (k + (i + 1))));
+  vector.forEach((r, i) => merged.set(r.id, (merged.get(r.id) ?? 0) + weightVec / (k + (i + 1))));
+  return Array.from(merged.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([id]) => id);
+}
+
+describe("SqliteMemoryAdapter.searchLanes (LANES-01 un-fused split)", () => {
+  let adapter: SqliteMemoryAdapter;
+
+  afterEach(() => {
+    try { adapter.close(); } catch { /* already closed */ }
+  });
+
+  it("exposes searchLanes returning two ranked lists { fts, vector }", async () => {
+    adapter = new SqliteMemoryAdapter(testConfig);
+    await adapter.store(makeEntry({ content: "dentist appointment on Tuesday" }));
+    await adapter.store(makeEntry({ content: "grocery list for the week" }));
+
+    // RED on pre-patch: searchLanes does not exist yet (undefined → call throws).
+    expect(adapter.searchLanes).toBeDefined();
+    const res = await adapter.searchLanes!(testSessionKey, "dentist");
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(Array.isArray(res.value.fts)).toBe(true);
+      expect(Array.isArray(res.value.vector)).toBe(true);
+      // FTS lane found the dentist memory.
+      expect(res.value.fts.some((r) => r.entry.content.includes("dentist"))).toBe(true);
+    }
+  });
+
+  it("reproduces search() id order byte-for-byte when its two lanes are fused at {1.0,1.5} (PARITY GUARD)", async () => {
+    if (!isVecAvailable()) return; // hybrid parity requires the vector lane
+    const embeddingPort = createMockEmbeddingPort(4);
+    adapter = new SqliteMemoryAdapter(testConfig, embeddingPort);
+
+    // Seed rows that match BOTH the FTS query AND carry embeddings (so both lanes
+    // populate). Distinct contents so FTS + vector rank them differently → fusion
+    // is non-trivial (a real ordering, not a single-lane identity).
+    await adapter.store(makeEntry({ content: "cat sat on the mat", embedding: [0.9, 0.1, 0, 0] }));
+    await adapter.store(makeEntry({ content: "cat chased the laser", embedding: [0.1, 0.9, 0, 0] }));
+    await adapter.store(makeEntry({ content: "the cat and the dog", embedding: [0.5, 0.5, 0, 0] }));
+    await adapter.store(makeEntry({ content: "cat food review", embedding: [0.2, 0.2, 0.6, 0] }));
+
+    // Today's fused order via search() (= hybridSearch with the hardcoded 1.0/1.5).
+    const old = await adapter.search(testSessionKey, "cat", { limit: 10 });
+    expect(old.ok).toBe(true);
+    const oldOrder = old.ok ? old.value.map((r) => r.entry.id) : [];
+
+    // The two lanes via searchLanes, fused IN-TEST at the same {1.0,1.5} weights.
+    const lanes = await adapter.searchLanes!(testSessionKey, "cat", { limit: 10 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      const fusedOrder = fuseLanesParity(
+        lanes.value.fts.map((r) => ({ id: r.entry.id })),
+        lanes.value.vector.map((r) => ({ id: r.entry.id })),
+      ).slice(0, oldOrder.length);
+      // Byte-for-byte: the unfused-then-fused order EQUALS today's pre-fused order.
+      expect(fusedOrder).toEqual(oldOrder);
+      expect(fusedOrder.length).toBeGreaterThan(1); // non-trivial fusion actually happened
+    }
+  });
+
+  it("returns the RAW hydrated lanes WITHOUT applying minScore (minScore moves to recall)", async () => {
+    adapter = new SqliteMemoryAdapter(testConfig);
+    await adapter.store(makeEntry({ content: "dentist appointment Tuesday" }));
+    await adapter.store(makeEntry({ content: "dentist follow-up Wednesday" }));
+
+    // A minScore far above any realistic score: search() would filter everything,
+    // but searchLanes must NOT apply it (the lanes are pre-filter candidate pools).
+    const lanes = await adapter.searchLanes!(testSessionKey, "dentist", { limit: 10, minScore: 0.99 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      expect(lanes.value.fts.length).toBeGreaterThan(0); // present despite minScore
+    }
+    // search() (with the SAME high minScore) does filter — proving the difference.
+    const filtered = await adapter.search(testSessionKey, "dentist", { limit: 10, minScore: 0.99 });
+    expect(filtered.ok).toBe(true);
+    if (filtered.ok) expect(filtered.value).toHaveLength(0);
+  });
+
+  it("over-fetches limit*2 candidates per lane (the pool entering fuse matches today's pool)", async () => {
+    adapter = new SqliteMemoryAdapter(testConfig);
+    // Store 6 FTS-matching rows; with limit=2 the over-fetch (limit*2=4) must surface
+    // MORE than `limit` candidates in the raw FTS lane.
+    for (let i = 0; i < 6; i++) {
+      await adapter.store(makeEntry({ content: `cat memory number ${i}` }));
+    }
+    const lanes = await adapter.searchLanes!(testSessionKey, "cat", { limit: 2 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      // limit*2 = 4 over-fetched (not capped at limit=2; not unbounded at 6).
+      expect(lanes.value.fts.length).toBeGreaterThan(2);
+      expect(lanes.value.fts.length).toBeLessThanOrEqual(4);
+    }
+  });
+
+  it("FTS-only (no embedding port) returns an EMPTY vector lane", async () => {
+    adapter = new SqliteMemoryAdapter(testConfig); // no embeddingPort → FTS-only
+    await adapter.store(makeEntry({ content: "dentist appointment Tuesday" }));
+
+    const lanes = await adapter.searchLanes!(testSessionKey, "dentist", { limit: 10 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      expect(lanes.value.fts.length).toBeGreaterThan(0);
+      expect(lanes.value.vector).toEqual([]); // empty vector lane
+    }
+  });
+
+  it("scopes lanes to the session tenant (rows of another tenant are excluded)", async () => {
+    adapter = new SqliteMemoryAdapter(testConfig);
+    await adapter.store(makeEntry({ content: "tenant-A cat note", tenantId: "default" }));
+    await adapter.store(makeEntry({ content: "tenant-B cat note", tenantId: "other-tenant" }));
+
+    const lanes = await adapter.searchLanes!(testSessionKey, "cat", { limit: 10 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      // Only the default-tenant row surfaces (testSessionKey.tenantId === "default").
+      expect(lanes.value.fts.every((r) => r.entry.tenantId === "default")).toBe(true);
+      expect(lanes.value.fts.some((r) => r.entry.content.includes("tenant-A"))).toBe(true);
+      expect(lanes.value.fts.some((r) => r.entry.content.includes("tenant-B"))).toBe(false);
+    }
+  });
+
+  it("vector-only query (a number[]) populates the vector lane and leaves FTS empty", async () => {
+    if (!isVecAvailable()) return; // the vector lane requires sqlite-vec
+    const embeddingPort = createMockEmbeddingPort(4);
+    adapter = new SqliteMemoryAdapter(testConfig, embeddingPort);
+    await adapter.store(makeEntry({ content: "cat sat on the mat", embedding: [0.9, 0.1, 0, 0] }));
+
+    // Passing the embedding ARRAY directly exercises the vector-only branch:
+    // no FTS lane runs (the query is not a string), the array IS the embedding.
+    const lanes = await adapter.searchLanes!(testSessionKey, [0.9, 0.1, 0, 0], { limit: 10 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      expect(lanes.value.fts).toEqual([]); // no text query → empty FTS lane
+      expect(lanes.value.vector.length).toBeGreaterThan(0); // vector lane populated
+    }
+  });
+
+  it("returns err (not throw) when the underlying DB query fails", async () => {
+    adapter = new SqliteMemoryAdapter(testConfig);
+    await adapter.store(makeEntry({ content: "dentist appointment Tuesday" }));
+    // Close the handle out from under the adapter → the prepared query throws,
+    // which the searchLanes catch must collapse into an err Result (never escape).
+    adapter.getDb().close();
+
+    const lanes = await adapter.searchLanes!(testSessionKey, "dentist", { limit: 10 });
+    expect(lanes.ok).toBe(false);
+    if (!lanes.ok) {
+      expect(lanes.error).toBeInstanceOf(Error);
+    }
+  });
+
+  it("falls back to FTS-only (empty vector lane) when the embedding provider errors", async () => {
+    // An embedding port that rejects: searchLanes must NOT fail — it degrades to
+    // FTS-only (the vector lane stays empty), mirroring search()'s resilience.
+    const failingPort: EmbeddingPort = {
+      provider: "test",
+      dimensions: 4,
+      modelId: "test-embed-model",
+      embed: async () => err(new Error("embedding backend down")),
+      embedBatch: async () => err(new Error("embedding backend down")),
+    };
+    adapter = new SqliteMemoryAdapter(testConfig, failingPort);
+    await adapter.store(makeEntry({ content: "dentist appointment Tuesday" }));
+
+    const lanes = await adapter.searchLanes!(testSessionKey, "dentist", { limit: 10 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      expect(lanes.value.fts.length).toBeGreaterThan(0); // FTS lane still works
+      expect(lanes.value.vector).toEqual([]); // embedding failed → empty vector lane
+    }
+  });
+
+  it("falls back to FTS-only when the embedding provider returns a zero-length vector", async () => {
+    // A zero-length embedding (short/emoji input) → the FTS-only fallback branch.
+    const emptyVecPort: EmbeddingPort = {
+      provider: "test",
+      dimensions: 4,
+      modelId: "test-embed-model",
+      embed: async () => ok([] as number[]),
+      embedBatch: async () => ok([[]] as number[][]),
+    };
+    adapter = new SqliteMemoryAdapter(testConfig, emptyVecPort);
+    await adapter.store(makeEntry({ content: "dentist appointment Tuesday" }));
+
+    const lanes = await adapter.searchLanes!(testSessionKey, "dentist", { limit: 10 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      expect(lanes.value.fts.length).toBeGreaterThan(0);
+      expect(lanes.value.vector).toEqual([]); // zero-length embedding → no vector lane
+    }
   });
 });

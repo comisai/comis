@@ -24,8 +24,20 @@ import {
   createFingerprintManager,
   createBatchIndexer,
   createEmbeddingQueue,
+  createLocalRerankerProvider,
+  rerankerModelPresent,
+  createSqliteMemoryEntityStore,
+  createSqliteMemoryConsolidationStore,
+  createSqliteMemoryUsefulnessStore,
+  createSqliteMemoryTemporalStore,
+  createSqliteMemoryCausalStore,
   type MemoryApi,
 } from "@comis/memory";
+import {
+  wireRecallCounters,
+  type RecallCountersWiring,
+} from "../observability/recall-counters-wiring.js";
+import { wireMemoryUsefulness } from "./setup-memory-usefulness-wiring.js";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -53,6 +65,74 @@ export interface MemoryResult {
   embeddingCacheStats?: () => import("@comis/memory").EmbeddingCacheStats;
   /** Embedding circuit breaker state accessor for memory persistence operations. */
   embeddingCircuitBreakerState?: () => import("@comis/agent").CircuitState;
+  /** Cross-encoder reranker port (RANK-01). Defined only when at least one agent has
+   *  `rag.rerank.enabled === true` AND the model loaded — otherwise undefined and recall
+   *  degrades to fusion order (RANK-03). The all-default (rerank-off) config NEVER builds
+   *  it, so the ~606MB GGUF is not downloaded by default. */
+  rerankerPort?: import("@comis/core").RerankerPort;
+  /** Phase 92 (RERANK-01/02): whether the reranker GGUF is ALREADY present locally — computed
+   *  ONCE here via the no-download `rerankerModelPresent` probe. The composition root threads
+   *  this SAME boolean to `setupAgents` so the per-agent effective `rag.rerank.enabled`
+   *  precedence and this build gate consult one source (T-92-06: no two-gate drift). */
+  rerankerModelPresent: boolean;
+  /** Entity-associative store (Phase 83, ENT-01/02/03). The SOLE adapter for the segregated
+   *  `MemoryEntityStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
+   *  memory adapter (so entity tables + memories share one FK-enabled connection and the
+   *  `ON DELETE CASCADE` fires). Unlike the reranker there is no model/IO cost to building it,
+   *  so it is always present; the entity lane stays dormant until an operator opts in via
+   *  `agents.<id>.rag.entityLane.enabled` (default OFF) — see setup-agents-runtime / the cron
+   *  review wiring, which thread this port into the read + write paths. */
+  entityStore: import("@comis/core").MemoryEntityStore;
+  /** Temporal-spread store (Phase 95, LANES-02). The SOLE adapter for the segregated
+   *  `MemoryTemporalStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
+   *  memory adapter (so the windowed `occurred_at` read shares the (tenant, agent) isolation
+   *  + FK-enabled connection with the memory rows it spreads over). Unlike the entity store
+   *  there is NO `ensure*` DDL (the `occurred_at` column already exists) and no model/IO cost,
+   *  so it is always present; the temporal lane stays dormant until an operator opts in via
+   *  `agents.<id>.rag.lanes.temporal.enabled` (default OFF) — see setup-agents-runtime, which
+   *  threads this port into the recall read path. The agent receives the port TYPE only
+   *  (the agent↛memory cut). */
+  temporalStore: import("@comis/core").MemoryTemporalStore;
+  /** Causal store (Phase 96, EXTRACT-03). The SOLE adapter for the segregated
+   *  `MemoryCausalStore` port (linkCausal WRITE + causalLane READ) — built UNCONDITIONALLY on
+   *  the SAME shared `db` handle as the memory adapter (so memory_causal_edges + memories share
+   *  one FK-enabled connection — the ON DELETE CASCADE fires — and the (tenant, agent) isolation
+   *  scope is consistent). No model/IO cost, so it is always present; the causal lane stays
+   *  dormant until an operator opts in via `agents.<id>.rag.lanes.causal.enabled` (default OFF),
+   *  and the agent-side write guards on extracted causes. Threaded into BOTH the recall read
+   *  path (setup-agents-*) AND the cron-review write path (setup-channels-*). The agent receives
+   *  the port TYPE only (the agent↛memory cut). */
+  causalStore: import("@comis/core").MemoryCausalStore;
+  /** Consolidation store (Phase 84, CONS-01..07). The SOLE adapter for the segregated
+   *  `MemoryConsolidationStore` port — built UNCONDITIONALLY on the SAME shared `db` handle
+   *  as the memory adapter + entity store (so the observation columns, the `(tenant, agent)`
+   *  isolation scope, and the FK-enabled connection are all consistent with the memory rows
+   *  it consolidates). Like the entity store there is no model/IO cost to building it, so it
+   *  is always present; the consolidation cron stays dormant until an operator opts in via
+   *  `agents.<id>.memoryConsolidation.enabled` (default OFF, a cost gate — CONS-07). The daemon
+   *  (composition root) is the only place this @comis/memory adapter and the @comis/agent
+   *  `runMemoryConsolidation` job are joined — the agent receives the port TYPE only. */
+  consolidationStore: import("@comis/core").MemoryConsolidationStore;
+  /** Recall-utility usefulness store (Phase 93, FEED-02). The SOLE adapter for the segregated
+   *  `MemoryUsefulnessStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
+   *  memory adapter + entity/consolidation stores (so the `(tenant, agent)` isolation scope and
+   *  the FK-enabled connection — the `memory_usefulness.memory_id` ON DELETE CASCADE — are all
+   *  consistent with the memory rows it scores). No model/IO cost to building it, so it is always
+   *  present; the feedback loop stays dormant until an operator enables
+   *  `agents.<id>.rag.feedback.enabled` (default OFF). The write-back subscriber is Plan 93-02 —
+   *  this plan only builds + exposes the store + its read capability. */
+  usefulnessStore: import("@comis/core").MemoryUsefulnessStore;
+  /** Live in-process recall-counter wiring (Phase 86, OBS-07). The single
+   *  `wireRecallCounters(container.eventBus)` subscriber is stood up HERE — the
+   *  memory composition site that already holds the event bus — so there is ONE
+   *  shared registry for the daemon lifetime (resets on restart, Assumption A2).
+   *  The daemon threads this `{ snapshot }` into `MemoryApiDeps.recallCounters`
+   *  so the `memory.recall_stats` handler reads the SAME live counters the
+   *  `memory:*` bus events feed (NOT a fresh registry per call). */
+  recallCounters: RecallCountersWiring;
+  /** Dispose callback for the reranker's native context (ranking ctx -> model -> llama).
+   *  Registered in the daemon shutdown path; undefined when no reranker was built. */
+  disposeReranker?: () => Promise<void>;
   /** Throttled WAL checkpoint — call every health tick, runs checkpoint every 10th call. */
   maintenanceTick: () => void;
 }
@@ -174,6 +254,112 @@ export async function setupMemory(deps: {
     }
   }
 
+  // 6.5.1b. Build the cross-encoder reranker — ONLY when at least one agent enables
+  // rerank. Building it downloads a ~606MB GGUF on first run, so the all-default
+  // (rerank-off) config must NEVER trigger it (Phase-79: rerank is opt-in/default-OFF).
+  // Scanning the in-memory agent configs is the cheapest correct gate (no I/O). When no
+  // reranker is built, recall degrades to fusion order (RANK-03).
+  let rerankerPort: import("@comis/core").RerankerPort | undefined;
+  let disposeReranker: (() => Promise<void>) | undefined;
+  // Phase 92 (RERANK-01/02): the gate is no longer explicit-on ONLY — it also auto-builds
+  // when the GGUF is already cached locally, while still NEVER downloading on a fresh
+  // install. Resolve the models dir ONCE (the SAME safePath value the factory builds with —
+  // T-92-06: probe and build must consult one dir so the two gates can't drift) and probe
+  // presence ONCE (no download — rerankerModelPresent uses resolveModelFile{download:false}).
+  // The whole resolve+probe degrades to `modelPresent = false` (the safe RERANK-02 posture)
+  // if anything goes wrong: an unconfigured model URI, or a dataDir/modelsDir pair safePath
+  // rejects (e.g. a relative dataDir that lets "models" escape its base). Auto-on is a
+  // best-effort convenience; a config that can't even locate the models dir must never throw
+  // into daemon startup — it just stays OFF and recall degrades to fusion.
+  let rerankerModelsDir: string | undefined;
+  let modelPresent = false;
+  if (memoryConfig.rerankerModel) {
+    try {
+      rerankerModelsDir = safePath(container.config.dataDir || ".", memoryConfig.rerankerModelsDir || "models");
+      modelPresent = await rerankerModelPresent({
+        modelUri: memoryConfig.rerankerModel,
+        modelsDir: rerankerModelsDir,
+      });
+    } catch (e) {
+      rerankerModelsDir = undefined;
+      modelPresent = false;
+      memoryLogger.warn(
+        { err: String(e), hint: "Set memory.dataDir to an absolute path so the reranker models dir resolves; reranker auto-on stays OFF", errorKind: "config" as const },
+        "Reranker model-present probe skipped (models dir unresolved)",
+      );
+    }
+  }
+  // someAgentExplicitOn preserves the explicit opt-in DOWNLOAD path (operator set
+  // `rag.rerank.enabled: true` on a fresh machine still fetches — Pitfall 3 / T-92-05).
+  // WR-03: read the SAME raw pre-Zod-default signal the per-agent effective-rerank
+  // precedence consumes (container.rawAgentRerankEnabled), NOT the parsed
+  // container.config.agents. Both gates therefore share ONE definition of "explicitly
+  // on" — a future change to the rerank schema default can no longer silently desync the
+  // build gate from the per-agent flip. Falls back to scanning the parsed config only
+  // when the raw map is absent (non-bootstrap AppContainer); there `=== true` is still
+  // correct because Zod defaults unset to false, so `true` can only be an explicit opt-in.
+  const rawRerankMap = container.rawAgentRerankEnabled;
+  const someAgentExplicitOn = rawRerankMap
+    ? [...rawRerankMap.values()].some((enabled) => enabled === true)
+    : Object.values(container.config.agents ?? {}).some(
+        (agent) => agent?.rag?.rerank?.enabled === true,
+      );
+  const shouldBuildReranker = someAgentExplicitOn || modelPresent;
+  // Boundary decision an operator must be able to reconstruct (AGENTS.md §2.7). Booleans
+  // only — never the model-path body beyond the non-secret config path (T-92-07).
+  memoryLogger.debug(
+    { modelPresent, someAgentExplicitOn, willBuild: shouldBuildReranker },
+    modelPresent
+      ? "Reranker model present -> auto-enable candidate"
+      : "Reranker model absent -> no download",
+  );
+  if (shouldBuildReranker) {
+    // Resolve the build models dir ONCE, inside a guard (WR-02). Reuse the dir the probe
+    // resolved (T-92-06: one shared value); it is only unset on the explicit-opt-in path
+    // when the probe's safePath threw — recompute there so the operator's opt-in gets the
+    // same root-confined resolution. CRITICAL: that recompute uses the SAME args that just
+    // threw on the probe, so without this guard it would throw AGAIN — now UNCAUGHT —
+    // propagating into daemon startup. Catch it and degrade to the same WARN + fusion the
+    // auto-on path uses (recall falls back to fusion order, RANK-03), never crash boot.
+    let modelsDirForBuild: string | undefined;
+    if (rerankerModelsDir !== undefined) {
+      modelsDirForBuild = rerankerModelsDir;
+    } else {
+      try {
+        modelsDirForBuild = safePath(container.config.dataDir || ".", memoryConfig.rerankerModelsDir || "models");
+      } catch (e) {
+        modelsDirForBuild = undefined;
+        memoryLogger.warn(
+          { err: String(e), hint: "Set memory.dataDir to an absolute path so the reranker models dir resolves; recall will use fusion order", errorKind: "config" as const },
+          "Reranker build skipped (models dir unresolved)",
+        );
+      }
+    }
+    if (modelsDirForBuild !== undefined) {
+      const rr = await createLocalRerankerProvider({
+        modelUri: memoryConfig.rerankerModel,
+        modelsDir: modelsDirForBuild,
+        gpu: memoryConfig.rerankerGpu,
+        threads: memoryConfig.rerankerThreads,
+      });
+      if (rr.ok) {
+        // Capture the resolved port so the dispose closure has a non-nullable
+        // reference (no `rerankerPort!.dispose!()` non-null clusters; AGENTS.md).
+        const port = rr.value;
+        rerankerPort = port;
+        disposeReranker = port.dispose
+          ? async () => { await port.dispose?.(); }
+          : undefined;
+        memoryLogger.debug({ model: memoryConfig.rerankerModel }, "Reranker provider initialized");
+      } else {
+        memoryLogger.warn(
+          { err: rr.error.message, hint: "Reranker model unavailable; recall will use fusion order", errorKind: "dependency" as const },
+          "Reranker provider unavailable",
+        );
+      }
+    }
+  }
+
   // 6.5.2. Create memory adapter with raw provider dimensions
   // Adapter uses embedding port only at query time (search()), not during construction.
   // Created BEFORE cache wiring because createSqliteEmbeddingCache needs the db handle.
@@ -181,6 +367,93 @@ export async function setupMemory(deps: {
   const adjustedMemoryConfig = { ...memoryConfig, embeddingDimensions: effectiveDimensions };
   const memoryAdapter = new SqliteMemoryAdapter(adjustedMemoryConfig, embeddingPort, memoryLogger);
   const db = memoryAdapter.getDb();
+
+  // 6.5.2b. Entity-associative store (Phase 83). Built on the SAME `db` handle the
+  // memory adapter owns — NOT a second Database — so the entity tables
+  // (memory_entities / memory_entity_links) and the memories table share one
+  // FK-enabled connection. That is what makes the link `ON DELETE CASCADE` fire and
+  // keeps the (tenant, agent) isolation scope consistent with the memory rows it joins.
+  // Always constructed (no model/IO cost); the entity recall lane stays dormant until an
+  // operator enables `agents.<id>.rag.entityLane.enabled` (default OFF).
+  const entityStore = createSqliteMemoryEntityStore({ db, logger: memoryLogger });
+
+  // 6.5.2b'. Temporal-spread store (Phase 95, LANES-02). Built on the SAME `db` handle the
+  // memory adapter owns — NOT a second Database — so the windowed `occurred_at` read shares
+  // one FK-enabled connection and the (tenant, agent) isolation scope is consistent with the
+  // memory rows it spreads over. Unlike the entity store there is NO `ensure*` DDL — the
+  // `occurred_at` column already exists (Phase 81). Always constructed (no model/IO cost); the
+  // temporal lane stays dormant until an operator enables `agents.<id>.rag.lanes.temporal.enabled`
+  // (default OFF). Composition-root join — the agent receives the port TYPE only.
+  const temporalStore = createSqliteMemoryTemporalStore({ db, logger: memoryLogger });
+
+  // 6.5.2b''. Causal store (Phase 96, EXTRACT-03). Built on the SAME shared `db` handle the
+  // memory adapter owns — so memory_causal_edges + memories share one FK-enabled connection
+  // (the ON DELETE CASCADE on both edge endpoints fires) and the (tenant, agent) isolation
+  // scope is consistent with the memory rows the edges link. Always constructed (no model/IO
+  // cost); the causal lane stays dormant until an operator enables `agents.<id>.rag.lanes.causal.
+  // enabled` (default OFF), and the agent-side linkCausal write guards on extracted causes.
+  // Composition-root join — the agent receives the port TYPE only (the agent↛memory cut). This
+  // SAME store is threaded into BOTH the recall read path (setup-agents-*) AND the cron-review
+  // write path (setup-channels-*).
+  const causalStore = createSqliteMemoryCausalStore({ db, logger: memoryLogger });
+
+  // 6.5.2c. Consolidation store (Phase 84). Built on the SAME `db` handle the memory
+  // adapter owns — NOT a second Database — so the observation columns (proof_count /
+  // source_ids / consolidated_at / confidence / history) and the memories table share
+  // one FK-enabled connection, and the (tenant, agent) isolation scope is consistent
+  // with the memory rows the consolidation job reads + marks. Always constructed (no
+  // model/IO cost, like the entity store); the consolidation cron stays dormant until an
+  // operator enables `agents.<id>.memoryConsolidation.enabled` (default OFF — the cost
+  // gate, CONS-07). This is the composition-root join: the daemon builds the @comis/memory
+  // adapter here and injects it into the @comis/agent job as the port TYPE (no agent→memory
+  // edge — the architecture-graph cut is preserved).
+  const consolidationStore = createSqliteMemoryConsolidationStore({ db, logger: memoryLogger });
+
+  // 6.5.2d. Recall-utility usefulness store (Phase 93, FEED-02). Built on the SAME `db`
+  // handle the memory adapter owns — NOT a second Database — so the memory_usefulness
+  // table and the memories table share one FK-enabled connection (the memory_id ON DELETE
+  // CASCADE fires) and the (tenant, agent) isolation scope is consistent with the memory
+  // rows it scores. Always constructed (no model/IO cost, like the entity + consolidation
+  // stores); the feedback loop stays dormant until an operator enables
+  // `agents.<id>.rag.feedback.enabled` (default OFF). This is the composition-root build
+  // ONLY; the FEED-01→02 attribution write-back subscriber is deferred to Plan 93-02
+  // (it depends on a recall-attribution bus event this plan does not yet declare).
+  const usefulnessStore = createSqliteMemoryUsefulnessStore({ db, logger: memoryLogger });
+
+  // 6.5.2e. Recall-counter composition (Phase 86, OBS-07). Stand up the SINGLE
+  // in-process recall-counter registry and subscribe it to the `memory:*` bus
+  // events HERE — the memory composition site already holds `container.eventBus`,
+  // so this is the natural composition root for the counters (it lives alongside
+  // the stores the diagnostic handlers read). The daemon threads the returned
+  // `{ snapshot }` into `MemoryApiDeps.recallCounters`, so the `memory.recall_stats`
+  // handler reads the SAME live registry the agent's `memory:recalled` /
+  // `memory:reranked` (and the consolidation job's `memory:consolidated`) events
+  // feed — never a fresh registry per call. The gauge is daemon-lifetime (resets
+  // on restart, Assumption A2). Counts only ever cross the bus (AGENTS.md §2.7).
+  const recallCounters = wireRecallCounters(container.eventBus);
+
+  // 6.5.2f. Recall-utility write-back subscriber (Phase 93, FEED-01 → FEED-02).
+  // Subscribe `memory:recall_used` (emitted by @comis/agent's postExecution) →
+  // usefulnessStore.recordUsage HERE — the composition root holds BOTH the bus
+  // AND the @comis/memory adapter (the agent↛memory cut: the agent emits ids+counts,
+  // the daemon writes). Mirrors the wireRecallCounters subscriber above. The
+  // `feedbackEnabled` gate scans the parsed per-agent config (mirroring the
+  // someAgentExplicitOn rerank-gate scan above) so default-off (no agent has
+  // feedback on) makes the subscriber a no-op write AND keeps the read-side off.
+  // (When Plan 93-04 adds the `feedback` schema field this access is live; until
+  // then the forward-declared view yields false = off.) Fire-and-forget/non-fatal.
+  wireMemoryUsefulness({
+    eventBus: container.eventBus,
+    usefulnessStore,
+    clock,
+    logger: memoryLogger,
+    feedbackEnabled: () =>
+      Object.values(container.config.agents ?? {}).some(
+        (a) =>
+          (a?.rag as ({ feedback?: { enabled?: boolean } } | undefined))?.feedback
+            ?.enabled === true,
+      ),
+  });
 
   // 6.5.3. Wire caching: L1(L2(provider)) when persistent, L1(provider) otherwise
   let cachedPort: EmbeddingPort | undefined;
@@ -302,6 +575,15 @@ export async function setupMemory(deps: {
     backgroundIndexingPromise,
     embeddingCacheStats,
     embeddingCircuitBreakerState: embeddingCbRef ? () => embeddingCbRef!.getState() : undefined,
+    rerankerPort,
+    rerankerModelPresent: modelPresent,
+    disposeReranker,
+    entityStore,
+    temporalStore,
+    causalStore,
+    consolidationStore,
+    usefulnessStore,
+    recallCounters,
     maintenanceTick,
   };
 }

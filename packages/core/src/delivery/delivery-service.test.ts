@@ -1470,7 +1470,14 @@ describe("DeliveryService — full pipeline behavior", () => {
 
       const drainResult = await service.drainInFlight(100);
       expect(drainResult.remaining).toBeGreaterThanOrEqual(1);
-      expect(drainResult.durationMs).toBeGreaterThanOrEqual(100);
+      // The deadline is 100ms, but `durationMs` is a wall-clock measurement
+      // (systemNowMs() delta) of a `setTimeout(100)` race — under full-suite
+      // parallel load the event loop is starved and the timer can fire a hair
+      // early, measuring 99ms. The invariant we assert is "the drain took
+      // ~the deadline" (it raced the timer, not the instant all-settled path),
+      // not an exact wall-clock value, so we tolerate scheduler jitter: 100ms
+      // ± ~10ms under load. (Was `>= 100` — a known full-suite load-flake.)
+      expect(drainResult.durationMs).toBeGreaterThanOrEqual(90);
 
       // Cleanup so the hung promise eventually resolves (don't leak).
       resolveAllSends();

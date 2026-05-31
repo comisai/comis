@@ -373,6 +373,40 @@ export interface BootContext {
   backgroundIndexingPromise: Awaited<ReturnType<typeof setupMemory>>["backgroundIndexingPromise"];
   embeddingCacheStats: Awaited<ReturnType<typeof setupMemory>>["embeddingCacheStats"];
   embeddingCircuitBreakerState: Awaited<ReturnType<typeof setupMemory>>["embeddingCircuitBreakerState"];
+  rerankerPort: Awaited<ReturnType<typeof setupMemory>>["rerankerPort"];
+  /** Phase 92 (RERANK-01/02): the no-download model-present probe result computed once in
+   *  setup-memory. Carried through BootContext so bootAgents threads the SAME boolean into
+   *  setupAgents (the per-agent effective rerank precedence consults one source — Pitfall 4). */
+  rerankerModelPresent: Awaited<ReturnType<typeof setupMemory>>["rerankerModelPresent"];
+  disposeReranker: Awaited<ReturnType<typeof setupMemory>>["disposeReranker"];
+  /** Entity-associative store (Phase 83) — threaded into setupAgents (executor recall
+   *  read path) + the cron review (write path). Built in setup-memory on the shared db. */
+  entityStore: Awaited<ReturnType<typeof setupMemory>>["entityStore"];
+  /** Temporal-spread store (Phase 95, LANES-02) — threaded into setupAgents (the executor recall
+   *  read path → createMemoryRecall) ONLY. NOT the cron/diagnostic paths. Built in setup-memory
+   *  on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until an operator
+   *  enables `agents.<id>.rag.lanes.temporal.enabled` (default OFF). */
+  temporalStore: Awaited<ReturnType<typeof setupMemory>>["temporalStore"];
+  /** Causal store (Phase 96, EXTRACT-03) — threaded into setupAgents (the executor recall read
+   *  path → createMemoryRecall, the 5th causal lane) AND the cron-review write path
+   *  (registerCronEventListeners → runMemoryReview → linkCausal). Built in setup-memory on the
+   *  shared db; injected as the port TYPE (agent↛memory cut). Dormant until an operator enables
+   *  `agents.<id>.rag.lanes.causal.enabled` (default OFF); the write guards on extracted causes. */
+  causalStore: Awaited<ReturnType<typeof setupMemory>>["causalStore"];
+  /** Usefulness store (Phase 93, FEED-03) — threaded into setupAgents (the executor recall
+   *  read path → createMemoryRecall) + exposed to the memory.* diagnostic deps alongside its
+   *  siblings. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory
+   *  cut). Dormant until an operator enables `agents.<id>.rag.feedback.enabled` (default OFF). */
+  usefulnessStore: Awaited<ReturnType<typeof setupMemory>>["usefulnessStore"];
+  /** Consolidation store (Phase 84, CONS-07) — threaded into the cron path ONLY (the
+   *  registerCronEventListeners → runMemoryConsolidation sentinel). NOT the executor recall
+   *  path. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). */
+  consolidationStore: Awaited<ReturnType<typeof setupMemory>>["consolidationStore"];
+  /** Live recall-counter wiring (Phase 86, OBS-07) — the single
+   *  `wireRecallCounters(eventBus)` subscriber, stood up in setup-memory (the
+   *  composition site that holds the event bus). Threaded into
+   *  MemoryApiDeps.recallCounters so `memory.recall_stats` reads the live gauge. */
+  recallCounters: Awaited<ReturnType<typeof setupMemory>>["recallCounters"];
   maintenanceTick: Awaited<ReturnType<typeof setupMemory>>["maintenanceTick"];
   obsStore: ObservabilityStore | undefined;
   obsPersistence: ObsPersistenceResult | undefined;
@@ -533,7 +567,10 @@ export interface BootContext {
   // Session store bridge (1 field)
   sessionStoreBridge?: SessionStoreBridge;
   // Hot-add / hot-remove closures (2 fields)
-  hotAdd?: (agentId: string, config: PerAgentConfig) => Promise<void>;
+  // `rawRerankEnabled` is the RAW (pre-Zod-default) rag.rerank.enabled from the
+  // agents.create RPC input — threaded so the hot-added agent's effective-rerank
+  // precedence sees genuine unset (undefined) vs explicit-off, same as the boot path.
+  hotAdd?: (agentId: string, config: PerAgentConfig, rawRerankEnabled?: boolean | undefined) => Promise<void>;
   hotRemove?: (agentId: string) => Promise<void>;
   // RPC dispatch deps (1 field; mutated post-gateway-init for wsConnections/mediaDir/onGatewayAttachment)
   rpcDispatchDeps?: import("./api/rpc-dispatch.js").ApiDispatchDeps;

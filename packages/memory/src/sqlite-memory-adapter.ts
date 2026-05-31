@@ -20,7 +20,7 @@ import type {
 } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import type Database from "better-sqlite3";
-import { hybridSearch, searchByVector } from "./hybrid-search.js";
+import { hybridSearch, searchByText, searchByVector } from "./hybrid-search.js";
 import { initSchema } from "./schema.js";
 import { rowToEntry, insertMemoryRow, storeEmbedding, parseTags, createRowMapper } from "./row-mapper.js";
 import { MemoryRowSchema } from "./row-schemas.js";
@@ -79,7 +79,10 @@ export class SqliteMemoryAdapter implements MemoryPort {
   async store(entry: MemoryEntry): Promise<Result<MemoryEntry, Error>> {
     const startMs = systemNowMs();
     try {
-      const memoryType = (entry as MemoryEntry & { memoryType?: string }).memoryType ?? "semantic";
+      // memoryType is a first-class optional MemoryEntry field (P95/LANES-03). The
+      // `?? "semantic"` fallback is belt-and-braces: an omitting write still satisfies
+      // the column's NOT NULL DEFAULT 'semantic' CHECK.
+      const memoryType = entry.memoryType ?? "semantic";
 
       const vecAvailable = this.vecAvailable;
       const tx = this.db.transaction(() => {
@@ -252,6 +255,141 @@ export class SqliteMemoryAdapter implements MemoryPort {
           errorKind: "internal" as const,
         },
         "Memory search failed",
+      );
+      return err(e instanceof Error ? e : new Error(String(e)));
+    }
+  }
+
+  // ── searchLanes (LANES-01: the un-fused FTS/vector split) ──────────
+
+  /**
+   * Resolve the query embedding exactly as {@link search} does for a string
+   * query: embed via the injected port, then collapse a zero-length vector to
+   * `undefined` (the documented short/emoji → FTS-only fallback). Returns
+   * `undefined` when there is no embedding port. Shared by `searchLanes`.
+   */
+  private async resolveQueryEmbedding(query: string, queryLen: number): Promise<number[] | undefined> {
+    if (!this.embeddingPort) return undefined;
+    const embedResult = await this.embeddingPort.embed(truncateForEmbedding(query));
+    if (!embedResult.ok) {
+      this.logger?.warn(
+        {
+          err: embedResult.error,
+          hint: "Continuing search with FTS5-only; vector search unavailable",
+          errorKind: "dependency" as const,
+          queryLen,
+        },
+        "Memory embedding failed",
+      );
+      return undefined;
+    }
+    // Zero-length embedding (short/emoji input) -> FTS-only fallback.
+    if (embedResult.value.length === 0) {
+      this.logger?.debug({ queryLen, op: "search-lanes" }, "Zero-length embedding vector, falling back to FTS-only");
+      return undefined;
+    }
+    return embedResult.value;
+  }
+
+  /**
+   * Hydrate an id list (in rank order) into MemorySearchResult[], scoped to the
+   * tenant, skipping missing/expired rows and applying the agent/trust filters
+   * (mirrors the {@link search} hydrate loop). NO minScore — the lanes are
+   * pre-filter candidate pools (the minScore re-application moves to the recall
+   * layer, applied after fusion). Each surviving row keeps a rank-preserving
+   * intra-lane score (1, 1-ε, …) — fuse() rebases multi-lane onto rank anyway,
+   * so order is what matters; the single-lane (FTS-only) path then preserves a
+   * monotone-decreasing score.
+   */
+  private hydrateLane(
+    ids: string[],
+    tenantId: string,
+    now: number,
+    options?: MemorySearchOptions,
+  ): MemorySearchResult[] {
+    const out: MemorySearchResult[] = [];
+    let rank = 0;
+    for (const id of ids) {
+      const parsed = memoryRowMapper.parseOptionalRow(
+        this.db.prepare("SELECT * FROM memories WHERE id = ? AND tenant_id = ?").get(id, tenantId),
+      );
+      const row = parsed.ok ? parsed.value : undefined;
+      if (!row) continue;
+      if (row.expires_at !== null && row.expires_at <= now) continue;
+      if (options?.agentId && row.agent_id !== options.agentId) continue;
+      if (options?.trustLevel && row.trust_level !== options.trustLevel) continue;
+      rank += 1;
+      // Rank-preserving intra-lane score in (0,1], strictly decreasing with rank.
+      out.push({ entry: rowToEntry(row), score: 1 / rank });
+    }
+    return out;
+  }
+
+  async searchLanes(
+    sessionKey: SessionKey,
+    query: string | number[],
+    options?: MemorySearchOptions,
+  ): Promise<Result<{ fts: MemorySearchResult[]; vector: MemorySearchResult[] }, Error>> {
+    const startMs = systemNowMs();
+    const queryLen = typeof query === "string" ? query.length : 0;
+    try {
+      const limit = options?.limit ?? 10;
+      // Match hybridSearch's per-lane over-fetch (hybrid-search.ts:284) so the
+      // candidate pools entering fuse() are byte-identical to today's fused pools.
+      const overfetchLimit = limit * 2;
+      const tenantId = sessionKey.tenantId;
+      const now = systemNowMs();
+
+      // Resolve the FTS query text + the vector embedding. A vector (number[])
+      // query has no FTS text; a string query resolves an embedding exactly as
+      // search() does (incl. the zero-length → FTS-only fallback).
+      let ftsIds: Array<{ id: string }> = [];
+      let queryEmbedding: number[] | undefined;
+      if (typeof query === "string") {
+        ftsIds = searchByText(this.db, query, overfetchLimit);
+        queryEmbedding = await this.resolveQueryEmbedding(query, queryLen);
+      } else {
+        // Vector-only query: no FTS lane; the array IS the embedding.
+        queryEmbedding = query;
+      }
+
+      // Vector lane: only when vec is available AND we have a non-empty embedding.
+      let vecIds: Array<{ id: string }> = [];
+      if (this.vecAvailable && queryEmbedding !== undefined && queryEmbedding.length > 0) {
+        vecIds = searchByVector(this.db, queryEmbedding, overfetchLimit);
+      }
+
+      // Hydrate each lane independently (rank order preserved). NO RRF fusion,
+      // NO minScore — fusion + minScore move to the agent's recall layer.
+      const fts = this.hydrateLane(ftsIds.map((r) => r.id), tenantId, now, options);
+      const vector = this.hydrateLane(vecIds.map((r) => r.id), tenantId, now, options);
+
+      const durationMs = systemNowMs() - startMs;
+      this.logger?.debug(
+        {
+          step: "search-lanes",
+          durationMs,
+          op: "search-lanes",
+          ftsCandidates: fts.length,
+          vectorCandidates: vector.length,
+          queryLen,
+          searchMode: queryEmbedding && queryEmbedding.length > 0 ? "hybrid" : "fts-only",
+        },
+        "Memory searchLanes complete",
+      );
+      return ok({ fts, vector });
+    } catch (e: unknown) {
+      const durationMs = systemNowMs() - startMs;
+      this.logger?.warn(
+        {
+          err: e instanceof Error ? e : new Error(String(e)),
+          op: "search-lanes",
+          durationMs,
+          queryLen,
+          hint: "Memory searchLanes query failed; check database integrity",
+          errorKind: "internal" as const,
+        },
+        "Memory searchLanes failed",
       );
       return err(e instanceof Error ? e : new Error(String(e)));
     }

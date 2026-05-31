@@ -128,7 +128,7 @@ export class IcAgentContextEngineEditor extends LitElement {
   };
 
   override render() {
-    const version = getField<string>(this.form, "contextEngine.version", "pipeline");
+    const version = getField<string>(this.form, "contextEngine.version", "dag");
 
     return html`
       <!-- Core fields (always visible) -->

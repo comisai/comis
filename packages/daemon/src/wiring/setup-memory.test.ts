@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { TypedEventBus } from "@comis/core";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { createFakeClock } from "../../../../test/support/fake-clock.js";
+
+// LO-04: setupMemory requires a ClockPort (createCircuitBreaker(..., clock)).
+// Inject the project-standard fake so every call exercises the real signature.
+const testClock = createFakeClock(0);
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -47,6 +53,63 @@ const mockCreateEmbeddingQueue = vi.hoisted(() => vi.fn(() => ({
   enqueue: vi.fn(),
   flush: vi.fn(),
 })));
+// Reranker provider factory — mocked so no real ~606MB GGUF ever loads in unit tests.
+const mockRerankerDispose = vi.hoisted(() => vi.fn(async () => {}));
+const mockCreateLocalRerankerProvider = vi.hoisted(() => vi.fn(async () => ({
+  ok: true,
+  value: { isAvailable: () => true, rank: vi.fn(async () => ({ ok: true, value: [] })), dispose: mockRerankerDispose },
+})));
+// Reranker model-present probe (Phase 92, RERANK-01/02). Default: ABSENT (false) — the
+// fresh-install posture. Without this entry the @comis/memory `rerankerModelPresent`
+// import is undefined and EVERY setupMemory call throws once the build gate calls it
+// (same failure mode as the consolidation-store mock above). Per-test override the
+// resolved value with `mockRerankerModelPresent.mockResolvedValueOnce(true)`.
+const mockRerankerModelPresent = vi.hoisted(() => vi.fn(async () => false));
+// Entity store factory (Phase 83) — mocked so setup wires it without a real DB.
+const mockCreateSqliteMemoryEntityStore = vi.hoisted(() => vi.fn(() => ({
+  resolveAndLink: vi.fn(async () => ({ ok: true, value: { ok: true, value: undefined } })),
+  associativeLane: vi.fn(async () => ({ ok: true, value: [] })),
+})));
+// Consolidation store factory (Phase 84) — mocked so setup wires it without a real DB.
+// setupMemory now builds this on the shared db handle (mirror the entity store); without
+// the mock entry the @comis/memory factory is undefined and every setup call throws.
+const mockCreateSqliteMemoryConsolidationStore = vi.hoisted(() => vi.fn(() => ({
+  listConsolidationCandidates: vi.fn(async () => ({ ok: true, value: [] })),
+  listObservations: vi.fn(async () => ({ ok: true, value: [] })),
+  applyConsolidation: vi.fn(async () => ({ ok: true, value: undefined })),
+  // Phase 94 (FOLD-01): the port gained foldIntoExisting; without this stub the
+  // mock no longer satisfies the MemoryConsolidationStore surface and every
+  // setupMemory test that touches the store throws `foldIntoExisting is not a
+  // function` (the MEMORY.md "setup-memory mock" gate).
+  foldIntoExisting: vi.fn(async () => ({ ok: true, value: undefined })),
+})));
+// Usefulness store factory (Phase 93, FEED-02) — mocked so setup wires it without a real
+// DB. setupMemory builds this on the shared db handle (mirror the entity + consolidation
+// stores); without the mock entry the @comis/memory factory is undefined and EVERY setup
+// call throws `createSqliteMemoryUsefulnessStore is not a function` (the MEMORY.md
+// "setup-memory mock" gate).
+const mockCreateSqliteMemoryUsefulnessStore = vi.hoisted(() => vi.fn(() => ({
+  recordUsage: vi.fn(async () => ({ ok: true, value: undefined })),
+  readUsefulness: vi.fn(async () => ({ ok: true, value: new Map() })),
+})));
+// Temporal-spread store factory (Phase 95, LANES-02) — mocked so setup wires it without a
+// real DB. setupMemory builds this on the shared db handle (mirror the entity/consolidation/
+// usefulness stores); without the mock entry the @comis/memory factory is undefined and
+// EVERY setup call throws `createSqliteMemoryTemporalStore is not a function` (the MEMORY.md
+// "setup-memory mock" gate — Pitfall 4).
+const mockCreateSqliteMemoryTemporalStore = vi.hoisted(() => vi.fn(() => ({
+  spreadLane: vi.fn(async () => ({ ok: true, value: [] })),
+})));
+// Causal store factory (Phase 96, EXTRACT-03) — mocked so setup wires it without a real DB.
+// setupMemory builds this on the shared db handle (mirror the entity/temporal/consolidation/
+// usefulness stores); without the mock entry the @comis/memory factory is undefined and EVERY
+// setup call throws `createSqliteMemoryCausalStore is not a function` (the MEMORY.md
+// "setup-memory mock" gate — Pitfall 4). Both port methods are stubbed (the read causalLane +
+// the write linkCausal — one segregated port, both halves).
+const mockCreateSqliteMemoryCausalStore = vi.hoisted(() => vi.fn(() => ({
+  linkCausal: vi.fn(async () => ({ ok: true, value: 0 })),
+  causalLane: vi.fn(async () => ({ ok: true, value: [] })),
+})));
 
 vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
@@ -58,12 +121,24 @@ vi.mock("@comis/memory", () => ({
   createFingerprintManager: mockCreateFingerprintManager,
   createBatchIndexer: mockCreateBatchIndexer,
   createEmbeddingQueue: mockCreateEmbeddingQueue,
+  createLocalRerankerProvider: mockCreateLocalRerankerProvider,
+  rerankerModelPresent: mockRerankerModelPresent,
+  createSqliteMemoryEntityStore: mockCreateSqliteMemoryEntityStore,
+  createSqliteMemoryConsolidationStore: mockCreateSqliteMemoryConsolidationStore,
+  createSqliteMemoryUsefulnessStore: mockCreateSqliteMemoryUsefulnessStore,
+  createSqliteMemoryTemporalStore: mockCreateSqliteMemoryTemporalStore,
+  createSqliteMemoryCausalStore: mockCreateSqliteMemoryCausalStore,
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));
-vi.mock("@comis/core", () => ({
-  safePath: mockSafePath,
-}));
+// Preserve the REAL TypedEventBus (the OBS-07 "subscriber is live" test drives a
+// real bus through setupMemory's wireRecallCounters call) while still stubbing
+// safePath. The rest of @comis/core stays as-is so the wiring is exercised end to
+// end against the actual event bus, not a vi.fn() stand-in.
+vi.mock("@comis/core", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return { ...actual, safePath: mockSafePath };
+});
 
 const mockCreateCircuitBreaker = vi.hoisted(() => vi.fn(() => ({
   isOpen: vi.fn(() => false),
@@ -89,8 +164,15 @@ function createMinimalContainer(overrides: Record<string, any> = {}) {
       memory: {
         dbPath: "/test/memory.db",
         embeddingDimensions: 768,
+        rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+        rerankerModelsDir: "models",
+        rerankerGpu: "auto",
+        rerankerThreads: 4,
         ...overrides.memory,
       },
+      // Per-agent configs scanned for rag.rerank.enabled (the build gate fallback path).
+      // Default: a single all-default agent with rerank OFF -> the factory must NOT be called.
+      agents: overrides.agents ?? { default: { rag: { rerank: { enabled: false } } } },
       embedding: {
         enabled: false,
         provider: "local",
@@ -103,6 +185,10 @@ function createMinimalContainer(overrides: Record<string, any> = {}) {
       },
       dataDir: "/test/data",
     },
+    // Phase 92 (WR-03): the build gate reads this RAW (pre-Zod-default) map when present
+    // so it shares ONE definition of "explicitly on" with the per-agent precedence. When
+    // omitted (undefined), setupMemory falls back to scanning the parsed config.agents.
+    rawAgentRerankEnabled: overrides.rawAgentRerankEnabled,
     secretManager: {
       get: vi.fn(() => undefined),
       has: vi.fn(() => false),
@@ -138,6 +224,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockSqliteMemoryAdapter).toHaveBeenCalled();
@@ -164,12 +251,19 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockCreateEmbeddingProvider).toHaveBeenCalled();
     expect(result.cachedPort).toBeDefined();
     expect(result.cachedPort!.modelId).toBe("test-model");
     expect(result.disposeEmbedding).toBeTypeOf("function");
+    // LO-04: the injected ClockPort must reach createCircuitBreaker as its 2nd
+    // arg — proves the required `clock` dep is actually exercised, not ignored.
+    expect(mockCreateCircuitBreaker).toHaveBeenCalledWith(
+      expect.any(Object),
+      testClock,
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -191,6 +285,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: memoryLogger as any,
+      clock: testClock,
     });
 
     expect(result.disposeEmbedding).toBeUndefined();
@@ -216,6 +311,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockCreateCachedEmbeddingPort).toHaveBeenCalledWith(
@@ -239,6 +335,7 @@ describe("setupMemory", () => {
     await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     // SqliteMemoryAdapter should receive adjusted config with provider's dimensions (384)
@@ -267,6 +364,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockFpMgr.hasChanged).toHaveBeenCalled();
@@ -310,6 +408,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockBatchIndexer.unembeddedCount).toHaveBeenCalled();
@@ -351,6 +450,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockBatchIndexer.indexUnembedded).not.toHaveBeenCalled();
@@ -370,6 +470,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockCreateEmbeddingQueue).toHaveBeenCalled();
@@ -397,6 +498,7 @@ describe("setupMemory", () => {
     await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(mockFpMgr.save).toHaveBeenCalledWith("fp-saved");
@@ -422,6 +524,7 @@ describe("setupMemory", () => {
     await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(container.secretManager.get).toHaveBeenCalledWith("OPENAI_API_KEY");
@@ -448,6 +551,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(result.db).toBeDefined();
@@ -470,6 +574,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     // L2 should be created with provider and db
@@ -511,6 +616,7 @@ describe("setupMemory", () => {
     await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     // L2 should NOT be created
@@ -540,6 +646,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(result.disposeEmbedding).toBeTypeOf("function");
@@ -564,6 +671,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     expect(result.disposeEmbedding).toBeUndefined();
@@ -580,6 +688,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     for (let i = 0; i < 9; i++) result.maintenanceTick();
@@ -600,6 +709,7 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     for (let i = 0; i < 20; i++) result.maintenanceTick();
@@ -618,9 +728,478 @@ describe("setupMemory", () => {
     const result = await setupMemory({
       container,
       memoryLogger: createMockLogger() as any,
+      clock: testClock,
     });
 
     for (let i = 0; i < 10; i++) result.maintenanceTick();
     expect(mockCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // 20. Reranker build gating (RANK-02/03) — no default download
+  // -------------------------------------------------------------------------
+
+  it("does NOT build the reranker for an all-default (rerank-off) config + model ABSENT (no 606MB download)", async () => {
+    // RERANK-02 (T-92-04): fresh all-default install, model NOT present locally.
+    // The probe resolves false (default mock), the build gate is
+    // `someAgentExplicitOn(false) || modelPresent(false)` = false → the SOLE download
+    // trigger (createLocalRerankerProvider) is NEVER reached → zero bytes fetched.
+    mockRerankerModelPresent.mockResolvedValueOnce(false);
+    const container = createMinimalContainer(); // default agent has rerank OFF
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // The factory must never be invoked when no agent enabled rerank AND model absent.
+    expect(mockCreateLocalRerankerProvider).not.toHaveBeenCalled();
+    expect(result.rerankerPort).toBeUndefined();
+    // The threaded presence signal the composition root passes to setupAgents.
+    expect(result.rerankerModelPresent).toBe(false);
+  });
+
+  it("auto-builds the reranker when the model is present (all-default config) — RERANK-01 build", async () => {
+    // RERANK-01 build (seam d): all agents all-default (rerank unset → false), but the
+    // GGUF is already cached locally → the probe resolves true → the widened gate
+    // `someAgentExplicitOn(false) || modelPresent(true)` = true builds the port. No
+    // schema flip; the auto-on is a daemon-wiring decision keyed on local presence.
+    mockRerankerModelPresent.mockResolvedValueOnce(true);
+    const container = createMinimalContainer(); // default agent has rerank OFF (unset → false)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    expect(mockCreateLocalRerankerProvider).toHaveBeenCalledOnce();
+    expect(result.rerankerPort).toBeDefined();
+    expect(result.rerankerPort!.isAvailable()).toBe(true);
+    expect(result.rerankerModelPresent).toBe(true);
+  });
+
+  it("probes presence with the SAME modelsDir it would build with (one safePath, no drift)", async () => {
+    // T-92-06: the probe and the factory MUST consult the same resolved modelsDir so
+    // the two gates can never disagree. Assert the probe was called with the same
+    // modelUri + safePath-derived modelsDir the factory receives.
+    mockRerankerModelPresent.mockResolvedValueOnce(true);
+    const container = createMinimalContainer();
+    const setupMemory = await getSetupMemory();
+
+    await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    expect(mockRerankerModelPresent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelUri: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+        modelsDir: expect.stringContaining("models"),
+      }),
+    );
+  });
+
+  it("degrades to no-build + WARN (never throws) when the models dir cannot be resolved", async () => {
+    // A relative/degenerate dataDir can make safePath REJECT the models dir (it would
+    // escape the base). Auto-on is best-effort: the probe block must degrade to
+    // modelPresent=false and NOT throw into daemon startup. With no explicit-on agent,
+    // shouldBuild stays false → factory not called → recall degrades to fusion.
+    mockSafePath.mockImplementationOnce(() => {
+      throw new Error("Path traversal blocked");
+    });
+    const container = createMinimalContainer(); // all-default, model URI set
+    const memoryLogger = createMockLogger();
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: memoryLogger as any,
+      clock: testClock,
+    });
+
+    expect(mockCreateLocalRerankerProvider).not.toHaveBeenCalled();
+    expect(result.rerankerPort).toBeUndefined();
+    expect(result.rerankerModelPresent).toBe(false);
+    expect(memoryLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "config" }),
+      expect.stringContaining("Reranker model-present probe skipped"),
+    );
+  });
+
+  it("does NOT throw into startup when an explicit-on agent hits a safePath rejection on the build path (WR-02)", async () => {
+    // WR-02: when someAgentExplicitOn is true, shouldBuild is true even though the probe's
+    // safePath threw (rerankerModelsDir left undefined). The build block then re-invokes
+    // safePath with the SAME args that just threw. On the OLD code that re-invoke is
+    // UNCAUGHT and propagates into daemon startup. safePath throws on EVERY call here, so
+    // both the probe AND the build re-invoke reject — the fix must catch the build-path
+    // rejection and degrade to a WARN + no port (recall falls back to fusion), never throw.
+    mockSafePath.mockImplementation(() => {
+      throw new Error("Path traversal blocked");
+    });
+    const container = createMinimalContainer({
+      agents: { researcher: { rag: { rerank: { enabled: true } } } },
+      rawAgentRerankEnabled: new Map<string, boolean | undefined>([["researcher", true]]),
+    });
+    const memoryLogger = createMockLogger();
+    const setupMemory = await getSetupMemory();
+
+    // The load-bearing assertion: setupMemory resolves (no throw into bootstrap).
+    const result = await setupMemory({
+      container,
+      memoryLogger: memoryLogger as any,
+      clock: testClock,
+    });
+
+    // Degrades cleanly: no port built, recall falls back to fusion.
+    expect(result.rerankerPort).toBeUndefined();
+    expect(result.rerankerModelPresent).toBe(false);
+    // Restore the default safePath behavior for subsequent tests.
+    mockSafePath.mockImplementation((...parts: string[]) => parts.join("/"));
+  });
+
+  it("skips the probe entirely when no reranker model is configured (modelPresent=false)", async () => {
+    // Unconfigured reranker (undefined modelUri) → there is nothing to probe; treat as
+    // absent without calling the probe or computing safePath (the structurally-off path).
+    const container = createMinimalContainer({
+      memory: { rerankerModel: undefined },
+    });
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    expect(mockRerankerModelPresent).not.toHaveBeenCalled();
+    expect(mockCreateLocalRerankerProvider).not.toHaveBeenCalled();
+    expect(result.rerankerModelPresent).toBe(false);
+  });
+
+  it("builds the reranker when at least one agent enables rerank and the factory succeeds", async () => {
+    const container = createMinimalContainer({
+      agents: {
+        default: { rag: { rerank: { enabled: false } } },
+        researcher: { rag: { rerank: { enabled: true } } },
+      },
+    });
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    expect(mockCreateLocalRerankerProvider).toHaveBeenCalledOnce();
+    // safePath used for the models dir (no path.join).
+    expect(mockCreateLocalRerankerProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelUri: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+        modelsDir: expect.stringContaining("models"),
+        gpu: "auto",
+        // ME-02: the Phase-79 4-8 thread CPU bound must reach the factory.
+        threads: 4,
+      }),
+    );
+    expect(result.rerankerPort).toBeDefined();
+    expect(result.rerankerPort!.isAvailable()).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-03: the build gate keys on the SAME raw pre-default signal the per-agent
+  // precedence consumes (container.rawAgentRerankEnabled), so the two gates share
+  // one definition of "explicitly on" and cannot desync on a future schema change.
+  // -------------------------------------------------------------------------
+
+  it("builds the reranker from the RAW map when an agent is explicitly on, model absent (opt-in download)", async () => {
+    // The raw map says `researcher` is explicit-on (true). modelPresent=false. The gate
+    // is `someAgentExplicitOn(true) || modelPresent(false)` = true → factory called. This
+    // exercises the WR-03 raw-map branch, NOT the parsed-config fallback.
+    mockRerankerModelPresent.mockResolvedValueOnce(false);
+    const container = createMinimalContainer({
+      // Parsed config carries concrete false for everyone (the Zod default) — proving the
+      // gate did NOT read the parsed config (which would yield someAgentExplicitOn=false).
+      agents: { default: { rag: { rerank: { enabled: false } } }, researcher: { rag: { rerank: { enabled: false } } } },
+      rawAgentRerankEnabled: new Map<string, boolean | undefined>([
+        ["default", undefined],
+        ["researcher", true],
+      ]),
+    });
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    expect(mockCreateLocalRerankerProvider).toHaveBeenCalledOnce();
+    expect(result.rerankerPort).toBeDefined();
+  });
+
+  it("does NOT build the reranker when the RAW map shows only unset agents and model absent (RERANK-02 via raw)", async () => {
+    // The raw map shows all agents UNSET (undefined) — none explicit-on. modelPresent=false.
+    // The gate is false → zero download. Crucially the parsed config below carries
+    // `enabled: true` for one agent, which the OLD parsed-config gate would have treated as
+    // explicit-on and built — so this asserts the gate truly reads the raw map (which says
+    // unset), preserving the zero-download posture keyed on the genuine operator signal.
+    mockRerankerModelPresent.mockResolvedValueOnce(false);
+    const container = createMinimalContainer({
+      agents: { default: { rag: { rerank: { enabled: true } } } },
+      rawAgentRerankEnabled: new Map<string, boolean | undefined>([["default", undefined]]),
+    });
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    expect(mockCreateLocalRerankerProvider).not.toHaveBeenCalled();
+    expect(result.rerankerPort).toBeUndefined();
+    expect(result.rerankerModelPresent).toBe(false);
+  });
+
+  it("leaves rerankerPort undefined + WARNs when the factory returns err", async () => {
+    mockCreateLocalRerankerProvider.mockResolvedValueOnce({
+      ok: false,
+      error: { message: "model load failed" },
+    });
+    const container = createMinimalContainer({
+      agents: { default: { rag: { rerank: { enabled: true } } } },
+    });
+    const memoryLogger = createMockLogger();
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: memoryLogger as any,
+      clock: testClock,
+    });
+
+    expect(result.rerankerPort).toBeUndefined();
+    expect(memoryLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "dependency" }),
+      expect.stringContaining("Reranker"),
+    );
+  });
+
+  it("disposes the rerankerPort via a disposeReranker callback (no leaked native context)", async () => {
+    const container = createMinimalContainer({
+      agents: { default: { rag: { rerank: { enabled: true } } } },
+    });
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    expect(result.disposeReranker).toBeTypeOf("function");
+    await result.disposeReranker!();
+    expect(mockRerankerDispose).toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Consolidation store wiring (Phase 84, CONS-07) — built on the shared db
+  // -------------------------------------------------------------------------
+
+  it("builds the consolidation store on the SAME shared db handle and returns it (Phase 84)", async () => {
+    const container = createMinimalContainer(); // all-default config (consolidation OFF)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // Built UNCONDITIONALLY (no opt-in gate at build time — only the cron is gated).
+    expect(mockCreateSqliteMemoryConsolidationStore).toHaveBeenCalledOnce();
+    // The SOLE adapter must share the memory adapter's db handle (the same mockDb the
+    // entity store + caches receive) — NOT a second Database. This is what keeps the
+    // observation columns + FK behaviour consistent with the memories it consolidates.
+    expect(mockCreateSqliteMemoryConsolidationStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb }),
+    );
+    expect(result.consolidationStore).toBeDefined();
+  });
+
+  it("builds the usefulness store on the SAME shared db handle and returns it (Phase 93, FEED-02)", async () => {
+    const container = createMinimalContainer(); // all-default config (feedback OFF)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // Built UNCONDITIONALLY (no opt-in gate at build time — only the FEED-01→02
+    // write-back subscriber, deferred to Plan 93-02, is gated).
+    expect(mockCreateSqliteMemoryUsefulnessStore).toHaveBeenCalledOnce();
+    // The SOLE adapter must share the memory adapter's db handle (the same mockDb the
+    // entity + consolidation stores receive) — NOT a second Database. This is what keeps
+    // the (tenant, agent) scope + the memory_id ON DELETE CASCADE consistent with the
+    // memory rows it scores.
+    expect(mockCreateSqliteMemoryUsefulnessStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb }),
+    );
+    expect(result.usefulnessStore).toBeDefined();
+  });
+
+  it("builds the temporal-spread store on the SAME shared db handle and returns it (Phase 95, LANES-02)", async () => {
+    const container = createMinimalContainer(); // all-default config (temporal lane OFF)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // Built UNCONDITIONALLY (no opt-in gate at build time — only the lane push in
+    // memory-recall.ts is gated on rag.lanes.temporal.enabled, default OFF). Without the
+    // mock-map entry this call throws "createSqliteMemoryTemporalStore is not a function".
+    expect(mockCreateSqliteMemoryTemporalStore).toHaveBeenCalledOnce();
+    // The SOLE adapter must share the memory adapter's db handle (the same mockDb the
+    // entity/consolidation/usefulness stores receive) — NOT a second Database. This keeps
+    // the (tenant, agent) isolation scope consistent with the memory rows it windows over.
+    expect(mockCreateSqliteMemoryTemporalStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb }),
+    );
+    expect(result.temporalStore).toBeDefined();
+  });
+
+  it("builds the causal store on the SAME shared db handle and returns it (Phase 96, EXTRACT-03)", async () => {
+    const container = createMinimalContainer(); // all-default config (causal lane OFF)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // Built UNCONDITIONALLY (no opt-in gate at build time — only the lane push in
+    // memory-recall.ts is gated on rag.lanes.causal.enabled, default OFF, and the agent-side
+    // linkCausal write guards on m.causes). Without the mock-map entry this call throws
+    // "createSqliteMemoryCausalStore is not a function" (Pitfall 4).
+    expect(mockCreateSqliteMemoryCausalStore).toHaveBeenCalledOnce();
+    // The SOLE adapter must share the memory adapter's db handle (the same mockDb the
+    // entity/temporal/consolidation/usefulness stores receive) — NOT a second Database. This
+    // keeps the (tenant, agent) isolation scope + the memory_id ON DELETE CASCADE consistent
+    // with the memory rows the edges link, AND means the read lane + the cron-review write
+    // share one FK-enabled connection.
+    expect(mockCreateSqliteMemoryCausalStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb }),
+    );
+    expect(result.causalStore).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Recall-counter composition (Phase 86, OBS-07) — wireRecallCounters subscribed
+// at the memory composition site; the shared snapshot reaches the result so the
+// memory.recall_stats handler reads LIVE counters.
+// ---------------------------------------------------------------------------
+
+describe("setupMemory recall-counter wiring (OBS-07)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function getSetupMemory() {
+    const mod = await import("./setup-memory.js");
+    return mod.setupMemory;
+  }
+
+  /** A container whose eventBus is a REAL TypedEventBus so the wired subscriber
+   *  is exercised end to end (emit -> snapshot), not a vi.fn() stub. */
+  function containerWithRealBus(bus: TypedEventBus) {
+    return {
+      config: {
+        memory: {
+          dbPath: "/test/memory.db",
+          embeddingDimensions: 768,
+          rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+          rerankerModelsDir: "models",
+          rerankerGpu: "auto",
+          rerankerThreads: 4,
+        },
+        agents: { default: { rag: { rerank: { enabled: false } } } },
+        embedding: {
+          enabled: false,
+          provider: "local",
+          local: { modelUri: "gte-small", modelsDir: ".models" },
+          openai: { model: "text-embedding-ada-002", dimensions: 1536 },
+          cache: { maxEntries: 1000, persistent: false, persistentMaxEntries: 50000, pruneIntervalMs: 300000 },
+          autoReindex: false,
+          batch: { batchSize: 100, indexOnStartup: false },
+        },
+        dataDir: "/test/data",
+      },
+      secretManager: { get: vi.fn(() => undefined), has: vi.fn(() => false) },
+      eventBus: bus,
+    } as any;
+  }
+
+  it("exposes a recallCounters snapshot accessor on the MemoryResult so the deps reach the live registry", async () => {
+    const bus = new TypedEventBus();
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container: containerWithRealBus(bus),
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // The composition-root glue: the result carries the snapshot accessor the
+    // daemon threads into MemoryApiDeps.recallCounters.
+    expect(result.recallCounters).toBeDefined();
+    expect(result.recallCounters!.snapshot).toBeTypeOf("function");
+    // A fresh registry reads zero before any recall.
+    expect(result.recallCounters!.snapshot().recalls).toBe(0);
+  });
+
+  it("subscribes the recall counters to the live event bus so an emitted memory:recalled is reflected in the snapshot", async () => {
+    const bus = new TypedEventBus();
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container: containerWithRealBus(bus),
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+    expect(result.recallCounters).toBeDefined();
+
+    // Emitting on the SAME bus setupMemory wired must move the shared snapshot —
+    // proving the subscriber is live (not a fresh registry per snapshot call).
+    bus.emit("memory:recalled", {
+      agentId: "a1",
+      sessionKey: "s1",
+      traceId: "t1",
+      lanes: 3,
+      ftsCandidates: 5,
+      vectorCandidates: 4,
+      entityCandidates: 2,
+      finalCount: 3,
+      rerankerAvailable: true,
+      durationMs: 10,
+      timestamp: 1_000,
+    });
+
+    const snap = result.recallCounters!.snapshot();
+    expect(snap.recalls).toBe(1);
+    expect(snap.recallsWithHits).toBe(1);
+    expect(snap.laneUsage).toEqual({ fts: 5, vector: 4, entity: 2 });
   });
 });

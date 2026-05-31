@@ -30,10 +30,11 @@ different. If you ask about "project deadlines," meaning matching might also
 find a memory about "task due dates" because the meaning is similar. This uses
 [embeddings](/agents/embeddings) to understand meaning.
 
-**Combined results** -- Both sets of results are merged. Duplicates are removed,
-and the most relevant results are ranked to the top. This combination means
-your agent benefits from both precise word matching and flexible meaning
-matching.
+**Combined results** -- The lanes are merged into a single ranked list,
+duplicates are removed, and the most relevant results are ranked to the top.
+This combination means your agent benefits from both precise word matching and
+flexible meaning matching. When the optional [entity lane](/agents/memory#entity-associative-recall-opt-in)
+is enabled, its associative hits join the same merge as a third lane.
 
 ## When search is used
 
@@ -80,10 +81,10 @@ You generally do not need to adjust the scoring -- the defaults work well for
 most use cases. If your agent is recalling too many irrelevant memories,
 increase `minScore`. If it is missing important context, lower it.
 
-## Reference: how the two scores are merged
+## Reference: how the lanes are merged
 
-The hybrid search lives in `packages/memory/src/hybrid-search.ts`. Three
-ingredients combine into the final ranking:
+The hybrid search lives in `packages/memory/src/hybrid-search.ts`. Several
+retrieval **lanes** combine into the final ranking:
 
 1. **FTS5 BM25** — The full-text index (`memory_fts`) returns a BM25 rank
    per match (lower is better). Stop words are filtered for Latin scripts;
@@ -91,12 +92,39 @@ ingredients combine into the final ranking:
    stripping content.
 2. **sqlite-vec cosine KNN** — When embeddings exist for stored memories, a
    vector KNN query against `vec_memories` returns a similarity-ranked list.
-3. **Reciprocal Rank Fusion (RRF)** — The two lists are merged using the
-   classic RRF formula `score = 1 / (k + rank)`. RRF is robust against the
-   FTS5/cosine score scales being incompatible.
+3. **Entity lane** *(opt-in)* — When `rag.entityLane.enabled` is on, a one-hop
+   self-join over shared linked entities contributes a third ranked list. See
+   [Memory](/agents/memory#entity-associative-recall-opt-in).
+4. **N-lane Reciprocal Rank Fusion (RRF)** — All active lanes are merged using
+   the classic RRF formula `score = 1 / (k + rank)` with `k = 60`. RRF is robust
+   against the lanes' score scales being incompatible, and adding or dropping a
+   lane (e.g. the entity lane, or vector when no embeddings exist) just changes
+   how many lists feed the same formula.
 
 If `sqlite-vec` is not available or the query has no embedding, search falls
 back gracefully to FTS5 only.
+
+## Cross-encoder reranking (opt-in)
+
+After fusion, recall can optionally **rerank** the top fused candidates with a
+cross-encoder before scoring. This stage is **opt-in** (`rag.rerank.enabled`
+defaults to `false`), so by default the fused RRF order *is* the recall order.
+
+When `rag.rerank.enabled: true`:
+
+- The top fused candidates (cap `rag.rerank.maxCandidates`, default `40`) are
+  re-scored by an on-device cross-encoder (`bge-reranker-v2-m3` Q8_0, run through
+  `node-llama-cpp` — the same runtime used for local embeddings).
+- A cross-encoder reads the query and a candidate *together* and emits a direct
+  relevance score, so after reranking the **cross-encoder score becomes the
+  primary order and the fused RRF order is discarded**.
+- The stage is bounded by `rag.rerank.timeoutMs` (default `800`); if it times out
+  or the reranker is unavailable, recall **falls back to the fused order**.
+
+A cross-encoder is a *different* model from the embedder used for the vector lane
+(a bi-encoder). See [Embeddings](/agents/embeddings#embedder-vs-reranker) for the
+distinction, and [Memory](/agents/memory#reranking-opt-in) for the full
+configuration and graceful-degradation behaviour.
 
 ### Filters supported
 

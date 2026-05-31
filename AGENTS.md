@@ -103,6 +103,7 @@ Dependency direction: inward to `core`. `daemon` depends on everything; `shared`
 - Once-per-request → INFO. N-per-request → DEBUG (aggregate count in the INFO summary).
 - Pipeline stages tag log lines with `step: "<stage-name>"` (canonical examples in `packages/channels/src/shared/`) — per-step analogue of `submodule:`.
 - Events vs logs: emit on `eventBus` for state transitions, lifecycle outcomes, observability snapshots, and safety/health signals (e.g., `tool:executed`, `execution:aborted`, `provider:degraded`). Logs describe; events announce. Logging supplements events — it does not replace them.
+- **Instrument for troubleshooting.** Every code path that crosses a boundary (channel inbound, RPC, tool call, external API, queue hop) must be reconstructable from logs + events alone — no debugger, no live repro required. Minimum coverage on any new boundary: an INFO completion line carrying `durationMs`, an ERROR/WARN with `hint` + `errorKind` on every failure branch, and a `step:`-tagged DEBUG per intermediate stage. `traceId` (auto-injected) ties a single request together across packages — never swallow it by starting a new context mid-flow. When a path can fail in a way an operator must act on, both log it (with an actionable `hint`) and emit the matching `eventBus` health/state event so observability snapshots stay complete. Litmus test: if you cannot describe how a future failure in the code you just wrote would be diagnosed from its logs, it is under-instrumented.
 
 **Contract vs implementation.** `ComisLogger`, `LogFields`, and `ErrorKind` are **structural type contracts** that live in `@comis/core/src/logging/log-fields.ts`. The Pino-backed runtime implementation lives in `@comis/infra` and is assignable to the contract (`expectTypeOf<PinoComisLogger>().toExtend<ComisLogger>()` proves this in `packages/infra/src/logging/__tests__/logger-contract.test.ts`). Type-only consumers (agent, channels, gateway, skills, scheduler) import the contract from `@comis/core`. Only the daemon (composition root) and infra itself import the Pino runtime. Pino's auto-redaction (`apiKey`, `token`, `password`, etc., 3 levels deep) is a runtime feature of the Pino implementation; the structural contract does not (and cannot) enforce redaction.
 
@@ -265,7 +266,7 @@ If full validation is impractical, document what was run and what was skipped.
 ## 9) Conventions
 
 - **Commits**: Conventional Commits — `feat(agent): description`, `fix(channels): description`.
-- **Branches**: `feature/<desc>`, `fix/<desc>`, `docs/<desc>` from `main`.
+- **Branches (branch-first)**: never commit directly to the default branch (`main`). Cut a working branch off `main` before the first change — `feature/<desc>`, `fix/<desc>`, `docs/<desc>` — and land the work via PR. Commit or push only when the user asks; approval to make a change is not approval to push it. If you find yourself on `main` with uncommitted work, branch before committing.
 - **Modules**: ES modules only (`"type": "module"`).
 - **TypeScript**: Strict mode, ES2023 target, NodeNext resolution, `composite: true` with project references, `isolatedModules: true`.
 - **Project references**: list every cross-package import in the importing package's `tsconfig.json` `references` array — missing entries break `tsc --build` ordering silently.

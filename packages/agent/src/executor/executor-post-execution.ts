@@ -50,6 +50,9 @@ import {
 import { mergeSessionStats } from "./pi-executor/session-stats.js";
 import { recordLastResponseTs } from "./ttl-guard.js";
 import { stripDiscoverySchemas } from "./schema-stripping.js";
+// FEED-01: in-package pure attribution fn (the agent↛memory cut — core types
+// only; the write-back is the daemon's job, off the recall-used bus event).
+import { attributeRecallUsage } from "../rag/recall-attribution.js";
 import { getWorkspaceStatus } from "../workspace/index.js";
 import type { ExecutionResult, ExecutionOverrides } from "./types.js";
 import type { ExecutionPlan } from "../planner/types.js";
@@ -143,6 +146,10 @@ export interface PostExecutionParams {
   executionStartMs: number;
   executionId: string;
   executionOverrides: ExecutionOverrides | undefined;
+  /** Recalled memories (id + content) for FEED-01 turn-end attribution. Consumed
+   *  IN-PROCESS by the overlap heuristic here; content NEVER logged/emitted (only
+   *  ids/counts cross the bus). Absent ⇒ no attribution (default-off / no recall). */
+  recalledMemories?: ReadonlyArray<{ id: string; content: string }>;
   bridge: PostExecutionBridge;
   unsubscribe: () => void;
   // Context engine
@@ -210,6 +217,18 @@ export interface PostExecutionParams {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Forward-declared shape of the `rag.feedback` sub-object (FEED-04 adds it to
+ * RagConfigSchema in Plan 93-04). Until that lands, RagConfig has no `feedback`
+ * key, so we read it through this view via a structural widening. Optional
+ * chaining + the `=== true` check make the gate default-OFF: absent field ⇒
+ * no attribution, no emit. When 93-04 adds the field, this access stays correct.
+ */
+interface FeedbackView {
+  enabled?: boolean;
+  usefulnessAlpha?: number;
+}
 
 /** Max chars of agent response to include in paired memory content. */
 const PAIRED_RESPONSE_MAX_CHARS = 300;
@@ -814,6 +833,36 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         { userLen: msg.text.trim().length, minUserChars: PAIRED_MIN_USER_CHARS, minCombinedChars: PAIRED_MIN_COMBINED_CHARS },
         "Paired memory skipped: content below quality threshold",
       );
+    }
+  }
+
+  // FEED-01: attribute recall usage + emit the recall-used event (flag-gated, non-fatal).
+  // The overlap heuristic reads recalled text in-process and produces ids only; the event
+  // carries counts + ids (never bodies). Default-OFF: when rag.feedback.enabled !== true
+  // this whole block is skipped (no attribution, no emit). The daemon subscriber
+  // (setup-memory-usefulness-wiring.ts) does the write-back through the FEED-02 port; the
+  // agent stays inside the build cut (no memory-package import on the write path).
+  const feedback = (config.rag as (typeof config.rag & { feedback?: FeedbackView }) | undefined)?.feedback;
+  if (
+    feedback?.enabled === true &&
+    params.recalledMemories !== undefined &&
+    params.recalledMemories.length > 0 &&
+    result.response
+  ) {
+    try {
+      const { usedIds, ignoredIds } = attributeRecallUsage(params.recalledMemories, result.response);
+      deps.eventBus.emit("memory:recall_used", {
+        agentId: effectiveAgentId,
+        sessionKey: formattedKey,
+        traceId: tryGetContext()?.traceId ?? formattedKey,
+        usedIds,
+        ignoredIds,
+        usedCount: usedIds.length,
+        ignoredCount: ignoredIds.length,
+        timestamp: deps.clock.now(),
+      });
+    } catch {
+      // Attribution + emit is non-fatal — it must never fail the turn.
     }
   }
 

@@ -289,6 +289,38 @@ export async function setupSchedulers(deps: {
         schedulerLogger.info({ agentId, schedule: memoryReviewConfig.schedule ?? "0 2 * * *" }, "Registered memory review cron job");
       }
     }
+
+    // -- Memory consolidation cron job (Phase 84, CONS-07) --
+    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron — NOT back-compat).
+    // Registered ONLY when the operator sets memoryConsolidation.enabled; a default
+    // agent registers NO job (T-84-19). Default schedule 30 3 * * * runs AFTER the
+    // memory-review's 0 2 so review-minted memories are consolidation candidates the
+    // same night. Job options mirror the review job 1:1 (isolated / next-heartbeat /
+    // no forward-to-main / fresh session); the __MEMORY_CONSOLIDATION__ sentinel is
+    // intercepted in setup-channels-credentials → runMemoryConsolidation.
+    const memoryConsolidationConfig = agentConfig.memoryConsolidation;
+    if (memoryConsolidationConfig?.enabled) {
+      const memConsolidationJobId = `memory-consolidation-${agentId}`;
+      const existingJobs = scheduler.getJobs();
+      const alreadyRegistered = existingJobs.some((j) => j.id === memConsolidationJobId);
+      if (!alreadyRegistered) {
+        await scheduler.addJob({
+          id: memConsolidationJobId,
+          name: "Memory consolidation",
+          agentId,
+          schedule: { kind: "cron", expr: memoryConsolidationConfig.schedule ?? "30 3 * * *" },
+          payload: { kind: "system_event", text: "__MEMORY_CONSOLIDATION__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: memoryConsolidationConfig.schedule ?? "30 3 * * *" }, "Registered memory consolidation cron job");
+      }
+    }
   }
 
   /** Resolve the CronScheduler for a given agent ID. Throws descriptive error if not found. */

@@ -16,11 +16,20 @@
  */
 
 import { ok, err, fromPromise, type Result } from "@comis/shared";
-import { safePath, parseFormattedSessionKey, systemNowMs, systemDateFrom, systemSetTimeout, systemClearTimeout } from "@comis/core";
+import { safePath, systemDateFrom, systemSetTimeout, systemClearTimeout, validateMemoryWrite } from "@comis/core";
 import type { MemoryReviewConfig } from "@comis/core";
 import type { MemoryPort, MemorySearchOptions } from "@comis/core";
-import type { MemoryEntry } from "@comis/core";
+// IN-01 (Phase 83): the SEGREGATED entity-store port — imported as a TYPE ONLY.
+// The concrete adapter lives in the memory package; the agent↛memory build cut
+// forbids importing that package here (architecture-graph.test.ts). The daemon
+// (Plan 05) injects the adapter through `MemoryReviewDeps.entityStore`.
+// EXTRACT-03 (Phase 96): the SEGREGATED causal-store port — likewise TYPE ONLY.
+// The agent reaches it as a @comis/core port type (NEVER `@comis/memory`); the
+// daemon (96-03) injects the concrete adapter via `MemoryReviewDeps.causalStore`.
+import type { MemoryEntityStore, MemoryCausalStore } from "@comis/core";
+import type { MemoryEntry, MemorySource, TrustLevel, ClockPort } from "@comis/core";
 import type { SessionData, SessionKey } from "@comis/core";
+import { STRUCTURED_PROMPT, parseExtractionResult, resolveOccurredAt } from "./memory-extraction.js";
 import { completeSimple, getModel } from "@earendil-works/pi-ai";
 import { readFile, writeFile, rename } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -48,6 +57,28 @@ export interface MemoryReviewDeps {
   agentName: string;
   config: MemoryReviewConfig;
   memoryPort: MemoryPort;
+  /**
+   * OPTIONAL entity-associative store (IN-01, Phase 83). When injected, each
+   * memory's emitted entity mentions are resolved + linked AFTER a successful
+   * store, populating `memory_entities` / `memory_entity_links`. When ABSENT,
+   * the job behaves exactly as Phase 82 (entities are emit-only, not persisted)
+   * — so the daemon (Plan 05) can light this up independently. A link failure
+   * is NON-FATAL (mirrors the WR-01 store/search guards): the watermark still
+   * advances, so a resolver fault never stalls + reprocesses every cron tick.
+   */
+  entityStore?: MemoryEntityStore;
+  /**
+   * OPTIONAL causal-edge store (EXTRACT-03, Phase 96). When injected, each
+   * memory's emitted `causes` are persisted AFTER a successful store as directed
+   * cause→effect edges (`linkCausal(entry.id, effect, scope, confidence)`),
+   * populating `memory_causal_edges`. When ABSENT, the job behaves exactly as
+   * Phase 91 (causes are emit-only, not persisted) — so the daemon (96-03) can
+   * light this up independently. Injected as the @comis/core port TYPE (the
+   * agent↛memory cut: the concrete adapter is daemon-built). A link failure is
+   * NON-FATAL (mirrors the entity-store guard): the watermark still advances, so
+   * an edge-resolver fault never stalls + reprocesses every cron tick.
+   */
+  causalStore?: MemoryCausalStore;
   sessionStore: {
     listDetailed(tenantId?: string): SessionDetailedEntry[];
     loadByFormattedKey(sessionKey: string): SessionData | undefined;
@@ -57,12 +88,26 @@ export interface MemoryReviewDeps {
   provider: string;
   modelId: string;
   apiKey: string;
-  logger: {
-    info(obj: Record<string, unknown>, msg: string): void;
-    debug(obj: Record<string, unknown>, msg: string): void;
-    warn(obj: Record<string, unknown>, msg: string): void;
-    error(obj: Record<string, unknown>, msg: string): void;
-  };
+  /**
+   * Wall-clock reads — the relative-date RESOLUTION reference + each stored
+   * entry's `createdAt`/event timestamps. Never `Date.now()` (globals rule);
+   * Plan 04 wires the daemon's `createSystemClock()` adapter here.
+   */
+  clock: ClockPort;
+  logger: ReviewLogger;
+}
+
+/**
+ * The structural logger contract this job needs (a subset of `ComisLogger`).
+ * `child(bindings)` returns the SAME shape so a `submodule`-scoped child logger
+ * (OBS-05) carries the canonical stage logs (AGENTS.md §2.7 contract vs impl).
+ */
+interface ReviewLogger {
+  info(obj: Record<string, unknown>, msg: string): void;
+  debug(obj: Record<string, unknown>, msg: string): void;
+  warn(obj: Record<string, unknown>, msg: string): void;
+  error(obj: Record<string, unknown>, msg: string): void;
+  child(bindings: Record<string, unknown>): ReviewLogger;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,9 +119,16 @@ interface ReviewWatermark {
   sessions: Record<string, number>;
 }
 
-interface ExtractedPreference {
-  content: string;
-  session: string;
+/**
+ * An extracted memory paired with its emitted entity mentions (Phase 82, EXTR-04 / Q4b).
+ *
+ * Entities are EMITTED on this in-memory result carrying the stored memory's
+ * inherited trust + provenance — they are NOT persisted (no entity table exists
+ * until Phase 83). `memoryId` is the link target Phase 83's resolver consumes.
+ */
+interface ExtractedMemoryWithEntities {
+  memoryId: string;
+  entities: { name: string; trustLevel: TrustLevel; source: MemorySource }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -84,11 +136,6 @@ interface ExtractedPreference {
 // ---------------------------------------------------------------------------
 
 const LLM_TIMEOUT_MS = 120_000;
-const SYSTEM_PROMPT = `You are analyzing chat session histories to extract user preferences and facts.
-For each session, extract any user preferences, facts about the user, or recurring patterns.
-Return a JSON array of objects: [{"content": "preference text", "session": "session_key"}]
-If no preferences found, return an empty array: []
-Return ONLY valid JSON, no markdown fences, no explanation.`;
 
 // ---------------------------------------------------------------------------
 // Watermark helpers
@@ -190,24 +237,6 @@ function buildSessionSummary(
 // LLM response parsing
 // ---------------------------------------------------------------------------
 
-function parseExtractedPreferences(text: string): ExtractedPreference[] | undefined {
-  // Strip markdown code fences
-  const cleaned = text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-  try {
-    const parsed = JSON.parse(cleaned);
-    if (!Array.isArray(parsed)) return undefined;
-    return parsed.filter(
-      (item: unknown) =>
-        item &&
-        typeof item === "object" &&
-        typeof (item as Record<string, unknown>).content === "string" &&
-        typeof (item as Record<string, unknown>).session === "string",
-    ) as ExtractedPreference[];
-  } catch {
-    return undefined;
-  }
-}
-
 function extractResponseText(response: { content?: unknown[] }): string {
   let text = "";
   if (response.content && Array.isArray(response.content)) {
@@ -234,15 +263,25 @@ function extractResponseText(response: { content?: unknown[] }): string {
  * Run periodic memory review for a single agent.
  *
  * Scans sessions updated since last watermark, batches them into a single
- * cheap-model LLM call, deduplicates extracted preferences, and stores new
- * findings via MemoryPort.
+ * cheap-model LLM call, then parses the LLM output into zod-validated STRUCTURED
+ * memories (`{ content, occurredAt?, entities[] }`, Phase 82 / EXTR-01..05),
+ * resolves each `occurredAt` via the injected clock, deduplicates, and stores
+ * new findings (content + occurredAt only) via MemoryPort. Entity mentions are
+ * EMITTED (not persisted — Q4b). Malformed output is non-fatal: the watermark
+ * advances and the run returns ok (EXTR-05).
  *
- * @param deps - Injected dependencies (memoryPort, sessionStore, eventBus, LLM config, etc.)
+ * @param deps - Injected dependencies (memoryPort, sessionStore, eventBus, clock, LLM config, etc.)
  * @returns Result<void, Error> -- ok on success (even if 0 memories extracted), err on fatal failure
  */
 export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<void, Error>> {
-  const startTime = systemNowMs();
-  const { config, agentId, tenantId, memoryPort, sessionStore, eventBus, logger } = deps;
+  const { config, agentId, tenantId, memoryPort, sessionStore, eventBus, logger, clock } = deps;
+  const startTime = clock.now();
+  // OBS-05: scope the per-stage step logs to a `submodule` child logger so an
+  // operator can answer "what did extraction do?" from logs alone (AGENTS.md
+  // §2.6/§2.7). The pre-existing `logger.*` WARN/DEBUG calls are left intact
+  // (their byte-identical strings are guarded by the degradation/forensic
+  // tests); only the new stage INFO lines route through `log`.
+  const log = logger.child({ submodule: "memory-review" });
 
   // Load watermark
   const watermarkPath = safePath(deps.workspacePath, ".memory-review-watermark");
@@ -261,8 +300,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       sessionsReviewed: 0,
       memoriesExtracted: 0,
       duplicatesSkipped: 0,
-      durationMs: systemNowMs() - startTime,
-      timestamp: systemNowMs(),
+      durationMs: clock.now() - startTime,
+      timestamp: clock.now(),
     });
     return ok(undefined);
   }
@@ -297,8 +336,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       sessionsReviewed: 0,
       memoriesExtracted: 0,
       duplicatesSkipped: 0,
-      durationMs: systemNowMs() - startTime,
-      timestamp: systemNowMs(),
+      durationMs: clock.now() - startTime,
+      timestamp: clock.now(),
     });
     return ok(undefined);
   }
@@ -324,12 +363,12 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     const response = await completeSimple(
       model,
       {
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt: STRUCTURED_PROMPT,
         messages: [
           {
             role: "user" as const,
             content: batchContent,
-            timestamp: systemNowMs(),
+            timestamp: clock.now(),
           },
         ],
       },
@@ -349,11 +388,24 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     systemClearTimeout(timer);
   }
 
-  // Parse LLM response
-  const preferences = parseExtractedPreferences(responseText);
-  if (!preferences) {
-    logger.warn({ agentId, responseLength: responseText.length }, "Memory review LLM returned invalid JSON, skipping extraction");
-    // Still update watermarks and emit event
+  // Parse LLM response into the zod-validated structured envelope. A total
+  // parser (Plan 02): undefined on ANY whole-payload failure (bad JSON, schema
+  // mismatch, or the DELETED flat `[{content, session}]` shape — there is NO
+  // fallback to the old path, design principle 8).
+  const extraction = parseExtractionResult(responseText);
+  if (!extraction) {
+    // EXTR-05 (whole-batch non-fatal): warn + advance the watermark for EVERY
+    // reviewed session BEFORE returning ok, so a malformed batch never stalls
+    // (Pitfall 4). errorKind + hint are the canonical structured fields.
+    logger.warn(
+      {
+        agentId,
+        responseLength: responseText.length,
+        errorKind: "validation" as const,
+        hint: "LLM extraction output failed schema validation — skipping batch, advancing watermark",
+      },
+      "Structured extraction returned invalid output, skipping",
+    );
     for (const session of reviewedSessions) {
       watermark.sessions[session.sessionKey] = session.updatedAt;
     }
@@ -363,79 +415,279 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
       sessionsReviewed: reviewedSessions.length,
       memoriesExtracted: 0,
       duplicatesSkipped: 0,
-      durationMs: systemNowMs() - startTime,
-      timestamp: systemNowMs(),
+      durationMs: clock.now() - startTime,
+      timestamp: clock.now(),
     });
     return ok(undefined);
   }
 
-  // Dedup and store
+  // OBS-05 EXTRACT stage: the parse succeeded — report the parsed memory count.
+  // O(1)/run boundary line → INFO (per-item store/link detail stays DEBUG).
+  log.info(
+    { agentId, step: "extract" as const, parsed: extraction.memories.length, durationMs: clock.now() - startTime },
+    "extraction parsed",
+  );
+
+  // The fixed review session key — structured memories carry no per-message
+  // `session` field, so dedup search/store scope to one review-owned key.
+  const reviewSessionKey: SessionKey = {
+    tenantId,
+    userId: "system",
+    channelId: "memory-review",
+  };
+  const searchOpts: MemorySearchOptions = {
+    limit: 1,
+    minScore: config.dedupThreshold,
+    trustLevel: "system",
+    tags: ["auto-review"],
+    agentId,
+  };
+
+  // Dedup, validate, and store each structured memory.
   let memoriesExtracted = 0;
   let duplicatesSkipped = 0;
+  const extractedEntities: ExtractedMemoryWithEntities[] = [];
 
-  for (const pref of preferences) {
-    if (!pref.content || !pref.session) continue;
+  // OBS-04 (memory:entities_linked): `entitiesLinked` counts SUCCESSFUL
+  // resolveAndLink calls this run; `seenEntityNames` derives `newEntities`.
+  // `resolveAndLink` returns only the resolved id — it does NOT signal
+  // create-vs-reuse, and adding a port method just to surface that is out of
+  // scope (Plan 02/05). We therefore derive `newEntities` CONSERVATIVELY as the
+  // count of DISTINCT entity names first-seen in THIS run (a lower-bound proxy
+  // for "minted a fresh row"): the run's first mention of a name is treated as
+  // new, recurrences as reuse. Counts only ever leave this function — never a name.
+  let entitiesLinked = 0;
+  const seenEntityNames = new Set<string>();
 
-    // Build a SessionKey for the search
-    const parsedKey = parseFormattedSessionKey(pref.session);
-    const sessionKey: SessionKey = parsedKey ?? {
-      tenantId,
-      userId: "system",
-      channelId: "memory-review",
-    };
+  for (const m of extraction.memories) {
+    // Per-item resilience (EXTR-05): a single bad memory must `continue`, never
+    // abort the batch. The lenient schema already guarantees content.min(1),
+    // but guard defensively.
+    if (!m.content) continue;
 
-    // Dedup check
-    const searchOpts: MemorySearchOptions = {
-      limit: 1,
-      minScore: config.dedupThreshold,
-      trustLevel: "system",
-      tags: ["auto-review"],
-      agentId,
-    };
+    // SECURITY (AGENTS.md §2.2, ASVS V5): the extracted `content` is derived
+    // from untrusted conversation text. Scan it BEFORE store. `critical`
+    // (dangerous-command / secret-egress patterns) → skip the item; `warn`
+    // (jailbreak/role patterns) → store with trust downgraded to "external";
+    // `clean` → the inherited `system` trust (EXTR-04). T-82-07 mitigation.
+    const verdict = validateMemoryWrite(m.content);
+    if (verdict.severity === "critical") {
+      // WR-02: the audit record for a security-blocking event must carry the
+      // COMPLETE matched-pattern set, not just the critical subset. The previous
+      // code logged the value `verdict.criticalPatterns` under the misleading
+      // field name `patterns`, silently dropping the broader `verdict.patterns`
+      // (for a dangerous-command match that set includes every matched pattern).
+      // Log both, each under its accurate name. Never log the offending content.
+      logger.warn(
+        {
+          agentId,
+          errorKind: "validation" as const,
+          patterns: verdict.patterns,
+          criticalPatterns: verdict.criticalPatterns,
+          hint: "extracted memory matched a dangerous/secret pattern — blocked from store",
+        },
+        "Skipping extracted memory that failed the memory-write security scan",
+      );
+      continue;
+    }
+    const trustLevel: TrustLevel = verdict.severity === "warn" ? "external" : "system";
 
-    const searchResult = await memoryPort.search(sessionKey, pref.content, searchOpts);
+    // Dedup check (reused — scoped to the review session key + system trust).
+    // WR-01: MemoryPort returns Promise<Result<…>> (non-throwing), but a real
+    // adapter can VIOLATE the contract and REJECT (SQLITE_BUSY on a locked DB,
+    // disk-full, a better-sqlite3 throw surfaced async). Route through
+    // `fromPromise` so a rejection becomes an `err` Result instead of an
+    // exception escaping `runMemoryReview` before the watermark saves — which
+    // would reprocess the same sessions every cron tick (the EXTR-05 stall).
+    const searchOutcome = await fromPromise(memoryPort.search(reviewSessionKey, m.content, searchOpts));
+    if (!searchOutcome.ok) {
+      // Dedup unavailable (adapter rejected) — skip this item rather than store
+      // blind (we can't confirm it isn't a duplicate). Non-fatal: the loop and
+      // the watermark advance continue. errorKind + hint are the canonical fields.
+      logger.warn(
+        {
+          agentId,
+          err: searchOutcome.error,
+          errorKind: "dependency" as const,
+          hint: "memory dedup search rejected (adapter contract violation) — skipping item, advancing watermark",
+        },
+        "Skipping extracted memory — dedup search failed",
+      );
+      continue;
+    }
+    const searchResult = searchOutcome.value;
     if (searchResult.ok && searchResult.value.length > 0) {
       duplicatesSkipped++;
-      logger.debug({ agentId, content: pref.content.slice(0, 50) }, "Skipping duplicate memory");
+      logger.debug({ agentId, content: m.content.slice(0, 50) }, "Skipping duplicate memory");
       continue;
     }
 
-    // Store new memory
+    // Resolve the LLM's ISO event time → epoch ms against the injected clock
+    // (EXTR-02); undefined → omit the key (falls back to createdAt per TEMP-01).
+    const occurredAt = resolveOccurredAt(m.occurredAt, clock.now());
+
+    // Store ONLY content + occurredAt. Trust + provenance inherit one consistent
+    // value (EXTR-04); NO `entities` field is persisted (Q4b — the strict
+    // MemoryRowSchema has no entity column; entities are emit-only below).
+    const memorySource: MemorySource = { who: "system", channel: "memory-review" };
     const entry: MemoryEntry = {
       id: randomUUID(),
       tenantId,
       agentId,
       userId: "system",
-      content: pref.content,
-      trustLevel: "system",
-      source: { who: "system", channel: "memory-review" },
+      content: m.content,
+      trustLevel,
+      source: memorySource,
       tags: ["auto-review", ...config.autoTags],
       sourceType: "conversation",
-      createdAt: systemNowMs(),
+      // Persist the LLM-classified memory class (P95/LANES-03) instead of dropping it
+      // to the adapter's 'semantic' fallback. `m.memoryType` is ALWAYS present post-parse
+      // (StructuredMemorySchema.memoryType has `.default("semantic")`), so the persisted
+      // value is the real classification.
+      memoryType: m.memoryType,
+      createdAt: clock.now(),
+      ...(occurredAt !== undefined ? { occurredAt } : {}),
     };
 
-    const storeResult = await memoryPort.store(entry);
+    // WR-01: same contract-violation guard as the dedup search above — a
+    // rejecting `store` (locked DB, disk-full) must NOT escape before the
+    // watermark saves. `fromPromise` collapses a rejection into an `err` that
+    // the existing non-fatal branch logs; the loop and watermark advance survive.
+    const storeOutcome = await fromPromise(memoryPort.store(entry));
+    const storeResult = storeOutcome.ok ? storeOutcome.value : storeOutcome;
     if (storeResult.ok) {
       memoriesExtracted++;
+      // EXTR-04 / Q4b: emit the entity mentions on the in-memory result with the
+      // SAME inherited trust + provenance. NOT persisted — for the Phase-83 handoff.
+      extractedEntities.push({
+        memoryId: entry.id,
+        entities: m.entities.map((e) => ({ name: e.name, trustLevel, source: memorySource })),
+      });
+
+      // IN-01 (Phase 83): persist the entity associations — resolve each emitted
+      // entity to a (tenant, agent)-scoped entity row and link it to THIS stored
+      // memory. The scope (tenantId, agentId) is the stored entry's own partition
+      // (ENT-03 isolation enforced at the write side); `now` comes from the
+      // injected clock (NEVER the wall-clock global — globals rule). Guarded by
+      // `deps.entityStore` so an un-injected port reproduces Phase-82 behaviour exactly.
+      //
+      // NON-FATAL (mirrors the WR-01 store/search guards above): `resolveAndLink`
+      // returns Promise<Result<string, Error>>, but a real adapter can REJECT
+      // (SQLITE_BUSY on a locked DB, disk-full). `fromPromise` collapses a
+      // rejection into an `err` Result; `!linked.ok` then covers the rejection and
+      // `!linked.value.ok` an inner-err Result. Either way we log a WARN
+      // (errorKind + hint only — NEVER the entity name body, AGENTS.md §2.7) and
+      // CONTINUE. No `return err`, no `throw`: the watermark advance below runs
+      // unchanged, so a resolver fault can never stall + reprocess every tick.
+      if (deps.entityStore) {
+        for (const e of m.entities) {
+          const linked = await fromPromise(
+            deps.entityStore.resolveAndLink(entry.id, e.name, { tenantId, agentId, now: clock.now() }),
+          );
+          if (!linked.ok || !linked.value.ok) {
+            logger.warn(
+              {
+                agentId,
+                errorKind: "dependency" as const,
+                hint: "entity link failed — memory stored, association skipped",
+              },
+              "Entity resolve/link failed (non-fatal)",
+            );
+          } else {
+            // OBS-04 counters: a successful resolve+link. `entitiesLinked` is the
+            // total (the event's `entityCount`); a name's FIRST appearance this
+            // run counts toward `newEntities` (conservative create proxy above).
+            entitiesLinked++;
+            seenEntityNames.add(e.name);
+          }
+        }
+      }
+
+      // EXTRACT-03 (Phase 96): persist the causal edges. Guarded by
+      // `deps.causalStore` so an un-injected port reproduces Phase-91 behaviour
+      // EXACTLY (no write). The cause is THIS stored memory (`entry.id`, A2); each
+      // emitted `effect` is resolved to a counterpart memory id by the injected
+      // adapter (scoped FTS top-1 — the agent never sees the SQL). NON-FATAL
+      // (mirrors the entity guard above): a failing linkCausal — an `err` Result
+      // OR a rejecting adapter collapsed by `fromPromise` — WARNs (errorKind +
+      // hint only; NEVER the untrusted effect-text body, AGENTS.md §2.7) and the
+      // loop continues; the watermark below advances regardless, so an edge fault
+      // never stalls + reprocesses every cron tick. The edge SQL lives in
+      // @comis/memory behind the injected MemoryCausalStore port — this file
+      // imports the TYPE only (the agent↛memory build cut).
+      if (deps.causalStore && m.causes.length > 0) {
+        for (const c of m.causes) {
+          const linked = await fromPromise(
+            deps.causalStore.linkCausal(entry.id, c.effect, { tenantId, agentId, now: clock.now() }, 1),
+          );
+          if (!linked.ok || !linked.value.ok) {
+            logger.warn(
+              {
+                agentId,
+                errorKind: "dependency" as const,
+                hint: "causal link failed — memory stored, edge skipped",
+              },
+              "Causal link failed (non-fatal)",
+            );
+          }
+        }
+      }
     } else {
-      logger.warn({ agentId, err: storeResult.error }, "Failed to store extracted memory");
+      logger.warn(
+        {
+          agentId,
+          err: storeResult.error,
+          errorKind: "dependency" as const,
+          hint: "memory store failed/rejected — skipping item, advancing watermark",
+        },
+        "Failed to store extracted memory",
+      );
     }
   }
 
-  // Update watermark per-session
+  const entitiesExtracted = extractedEntities.reduce((n, e) => n + e.entities.length, 0);
+
+  // OBS-05 STORE stage: report what the per-memory store loop persisted.
+  log.info(
+    { agentId, step: "store" as const, memoriesExtracted, duplicatesSkipped, durationMs: clock.now() - startTime },
+    "memories stored",
+  );
+
+  // OBS-05 LINK stage + OBS-04 emit — only meaningful when the entity-store port
+  // is injected (un-injected ⇒ Phase-82 behaviour: no link work, no event). The
+  // `entitiesLinked > 0` guard keeps a no-entity run silent (no zero-count noise).
+  if (deps.entityStore && entitiesLinked > 0) {
+    const newEntities = seenEntityNames.size;
+    log.info(
+      { agentId, step: "link" as const, entitiesLinked, newEntities, durationMs: clock.now() - startTime },
+      "entities linked",
+    );
+    // OBS-04: counts ONLY — entityCount (total resolved) + newEntities (distinct
+    // first-seen) + durationMs. NEVER an entity name (AGENTS.md §2.7 / T-86-16).
+    eventBus.emit("memory:entities_linked", {
+      agentId,
+      entityCount: entitiesLinked,
+      newEntities,
+      durationMs: clock.now() - startTime,
+      timestamp: clock.now(),
+    });
+  }
+
+  // Update watermark per-session (success path — runs on every terminating path).
   for (const session of reviewedSessions) {
     watermark.sessions[session.sessionKey] = session.updatedAt;
   }
   await saveWatermark(watermarkPath, watermark);
 
-  // Emit completion event
+  // Emit completion event (entitiesExtracted is additive/harmless — Open Q Q3).
   eventBus.emit("memory:review_completed", {
     agentId,
     sessionsReviewed: reviewedSessions.length,
     memoriesExtracted,
     duplicatesSkipped,
-    durationMs: systemNowMs() - startTime,
-    timestamp: systemNowMs(),
+    entitiesExtracted,
+    durationMs: clock.now() - startTime,
+    timestamp: clock.now(),
   });
 
   logger.info({
@@ -443,7 +695,8 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
     sessionsReviewed: reviewedSessions.length,
     memoriesExtracted,
     duplicatesSkipped,
-    durationMs: systemNowMs() - startTime,
+    entitiesExtracted,
+    durationMs: clock.now() - startTime,
   }, "Memory review completed");
 
   return ok(undefined);

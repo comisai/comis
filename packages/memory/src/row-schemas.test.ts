@@ -84,6 +84,10 @@ import {
   BatchCacheRowSchema,
   IdProjectionRowSchema,
   CountProjectionRowSchema,
+  MemoryEntityRowSchema,
+  EntityLaneRowSchema,
+  EntityListRowSchema,
+  CausalLaneRowSchema,
 } from "./row-schemas.js";
 
 // =====================================================================
@@ -165,6 +169,49 @@ describe("row-schemas — type-equality with paired interfaces", () => {
 // 2. Runtime-parse assertions for schemas whose source interface is
 // file-internal (the schema IS the SSOT)
 // =====================================================================
+
+describe("row-schemas — MemoryRowSchema occurred_at column (TEMP-01)", () => {
+  function baseMemoryRow(): Record<string, unknown> {
+    return {
+      id: "row-1",
+      tenant_id: "default",
+      agent_id: "default",
+      user_id: "user-1",
+      content: "test",
+      trust_level: "learned",
+      memory_type: "semantic",
+      source_who: "agent",
+      source_channel: null,
+      source_session_key: null,
+      tags: "[]",
+      created_at: 1700000000000,
+      occurred_at: null,
+      proof_count: null,
+      source_ids: null,
+      consolidated_at: null,
+      confidence: null,
+      history: null,
+      updated_at: null,
+      expires_at: null,
+      has_embedding: 0,
+    };
+  }
+
+  it("accepts a row whose occurred_at is a number (event time, epoch ms)", () => {
+    const sample = { ...baseMemoryRow(), occurred_at: 1699000000000 };
+    expect(MemoryRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("accepts a row whose occurred_at is null (event time unknown)", () => {
+    const sample = { ...baseMemoryRow(), occurred_at: null };
+    expect(MemoryRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("rejects a row whose occurred_at is a string (must be number|null)", () => {
+    const sample = { ...baseMemoryRow(), occurred_at: "2026-05-20T10:00:00Z" };
+    expect(MemoryRowSchema.safeParse(sample).success).toBe(false);
+  });
+});
 
 describe("row-schemas — internal DB row runtime parses", () => {
   it("TokenUsageDbRowSchema parses a complete token_usage row", () => {
@@ -462,6 +509,7 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
       source_session_key: null,
       tags: "[]",
       created_at: 1700000000000,
+      occurred_at: 1700000000050,
       updated_at: null,
       expires_at: null,
       has_embedding: 0,
@@ -491,5 +539,95 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
       // ... missing all other required columns
     };
     expect(TokenUsageDbRowSchema.safeParse(sample).success).toBe(false);
+  });
+
+  // --- Entity-association row schemas (Phase 83) ---
+
+  it("MemoryEntityRowSchema parses a full memory_entities row including canonical_key", () => {
+    const sample = {
+      id: "e1",
+      tenant_id: "default",
+      agent_id: "default",
+      canonical_name: "Istanbul",
+      canonical_key: "istanbul",
+      mention_count: 3,
+      first_seen: 1700000000000,
+      last_seen: 1700000005000,
+    };
+    expect(MemoryEntityRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("MemoryEntityRowSchema rejects a row missing the canonical_key column", () => {
+    const sample = {
+      id: "e1",
+      tenant_id: "default",
+      agent_id: "default",
+      canonical_name: "Istanbul",
+      // canonical_key omitted
+      mention_count: 1,
+      first_seen: 1700000000000,
+      last_seen: 1700000000000,
+    };
+    expect(MemoryEntityRowSchema.safeParse(sample).success).toBe(false);
+  });
+
+  it("MemoryEntityRowSchema rejects unknown extra columns (z.strictObject)", () => {
+    const sample = {
+      id: "e1",
+      tenant_id: "default",
+      agent_id: "default",
+      canonical_name: "Istanbul",
+      canonical_key: "istanbul",
+      mention_count: 1,
+      first_seen: 1700000000000,
+      last_seen: 1700000000000,
+      attacker_injected: "x",
+    };
+    expect(MemoryEntityRowSchema.safeParse(sample).success).toBe(false);
+  });
+
+  it("EntityLaneRowSchema parses the self-join projection (memory_id + shared count)", () => {
+    expect(EntityLaneRowSchema.safeParse({ memory_id: "m2", shared: 2 }).success).toBe(true);
+  });
+
+  it("EntityLaneRowSchema rejects a non-numeric shared count", () => {
+    expect(EntityLaneRowSchema.safeParse({ memory_id: "m2", shared: "two" }).success).toBe(false);
+  });
+
+  it("EntityListRowSchema parses the OBS-06 listEntities projection (no canonical_key)", () => {
+    const sample = {
+      id: "e1",
+      canonical_name: "Acme Corp",
+      mention_count: 4,
+      first_seen: 1700000000000,
+      last_seen: 1700000009000,
+    };
+    expect(EntityListRowSchema.safeParse(sample).success).toBe(true);
+  });
+
+  it("EntityListRowSchema rejects the DB-internal canonical_key column (OQ-2 — strictObject keeps it out of the diagnostic projection)", () => {
+    const sample = {
+      id: "e1",
+      canonical_name: "Acme Corp",
+      canonical_key: "acme corp",
+      mention_count: 4,
+      first_seen: 1700000000000,
+      last_seen: 1700000009000,
+    };
+    expect(EntityListRowSchema.safeParse(sample).success).toBe(false);
+  });
+
+  it("CausalLaneRowSchema parses the one-hop edge-lookup projection (linked + confidence)", () => {
+    expect(CausalLaneRowSchema.safeParse({ linked: "m2", confidence: 0.9 }).success).toBe(true);
+  });
+
+  it("CausalLaneRowSchema rejects a non-numeric confidence", () => {
+    expect(CausalLaneRowSchema.safeParse({ linked: "m2", confidence: "high" }).success).toBe(false);
+  });
+
+  it("CausalLaneRowSchema rejects an unexpected column (strictObject keeps the projection minimal)", () => {
+    expect(
+      CausalLaneRowSchema.safeParse({ linked: "m2", confidence: 0.9, tenant_id: "t" }).success,
+    ).toBe(false);
   });
 });

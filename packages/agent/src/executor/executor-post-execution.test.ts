@@ -17,6 +17,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import { buildSessionEndMetadata, shouldStorePairedMemory } from "./executor-post-execution.js";
+import { attributeRecallUsage } from "../rag/recall-attribution.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -384,6 +385,88 @@ describe("tool-failure endReason and notice", () => {
 // The helper is private inside executor-post-execution.ts, so we test its
 // behaviour via the source text (the same pattern used by the tool-failure
 // suite above).
+// ---------------------------------------------------------------------------
+// FEED-01 — recall-usage attribution + memory:recall_used emit (flag-gated).
+//
+// postExecution() attributes which recalled memories were used vs ignored from
+// result.response (the pure attributeRecallUsage heuristic) and emits a
+// counts+ids-only memory:recall_used event, gated on config.rag.feedback.enabled
+// (default OFF → no emit). Content stays in-process; only ids cross the bus.
+//
+// Source-grep is the load-bearing mode (scaffolding all 30+ postExecution deps
+// is impractical — see the markRead block above). The grep locks: the in-package
+// import (cut held), the default-off gate, the emit shape, and the no-content
+// invariant on the emit call site. A paired behavior probe re-confirms the
+// attribution fn drives the ids the emit will carry.
+// ---------------------------------------------------------------------------
+describe("FEED-01 recall-usage attribution + memory:recall_used emit", () => {
+  function readPostExec(): { src: string; stripped: string } {
+    const src = readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");
+    const stripped = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+      .join("\n");
+    return { src, stripped };
+  }
+
+  it("imports attributeRecallUsage in-package (the agent↛memory cut held)", () => {
+    const { stripped } = readPostExec();
+    expect(stripped).toMatch(
+      /import\s*\{[^}]*\battributeRecallUsage\b[^}]*\}\s*from\s*"\.\.\/rag\/recall-attribution\.js"/,
+    );
+    // No @comis/memory import anywhere in production source.
+    expect(stripped).not.toMatch(/from\s*"@comis\/memory"/);
+  });
+
+  it("gates the emit on rag.feedback.enabled === true (default-off guard)", () => {
+    const { stripped } = readPostExec();
+    expect(stripped).toMatch(/feedback\?\.enabled\s*===\s*true/);
+  });
+
+  it("emits memory:recall_used with usedIds/ignoredIds/usedCount/ignoredCount (counts+ids only)", () => {
+    const { stripped } = readPostExec();
+    // The emit call exists and carries the counts+ids payload.
+    expect(stripped).toMatch(/emit\(\s*"memory:recall_used"/);
+    const emitBlock = stripped.match(/emit\(\s*"memory:recall_used"[\s\S]*?\}\s*\);/);
+    expect(emitBlock, "memory:recall_used emit call must exist").not.toBeNull();
+    const block = emitBlock![0];
+    expect(block).toMatch(/usedIds/);
+    expect(block).toMatch(/ignoredIds/);
+    expect(block).toMatch(/usedCount/);
+    expect(block).toMatch(/ignoredCount/);
+  });
+
+  it("the emit call carries NO memory content / response / preview field", () => {
+    const { stripped } = readPostExec();
+    const emitBlock = stripped.match(/emit\(\s*"memory:recall_used"[\s\S]*?\}\s*\);/);
+    expect(emitBlock).not.toBeNull();
+    const block = emitBlock![0];
+    // ids + counts only — never the content, the response text, or a preview.
+    expect(block, "no content: field").not.toMatch(/\bcontent:/);
+    expect(block, "no .response payload").not.toMatch(/\.response\b/);
+    expect(block, "no preview field").not.toMatch(/\bpreview\b/);
+  });
+
+  it("behavior — attributeRecallUsage drives the ids the emit carries (echo → used)", () => {
+    // The emit's usedIds/ignoredIds come straight from attributeRecallUsage.
+    // Re-confirm the documented behavior end-to-end at the call-site contract:
+    // a recalled memory echoed in the response is attributed USED.
+    const recalled = [
+      { id: "used-1", content: "the incident postmortem identified a missing retry budget" },
+      { id: "ignored-1", content: "unrelated trivia about the office plants" },
+    ];
+    const response =
+      "Per the incident postmortem, we identified a missing retry budget and added one.";
+    const { usedIds, ignoredIds } = attributeRecallUsage(recalled, response);
+    expect(usedIds).toContain("used-1");
+    expect(ignoredIds).toContain("ignored-1");
+    // Counts the emit reports are the array lengths (parity with the family).
+    expect(usedIds.length).toBe(1);
+    expect(ignoredIds.length).toBe(1);
+  });
+});
+
 describe("modelAcknowledgedFailure word-boundary regression", () => {
   function readPostExecSource(): string {
     return readFileSync(resolve(here, "executor-post-execution.ts"), "utf-8");

@@ -25,6 +25,196 @@ export function isVecAvailable(): boolean {
 }
 
 /**
+ * Additively ensure the `memories` table carries every column the current
+ * code expects, adding any that are absent. This is the package's
+ * forward-only, additive column-add path (design §4.1): SQLite has no
+ * `ADD COLUMN IF NOT EXISTS`, so each add is guarded by a
+ * `PRAGMA table_info(memories)` presence check. Safe to run on every boot,
+ * including a live `~/.comis` DB created before a column existed — existing
+ * rows get the column with a NULL value (a nullable add is O(1); no table
+ * rewrite, no backfill).
+ *
+ * Currently adds:
+ * - `occurred_at INTEGER` (TEMP-01): event time, distinct from `created_at`
+ *   (record time). NULL when the event time is unknown.
+ * - `proof_count INTEGER` (P84/CONS-01): evidence count. NULL = raw memory;
+ *   >=1 marks the row as an observation (the column-flag data model — design
+ *   §4.1; the `memory_type` CHECK is intentionally NOT touched).
+ * - `source_ids TEXT` (P84/CONS-01): JSON array of contributing source ids.
+ * - `consolidated_at INTEGER` (P84/CONS-04): set when a raw memory is folded
+ *   into an observation; the state predicate for candidate selection.
+ * - `confidence REAL` (P84/CONS-08): observation confidence 0..1.
+ * - `history TEXT` (P84/CONS-05): JSON audit array of prior contents.
+ *
+ * @param db - An open better-sqlite3 Database instance whose `memories`
+ *   table already exists (created by `initSchema`'s `CREATE TABLE IF NOT EXISTS`).
+ */
+export function ensureMemoryColumns(db: Database.Database): void {
+  // Object-literal cast (matches the `as { v: string } | undefined` style at
+  // the vec_version() probe below); the untyped-sqlite rule targets `as Foo[]`
+  // (a \w+ named type) and does NOT match an object-literal cast.
+  const cols = new Set(
+    (db.prepare(`PRAGMA table_info(memories)`).all() as { name: string }[]).map((r) => r.name),
+  );
+  if (!cols.has("occurred_at")) {
+    // Nullable add → O(1), no table rewrite, no destructive rewrite (TEMP-01).
+    db.exec(`ALTER TABLE memories ADD COLUMN occurred_at INTEGER`);
+  }
+  // Observation columns (P84). All nullable → O(1) ADD, no rewrite, no backfill
+  // (existing rows get NULL = "raw, never consolidated"). Forward-only.
+  if (!cols.has("proof_count")) db.exec(`ALTER TABLE memories ADD COLUMN proof_count INTEGER`);
+  if (!cols.has("source_ids")) db.exec(`ALTER TABLE memories ADD COLUMN source_ids TEXT`);
+  if (!cols.has("consolidated_at")) db.exec(`ALTER TABLE memories ADD COLUMN consolidated_at INTEGER`);
+  if (!cols.has("confidence")) db.exec(`ALTER TABLE memories ADD COLUMN confidence REAL`);
+  if (!cols.has("history")) db.exec(`ALTER TABLE memories ADD COLUMN history TEXT`);
+}
+
+/**
+ * Idempotently create the entity-association junction tables (Phase 83):
+ * `memory_entities` (one row per resolved entity, scoped to a tenant+agent)
+ * and `memory_entity_links` (the many-to-many memory<->entity edge). Mirrors
+ * `ensureMemoryColumns`'s forward-only, additive contract — all DDL is
+ * `CREATE … IF NOT EXISTS`, so it is safe to run on every boot including a
+ * live `~/.comis` DB created before the feature existed (no backfill: existing
+ * memories simply have no links until re-extracted).
+ *
+ * ## The UNIQUE index keys on `canonical_key`, NOT a SQL lower() expression
+ *
+ * RESEARCH Pitfall 3: SQLite's built-in `lower()` is ASCII-only (it leaves
+ * `İSTANBUL`/`CAFÉ`/`ПРИВЕТ` unchanged), so the original §4.2 spec's UNIQUE
+ * index over a SQL `lower(...)` expression of the display name would NOT dedup
+ * Turkish/CJK/Cyrillic case-variants → duplicate entities (ENT-05 break).
+ * Instead the resolver computes a locale-independent `canonical_key` in
+ * TypeScript (`normalizeEntityKey` in entity-resolver.ts: lower+NFKD+strip-
+ * marks) and we UNIQUE-index THAT stored column.
+ *
+ * The index keys on `(tenant_id, agent_id, canonical_key)` so two agents or
+ * tenants NEVER collapse to one entity row even with an identical name — the
+ * resolver-side half of the ENT-03 isolation boundary.
+ *
+ * `ON DELETE CASCADE` on `memory_entity_links.memory_id → memories(id)` is the
+ * ENTIRE link-maintenance story (ENT-04 — no orphan-sweep job). It fires
+ * automatically because `openSqliteDatabase` already sets
+ * `PRAGMA foreign_keys = ON` (sqlite-adapter-base.ts:52) — no pragma is set
+ * here. NB: the parent `memory_entities` row is intentionally NOT cascaded by a
+ * memory delete (entities are per-concept and may be re-linked; RESEARCH
+ * Pitfall 7), so a stale `mention_count` is by-design, not an orphan bug.
+ *
+ * @param db - An open better-sqlite3 Database whose `memories` table already
+ *   exists (the FK target). Call AFTER the base `memories` CREATE.
+ */
+export function ensureEntityTables(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_entities (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      canonical_name TEXT NOT NULL,            -- display form (first-seen casing)
+      canonical_key  TEXT NOT NULL,            -- normalized key (TS lower+NFKD+strip-marks; NOT sqlite lower(), Pitfall 3)
+      mention_count INTEGER NOT NULL DEFAULT 1,
+      first_seen INTEGER NOT NULL,
+      last_seen  INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_mement_uniq
+      ON memory_entities(tenant_id, agent_id, canonical_key);
+
+    CREATE TABLE IF NOT EXISTS memory_entity_links (
+      memory_id TEXT NOT NULL REFERENCES memories(id)        ON DELETE CASCADE,
+      entity_id TEXT NOT NULL REFERENCES memory_entities(id) ON DELETE CASCADE,
+      PRIMARY KEY (memory_id, entity_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_mentlink_entity ON memory_entity_links(entity_id);
+  `);
+}
+
+/**
+ * Idempotently create the recall-utility usefulness table (Phase 93, FEED-02):
+ * `memory_usefulness` — one row per (tenant, agent, memory) carrying the durable
+ * used/ignored counts + last-useful-at that the recall-utility feedback loop
+ * learns from (the leapfrog Hindsight structurally cannot follow — its
+ * `access_count` is dead schema; HINDSIGHT_VS_COMIS.md #7). Mirrors
+ * `ensureEntityTables`'s forward-only, additive contract — the DDL is
+ * `CREATE TABLE IF NOT EXISTS`, so it is safe to run on every boot including a
+ * live `~/.comis` DB created before the feature existed (no backfill: existing
+ * memories simply have no usefulness row until first recalled).
+ *
+ * ## The PRIMARY KEY is the isolation boundary AND the upsert key (T-93-01)
+ *
+ * Comis runs many agents in one DB. `PRIMARY KEY (tenant_id, agent_id,
+ * memory_id)` is both the `ON CONFLICT` target for the adapter's idempotent
+ * upsert and the load-bearing isolation scope — two agents/tenants NEVER share
+ * a row even for the same `memory_id`, and the adapter additionally filters
+ * every read/write on all three columns (belt-and-braces).
+ *
+ * `ON DELETE CASCADE` on `memory_usefulness.memory_id → memories(id)` is the
+ * ENTIRE row-maintenance story (no orphan-sweep job): a memory delete drops its
+ * usefulness row automatically. It fires because `openSqliteDatabase` already
+ * sets `PRAGMA foreign_keys = ON` (sqlite-adapter-base.ts) — no pragma is set
+ * here.
+ *
+ * @param db - An open better-sqlite3 Database whose `memories` table already
+ *   exists (the FK target). Call AFTER `ensureEntityTables` in `initSchema`.
+ */
+export function ensureUsefulnessTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_usefulness (
+      tenant_id      TEXT NOT NULL,
+      agent_id       TEXT NOT NULL,
+      memory_id      TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+      used_count     INTEGER NOT NULL DEFAULT 0,
+      ignored_count  INTEGER NOT NULL DEFAULT 0,
+      last_useful_at INTEGER,
+      PRIMARY KEY (tenant_id, agent_id, memory_id)
+    );
+  `);
+}
+
+/**
+ * Idempotently create the causal-edge table (Phase 96, EXTRACT-03):
+ * `memory_causal_edges` — one row per directed cause→effect edge between two
+ * memories, scoped to a (tenant, agent). Mirrors `ensureEntityTables` /
+ * `ensureUsefulnessTable`'s forward-only, additive contract — the DDL is
+ * `CREATE TABLE IF NOT EXISTS`, so it is safe to run on every boot including a
+ * live `~/.comis` DB created before the feature existed (no backfill: existing
+ * memories simply have no causal edges until re-extracted).
+ *
+ * ## The PRIMARY KEY is the isolation boundary AND the idempotency target (T-96-01)
+ *
+ * Comis runs many agents in one DB. `PRIMARY KEY (tenant_id, agent_id,
+ * source_memory_id, target_memory_id)` is both the `INSERT OR IGNORE` conflict
+ * target for the adapter's idempotent edge write and the load-bearing isolation
+ * scope — an edge written under one (tenant, agent) is NEVER returned for another
+ * by memory-id coincidence, and the adapter additionally filters every read/write
+ * on tenant_id + agent_id (belt-and-braces).
+ *
+ * `ON DELETE CASCADE` on BOTH `source_memory_id` and `target_memory_id →
+ * memories(id)` is the ENTIRE edge-maintenance story (no orphan-sweep job — the
+ * ENT-04 pattern, T-96-04): a memory delete drops every edge it participates in
+ * automatically. It fires because `openSqliteDatabase` already sets
+ * `PRAGMA foreign_keys = ON` (sqlite-adapter-base.ts) — no pragma is set here.
+ * The `idx_causal_target` index serves the read lane's effect→cause direction
+ * (the source→effect direction is served by the PK prefix).
+ *
+ * @param db - An open better-sqlite3 Database whose `memories` table already
+ *   exists (the FK target). Call AFTER `ensureUsefulnessTable` in `initSchema`.
+ */
+export function ensureCausalTables(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_causal_edges (
+      tenant_id        TEXT NOT NULL,
+      agent_id         TEXT NOT NULL,
+      source_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+      target_memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+      confidence       REAL NOT NULL DEFAULT 1.0,
+      created_at       INTEGER NOT NULL,
+      PRIMARY KEY (tenant_id, agent_id, source_memory_id, target_memory_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_causal_target
+      ON memory_causal_edges(tenant_id, agent_id, target_memory_id);
+  `);
+}
+
+/**
  * Initialize the full memory schema on the given SQLite database.
  *
  * Creates:
@@ -164,6 +354,44 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
 
   // --- Context store tables (DAG schema) ---
   initContextSchema(db);
+
+  // --- Additive memory columns (forward-only; design §4.1) ---
+  // The base CREATE TABLE above intentionally omits occurred_at; it is added
+  // here so the SAME path serves both a fresh DB and a live DB that predates
+  // the column (idempotent via the PRAGMA guard).
+  ensureMemoryColumns(db);
+
+  // --- Entity-association junction tables (Phase 83) ---
+  // Created right after the `memories` table (the FK target) exists, so the
+  // ON DELETE CASCADE on memory_entity_links.memory_id is valid. Idempotent.
+  ensureEntityTables(db);
+
+  // --- Recall-utility usefulness table (Phase 93, FEED-02) ---
+  // Created AFTER ensureEntityTables so the `memories` FK target already exists;
+  // its ON DELETE CASCADE fires via the PRAGMA foreign_keys=ON set by
+  // openSqliteDatabase. Brand-new additive table — no ALTER on memories.
+  ensureUsefulnessTable(db);
+
+  // --- Causal-edge table (Phase 96, EXTRACT-03) ---
+  // Created AFTER ensureUsefulnessTable so the `memories` FK target already
+  // exists; BOTH memory FKs' ON DELETE CASCADE fire via the PRAGMA
+  // foreign_keys=ON set by openSqliteDatabase. Brand-new additive table — no
+  // ALTER on memories.
+  ensureCausalTables(db);
+
+  // --- Observation partial indexes (Phase 84; design §4.1) ---
+  // Created AFTER ensureMemoryColumns (the indexed columns must exist first).
+  // `idx_memories_unconsol` serves the candidate scan (WHERE consolidated_at IS
+  // NULL, the CONS-04 state predicate); `idx_memories_observations` serves the
+  // observation lookup (WHERE proof_count IS NOT NULL — the column-flag). The
+  // design's third "live" index (the exact-dup-retirement filter) is OMITTED —
+  // exact-dup retirement and its column are deferred to a later phase.
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_memories_unconsol
+      ON memories(agent_id, created_at) WHERE consolidated_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_memories_observations
+      ON memories(agent_id) WHERE proof_count IS NOT NULL;
+  `);
 
   // --- Observability persistence tables ---
   db.exec(`

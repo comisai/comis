@@ -228,6 +228,27 @@ export interface MessagingEvents {
     timestamp: number;
   };
 
+  /** Context engine mode switched between pipeline and dag (one-time import cost).
+   *  Carries the switch DIRECTION + the one-time reconciliation cost. Emitted on
+   *  an ACTUAL direction change (not on a brand-new DAG-default conversation) from
+   *  the @comis/agent reconciliation seam. Payload is identifiers + counts +
+   *  durations only — NO message text (mirrors context:dag_compacted). */
+  "context:mode_switched": {
+    /** Engine mode before the switch (closed union — never an open string). */
+    from: "pipeline" | "dag";
+    /** Engine mode after the switch (closed union — never an open string). */
+    to: "pipeline" | "dag";
+    conversationId: string;
+    agentId: string;
+    sessionKey: string;
+    /** true = full reconciliation import (empty DAG); false = incremental/gap-only. */
+    fullImport: boolean;
+    /** Messages imported on this switch (the one-time cost). */
+    importedCount: number;
+    durationMs: number;
+    timestamp: number;
+  };
+
   /** DAG integrity check completed with health report */
   "context:integrity": {
     conversationId: string;

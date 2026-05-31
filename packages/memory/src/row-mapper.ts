@@ -28,14 +28,58 @@ export function parseTags(raw: string): string[] {
   }
 }
 
+// Observation JSON-column schemas (P84). The row-level columns are JSON TEXT;
+// the consumer parses them here into the domain shape. Both degrade to
+// `undefined` on corrupt/oversized JSON (mirrors parseTags) so a damaged column
+// yields "field absent", never a throw that breaks recall (threat T-84-01).
+const SourceIdsSchema = z.array(z.string());
+const HistorySchema = z.array(
+  z.strictObject({ previousContent: z.string(), changedAt: z.number().int().positive() }),
+);
+
+/** Parse the JSON-encoded `source_ids` column; undefined on corrupt data. */
+function parseSourceIds(raw: string): string[] | undefined {
+  try {
+    const result = SourceIdsSchema.safeParse(JSON.parse(raw));
+    return result.success ? result.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Parse the JSON-encoded `history` column; undefined on corrupt data. */
+function parseHistory(raw: string): MemoryEntry["history"] | undefined {
+  try {
+    const result = HistorySchema.safeParse(JSON.parse(raw));
+    return result.success ? result.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Spread helper for a nullable JSON column: yields `{ [key]: parsed }` only when
+ * the column is non-null AND `parse` succeeds; otherwise yields `{}` so the
+ * field is absent (corrupt JSON or NULL both degrade to "field absent", T-84-01).
+ */
+function spreadParsedJson<K extends string, V>(
+  key: K,
+  raw: string | null,
+  parse: (raw: string) => V | undefined,
+): Partial<Record<K, V>> {
+  if (raw === null) return {};
+  const parsed = parse(raw);
+  return parsed === undefined ? {} : ({ [key]: parsed } as Record<K, V>);
+}
+
 // ── Row Conversion ───────────────────────────────────────────────────
 
 /** Convert a MemoryRow (DB row) to a MemoryEntry (domain type).
- *  The returned object includes a non-schema `memoryType` property
- *  so that RPC handlers can surface the DB-level memory_type column
- *  without modifying the strict MemoryEntry Zod schema.
+ *  `memoryType` is a first-class optional field on MemoryEntry (P95/LANES-03);
+ *  the DB column's CHECK constraint guarantees `row.memory_type` is in the enum set,
+ *  so it maps straight onto the typed field (no intersection widening needed).
  */
-export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry & { memoryType?: string } {
+export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry {
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -50,10 +94,21 @@ export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry & 
     },
     tags: parseTags(row.tags),
     createdAt: row.created_at,
+    ...(row.occurred_at !== null ? { occurredAt: row.occurred_at } : {}),
+    // Observation fields (P84). Numeric columns mirror occurred_at; JSON columns
+    // (source_ids/history) parse-then-spread so a corrupt column degrades to an
+    // absent field (parse* returns undefined → spread is empty) instead of throwing.
+    ...(row.proof_count !== null ? { proofCount: row.proof_count } : {}),
+    ...spreadParsedJson("sourceIds", row.source_ids, parseSourceIds),
+    ...(row.consolidated_at !== null ? { consolidatedAt: row.consolidated_at } : {}),
+    ...(row.confidence !== null ? { confidence: row.confidence } : {}),
+    ...spreadParsedJson("history", row.history, parseHistory),
     ...(row.updated_at !== null ? { updatedAt: row.updated_at } : {}),
     ...(row.expires_at !== null ? { expiresAt: row.expires_at } : {}),
     ...(embedding ? { embedding } : {}),
-    memoryType: row.memory_type,
+    // DB CHECK(memory_type IN ('working','episodic','semantic','procedural')) guarantees
+    // the in-set value; cast to the enum mirrors the trust_level mapping above.
+    memoryType: row.memory_type as MemoryEntry["memoryType"],
   };
 }
 
@@ -70,8 +125,8 @@ export function insertMemoryRow(
   memoryType: string,
 ): void {
   db.prepare(
-    `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_channel, source_session_key, tags, created_at, updated_at, expires_at, has_embedding)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_channel, source_session_key, tags, created_at, occurred_at, proof_count, source_ids, consolidated_at, confidence, history, updated_at, expires_at, has_embedding)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
   ).run(
     entry.id,
     entry.tenantId,
@@ -85,6 +140,15 @@ export function insertMemoryRow(
     entry.source.sessionKey ?? null,
     JSON.stringify(entry.tags),
     entry.createdAt,
+    entry.occurredAt ?? null,
+    // Observation fields (P84). source_ids/history persist as JSON TEXT; the
+    // numeric fields persist directly. Column-count === placeholder-count ===
+    // arg-count (a shift surfaces in the observation round-trip test).
+    entry.proofCount ?? null,
+    entry.sourceIds ? JSON.stringify(entry.sourceIds) : null,
+    entry.consolidatedAt ?? null,
+    entry.confidence ?? null,
+    entry.history ? JSON.stringify(entry.history) : null,
     entry.updatedAt ?? null,
     entry.expiresAt ?? null,
   );

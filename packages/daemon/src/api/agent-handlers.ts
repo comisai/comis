@@ -190,7 +190,19 @@ export function createAgentHandlers(deps: AgentHandlerDeps): Record<string, RpcH
       // Hot-add agent to running daemon without restart
       if (deps.hotAdd) {
         try {
-          await deps.hotAdd(agentId, parsedConfig);
+          // Phase 92 (CR-01): derive the RAW (pre-Zod-default) rag.rerank.enabled from the
+          // RPC `config` (NOT parsedConfig — the parse defaults unset to a concrete false and
+          // erases the signal). Coerce only genuine booleans; anything else -> undefined (unset)
+          // so the hot-added agent's effective-rerank precedence distinguishes unset from off.
+          const rawRerank = (() => {
+            const rag = (config as Record<string, unknown> | undefined)?.["rag"];
+            const rerank =
+              rag !== null && typeof rag === "object" ? (rag as Record<string, unknown>)["rerank"] : undefined;
+            const enabled =
+              rerank !== null && typeof rerank === "object" ? (rerank as Record<string, unknown>)["enabled"] : undefined;
+            return typeof enabled === "boolean" ? enabled : undefined;
+          })();
+          await deps.hotAdd(agentId, parsedConfig, rawRerank);
         } catch (hotAddErr) {
           deps.persistDeps?.logger.warn(
             { method: "agents.create", agentId, err: hotAddErr,

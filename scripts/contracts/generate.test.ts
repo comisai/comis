@@ -17,11 +17,13 @@
  *
  * @module
  */
-import { describe, it, expect, beforeAll } from "vitest";
-import { readFileSync, statSync } from "node:fs";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { readFileSync, statSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { runCodegen, OUT_TS, OUT_JSON, OUT_SIZE } from "./generate-web-artifact.js";
+import { runCodegen } from "./generate-web-artifact.js";
 import { assertOnlyAllowlistShapes } from "./walk-zod-schema.js";
 import {
   BUDGET_MINIFIED_BYTES,
@@ -34,18 +36,36 @@ function sha256(buf: Buffer | string): string {
     .digest("hex");
 }
 
+// Write all artifacts to a per-suite temp dir, never the committed
+// packages/web/src/api paths. test/architecture/contract-codegen-drift.test.ts
+// runs in a SEPARATE vitest project (parallel fork) and also calls
+// runCodegen(); writing the shared committed files from both projects
+// concurrently let one read the other's in-progress write (a spurious drift
+// flake). Redirecting to a temp dir removes the cross-project race surface.
+let OUT_DIR: string;
+const OUT_TS = (): string => join(OUT_DIR, "contracts.generated.ts");
+const OUT_JSON = (): string => join(OUT_DIR, "contracts.generated.json");
+const OUT_SIZE = (): string => join(OUT_DIR, "contracts.generated.size.json");
+
 describe("scripts/contracts/generate-web-artifact", () => {
+  beforeAll(() => {
+    OUT_DIR = mkdtempSync(join(tmpdir(), "comis-codegen-gen-"));
+  });
+  afterAll(() => {
+    rmSync(OUT_DIR, { recursive: true, force: true });
+  });
+
   describe("runCodegen()", () => {
     let result: ReturnType<typeof runCodegen>;
 
     beforeAll(() => {
-      result = runCodegen();
+      result = runCodegen(OUT_DIR);
     });
 
     it("produces all three artifacts on disk", () => {
-      expect(statSync(OUT_TS).isFile()).toBe(true);
-      expect(statSync(OUT_JSON).isFile()).toBe(true);
-      expect(statSync(OUT_SIZE).isFile()).toBe(true);
+      expect(statSync(OUT_TS()).isFile()).toBe(true);
+      expect(statSync(OUT_JSON()).isFile()).toBe(true);
+      expect(statSync(OUT_SIZE()).isFile()).toBe(true);
     });
 
     it("returns a non-empty CodegenResult", () => {
@@ -78,15 +98,15 @@ describe("scripts/contracts/generate-web-artifact", () => {
 
   describe("double-run determinism", () => {
     it("produces byte-identical output across two runs", () => {
-      runCodegen();
-      const ts1 = readFileSync(OUT_TS);
-      const json1 = readFileSync(OUT_JSON);
-      const size1 = readFileSync(OUT_SIZE);
+      runCodegen(OUT_DIR);
+      const ts1 = readFileSync(OUT_TS());
+      const json1 = readFileSync(OUT_JSON());
+      const size1 = readFileSync(OUT_SIZE());
 
-      runCodegen();
-      const ts2 = readFileSync(OUT_TS);
-      const json2 = readFileSync(OUT_JSON);
-      const size2 = readFileSync(OUT_SIZE);
+      runCodegen(OUT_DIR);
+      const ts2 = readFileSync(OUT_TS());
+      const json2 = readFileSync(OUT_JSON());
+      const size2 = readFileSync(OUT_SIZE());
 
       expect(sha256(ts2), "contracts.generated.ts diverged on rerun").toBe(sha256(ts1));
       expect(sha256(json2), "contracts.generated.json diverged on rerun").toBe(
@@ -100,7 +120,7 @@ describe("scripts/contracts/generate-web-artifact", () => {
 
   describe("bundle-size budget", () => {
     it("real registry fits within 120 KB minified + 38 KB gzipped", () => {
-      const result = runCodegen();
+      const result = runCodegen(OUT_DIR);
       expect(
         result.sizeReport.totalMinified,
         `minified ${result.sizeReport.totalMinified}B exceeds budget ${BUDGET_MINIFIED_BYTES}B`,

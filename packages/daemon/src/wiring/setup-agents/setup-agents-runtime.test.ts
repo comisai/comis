@@ -92,14 +92,22 @@ describe("setup-agents-runtime skills directory creation", () => {
 
 describe("setupSingleAgent OAuth wiring", () => {
   const source = readRuntimeSource();
+  // The OAuth auth-provider construction was extracted to setup-agents-oauth.ts
+  // (85-05 file-size split); the runtime file now calls wireAuthProvider(...).
+  const oauthSource = readFileSync(
+    join(__dirname, "setup-agents-oauth.ts"),
+    "utf-8",
+  );
 
   it("invokes createAuthProvider({ oauth: ... }) — closes the unwired-OAuth gap", () => {
     // createAuthProvider was previously exported by @comis/agent but never
     // called by the daemon, so refreshed OAuth tokens lived only in the
     // in-memory cache and silently disappeared on restart. The daemon-side
-    // call closes that gap.
-    expect(source).toContain("createAuthProvider({");
-    expect(source).toMatch(/createAuthProvider\(\s*{[\s\S]*?oauth:\s*{/);
+    // call (now in the extracted wireAuthProvider helper) closes that gap.
+    expect(oauthSource).toContain("createAuthProvider({");
+    expect(oauthSource).toMatch(/createAuthProvider\(\s*{[\s\S]*?oauth:\s*{/);
+    // The runtime file delegates to the extracted helper.
+    expect(source).toContain("wireAuthProvider({");
   });
 
   it("uses safePath (NOT path.join) for all newly-added path constructions", () => {
@@ -109,10 +117,14 @@ describe("setupSingleAgent OAuth wiring", () => {
     // discovery), but the OAuth wiring must use safePath only.
     expect(source).not.toMatch(/path\.join\(/);
     expect(source).not.toMatch(/path\.resolve\(/);
-    // The OAuth wiring's dataDir construction must use safePath.
+    expect(oauthSource).not.toMatch(/path\.join\(/);
+    expect(oauthSource).not.toMatch(/path\.resolve\(/);
+    // The OAuth wiring's path construction (now in the helper) must use safePath.
+    expect(oauthSource).toContain("safePath(");
+    // The runtime file's remaining dataDir construction also uses safePath.
     const oauthSection = source.slice(
       source.indexOf("FIRST daemon-side OAuth wiring"),
-      source.indexOf("createAuthProvider({"),
+      source.indexOf("wireAuthProvider({"),
     );
     expect(oauthSection).toContain("safePath(");
   });
@@ -265,5 +277,231 @@ describe("setupSingleAgent structural parity", () => {
     // The function body should contain PerAgentConfigSchema.parse
     const fnBody = source.slice(fnStart);
     expect(fnBody).toContain("PerAgentConfigSchema.parse(");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DAG-05: context-engine mode-switch DIRECTION detection at the rebuild seam
+// ---------------------------------------------------------------------------
+
+describe("setupSingleAgent context-engine mode-switch detection (DAG-05)", () => {
+  const source = readRuntimeSource();
+  const typesSource = readFileSync(
+    join(__dirname, "setup-agents-types.ts"),
+    "utf-8",
+  );
+  const registrySource = readFileSync(
+    join(__dirname, "setup-agents-registry.ts"),
+    "utf-8",
+  );
+  // The detection + one-shot consume logic was extracted to
+  // setup-agents-mode-switch.ts (85-05 file-size split); the runtime file calls
+  // detectAndRecordModeSwitch(...) + makeConsumePendingModeSwitch(...).
+  const modeSwitchSource = readFileSync(
+    join(__dirname, "setup-agents-mode-switch.ts"),
+    "utf-8",
+  );
+
+  it("SingleAgentDeps carries the daemon-level pendingModeSwitches Map", () => {
+    // The pending-switch carrier is a single shared Map keyed by agentId,
+    // set at the rebuild seam on a contextEngine.version change and consumed
+    // one-shot by the DAG engine at the reconcile seam.
+    expect(typesSource).toContain("pendingModeSwitches");
+    // Map of agentId -> { from, to } with the closed pipeline|dag union.
+    expect(typesSource).toMatch(
+      /pendingModeSwitches:\s*Map<string,\s*\{\s*from:\s*"pipeline"\s*\|\s*"dag";\s*to:\s*"pipeline"\s*\|\s*"dag"\s*\}>/,
+    );
+  });
+
+  it("constructs pendingModeSwitches as a shared new Map() in the registry deps", () => {
+    // A single shared Map: the daemon reload re-invokes setupSingleAgent with
+    // the SAME deps object, so the Map persists across reloads.
+    expect(registrySource).toContain("pendingModeSwitches: new Map()");
+  });
+
+  it("reads the PRIOR contextEngine.version BEFORE overwriting container.config.agents[agentId]", () => {
+    const fnStart = source.indexOf("export async function setupSingleAgent(");
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnBody = source.slice(fnStart);
+
+    // The detection reads the prior version off the still-present prior config
+    // and compares it to the new effective version.
+    expect(fnBody).toContain("contextEngine?.version");
+    expect(fnBody).toContain("pendingModeSwitches");
+
+    // CRITICAL ORDERING: the prevVersion read must happen BEFORE the
+    // overwrite at `container.config.agents[agentId] = effectiveConfig`,
+    // because that overwrite destroys the prior config we compare against.
+    const prevVersionRead = fnBody.indexOf("container.config.agents[agentId]?.contextEngine?.version");
+    const overwrite = fnBody.indexOf("container.config.agents[agentId] = effectiveConfig");
+    expect(prevVersionRead).toBeGreaterThan(-1);
+    expect(overwrite).toBeGreaterThan(-1);
+    expect(prevVersionRead).toBeLessThan(overwrite);
+  });
+
+  it("guards the pending-switch write on a REAL version change (prior defined AND prior !== new)", () => {
+    // The guard + INFO log live in the extracted detectAndRecordModeSwitch.
+    // The set is guarded so a first build (no prior version) and a no-change
+    // reload record nothing — only prev!=new fires. fullImport is NOT the trigger.
+    expect(modeSwitchSource).toMatch(/prevVersion\s*&&\s*prevVersion\s*!==\s*resolvedNew/);
+    expect(modeSwitchSource).toMatch(/pendingModeSwitches\.set\(\s*agentId/);
+    // The new version falls back to the schema default when unset (parity with
+    // the per-turn engine build which reads ContextEngineConfigSchema.parse({})).
+    expect(modeSwitchSource).toContain("ContextEngineConfigSchema");
+    // The runtime file delegates the detection to the extracted helper.
+    expect(source).toContain("detectAndRecordModeSwitch(");
+  });
+
+  it("threads a one-shot consumePendingModeSwitch closure into createPiExecutor deps", () => {
+    const depsStart = source.indexOf("createPiExecutor(effectiveConfig, {");
+    const depsEnd = source.indexOf("});", depsStart);
+    expect(depsStart).toBeGreaterThan(-1);
+    expect(depsEnd).toBeGreaterThan(depsStart);
+    const depsBlock = source.slice(depsStart, depsEnd);
+    // The executor receives the consume-and-clear callback (built by the
+    // extracted makeConsumePendingModeSwitch) so the DAG engine can emit
+    // context:mode_switched once at the next reconcile.
+    expect(depsBlock).toContain("consumePendingModeSwitch");
+    expect(depsBlock).toContain("makeConsumePendingModeSwitch(deps.pendingModeSwitches)");
+    // The closure deletes the entry on read (one-shot semantics).
+    expect(modeSwitchSource).toContain("pendingModeSwitches.delete(");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OBS-02: recall-trace config threading (Phase 86)
+//
+// The recall-trace recorder + sanitization pipeline are built and proven in
+// isolation, but the daemon never threaded diagnostics.recallTrace into the
+// executor — so buildRecallTrace always received cfg=undefined → returned null
+// → ZERO recall traces were written even with diagnostics.recallTrace.enabled:
+// true. The fix mirrors the EXISTING cacheTraceConfig wiring: a parallel
+// `recallTraceConfig: container.config.diagnostics?.recallTrace` entry inside
+// the createPiExecutor deps object.
+// ---------------------------------------------------------------------------
+
+describe("setupSingleAgent recall-trace config wiring (OBS-02)", () => {
+  const source = readRuntimeSource();
+
+  it("threads container.config.diagnostics.recallTrace into createPiExecutor deps as recallTraceConfig", () => {
+    // Production-wiring regression guard. RED on pre-patch code: the
+    // createPiExecutor deps block carried cacheTraceConfig but NOT
+    // recallTraceConfig, so the recall trace was structurally unreachable
+    // from operator YAML. The assertion is scoped to the deps block (not the
+    // whole file) so a stray comment elsewhere cannot satisfy it.
+    const depsStart = source.indexOf("createPiExecutor(effectiveConfig, {");
+    const depsEnd = source.indexOf("});", depsStart);
+    expect(depsStart).toBeGreaterThan(-1);
+    expect(depsEnd).toBeGreaterThan(depsStart);
+
+    const depsBlock = source.slice(depsStart, depsEnd);
+    expect(depsBlock).toContain("recallTraceConfig");
+    expect(depsBlock).toContain("container.config.diagnostics");
+    // The field reads diagnostics.recallTrace specifically (mirrors the
+    // sibling cacheTraceConfig line which reads diagnostics.cacheTrace).
+    expect(depsBlock).toMatch(
+      /recallTraceConfig:\s*container\.config\.diagnostics\??\.recallTrace/,
+    );
+  });
+
+  it("keeps the cacheTraceConfig wiring intact alongside recallTraceConfig (no regression)", () => {
+    // The two diagnostics threads are siblings; the new wiring must not
+    // displace the existing cache-trace thread.
+    const depsStart = source.indexOf("createPiExecutor(effectiveConfig, {");
+    const depsEnd = source.indexOf("});", depsStart);
+    const depsBlock = source.slice(depsStart, depsEnd);
+    expect(depsBlock).toContain("cacheTraceConfig");
+    expect(depsBlock).toMatch(
+      /cacheTraceConfig:\s*container\.config\.diagnostics\??\.cacheTrace/,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 92: per-agent effective rag.rerank.enabled precedence (RERANK-01) +
+// the modelPresent threading daemon -> registry -> types -> runtime (Pitfall 4).
+// ---------------------------------------------------------------------------
+
+describe("setupSingleAgent rerank auto-on precedence (RERANK-01)", () => {
+  const source = readRuntimeSource();
+  const typesSource = readFileSync(
+    join(__dirname, "setup-agents-types.ts"),
+    "utf-8",
+  );
+  const registrySource = readFileSync(
+    join(__dirname, "setup-agents-registry.ts"),
+    "utf-8",
+  );
+  // The composition root threads the SAME modelPresent boolean setup-memory
+  // computed; daemon.ts wires it into the setupAgents call.
+  const daemonSource = readFileSync(
+    join(__dirname, "..", "..", "daemon.ts"),
+    "utf-8",
+  );
+
+  it("imports resolveEffectiveRerank from ./setup-agents-tooling.js", () => {
+    // The pure precedence fn lives beside its sibling resolveAgentModel (Plan 01).
+    expect(source).toMatch(
+      /import\s*\{[^}]*resolveEffectiveRerank[^}]*\}\s*from\s*"\.\/setup-agents-tooling\.js"/s,
+    );
+  });
+
+  it("computes effectiveConfig.rag.rerank.enabled via resolveEffectiveRerank (spread preserves siblings)", () => {
+    const fnStart = source.indexOf("export async function setupSingleAgent(");
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnBody = source.slice(fnStart);
+    // The rag spread must nest correctly so maxCandidates/minResults/timeoutMs
+    // survive and only `enabled` is overridden by the precedence call.
+    expect(fnBody).toContain(
+      "rerank: { ...agentConfig.rag.rerank, enabled: resolveEffectiveRerank(",
+    );
+  });
+
+  it("feeds resolveEffectiveRerank the GENUINE raw tri-state signal, not the zod-defaulted parse (CR-01)", () => {
+    // CR-01 fix: the precedence MUST read the RAW (pre-Zod-default) rerank value.
+    // The parsed agentConfig.rag.rerank.enabled is ALWAYS a concrete boolean
+    // (.default(false)), so reading it would erase the unset signal and make auto-on
+    // impossible. The raw value comes from the explicit `rawRerankEnabled` arg (hot-add)
+    // else the daemon-wide map on the container (boot path). The OLD broken code read
+    // `rawAgentConfig.rag?.rerank?.enabled` (a misnomer — that object was already parsed);
+    // assert that dead pattern is GONE.
+    const fnStart = source.indexOf("export async function setupSingleAgent(");
+    const fnBody = source.slice(fnStart);
+    expect(fnBody).not.toContain("rawAgentConfig.rag?.rerank?.enabled");
+    // The resolved raw value (rawRerank) is what feeds resolveEffectiveRerank.
+    const callStart = fnBody.indexOf("enabled: resolveEffectiveRerank(");
+    const callSlice = fnBody.slice(callStart, callStart + 80);
+    expect(callSlice).toContain("rawRerank");
+    expect(callSlice).toContain("deps.rerankerModelPresent");
+    // rawRerank resolves from the explicit arg first, then the container raw map.
+    expect(fnBody).toContain("rawRerankEnabled !== undefined");
+    expect(fnBody).toContain("container.rawAgentRerankEnabled?.get(agentId)");
+  });
+
+  it("threads the raw rerank signal from the boot loop and hot-add into setupSingleAgent (one source)", () => {
+    // The boot loop passes container.rawAgentRerankEnabled.get(agentId) as the 4th arg.
+    expect(registrySource).toContain("container.rawAgentRerankEnabled?.get(agentId)");
+    // The build gate (setup-memory) reads the SAME raw map, so the two gates can't desync.
+    const memorySource = readFileSync(
+      join(__dirname, "..", "setup-memory.ts"),
+      "utf-8",
+    );
+    expect(memorySource).toContain("container.rawAgentRerankEnabled");
+  });
+
+  it("still writes the effective config back to container.config.agents[agentId] (downstream contract)", () => {
+    // The precedence must flow through the EXISTING write-back, not mutate
+    // agentConfig in place — downstream consumers read container.config.agents.
+    expect(source).toContain("container.config.agents[agentId] = effectiveConfig");
+  });
+
+  it("threads rerankerModelPresent through SingleAgentDeps, AgentsArgs, the build literal, and daemon.ts (Pitfall 4: one source)", () => {
+    // SingleAgentDeps interface carries it (beside rerankerPort).
+    expect(typesSource).toContain("rerankerModelPresent");
+    // AgentsArgs carries it AND the SingleAgentDeps build literal forwards it.
+    expect(registrySource).toContain("rerankerModelPresent");
+    expect(registrySource).toContain("rerankerModelPresent: deps.rerankerModelPresent");
+    // daemon.ts destructures it off the setupMemory result AND passes it to setupAgents.
+    expect(daemonSource).toContain("rerankerModelPresent");
   });
 });

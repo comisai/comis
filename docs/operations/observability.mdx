@@ -6,7 +6,7 @@ icon: "chart-line"
 
 A fleet-wide bug must be diagnosable from one structured artifact with one command in under five minutes.
 
-This page documents the observability foundations. It covers the trajectory layer, the 55-entry bridge mapping, lifecycle envelopes, forensic INFO promotions, the dedup detector, boot invariants, the alert budget, `step:` discipline, log rotation, and the bundle export entry point. If you are new to Comis observability, start here; then follow the cross-links for operator workflows.
+This page documents the observability foundations. It covers the trajectory layer, the 55-entry bridge mapping, lifecycle envelopes, forensic INFO promotions, the dedup detector, boot invariants, the alert budget, `step:` discipline, log rotation, the memory & recall diagnostics (recall-trace artifact, recall events, degradation signals), and the bundle export entry point. If you are new to Comis observability, start here; then follow the cross-links for operator workflows.
 
 <CardGroup cols={2}>
   <Card title="Incident Bundle" icon="folder-tree" href="/operations/incident-bundle">
@@ -416,7 +416,83 @@ All four signals — in a single terminal session. Time from user complaint to i
 
 ---
 
-## 15. Existing Tracking Surfaces (pre-existing, preserved for completeness)
+## 15. Memory & Recall Diagnostics
+
+Recall is the path that decides *which* memories enter the prompt. When recall surprises you — the wrong memory injected, or recall feeling slow — these are the signals that explain it. The runbook for *acting* on them lives in [Troubleshooting → "Why did recall pick X / why is recall slow?"](/operations/troubleshooting#memory-recall-issues); this section documents the artifacts and events those workflows read.
+
+### 15.1 The recall-trace artifact (opt-in)
+
+The recall trace is a per-recall JSONL artifact that records the ranking preview for each recall: which lanes matched, the fused order, the pre/post-rerank scores, the recency/temporal/proof/trust score components, and the include/exclude reason for every candidate. It is the sibling of the [cache trace](/agents/cache) — same writer family, same rotation policy — but **opt-in**.
+
+| Property | Value |
+|---|---|
+| Config key | `diagnostics.recallTrace.enabled` |
+| Default | `false` — **opt-in** (the only diagnostics writer that ships off; `trajectory` and `cacheTrace` default `true`) |
+| Default path | `~/.comis/logs/recall-trace.jsonl` (override via `diagnostics.recallTrace.filePath`; `~` expansion supported) |
+| File cap | `52428800` (50 MB), via `diagnostics.recallTrace.maxFileBytes` |
+| Env hard-off | `COMIS_DISABLE_RECALL_TRACE` disables the writer regardless of config |
+| Sanitization | **Always full-sanitized.** Every payload runs through `sanitizeForPersistence` (bound → sanitize → redact) before it touches disk |
+
+It is OFF by default because it records per-recall ranking previews you only want captured during a focused debug session. Enable it for a session, reproduce the surprising recall, then turn it back off:
+
+```yaml
+# config.yaml
+diagnostics:
+  recallTrace:
+    enabled: true          # opt-in (default false) — redacted, bounded JSONL
+    # filePath: ~/.comis/logs/recall-trace.jsonl   # optional override
+    # maxFileBytes: 52428800                        # 50 MB cap (default)
+```
+
+<Warning>
+**There is no raw-content toggle.** Unlike `cacheTrace` (which has `includeMessages` / `includeSystem` / `includePrompt` opt-ins), `recallTrace` has **no** such field. Every payload is full-sanitized before disk — query text, memory bodies, secrets, and absolute paths never reach the file. This is a deliberate security property, not a missing feature: there is no supported way to persist raw recall content. Do not expect a flag to disable sanitization — adding one would be a security regression.
+</Warning>
+
+Read the trace with [`comis memory recall-trace <session>`](/reference/cli#comis-memory) — `--format json` for the full per-record ranking breakdown, the table view for correlation keys.
+
+### 15.2 Recall events (direct-emit — not bridge-mapped)
+
+Five typed events report recall and curation activity on the event bus. They are emitted **directly** at a single canonical site each — they are **not** part of the [§4 bridge mapping](#4-bridge-mapping-55-entries) (the disjoint-set invariant in `test/architecture/trajectory-event-types-known.test.ts` explicitly allowlists them as not-trajectory-mapped, so the 55-entry bridge count is unaffected).
+
+Every payload is **counts, booleans, and IDs only** — never query text, memory bodies, or entity names (AGENTS.md §2.7). The per-recall ranking detail lives in the opt-in recall-trace artifact above, not on the bus.
+
+| Event | Fires | Key fields |
+|---|---|---|
+| `memory:recalled` | Once per recall, after fuse/rerank/score | `lanes`, `ftsCandidates`, `vectorCandidates`, `entityCandidates`, `finalCount`, `rerankerAvailable`, `durationMs` |
+| `memory:reranked` | When a rerank stage ran (rerank opt-in) | `candidateCount`, `hitCount`, `rerankerAvailable`, `timedOut`, `fellBack`, `durationMs` |
+| `memory:entities_linked` | After an entity resolve-and-link pass (memory-review job) | `entityCount`, `newEntities`, `durationMs` |
+| `memory:consolidated` | After a consolidation run (consolidation job) | `clustersProcessed`, `observationsCreated`, `dedupHits`, `durationMs` |
+| `context:mode_switched` | On an actual `pipeline`⇄`dag` engine direction change | `from`, `to`, `fullImport`, `importedCount`, `durationMs` |
+
+`memory:recalled.finalCount == 0` means recall returned nothing for that turn. `memory:reranked.fellBack` / `.timedOut` flag the graceful-degradation paths (see below). `context:mode_switched` fires only on a real direction change — never on a brand-new DAG-default conversation — and reports the one-time reconciliation `importedCount`.
+
+### 15.3 No-silent-degradation signals (`errorKind` + `hint`)
+
+Recall degrades gracefully, and **every degradation path is explicit** — it emits a WARN carrying both `errorKind` and `hint` (the same contract as the rest of the daemon; see [Logging → Error Classification](/operations/logging#error-classification)). There is no silent fallback: if recall quietly drops to a cheaper path, there is a log line that says so and why.
+
+| Degradation | What happened | Surfaced as |
+|---|---|---|
+| Reranker unavailable | The cross-encoder reranker was not built/loaded (e.g. rerank off, or the GGUF failed to load) — recall uses the fusion-ranked order | WARN with `errorKind` + `hint`; `memory:reranked.fellBack: true`, `rerankerAvailable: false` |
+| Reranker timeout | The reranker exceeded its budget (`rag.rerank.timeoutMs`, default 800 ms) — recall falls back to the fusion-ranked order | WARN with `errorKind` + `hint`; `memory:reranked.timedOut: true`, `fellBack: true` |
+| Vector index unavailable | The vector lane could not run — recall falls back to FTS-only | WARN with `errorKind` + `hint`; `memory:recalled.vectorCandidates: 0` |
+| Candidate missing embedding | A candidate had no embedding to score on the vector lane — it is handled, not dropped silently | WARN with `errorKind` + `hint` |
+| Invalid extraction / consolidation | An extraction or consolidation step produced an unusable result — skipped with an explicit signal | WARN with `errorKind` + `hint` |
+
+For **aggregate** health (rather than a single recall), point at the `comis memory stats` recall-counter overlay: lane usage, rerank-fallback rate, consolidation throughput, and recall hit-rate. A climbing rerank-fallback rate, for instance, says the reranker is timing out across the fleet, not just on one turn. The overlay is best-effort — a daemon that has not wired the counters still renders base stats.
+
+```bash
+# Aggregate recall health (lane usage, rerank-fallback rate, hit-rate)
+node packages/cli/dist/cli.js memory stats
+
+# Per-recall ranking detail for a session (enable recallTrace first)
+node packages/cli/dist/cli.js memory recall-trace <session> --format json
+```
+
+See the [CLI reference](/reference/cli#comis-memory) for the full `comis memory` surface and the [Troubleshooting runbook](/operations/troubleshooting#memory-recall-issues) for the diagnosis flow.
+
+---
+
+## 16. Existing Tracking Surfaces (pre-existing, preserved for completeness)
 
 <Note>
 The following tracking surfaces predate the observability work above and continue to operate as before. They are referenced by the web dashboard at [/web-dashboard/observability](/web-dashboard/observability).
@@ -466,7 +542,7 @@ Breakpoint budget auditing (INFO before each Anthropic API call), placement resu
 
 ---
 
-## 16. Related Pages
+## 17. Related Pages
 
 <CardGroup cols={2}>
   <Card title="Logging" icon="file-lines" href="/operations/logging">

@@ -31,6 +31,7 @@ import { createContextStore, type ContextStore } from "@comis/memory";
 import { TypedEventBus, ContextEngineConfigSchema } from "@comis/core";
 import {
   reconcileJsonlToDag,
+  createContextEngine,
   createDagContextEngine,
   runDagCompaction,
   shouldCompact,
@@ -41,6 +42,7 @@ import {
   resolveFreshTailBoundary,
 } from "@comis/agent";
 import type {
+  ContextEngineDeps,
   DagContextEngineDeps,
   DagCompactionConfig,
   DagCompactionDeps,
@@ -351,10 +353,22 @@ describe("Compaction Cycle (Originals Recoverable)", () => {
 });
 
 // =========================================================================
-// Mode Switch (Pipeline to DAG)
+// Mode Switch — §13.2 row-8 taxonomy (8 cases) + cross-cutting assertions
+//
+// The full edge-case taxonomy for engine mode switching (design §13.2 row 8 /
+// CONTEXT.md "§19"). Covers BOTH directions (pipeline->dag full import and
+// dag->pipeline non-destructive re-read), the full-vs-incremental import-cost
+// distinction the context:mode_switched event reports, the lost-anchor graceful
+// skip (§8.5), and a lossless pipeline->dag->pipeline round-trip (DAG-04).
+//
+// Cross-cutting: the context:mode_switched event end-to-end through
+// createDagContextEngine (fires once on a real switch, suppressed for a
+// brand-new DAG conversation — DAG-05) and the DAG-03 turn-boundary guarantee
+// (an in-flight, closure-captured engine is unaffected by a later rebuild;
+// the switch lands at the NEXT engine build, never mid-turn).
 // =========================================================================
 
-describe("Mode Switch (Pipeline to DAG)", () => {
+describe("Mode Switch (8-case taxonomy + event + turn-boundary)", () => {
   let db: InstanceType<typeof Database>;
   let store: ContextStore;
   let conversationId: string;
@@ -370,6 +384,7 @@ describe("Mode Switch (Pipeline to DAG)", () => {
     db.close();
   });
 
+  // ---- Case 1 (existing): pipeline->dag full import ----
   it("mode switch triggers fullImport=true and imports all pipeline messages", () => {
     // Step 1: Simulate pipeline messages (exist in JSONL but not in DAG)
     const pipelineMessages = buildSyntheticMessages(10);
@@ -391,6 +406,7 @@ describe("Mode Switch (Pipeline to DAG)", () => {
     expect(result.imported).toBe(10);
   });
 
+  // ---- Case 2 (existing): DAG post-switch state ----
   it("DAG state is correct after mode switch", () => {
     const pipelineMessages = buildSyntheticMessages(10);
     reconcileJsonlToDag(pipelineMessages, store, db, conversationId, estimateTokens, mockLogger);
@@ -409,6 +425,7 @@ describe("Mode Switch (Pipeline to DAG)", () => {
     }
   });
 
+  // ---- Case 3 (existing): integrity passes after switch ----
   it("integrity check passes after mode switch", () => {
     const pipelineMessages = buildSyntheticMessages(10);
     reconcileJsonlToDag(pipelineMessages, store, db, conversationId, estimateTokens, mockLogger);
@@ -420,6 +437,7 @@ describe("Mode Switch (Pipeline to DAG)", () => {
     expect(report.errorsLogged).toBe(0);
   });
 
+  // ---- Case 4 (existing): subsequent reconcile is incremental ----
   it("subsequent reconciliation is incremental (not full)", () => {
     const pipelineMessages = buildSyntheticMessages(10);
     reconcileJsonlToDag(pipelineMessages, store, db, conversationId, estimateTokens, mockLogger);
@@ -440,6 +458,316 @@ describe("Mode Switch (Pipeline to DAG)", () => {
     expect(result2.fullImport).toBe(false);
     expect(result2.imported).toBe(2);
   });
+
+  // -----------------------------------------------------------------------
+  // Helpers for the dag->pipeline direction (cross-cutting cases below)
+  // -----------------------------------------------------------------------
+
+  // A pipeline-mode engine over the SAME JSONL. The §8.2 invariant: the JSONL
+  // session is the source of truth and the ctx_* tables are a derived cache the
+  // dag layers never write back — so a dag->pipeline switch re-reads the FULL
+  // original content. The DAG annotator (which inserts the
+  // "Use ctx_inspect to view." placeholder, dag-annotator.ts:93) runs ONLY in
+  // dag mode; the pipeline path never inserts it.
+  function buildPipelineEngine() {
+    const config = ContextEngineConfigSchema.parse({ enabled: true, version: "pipeline" });
+    const deps: ContextEngineDeps = {
+      logger: mockLogger,
+      getModel: () => ({ reasoning: false, contextWindow: 128_000, maxTokens: 4096 }),
+      eventBus: new TypedEventBus(),
+      agentId: "test-agent",
+      sessionKey: "test:u:c",
+    };
+    return createContextEngine(config, deps);
+  }
+
+  // A dag-mode engine bound to this test's live :memory: store. `eventBus` and
+  // `consumePendingModeSwitch` are injectable so the cross-cutting cases can
+  // observe context:mode_switched and drive the one-shot switch carrier.
+  function buildDagEngine(opts?: {
+    eventBus?: { emit(event: string, data: unknown): void };
+    consumePendingModeSwitch?: DagContextEngineDeps["consumePendingModeSwitch"];
+  }) {
+    const config = ContextEngineConfigSchema.parse({
+      enabled: true,
+      version: "dag",
+      freshTailTurns: 3,
+    });
+    const deps: DagContextEngineDeps = {
+      logger: mockLogger,
+      getModel: () => ({ reasoning: false, contextWindow: 128_000, maxTokens: 4096 }),
+      eventBus: opts?.eventBus ?? new TypedEventBus(),
+      agentId: "test-agent",
+      sessionKey: "test:u:c",
+      contextStore: store,
+      db,
+      conversationId,
+      estimateTokens,
+      consumePendingModeSwitch: opts?.consumePendingModeSwitch,
+    };
+    return createDagContextEngine(config, deps);
+  }
+
+  function joinContent(messages: Array<{ content: unknown }>): string {
+    return messages
+      .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
+      .join("\n");
+  }
+
+  // ---- Case 5 (ADD): dag->pipeline re-reads full content, NO orphaned stubs (DAG-04) ----
+  it("case 5: dag->pipeline re-reads full content with no orphaned ctx_inspect placeholders", async () => {
+    // Establish the dag state (pipeline->dag full import).
+    const pipelineMessages = buildSyntheticMessages(10);
+    reconcileJsonlToDag(pipelineMessages, store, db, conversationId, estimateTokens, mockLogger);
+
+    // Switch BACK to pipeline: build a pipeline engine over the SAME JSONL.
+    const pipelineEngine = buildPipelineEngine();
+    const out = await pipelineEngine.transformContext(
+      pipelineMessages.map((m) => ({ role: m.role, content: m.content })),
+    );
+
+    const joined = joinContent(out);
+    // Full original content survives the switch (no data loss; re-read from JSONL).
+    for (let i = 0; i < pipelineMessages.length; i++) {
+      expect(joined).toContain(`Message ${i + 1}`);
+    }
+    // No DAG annotator placeholder leaked into the pipeline output.
+    expect(joined).not.toContain("Use ctx_inspect to view.");
+    expect(joined).not.toContain("[Tool result from");
+  });
+
+  // ---- Case 6 (ADD): full-vs-incremental import-cost distinction ----
+  it("case 6: switch into an empty DAG => fullImport:true; re-entry into a populated DAG => fullImport:false", () => {
+    const messages = buildSyntheticMessages(8);
+
+    // Switch into an EMPTY dag => the one-time full-import cost.
+    const first = reconcileJsonlToDag(
+      messages,
+      store,
+      db,
+      conversationId,
+      estimateTokens,
+      mockLogger,
+    );
+    expect(first.fullImport).toBe(true);
+    expect(first.imported).toBe(8);
+
+    // Re-entry into a POPULATED dag after appending => incremental, NOT full.
+    const more = [
+      ...messages,
+      createAgentMessage("user", "Ninth message. " + "x".repeat(150)),
+    ];
+    const second = reconcileJsonlToDag(
+      more,
+      store,
+      db,
+      conversationId,
+      estimateTokens,
+      mockLogger,
+    );
+    expect(second.fullImport).toBe(false);
+    expect(second.imported).toBe(1);
+  });
+
+  // ---- Case 7 (ADD): lost-anchor graceful skip (§8.5) ----
+  it("case 7: lost-anchor reconcile returns a well-formed result without throwing", () => {
+    // Populate the dag from an initial JSONL set.
+    const initial = buildSyntheticMessages(6);
+    reconcileJsonlToDag(initial, store, db, conversationId, estimateTokens, mockLogger);
+
+    // Reconcile a DIFFERENT JSONL whose content shares no hash with the last
+    // dag row (the anchor is gone — e.g. JSONL was rotated/truncated). The
+    // anchor scan finds nothing (dag-reconciliation.ts:231) and skips gracefully.
+    const rotated = [
+      createAgentMessage("user", "Totally different content A. " + "q".repeat(150)),
+      createAgentMessage("assistant", "Totally different content B. " + "q".repeat(150)),
+    ];
+
+    let result!: ReconciliationResult;
+    expect(() => {
+      result = reconcileJsonlToDag(
+        rotated,
+        store,
+        db,
+        conversationId,
+        estimateTokens,
+        mockLogger,
+      );
+    }).not.toThrow();
+
+    // Well-formed ReconciliationResult, no throw, no destructive change.
+    expect(typeof result.fullImport).toBe("boolean");
+    expect(typeof result.imported).toBe("number");
+    expect(result.conversationId).toBe(conversationId);
+    // Graceful skip path imports nothing and is not a full import.
+    expect(result.fullImport).toBe(false);
+    expect(result.imported).toBe(0);
+    // Original dag rows are untouched (no data loss on a lost anchor).
+    expect(store.getMessagesByConversation(conversationId).length).toBe(6);
+  });
+
+  // ---- Case 8 (ADD): pipeline->dag->pipeline round-trip is lossless (DAG-04, T-85-15) ----
+  it("case 8: round-trip pipeline->dag->pipeline is lossless and the switch back to dag is non-destructive", async () => {
+    const original = buildSyntheticMessages(10);
+
+    // (a) pipeline -> dag: full import populates the ctx_* cache.
+    const toDag = reconcileJsonlToDag(
+      original,
+      store,
+      db,
+      conversationId,
+      estimateTokens,
+      mockLogger,
+    );
+    expect(toDag.fullImport).toBe(true);
+    const afterImportCount = store.getMessagesByConversation(conversationId).length;
+    expect(afterImportCount).toBe(10);
+
+    // (b) dag -> pipeline: re-read full content; the ctx_* tables are LEFT INTACT
+    // (the dag layers never write the session — §8.2). No orphaned stubs.
+    const pipelineEngine = buildPipelineEngine();
+    const pipelineOut = await pipelineEngine.transformContext(
+      original.map((m) => ({ role: m.role, content: m.content })),
+    );
+    const pipelineJoined = joinContent(pipelineOut);
+    expect(pipelineJoined).not.toContain("Use ctx_inspect to view.");
+    // ctx_* survived the dag->pipeline switch: row count unchanged.
+    expect(store.getMessagesByConversation(conversationId).length).toBe(afterImportCount);
+
+    // (c) switch BACK to dag: reconcile again. Because the ctx_* cache survived,
+    // this is INCREMENTAL (fullImport:false) — NOT a destructive re-import.
+    const backToDag = reconcileJsonlToDag(
+      original,
+      store,
+      db,
+      conversationId,
+      estimateTokens,
+      mockLogger,
+    );
+    expect(backToDag.fullImport).toBe(false);
+    expect(backToDag.imported).toBe(0);
+
+    // Final content equals the original — no data loss in EITHER direction.
+    const finalMessages = store.getMessagesByConversation(conversationId);
+    expect(finalMessages.length).toBe(10);
+    for (let i = 0; i < original.length; i++) {
+      expect(finalMessages[i].content).toContain(`Message ${i + 1}`);
+    }
+  });
+
+  // ---- Cross-cutting: context:mode_switched emitted on a REAL switch (DAG-05) ----
+  it("emits context:mode_switched ONCE on a real operator switch with the right direction + cost", async () => {
+    const messages = buildSyntheticMessages(10);
+
+    const emitted: Array<{ event: string; data: Record<string, unknown> }> = [];
+    const eventBus = {
+      emit: vi.fn((event: string, data: unknown) => {
+        emitted.push({ event, data: data as Record<string, unknown> });
+      }),
+    };
+
+    // One-shot carrier: returns {from:"pipeline",to:"dag"} the FIRST time, then
+    // clears (mirrors the daemon's delete-on-read consumePendingModeSwitch).
+    let pending: { from: "pipeline" | "dag"; to: "pipeline" | "dag" } | undefined = {
+      from: "pipeline",
+      to: "dag",
+    };
+    const consumePendingModeSwitch = vi.fn((_agentId: string) => {
+      const v = pending;
+      pending = undefined;
+      return v;
+    });
+
+    const engine = buildDagEngine({ eventBus, consumePendingModeSwitch });
+    await engine.transformContext(messages);
+
+    const switchEvents = emitted.filter((e) => e.event === "context:mode_switched");
+    expect(switchEvents.length).toBe(1);
+    const payload = switchEvents[0].data;
+    expect(payload.from).toBe("pipeline");
+    expect(payload.to).toBe("dag");
+    expect(payload.conversationId).toBe(conversationId);
+    expect(payload.agentId).toBe("test-agent");
+    // Real one-time cost rides the payload: this was a full import of 10 messages.
+    expect(payload.fullImport).toBe(true);
+    expect(payload.importedCount).toBe(10);
+    expect(typeof payload.durationMs).toBe("number");
+    expect(typeof payload.timestamp).toBe("number");
+
+    // One-shot: a SECOND turn (carrier now empty) emits NO further switch event.
+    await engine.transformContext(messages);
+    const switchEventsAfter = emitted.filter((e) => e.event === "context:mode_switched");
+    expect(switchEventsAfter.length).toBe(1);
+  });
+
+  // ---- Cross-cutting: NO false context:mode_switched for a brand-new DAG convo ----
+  it("does NOT emit context:mode_switched for a brand-new DAG conversation (fullImport is the cost, not the trigger)", async () => {
+    const messages = buildSyntheticMessages(10);
+
+    const emitted: string[] = [];
+    const eventBus = {
+      emit: vi.fn((event: string, _data: unknown) => {
+        emitted.push(event);
+      }),
+    };
+
+    // Brand-new DAG conversation: no operator switch was recorded, so the
+    // carrier returns undefined even though this first reconcile is a fullImport.
+    const consumePendingModeSwitch = vi.fn((_agentId: string) => undefined);
+
+    const engine = buildDagEngine({ eventBus, consumePendingModeSwitch });
+    const out = await engine.transformContext(messages);
+
+    // It DID do a full import (the common DAG-default first-turn case)...
+    expect(out.length).toBeGreaterThan(0);
+    expect(store.getMessagesByConversation(conversationId).length).toBe(10);
+    // ...but emitted NO mode_switched event — no false "switched from pipeline".
+    expect(emitted).not.toContain("context:mode_switched");
+  });
+
+  // ---- Cross-cutting: DAG-03 turn-boundary (never mid-turn) ----
+  it("DAG-03: an in-flight (closure-captured) dag engine is unaffected by a later pipeline rebuild; the next build uses pipeline", async () => {
+    const messages = buildSyntheticMessages(10);
+    reconcileJsonlToDag(messages, store, db, conversationId, estimateTokens, mockLogger);
+
+    // Engine A is the "in-flight turn" executor — built under version:"dag" and
+    // captured. (pi-executor.ts:144 captures config in the execute() closure.)
+    const engineA = buildDagEngine();
+
+    // An operator reload now changes contextEngine.version to "pipeline" and the
+    // daemon REBUILDS the executor (setup-agents-runtime.ts:460). That produces a
+    // NEW engine B — it does NOT mutate the already-captured engine A.
+    const engineB = buildPipelineEngine();
+
+    // Engine A (the in-flight turn) still behaves as DAG: its output carries the
+    // DAG recall guidance the dag assembler injects. Its closure config is
+    // unchanged by B's construction — the switch never applies mid-turn.
+    const outA = await engineA.transformContext(messages);
+    const joinedA = joinContent(outA);
+    expect(joinedA).toContain("ctx_search");
+
+    // The NEXT build (engine B) takes the pipeline path: plain re-read, NO DAG
+    // recall-guidance preamble (the switch applies at the next turn boundary).
+    const outB = await engineB.transformContext(
+      messages.map((m) => ({ role: m.role, content: m.content })),
+    );
+    const joinedB = joinContent(outB);
+    expect(joinedB).not.toContain("ctx_search");
+    // Pipeline still has the full original content (lossless).
+    for (let i = 0; i < messages.length; i++) {
+      expect(joinedB).toContain(`Message ${i + 1}`);
+    }
+  });
+
+  // ---- Cross-cutting: tool-set flip (§8.1 force-include) — coverage note ----
+  // The end-to-end tool-set flip (dag mode force-includes ctx_* under a
+  // restricted profile; pipeline mode does not) is proven at the UNIT level in
+  // Plan 02's setup-tools.test.ts (the §8.1 force-include in setup-tools.ts:587).
+  // Standing up the full daemon platform-tool provider here — which is the only
+  // place allowedNames is computed — would violate this file's in-process,
+  // no-daemon pattern (TESTING.md). The flip is therefore asserted where the
+  // logic lives (the setup-tools unit suite), not duplicated through a daemon
+  // harness here. (See SUMMARY: tool-set-flip coverage location.)
 });
 
 // =========================================================================

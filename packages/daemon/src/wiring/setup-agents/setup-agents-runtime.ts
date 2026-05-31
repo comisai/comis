@@ -36,7 +36,6 @@ import {
   createComisSessionManager,
   cleanupStaleLocks,
   createAuthStorageAdapter,
-  createAuthProvider,
   createModelRegistryAdapter,
   registerCustomProviders,
   createAuthProfileManager,
@@ -53,8 +52,13 @@ import {
   createRuntimeEligibilityContext,
   type SkillWatcherHandle,
 } from "@comis/skills";
-import { resolveAgentModel, deriveCanaryFallback } from "./setup-agents-tooling.js";
+import { resolveAgentModel, deriveCanaryFallback, resolveEffectiveRerank } from "./setup-agents-tooling.js";
 import { createAcpWiring } from "./setup-acp-wiring.js";
+import {
+  detectAndRecordModeSwitch,
+  makeConsumePendingModeSwitch,
+} from "./setup-agents-mode-switch.js";
+import { wireAuthProvider } from "./setup-agents-oauth.js";
 import type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js";
 // Re-export types so consumers of the runtime leaf preserve the historic
 // import shape (parity-tests + setup-agents.test.ts inspect by name).
@@ -66,18 +70,22 @@ export type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js
 
 /**
  * Set up a single agent's executor and all supporting services.
- * Validates rawAgentConfig with PerAgentConfigSchema before any runtime setup.
+ * Validates agentConfig with PerAgentConfigSchema before any runtime setup.
  * On validation failure the Zod error propagates to the caller.
  * Extracted from the setupAgents() loop body so it can be called independently
  * for hot-add (adding an agent at runtime without daemon restart).
+ *
+ * `rawRerankEnabled` is the RAW (pre-Zod-default) `rag.rerank.enabled`
+ * (`undefined` = operator unset) — see the resolution site below (CR-01).
  */
 export async function setupSingleAgent(
   agentId: string,
-  rawAgentConfig: PerAgentConfig,
+  agentConfigInput: PerAgentConfig,
   deps: SingleAgentDeps,
+  rawRerankEnabled?: boolean | undefined,
 ): Promise<SingleAgentResult> {
   // Validate agent config with Zod before any runtime setup
-  const agentConfig = PerAgentConfigSchema.parse(rawAgentConfig);
+  const agentConfig = PerAgentConfigSchema.parse(agentConfigInput);
 
   const { container, memoryAdapter, agentLogger, resolvedAgentDir } = deps;
 
@@ -91,12 +99,43 @@ export async function setupSingleAgent(
   // which model got picked without having to read the resolver source.
   const modelsConfig = container.config.models;
   const resolved = resolveAgentModel(agentConfig, modelsConfig);
-  const effectiveConfig = { ...agentConfig, model: resolved.model, provider: resolved.provider };
+  // Phase 92 (RERANK-01/CR-01): EFFECTIVE rag.rerank.enabled — explicit wins, unset auto-ons
+  // iff the model is present. The explicit signal MUST be RAW (parsed agentConfig defaults
+  // unset to false, erasing it): explicit arg (hot-add) else the daemon-wide container map
+  // (boot) — the SAME source the build gate reads (T-92-06/WR-03). Spread keeps sibling knobs.
+  const rawRerank =
+    rawRerankEnabled !== undefined ? rawRerankEnabled : container.rawAgentRerankEnabled?.get(agentId);
+  const effectiveConfig = {
+    ...agentConfig,
+    model: resolved.model,
+    provider: resolved.provider,
+    rag: { ...agentConfig.rag, rerank: { ...agentConfig.rag.rerank, enabled: resolveEffectiveRerank(rawRerank, deps.rerankerModelPresent ?? false) } },
+  };
+
+  // DAG-05: detect a context-engine MODE SWITCH at the rebuild seam.
+  // container.config.agents[agentId] still holds the PRIOR config here (on a
+  // config-reload re-invocation); it is undefined on the very first build. We
+  // must read the prior version BEFORE the overwrite below (which destroys the
+  // prior config). The detection + INFO boundary log live in
+  // detectAndRecordModeSwitch (setup-agents-mode-switch.ts).
+  detectAndRecordModeSwitch(
+    agentId,
+    container.config.agents[agentId]?.contextEngine?.version,
+    effectiveConfig.contextEngine?.version,
+    deps.pendingModeSwitches,
+    agentLogger,
+  );
 
   // Write resolved values back to container.config.agents so all downstream
   // consumers (getConfig RPC, agents.get, session.status, REST /api/agents)
   // see the resolved model/provider instead of the placeholder "default".
   container.config.agents[agentId] = effectiveConfig;
+
+  // Phase 92 (RERANK-01): surface the locally-gated auto-on once at the boundary (booleans
+  // only — T-92-07). Now LIVE: fires ONLY for unset + model-present (not for explicit-on).
+  if (rawRerank === undefined && effectiveConfig.rag.rerank.enabled === true) {
+    agentLogger.info({ agentId, rerankAutoEnabled: true }, "Reranker auto-enabled (model present, unset config)");
+  }
 
   if (agentConfig.model !== resolved.model || agentConfig.provider !== resolved.provider) {
     const source =
@@ -171,21 +210,8 @@ export async function setupSingleAgent(
     customProviderEntries,
   });
 
-  // -------------------------------------------------------------------------
-  // FIRST daemon-side OAuth wiring.
-  //
-  // Closes the unwired-OAuth gap — the createAuthProvider symbol was exported
-  // by @comis/agent but never called by the daemon, so refreshed OAuth tokens
-  // lived only in the in-memory cache and silently disappeared on restart.
-  // AuthProviderConfig.oauth credentialStore + logger + dataDir are REQUIRED
-  // so this wiring is type-checked at compile time — future regressions
-  // surface as TS errors, not silent runtime failures.
-  //
-  // All path constructions in this block use safePath from @comis/core (NOT
-  // path.join — required by the ESLint security rule).
-  // When storage === "encrypted", the OAuth profile adapter SHARES the
-  // existing secretsDb handle from createSqliteSecretStore (no dual-handle).
-  // -------------------------------------------------------------------------
+  // FIRST daemon-side OAuth wiring — see setup-agents-oauth.ts for the full
+  // rationale (unwired-OAuth gap closure + closure-stability invariant).
   const oauthStorageMode = container.config.oauth.storage;
   const dataDirAbs =
     container.config.dataDir && container.config.dataDir.length > 0
@@ -198,65 +224,16 @@ export async function setupSingleAgent(
   // RpcDispatchDeps for the agents.update oauthProfiles existence check.
   const oauthCredentialStore = deps.oauthCredentialStore;
 
-  const authProvider = createAuthProvider({
-    secretManager: scopedManager,
-    additionalProviderKeys: undefined,
-    oauth: {
-      eventBus: container.eventBus,
-      credentialStore: oauthCredentialStore,
-      logger: agentLogger.child({ submodule: "oauth-token-manager" }),
-      dataDir: dataDirAbs,
-      // Same canonical FileLockPort instance the OAuth credential store
-      // was constructed with — both the file adapter and the token manager
-      // need cross-process serialization on the same .locks/ directory.
-      fileLock: deps.fileLock,
-      keyPrefix: "OAUTH_",
-      // Pass auth-profiles.json path when file adapter active so
-      // OAuthTokenManager can register the chokidar watcher and pick up
-      // CLI-written profiles within ~250ms without a daemon restart.
-      // Encrypted-mode: undefined -> no watcher; documented limitation.
-      watchPath:
-        oauthStorageMode === "file"
-          ? safePath(dataDirAbs, "auth-profiles.json")
-          : undefined,
-      // Closure-stability: the closure dereferences
-      // container.config.agents[agentId]?.oauthProfiles on every call.
-      // This is the only correct shape because:
-      //   1. The `container.config.agents[agentId] = effectiveConfig`
-      //      writeback above (search for that assignment in this file)
-      //      stores a NEW object built from
-      //      { ...agentConfig, model, provider } into the daemon's map.
-      //      The local `agentConfig` parameter diverges from the map
-      //      immediately at startup — capturing it would observe the
-      //      wrong value.
-      //   2. agents.update at agent-handlers.ts:341 executes
-      //      `deps.agents[agentId] = parsedConfig`, REPLACING the
-      //      reference at that key with a new validated object. Capturing
-      //      the local agentConfig parameter would miss this hot-update.
-      //   3. daemon.ts confirms `deps.agents` and `container.config.agents`
-      //      are THE SAME map object — search for
-      //      `agents: container.config.agents` in the RpcDispatchDeps
-      //      construction. The daemon holds a single per-process
-      //      Container.config instance.
-      // The map identity is stable; only the value at the agent key
-      // changes. The closure-evaluated dereference observes (1) at
-      // startup AND (2) on every agents.update without an event-bus
-      // invalidation or daemon restart, allowing the agents_manage tool to
-      // update without a daemon restart.
-      getAgentOauthProfiles: () =>
-        container.config.agents?.[agentId]?.oauthProfiles,
-    },
+  const authProvider = wireAuthProvider({
+    agentId,
+    container,
+    scopedManager,
+    oauthCredentialStore,
+    fileLock: deps.fileLock,
+    dataDirAbs,
+    oauthStorageMode,
+    agentLogger,
   });
-
-  agentLogger.debug(
-    {
-      agentId,
-      oauthStorage: oauthStorageMode,
-      dataDir: dataDirAbs,
-      submodule: "setup-agents",
-    },
-    "OAuth credential store + auth provider + per-LLM-call dispatch wired",
-  );
 
   const piModelRegistry = createModelRegistryAdapter(piAuthStorage);
   const { registered: customProviderCount, providerAliases } = registerCustomProviders(
@@ -485,6 +462,8 @@ export async function setupSingleAgent(
     subAgentToolNames: deps.subAgentToolNames,
     mcpToolsInherited: deps.mcpToolsInherited,
     memoryPort: memoryAdapter,
+    reranker: deps.rerankerPort,  // Cross-encoder reranker (built in setup-memory only when an agent enables rerank).
+    entityStore: deps.entityStore, temporalStore: deps.temporalStore, causalStore: deps.causalStore, usefulnessStore: deps.usefulnessStore,  // P83/rag.entityLane + P95·LANES-02/rag.lanes.temporal + P96·EXTRACT-03/rag.lanes.causal + P93·FEED-03/rag.feedback -> createMemoryRecall read (default-OFF; JSDoc on AgentSetupDeps).
     secretManager: scopedManager,
     envelopeConfig: container.config.envelope,
     senderTrustDisplayConfig: container.config.senderTrustDisplay,
@@ -510,6 +489,13 @@ export async function setupSingleAgent(
     // DAG context engine deps (optional -- only when context engine version is dag)
     contextStore: deps.contextStore,
     db: deps.db,
+    // DAG-05: one-shot delete-on-read consumer of a pending engine-mode switch.
+    // Threaded through PiExecutorDeps -> setupContextEngine -> DagContextEngineDeps
+    // so the DAG reconcile seam can emit context:mode_switched once (with the
+    // real import cost) and then clear the pending flag. Returns undefined when
+    // there is no pending switch (e.g. a brand-new DAG-default conversation),
+    // so no false event fires.
+    consumePendingModeSwitch: makeConsumePendingModeSwitch(deps.pendingModeSwitches),
     tenantId: container.config.tenantId,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
@@ -553,6 +539,22 @@ export async function setupSingleAgent(
           includePrompt: container.config.diagnostics.cacheTrace.includePrompt,
           includeSystem: container.config.diagnostics.cacheTrace.includeSystem,
           maxFileBytes: container.config.diagnostics.cacheTrace.maxFileBytes,
+        }
+      : undefined,
+    // Forward AppConfig.diagnostics.recallTrace into the executor (Phase 86 /
+    // OBS-02), EXACTLY mirroring the cacheTraceConfig thread above. Threaded
+    // onward via ToolAssemblyDeps → PromptAssemblyParams.deps.recallTraceConfig,
+    // where buildRecallTrace reads the `enabled` gate. Without this thread
+    // buildRecallTrace always saw cfg=undefined and returned null, so zero
+    // recall traces were written even with diagnostics.recallTrace.enabled: true.
+    // Recall-trace is OPT-IN (schema default enabled:false) and has NO
+    // raw-content slot (unlike cacheTrace's includeMessages/includeSystem): the
+    // recorder always full-sanitizes before disk (OBS-02).
+    recallTraceConfig: container.config.diagnostics?.recallTrace
+      ? {
+          enabled: container.config.diagnostics.recallTrace.enabled,
+          filePath: container.config.diagnostics.recallTrace.filePath,
+          maxFileBytes: container.config.diagnostics.recallTrace.maxFileBytes,
         }
       : undefined,
     geminiCacheManager: deps.geminiCacheManager,  // Gemini cache lifecycle manager

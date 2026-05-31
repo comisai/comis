@@ -62,6 +62,41 @@ export interface MemoryPort {
   ): Promise<Result<MemorySearchResult[], Error>>;
 
   /**
+   * OPTIONAL (LANES-01): search returning the FTS-ranked and vector-ranked
+   * candidate lists SEPARATELY — the un-fused split.
+   *
+   * Where {@link search} fuses the FTS + vector lanes INTERNALLY (RRF, weights
+   * 1.0/1.5) and returns ONE merged scored list, `searchLanes` returns the two
+   * ranked lists UN-fused so a downstream layer (the agent's `fuse()`) can fuse
+   * them with OPERATOR-TUNABLE per-lane weights and report TRUE per-lane
+   * candidate counts. It is the SAME search over the SAME tenant-scoped rows,
+   * just un-fused — NOT a new authority surface.
+   *
+   * Contract for an implementer:
+   * - Over-fetch the SAME `limit * 2` per lane that the fused `search` path
+   *   over-fetches, so the candidate pools entering fusion match the fused path.
+   * - Return RAW hydrated lanes — do NOT apply `minScore` (that filter moves to
+   *   the fusion/recall layer, applied AFTER fusion).
+   * - Resolve the embedding exactly as `search` does; an absent/zero-length
+   *   embedding (or no vector backend) yields an EMPTY `vector` lane.
+   * - Each lane is ordered most-relevant-first (rank 1 = first).
+   *
+   * This method is OPTIONAL: an adapter MAY omit it. Callers that find it absent
+   * MUST fall back to {@link search} (the single-lane path) — this is a
+   * graceful-degrade, not a compatibility toggle.
+   *
+   * @param sessionKey - Session context to scope the search (tenant isolation)
+   * @param query - Text query or embedding vector
+   * @param options - Search filters and limits (minScore is IGNORED here)
+   * @returns The two ranked, hydrated candidate lists, or an error
+   */
+  searchLanes?(
+    sessionKey: SessionKey,
+    query: string | number[],
+    options?: MemorySearchOptions,
+  ): Promise<Result<{ fts: MemorySearchResult[]; vector: MemorySearchResult[] }, Error>>;
+
+  /**
    * Delete a memory entry by its ID.
    *
    * @param id - The UUID of the entry to delete

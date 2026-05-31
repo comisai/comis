@@ -1836,15 +1836,21 @@ describe("PiExecutor", () => {
       };
       mockHybridSplit.mockReturnValueOnce({ inlineMemory: undefined, systemPromptSections: ["## Relevant Memories\n- [system] memory 1"] });
 
-      const ragConfig = { enabled: true, maxResults: 5, minScore: 0.5, maxContextChars: 5000, includeTrustLevels: ["system"] };
+      // rerank/scoring are read by createMemoryRecall; rerank OFF keeps the default
+      // pool size (limit = maxResults) and fusion order.
+      const ragConfig = {
+        enabled: true, maxResults: 5, minScore: 0.5, maxContextChars: 5000, includeTrustLevels: ["system"],
+        rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 },
+      };
       const configWithRag = { ...testConfig, rag: ragConfig } as PerAgentConfig;
       const deps = createMockDeps({ memoryPort: mockMemoryPort as any });
       const executor = createPiExecutor(configWithRag, deps);
 
       await executor.execute(testMessage, testSessionKey, undefined, undefined, "agent-rag");
 
-      // RAG retrieval now resolves results via MemoryPort.search and the
-      // hybrid memory injector (createRagRetriever factory removed).
+      // Recall (RANK-07) resolves results via MemoryPort.search + the hybrid injector.
+      // With rerank OFF the search limit is maxResults (default pool size unchanged).
       expect(mockMemoryPort.search).toHaveBeenCalledWith(
         testSessionKey,
         "hello world",
@@ -1865,7 +1871,11 @@ describe("PiExecutor", () => {
         store: vi.fn(),
       };
 
-      const ragConfig = { enabled: true, maxResults: 5, minScore: 0.5, maxContextChars: 5000, includeTrustLevels: ["system"] };
+      const ragConfig = {
+        enabled: true, maxResults: 5, minScore: 0.5, maxContextChars: 5000, includeTrustLevels: ["system"],
+        rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+        scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 },
+      };
       const configWithRag = { ...testConfig, rag: ragConfig } as PerAgentConfig;
       const deps = createMockDeps({ memoryPort: mockMemoryPort as any });
       const executor = createPiExecutor(configWithRag, deps);
@@ -1875,10 +1885,11 @@ describe("PiExecutor", () => {
       // Execution should still complete successfully
       expect(result.finishReason).toBe("stop");
       expect(result.response).toBe("test response");
-      // RAG failure logged as warn
+      // Recall failure logged as warn (non-fatal). A rejected memoryPort.search
+      // surfaces as an err Result inside recall -> the caller's catch logs it.
       expect(deps.logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({ hint: expect.any(String), errorKind: "dependency" }),
-        "RAG retrieval failed (non-fatal)",
+        "RAG recall failed (non-fatal)",
       );
     });
 

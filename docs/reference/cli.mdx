@@ -633,7 +633,7 @@ comis auth login --provider openai-codex --method device-code
 
 ### `comis memory`
 
-Memory management commands for searching, inspecting, and clearing conversation memory entries.
+Memory management and recall-diagnostics commands for searching, inspecting, and clearing conversation memory entries, and for inspecting how hybrid recall ranked them.
 
 #### Subcommands
 
@@ -641,8 +641,15 @@ Memory management commands for searching, inspecting, and clearing conversation 
 |------------|-------------|
 | `memory search <query>` | Search memory entries by content |
 | `memory inspect <id>` | Display full details of a memory entry |
-| `memory stats` | Display memory statistics |
+| `memory stats` | Display memory statistics (with a best-effort recall-counter overlay) |
+| `memory recall-trace <session>` | Inspect a session's hybrid-recall trace — **admin** |
+| `memory observations` | List observation provenance (sources + history) — **admin** |
+| `memory entities` | List an agent's entity graph, most-mentioned first — **admin** |
 | `memory clear` | Clear memory entries matching a filter |
+
+<Note>
+`memory recall-trace`, `memory observations`, and `memory entities` are **admin-gated** and **(tenant, agent)-scoped** — they require an admin-scoped gateway token and operate within the caller's tenant/agent scope.
+</Note>
 
 #### `memory search <query>`
 
@@ -663,6 +670,45 @@ Memory management commands for searching, inspecting, and clearing conversation 
 |------|------|---------|-------------|
 | `--format <format>` | `detail` \| `json` | `detail` | Output format |
 
+<Note>
+`memory stats` now overlays best-effort **recall counters** on top of the base memory statistics: lane usage, rerank-fallback rate, consolidation throughput, and recall hit-rate. The overlay is best-effort — a daemon that has not wired the counters (or a non-admin caller) still renders base stats.
+</Note>
+
+#### `memory recall-trace <session>`
+
+Inspect the hybrid-recall trace for a session — the per-recall ranking previews recorded by the opt-in [`diagnostics.recallTrace`](/reference/config-yaml) artifact. **Admin-gated** and (tenant, agent)-scoped.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--trace-id <id>` | `string` | - | Filter by trace id instead of / alongside the session |
+| `--agent <agentId>` | `string` | - | Scope to a specific agent |
+| `--limit <n>` | `string` | `200` | Maximum records to return |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+<Note>
+The **table** view shows the correlation keys and the final-count summary (`trace`, `session`, `finalCount`, `ts`) — enough to locate the right record. The full per-record ranking breakdown (matched lanes, fused order, pre/post-rerank scores, score components, include/exclude reasons) is available via `--format json`. See the [recall runbook](/operations/troubleshooting#memory-recall-issues).
+</Note>
+
+#### `memory observations`
+
+List observation provenance — the consolidated observations and the sources + history behind them. **Admin-gated** and (tenant, agent)-scoped.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--agent <agentId>` | `string` | - | Scope to a specific agent |
+| `--limit <n>` | `string` | `50` | Maximum observations to return |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
+#### `memory entities`
+
+List an agent's entity graph, most-mentioned first. **Admin-gated** and (tenant, agent)-scoped.
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--agent <agentId>` | `string` | - | Scope to a specific agent |
+| `--limit <n>` | `string` | `100` | Maximum entities to return |
+| `--format <format>` | `table` \| `json` | `table` | Output format |
+
 #### `memory clear`
 
 | Flag | Type | Default | Description |
@@ -677,12 +723,26 @@ Memory management commands for searching, inspecting, and clearing conversation 
 # Search memory
 comis memory search "project requirements" --limit 5
 
-# View memory statistics
+# View memory statistics (incl. the recall-counter overlay)
 comis memory stats
+
+# Inspect a session's recall trace — full ranking breakdown as JSON
+comis memory recall-trace my-session --format json
+comis memory recall-trace my-session --trace-id 9f2c1a --agent default --limit 50
+
+# List observation provenance for an agent
+comis memory observations --agent default --limit 50
+
+# List an agent's entity graph (most-mentioned first)
+comis memory entities --agent default --limit 100
 
 # Clear conversation memory for a specific tenant
 comis memory clear --tenant default --filter memoryType=conversation --yes
 ```
+
+<Note>
+Recall-trace records only exist when `diagnostics.recallTrace.enabled` is on (opt-in, default off). See the [recall runbook](/operations/troubleshooting#memory-recall-issues) for the enable-and-read workflow.
+</Note>
 
 ---
 

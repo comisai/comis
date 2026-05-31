@@ -64,6 +64,32 @@ export interface SingleAgentDeps {
   lastKnownModel?: LastKnownModelTracker;
   /** Optional embedding port for discover_tools semantic search. */
   embeddingPort?: import("@comis/core").EmbeddingPort;
+  /** Optional cross-encoder reranker (built in setup-memory only when an agent enables
+   *  rerank). Threaded into createPiExecutor like memoryPort; absent -> fusion order. */
+  rerankerPort?: import("@comis/core").RerankerPort;
+  /** Phase 92: model-present probe result from setup-memory; drives per-agent effective
+   *  rerank precedence. Same value as the build gate (Pitfall 4 — one source). */
+  rerankerModelPresent?: boolean;
+  /** Entity-associative store (Phase 83). Threaded into each per-agent createPiExecutor
+   *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the
+   *  shared db handle; the entity lane stays dormant until an operator enables
+   *  `agents.<id>.rag.entityLane.enabled` (default OFF). */
+  entityStore?: import("@comis/core").MemoryEntityStore;
+  /** Temporal-spread store (Phase 95, LANES-02). Threaded into each per-agent createPiExecutor
+   *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the shared
+   *  db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator enables
+   *  `agents.<id>.rag.lanes.temporal.enabled` (default OFF). */
+  temporalStore?: import("@comis/core").MemoryTemporalStore;
+  /** Causal store (Phase 96, EXTRACT-03). Threaded into each per-agent createPiExecutor
+   *  (the executor recall read path -> createMemoryRecall, the 5th causal lane). Built in
+   *  setup-memory on the shared db handle; the segregated port TYPE (agent↛memory cut). Dormant
+   *  until an operator enables `agents.<id>.rag.lanes.causal.enabled` (default OFF). */
+  causalStore?: import("@comis/core").MemoryCausalStore;
+  /** Usefulness store (Phase 93, FEED-03). Threaded into each per-agent createPiExecutor
+   *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the
+   *  shared db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator
+   *  enables `agents.<id>.rag.feedback.enabled` (default OFF). */
+  usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */
@@ -121,6 +147,17 @@ export interface SingleAgentDeps {
   env: import("@comis/core").EnvPort;
   /** Timer scheduling. */
   timers: import("@comis/core").TimerPort;
+  /**
+   * Daemon-level in-memory record of pending engine-mode switches, keyed by
+   * agentId. Set at the rebuild seam (setupSingleAgent) ONLY when an operator
+   * config reload CHANGES contextEngine.version (old defined AND old !== new),
+   * then consumed one-shot by the DAG engine at the next reconcile to emit
+   * context:mode_switched with the real import cost. A single shared Map: the
+   * daemon reload re-invokes setupSingleAgent with the SAME deps object, so the
+   * Map persists across reloads. NOT triggered by fullImport — a brand-new
+   * DAG-default conversation records nothing here.
+   */
+  pendingModeSwitches: Map<string, { from: "pipeline" | "dag"; to: "pipeline" | "dag" }>;
   /**
    * ObservabilityStore for SystemPromptReport persistence in the
    * production prompt-assembly path. Constructed in daemon.ts

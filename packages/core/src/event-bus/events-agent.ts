@@ -456,6 +456,134 @@ export interface AgentEvents {
     timestamp: number;
   };
 
+  /**
+   * Memory consolidation completed (periodic clustering of near-duplicate raw
+   * memories into observations — Phase 84 / CONS-07). MINIMAL payload by design:
+   * Phase 86 (OBS-03/04) owns the rich observability surface (recall trace,
+   * per-cluster diagnostics). Counts only — NEVER memory content or tags
+   * (AGENTS.md §2.7).
+   */
+  "memory:consolidated": {
+    agentId: string;
+    /** Homogeneous sub-clusters that passed the trust/external gate and were processed. */
+    clustersProcessed: number;
+    /** New observation rows created (excludes dedup-hit clusters). */
+    observationsCreated: number;
+    /** Clusters skipped because an equivalent observation already existed (CONS-04). */
+    dedupHits: number;
+    /** Observations grown by folding new corroborating sources into them (FOLD-01). */
+    foldsApplied: number;
+    durationMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * Hybrid memory recall completed for one turn (Phase 86 / OBS-04). MINIMAL
+   * payload by design — counts/booleans/ids ONLY, NEVER the query text, memory
+   * bodies, or entity names (AGENTS.md §2.7). The per-recall ranking detail
+   * lives in the opt-in `diagnostics.recallTrace` JSONL artifact, not on the
+   * bus. Drives the in-process recall counters (OBS-07) lane-usage + hit-rate.
+   *
+   * Emit site: `createMemoryRecall` in
+   * `packages/agent/src/rag/memory-recall.ts` (Plan 03), at the single
+   * one-per-recall site after fuse/rerank/score.
+   */
+  "memory:recalled": {
+    agentId: string;
+    sessionKey?: string;
+    traceId: string;
+    /** Count of retrieval lanes that fired (fts / vector / entity). */
+    lanes: number;
+    /** Candidate count from the FTS5 lane. */
+    ftsCandidates: number;
+    /** Candidate count from the vector lane. */
+    vectorCandidates: number;
+    /** Candidate count from the entity-associative lane. */
+    entityCandidates: number;
+    /** Size of the final ranked set returned to the prompt (0 ⇒ no hit). */
+    finalCount: number;
+    /** Whether the cross-encoder reranker was available for this recall. */
+    rerankerAvailable: boolean;
+    durationMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * Cross-encoder rerank stage completed for one recall (Phase 86 / OBS-04).
+   * MINIMAL payload by design — counts/booleans ONLY, NEVER memory bodies or
+   * query text (AGENTS.md §2.7). The `fellBack` / `timedOut` flags make the
+   * graceful-degradation paths (reranker err / budget exceeded → fusion order)
+   * queryable (OBS-03); they feed the rerank-fallback-rate counter (OBS-07).
+   *
+   * Emit site: `createMemoryRecall` in
+   * `packages/agent/src/rag/memory-recall.ts` (Plan 03), alongside
+   * `memory:recalled` whenever a rerank stage ran.
+   */
+  "memory:reranked": {
+    agentId: string;
+    traceId: string;
+    /** Candidates handed to the reranker. */
+    candidateCount: number;
+    /** Memories surviving into the final ranked set. */
+    hitCount: number;
+    /** Whether the cross-encoder reranker was available. */
+    rerankerAvailable: boolean;
+    /** True when the reranker exceeded its budget and the fusion order was used. */
+    timedOut: boolean;
+    /** True when the reranker returned err and the fusion order was used. */
+    fellBack: boolean;
+    durationMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * Entity resolve-and-link pass completed during a memory-review run
+   * (Phase 86 / OBS-04). MINIMAL payload by design — counts ONLY, NEVER entity
+   * names or memory bodies (AGENTS.md §2.7). `newEntities` is the subset of
+   * `entityCount` that created a fresh entity row (the rest reused an existing
+   * one).
+   *
+   * Emit site: the `resolveAndLink` loop in `runMemoryReview`
+   * (`packages/agent/src/memory/memory-review-job.ts`, Plan 04).
+   */
+  "memory:entities_linked": {
+    agentId: string;
+    /** Total entities resolved + linked in this pass. */
+    entityCount: number;
+    /** Entities that created a NEW entity row (subset of entityCount). */
+    newEntities: number;
+    durationMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * Recall-usage attribution complete for one turn (Phase 93 / FEED-01). MINIMAL
+   * payload — counts + memory IDS only, NEVER memory content, the agent
+   * response, or the query (AGENTS.md §2.7, matching the whole memory:* family).
+   * The overlap heuristic (recall-attribution.ts) reads memory content in-process
+   * at the turn-end site and discards it; only the resulting ids cross the bus.
+   *
+   * Emit site: `postExecution` in
+   * `packages/agent/src/executor/executor-post-execution.ts` (Plan 93-02),
+   * flag-gated on `rag.feedback.enabled` (default OFF → no emit). The daemon
+   * subscriber (setup-memory-usefulness-wiring.ts) writes the signal through the
+   * FEED-02 `MemoryUsefulnessStore.recordUsage` port.
+   */
+  "memory:recall_used": {
+    agentId: string;
+    sessionKey?: string;
+    traceId: string;
+    /** Opaque memory uuids attributed as USED this turn — ids only, never bodies. */
+    usedIds: string[];
+    /** Opaque memory uuids recalled but NOT used — ids only. */
+    ignoredIds: string[];
+    /** == usedIds.length (parity with the counts-only family). */
+    usedCount: number;
+    /** == ignoredIds.length. */
+    ignoredCount: number;
+    timestamp: number;
+  };
+
   /** First graph subagent LLM turn confirmed a cache prefix write.
    *  Graph coordinator uses this as spawn gate for remaining nodes. */
   "cache:graph_prefix_written": {
@@ -538,8 +666,10 @@ export interface AgentEvents {
    * turns where the hybrid memory injector actually emitted at least one
    * section / inline string — no-injection turns produce no event.
    *
-   * Emit site: `packages/agent/src/executor/prompt-assembly.ts`
-   * (immediately after `inlineMemory = injection.inlineMemory`).
+   * Emit site: `packages/agent/src/executor/prompt-assembly.ts`, after the
+   * hybrid split. `charsInjected`/`hitCount` count RETRIEVED memory only
+   * (inline + retrieved sections); the §7.3 temporal-guidance block is fixed
+   * guidance text and is deliberately NOT tallied here (WR-02).
    */
   "memory:injected": {
     agentId: string;

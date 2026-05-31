@@ -182,6 +182,25 @@ export async function setupAgents(deps: {
   db?: unknown;
   /** Optional embedding port for discover_tools semantic search. */
   embeddingPort?: import("@comis/core").EmbeddingPort;
+  /** Optional cross-encoder reranker (built in setup-memory only when an agent enables
+   *  rerank). Threaded into each per-agent createPiExecutor like memoryPort. */
+  rerankerPort?: import("@comis/core").RerankerPort;
+  /** Phase 92: model-present probe result from setup-memory; forwarded into each
+   *  SingleAgentDeps so the per-agent effective rerank precedence consults the SAME
+   *  value as the build gate (Pitfall 4 — one source). */
+  rerankerModelPresent?: boolean;
+  /** Entity-associative store (Phase 83). Threaded into each per-agent createPiExecutor
+   *  like memoryPort (the recall read path). Built in setup-memory on the shared db. */
+  entityStore?: import("@comis/core").MemoryEntityStore;
+  /** Temporal-spread store (Phase 95, LANES-02). Threaded into each per-agent createPiExecutor
+   *  like entityStore (the recall temporal-spread read path). Built in setup-memory on the shared db. */
+  temporalStore?: import("@comis/core").MemoryTemporalStore;
+  /** Causal store (Phase 96, EXTRACT-03). Threaded into each per-agent createPiExecutor
+   *  like entityStore (the recall 5th causal lane read path). Built in setup-memory on the shared db. */
+  causalStore?: import("@comis/core").MemoryCausalStore;
+  /** Usefulness store (Phase 93, FEED-03). Threaded into each per-agent createPiExecutor
+   *  like entityStore (the recall usefulness read path). Built in setup-memory on the shared db. */
+  usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */
@@ -399,6 +418,12 @@ export async function setupAgents(deps: {
     providerHealth,
     lastKnownModel,
     embeddingPort: deps.embeddingPort,
+    rerankerPort: deps.rerankerPort,
+    rerankerModelPresent: deps.rerankerModelPresent,
+    entityStore: deps.entityStore,
+    temporalStore: deps.temporalStore,
+    causalStore: deps.causalStore,
+    usefulnessStore: deps.usefulnessStore,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
     geminiCacheManager: deps.geminiCacheManager,
@@ -426,10 +451,25 @@ export async function setupAgents(deps: {
     // Session-scoped trajectory recorder registry — threaded into every
     // per-agent executor so the same registry is shared across agents.
     trajectoryRegistry,
+    // DAG-05: single shared pending-switch carrier. Built ONCE here and reused
+    // for every setupSingleAgent call (incl. config-reload re-invocations with
+    // the SAME deps object), so a contextEngine.version switch recorded at the
+    // rebuild seam survives until the DAG engine consumes it at the next reconcile.
+    pendingModeSwitches: new Map(),
   };
 
   for (const [agentId, agentConfig] of Object.entries(agents)) {
-    const result = await setupSingleAgent(agentId, agentConfig, singleAgentDeps);
+    // Phase 92 (CR-01): pass the RAW (pre-Zod-default) rerank signal from the
+    // daemon-wide map so the per-agent effective-rerank precedence sees genuine
+    // unset (undefined) vs explicit-off (false). `agentConfig` here is the PARSED
+    // config — its rag.rerank.enabled is always a concrete boolean and would erase
+    // the unset signal if read directly.
+    const result = await setupSingleAgent(
+      agentId,
+      agentConfig,
+      singleAgentDeps,
+      container.rawAgentRerankEnabled?.get(agentId),
+    );
     executors.set(agentId, result.executor);
     workspaceDirs.set(agentId, result.workspaceDir);
     costTrackers.set(agentId, result.costTracker);

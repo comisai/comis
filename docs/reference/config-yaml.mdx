@@ -114,8 +114,7 @@ memory:
   embeddingModel: "text-embedding-3-small"
   embeddingDimensions: 1536
   retention:
-    maxAgeDays: 365               # Keep one year of memory entries
-    maxEntries: 0                 # 0 = no count limit
+    maxAgeDays: 365               # Keep one year of memory entries (0 = no age limit)
 
 # -- Gateway: HTTP + WebSocket on loopback only ------------------------------
 gateway:
@@ -341,6 +340,75 @@ See [Resilience](/agents/resilience) for how prompt timeouts fit into the full r
 | `minScore` | `number` | `0.1` | Minimum RRF score threshold (0-1) |
 | `includeTrustLevels` | `string[]` | `["system", "learned"]` | Trust levels to include in retrieval |
 
+**Cross-encoder rerank (agents.*.rag.rerank)** — opt-in (default off)
+
+A cross-encoder re-scores the top fusion candidates with the local reranker model (see `memory.rerankerModel`). Disabled by default; on timeout or unavailability it falls back to the fusion-ranked order, and the reranker GGUF is never downloaded while disabled.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable cross-encoder reranking of fused candidates (opt-in) |
+| `maxCandidates` | `number` | `40` | Candidate cap bounding worst-case rerank latency (positive) |
+| `minResults` | `number` | `1` | Skip reranking when fewer than this many candidates are present (nonnegative) |
+| `timeoutMs` | `number` | `800` | Rerank wall-clock timeout in ms; on timeout fall back to fusion order (positive) |
+
+**Scoring boosts (agents.*.rag.scoring)** — all `number`, range 0-1
+
+Multiplicative boosts applied to the reranked-or-fused score before the trust filter.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `recencyAlpha` | `number` | `0.2` | Recency boost weight (applied via `createdAt`) |
+| `temporalAlpha` | `number` | `0.2` | Event-time proximity boost weight (applies when `occurredAt` is present, neutral when absent) |
+| `proofAlpha` | `number` | `0.1` | Proof-count boost weight (neutral until `proofCount` exists) |
+| `trustAlpha` | `number` | `0.1` | Trust-level boost weight and tie-break |
+
+**Entity associative lane (agents.*.rag.entityLane)** — opt-in (default off)
+
+A one-hop entity-associative fusion lane. When disabled (the default), RRF fusion is unchanged.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable the one-hop entity-associative lane (opt-in) |
+| `seedCount` | `number` | `5` | How many top search hits seed the entity self-join (positive) |
+| `perEntityCap` | `number` | `200` | Max shared-entity neighbour rows the lane returns (positive) |
+| `weight` | `number` | `1.0` | RRF weight for the entity lane (≥ 0) |
+
+**Enabling the opt-in recall features**
+
+Reranking, the entity lane, and consolidation all ship off. The reranker model and the recall trace live under the top-level `memory` and `diagnostics` keys (not under `agents`). A schema-valid block that turns them on:
+
+```yaml
+agents:
+  default:
+    rag:
+      enabled: true                 # always-on recall (default true)
+      rerank:
+        enabled: true               # opt-in (default false) -- cross-encoder re-scoring
+        maxCandidates: 40
+        timeoutMs: 800
+      scoring:                      # multiplicative boosts (defaults shown)
+        recencyAlpha: 0.2
+        temporalAlpha: 0.2
+        proofAlpha: 0.1
+        trustAlpha: 0.1
+      entityLane:
+        enabled: true               # opt-in (default false) -- one-hop associative lane
+    memoryConsolidation:
+      enabled: true                 # opt-in (default false) -- LLM cron, a cost gate
+      schedule: "30 3 * * *"
+    contextEngine:
+      version: dag                  # the default; set "pipeline" to opt out
+
+memory:
+  rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+  rerankerThreads: 4
+  rerankerGpu: auto
+
+diagnostics:
+  recallTrace:
+    enabled: true                   # opt-in (default false) -- full-sanitized, bounded JSONL
+```
+
 #### Bootstrap (agents.*.bootstrap)
 
 | Key | Type | Default | Description |
@@ -413,21 +481,21 @@ Per-agent configuration for Gemini explicit CachedContent caching. When enabled,
 
 #### Context Engine (agents.*.contextEngine)
 
-Context engine configuration. Controls the system that manages what your agent sees each turn. Supports two operating modes: **pipeline** (default, the 8-step system) and **dag** (opt-in, lossless DAG with recall tools). See [Compaction](/agents/compaction) for a user-friendly explanation.
+Context engine configuration. Controls the system that manages what your agent sees each turn. Supports two operating modes: **dag** (default, the lossless DAG with recall tools) and **pipeline** (opt-out, the 8-step sequential system). See [Compaction](/agents/compaction) for a user-friendly explanation.
 
 **Core fields**
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | `boolean` | `true` | Master toggle for the context engine |
-| `version` | `string` | `"pipeline"` | Operating mode: `"pipeline"` (default) or `"dag"` (lossless DAG with recall tools) |
+| `version` | `string` | `"dag"` | Operating mode: `"dag"` (default, lossless DAG with recall tools) or `"pipeline"` (opt-out, the 8-step sequential system) |
 
 **Shared fields** (both modes)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `thinkingKeepTurns` | `number` | `10` | Recent assistant turns that retain thinking blocks (1-50) |
-| `compactionModel` | `string` | `"anthropic:claude-haiku-4-5-20250929"` | Model used for summarization. Override with a cheaper or faster model if needed. |
+| `compactionModel` | `string` | `""` | Model used for summarization. Empty (the default) means runtime-resolved against the agent's primary provider. Override with a specific cheaper or faster model if needed. |
 | `evictionMinAge` | `number` | `15` | Minimum turn age before stale errors are evicted by the dead content evictor (3-50) |
 
 **Pipeline mode fields** (`version: "pipeline"`)
@@ -470,6 +538,23 @@ Context engine configuration. Controls the system that manages what your agent s
 <Note>
   DAG mode fields are validated by Zod even when `version` is `"pipeline"`. This means you can pre-configure DAG settings before switching modes -- invalid values will be caught at startup regardless of the active mode.
 </Note>
+
+#### Memory Consolidation (agents.*.memoryConsolidation)
+
+Periodic LLM-driven consolidation of similar memories into observations. Opt-in (default off) because each run spends model tokens -- it is a cost gate. When enabled, a scheduled cron clusters near-duplicate memories and folds each cluster into a single observation; external-trust memories are excluded by default.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable periodic consolidation for this agent (opt-in cost gate) |
+| `schedule` | `string` | `"30 3 * * *"` | Cron schedule for consolidation runs (daily at 03:30 UTC by default) |
+| `similarityThreshold` | `number` | `0.82` | Cluster-neighbour cosine threshold for single-link clustering (0-1) |
+| `dedupThreshold` | `number` | `0.9` | Content-similarity threshold for the deterministic dedup pre-check (0-1) |
+| `maxCandidatesPerRun` | `number` | `200` | Maximum raw candidates fetched per run (positive) |
+| `maxClusterSize` | `number` | `12` | Maximum candidates folded into one observation (positive) |
+| `maxClustersPerRun` | `number` | `25` | Maximum clusters consolidated per run (positive) |
+| `maxConsolidationTokens` | `number` | `1024` | Maximum LLM response tokens for one merge call (positive) |
+| `consolidateExternal` | `boolean` | `false` | Include external-trust memories in consolidation (excluded by default) |
+| `autoTags` | `string[]` | `[]` | Extra tags applied to every created observation |
 
 #### Source Gate (agents.*.sourceGate)
 
@@ -790,6 +875,17 @@ SQLite-backed memory system configuration.
 | `embeddingModel` | `string` | `"text-embedding-3-small"` | Embedding model identifier |
 | `embeddingDimensions` | `number` | `1536` | Embedding vector dimensions |
 
+**Reranker model (memory.reranker\*)**
+
+The cross-encoder model used when `agents.*.rag.rerank.enabled` is `true`. The `hf:` URI auto-downloads on first enable; nothing is downloaded while reranking is off. This is a distinct model from the bi-encoder embedder (see the `embedding` accordion) -- do not conflate the two.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `rerankerModel` | `string` | `"hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"` | Reranker GGUF model URI (HuggingFace `hf:` ref or local path) |
+| `rerankerModelsDir` | `string` | `"models"` | Directory (relative to dataDir) to store/resolve the reranker GGUF |
+| `rerankerGpu` | `enum` | `"auto"` | GPU acceleration: `auto`, `metal`, `cuda`, `vulkan`, `false` |
+| `rerankerThreads` | `number` | `4` | Thread count for the reranker ranking context (positive) |
+
 **Compaction (memory.compaction)**
 
 | Key | Type | Default | Description |
@@ -803,7 +899,6 @@ SQLite-backed memory system configuration.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `maxAgeDays` | `number` | `0` | Maximum age in days (0 = no limit) |
-| `maxEntries` | `number` | `0` | Maximum total entries (0 = no limit) |
 
 <Info>See [Memory](/agents/memory) and [Search](/agents/search) for how these settings affect agent memory behavior.</Info>
 
@@ -2033,6 +2128,33 @@ observability:
 
 </AccordionGroup>
 
+## Diagnostics
+
+<AccordionGroup>
+
+<Accordion title="diagnostics.recallTrace">
+
+Per-recall ranking trace written as bounded JSONL for "why did recall pick X?" debugging. Opt-in (default off) -- unlike its `cacheTrace` sibling (which defaults `true`), the recall trace is only captured during a focused debug session.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | `boolean` | `false` | Enable the recall-trace writer (opt-in). Also honors the `COMIS_DISABLE_RECALL_TRACE` env hard-off. |
+| `filePath` | `string` | _(optional)_ | Full path override. When unset, resolves to `~/.comis/logs/recall-trace.jsonl` (tilde-prefix supported). |
+| `maxFileBytes` | `number` | `52428800` | Per-file byte cap (50 MB; positive). |
+
+<Warning>
+  The recall trace has **no** raw-content opt-in -- there is intentionally no `includeMessages` / `includeSystem` / `includePrompt` slot (unlike `cacheTrace`). Every payload is full-sanitized (bound, then sanitize, then redact) before it touches disk. There is no way to disable that sanitization.
+</Warning>
+
+```yaml
+diagnostics:
+  recallTrace:
+    enabled: true                   # opt-in (default false) -- full-sanitized, bounded JSONL
+```
+
+</Accordion>
+
+</AccordionGroup>
 ## Credential Broker Bindings (executor.broker)
 
 <Info>

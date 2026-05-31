@@ -496,6 +496,96 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // 13.4. Memory consolidation cron — the opt-in gate (Phase 84, CONS-07 / T-84-19)
+  // OFF by default: a default-config agent registers NO consolidation job; an
+  // operator-enabled agent registers __MEMORY_CONSOLIDATION__ (default 30 3 * * *).
+  // -------------------------------------------------------------------------
+
+  /** A cron-scheduler stub that supports the registration path (getJobs/addJob). */
+  function withRegistrableScheduler() {
+    const addJob = vi.fn(async () => {});
+    const getJobs = vi.fn(() => []);
+    mockCreateCronScheduler.mockReturnValue({
+      start: vi.fn(async () => {}),
+      stop: vi.fn(),
+      getJobs,
+      addJob,
+    } as any);
+    return { addJob, getJobs };
+  }
+
+  it("registers NO consolidation cron for a default (consolidation-off) agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // memoryConsolidation undefined => default OFF (the cost gate).
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    // No __MEMORY_CONSOLIDATION__ job is ever added.
+    const consolidationAdds = addJob.mock.calls.filter(
+      (c) => (c[0] as any)?.payload?.text === "__MEMORY_CONSOLIDATION__",
+    );
+    expect(consolidationAdds.length).toBe(0);
+  });
+
+  it("registers the __MEMORY_CONSOLIDATION__ cron (default 30 3 * * *) for an enabled agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryConsolidation: { enabled: true },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const consolidationAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__MEMORY_CONSOLIDATION__");
+    expect(consolidationAdd).toBeDefined();
+    expect(consolidationAdd.id).toBe("memory-consolidation-agent-1");
+    expect(consolidationAdd.name).toBe("Memory consolidation");
+    // Default schedule runs AFTER memory-review's 0 2 so review-minted memories
+    // are consolidation candidates the same night.
+    expect(consolidationAdd.schedule).toEqual({ kind: "cron", expr: "30 3 * * *" });
+    expect(consolidationAdd.sessionTarget).toBe("isolated");
+    expect(consolidationAdd.sessionStrategy).toBe("fresh");
+  });
+
+  it("honors a custom consolidation schedule when the operator overrides it", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryConsolidation: { enabled: true, schedule: "15 4 * * 0" },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const consolidationAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__MEMORY_CONSOLIDATION__");
+    expect(consolidationAdd?.schedule).toEqual({ kind: "cron", expr: "15 4 * * 0" });
+  });
+
+  // -------------------------------------------------------------------------
   // 13.5. sessionStrategy and maxHistoryTurns propagated in event emission
   // -------------------------------------------------------------------------
 

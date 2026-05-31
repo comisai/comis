@@ -651,7 +651,7 @@ function buildChannelManagerDeps(deps: {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
-    workspaceDirs, defaultWorkspaceDir, memoryAdapter, embeddingQueue,
+    workspaceDirs, defaultWorkspaceDir, memoryAdapter, entityStore, causalStore, consolidationStore, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
@@ -710,6 +710,19 @@ function buildChannelManagerDeps(deps: {
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore,
     fileExtractor, fileExtractionConfig: container.config.integrations.media.documentExtraction,
     workspaceDirs, defaultWorkspaceDir, memoryAdapter,
+    // Phase 83: the entity-associative store (built in setup-memory on the shared db).
+    // Forwarded into registerCronEventListeners -> runMemoryReview (the write path that
+    // populates memory_entities / memory_entity_links after each successful store).
+    entityStore,
+    // Phase 96 (EXTRACT-03): the causal store (built in setup-memory on the shared db).
+    // Forwarded into registerCronEventListeners -> runMemoryReview (the write path that
+    // links cause->effect edges via linkCausal after each successful store). The SAME store
+    // also rides the setupAgents read path (the 5th causal recall lane).
+    causalStore,
+    // Phase 84: the consolidation store (built in setup-memory on the shared db).
+    // Forwarded into registerCronEventListeners -> runMemoryConsolidation (the opt-in
+    // __MEMORY_CONSOLIDATION__ cron path). The executor recall path does NOT receive it.
+    consolidationStore,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,
@@ -983,19 +996,21 @@ function resolveGatewayTokens(deps: {
 function createHotAdd(deps: {
   channels: PostChannelsBootContext;
   shutdownRef: { value?: { readonly isShuttingDown: boolean } };
-}): (agentId: string, config: PerAgentConfig) => Promise<void> {
+}): (agentId: string, config: PerAgentConfig, rawRerankEnabled?: boolean | undefined) => Promise<void> {
   const { channels, shutdownRef } = deps;
   const {
     singleAgentDeps, executors, workspaceDirs, costTrackers, budgetGuards,
     stepCounters, piSessionAdapters, skillWatcherHandles, skillRegistries,
     toolCapabilityPorts, container, daemonLogger,
   } = channels;
-  return async (agentId, config) => {
+  return async (agentId, config, rawRerankEnabled) => {
     const startMs = systemNowMs();
     if (shutdownRef.value?.isShuttingDown) {
       throw new Error("Cannot hot-add agent during shutdown");
     }
-    const result = await setupSingleAgent(agentId, config, singleAgentDeps);
+    // Phase 92 (CR-01): forward the RAW rerank signal from the agents.create RPC input
+    // so the hot-added agent's effective-rerank precedence matches the boot path.
+    const result = await setupSingleAgent(agentId, config, singleAgentDeps, rawRerankEnabled);
     executors.set(agentId, result.executor);
     workspaceDirs.set(agentId, result.workspaceDir);
     costTrackers.set(agentId, result.costTracker);
@@ -1107,11 +1122,23 @@ function buildRpcDispatchDeps(deps: {
     }
     return cachedMcpTokenStore;
   };
+  // OBS-07: the single in-process recall-counter registry is stood up once in
+  // setup-memory (the composition site that holds the event bus) and threaded
+  // here on the boot context. The snapshot accessor feeds the
+  // memory.recall_stats handler (comis memory stats reads live counters). The
+  // gauge is daemon-lifetime — it resets on restart (Assumption A2).
+  const recallCounters = c.recallCounters;
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
     defaultWorkspaceDir: c.defaultWorkspaceDir, workspaceDirs: c.workspaceDirs,
     memoryApi: c.memoryApi, memoryAdapter: c.memoryAdapter, embeddingQueue: c.embeddingQueue,
+    // OBS-06 memory-diagnostic deps: the scoped consolidation + entity stores
+    // (provenance + entity-graph reads) and the live recall counters (OBS-07)
+    // for the 4 admin-gated memory.* diagnostic handlers. (usefulnessStore is NOT
+    // here — no diagnostic handler consumes it; FEED-03's read path is the setupAgents
+    // injection at the setupAgents({…}) call below, mirroring entityStore.)
+    consolidationStore: c.consolidationStore, entityStore: c.entityStore, recallCounters,
     tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
     sessionStore: g.sessionStoreBridge,
@@ -1653,6 +1680,7 @@ async function bootFoundation(
     disposeEmbedding, cachedPort, memoryAdapter, db,
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
+    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, temporalStore, causalStore, usefulnessStore, consolidationStore, recallCounters,
   } = await setupMemory({ container, memoryLogger, clock });
 
   // Observability persistence (dual-write to SQLite). obsStore +
@@ -1803,7 +1831,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, maintenanceTick,
+    embeddingCircuitBreakerState, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, temporalStore, causalStore, usefulnessStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence, contextStore,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
@@ -1852,6 +1880,12 @@ async function bootAgents(
     clock, env, timers,
     daemonLogger, gatewayLogger, agentLogger, schedulerLogger, skillsLogger,
     memoryAdapter, db, sessionStore, cachedPort, embeddingQueue,
+    rerankerPort, // built in setup-memory; threaded into setupAgents -> createPiExecutor
+    rerankerModelPresent, // Phase 92: model-present probe result; threaded into setupAgents -> per-agent effective rerank precedence (same value as the build gate)
+    entityStore, // Phase 83: threaded into setupAgents -> createPiExecutor (recall read path) + the cron review (write path)
+    temporalStore, // Phase 95 (LANES-02): threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the recall temporal-spread read path); dormant until rag.lanes.temporal.enabled
+    causalStore, // Phase 96 (EXTRACT-03): threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 5th causal read lane, dormant until rag.lanes.causal.enabled) AND the cron review -> runMemoryReview -> linkCausal (the write path) — one segregated port, both halves
+    usefulnessStore, // Phase 93 (FEED-03): threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the recall usefulness read path); dormant until rag.feedback.enabled
     contextStore,
     activeRunRegistry, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, geminiCacheManager,
@@ -1988,7 +2022,7 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts,
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, temporalStore, causalStore, usefulnessStore, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,
@@ -2707,7 +2741,7 @@ async function bootShutdown(
     tokenTracker, processMonitor,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
     contextPipelineCollector, backgroundIndexingPromise, db,
-    disposeEmbedding, cachedPort, maintenanceTick, obsPersistence,
+    disposeEmbedding, disposeReranker, cachedPort, maintenanceTick, obsPersistence,
     disposeActivityStream,
     injectionRateLimiter, geminiCacheManager, backgroundTaskManager,
     secretStore,
@@ -2750,6 +2784,7 @@ async function bootShutdown(
     diagnosticCollector, channelActivityTracker, deliveryTracer, contextPipelineCollector,
     backgroundIndexingPromise, db,
     disposeEmbedding,  // coordinated L1 -> L2 -> provider dispose chain
+    disposeReranker,  // release the reranker native context (ranking ctx -> model -> llama)
     approvalGate,
     secretStore,  // close secrets.db on shutdown
     auditAggregator,  // clear pending dedup timers

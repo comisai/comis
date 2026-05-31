@@ -6,10 +6,12 @@ icon: "compress"
 
 As conversations grow longer, they eventually become too large for your agent to
 handle efficiently. Comis offers two context engine modes to manage long
-conversations: the default **pipeline** mode processes every conversation through
-eight steps before each AI call, while the opt-in **DAG** mode preserves your
-full conversation history in a lossless directed acyclic graph with recall tools.
-The result: your agent never runs out of room to think.
+conversations. The default **DAG** mode preserves your full conversation history
+in a lossless directed acyclic graph with recall tools, so nothing is thrown away
+— `contextEngine.version` defaults to `"dag"`. The opt-out **pipeline** mode
+(`version: "pipeline"`) instead processes every conversation through eight steps
+before each AI call, dropping and masking old content as it goes. The result:
+your agent never runs out of room to think.
 
 ## How the context engine works
 
@@ -21,9 +23,12 @@ chapters, masks old footnotes, summarizes if the manuscript is still too long,
 and restores key references at the end. All of this happens automatically in the
 background, and you do not need to configure or monitor it.
 
-## The eight steps (pipeline mode)
+## The eight steps (pipeline mode, the opt-out engine)
 
-Here is what happens during each step, in order:
+These eight steps run only in **pipeline** mode — the opt-out engine you reach by
+setting `contextEngine.version: "pipeline"`. (The default DAG engine handles long
+conversations differently; see [DAG mode](#dag-mode) below.) Here is what happens
+during each step, in order:
 
 ### 1. Clearing scratch paper
 
@@ -255,13 +260,15 @@ Oversized results are saved to disk as JSON files with compact inline references
 
 ### What is DAG mode
 
-DAG mode is an alternative context engine that stores every message and tool
+DAG mode is the **default** context engine: it stores every message and tool
 result in a directed acyclic graph (DAG). Instead of discarding old content, the
 DAG compresses it into hierarchical summaries. Your agent can recall any past
 content through search and inspection tools -- nothing is ever truly lost.
 
-DAG mode is opt-in. Set `contextEngine.version: "dag"` in your config to enable
-it. See [Switching modes](#switching-modes) below.
+Because `contextEngine.version` defaults to `"dag"`, this is what your agent runs
+out of the box — no configuration required. To opt out and run the eight-step
+pipeline instead, set `version: "pipeline"`. See [Switching modes](#switching-modes)
+below.
 
 ### How DAG compaction works
 
@@ -302,18 +309,26 @@ See [Built-in Tools](/skills/built-in-tools) and
 
 ### Switching modes
 
-Set `contextEngine.version: "dag"` in your config to switch to DAG mode:
+DAG is the default, so you only set `contextEngine.version` explicitly when you
+want to **opt out** to the pipeline engine — or switch back:
 
 ```yaml title="~/.comis/config.yaml"
 agents:
   default:
     contextEngine:
-      version: "dag"
+      version: "pipeline"   # opt out of the DAG default; remove the key (or set "dag") to switch back
 ```
 
-When switching from pipeline to DAG, existing JSONL conversation history is
-automatically reconciled into the DAG on the next turn. No manual migration is
-required.
+Switching either direction is operator-safe: it is applied on a config reload (no
+daemon restart) and takes effect at the next turn boundary — never mid-turn. The
+switch is reversible and non-destructive in both directions: going to DAG
+reconciles existing JSONL history into the DAG automatically (no manual
+migration), and switching back to pipeline re-reads the full conversation while
+leaving the DAG's stored content intact for a later switch-back. `contextEngine.version`
+is operator-only — an agent cannot switch its own engine mode via the `config.patch`
+RPC. For the full switching semantics (including the `context:mode_switched` event
+and the security boundary), see
+[Switching context modes](/context-management#switching-context-modes-operator-safe).
 
 ## Configuration
 
@@ -324,9 +339,9 @@ change anything.
 | Option | Type | Default | What it does |
 |--------|------|---------|--------------|
 | `contextEngine.enabled` | boolean | `true` | Master toggle for the context engine |
-| `contextEngine.version` | string | `"pipeline"` | Context engine mode: `"pipeline"` (default) or `"dag"` |
+| `contextEngine.version` | string | `"dag"` | Context engine mode: `"dag"` (default) or `"pipeline"` (opt-out) |
 | `contextEngine.thinkingKeepTurns` | number | `10` | Recent turns that keep AI reasoning notes (1-50) |
-| `contextEngine.compactionModel` | string | `"anthropic:claude-haiku-4-5-20250929"` | Model used for summarization |
+| `contextEngine.compactionModel` | string | `""` | Model used for summarization (empty = runtime-resolved default) |
 | `contextEngine.evictionMinAge` | number | `15` | Minimum turn age before stale errors are evicted (3-50) |
 | `contextEngine.historyTurns` | number | `15` | Recent user turns to keep in full (3-100) |
 | `contextEngine.historyTurnOverrides` | record | -- | Per-channel turn limits (e.g., `{ dm: 10, group: 5 }`) |
@@ -344,7 +359,7 @@ agents:
   default:
     contextEngine:
       enabled: true
-      # version: "dag"  # Uncomment to enable DAG mode
+      # version: "pipeline"  # DAG is the default; uncomment to opt out to the pipeline engine
       thinkingKeepTurns: 10
       historyTurns: 15
       historyTurnOverrides:
@@ -354,7 +369,7 @@ agents:
       observationTriggerChars: 120000
       compactionCooldownTurns: 5
       compactionPrefixAnchorTurns: 2  # Turns preserved at head for cache prefix stability
-      compactionModel: "anthropic:claude-haiku-4-5-20250929"
+      compactionModel: ""  # empty = runtime-resolved default
 ```
 
 <Note>

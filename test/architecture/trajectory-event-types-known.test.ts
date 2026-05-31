@@ -104,10 +104,29 @@ const EVENTS_NOT_TRAJECTORY_MAPPED: ReadonlySet<string> = new Set<string>([
   "cache:graph_prefix_written",
 
   // -------------------------------------------------------------------
-  // Command + memory-review lifecycle — internal handlers.
+  // Command + memory-maintenance lifecycle — internal handlers / background
+  // jobs, not turn-level trajectory events.
   // -------------------------------------------------------------------
   "command:blocked",
   "memory:review_completed",
+  // Background consolidation job metrics (clustersProcessed/observationsCreated/
+  // dedupHits) — a maintenance job, not part of an agent turn. Same class as
+  // memory:review_completed above.
+  "memory:consolidated",
+  // Recall-pipeline diagnostic counters (Phase 86) — counts-only observability
+  // events fed into the recall-trace sidecar + recall-counters store, NOT
+  // turn-level trajectory steps. Same class as memory:consolidated above:
+  //   memory:recalled        — per-recall lane/candidate/final counts.
+  //   memory:reranked         — rerank candidate/hit counts + outcome flags.
+  //   memory:entities_linked — entity resolveAndLink counts (newEntities).
+  //   memory:recall_used     — FEED-01 recall-usage attribution: used/ignored
+  //     memory ids + counts, consumed by the daemon write-back subscriber
+  //     (setup-memory-usefulness-wiring.ts → MemoryUsefulnessStore.recordUsage),
+  //     NOT a turn-level trajectory step.
+  "memory:recalled",
+  "memory:reranked",
+  "memory:entities_linked",
+  "memory:recall_used",
 
   // -------------------------------------------------------------------
   // Session-store lifecycle (distinct from session:started/ended which

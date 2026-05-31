@@ -1196,10 +1196,37 @@ describe("createAgentHandlers", () => {
       });
 
       expect(hotAddMock).toHaveBeenCalledOnce();
+      // Phase 92 (CR-01): the 3rd arg is the RAW (pre-Zod-default) rag.rerank.enabled.
+      // This config never set rerank, so it must thread `undefined` (unset) — NOT the
+      // parsed `false` — so the hot-added agent can still auto-on when the model is present.
       expect(hotAddMock).toHaveBeenCalledWith(
         "hot-bot",
         expect.objectContaining({ name: "Hot Bot", model: "claude-sonnet-4-5-20250929" }),
+        undefined,
       );
+    });
+
+    it("threads the RAW rerank signal to hotAdd: explicit true stays true, explicit false stays false (CR-01)", async () => {
+      // Two creates: one with rag.rerank.enabled: true, one with false. The raw signal
+      // passed to hotAdd must mirror the operator's genuine choice (not the parsed default),
+      // so the hot-added agent's effective-rerank precedence matches the boot path.
+      const hotAddMock = vi.fn().mockResolvedValue(undefined);
+      const deps = makeDeps({ persistDeps: makePersistDeps(), hotAdd: hotAddMock });
+      const handlers = createAgentHandlers(deps);
+
+      await handlers["agents.create"]!({
+        agentId: "on-bot",
+        config: { name: "On Bot", rag: { rerank: { enabled: true } } },
+        _trustLevel: "admin",
+      });
+      await handlers["agents.create"]!({
+        agentId: "off-bot",
+        config: { name: "Off Bot", rag: { rerank: { enabled: false } } },
+        _trustLevel: "admin",
+      });
+
+      expect(hotAddMock).toHaveBeenNthCalledWith(1, "on-bot", expect.anything(), true);
+      expect(hotAddMock).toHaveBeenNthCalledWith(2, "off-bot", expect.anything(), false);
     });
 
     it("passes skipRestart: true to persistToConfig when hotAdd provided", async () => {

@@ -4,13 +4,19 @@ import type { MemorySearchResult } from "@comis/core";
 import { createHybridMemoryInjector } from "./hybrid-memory-injector.js";
 
 /** Helper to create a mock MemorySearchResult. */
-function mockResult(content: string, score: number, date?: string): MemorySearchResult {
+function mockResult(
+  content: string,
+  score: number,
+  date?: string,
+  occurredDate?: string,
+): MemorySearchResult {
   return {
     entry: {
       id: `mem-${Math.random().toString(36).slice(2, 8)}`,
       tenantId: "test-tenant",
       content,
       createdAt: date ? new Date(date).getTime() : Date.now(),
+      ...(occurredDate !== undefined ? { occurredAt: new Date(occurredDate).getTime() } : {}),
       tags: [],
       trustLevel: "learned",
       source: { channel: "test" },
@@ -36,7 +42,21 @@ describe("hybrid-memory-injector", () => {
       expect(result.inlineMemory).toBeDefined();
       expect(result.inlineMemory).toContain("User prefers dark mode");
       expect(result.inlineMemory).toContain("recorded 2026-01-15");
+      // No occurredAt → no "occurred" segment (Phase-80 inline format unchanged).
+      expect(result.inlineMemory).not.toContain("occurred ");
       expect(result.systemPromptSections).toEqual([]);
+    });
+
+    it("inlines BOTH recorded and occurred dates when occurredAt is present (TEMP-05)", () => {
+      const injector = createHybridMemoryInjector();
+      const results = [
+        mockResult("Discussed the launch on the 3rd", 0.85, "2026-01-15", "2026-01-03"),
+      ];
+      const result = injector.split(results, 5000);
+
+      expect(result.inlineMemory).toBeDefined();
+      expect(result.inlineMemory).toContain("recorded 2026-01-15");
+      expect(result.inlineMemory).toContain("occurred 2026-01-03");
     });
 
     it("puts top-1 in system prompt when score below threshold", () => {

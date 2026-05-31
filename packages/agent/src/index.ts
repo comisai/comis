@@ -162,6 +162,10 @@ export type { GreetingGenerator, GreetingGeneratorDeps, GreetingTrigger } from "
 export { runMemoryReview } from "./memory/memory-review-job.js";
 export type { MemoryReviewDeps } from "./memory/memory-review-job.js";
 
+// Memory consolidation (periodic clustering of near-duplicate memories → observations)
+export { runMemoryConsolidation } from "./memory/memory-consolidation-job.js";
+export type { MemoryConsolidationDeps } from "./memory/memory-consolidation-job.js";
+
 // RAG (Retrieval-Augmented Generation)
 export { formatMemorySection } from "./rag/rag-retriever.js";
 
@@ -240,6 +244,12 @@ export { clearSessionState, wireSessionStateCleanup } from "./executor/session-s
 // Sub-agent cache prefix sharing -- parent CacheSafeParams reader for setup-cross-session
 export { getCacheSafeParams } from "./executor/prompt-assembly.js";
 export type { CacheSafeParams } from "./executor/prompt-assembly.js";
+
+// Recall-trace recorder wiring (Phase 86 / OBS-01/02). Exported so the
+// recall-diagnostics capstone can drive the REAL production recorder path
+// (envelope + dataDir-derived confinedBaseDir) rather than a hand-written
+// fixture, closing the WR-01 read-path gap end-to-end.
+export { buildRecallTrace } from "./executor/prompt-assembly.js";
 
 // MCP disconnect cleanup (clean discovery state on server disconnect/tools_changed)
 export { wireMcpDisconnectCleanup } from "./executor/mcp-disconnect-cleanup.js";
@@ -337,6 +347,8 @@ export type { ContextTruncationResult } from "./safety/context-truncation-recove
 // Hybrid memory injector (split RAG results: inline + system prompt)
 export { createHybridMemoryInjector } from "./rag/hybrid-memory-injector.js";
 export type { HybridMemoryInjector, HybridMemoryInjection } from "./rag/hybrid-memory-injector.js";
+export { createMemoryRecall } from "./rag/memory-recall.js";
+export type { MemoryRecall, MemoryRecallDeps, MemoryRecallConfig } from "./rag/memory-recall.js";
 
 // Schema normalizer (strip unsupported JSON Schema keywords per provider)
 export { normalizeToolSchema, PROVIDER_UNSUPPORTED_KEYWORDS } from "./safety/tool-schema-safety.js";

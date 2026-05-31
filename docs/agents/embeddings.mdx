@@ -44,6 +44,36 @@ This makes your agent significantly better at recalling relevant information,
 especially over long periods where the same topics might be discussed using
 different terminology.
 
+## Embedder vs reranker
+
+Comis runs **two** different local GGUF models (both via `node-llama-cpp`) at two
+different stages of recall — it is easy to confuse them, so the distinction
+matters:
+
+| | **Embedder** | **Reranker** |
+|---|---|---|
+| Model type | Bi-encoder | Cross-encoder |
+| Example model | `nomic-embed` (local) / `text-embedding-3-small` (OpenAI) | `bge-reranker-v2-m3` (local GGUF) |
+| Config home | `embedding.*` (e.g. `embedding.local.modelUri`) | `memory.rerankerModel` + `rag.rerank.*` |
+| What it does | Turns each memory into a vector **once**, ahead of time, feeding the vector search lane | Re-scores already-retrieved candidates by reading the query and candidate **together** |
+| When it runs | At store/index time (and to embed the query) | After fusion, only on the top candidates |
+| Default | On (the `auto` provider) | **Opt-in** (`rag.rerank.enabled` defaults `false`) |
+
+The **embedder** is a bi-encoder: it encodes the query and each memory
+*separately* into vectors, and similarity is the distance between them — fast,
+and what powers the meaning-matching [search](/agents/search) lane. The
+**reranker** is a cross-encoder: it processes the query and a candidate
+*jointly* for a sharper relevance judgement, but is more expensive, so it only
+re-scores the handful of candidates that already passed fusion, and it is
+opt-in.
+
+<Warning>
+  The reranker is **not** an embedding model, and its keys do **not** live under
+  `embedding.*`. The reranker model is `memory.rerankerModel` and its behaviour is
+  tuned under `rag.rerank.*`. See [Search](/agents/search#cross-encoder-reranking-opt-in)
+  and [Memory](/agents/memory#reranking-opt-in).
+</Warning>
+
 ## Choosing a provider
 
 Comis supports three embedding provider options:

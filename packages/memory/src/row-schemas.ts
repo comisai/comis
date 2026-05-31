@@ -75,12 +75,116 @@ export const MemoryRowSchema = z.strictObject({
   tags: z.string(),
   /** Unix timestamp in milliseconds. */
   created_at: z.number(),
+  /** Unix timestamp in milliseconds, null if event time unknown (TEMP-01). */
+  occurred_at: z.number().nullable(),
+  /** Evidence count; null = raw memory, >=1 = observation (P84/CONS-01). */
+  proof_count: z.number().nullable(),
+  /** JSON-encoded string[] of source ids — consumer parses; null on raw. */
+  source_ids: z.string().nullable(),
+  /** Unix ms; set when folded into an observation (P84/CONS-04); null on raw. */
+  consolidated_at: z.number().nullable(),
+  /** Observation confidence 0..1 (P84/CONS-08); null on raw. */
+  confidence: z.number().nullable(),
+  /** JSON-encoded audit array — consumer parses; null on raw (P84/CONS-05). */
+  history: z.string().nullable(),
   /** Unix timestamp in milliseconds, null if never updated. */
   updated_at: z.number().nullable(),
   /** Unix timestamp in milliseconds, null if no expiry. */
   expires_at: z.number().nullable(),
   /** 0 or 1 — whether vec_memories has an embedding for this entry. */
   has_embedding: z.number(),
+});
+
+/**
+ * Schema for the `memory_entities` table (Phase 83, ENT-05).
+ *
+ * `canonical_key` is DB-row-ONLY (OQ-2): it is the normalized dedup/index key
+ * (TS lower+NFKD+strip-marks — see entity-resolver.ts) and is intentionally
+ * NOT a field on the strict `MemoryEntity` domain type in @comis/core, which
+ * carries only the display `canonicalName`. The key is an implementation
+ * detail of the resolver + UNIQUE index, not part of the domain contract.
+ */
+export const MemoryEntityRowSchema = z.strictObject({
+  id: z.string(),
+  tenant_id: z.string(),
+  agent_id: z.string(),
+  /** Display form (first-seen casing). */
+  canonical_name: z.string(),
+  /** Normalized dedup key; DB-row-only (not on the MemoryEntity domain type). */
+  canonical_key: z.string(),
+  mention_count: z.number(),
+  /** Unix timestamp in milliseconds. */
+  first_seen: z.number(),
+  /** Unix timestamp in milliseconds. */
+  last_seen: z.number(),
+});
+
+/**
+ * Schema for the `readUsefulness` projection (Phase 93, FEED-02). The scoped
+ * `SELECT memory_id, used_count, ignored_count, last_useful_at FROM
+ * memory_usefulness WHERE tenant_id=? AND agent_id=? AND memory_id IN (...)`
+ * read. `tenant_id`/`agent_id` are NOT projected — the WHERE already pins them
+ * (mirrors `EntityListRowSchema`'s drop of `canonical_key`). `last_useful_at` is
+ * nullable (NULL until the memory's first "used" attribution). Parsed via
+ * `createRowMapper` in the adapter — never `as Row[]`.
+ */
+export const MemoryUsefulnessRowSchema = z.strictObject({
+  memory_id: z.string(),
+  used_count: z.number(),
+  ignored_count: z.number(),
+  /** Epoch ms of the last "used" attribution; NULL until first use. */
+  last_useful_at: z.number().nullable(),
+});
+
+/**
+ * Schema for the entity associative-lane self-join projection (Phase 83,
+ * ENT-02; RESEARCH Pattern 2). The one-hop self-join over
+ * `memory_entity_links` returns, per other memory, the count of distinct
+ * entities it shares with the seed set. Parsed via `createRowMapper` in the
+ * (Plan-02) lane query — never `as Row[]`.
+ */
+export const EntityLaneRowSchema = z.strictObject({
+  memory_id: z.string(),
+  /** COUNT(DISTINCT shared entity_id) — drives most-shared-first ordering. */
+  shared: z.number(),
+});
+
+/**
+ * Schema for the causal one-hop edge-lookup projection (Phase 96, EXTRACT-03;
+ * RESEARCH Pattern 3). The scoped UNION over `memory_causal_edges` returns, per
+ * counterpart memory, the linked memory id (the cause/effect counterpart of a
+ * seed, EITHER direction) and the edge `confidence`. `tenant_id`/`agent_id` are
+ * NOT projected — the WHERE already pins them (mirrors `EntityLaneRowSchema`'s
+ * minimal projection). Parsed via `createRowMapper` in the adapter — never
+ * `as Row[]`.
+ */
+export const CausalLaneRowSchema = z.strictObject({
+  /** The cause/effect counterpart memory id of a seed (drives the hydrate). */
+  linked: z.string(),
+  /** The edge confidence (REAL) — drives confidence-desc intra-lane ordering. */
+  confidence: z.number(),
+});
+
+/**
+ * Schema for the `listEntities` diagnostic projection (Phase 86, OBS-06). The
+ * scoped `SELECT id, canonical_name, mention_count, first_seen, last_seen FROM
+ * memory_entities WHERE tenant_id=? AND agent_id=? ORDER BY mention_count DESC`
+ * read. This is a STRICT SUBSET of the `memory_entities` columns: it
+ * deliberately omits `canonical_key` (DB-internal dedup key — OQ-2, never
+ * operator-facing) and the `tenant_id`/`agent_id` scope columns (the WHERE
+ * already pins them). The adapter maps this snake_case row to the camelCase
+ * `EntityRow` domain shape (`@comis/core`) — parsed via `createRowMapper`,
+ * never `as Row[]`.
+ */
+export const EntityListRowSchema = z.strictObject({
+  id: z.string(),
+  /** Display form (first-seen casing) → `EntityRow.name`. */
+  canonical_name: z.string(),
+  mention_count: z.number(),
+  /** Unix timestamp in milliseconds. */
+  first_seen: z.number(),
+  /** Unix timestamp in milliseconds. */
+  last_seen: z.number(),
 });
 
 /**

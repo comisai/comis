@@ -1,0 +1,450 @@
+// SPDX-License-Identifier: Apache-2.0
+// @allow-throw: foldIntoExisting's `throw new Error(...)` guards (fold target not found / mapper parse failure / grown-row vanished) run INSIDE the better-sqlite3 `db.transaction(fn)()` callback, where a throw is the ONLY way to trigger the atomic ROLLBACK — returning a Result.err from the callback would COMMIT the partial grow. Every throw is caught by the method's own outer try/catch and converted to `err` (the tests prove "never throws"); consumed by the daemon consolidation cron (@allow-throw boundary), which treats the err as a non-fatal skipped fold.
+/**
+ * SqliteMemoryConsolidationStore: the SOLE adapter for the segregated
+ * `MemoryConsolidationStore` port (@comis/core, Phase 84). It owns ALL
+ * consolidation SQL — the scoped, STATE-predicate candidate selection
+ * (`consolidated_at IS NULL`, NOT a time cursor — CONS-04), the embedding
+ * hydration (a `LEFT JOIN vec_memories` when sqlite-vec is available — RESEARCH
+ * Pitfall 7), the observation listing for the deterministic dedup pre-check
+ * (CONS-01/04 support), and the ATOMIC `applyConsolidation` transaction
+ * (CONS-03).
+ *
+ * It shares the `better-sqlite3` handle of the `SqliteMemoryAdapter` (passed in
+ * via `getDb()`), so it runs against the same schema — the `memories` table now
+ * carries the 5 observation columns (`proof_count`, `source_ids`,
+ * `consolidated_at`, `confidence`, `history`) and the
+ * `idx_memories_unconsol` / `idx_memories_observations` partial indexes added by
+ * `ensureMemoryColumns` + `initSchema` (Plan 01).
+ *
+ * ## The two central de-risks live here (the SQL boundary)
+ *
+ * 1. **Atomic apply (CONS-03).** `applyConsolidation` is ONE
+ *    `db.transaction(fn)()`: it creates the observation row AND marks every
+ *    source `consolidated_at` in a single unit. better-sqlite3's transaction
+ *    callable auto-ROLLBACKs on any throw, so a mid-failure leaves NEITHER an
+ *    orphan observation NOR partially-marked sources.
+ * 2. **State-predicate selection (CONS-04).** Candidates are selected by
+ *    `consolidated_at IS NULL` — a STATE predicate, not a `created_at > cursor`
+ *    watermark. Because the mark happens INSIDE the apply transaction, a
+ *    processed source leaves the candidate set atomically; a re-run does not
+ *    re-select it, so the cycle is naturally idempotent (no double-create — the
+ *    singleton/watermark bug the superseded design sketch suffered).
+ *
+ * ## Non-destructive (CONS-05)
+ *
+ * `applyConsolidation` NEVER removes a source memory and NEVER touches a
+ * supersession column — it only sets `consolidated_at`. The raw rows stay
+ * live and recall-able; conflicts are resolved at read time (Phase 81).
+ *
+ * ## Single-writer assumption (mirror sqlite-memory-entity-store.ts:137-144)
+ *
+ * better-sqlite3 transactions are DEFERRED (no up-front write lock), so
+ * atomicity within one `applyConsolidation` call does NOT by itself serialize
+ * two *concurrent* writers. What guarantees no interleave is that the daemon
+ * memory write path is SINGLE-THREADED and better-sqlite3 is synchronous — the
+ * consolidation cron and a live agent write cannot run mid-transaction. The
+ * apply leans on that assumption (a concurrent design would need additional
+ * locking around the create+mark unit).
+ *
+ * ## Isolation is the load-bearing security boundary (T-84-05)
+ *
+ * Comis runs many agents/tenants in one DB. The candidate SELECT, the
+ * observation SELECT, AND the source-mark UPDATE all filter on
+ * `(tenant_id, agent_id)` (the UPDATE on `tenant_id` — a cross-tenant id is a
+ * fail-closed no-op) — parameterized — so a cross-scope memory is never
+ * returned as a candidate nor marked.
+ *
+ * ## Untrusted input (T-84-09)
+ *
+ * Memory content + ids derive from conversation text. Every value reaches SQL
+ * as a bound `?` parameter — never concatenated — and every read parses through
+ * `MemoryRowSchema` (the `createRowMapper` factory; no `as Foo[]` casts —
+ * `untyped-sqlite.test.ts`).
+ *
+ * @module
+ */
+
+import type Database from "better-sqlite3";
+import type {
+  MemoryConsolidationStore,
+  ConsolidationCandidate,
+  ConsolidationPlan,
+  ConsolidationFoldPlan,
+  MemoryEntry,
+} from "@comis/core";
+import { systemNowMs } from "@comis/core";
+import { ok, err, type Result } from "@comis/shared";
+import { createRowMapper, rowToEntry, insertMemoryRow } from "./row-mapper.js";
+import { MemoryRowSchema } from "./row-schemas.js";
+import { isVecAvailable } from "./schema.js";
+
+/** Minimal pino-compatible logger (mirrors sqlite-memory-entity-store.ts). */
+interface MemoryLogger {
+  info(obj: Record<string, unknown>, msg: string): void;
+  warn(obj: Record<string, unknown>, msg: string): void;
+  debug(obj: Record<string, unknown>, msg: string): void;
+}
+
+/** Constructor deps for {@link createSqliteMemoryConsolidationStore}. */
+export interface MemoryConsolidationStoreDeps {
+  /** The shared better-sqlite3 handle (typically `SqliteMemoryAdapter.getDb()`). */
+  db: Database.Database;
+  /** Optional structured logger. */
+  logger?: MemoryLogger;
+}
+
+// Row mapper — the sanctioned read path (no `as Foo[]`). The candidate SELECT
+// peels the joined `embedding` column off each raw row BEFORE this strict parse,
+// so the extra column never trips MemoryRowSchema's `strictObject`.
+const memoryRowMapper = createRowMapper(MemoryRowSchema);
+
+/**
+ * Decode a sqlite-vec embedding column (a Node Buffer of packed float32s) into
+ * a `number[]`. Returns `undefined` when the column is null/absent (a LEFT JOIN
+ * miss, or sqlite-vec unavailable) — embeddings are optional on a candidate
+ * (the clusterer then degrades to entity/FTS overlap, non-fatal).
+ *
+ * Decode is TOTAL and non-throwing (WR-01). A corrupt/misaligned/truncated blob
+ * degrades that ONE candidate to "no embedding" — it MUST NOT throw, because the
+ * caller's outer try/catch would turn a single bad row into an `err` and the
+ * consolidation job treats a candidate-read `err` as FATAL (aborts the whole
+ * run). Two concrete hazards this guards:
+ *   - byteOffset alignment: `new Float32Array(buf.buffer, buf.byteOffset, len)`
+ *     throws `RangeError` when `byteOffset` is not a multiple of 4 (a POOLED
+ *     Buffer's backing ArrayBuffer window). We copy the bytes into a fresh,
+ *     0-aligned ArrayBuffer first, so the view offset is always 0.
+ *   - truncation: a blob whose byteLength is not a multiple of 4 is not a clean
+ *     float32 vector; viewing `floor(len/4)` floats would silently DROP the
+ *     trailing bytes and feed a wrong vector into cosine. We reject it.
+ */
+function decodeEmbedding(raw: unknown): number[] | undefined {
+  if (!Buffer.isBuffer(raw)) return undefined;
+  // A clean float32 payload is a whole number of 4-byte lanes; anything else is
+  // a corrupt/partial blob → degrade (never a silently-truncated vector).
+  if (raw.byteLength % 4 !== 0) return undefined;
+  try {
+    // Copy into a fresh, 0-offset ArrayBuffer (owns its own buffer) so the
+    // Float32Array view is always 4-byte aligned regardless of the source
+    // Buffer's pooled byteOffset. sqlite-vec packs little-endian float32s.
+    const copy = Uint8Array.prototype.slice.call(raw);
+    return Array.from(new Float32Array(copy.buffer, 0, copy.byteLength / 4));
+  } catch {
+    // Defensive: never let one bad row abort the candidate read (WR-01).
+    return undefined;
+  }
+}
+
+/**
+ * Create the SQLite-backed {@link MemoryConsolidationStore} adapter over a
+ * shared db handle. The handle's lifecycle (open/close, pragmas) is owned by the
+ * caller (the memory adapter) — this factory neither opens nor closes it.
+ */
+export function createSqliteMemoryConsolidationStore(
+  deps: MemoryConsolidationStoreDeps,
+): MemoryConsolidationStore {
+  const { db, logger } = deps;
+
+  // --- Prepared statements (parameterized; built once, reused across calls) ---
+
+  // Candidate selection. Embeddings are hydrated via a LEFT JOIN onto the
+  // vec_memories vec0 virtual table when sqlite-vec is available; when it is
+  // not, the same query minus the JOIN + the `embedding` projection runs (the
+  // candidate then has no embedding — the clusterer degrades gracefully). Both
+  // variants share the load-bearing predicates:
+  //   - m.tenant_id = ? AND m.agent_id = ?  → scope isolation (T-84-05)
+  //   - m.consolidated_at IS NULL           → STATE predicate, NOT a cursor (CONS-04)
+  //   - m.proof_count IS NULL               → only raws, never existing observations
+  //   - ORDER BY m.created_at ASC LIMIT ?   → oldest-first, bounded (CONS-07)
+  const selectCandidates = isVecAvailable()
+    ? db.prepare(
+        "SELECT m.*, v.embedding AS embedding FROM memories m " +
+          "LEFT JOIN vec_memories v ON v.memory_id = m.id " +
+          "WHERE m.tenant_id = ? AND m.agent_id = ? AND m.consolidated_at IS NULL " +
+          "AND m.proof_count IS NULL " +
+          "ORDER BY m.created_at ASC LIMIT ?",
+      )
+    : db.prepare(
+        "SELECT m.* FROM memories m " +
+          "WHERE m.tenant_id = ? AND m.agent_id = ? AND m.consolidated_at IS NULL " +
+          "AND m.proof_count IS NULL " +
+          "ORDER BY m.created_at ASC LIMIT ?",
+      );
+
+  // Observation listing for the dedup pre-check (CONS-04). proof_count IS NOT
+  // NULL is the column-flag for "this row is an observation" (§4.1).
+  const selectObservations = db.prepare(
+    "SELECT * FROM memories WHERE tenant_id = ? AND agent_id = ? AND proof_count IS NOT NULL " +
+      "ORDER BY created_at DESC LIMIT ?",
+  );
+
+  // Source-mark UPDATE — scoped on tenant_id (a cross-tenant id is a no-op,
+  // fail-closed). NON-DESTRUCTIVE: sets consolidated_at only; the source row is
+  // never removed (CONS-05).
+  const markConsolidated = db.prepare(
+    "UPDATE memories SET consolidated_at = ? WHERE id = ? AND tenant_id = ?",
+  );
+
+  // --- Fold statements (Phase 94, FOLD-01/02) — the dual of the create path ---
+
+  // Read the EXISTING observation to grow, INSIDE the fold transaction. Scoped on
+  // (tenant_id) + `proof_count IS NOT NULL` so the target MUST be an observation
+  // in the caller's tenant — a cross-tenant id OR a raw (proof_count NULL) row
+  // misses → fail-closed err (T-94-04), nothing mutated.
+  const selectObservationById = db.prepare(
+    "SELECT * FROM memories WHERE id = ? AND tenant_id = ? AND proof_count IS NOT NULL",
+  );
+
+  // Grow the observation in place (partial-column UPDATE — NOT a full-row replace
+  // via the create-path insert helper). `content = COALESCE(?, content)` makes an
+  // omitted content a true no-op on the column → the `memories_au AFTER UPDATE OF
+  // content` FTS trigger does not re-index a proof-only fold (RESEARCH Pitfall 6,
+  // schema.ts:284). `trust_level = ?` writes plan.trustLevel VERBATIM — the
+  // adapter never recomputes/raises trust (the min ceiling is computed upstream
+  // in 94-02; the adapter has no path to RAISE, T-94-01). Scoped on (tenant_id) +
+  // `proof_count IS NOT NULL` (defense-in-depth — the same predicate as the read).
+  const growObservation = db.prepare(
+    "UPDATE memories SET proof_count = ?, source_ids = ?, history = ?, confidence = ?, " +
+      "occurred_at = ?, trust_level = ?, content = COALESCE(?, content), updated_at = ? " +
+      "WHERE id = ? AND tenant_id = ? AND proof_count IS NOT NULL",
+  );
+
+  return {
+    async listConsolidationCandidates(
+      agentId: string,
+      tenantId: string,
+      limit: number,
+    ): Promise<Result<ConsolidationCandidate[], Error>> {
+      const startMs = systemNowMs();
+      try {
+        // `Statement.all()` already returns `unknown[]` here — no `as Foo[]`
+        // cast (untyped-sqlite). Each row is peeled + parsed below.
+        const rawRows = selectCandidates.all(tenantId, agentId, limit);
+
+        const candidates: ConsolidationCandidate[] = [];
+        for (const raw of rawRows) {
+          // Peel the joined embedding column off the row BEFORE the strict parse
+          // (MemoryRowSchema is strictObject — an extra `embedding` column would
+          // be rejected). The remaining columns are the memory row.
+          const { embedding: rawEmbedding, ...memoryRow } = raw as Record<string, unknown>;
+          const embedding = decodeEmbedding(rawEmbedding);
+
+          const parsed = memoryRowMapper.parseOptionalRow(memoryRow);
+          if (!parsed.ok) return err(new Error(parsed.error.message));
+          if (!parsed.value) continue; // defensive — parseOptionalRow only nulls on undefined input
+
+          const entry = rowToEntry(parsed.value, embedding);
+          candidates.push(embedding ? { entry, embedding } : { entry });
+        }
+
+        const durationMs = systemNowMs() - startMs;
+        logger?.debug(
+          { step: "consolidation-candidates", durationMs, count: candidates.length },
+          "Consolidation candidate selection complete",
+        );
+        return ok(candidates);
+      } catch (e: unknown) {
+        const durationMs = systemNowMs() - startMs;
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "consolidation-candidates",
+            durationMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "consolidation candidate query failed — check DB integrity",
+          },
+          "Consolidation candidate selection failed",
+        );
+        return err(error);
+      }
+    },
+
+    async listObservations(
+      agentId: string,
+      tenantId: string,
+      limit: number,
+    ): Promise<Result<MemoryEntry[], Error>> {
+      const startMs = systemNowMs();
+      try {
+        const parsed = memoryRowMapper.parseRows(selectObservations.all(tenantId, agentId, limit));
+        if (!parsed.ok) return err(new Error(parsed.error.message));
+
+        // Observations have no embedding hydration (the dedup pre-check compares
+        // content/source-id sets, not vectors).
+        const observations = parsed.value.map((row) => rowToEntry(row));
+
+        const durationMs = systemNowMs() - startMs;
+        logger?.debug(
+          { step: "consolidation-observations", durationMs, count: observations.length },
+          "Observation listing complete",
+        );
+        return ok(observations);
+      } catch (e: unknown) {
+        const durationMs = systemNowMs() - startMs;
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "consolidation-observations",
+            durationMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "observation listing query failed — check DB integrity",
+          },
+          "Observation listing failed",
+        );
+        return err(error);
+      }
+    },
+
+    async applyConsolidation(
+      plan: ConsolidationPlan,
+    ): Promise<Result<MemoryEntry, Error>> {
+      const startMs = systemNowMs();
+      try {
+        // ONE transaction (CONS-03): create the observation AND mark every source
+        // consolidated_at. better-sqlite3's transaction callable BEGINs, runs fn,
+        // COMMITs — and auto-ROLLBACKs on ANY throw, so a failure in EITHER the
+        // insert OR a source-mark reverts BOTH. The mark uses `plan.now` (the
+        // injected clock value) — never a wall-clock global for the WRITTEN
+        // timestamp (systemNowMs below is only the durationMs metric, globals rule).
+        const tx = db.transaction(() => {
+          insertMemoryRow(db, plan.observation, "semantic"); // observation stays memory_type='semantic' (§4.1)
+          for (const id of plan.markConsolidated) {
+            markConsolidated.run(plan.now, id, plan.tenantId); // non-destructive, scoped, fail-closed
+          }
+        });
+        tx(); // throws → automatic ROLLBACK; nothing committed (no orphan, no partial mark)
+
+        const durationMs = systemNowMs() - startMs;
+        logger?.debug(
+          {
+            step: "consolidation-apply",
+            durationMs,
+            markedCount: plan.markConsolidated.length,
+            proofCount: plan.observation.proofCount,
+          },
+          "Consolidation applied (observation created + sources marked)",
+        );
+        return ok(plan.observation);
+      } catch (e: unknown) {
+        const durationMs = systemNowMs() - startMs;
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "consolidation-apply",
+            durationMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "applyConsolidation transaction failed — rolled back, no partial state",
+          },
+          "Consolidation apply failed",
+        );
+        return err(error);
+      }
+    },
+
+    async foldIntoExisting(
+      plan: ConsolidationFoldPlan,
+    ): Promise<Result<MemoryEntry, Error>> {
+      const startMs = systemNowMs();
+      try {
+        // ONE transaction (FOLD-02): grow the EXISTING observation AND mark every
+        // new source consolidated_at in a single unit. better-sqlite3's
+        // transaction callable auto-ROLLBACKs on ANY throw, so a failure in EITHER
+        // the grow OR a source-mark reverts BOTH — no torn observation, no orphan
+        // mark. `grown` is captured inside so the read-back reflects the committed
+        // state. The mark + history use `plan.now` (the injected clock); systemNowMs
+        // below is only the durationMs metric (globals rule).
+        let grown: MemoryEntry | undefined;
+        const tx = db.transaction(() => {
+          // (a) Read the target INSIDE the tx — must be an observation in scope.
+          //     A cross-tenant id OR a raw (proof_count NULL) row misses → throw →
+          //     ROLLBACK → err (fail-closed, T-94-04). Parsed via the row mapper
+          //     (the sanctioned typed-read path — untyped-sqlite gate).
+          const targetRaw = selectObservationById.get(plan.targetObservationId, plan.tenantId);
+          const parsedTarget = memoryRowMapper.parseOptionalRow(targetRaw);
+          if (!parsedTarget.ok) throw new Error(parsedTarget.error.message);
+          if (!parsedTarget.value) {
+            throw new Error("fold target not found — not an observation in scope");
+          }
+          const target = rowToEntry(parsedTarget.value);
+
+          // (b) IDEMPOTENCY backstop (FOLD-02): proof_count := |UNION(existing, new)|
+          //     — a SET-cardinality recompute via `new Set(...)`, NEVER a blind +=.
+          //     Re-folding already-present sources leaves the count unchanged.
+          const union = [...new Set([...(target.sourceIds ?? []), ...plan.newSourceIds])];
+          const newProofCount = union.length;
+
+          // (c) Non-destructive history (CONS-05): append the prior content ONLY
+          //     when the fold actually CHANGES content (a proof-only fold appends
+          //     nothing → no FTS churn, no history noise — Pitfall 6 / T-94-06).
+          const history = [...(target.history ?? [])];
+          if (plan.content !== undefined && plan.content !== target.content) {
+            history.push({ previousContent: target.content, changedAt: plan.now });
+          }
+
+          // (d) Grow the row: UNIONed proof_count + source_ids, appended history,
+          //     refreshed confidence + occurred_at (half-life clock reset), trust
+          //     written VERBATIM (never raised — T-94-01), content COALESCE-d
+          //     (omit = unchanged). source_ids/history persist as JSON TEXT.
+          growObservation.run(
+            newProofCount,
+            JSON.stringify(union),
+            JSON.stringify(history),
+            plan.confidence,
+            plan.occurredAt,
+            plan.trustLevel,
+            plan.content ?? null, // null → COALESCE keeps existing content (no FTS re-index)
+            plan.now, // updated_at (record time of the fold)
+            plan.targetObservationId,
+            plan.tenantId,
+          );
+
+          // (e) Mark every NEW source consolidated_at — scoped, fail-closed,
+          //     non-destructive (sets consolidated_at only; never deletes).
+          for (const id of plan.newSourceIds) {
+            markConsolidated.run(plan.now, id, plan.tenantId);
+          }
+
+          // (f) Read the grown row back (same scoped statement) so the returned
+          //     entry reflects the committed state.
+          const grownRaw = selectObservationById.get(plan.targetObservationId, plan.tenantId);
+          const parsedGrown = memoryRowMapper.parseOptionalRow(grownRaw);
+          if (!parsedGrown.ok) throw new Error(parsedGrown.error.message);
+          if (!parsedGrown.value) throw new Error("grown observation vanished post-fold");
+          grown = rowToEntry(parsedGrown.value);
+        });
+        tx(); // throws → automatic ROLLBACK; nothing committed (no torn grow, no orphan mark)
+
+        const durationMs = systemNowMs() - startMs;
+        logger?.debug(
+          {
+            step: "consolidation-fold",
+            durationMs,
+            targetObservationId: plan.targetObservationId,
+            newSourceCount: plan.newSourceIds.length,
+            proofCount: grown?.proofCount,
+          },
+          "Consolidation fold applied (observation grown + new sources marked)",
+        );
+        // grown is always set on the COMMIT path (set in step (f) before tx() returns).
+        return ok(grown!);
+      } catch (e: unknown) {
+        const durationMs = systemNowMs() - startMs;
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "consolidation-fold",
+            durationMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "fold transaction failed — rolled back, no partial state",
+          },
+          "Consolidation fold failed",
+        );
+        return err(error);
+      }
+    },
+  };
+}

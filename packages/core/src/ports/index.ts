@@ -19,6 +19,21 @@ export type {
   MemorySearchResult,
 } from "./memory.js";
 export type { EmbeddingPort } from "./embedding.js";
+export type { RerankerPort } from "./reranker.js";
+export type { MemoryEntityStore, EntityScope, EntityRow } from "./memory-entity-store.js";
+export type { MemoryTemporalStore } from "./memory-temporal-store.js";
+export type { MemoryCausalStore, CausalScope } from "./memory-causal-store.js";
+export type {
+  MemoryUsefulnessStore,
+  UsefulnessScope,
+  UsefulnessSignal,
+} from "./memory-usefulness-store.js";
+export type {
+  MemoryConsolidationStore,
+  ConsolidationCandidate,
+  ConsolidationPlan,
+  ConsolidationFoldPlan,
+} from "./memory-consolidation.js";
 export type { ContextStorePort } from "./context-store.js";
 export type { ContextEngineStore } from "./context-engine-store.js";
 export type { ContextAdminStore } from "./context-admin-store.js";

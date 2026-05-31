@@ -131,7 +131,7 @@ function createDefaultForm(): Record<string, unknown> {
     "session.compaction.threshold": 50,
     // Context Engine
     "contextEngine.enabled": true,
-    "contextEngine.version": "pipeline",
+    "contextEngine.version": "dag",
     "contextEngine.thinkingKeepTurns": undefined,
     "contextEngine.compactionModel": "",
     "contextEngine.evictionMinAge": undefined,
@@ -905,7 +905,7 @@ export class IcAgentEditor extends LitElement {
     const ceDetail = (agent as unknown as Record<string, unknown>).contextEngine as Record<string, unknown> | undefined;
     if (ceDetail) {
       form["contextEngine.enabled"] = ceDetail.enabled ?? true;
-      form["contextEngine.version"] = ceDetail.version ?? "pipeline";
+      form["contextEngine.version"] = ceDetail.version ?? "dag";
       form["contextEngine.thinkingKeepTurns"] = ceDetail.thinkingKeepTurns;
       form["contextEngine.compactionModel"] = ceDetail.compactionModel ?? "";
       form["contextEngine.evictionMinAge"] = ceDetail.evictionMinAge;
@@ -1415,7 +1415,7 @@ export class IcAgentEditor extends LitElement {
     if (ceEnabled !== undefined) {
       const cePrev: Record<string, unknown> = {
         enabled: Boolean(ceEnabled),
-        version: ceVersion || "pipeline",
+        version: ceVersion || "dag",
       };
       if (f["contextEngine.thinkingKeepTurns"] !== undefined && f["contextEngine.thinkingKeepTurns"] !== "") {
         cePrev.thinkingKeepTurns = Number(f["contextEngine.thinkingKeepTurns"]);
