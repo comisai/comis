@@ -13,7 +13,7 @@
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as net from "node:net";
 import { existsSync, unlinkSync } from "node:fs";
 
@@ -85,7 +85,7 @@ describe.skipIf(!egressIntegrationAvailable)(
       let server: net.Server;
       let socketPath: string;
 
-      beforeEach(() => {
+      beforeEach(async () => {
         socketPath = `/tmp/comis-egress-test-${systemNowMs()}.sock`;
         createdSocketPaths.push(socketPath);
 
@@ -105,9 +105,12 @@ describe.skipIf(!egressIntegrationAvailable)(
           });
         });
 
-        // Bind the server before spawning bwrap (pitfall 1: file must exist
-        // before the --bind argument is evaluated by bwrap at namespace setup).
-        server.listen(socketPath);
+        // Await the 'listening' event so the socket is bound and the file
+        // exists before bwrap evaluates its --bind argument (pitfall 1).
+        await new Promise<void>((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(socketPath, () => resolve());
+        });
       });
 
       afterEach((ctx) => {
@@ -117,44 +120,58 @@ describe.skipIf(!egressIntegrationAvailable)(
       });
 
       it(
-        "socat CONNECT through bind-mounted unix socket receives a response from the host server",
+        "curl through the bind-mounted unix socket receives a response from the host server",
         { timeout: 15_000 },
-        () => {
-          // Wait until the socket file actually exists on disk.
-          let waited = 0;
-          while (!existsSync(socketPath) && waited < 2000) {
-            // Busy-wait up to 2 s — server.listen callback not awaited in
-            // beforeEach. In practice the file appears within a few ms.
-            const result = spawnSync("sleep", ["0.05"]);
-            waited += 50;
-            void result;
-          }
+        async () => {
           expect(existsSync(socketPath), "socket file must exist before bwrap spawn").toBe(true);
 
           const bwrapArgs = argsWithSocketBind(socketPath);
-          // Inside the namespace: use socat to connect to the unix socket and
-          // send a minimal HTTP request. socat must be present on the prod host
-          // class (required by the R1 spike design; same dep as Anthropic sandbox-runtime).
-          const result = spawnSync(
-            bwrapArgs[0],
-            [
+          // Inside the namespace: dial the bind-mounted unix socket with an HTTP
+          // client and read back the host server's response. We use
+          // `curl --unix-socket` (curl is already bound into the namespace via
+          // /usr and is used by Group B) rather than socat: curl is guaranteed
+          // present on any host that can run the broker, needs no TCP (so it
+          // works under --unshare-net), and mirrors how a real driven CLI dials
+          // the broker — HTTP over a unix socket. The product never spawns
+          // socat (it is a *blocked* command in exec-security), so socat is not
+          // a prod-host dependency and must not gate this property.
+          //
+          // The client MUST be driven asynchronously (spawn, not spawnSync):
+          // the responder runs on THIS process's event loop, so a synchronous
+          // spawnSync would block the loop and deadlock — the server could never
+          // write its reply and curl would time out.
+          const result = await new Promise<{
+            status: number | null;
+            stdout: string;
+            stderr: string;
+          }>((resolve) => {
+            const child = spawn(bwrapArgs[0], [
               ...bwrapArgs.slice(1),
-              "socat",
-              "-",
-              `UNIX-CONNECT:${socketPath}`,
-            ],
-            {
-              input: "GET / HTTP/1.1\r\nHost: broker\r\n\r\n",
-              encoding: "utf8",
-              timeout: 15_000,
-            },
-          );
+              "curl",
+              "--silent",
+              "--show-error",
+              "--include", // emit the status line so we can assert "200 OK"
+              "--max-time", "5",
+              "--unix-socket", socketPath,
+              "http://broker/",
+            ]);
+            let stdout = "";
+            let stderr = "";
+            child.stdout.setEncoding("utf8");
+            child.stderr.setEncoding("utf8");
+            child.stdout.on("data", (d: string) => (stdout += d));
+            child.stderr.on("data", (d: string) => (stderr += d));
+            child.on("close", (code) =>
+              resolve({ status: code, stdout, stderr }),
+            );
+          });
 
-          // GO: socat received a response from the host-side server.
-          // NO-GO: exit != 0 (ENOENT socat, ENOTSOCK, EACCES, or namespace setup failure)
+          // GO: curl received a response from the host-side server through the
+          //     bind-mounted unix socket.
+          // NO-GO: exit != 0 (ENOTSOCK, EACCES, or namespace setup failure)
           expect(
             result.status,
-            `socat CONNECT to unix socket failed. stderr: ${result.stderr ?? ""}`,
+            `curl --unix-socket to bind-mounted broker socket failed. stderr: ${result.stderr}`,
           ).toBe(0);
           expect(result.stdout, "expected HTTP 200 response from host server").toContain("200 OK");
         },
@@ -228,6 +245,15 @@ describe.skipIf(!egressIntegrationAvailable)(
 
       beforeEach(() => {
         provider = new BwrapProvider();
+        // available() resolves and caches the bwrap binary path. buildArgs()
+        // returns [this.bwrapPath, ...] and assumes availability was checked
+        // first — the production sandbox-selection contract (the sandbox manager
+        // always gates on available() before building args). Without this call
+        // bwrapPath stays null and sandboxArgs[0] would be null.
+        expect(
+          provider.available(),
+          "bwrap must be available for the Group C secure-profile checks",
+        ).toBe(true);
         // Construct the bwrap args via the production code path.
         // brokerSocketPath points to a non-existent socket — this test only
         // verifies the credential-file absence, not broker connectivity.
