@@ -361,23 +361,46 @@ the perspective of an exec'd command.
 security_opt:
   - apparmor=unconfined
   - seccomp=unconfined
+  - systempaths=unconfined
 ```
 
-These opt-outs are required because:
+These opt-outs are required because bwrap needs to create a user + pid
+namespace **and** mount a private `/proc` inside it, and Docker's defaults
+block all three layers:
 
-- **AppArmor** -- Ubuntu 23.10+ hosts set
-  `kernel.apparmor_restrict_unprivileged_userns=1`, and Docker's default
-  `docker-default` AppArmor profile denies unprivileged user-namespace
-  creation by binaries inside the container. Without `apparmor=unconfined`,
-  bwrap fails with `setting up uid map: Permission denied`.
+- **AppArmor** -- the default `docker-default` AppArmor profile denies
+  unprivileged user-namespace creation by binaries inside the container.
+  Without `apparmor=unconfined`, bwrap fails with `setting up uid map:
+  Permission denied`.
 - **seccomp** -- Docker's default seccomp profile filters several `unshare`
   and `clone` flags that bwrap needs. Without `seccomp=unconfined`, the
   same userns setup is blocked at the syscall layer instead of AppArmor.
+- **systempaths** -- Docker masks and read-only-binds parts of `/proc` by
+  default, which makes bwrap's `--proc /proc` mount in the new namespace fail
+  with `Can't mount proc on /newroot/proc: Operation not permitted`. Without
+  `systempaths=unconfined`, userns succeeds but the sandbox aborts at the
+  proc-mount step.
+
+<Warning>
+**Ubuntu 23.10+ / 24.04 hosts need a host-level change too.** These hosts set
+`kernel.apparmor_restrict_unprivileged_userns=1`, which denies user namespaces
+to the now-**unconfined** container `bwrap` — so even with all three
+`security_opt` entries, bwrap fails at `setting up uid map: Permission denied`.
+On such hosts also run, **on the host**:
+
+```bash
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0   # persist in /etc/sysctl.d
+```
+
+(Alternatively, load an AppArmor profile that grants `userns` to
+`/usr/bin/bwrap`.) This is a host setting; `docker-compose.yml` cannot set it.
+</Warning>
 
 When bwrap fails, the daemon does not abort -- it logs a WARN and runs
 agent-issued shell commands unsandboxed. Always check the startup logs for
-`exec sandbox provider detected` (provider name `bwrap`) to confirm the
-sandbox is active.
+`Exec sandbox provider detected` (provider name `bwrap`) to confirm the
+sandbox is active — if you see the sandbox disabled, the broker's network
+containment is not enforced.
 
 #### Verifying the sandbox
 
