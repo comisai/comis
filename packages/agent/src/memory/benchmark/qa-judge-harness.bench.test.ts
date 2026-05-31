@@ -651,7 +651,15 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
       expect(reportJson).not.toMatch(/apiKey|sk-|Bearer/);
       // (Per-item bench stores were already closed in beforeAll; nothing to close here.)
     },
-    600_000,
+    // BASE-01 / RESEARCH Landmine 6: the full ~4080-call run (≈2040 answer + ≈2040
+    // judge LLM round-trips, serial) exceeds the prior ten-minute Vitest `it`
+    // ceiling. Raise to a 2h bound sized for the full set: ≈2040 calls × up to 120s
+    // each (worst case) still fits, while the per-call LLM_TIMEOUT_MS=120_000
+    // AbortController (above) keeps bounding any single hung call — only the aggregate
+    // serial loop is bounded by this ceiling. (Sharding by dataset across separate
+    // retrieval/qa invocations is the run plan's alternative; raising this `it` ceiling
+    // is the minimal change that lets one `pnpm bench:memory qa` complete.)
+    7_200_000,
   );
 
   // INGEST-ONCE structural witness (BENCH-03 SC-3): the store-call count equals the

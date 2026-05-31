@@ -64,8 +64,9 @@ import { loadLocomoDataset } from "./locomo-loader.js";
 import { buildGoldMap } from "./gold-map.js";
 // RELATIVE Plan 02 analyzer (the optional quality-view tie-in, step 8).
 import { analyzeRecallTrace } from "./recall-trace-analyzer.js";
-// VALUE obs import (fine in a .test.ts) — the tmp-filePath recall-trace recorder.
-import { createRecallTrace } from "@comis/observability";
+// VALUE obs import (fine in a .test.ts) — the tmp-filePath recall-trace recorder +
+// the confined report writer (O_NOFOLLOW + EXCL + confinement) for retrieval-metrics.json.
+import { createRecallTrace, writeRegularFile } from "@comis/observability";
 // Determinism helpers (test/support — 5 segments up from packages/agent/src/memory/benchmark/).
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
@@ -87,6 +88,8 @@ const COMIS_BENCH_DATA = process.env.COMIS_BENCH_DATA; // operator-placed full h
 
 /** Fixed epoch (matches recall-eval.ts's neutral clock) — recencyAlpha:0 neutralizes recency anyway. */
 const BENCH_NOW = 1_700_000_000_000;
+/** Harness version stamp — recorded in retrieval-metrics.json (matches the QA sibling). */
+const HARNESS_VERSION = "phase-89-v1";
 
 /**
  * The bench store config (mirrors the roundtrip template makeTestConfig at
@@ -136,6 +139,22 @@ function readDataset(vendoredRelPath: string, operatorFileName: string): unknown
   );
 }
 
+/**
+ * Resolve the metrics output directory. When `COMIS_BENCH_DATA` is set, write
+ * alongside the operator haystack (resolved, asserted to be the base itself — no
+ * traversal); otherwise a fresh tmp dir. The actual write uses
+ * `writeRegularFile({ confinedBaseDir })`, so O_NOFOLLOW + EXCL + confinement
+ * applies regardless. DUPLICATED VERBATIM from qa-judge-harness.bench.test.ts
+ * (the documented intentional cross-harness duplication — a shared non-`.test.ts`
+ * helper would trip the agent->memory cut; both harnesses are independent gates).
+ */
+function resolveReportDir(fallbackTmpDir: string): string {
+  if (COMIS_BENCH_DATA !== undefined && COMIS_BENCH_DATA.length > 0) {
+    return resolve(COMIS_BENCH_DATA);
+  }
+  return fallbackTmpDir;
+}
+
 describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", () => {
   // questionId -> the live ranked MemorySearchResult[] (memoized; recall() is async,
   // scoreRanking's rankFn is sync — Pattern D). Keyed by the UNIQUE questionId, never
@@ -150,6 +169,8 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
   let locomoQuestionIds = new Set<string>();
   // The tmp recall-trace JSONL the live pipeline writes (the analyzer tie-in reads it).
   let traceFile = "";
+  // The dir retrieval-metrics.json is written to (operator haystack dir, or the tmp dir).
+  let reportDir = "";
 
   beforeAll(async () => {
     // 1. DATASETS — FULL arrays (the public sets); a single-object vendored fixture
@@ -187,6 +208,8 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
     // whole). createRecallTrace returns null when COMIS_DISABLE_RECALL_TRACE=1 -> null-check.
     const dir = mkdtempSync(join(tmpdir(), "comis-bench-"));
     traceFile = join(dir, "bench-recall-trace.jsonl");
+    // Resolve where retrieval-metrics.json is written (operator dir or this tmp dir).
+    reportDir = resolveReportDir(dir);
     const trace = createRecallTrace({
       enabled: true,
       filePath: traceFile,
@@ -340,6 +363,29 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
       "rerank:",
       !!LLAMA_RERANKER_MODEL_PATH,
     );
+
+    // BASE-01: persist recall@k/MRR to disk so it is a committable manifest sibling of
+    // qa-report.json, not a console-only number. The written object is pure metrics +
+    // booleans + a version string — no model identity carrying a key (T-98-01-02); the
+    // confined writeRegularFile (O_NOFOLLOW + EXCL + confinement) is the same writer the
+    // QA harness uses for qa-report.json. retrieval is keyless, so no secret exists to leak.
+    const metricsJson = JSON.stringify(
+      {
+        ...metrics,
+        vectorLane: !!LLAMA_MODEL_PATH,
+        rerank: !!LLAMA_RERANKER_MODEL_PATH,
+        harnessVersion: HARNESS_VERSION,
+      },
+      null,
+      2,
+    );
+    const writeResult = writeRegularFile({
+      path: join(reportDir, "retrieval-metrics.json"),
+      content: metricsJson,
+      confinedBaseDir: reportDir,
+    });
+    expect(writeResult.ok, "retrieval-metrics.json written to the confined dir").toBe(true);
+
     // Assertion discipline (Pitfall 2) — structural invariants ONLY, never a hard floor.
     expect(metrics.recallAt1).toBeGreaterThanOrEqual(0); // recall-eval.test.ts:328 style
     expect(metrics.recallAt5).toBeGreaterThanOrEqual(metrics.recallAt1); // monotone @k invariant
