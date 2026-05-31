@@ -26,10 +26,15 @@
 
 import { ok, err, type Result } from "@comis/shared";
 
-/** One ingestable dated document (one per haystack session). */
+/**
+ * One ingestable dated document (one per haystack session).
+ *
+ * IN-02: no per-doc `questionId` — the harness keys the gold side-map on
+ * `sessionId` and resolves question-level gold through `LongMemEvalParsed`'s
+ * separate `questions[]` / `answerSessionIdsByQuestion` channel, so a per-doc
+ * question id would be dead weight that overstates the contract.
+ */
 export interface LongMemEvalDoc {
-  /** The question this session belongs to (carried for the harness to map). */
-  questionId: string;
   /** The dataset session id (the gold-map side-map key, never a MemoryEntry.id). */
   sessionId: string;
   /** `JSON.stringify` of the has_answer-stripped turns. NEVER contains has_answer. */
@@ -185,7 +190,6 @@ export function loadLongMemEval(raw: unknown): Result<LongMemEvalParsed, Error> 
       return dateResult;
     }
     docs.push({
-      questionId,
       sessionId: sessionIds[i],
       content: JSON.stringify(stripHasAnswer(turns)),
       createdAt: dateResult.value,
