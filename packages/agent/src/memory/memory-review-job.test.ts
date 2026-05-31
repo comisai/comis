@@ -1219,4 +1219,195 @@ describe("runMemoryReview", () => {
     );
     expect(emitted).toHaveLength(0);
   });
+
+  // -------------------------------------------------------------------------
+  // EXTRACT-03 (Phase 96) — causal-edge write AFTER a successful store.
+  //
+  // The extractor may emit per-memory `causes: [{ effect }]` (the cause is the
+  // memory's own content, A2). When the INJECTED `MemoryCausalStore` port
+  // (`deps.causalStore`) is present, the job calls `linkCausal(entry.id, effect,
+  // scope, 1)` once per cause AFTER a successful store — mirroring the entity
+  // block. The port is OPTIONAL: absent ⇒ Phase-91 behaviour EXACTLY (zero
+  // linkCausal calls, memoriesExtracted unchanged), so the daemon (96-03) can
+  // light it up independently. A link failure (err Result OR a rejecting adapter)
+  // is NON-FATAL (mirrors the WR-01 / entity guards): a WARN is logged (errorKind
+  // + hint only — NEVER the effect-text body, AGENTS.md §2.7) and the watermark
+  // STILL advances. The agent reaches the store as a @comis/core port TYPE only
+  // (the agent↛memory build cut); the concrete adapter is daemon-injected.
+  // -------------------------------------------------------------------------
+
+  /**
+   * A stub MemoryCausalStore whose `linkCausal` captures each call into
+   * `linkCalls` and returns `ok(1)` by default (one edge written). `causalLane`
+   * is a no-op spy (the read lane is Wave 3). Pass a custom `linkCausal` (e.g.
+   * one returning `err(...)` or a rejecting mock) for the non-fatal tests.
+   */
+  function makeCausalStore(
+    linkCausal = vi.fn().mockResolvedValue(ok(1)),
+  ): { store: NonNullable<MemoryReviewDeps["causalStore"]>; linkCalls: typeof linkCausal } {
+    const store = {
+      linkCausal,
+      causalLane: vi.fn().mockResolvedValue(ok([])),
+    } as unknown as NonNullable<MemoryReviewDeps["causalStore"]>;
+    return { store, linkCalls: linkCausal };
+  }
+
+  it("calls linkCausal once per emitted cause after store (with the stored id, effect text, (tenant,agent) scope, confidence 1)", async () => {
+    const { store, linkCalls } = makeCausalStore();
+    const deps = makeDeps({ agentId: "agent-x", tenantId: "tenant-y", causalStore: store });
+    arrangeOneSession(deps);
+    // One memory carrying one causal pair.
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User started a new job","entities":[{"name":"user"}],' +
+        '"causes":[{"effect":"User moved to Berlin"}]}]}',
+    ));
+    (deps.memoryPort.store as Mock).mockResolvedValue(ok({ id: "irrelevant" }));
+
+    await runMemoryReview(deps);
+
+    const storedEntry = (deps.memoryPort.store as Mock).mock.calls[0]?.[0];
+    expect(storedEntry).toBeDefined();
+    const storedId = storedEntry.id as string;
+
+    // linkCausal fired once: (sourceMemoryId = entry.id, effectText, scope, confidence = 1).
+    expect(linkCalls).toHaveBeenCalledTimes(1);
+    expect(linkCalls).toHaveBeenNthCalledWith(
+      1,
+      storedId,
+      "User moved to Berlin",
+      { tenantId: "tenant-y", agentId: "agent-x", now: NOW },
+      1,
+    );
+    // The `now` rides the injected fake clock (NEVER Date.now).
+    expect((linkCalls.mock.calls[0]?.[2] as { now: number }).now).toBe(NOW);
+  });
+
+  it("calls linkCausal for EACH cause when a memory carries several (one edge per consequence)", async () => {
+    const { store, linkCalls } = makeCausalStore();
+    const deps = makeDeps({ causalStore: store });
+    arrangeOneSession(deps);
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User got a promotion","entities":[{"name":"user"}],' +
+        '"causes":[{"effect":"User earns more"},{"effect":"User relocated offices"}]}]}',
+    ));
+
+    await runMemoryReview(deps);
+
+    expect(linkCalls).toHaveBeenCalledTimes(2);
+    const effects = linkCalls.mock.calls.map((c) => c[1]);
+    expect(effects).toEqual(["User earns more", "User relocated offices"]);
+  });
+
+  it("does NOT call linkCausal when causalStore is not injected (Phase-91 parity, no crash)", async () => {
+    const deps = makeDeps(); // no causalStore
+    expect(deps.causalStore).toBeUndefined();
+    arrangeOneSession(deps);
+    // A memory WITH causes — but no store injected, so nothing is written.
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User started a new job","entities":[{"name":"user"}],' +
+        '"causes":[{"effect":"User moved to Berlin"}]}]}',
+    ));
+
+    const result = await runMemoryReview(deps);
+
+    // Identical to Phase-91: stored, counted, no crash, no causal write path.
+    expect(result.ok).toBe(true);
+    expect(deps.memoryPort.store).toHaveBeenCalledTimes(1);
+    expect(deps.eventBus.emit).toHaveBeenCalledWith("memory:review_completed", expect.objectContaining({
+      memoriesExtracted: 1,
+    }));
+  });
+
+  it("does NOT call linkCausal for a memory with causes: [] (the m.causes.length > 0 guard)", async () => {
+    const { store, linkCalls } = makeCausalStore();
+    const deps = makeDeps({ causalStore: store });
+    arrangeOneSession(deps);
+    // A memory with NO causal pairs → zero linkCausal calls.
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User enjoys hiking","entities":[{"name":"user"}]}]}',
+    ));
+
+    await runMemoryReview(deps);
+
+    expect(linkCalls).not.toHaveBeenCalled();
+  });
+
+  it("causal link failure (err Result) is NON-FATAL — WARN logged (no effect body), watermark advances", async () => {
+    const linkCausal = vi.fn().mockResolvedValue(err(new Error("edge resolver unavailable")));
+    const { store, linkCalls } = makeCausalStore(linkCausal);
+    const deps = makeDeps({ causalStore: store });
+    arrangeOneSession(deps, 9810);
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User started a new job","entities":[{"name":"user"}],' +
+        '"causes":[{"effect":"User moved to Berlin"}]}]}',
+    ));
+
+    const result = await runMemoryReview(deps);
+
+    // Run still ok — the link failure did not crash the run.
+    expect(result.ok).toBe(true);
+    expect(linkCalls).toHaveBeenCalledTimes(1);
+    // A WARN with errorKind + hint was logged.
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: expect.anything(), hint: expect.anything() }),
+      expect.any(String),
+    );
+    // The effect-text body ("User moved to Berlin") must NEVER appear in any WARN object (§2.7).
+    const warnObjs = (deps.logger.warn as Mock).mock.calls.map((c) => JSON.stringify(c[0]));
+    for (const o of warnObjs) {
+      expect(o).not.toContain("Berlin");
+    }
+    // The memory was still counted as stored (the link failure is orthogonal).
+    expect(deps.eventBus.emit).toHaveBeenCalledWith("memory:review_completed", expect.objectContaining({
+      memoriesExtracted: 1,
+    }));
+    // The watermark STILL advances (a causal-edge fault never stalls the cron).
+    expect(writeFile).toHaveBeenCalled();
+    const writeCall = (writeFile as Mock).mock.calls[0];
+    expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9810);
+    expect(rename).toHaveBeenCalled();
+  });
+
+  it("causal link REJECTION (adapter throws) is NON-FATAL — run ok, watermark advances", async () => {
+    // A real adapter can REJECT (not return err) — the fromPromise guard must catch it.
+    const linkCausal = vi.fn().mockRejectedValue(new Error("SQLITE_BUSY: database is locked"));
+    const { store } = makeCausalStore(linkCausal);
+    const deps = makeDeps({ causalStore: store });
+    arrangeOneSession(deps, 9910);
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User started a new job","entities":[{"name":"user"}],' +
+        '"causes":[{"effect":"User moved to Berlin"}]}]}',
+    ));
+
+    const result = await runMemoryReview(deps);
+
+    // The rejection did NOT escape runMemoryReview.
+    expect(result.ok).toBe(true);
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: expect.anything(), hint: expect.anything() }),
+      expect.any(String),
+    );
+    // The watermark STILL advances.
+    expect(writeFile).toHaveBeenCalled();
+    const writeCall = (writeFile as Mock).mock.calls[0];
+    expect(JSON.parse(writeCall[1] as string).sessions["default:user1:ch1"]).toBe(9910);
+    expect(rename).toHaveBeenCalled();
+  });
+
+  it("does NOT call linkCausal for a memory whose store FAILED (links only after a successful store)", async () => {
+    const { store, linkCalls } = makeCausalStore();
+    const deps = makeDeps({ causalStore: store });
+    arrangeOneSession(deps, 9960);
+    (completeSimple as Mock).mockResolvedValue(rawResponse(
+      '{"memories":[{"content":"User started a new job","entities":[{"name":"user"}],' +
+        '"causes":[{"effect":"User moved to Berlin"}]}]}',
+    ));
+    // The store FAILS — no causal edge should be attempted for this memory.
+    (deps.memoryPort.store as Mock).mockResolvedValue(err(new Error("disk full")));
+
+    const result = await runMemoryReview(deps);
+
+    expect(result.ok).toBe(true);
+    expect(linkCalls).not.toHaveBeenCalled();
+  });
 });
