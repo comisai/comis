@@ -43,6 +43,10 @@ import type { MemorySearchResult, TrustLevel, UsefulnessSignal } from "@comis/co
  * - `"temporal-spread"` — Phase 95: the temporal-spread lane (LANES-02) — a memory near
  *   the seed's event time, surfaced by the temporal lane as a 4th fusion lane, lifts
  *   recall@1 over a lexical distractor fusion ranked first.
+ * - `"causal"` — Phase 96: the causal one-hop lane (EXTRACT-03) — a causally-linked memory,
+ *   surfaced by the causal lane as a 5th fusion lane, lifts recall@1 over an unlinked lexical
+ *   distractor fusion ranked first (the multi-hop / consuming-lane proof; the table is never
+ *   write-only dead data).
  */
 export type EvalGroup =
   | "reranking"
@@ -51,7 +55,8 @@ export type EvalGroup =
   | "feedback"
   | "proof"
   | "lanes"
-  | "temporal-spread";
+  | "temporal-spread"
+  | "causal";
 
 /**
  * One labeled eval query: the candidate pool a ranker sees plus the
@@ -498,6 +503,65 @@ export const TEMPORAL_SPREAD_EVAL_FIXTURES: EvalQuery[] = [
  * distractor. PURE — no DB, no I/O.
  */
 export function temporalLane(q: EvalQuery): MemorySearchResult[] {
+  const relevant = new Set(q.relevantIds);
+  return q.candidates.filter((c) => relevant.has(c.entry.id));
+}
+
+/**
+ * Phase-96 causal-lane fixtures (EXTRACT-03) — the `"causal"` group, the multi-hop / causal
+ * lift scenario scored against the LIVE fuse() RRF (the causal lane MODELED as a 2nd fusion
+ * lane via {@link causalLane}; the fixture stand-in for the live `causalLane`'s output — the
+ * one-hop edge lookup over memory_causal_edges).
+ *
+ * THE KEYSTONE PROOF (the phase invariant): each fixture is a lexical DISTRACTOR with a HIGHER
+ * fusion score vs a causally-LINKED relevant memory with a LOWER fusion score. Fusion-only
+ * ranks the distractor @1 and MISSES the linked id (`baseline.recallAt1 < 1` — the headroom
+ * guard makes the lift NON-VACUOUS). The causal lane (relevant-first) sums the linked id's two
+ * RRF terms and lifts it to recall@1 — the measurable EXTRACT-03 figure that proves the edge
+ * table is CONSUMED (never write-only dead data). The cause is stated in the distractor's
+ * sibling content; the `effect` (the linked memory) is what the lane surfaces.
+ *
+ * Determinism (AGENTS.md §2.5): neutral placeholders + stable ids `cz1`, `cz2`, … No real
+ * identities, no network, no `Date.now`/`Math.random`.
+ */
+export const CAUSAL_EVAL_FIXTURES: EvalQuery[] = [
+  {
+    group: "causal",
+    query: "what did the migration lead to",
+    candidates: [
+      // Lexical distractor: high fusion score, causally UNLINKED — fusion rank 1.
+      candidate("cz1", "user_a wrote a long migration status update", 0.9),
+      // Relevant: causally LINKED to the seed (the effect), lower fusion score — fusion rank 2
+      // (missed @1).
+      candidate("cz2", "the schema rollback corrupted three tables", 0.5),
+      candidate("cz3", "user_a prefers dark mode", 0.25),
+    ],
+    relevantIds: ["cz2"],
+  },
+  {
+    group: "causal",
+    query: "what was the consequence of the outage",
+    candidates: [
+      // Lexical distractor: high fusion score, causally UNLINKED — fusion rank 1.
+      candidate("cz4", "user_a mentioned the outage in passing", 0.88),
+      // Relevant: causally LINKED to the seed (the effect), lower fusion score — fusion rank 2
+      // (missed @1).
+      candidate("cz5", "the cache stampede tripped the rate limiter", 0.5),
+      candidate("cz6", "user_a scheduled a sync", 0.2),
+    ],
+    relevantIds: ["cz5"],
+  },
+];
+
+/**
+ * The MODELED causal one-hop lane for a fixture — the causally-linked memory/memories surfaced
+ * FIRST, ready to fuse as a 2nd {@link import("../../rag/fuse.js").FusionLane}. This is the
+ * fixture stand-in for the live `causalLane`'s output (the one-hop edge lookup): the memories
+ * causally linked (cause↔effect) to the seeds. Here those are exactly the fixture's
+ * `relevantIds` (the linked memory), placed at lane rank 1 so RRF lifts them over the lexical
+ * distractor. PURE — no DB, no I/O.
+ */
+export function causalLane(q: EvalQuery): MemorySearchResult[] {
   const relevant = new Set(q.relevantIds);
   return q.candidates.filter((c) => relevant.has(c.entry.id));
 }
