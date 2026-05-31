@@ -89,6 +89,18 @@ export function resolveAgentModel(
 }
 
 /**
+ * Resolve the EFFECTIVE rag.rerank.enabled for an agent (Phase 92, RERANK-01).
+ * Explicit operator value wins both directions; unset → auto-on iff the model
+ * is locally present. `explicit` MUST be read from the RAW (pre-zod-default)
+ * config — see setup-agents-runtime.ts — because RagConfigSchema.rerank.enabled
+ * has .default(false), so a parsed value cannot distinguish unset from false.
+ */
+export function resolveEffectiveRerank(explicit: boolean | undefined, present: boolean): boolean {
+  if (explicit !== undefined) return explicit;
+  return present;
+}
+
+/**
  * Resolve the union of tool names from TOOL_PROFILES for the configured
  * sub-agent tool groups. Also includes builtin tools that sub-agents always get
  * (web_search, web_fetch, read, edit, write, grep, find, ls).
