@@ -481,7 +481,7 @@ async function runSessionLocked(
     resourceLoaderOptions, promptResult, cachedSystemTokensEstimate,
   } = toolAssembly;
   const currentDiscoveryTracker: DiscoveryTracker | undefined = toolAssembly.currentDiscoveryTracker;
-  const { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory } = promptResult;
+  const { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory, recalledMemories } = promptResult;
 
   // DAG ingestion hook -- install BEFORE microcompaction
   // so microcompaction is the outer wrapper. Execution order: microcompaction first -> DAG ingest second.
@@ -1456,6 +1456,7 @@ async function runSessionLocked(
     // Extracted to executor-post-execution.ts
     await postExecution({
       result, session, sm, config, msg, sessionKey, formattedKey, resolverRegisterKey, agentId,
+      recalledMemories,
       executionStartMs, executionId, executionOverrides,
       bridge, unsubscribe,
       contextEngineRef, ceSetup, streamSetup,

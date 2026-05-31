@@ -500,6 +500,11 @@ export interface ExecutionPromptResult {
   dynamicPreamble: string;
   /** Top-1 RAG memory for inline injection adjacent to user message. */
   inlineMemory?: string;
+  /** Recalled memories (id + content) for FEED-01 turn-end attribution. Content is
+   *  used IN-PROCESS by the overlap heuristic at postExecution and is NEVER
+   *  logged/emitted — only the resulting ids cross the bus. Rides the RESULT object
+   *  (like inlineMemory), NOT assemblerParams, so the cache-fence invariant holds. */
+  recalledMemories?: ReadonlyArray<{ id: string; content: string }>;
 }
 
 export async function assembleExecutionPrompt(params: PromptAssemblyParams): Promise<ExecutionPromptResult> {
@@ -639,7 +644,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       "Using parent cache prefix (model/provider match)",
     );
 
-    return { systemPrompt: parentCache.frozenSystemPrompt, systemPromptBlocks: parentCache.frozenSystemPromptBlocks, dynamicPreamble, inlineMemory: undefined };
+    return { systemPrompt: parentCache.frozenSystemPrompt, systemPromptBlocks: parentCache.frozenSystemPromptBlocks, dynamicPreamble, inlineMemory: undefined, recalledMemories: undefined };
   }
 
   // 1. Resolve promptMode
@@ -708,6 +713,10 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
   // only, excluding the fixed guidance block (WR-02).
   let memorySections: string[] = [];
   let inlineMemory: string | undefined;
+  // FEED-01: id + content of the recalled memories, surfaced on the result so the
+  // turn-end hook (executor-post-execution.ts) can attribute used-vs-ignored from
+  // the agent response. Stays in-process — only ids/counts ever leave the agent.
+  let recalledMemories: ReadonlyArray<{ id: string; content: string }> | undefined;
   let retrievedSectionsChars = 0;
   let retrievedRagHits = 0;
   if (deps.memoryPort && config.rag?.enabled && !params.skipRag) {
@@ -760,6 +769,8 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       if (recalled.ok && recalled.value.length > 0) {
         // Hybrid split: top-1 inline with user message, rest in dynamic preamble.
         const ranked = recalled.value;
+        // FEED-01: capture id + content for turn-end attribution (in-process only).
+        recalledMemories = ranked.map((r) => ({ id: r.entry.id, content: r.entry.content }));
         const injector = createHybridMemoryInjector({
           onSuspiciousContent: deps.onSuspiciousContent,
         });
@@ -1391,5 +1402,5 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
     }
   }
 
-  return { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory };
+  return { systemPrompt, systemPromptBlocks, dynamicPreamble, inlineMemory, recalledMemories };
 }
