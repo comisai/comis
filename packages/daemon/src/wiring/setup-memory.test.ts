@@ -78,6 +78,15 @@ const mockCreateSqliteMemoryConsolidationStore = vi.hoisted(() => vi.fn(() => ({
   listObservations: vi.fn(async () => ({ ok: true, value: [] })),
   applyConsolidation: vi.fn(async () => ({ ok: true, value: undefined })),
 })));
+// Usefulness store factory (Phase 93, FEED-02) — mocked so setup wires it without a real
+// DB. setupMemory builds this on the shared db handle (mirror the entity + consolidation
+// stores); without the mock entry the @comis/memory factory is undefined and EVERY setup
+// call throws `createSqliteMemoryUsefulnessStore is not a function` (the MEMORY.md
+// "setup-memory mock" gate).
+const mockCreateSqliteMemoryUsefulnessStore = vi.hoisted(() => vi.fn(() => ({
+  recordUsage: vi.fn(async () => ({ ok: true, value: undefined })),
+  readUsefulness: vi.fn(async () => ({ ok: true, value: new Map() })),
+})));
 
 vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
@@ -93,6 +102,7 @@ vi.mock("@comis/memory", () => ({
   rerankerModelPresent: mockRerankerModelPresent,
   createSqliteMemoryEntityStore: mockCreateSqliteMemoryEntityStore,
   createSqliteMemoryConsolidationStore: mockCreateSqliteMemoryConsolidationStore,
+  createSqliteMemoryUsefulnessStore: mockCreateSqliteMemoryUsefulnessStore,
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));
@@ -996,6 +1006,29 @@ describe("setupMemory", () => {
       expect.objectContaining({ db: mockDb }),
     );
     expect(result.consolidationStore).toBeDefined();
+  });
+
+  it("builds the usefulness store on the SAME shared db handle and returns it (Phase 93, FEED-02)", async () => {
+    const container = createMinimalContainer(); // all-default config (feedback OFF)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // Built UNCONDITIONALLY (no opt-in gate at build time — only the FEED-01→02
+    // write-back subscriber, deferred to Plan 93-02, is gated).
+    expect(mockCreateSqliteMemoryUsefulnessStore).toHaveBeenCalledOnce();
+    // The SOLE adapter must share the memory adapter's db handle (the same mockDb the
+    // entity + consolidation stores receive) — NOT a second Database. This is what keeps
+    // the (tenant, agent) scope + the memory_id ON DELETE CASCADE consistent with the
+    // memory rows it scores.
+    expect(mockCreateSqliteMemoryUsefulnessStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb }),
+    );
+    expect(result.usefulnessStore).toBeDefined();
   });
 });
 

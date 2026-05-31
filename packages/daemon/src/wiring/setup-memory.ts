@@ -28,6 +28,7 @@ import {
   rerankerModelPresent,
   createSqliteMemoryEntityStore,
   createSqliteMemoryConsolidationStore,
+  createSqliteMemoryUsefulnessStore,
   type MemoryApi,
 } from "@comis/memory";
 import {
@@ -89,6 +90,15 @@ export interface MemoryResult {
    *  (composition root) is the only place this @comis/memory adapter and the @comis/agent
    *  `runMemoryConsolidation` job are joined — the agent receives the port TYPE only. */
   consolidationStore: import("@comis/core").MemoryConsolidationStore;
+  /** Recall-utility usefulness store (Phase 93, FEED-02). The SOLE adapter for the segregated
+   *  `MemoryUsefulnessStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
+   *  memory adapter + entity/consolidation stores (so the `(tenant, agent)` isolation scope and
+   *  the FK-enabled connection — the `memory_usefulness.memory_id` ON DELETE CASCADE — are all
+   *  consistent with the memory rows it scores). No model/IO cost to building it, so it is always
+   *  present; the feedback loop stays dormant until an operator enables
+   *  `agents.<id>.rag.feedback.enabled` (default OFF). The write-back subscriber is Plan 93-02 —
+   *  this plan only builds + exposes the store + its read capability. */
+  usefulnessStore: import("@comis/core").MemoryUsefulnessStore;
   /** Live in-process recall-counter wiring (Phase 86, OBS-07). The single
    *  `wireRecallCounters(container.eventBus)` subscriber is stood up HERE — the
    *  memory composition site that already holds the event bus — so there is ONE
@@ -356,7 +366,18 @@ export async function setupMemory(deps: {
   // edge — the architecture-graph cut is preserved).
   const consolidationStore = createSqliteMemoryConsolidationStore({ db, logger: memoryLogger });
 
-  // 6.5.2d. Recall-counter composition (Phase 86, OBS-07). Stand up the SINGLE
+  // 6.5.2d. Recall-utility usefulness store (Phase 93, FEED-02). Built on the SAME `db`
+  // handle the memory adapter owns — NOT a second Database — so the memory_usefulness
+  // table and the memories table share one FK-enabled connection (the memory_id ON DELETE
+  // CASCADE fires) and the (tenant, agent) isolation scope is consistent with the memory
+  // rows it scores. Always constructed (no model/IO cost, like the entity + consolidation
+  // stores); the feedback loop stays dormant until an operator enables
+  // `agents.<id>.rag.feedback.enabled` (default OFF). This is the composition-root build
+  // ONLY; the FEED-01→02 attribution write-back subscriber is deferred to Plan 93-02
+  // (it depends on a recall-attribution bus event this plan does not yet declare).
+  const usefulnessStore = createSqliteMemoryUsefulnessStore({ db, logger: memoryLogger });
+
+  // 6.5.2e. Recall-counter composition (Phase 86, OBS-07). Stand up the SINGLE
   // in-process recall-counter registry and subscribe it to the `memory:*` bus
   // events HERE — the memory composition site already holds `container.eventBus`,
   // so this is the natural composition root for the counters (it lives alongside
@@ -493,6 +514,7 @@ export async function setupMemory(deps: {
     disposeReranker,
     entityStore,
     consolidationStore,
+    usefulnessStore,
     recallCounters,
     maintenanceTick,
   };
