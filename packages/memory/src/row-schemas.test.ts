@@ -87,6 +87,7 @@ import {
   MemoryEntityRowSchema,
   EntityLaneRowSchema,
   EntityListRowSchema,
+  CausalLaneRowSchema,
 } from "./row-schemas.js";
 
 // =====================================================================
@@ -614,5 +615,19 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
       last_seen: 1700000009000,
     };
     expect(EntityListRowSchema.safeParse(sample).success).toBe(false);
+  });
+
+  it("CausalLaneRowSchema parses the one-hop edge-lookup projection (linked + confidence)", () => {
+    expect(CausalLaneRowSchema.safeParse({ linked: "m2", confidence: 0.9 }).success).toBe(true);
+  });
+
+  it("CausalLaneRowSchema rejects a non-numeric confidence", () => {
+    expect(CausalLaneRowSchema.safeParse({ linked: "m2", confidence: "high" }).success).toBe(false);
+  });
+
+  it("CausalLaneRowSchema rejects an unexpected column (strictObject keeps the projection minimal)", () => {
+    expect(
+      CausalLaneRowSchema.safeParse({ linked: "m2", confidence: 0.9, tenant_id: "t" }).success,
+    ).toBe(false);
   });
 });
