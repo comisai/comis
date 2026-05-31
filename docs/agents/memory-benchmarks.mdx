@@ -1,0 +1,280 @@
+---
+title: "Memory benchmarks"
+description: "How Comis measures recall quality: the datasets, the gated harnesses, and how to reproduce the runs"
+icon: "chart-line"
+---
+
+**What this page is.** How Comis measures the quality of its agent memory, and
+how you reproduce those measurements yourself. The posture is deliberate: an
+honest, reproducible methodology is the differentiator, not a single headline
+number. There is no published benchmark result to cite here -- the harnesses
+assert structural invariants, and you run them against your own datasets to get
+a number for your own configuration.
+
+Two distinct things are measured, and they are not interchangeable:
+
+- **Retrieval recall@k / MRR** -- an internal regression proxy. It scores
+  whether the recall pipeline surfaces the gold-labelled memories for a question.
+  It is the gate every v2.7 recall change is re-run against.
+- **End-to-end QA accuracy** -- the apples-to-apples number. It drives recalled
+  context through an answer model, grades correctness with a category-specific
+  LLM judge, and reports overall plus per-category accuracy. This is the metric
+  comparable to what other memory systems publish.
+
+For how recall itself works (the pipeline, the lanes, the scoring factors), see
+[Memory](/agents/memory).
+
+## Datasets
+
+Two standard long-term-memory datasets drive both harnesses:
+
+- **LongMemEval** -- multi-session question-answering over long conversation
+  histories. Each haystack session is ingested as one dated document. The
+  per-turn `has_answer` evidence flags are stripped before ingestion (an
+  eval-integrity strip -- the gold label must never reach the stored content).
+- **LoCoMo** -- long conversational memory with `D<session>:<dialogue>` evidence
+  references. The loader excludes the category-5 adversarial items and parses
+  the `D<sess>:<dia>` evidence into dialogue ids. Each session is ingested as one
+  dated document.
+
+For both datasets the gold-evidence to memory-id mapping is recorded at
+**ingestion time** -- the dataset reference is the lookup key, never an id, so a
+gold reference resolves to the actual stored `MemoryEntry` id.
+
+### Licensing and no vendoring
+
+The full datasets are **not vendored** in the repository (LoCoMo is CC BY-NC
+4.0). Only two tiny, neutral placeholder fixtures ship in-repo so the structural
+unit tests can run in default CI. The full haystacks are **operator-provided
+out-of-band**, and the harness **never auto-downloads** datasets or models. This
+is a supply-chain invariant: a fresh checkout pulls down no benchmark corpus and
+no model weights.
+
+## Retrieval recall@k harness (a regression proxy)
+
+The retrieval harness lives in `retrieval-harness.bench.test.ts` (BENCH-02). It
+is the v2.7 **regression proxy** -- every recall change from Phase 90 onward
+re-runs it and reads the recall@k / MRR delta. It is not a published score.
+
+What it does:
+
+- **Env-gated behind `COMIS_BENCH`** via `describe.skipIf(!COMIS_BENCH)`. The
+  default `pnpm test` and `pnpm validate` runs **skip it entirely** -- no dataset
+  weight, no model weight, no cost in CI.
+- **Ingests into a real, isolated SQLite store** -- a fresh temp-directory
+  `SqliteMemoryAdapter` (trust level `learned`, never `~/.comis`), so the run
+  cannot touch a live memory store.
+- **Runs the live `MemoryRecall` pipeline per question** (the same
+  search -> fuse -> rerank -> score -> trust-filter -> dedup pipeline production
+  uses) and scores recall@k / MRR with the shared scorer against the
+  gold-mapped ids.
+- **Asserts only structural invariants** -- `recall@1 >= 0`,
+  `recall@5 >= recall@1`, `mrr >= 0`. It never asserts a machine-dependent
+  accuracy floor. The recall@k / MRR number is printed via `console.log`, not
+  baked into an assertion.
+
+### Commands
+
+Default run (the suite is skipped):
+
+```bash
+pnpm vitest run packages/agent/src/memory/benchmark/retrieval-harness.bench.test.ts
+# -> 1 file skipped, 4 tests skipped (describe.skipIf(!COMIS_BENCH) fires)
+```
+
+Gated, FTS-only (no models needed -- the honest default lane):
+
+```bash
+COMIS_BENCH=1 pnpm vitest run packages/agent/src/memory/benchmark/retrieval-harness.bench.test.ts
+# prints, for example:
+# BENCH recall@k/MRR {"recallAt1":0.667,...} vectorLane: false rerank: false
+```
+
+The printed line above is **illustrative over the tiny vendored fixtures -- it
+is not a benchmark result.** It is computed over three placeholder questions, so
+treat it as a smoke signal that the harness ran, nothing more.
+
+With the vector and rerank lanes (operator-provided local model files):
+
+```bash
+COMIS_BENCH=1 \
+  LLAMA_MODEL_PATH=/abs/path/to/embedding-model.gguf \
+  LLAMA_RERANKER_MODEL_PATH=/abs/path/to/bge-reranker-v2-m3.gguf \
+  pnpm vitest run packages/agent/src/memory/benchmark/retrieval-harness.bench.test.ts
+# vectorLane: true rerank: true -- recall@k now reflects vector + cross-encoder retrieval
+```
+
+Against the full operator-placed haystack:
+
+```bash
+COMIS_BENCH=1 COMIS_BENCH_DATA=/abs/path/to/datasets \
+  pnpm vitest run packages/agent/src/memory/benchmark/retrieval-harness.bench.test.ts
+# reads $COMIS_BENCH_DATA/longmemeval.json + $COMIS_BENCH_DATA/locomo.json
+```
+
+Each resolved dataset path is confined under the base directory before any read
+(a `..` escape is rejected). The datasets are placed out-of-band; nothing is
+downloaded.
+
+### The FTS-only disclosure
+
+With **no `LLAMA_MODEL_PATH`**, the store runs FTS5-only, so the reported
+recall@k reflects **lexical-only retrieval** -- the printed flag reads
+`vectorLane: false`. Supplying the embedding model activates the vector lane;
+supplying the reranker model adds the cross-encoder lift. Read the
+`vectorLane` / `rerank` flags on the printed line so a lexical-only number is
+never mistaken for semantic recall.
+
+## End-to-end QA + LLM-judge accuracy (the apples-to-apples number)
+
+The QA harness lives in `qa-judge-harness.bench.test.ts` (BENCH-03 / BENCH-04).
+This is the metric comparable to what other memory systems publish. It ingests
+the datasets once, then for each question:
+
+1. **Recall** the context for the question through the live pipeline.
+2. **Answer** with an answer model at temperature 0.
+3. **Judge** correctness with a category-specific judge model at temperature 0,
+   using LongMemEval-paper-derived per-category rubrics (the rubric is placed
+   first in the prompt, ahead of any dataset content).
+4. **Parse** the judge verdict with a total parser -- a verdict it cannot parse
+   is counted as `invalid`, never as a wrong answer.
+5. **Aggregate** overall and per-category accuracy using the
+   **invalid-excluded denominator**, `correct / (total - invalid)`, matching the
+   reference Hindsight runner's accounting.
+6. **Build** a reproducible, secret-free report and write it to a confined path.
+
+Gating and assertions:
+
+- **Gated behind `COMIS_BENCH`** plus a nested gate on the answer/judge model
+  env -- it runs only when you supply both model configurations. The default
+  test run skips it.
+- **Structural assertions only** -- `0 <= overall <= 100`,
+  `validTotal === total - invalid`, per-category bounds. There is **no hard
+  accuracy floor** baked in.
+- A `not.toMatch(/apiKey|sk-|Bearer/)` assertion proves the written report is
+  secret-free.
+
+### Operator environment
+
+All values are provided out-of-band -- the page lists the variable **names** and
+placeholders only, never a real key, token, or tokened model URL:
+
+| Variable | Role |
+|----------|------|
+| `COMIS_BENCH` | Master gate (set to `1` to enable the harness) |
+| `COMIS_BENCH_ANSWER_PROVIDER` | Answer model provider (placeholder, e.g. `<provider>`) |
+| `COMIS_BENCH_ANSWER_MODEL` | Answer model id (placeholder, e.g. `<model>`) |
+| `COMIS_BENCH_ANSWER_API_KEY` | Answer model credential (env-var name only) |
+| `COMIS_BENCH_JUDGE_PROVIDER` | Judge model provider (placeholder) |
+| `COMIS_BENCH_JUDGE_MODEL` | Judge model id (placeholder) |
+| `COMIS_BENCH_JUDGE_API_KEY` | Judge model credential (env-var name only) |
+| `COMIS_BENCH_DATA` | Optional: absolute path to the full haystack directory |
+| `LLAMA_MODEL_PATH` | Optional: absolute path to the embedding GGUF (vector lane) |
+| `LLAMA_RERANKER_MODEL_PATH` | Optional: absolute path to the reranker GGUF (rerank lift) |
+
+The harness uses **production-representative recall defaults** so the accuracy
+number reflects the shipped behaviour -- recency 0.2, temporal 0.2, proof 0.1,
+trust 0.1, `maxResults` 5, `minScore` 0.1, trust levels `system` and `learned`,
+with reranking default-off in the bench unless a model path is supplied. Those
+defaults are recorded in the report (below) so a run is reproducible.
+
+## Reproducible report
+
+`buildBenchmarkReport` produces a comparable, secret-free record of each run. It
+captures:
+
+- The **run configuration** -- the extraction, answer, judge, embedding, and
+  reranker model roles recorded as `{provider, modelId}` only. Credentials are
+  **structurally omitted**: the input config is never spread into the report, so
+  no key, token, or base URL can reach the written file.
+- The **dataset version** as a sha256 over the dataset bytes.
+- The recall **defaults** the run used.
+- The **results**, carrying both the `invalid` count and the `validTotal`
+  denominator.
+- A **timestamp** and the **harness version**.
+
+Because the config, the dataset hash, and the denominator are all recorded, two
+runs are comparable across code changes -- and a future apples-to-apples
+comparison against another system's published figures is a fair one, run on the
+same datasets with the same accounting.
+
+## Recall-trace quality view
+
+For diagnosing a recall regression rather than scoring it, the offline analyzer
+`analyzeRecallTrace` folds the recall-trace JSONL into a quality view. It reports:
+
+- **rerank-lift-realized** -- the fraction of reranked recalls where the
+  cross-encoder actually changed the ranking order (a rescale that preserves
+  order counts as no lift).
+- **trust-filtered** and **deduped** rates.
+- per-factor **score-factor distributions** (recency, temporal, proof, trust).
+- per-lane **totals** (FTS, vector, entity, causal) and degradation counts.
+
+It reads ids, numeric breakdowns, and closed-union reason codes only -- never
+memory bodies -- so it is safe to run over a captured trace. It is the diagnostic
+companion to the recall@k harness: when a recall@k delta moves, the quality view
+explains which stage moved it.
+
+## How this compares to Hindsight (honestly)
+
+This is the crux, and it is easy to get subtly wrong.
+
+<Note>
+  Recall@k and QA accuracy measure **different things** -- do not equate them.
+  Hindsight publishes **end-to-end QA accuracy**, graded by a paper-derived
+  category-specific LLM judge. It reads the datasets' gold evidence ids but does
+  **not** score retrieval recall@k. Comis's recall@k harness is an **internal
+  regression proxy**; Comis's **QA + judge harness** is the apples-to-apples
+  number that matches what Hindsight publishes.
+</Note>
+
+So the fair comparison is Comis's **QA + judge accuracy** against Hindsight's
+published QA accuracy -- both end-to-end, both judged, both on the same datasets,
+both using the invalid-excluded denominator. Comis's recall@k number is a
+different measurement (retrieval only, no generation, no judge) and is not
+comparable to Hindsight's scoreboard.
+
+This page does not state a comparative result -- there is no published Comis
+number to compare. What it documents is the methodology that makes a future
+comparison fair: the same datasets, the same `correct / (total - invalid)`
+denominator, and the recorded report configuration so the run conditions are
+known on both sides.
+
+## Reproduce it
+
+Copy-paste blocks. Nothing here auto-downloads a dataset or a model -- you place
+the datasets out-of-band and point at local model files.
+
+Retrieval recall@k, FTS-only (no models):
+
+```bash
+COMIS_BENCH=1 \
+  pnpm vitest run packages/agent/src/memory/benchmark/retrieval-harness.bench.test.ts
+```
+
+Retrieval recall@k, full haystack plus the vector and rerank lanes:
+
+```bash
+COMIS_BENCH=1 \
+  COMIS_BENCH_DATA=/abs/path/to/datasets \
+  LLAMA_MODEL_PATH=/abs/path/to/embedding-model.gguf \
+  LLAMA_RERANKER_MODEL_PATH=/abs/path/to/bge-reranker-v2-m3.gguf \
+  pnpm vitest run packages/agent/src/memory/benchmark/retrieval-harness.bench.test.ts
+```
+
+End-to-end QA + LLM-judge accuracy (answer and judge models required):
+
+```bash
+COMIS_BENCH=1 \
+  COMIS_BENCH_ANSWER_PROVIDER=<provider> COMIS_BENCH_ANSWER_MODEL=<model> COMIS_BENCH_ANSWER_API_KEY=$ANSWER_KEY \
+  COMIS_BENCH_JUDGE_PROVIDER=<provider> COMIS_BENCH_JUDGE_MODEL=<model> COMIS_BENCH_JUDGE_API_KEY=$JUDGE_KEY \
+  COMIS_BENCH_DATA=/abs/path/to/datasets \
+  pnpm vitest run packages/agent/src/memory/benchmark/qa-judge-harness.bench.test.ts
+```
+
+The `*_API_KEY` values are read from your shell environment -- pass the env-var
+name, never an inline secret. The written report records only `{provider,
+modelId}` per role, so no credential reaches disk.
+
+For the recall defaults the QA harness uses, see the
+[config reference](/reference/config-yaml).
