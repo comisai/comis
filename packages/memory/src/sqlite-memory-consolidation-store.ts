@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: foldIntoExisting's `throw new Error(...)` guards (fold target not found / mapper parse failure / grown-row vanished) run INSIDE the better-sqlite3 `db.transaction(fn)()` callback, where a throw is the ONLY way to trigger the atomic ROLLBACK — returning a Result.err from the callback would COMMIT the partial grow. Every throw is caught by the method's own outer try/catch and converted to `err` (the tests prove "never throws"); consumed by the daemon consolidation cron (@allow-throw boundary), which treats the err as a non-fatal skipped fold.
 /**
  * SqliteMemoryConsolidationStore: the SOLE adapter for the segregated
  * `MemoryConsolidationStore` port (@comis/core, Phase 84). It owns ALL
