@@ -1,10 +1,10 @@
 # J1 Baseline — Gap Report (BASE-02)
 
 **Date:** 2026-05-31 · **Commit:** `af64462f` · **Branch:** `v2.8-prove-climb`
-**Inputs:** `qa-report.judge-a.json` (gpt-4o) · `qa-report.judge-b.json` (claude-opus-4-8) · `cross-judge-spread.md` · `retrieval-metrics.json` · `run-provenance.json`
-**Models:** answer = anthropic/`claude-sonnet-4-6` · judges = openai/`gpt-4o-2024-11-20` + anthropic/`claude-opus-4-8` · embedding/reranker = local (default config proven)
+**Inputs:** `qa-report.judge-a.json` (gpt-4o) · `qa-report.judge-b.json` (gpt-4.1) · `cross-judge-spread.md` · `retrieval-metrics.json` · `run-provenance.json`
+**Models:** answer = anthropic/`claude-sonnet-4-6` · judges = openai/`gpt-4o-2024-11-20` + openai/`gpt-4.1` (cross-**model**; the intended cross-provider Anthropic judge failed — BUG-004 — so cross-provider judging is deferred to Phase 104) · embedding/reranker = local (default config proven)
 
-> **Reading rules (honesty protocol).** Every prioritization decision below is driven **only by cross-judge-SURVIVING per-category numbers** (all categories survived the ≤5pt tolerance — see `cross-judge-spread.md`). **LoCoMo is comparability-only and never drives a decision.** QA accuracy is on a **disclosed category-stratified subset** (20 LongMemEval items/question_type = 120 of 500, + 15 LoCoMo QA); retrieval recall@k is full-set. Per-category n=20 (~±11pt SE) — the gap report makes **coarse track-level** decisions (each weak category maps to a *different* track), which the subset supports; the full published head-to-head is Phase 104.
+> **Reading rules (honesty protocol).** Every prioritization decision below is driven **only by cross-judge-SURVIVING per-category numbers** (all **6 LongMemEval categories** survived the ≤5pt tolerance; `locomo`'s 6.7pt spread did NOT survive but is comparability-only and drives nothing — see `cross-judge-spread.md`). **LoCoMo is comparability-only and never drives a decision.** QA accuracy is on a **disclosed category-stratified subset** (20 LongMemEval items/question_type = 120 of 500, + 15 LoCoMo QA); retrieval recall@k is full-set. Per-category n=20 (~±11pt SE) — the gap report makes **coarse track-level** decisions (each weak category maps to a *different* track), which the subset supports; the full published head-to-head is Phase 104.
 
 ---
 
@@ -14,16 +14,16 @@
 |---|---|---|---|---|---|
 | single-session-user | 20 | 100 / 100 | ✅ | **STRONG** | reranker (already shipped) → none |
 | single-session-assistant | 20 | 100 / 100 | ✅ | **STRONG** | reranker (already shipped) → none |
-| knowledge-update | 20 | 75 / 75 | ✅ | moderate | Track F (bi-temporal KG) → **Phase 100** |
+| knowledge-update | 20 | 75 / 80 | ✅ | moderate | Track F (bi-temporal KG) → **Phase 100** |
 | multi-session | 20 | 60 / 65 | ✅ | **WEAK** | Track D (reasoning/multi-hop) → **Phase 101** |
 | temporal-reasoning | 20 | 45 / 45 | ✅ | **WEAK** | Track F (KG) + Track B2 (temporal parse) → **Phase 100 + 102** |
-| single-session-preference | 20 | 30 / 30 | ✅ | **WEAKEST** | Track E1 (user model) — *conditional* (Open Decision 1) |
-| locomo *(comparability-only)* | 15 | 93.3 / 93.3 | ✅ | — | never headlined |
+| single-session-preference | 20 | 30 / 35 | ✅ | **WEAKEST** | Track E1 (user model) — *conditional* (Open Decision 1) |
+| locomo *(comparability-only)* | 15 | 93.3 / 86.7 | ❌ *(comparability-only)* | — | never headlined |
 
 **Context rows (not decision drivers):**
 - **Retrieval (FULL 500+10):** recall@1 0.573 · recall@3 0.783 · recall@5 **0.845** · MRR 0.788 · vector + rerank lanes lit.
 - **Cost / latency (judge A run, incl. control):** answer ≈ 15.2k tokens/query · end-to-end latency P50 **6.25s** / P95 9.97s (recall P50 1.46s, answer P50 3.86s, judge P50 0.86s).
-- **Filesystem-baseline control:** 52.6 / 53.3 overall (vs Comis 71.1 / 71.9). **On LoCoMo the control scores 100% vs Comis 93.3%** — a trivial full-context dump *beats* the recall system on LoCoMo → LoCoMo is gameable → comparability-only confirmed. On LongMemEval the control trails Comis by ~19pt (recall earns its keep where the haystack exceeds the context budget).
+- **Filesystem-baseline control:** 52.6 / 52.6 overall (vs Comis 71.1 / 71.9). **On LoCoMo the control ≥ Comis under both judges** (judge A: control 100.0 vs Comis 93.3 — control wins; judge B: control 86.7 vs Comis 86.7 — tie): a trivial full-context dump matches-or-beats the recall system on LoCoMo → LoCoMo is gameable → comparability-only confirmed. On LongMemEval the control trails Comis by ~19pt (recall earns its keep where the haystack exceeds the context budget).
 
 **The gap is per-ability, and it is real and stable:** preference (30) ≪ temporal (45) ≪ multi-session (60–65) ≪ knowledge-update (75) ≪ single-session user/assistant (100). The two strong categories (single-session) are already saturated by the shipped reranker; **all headroom is in the cross-session / temporal / preference abilities** — exactly the abilities the Supremacy tracks target.
 

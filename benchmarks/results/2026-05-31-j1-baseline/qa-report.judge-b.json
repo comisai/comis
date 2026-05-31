@@ -1,6 +1,6 @@
 {
   "benchmark": "combined",
-  "timestamp": "2026-05-31T21:05:08.748Z",
+  "timestamp": "2026-05-31T21:53:19.079Z",
   "models": {
     "extraction": {
       "provider": "none",
@@ -11,8 +11,8 @@
       "modelId": "claude-sonnet-4-6"
     },
     "judge": {
-      "provider": "anthropic",
-      "modelId": "claude-opus-4-8"
+      "provider": "openai",
+      "modelId": "gpt-4.1"
     },
     "embedding": {
       "provider": "local",
@@ -44,124 +44,124 @@
     }
   },
   "results": {
-    "overall": 0,
-    "correct": 0,
+    "overall": 73.33333333333333,
+    "correct": 99,
     "total": 135,
-    "invalid": 135,
-    "validTotal": 0,
+    "invalid": 0,
+    "validTotal": 135,
     "perCategory": {
       "single-session-user": {
-        "correct": 0,
+        "correct": 19,
         "total": 20,
-        "invalid": 20,
-        "accuracy": 0
+        "invalid": 0,
+        "accuracy": 95
       },
       "multi-session": {
-        "correct": 0,
+        "correct": 13,
         "total": 20,
-        "invalid": 20,
-        "accuracy": 0
+        "invalid": 0,
+        "accuracy": 65
       },
       "single-session-preference": {
-        "correct": 0,
+        "correct": 9,
         "total": 20,
-        "invalid": 20,
-        "accuracy": 0
+        "invalid": 0,
+        "accuracy": 45
       },
       "temporal-reasoning": {
-        "correct": 0,
+        "correct": 8,
         "total": 20,
-        "invalid": 20,
-        "accuracy": 0
+        "invalid": 0,
+        "accuracy": 40
       },
       "knowledge-update": {
-        "correct": 0,
+        "correct": 15,
         "total": 20,
-        "invalid": 20,
-        "accuracy": 0
+        "invalid": 0,
+        "accuracy": 75
       },
       "single-session-assistant": {
-        "correct": 0,
+        "correct": 20,
         "total": 20,
-        "invalid": 20,
-        "accuracy": 0
+        "invalid": 0,
+        "accuracy": 100
       },
       "locomo": {
-        "correct": 0,
+        "correct": 15,
         "total": 15,
-        "invalid": 15,
-        "accuracy": 0
+        "invalid": 0,
+        "accuracy": 100
       }
     }
   },
   "harnessVersion": "phase-89-v1",
   "cost": {
-    "answerTokensPerQuery": 0,
-    "judgeTokensPerQuery": 0,
-    "totalTokensPerQuery": 0,
-    "answerCostUsd": 0,
-    "judgeCostUsd": 0
+    "answerTokensPerQuery": 15209.437037037036,
+    "judgeTokensPerQuery": 346.2074074074074,
+    "totalTokensPerQuery": 15555.644444444444,
+    "answerCostUsd": 7.877471250000004,
+    "judgeCostUsd": 0.126236
   },
   "latency": {
-    "recallP50Ms": 0,
-    "recallP95Ms": 0,
-    "answerP50Ms": 0,
-    "answerP95Ms": 0,
-    "judgeP50Ms": 0,
-    "judgeP95Ms": 0,
-    "endToEndP50Ms": 0,
-    "endToEndP95Ms": 0
+    "recallP50Ms": 1327.2891669999954,
+    "recallP95Ms": 1678.300292,
+    "answerP50Ms": 3901.485541999922,
+    "answerP95Ms": 8039.9902090000105,
+    "judgeP50Ms": 877.6897919999901,
+    "judgeP95Ms": 1817.1630000000587,
+    "endToEndP50Ms": 6045.960749999926,
+    "endToEndP95Ms": 10694.727498999899
   },
   "control": {
     "label": "filesystem-baseline-full-context-control",
     "results": {
-      "overall": 0,
-      "correct": 0,
+      "overall": 36.2962962962963,
+      "correct": 49,
       "total": 135,
-      "invalid": 135,
-      "validTotal": 0,
+      "invalid": 0,
+      "validTotal": 135,
       "perCategory": {
         "single-session-user": {
-          "correct": 0,
+          "correct": 11,
           "total": 20,
-          "invalid": 20,
-          "accuracy": 0
+          "invalid": 0,
+          "accuracy": 55.00000000000001
         },
         "multi-session": {
-          "correct": 0,
+          "correct": 10,
           "total": 20,
-          "invalid": 20,
-          "accuracy": 0
+          "invalid": 0,
+          "accuracy": 50
         },
         "single-session-preference": {
-          "correct": 0,
+          "correct": 2,
           "total": 20,
-          "invalid": 20,
-          "accuracy": 0
+          "invalid": 0,
+          "accuracy": 10
         },
         "temporal-reasoning": {
-          "correct": 0,
+          "correct": 5,
           "total": 20,
-          "invalid": 20,
-          "accuracy": 0
+          "invalid": 0,
+          "accuracy": 25
         },
         "knowledge-update": {
-          "correct": 0,
+          "correct": 10,
           "total": 20,
-          "invalid": 20,
-          "accuracy": 0
+          "invalid": 0,
+          "accuracy": 50
         },
         "single-session-assistant": {
-          "correct": 0,
+          "correct": 8,
           "total": 20,
-          "invalid": 20,
-          "accuracy": 0
+          "invalid": 0,
+          "accuracy": 40
         },
         "locomo": {
-          "correct": 0,
+          "correct": 3,
           "total": 15,
-          "invalid": 15,
-          "accuracy": 0
+          "invalid": 0,
+          "accuracy": 20
         }
       }
     }
