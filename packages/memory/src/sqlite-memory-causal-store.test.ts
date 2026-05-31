@@ -297,5 +297,47 @@ describe("createSqliteMemoryCausalStore", () => {
         expect(capped.value[0]?.entry.id).toBe("high");
       }
     });
+
+    it("breaks an EQUAL-confidence tie deterministically by linked id ascending", async () => {
+      const cause = await seedMemory({ id: "cause-tie", content: "the tie root token-tieroot" });
+      // Seed two effects with ids whose ascending order (idA < idB) is the expected tie-break.
+      await seedMemory({ id: "aaa-effect", content: "first effect token-tieA" });
+      await seedMemory({ id: "zzz-effect", content: "second effect token-tieB" });
+      // SAME confidence on both edges → the confidence sort is a tie → the id tie-break decides.
+      expect((await store.linkCausal(cause, "token-tieB", SCOPE_A, 0.5)).ok).toBe(true);
+      expect((await store.linkCausal(cause, "token-tieA", SCOPE_A, 0.5)).ok).toBe(true);
+      const read = await store.causalLane([cause], READ_A, 10);
+      expect(read.ok).toBe(true);
+      if (!read.ok) return;
+      // Equal confidence → stable ascending-id order (aaa- before zzz-), regardless of link order.
+      expect(read.value.map((r) => r.entry.id)).toEqual(["aaa-effect", "zzz-effect"]);
+    });
+  });
+
+  // =====================================================================
+  // NON-FATAL err paths (T-96-13): a SQL fault during either method is
+  // caught + returned as err (never thrown) — the catch blocks. Simulated
+  // by closing the db handle so every prepared statement throws.
+  // =====================================================================
+
+  describe("non-fatal err paths (the catch blocks, T-96-13)", () => {
+    it("linkCausal returns err (not throw) when the underlying db query fails", async () => {
+      const cause = await seedMemory({ id: "cause-err", content: "cause token-errsrc" });
+      await seedMemory({ id: "effect-err", content: "effect token-errdst" });
+      db.close(); // every prepared statement now throws SQLITE_MISUSE
+      const r = await store.linkCausal(cause, "token-errdst", SCOPE_A, 1);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+    });
+
+    it("causalLane returns err (not throw) when the underlying db query fails", async () => {
+      const cause = await seedMemory({ id: "cause-laneerr", content: "cause token-lanesrc" });
+      await seedMemory({ id: "effect-laneerr", content: "effect token-lanedst" });
+      expect((await store.linkCausal(cause, "token-lanedst", SCOPE_A, 1)).ok).toBe(true);
+      db.close(); // the lane read now throws
+      const r = await store.causalLane([cause], READ_A, 10);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+    });
   });
 });

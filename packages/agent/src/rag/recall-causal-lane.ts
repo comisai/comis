@@ -21,7 +21,7 @@
  * @module
  */
 
-import type { MemoryCausalStore, SessionKey, ComisLogger, MemorySearchResult } from "@comis/core";
+import type { MemoryCausalStore, SessionKey, ComisLogger } from "@comis/core";
 import type { FusionLane } from "./fuse.js";
 
 /**
