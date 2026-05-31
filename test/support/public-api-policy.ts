@@ -1850,6 +1850,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // here ahead of that wiring — baseline orphans until the daemon consumer lands.
       "createSqliteMemoryEntityStore",
       "MemoryEntityStoreDeps",
+      // Temporal-spread store (Phase 95-02, LANES-02). createSqliteMemoryTemporalStore is the
+      // sole MemoryTemporalStore adapter. Task 1 of this plan lands the adapter + factory ahead
+      // of the daemon composition-root wiring (Task 2, setup-memory) — surfaced here as a
+      // baseline orphan until that consumer lands within the SAME plan (the factory entry is
+      // REMOVED in Task 2 once setup-memory consumes it). The constructor-deps SHAPE type is
+      // part of its public API but is referenced only via inline objects — a permanent baseline
+      // orphan (mirror MemoryEntityStoreDeps / MemoryUsefulnessStoreDeps).
+      "createSqliteMemoryTemporalStore",
+      "MemoryTemporalStoreDeps",
       // Consolidation store (Phase 84-02). createSqliteMemoryConsolidationStore is the sole
       // MemoryConsolidationStore adapter; the daemon composition root constructs it on the
       // memory adapter's db handle in Plan 84-05 (setup-memory) — so the FACTORY has a

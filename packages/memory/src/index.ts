@@ -48,6 +48,15 @@ export { rerankerModelPresent } from "./reranker-model-present.js";
 export { createSqliteMemoryEntityStore } from "./sqlite-memory-entity-store.js";
 export type { MemoryEntityStoreDeps } from "./sqlite-memory-entity-store.js";
 
+// Temporal-spread recall store (sole MemoryTemporalStore impl; Phase 95, LANES-02).
+// Owns the windowed read over the EXISTING `memories.occurred_at` column — given the
+// seed memories' event times, surfaces OTHER memories near those times (NO new table).
+// The daemon (composition root) constructs it on the memory adapter's db handle; the
+// MemoryTemporalStore port TYPE lives in @comis/core (the agent↛memory cut — the recall
+// read path consumes the type only).
+export { createSqliteMemoryTemporalStore } from "./sqlite-memory-temporal-store.js";
+export type { MemoryTemporalStoreDeps } from "./sqlite-memory-temporal-store.js";
+
 // Memory consolidation store (sole MemoryConsolidationStore impl; Phase 84).
 // Owns the scoped, state-predicate (consolidated_at IS NULL) candidate selection
 // + the atomic applyConsolidation transaction. The daemon (Plan 05) constructs
