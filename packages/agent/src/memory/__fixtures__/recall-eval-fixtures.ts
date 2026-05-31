@@ -26,7 +26,7 @@
  * @module
  */
 
-import type { MemorySearchResult, TrustLevel } from "@comis/core";
+import type { MemorySearchResult, TrustLevel, UsefulnessSignal } from "@comis/core";
 
 /**
  * Phase group tag for an eval query. Lets subsequent phases append fixtures
@@ -34,8 +34,9 @@ import type { MemorySearchResult, TrustLevel } from "@comis/core";
  * - `"reranking"` — Phase 80 (this plan): cross-encoder rescue of fusion mis-ranks.
  * - `"temporal"`  — Phase 81: temporal-contradiction / recency.
  * - `"entity"`    — Phase 83: entity-association.
+ * - `"feedback"`  — Phase 93: recall-utility feedback loop repeat-query lift (FEED-04).
  */
-export type EvalGroup = "reranking" | "temporal" | "entity";
+export type EvalGroup = "reranking" | "temporal" | "entity" | "feedback";
 
 /**
  * One labeled eval query: the candidate pool a ranker sees plus the
@@ -392,4 +393,107 @@ export const ENTITY_EVAL_FIXTURES: EvalQuery[] = [
 export function entityLane(q: EvalQuery): MemorySearchResult[] {
   const relevant = new Set(q.relevantIds);
   return q.candidates.filter((c) => relevant.has(c.entry.id));
+}
+
+/**
+ * Phase-93 recall-utility feedback fixtures (FEED-04) — the `"feedback"` group, the
+ * repeat-query scenario scored against the LIVE usefulness lever (`score()` with
+ * `usefulnessAlpha>0` + a `usefulnessById` map, Phase-93 plan 03; the fifth score.ts factor).
+ * Kept in a SEPARATE exported array from {@link RECALL_EVAL_FIXTURES} /
+ * {@link TEMPORAL_EVAL_FIXTURES} / {@link ENTITY_EVAL_FIXTURES} so the prior groups' assertions
+ * stay untouched and green (the documented zero-regression discipline).
+ *
+ * THE FEEDBACK LEAPFROG (vs Hindsight's dead `access_count`). The recall layer LEARNS from
+ * outcomes: a memory the agent USED at turn 1 ranks higher when offered again at a turn-2
+ * repeat query. Each query pairs a DISTRACTOR carrying the HIGHER fusion `score` (it would win
+ * on lexical/fusion alone) but a turn-1 "recalled-but-IGNORED" signal, against the RELEVANT
+ * memory carrying the LOWER fusion `score` but a turn-1 "USED" signal. Because single-lane
+ * `fuse()` is order-preserving, the fusion-only baseline ranks the distractor at rank 1 and
+ * MISSES the relevant id at recall@1 (the headroom). The usefulness boost
+ * (`usefulnessFactor = 1 + usefulnessAlpha·(usedRate − 0.5)`, score.ts) then lifts the
+ * proven-useful memory to rank 1. `relevantIds` = the USED memory's id.
+ *
+ * The usefulness signal is NOT a field on {@link EvalQuery} — it is supplied to `score()` as a
+ * `usefulnessById` map built by {@link usefulnessByIdFor} from {@link FEEDBACK_USEFULNESS}
+ * (keeping the EvalQuery cut clean — the read-side feeds the signal via a side map, exactly as
+ * the live `memory-recall.ts` does after FEED-02).
+ *
+ * Worked math (usefulnessFactor = 1 + 0.5·(usedRate − 0.5); all other alphas 0):
+ *   distractor base 0.80, usedRate 0/(0+3)=0   → 0.80·(1 + 0.5·(0 − 0.5)) = 0.80·0.75 = 0.60
+ *   useful     base 0.60, usedRate 3/(3+0)=1.0 → 0.60·(1 + 0.5·(1 − 0.5)) = 0.60·1.25 = 0.75
+ *   → the proven-useful memory wins recall@1.
+ *
+ * Determinism (AGENTS.md §2.5): neutral placeholders + stable ids `f-useful*`/`f-distractor*`.
+ * No real identities, no network, no `Date.now`/`Math.random`. `createdAt` is uniform EVAL_NOW
+ * (so the lift is attributable to the usefulness axis, not an incidental recency edge).
+ *
+ * - F1 ("how do I configure the deploy pipeline") — the repeat-query "used-last-turn" case: the
+ *   lexical distractor "the deploy pipeline failed last night" (f-distractor1, base 0.85,
+ *   recalled-but-ignored) outscores the relevant "configure the deploy pipeline via the
+ *   ci.yaml on example.com" (f-useful1, base 0.60, USED last turn) in fusion order; the
+ *   usefulness boost rescues f-useful1 to rank 1.
+ * - F2 ("what's the on-call escalation policy") — same shape: the distractor "on-call rotation
+ *   starts monday" (f-distractor2, base 0.80, ignored) precedes the relevant "on-call
+ *   escalation: page the lead after 15m on example.com" (f-useful2, base 0.62, USED) in fusion
+ *   order; the boost rescues f-useful2.
+ */
+export const FEEDBACK_EVAL_FIXTURES: EvalQuery[] = [
+  {
+    group: "feedback",
+    query: "how do I configure the deploy pipeline",
+    candidates: [
+      // Distractor: high fusion score, recalled-but-IGNORED last turn — fusion rank 1.
+      candidate("f-distractor1", "the deploy pipeline failed last night during the release", 0.85),
+      // Relevant: lower fusion score, USED last turn — fusion rank 2 (missed @1); feedback rescues it.
+      candidate("f-useful1", "configure the deploy pipeline via the ci.yaml on example.com", 0.6),
+      candidate("f-noise1", "user_a prefers tabs over spaces", 0.3),
+    ],
+    relevantIds: ["f-useful1"],
+  },
+  {
+    group: "feedback",
+    query: "what's the on-call escalation policy",
+    candidates: [
+      // Distractor: high fusion score, recalled-but-IGNORED last turn — fusion rank 1.
+      candidate("f-distractor2", "the on-call rotation starts monday for the platform team", 0.8),
+      // Relevant: lower fusion score, USED last turn — fusion rank 2 (missed @1); feedback rescues it.
+      candidate("f-useful2", "on-call escalation: page the lead after 15m on example.com", 0.62),
+      candidate("f-noise2", "user_a scheduled a sync for next week", 0.25),
+    ],
+    relevantIds: ["f-useful2"],
+  },
+];
+
+/**
+ * The MODELED turn-1 usefulness signal per memory id (FEED-04) — the fixture stand-in for the
+ * FEED-02 store's `readUsefulness` output (the per-memory used/ignored counts the daemon
+ * write-back accrued from `memory:recall_used`). The USED memories carry `usedCount >= 1`
+ * (used-rate 1.0 → a boost); the distractors carry `ignoredCount >= 1` with `usedCount 0`
+ * (recalled-but-ignored, used-rate 0.0 → a demotion below neutral). Noise ids are absent
+ * (no signal → neutral factor 1.0). Keyed by memory id so {@link usefulnessByIdFor} can build
+ * a per-query map WITHOUT a field on {@link EvalQuery}.
+ */
+export const FEEDBACK_USEFULNESS: ReadonlyMap<string, UsefulnessSignal> = new Map([
+  ["f-useful1", { usedCount: 3, ignoredCount: 0 }],
+  ["f-distractor1", { usedCount: 0, ignoredCount: 3 }],
+  ["f-useful2", { usedCount: 2, ignoredCount: 0 }],
+  ["f-distractor2", { usedCount: 0, ignoredCount: 2 }],
+]);
+
+/**
+ * Build the `usefulnessById` map a feedback-group ranker hands to `score()` — restricted to
+ * THIS query's candidate ids that have a signal in {@link FEEDBACK_USEFULNESS}. For a query
+ * whose candidates carry NO usefulness signal (e.g. the reranking/temporal/entity groups) this
+ * returns an EMPTY map, so `score()` over those groups sees `usefulnessNorm(undefined)` → 0.5 →
+ * a neutral 1.0 factor (the zero-regression guard). PURE — no DB, no I/O; the lift is
+ * reproducible from the fixtures alone. This is the read-side seam: the live `memory-recall.ts`
+ * reads the same per-id signal from the FEED-02 store after fuse() and passes it to the scorer.
+ */
+export function usefulnessByIdFor(q: EvalQuery): ReadonlyMap<string, UsefulnessSignal> {
+  const out = new Map<string, UsefulnessSignal>();
+  for (const c of q.candidates) {
+    const sig = FEEDBACK_USEFULNESS.get(c.entry.id);
+    if (sig !== undefined) out.set(c.entry.id, sig);
+  }
+  return out;
 }
