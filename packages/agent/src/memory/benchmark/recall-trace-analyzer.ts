@@ -84,8 +84,10 @@ export interface TraceQualityView {
  *
  * Ties are broken by original index ascending in BOTH argsorts, so equal scores
  * preserve their relative position and never spuriously register as "differs".
- * Unequal lengths are treated as a difference (documented total-function choice:
- * a rerank that changed the candidate count plainly reordered the set).
+ * Unequal lengths return `true` to keep this a sound TOTAL function in isolation.
+ * NOTE (WR-04): the analyzer's lift-realized path does NOT rely on that branch —
+ * it pre-guards equal, non-empty lengths before calling here, so a malformed
+ * trace with mismatched lengths is never counted as a realized rerank lift.
  */
 export function argsortDiffers(pre: number[], post: number[]): boolean {
   if (pre.length !== post.length) return true;
@@ -150,19 +152,29 @@ export function analyzeRecallTrace(jsonlContent: string): TraceQualityView {
 
     // --- rerank outcome counters + lift-realized ---------------------------
     switch (event.rerank.outcome) {
-      case "ran":
+      case "ran": {
         rerankRan++;
-        // pre/postScores are present when outcome === "ran"; if either is
-        // absent treat as no-lift (a rerank that produced no scores moved
-        // nothing observable).
+        // Attribute realized lift ONLY when both score arrays are present,
+        // non-empty, AND equal-length (WR-04). The schema makes preScores /
+        // postScores independently optional with no cross-field length
+        // invariant, so a malformed external trace could emit mismatched/empty
+        // lengths; argsortDiffers reports a length mismatch as "differs" (a
+        // sound TOTAL function in isolation — its own test documents that), but
+        // a mismatch is malformed input, not an OBSERVED reordering. Counting it
+        // would inflate rerankLiftRealized, a headline quality signal later v2.7
+        // phases (90-96) are scored against — so exclude it from the numerator.
+        const { preScores, postScores } = event.rerank;
         if (
-          event.rerank.preScores !== undefined &&
-          event.rerank.postScores !== undefined &&
-          argsortDiffers(event.rerank.preScores, event.rerank.postScores)
+          preScores !== undefined &&
+          postScores !== undefined &&
+          preScores.length === postScores.length &&
+          preScores.length > 0 &&
+          argsortDiffers(preScores, postScores)
         ) {
           liftRealizedCount++;
         }
         break;
+      }
       case "fell_back":
         rerankFellBack++;
         break;
