@@ -75,14 +75,8 @@ export type { SingleAgentDeps, SingleAgentResult } from "./setup-agents-types.js
  * Extracted from the setupAgents() loop body so it can be called independently
  * for hot-add (adding an agent at runtime without daemon restart).
  *
- * `rawRerankEnabled` is the RAW (pre-Zod-default) `rag.rerank.enabled` for this
- * agent — `boolean | undefined`, where `undefined` means the operator left it
- * unset (the auto-on candidate). It MUST be threaded explicitly because the
- * parsed `agentConfig.rag.rerank.enabled` always carries a concrete boolean
- * (`.default(false)`) and so cannot distinguish unset from explicit-off (the
- * CR-01 bug). When the caller omits it, we fall back to the daemon-wide raw map
- * on the container (populated at bootstrap from the pre-Zod merged config); the
- * boot loop passes the map value, hot-add passes the RPC-input value directly.
+ * `rawRerankEnabled` is the RAW (pre-Zod-default) `rag.rerank.enabled`
+ * (`undefined` = operator unset) — see the resolution site below (CR-01).
  */
 export async function setupSingleAgent(
   agentId: string,
@@ -105,21 +99,12 @@ export async function setupSingleAgent(
   // which model got picked without having to read the resolver source.
   const modelsConfig = container.config.models;
   const resolved = resolveAgentModel(agentConfig, modelsConfig);
-  // Phase 92 (RERANK-01): resolve the EFFECTIVE rag.rerank.enabled with the same
-  // explicit-wins-or-default-on-presence precedence the build gate uses. CRITICAL
-  // (CR-01): the explicit signal MUST be the RAW (pre-Zod-default) value — the parsed
-  // agentConfig.rag.rerank.enabled is ALWAYS a concrete boolean (.default(false)), which
-  // erases the "unset" signal and would make auto-on impossible. Resolve raw from the
-  // explicit `rawRerankEnabled` arg (hot-add passes the RPC input) else the daemon-wide
-  // raw map on the container (boot path; populated at bootstrap from the pre-Zod merged
-  // config). deps.rerankerModelPresent is the SAME boolean setup-memory computed (one
-  // source — T-92-06), and the build gate reads the SAME raw map (no parsed-vs-raw drift,
-  // WR-03). The rag spread nests so the sibling rerank knobs (maxCandidates/minResults/
-  // timeoutMs) survive untouched.
+  // Phase 92 (RERANK-01/CR-01): EFFECTIVE rag.rerank.enabled — explicit wins, unset auto-ons
+  // iff the model is present. The explicit signal MUST be RAW (parsed agentConfig defaults
+  // unset to false, erasing it): explicit arg (hot-add) else the daemon-wide container map
+  // (boot) — the SAME source the build gate reads (T-92-06/WR-03). Spread keeps sibling knobs.
   const rawRerank =
-    rawRerankEnabled !== undefined
-      ? rawRerankEnabled
-      : container.rawAgentRerankEnabled?.get(agentId);
+    rawRerankEnabled !== undefined ? rawRerankEnabled : container.rawAgentRerankEnabled?.get(agentId);
   const effectiveConfig = {
     ...agentConfig,
     model: resolved.model,
@@ -146,11 +131,8 @@ export async function setupSingleAgent(
   // see the resolved model/provider instead of the placeholder "default".
   container.config.agents[agentId] = effectiveConfig;
 
-  // Phase 92 (RERANK-01): surface the locally-gated auto-on once, at the boundary, so
-  // an operator can see WHY rerank turned on for an agent that never set it (AGENTS.md
-  // §2.7). Booleans only — no model path/body (T-92-07). Fires ONLY when the operator
-  // left it unset (rawRerank === undefined) AND local presence flipped it on (not for an
-  // explicit-on agent). This guard is now LIVE: rawRerank is the genuine tri-state.
+  // Phase 92 (RERANK-01): surface the locally-gated auto-on once at the boundary (booleans
+  // only — T-92-07). Now LIVE: fires ONLY for unset + model-present (not for explicit-on).
   if (rawRerank === undefined && effectiveConfig.rag.rerank.enabled === true) {
     agentLogger.info({ agentId, rerankAutoEnabled: true }, "Reranker auto-enabled (model present, unset config)");
   }
