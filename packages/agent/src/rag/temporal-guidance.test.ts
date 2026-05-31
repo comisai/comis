@@ -41,6 +41,10 @@ const PHRASES = [
   // Trust-FIRST (CONTRA-01): the higher-trust memory wins a conflict even when it is OLDER.
   "the higher-TRUST memory wins even if older",
   "a [system] memory outranks a [learned] or [external] one even if older",
+  // NON-DESTRUCTIVE (CONTRA-01, TEMP-03): the conflict bullet must phrase the demotion as an
+  // answer-time PREFERENCE, never a deletion. The word "superseded" reads as license to drop
+  // the lower-trust memory — this phrase pins the retained-both, prefer-don't-delete framing.
+  "keep BOTH in mind — this is a preference for answering, not a deletion",
   // Recency is SECONDARY — only a tie-break among equal-trust memories.
   "among equal-trust memories, the most recently RECORDED one wins",
   "do NOT average or sum",

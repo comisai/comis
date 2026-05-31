@@ -36,11 +36,14 @@ import type { MemorySearchResult } from "@comis/core";
  * (recorded time, occurred time, trust tier) in prose; it does NOT echo or interpolate
  * any memory CONTENT (prompt-injection safe). The FIRST conflict bullet asserts
  * trust-primacy (the higher-trust memory wins a conflict even if older); recency appears
- * only as a tie-break among EQUAL-trust memories (TEMP-04).
+ * only as a tie-break among EQUAL-trust memories (TEMP-04). The conflict bullet frames the
+ * demotion as an answer-time PREFERENCE — both memories are RETAINED ("keep BOTH in mind …
+ * not a deletion"), never "superseded"/dropped — keeping the prose the LLM reads aligned
+ * with the NON-DESTRUCTIVE contract (TEMP-03; resolution is answering guidance, not a store delete).
  */
 const TEMPORAL_GUIDANCE = `## Using these memories over time
-- Each memory shows when it was recorded, (if known) when the event occurred, and its trust tier ([system] > [learned] > [external]).
-- If two conflict about the same thing, the higher-TRUST memory wins even if older — a [system] memory outranks a [learned] or [external] one even if older; treat the lower-trust conflicting statement as superseded — do NOT average or sum.
+- Each memory shows when it was recorded, when the event occurred (if known), and its trust tier ([system] > [learned] > [external]).
+- If two conflict about the same thing, the higher-TRUST memory wins even if older — a [system] memory outranks a [learned] or [external] one even if older; answer from the higher-trust memory and treat the lower-trust statement as outdated for this answer, but keep BOTH in mind — this is a preference for answering, not a deletion; do NOT average or sum.
 - Only break ties between equal-trust memories by recency: among equal-trust memories, the most recently RECORDED one wins.
 - For a timeline, order by when events OCCURRED, not when they were recorded.
 - If still disagreeing at equal trust and equal recency, say so rather than guess.`;
