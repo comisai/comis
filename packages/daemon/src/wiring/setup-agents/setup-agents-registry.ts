@@ -185,6 +185,10 @@ export async function setupAgents(deps: {
   /** Optional cross-encoder reranker (built in setup-memory only when an agent enables
    *  rerank). Threaded into each per-agent createPiExecutor like memoryPort. */
   rerankerPort?: import("@comis/core").RerankerPort;
+  /** Phase 92: model-present probe result from setup-memory; forwarded into each
+   *  SingleAgentDeps so the per-agent effective rerank precedence consults the SAME
+   *  value as the build gate (Pitfall 4 — one source). */
+  rerankerModelPresent?: boolean;
   /** Entity-associative store (Phase 83). Threaded into each per-agent createPiExecutor
    *  like memoryPort (the recall read path). Built in setup-memory on the shared db. */
   entityStore?: import("@comis/core").MemoryEntityStore;
@@ -406,6 +410,7 @@ export async function setupAgents(deps: {
     lastKnownModel,
     embeddingPort: deps.embeddingPort,
     rerankerPort: deps.rerankerPort,
+    rerankerModelPresent: deps.rerankerModelPresent,
     entityStore: deps.entityStore,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,

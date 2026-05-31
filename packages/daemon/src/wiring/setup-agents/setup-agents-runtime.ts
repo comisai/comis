@@ -52,7 +52,7 @@ import {
   createRuntimeEligibilityContext,
   type SkillWatcherHandle,
 } from "@comis/skills";
-import { resolveAgentModel, deriveCanaryFallback } from "./setup-agents-tooling.js";
+import { resolveAgentModel, deriveCanaryFallback, resolveEffectiveRerank } from "./setup-agents-tooling.js";
 import { createAcpWiring } from "./setup-acp-wiring.js";
 import {
   detectAndRecordModeSwitch,
@@ -95,7 +95,20 @@ export async function setupSingleAgent(
   // which model got picked without having to read the resolver source.
   const modelsConfig = container.config.models;
   const resolved = resolveAgentModel(agentConfig, modelsConfig);
-  const effectiveConfig = { ...agentConfig, model: resolved.model, provider: resolved.provider };
+  // Phase 92 (RERANK-01): resolve the EFFECTIVE rag.rerank.enabled with the same
+  // explicit-wins-or-default-on-presence precedence the build gate uses. CRITICAL
+  // (Pitfall 1): read the explicit signal from rawAgentConfig (pre-parse) — the parsed
+  // agentConfig.rag.rerank.enabled is ALWAYS a concrete boolean (.default(false)), which
+  // would erase the "unset" signal and never auto-on. deps.rerankerModelPresent is the
+  // SAME boolean setup-memory computed (one source — T-92-06), so this per-agent invoke
+  // gate can never disagree with the build gate. The rag spread nests so the sibling
+  // rerank knobs (maxCandidates/minResults/timeoutMs) survive untouched.
+  const effectiveConfig = {
+    ...agentConfig,
+    model: resolved.model,
+    provider: resolved.provider,
+    rag: { ...agentConfig.rag, rerank: { ...agentConfig.rag.rerank, enabled: resolveEffectiveRerank(rawAgentConfig.rag?.rerank?.enabled, deps.rerankerModelPresent ?? false) } },
+  };
 
   // DAG-05: detect a context-engine MODE SWITCH at the rebuild seam.
   // container.config.agents[agentId] still holds the PRIOR config here (on a
@@ -115,6 +128,14 @@ export async function setupSingleAgent(
   // consumers (getConfig RPC, agents.get, session.status, REST /api/agents)
   // see the resolved model/provider instead of the placeholder "default".
   container.config.agents[agentId] = effectiveConfig;
+
+  // Phase 92 (RERANK-01): surface the locally-gated auto-on once, at the boundary, so
+  // an operator can see WHY rerank turned on for an agent that never set it (AGENTS.md
+  // §2.7). Booleans only — no model path/body (T-92-07). Fires ONLY when the operator
+  // left it unset AND local presence flipped it on (not for an explicit-on agent).
+  if (rawAgentConfig.rag?.rerank?.enabled === undefined && effectiveConfig.rag.rerank.enabled === true) {
+    agentLogger.info({ agentId, rerankAutoEnabled: true }, "Reranker auto-enabled (model present, unset config)");
+  }
 
   if (agentConfig.model !== resolved.model || agentConfig.provider !== resolved.provider) {
     const source =

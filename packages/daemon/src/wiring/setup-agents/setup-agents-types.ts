@@ -67,6 +67,9 @@ export interface SingleAgentDeps {
   /** Optional cross-encoder reranker (built in setup-memory only when an agent enables
    *  rerank). Threaded into createPiExecutor like memoryPort; absent -> fusion order. */
   rerankerPort?: import("@comis/core").RerankerPort;
+  /** Phase 92: model-present probe result from setup-memory; drives per-agent effective
+   *  rerank precedence. Same value as the build gate (Pitfall 4 — one source). */
+  rerankerModelPresent?: boolean;
   /** Entity-associative store (Phase 83). Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the
    *  shared db handle; the entity lane stays dormant until an operator enables
