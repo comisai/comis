@@ -211,9 +211,17 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // FTS + vector lanes SEPARATELY so fuse() applies the operator-tunable weights and the
       // recall-trace reports TRUE per-lane counts. When it is ABSENT (an older / search-only
       // adapter), fall back to the single-lane search() path VERBATIM — a graceful degrade,
-      // NOT a compat toggle (mirrors the absent-reranker / absent-entityStore degrade). The
-      // two paths differ in WHERE minScore is applied: searchLanes is PRE-filter (minScore
-      // re-applied post-fuse below), search() applies minScore itself (no double-apply).
+      // NOT a compat toggle (mirrors the absent-reranker / absent-entityStore degrade).
+      //
+      // BOTH paths produce ONE base lane that is CAPPED to cfg.maxResults and minScore-filtered
+      // (W1 parity): on the fallback path search()->hybridSearch already does this internally
+      // (filteredIds.slice(0, limit) then the adapter's minScore filter); on the searchLanes
+      // path the lanes are PRE-filter candidate pools, so recall reproduces that here — fuse
+      // the fts+vector lanes (operator weights applied), slice the fused union to maxResults
+      // (mirroring hybridSearch's slice), then minScore-filter. The result is the single
+      // pre-fused base lane v2.6 carried, so the downstream entity/temporal append + final
+      // fuse() is byte-identical to v2.6 at default config (count AND id order), and the
+      // entity/temporal lanes still legitimately add candidates ON TOP of the capped base.
       const baseLanes: FusionLane[] = [];
       // ftsCandidates is assigned on BOTH reachable paths below (the searchLanes branch and
       // the search() fallback) before any read, so a `= 0` initializer is provably dead
@@ -221,11 +229,10 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // fallback the split is not observable so it stays 0 (the WR-04 honest stub).
       let ftsCandidates: number;
       let vectorCandidates = 0;
-      // Tracks whether minScore still needs applying after fuse() (true on the searchLanes
-      // path where the lanes were fetched pre-filter; false on the search() fallback where
-      // search() already applied it — gating prevents a double minScore filter).
-      let minScoreAppliedInSearch = false;
-
+      // minScore is applied exactly ONCE on the capped base on BOTH paths now (the searchLanes
+      // branch applies it below after the cap; the fallback's search() applies it internally),
+      // so the post-fuse re-application is fully retired — the base lane is already filtered,
+      // and v2.6 never minScore-filtered the entity/temporal lane contributions post-fuse.
       if (typeof deps.memoryPort.searchLanes === "function") {
         // Two-lane path. NB: no minScore passed — the lanes are pre-filter candidate pools.
         const laneRes = await deps.memoryPort.searchLanes(sessionKey, query, { limit, agentId });
@@ -238,18 +245,33 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         // MUST hit fuse()'s single-lane pass-through (order + score preserved) rather than
         // the multi-lane rank-ramp, so the FTS-only degrade keeps today's BM25-distributed
         // scores. fuse() of [ftsLane, emptyVectorLane] would otherwise run the 2-lane RRF.
-        if (laneRes.value.fts.length > 0) baseLanes.push({ results: laneRes.value.fts, weight: ftsWeight });
-        if (laneRes.value.vector.length > 0) baseLanes.push({ results: laneRes.value.vector, weight: vectorWeight });
+        const ftsVecLanes: FusionLane[] = [];
+        if (laneRes.value.fts.length > 0) ftsVecLanes.push({ results: laneRes.value.fts, weight: ftsWeight });
+        if (laneRes.value.vector.length > 0) ftsVecLanes.push({ results: laneRes.value.vector, weight: vectorWeight });
+        // W1 cap: fuse the fts+vector lanes, slice the fused union to cfg.maxResults
+        // (mirroring hybridSearch.ts's `filteredIds.slice(0, options.limit)` — the cap the
+        // LANES-01 unfuse dropped), then minScore-filter. This single pre-fused base lane is
+        // exactly what v2.6's search() returned, so the entity/temporal append + final fuse
+        // reproduce v2.6's default-config result SET (not merely its head ordering). RRF
+        // depends only on per-lane ranks, so the slice drops only tail items — ranking parity
+        // (the proven LANES-01 guard) is untouched. An empty fts+vector union pushes nothing.
+        if (ftsVecLanes.length > 0) {
+          const base = fuse(ftsVecLanes)
+            .slice(0, cfg.maxResults)
+            .filter((r) => (r.score ?? 0) >= cfg.minScore);
+          if (base.length > 0) baseLanes.push({ results: base, weight: 1.0 });
+        }
       } else {
-        // Single-lane fallback (search-only adapter). search() applies minScore internally.
+        // Single-lane fallback (search-only adapter). search()->hybridSearch applies BOTH the
+        // slice(0, limit=maxResults) cap and the minScore filter internally, so searched.value
+        // is ALREADY the capped+filtered base — wrap it verbatim (no second cap/filter here).
         const searched = await deps.memoryPort.search(sessionKey, query, { limit, minScore: cfg.minScore, agentId });
         if (!searched.ok) return searched;
         ftsCandidates = searched.value.length;
         // WR-04: the split is NOT observable on this path (search() returns ONE merged list),
         // so vectorCandidates stays its honest initial value — the recall layer cannot break
         // out a true vector count here. The searchLanes path above sets the real count.
-        minScoreAppliedInSearch = true;
-        baseLanes.push({ results: searched.value, weight: 1.0 });
+        if (searched.value.length > 0) baseLanes.push({ results: searched.value, weight: 1.0 });
       }
 
       let entityCandidates = 0;
@@ -284,8 +306,11 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // to the base lanes only. The lane SQL lives in the memory package behind the injected
       // MemoryEntityStore port — this file imports the TYPE only (the agent↛memory build cut).
       const lanes: FusionLane[] = baseLanes;
-      // Entity-lane seeds: the top hits of the primary (FTS / fallback search) lane — the
-      // same pool the pre-LANES-01 path seeded on (`searched.value`).
+      // Entity/temporal-lane seeds: the top hits of the capped+filtered base lane — i.e. the
+      // SAME pool v2.6 seeded on (`searched.value`, which was the maxResults-capped, minScore-
+      // filtered fused result). On the searchLanes path baseLanes[0] is now that capped base
+      // (fts+vector fused, sliced, filtered above); on the fallback path it is search()'s
+      // already-capped result. Either way the seeds are byte-identical to v2.6's.
       const seedPool = baseLanes[0]?.results ?? [];
       const el = cfg.entityLane;
       if (el?.enabled === true && deps.entityStore !== undefined && seedPool.length > 0) {
@@ -371,17 +396,15 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           }
         }
       }
+      // FUSE the base lane (already capped + minScore-filtered) with any entity/temporal
+      // lanes. minScore is NOT re-applied here: v2.6 filtered minScore exactly once on the
+      // capped base (inside search()->hybridSearch) and never re-filtered the entity lane's
+      // post-fusion contributions — reproducing that single-apply is what keeps the
+      // default-config result SET byte-identical AND lets the entity/temporal lanes add
+      // candidates as designed. (On the searchLanes path the base lane was fused, sliced to
+      // maxResults, and minScore-filtered above; on the fallback path search() did the same
+      // internally — so the base entering fuse() is identically pre-filtered on both paths.)
       let ranked = fuse(lanes);
-
-      // LANES-01 minScore re-application (Pitfall 1 subtlety 2). On the searchLanes path the
-      // lanes were fetched PRE-filter (no minScore), so the adapter's old post-fusion
-      // minScore filter (sqlite-memory-adapter.ts:215) must be reproduced HERE, after fuse()
-      // normalizes RRF→[0,1] with the SAME (Σw)/(k+1) clamp the adapter used. GATED on
-      // !minScoreAppliedInSearch so the search() fallback (where search() already filtered)
-      // is NOT double-filtered. With default weights this reproduces v2.6's filtered set.
-      if (!minScoreAppliedInSearch) {
-        ranked = ranked.filter((r) => (r.score ?? 0) >= cfg.minScore);
-      }
 
       // Stage-2 snapshot: the post-fuse id order (the fused ranking before rerank/score).
       const fusedOrder = ranked.map((r) => r.entry.id);
