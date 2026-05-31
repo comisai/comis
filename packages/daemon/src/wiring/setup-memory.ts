@@ -233,11 +233,29 @@ export async function setupMemory(deps: {
   // install. Resolve the models dir ONCE (the SAME safePath value the factory builds with —
   // T-92-06: probe and build must consult one dir so the two gates can't drift) and probe
   // presence ONCE (no download — rerankerModelPresent uses resolveModelFile{download:false}).
-  const rerankerModelsDir = safePath(container.config.dataDir || ".", memoryConfig.rerankerModelsDir);
-  const modelPresent = await rerankerModelPresent({
-    modelUri: memoryConfig.rerankerModel,
-    modelsDir: rerankerModelsDir,
-  });
+  // The whole resolve+probe degrades to `modelPresent = false` (the safe RERANK-02 posture)
+  // if anything goes wrong: an unconfigured model URI, or a dataDir/modelsDir pair safePath
+  // rejects (e.g. a relative dataDir that lets "models" escape its base). Auto-on is a
+  // best-effort convenience; a config that can't even locate the models dir must never throw
+  // into daemon startup — it just stays OFF and recall degrades to fusion.
+  let rerankerModelsDir: string | undefined;
+  let modelPresent = false;
+  if (memoryConfig.rerankerModel) {
+    try {
+      rerankerModelsDir = safePath(container.config.dataDir || ".", memoryConfig.rerankerModelsDir || "models");
+      modelPresent = await rerankerModelPresent({
+        modelUri: memoryConfig.rerankerModel,
+        modelsDir: rerankerModelsDir,
+      });
+    } catch (e) {
+      rerankerModelsDir = undefined;
+      modelPresent = false;
+      memoryLogger.warn(
+        { err: String(e), hint: "Set memory.dataDir to an absolute path so the reranker models dir resolves; reranker auto-on stays OFF", errorKind: "config" as const },
+        "Reranker model-present probe skipped (models dir unresolved)",
+      );
+    }
+  }
   // someAgentExplicitOn preserves the explicit opt-in DOWNLOAD path (operator set
   // `rag.rerank.enabled: true` on a fresh machine still fetches — Pitfall 3 / T-92-05).
   const someAgentExplicitOn = Object.values(container.config.agents ?? {}).some(
@@ -255,7 +273,11 @@ export async function setupMemory(deps: {
   if (shouldBuildReranker) {
     const rr = await createLocalRerankerProvider({
       modelUri: memoryConfig.rerankerModel,
-      modelsDir: rerankerModelsDir,
+      // Reuse the dir the probe resolved (T-92-06: one shared value). It is only
+      // unset on the explicit-opt-in path when the probe's safePath threw — recompute
+      // there so the operator's opt-in still gets the same root-confined resolution
+      // (matching the pre-Phase-92 behavior where the factory owned this safePath call).
+      modelsDir: rerankerModelsDir ?? safePath(container.config.dataDir || ".", memoryConfig.rerankerModelsDir || "models"),
       gpu: memoryConfig.rerankerGpu,
       threads: memoryConfig.rerankerThreads,
     });

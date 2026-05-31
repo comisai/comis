@@ -765,6 +765,52 @@ describe("setupMemory", () => {
     );
   });
 
+  it("degrades to no-build + WARN (never throws) when the models dir cannot be resolved", async () => {
+    // A relative/degenerate dataDir can make safePath REJECT the models dir (it would
+    // escape the base). Auto-on is best-effort: the probe block must degrade to
+    // modelPresent=false and NOT throw into daemon startup. With no explicit-on agent,
+    // shouldBuild stays false → factory not called → recall degrades to fusion.
+    mockSafePath.mockImplementationOnce(() => {
+      throw new Error("Path traversal blocked");
+    });
+    const container = createMinimalContainer(); // all-default, model URI set
+    const memoryLogger = createMockLogger();
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: memoryLogger as any,
+      clock: testClock,
+    });
+
+    expect(mockCreateLocalRerankerProvider).not.toHaveBeenCalled();
+    expect(result.rerankerPort).toBeUndefined();
+    expect(result.rerankerModelPresent).toBe(false);
+    expect(memoryLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ errorKind: "config" }),
+      expect.stringContaining("Reranker model-present probe skipped"),
+    );
+  });
+
+  it("skips the probe entirely when no reranker model is configured (modelPresent=false)", async () => {
+    // Unconfigured reranker (undefined modelUri) → there is nothing to probe; treat as
+    // absent without calling the probe or computing safePath (the structurally-off path).
+    const container = createMinimalContainer({
+      memory: { rerankerModel: undefined },
+    });
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    expect(mockRerankerModelPresent).not.toHaveBeenCalled();
+    expect(mockCreateLocalRerankerProvider).not.toHaveBeenCalled();
+    expect(result.rerankerModelPresent).toBe(false);
+  });
+
   it("builds the reranker when at least one agent enables rerank and the factory succeeds", async () => {
     const container = createMinimalContainer({
       agents: {
