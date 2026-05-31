@@ -59,6 +59,12 @@ const mockCreateLocalRerankerProvider = vi.hoisted(() => vi.fn(async () => ({
   ok: true,
   value: { isAvailable: () => true, rank: vi.fn(async () => ({ ok: true, value: [] })), dispose: mockRerankerDispose },
 })));
+// Reranker model-present probe (Phase 92, RERANK-01/02). Default: ABSENT (false) — the
+// fresh-install posture. Without this entry the @comis/memory `rerankerModelPresent`
+// import is undefined and EVERY setupMemory call throws once the build gate calls it
+// (same failure mode as the consolidation-store mock above). Per-test override the
+// resolved value with `mockRerankerModelPresent.mockResolvedValueOnce(true)`.
+const mockRerankerModelPresent = vi.hoisted(() => vi.fn(async () => false));
 // Entity store factory (Phase 83) — mocked so setup wires it without a real DB.
 const mockCreateSqliteMemoryEntityStore = vi.hoisted(() => vi.fn(() => ({
   resolveAndLink: vi.fn(async () => ({ ok: true, value: { ok: true, value: undefined } })),
@@ -84,6 +90,7 @@ vi.mock("@comis/memory", () => ({
   createBatchIndexer: mockCreateBatchIndexer,
   createEmbeddingQueue: mockCreateEmbeddingQueue,
   createLocalRerankerProvider: mockCreateLocalRerankerProvider,
+  rerankerModelPresent: mockRerankerModelPresent,
   createSqliteMemoryEntityStore: mockCreateSqliteMemoryEntityStore,
   createSqliteMemoryConsolidationStore: mockCreateSqliteMemoryConsolidationStore,
 }));
@@ -693,7 +700,12 @@ describe("setupMemory", () => {
   // 20. Reranker build gating (RANK-02/03) — no default download
   // -------------------------------------------------------------------------
 
-  it("does NOT build the reranker for an all-default (rerank-off) config (no 606MB download)", async () => {
+  it("does NOT build the reranker for an all-default (rerank-off) config + model ABSENT (no 606MB download)", async () => {
+    // RERANK-02 (T-92-04): fresh all-default install, model NOT present locally.
+    // The probe resolves false (default mock), the build gate is
+    // `someAgentExplicitOn(false) || modelPresent(false)` = false → the SOLE download
+    // trigger (createLocalRerankerProvider) is NEVER reached → zero bytes fetched.
+    mockRerankerModelPresent.mockResolvedValueOnce(false);
     const container = createMinimalContainer(); // default agent has rerank OFF
     const setupMemory = await getSetupMemory();
 
@@ -703,9 +715,54 @@ describe("setupMemory", () => {
       clock: testClock,
     });
 
-    // The factory must never be invoked when no agent enabled rerank.
+    // The factory must never be invoked when no agent enabled rerank AND model absent.
     expect(mockCreateLocalRerankerProvider).not.toHaveBeenCalled();
     expect(result.rerankerPort).toBeUndefined();
+    // The threaded presence signal the composition root passes to setupAgents.
+    expect(result.rerankerModelPresent).toBe(false);
+  });
+
+  it("auto-builds the reranker when the model is present (all-default config) — RERANK-01 build", async () => {
+    // RERANK-01 build (seam d): all agents all-default (rerank unset → false), but the
+    // GGUF is already cached locally → the probe resolves true → the widened gate
+    // `someAgentExplicitOn(false) || modelPresent(true)` = true builds the port. No
+    // schema flip; the auto-on is a daemon-wiring decision keyed on local presence.
+    mockRerankerModelPresent.mockResolvedValueOnce(true);
+    const container = createMinimalContainer(); // default agent has rerank OFF (unset → false)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    expect(mockCreateLocalRerankerProvider).toHaveBeenCalledOnce();
+    expect(result.rerankerPort).toBeDefined();
+    expect(result.rerankerPort!.isAvailable()).toBe(true);
+    expect(result.rerankerModelPresent).toBe(true);
+  });
+
+  it("probes presence with the SAME modelsDir it would build with (one safePath, no drift)", async () => {
+    // T-92-06: the probe and the factory MUST consult the same resolved modelsDir so
+    // the two gates can never disagree. Assert the probe was called with the same
+    // modelUri + safePath-derived modelsDir the factory receives.
+    mockRerankerModelPresent.mockResolvedValueOnce(true);
+    const container = createMinimalContainer();
+    const setupMemory = await getSetupMemory();
+
+    await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    expect(mockRerankerModelPresent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelUri: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf",
+        modelsDir: expect.stringContaining("models"),
+      }),
+    );
   });
 
   it("builds the reranker when at least one agent enables rerank and the factory succeeds", async () => {
