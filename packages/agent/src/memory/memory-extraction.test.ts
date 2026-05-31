@@ -63,6 +63,48 @@ describe("STRUCTURED_PROMPT instruction invariants", () => {
     expect(STRUCTURED_PROMPT).toMatch(/Extract durable facts/i); // new ✅ lead-in
     expect(STRUCTURED_PROMPT).toMatch(/Skip filler/i); // new ❌ lead-in
   });
+
+  // -------------------------------------------------------------------------
+  // EXTRACT-03 (Phase 96) — the additive, DECLARATIVE causal-emission paragraph.
+  //
+  // The prompt now instructs the LLM to emit `causes` (each `{ effect }`) when a
+  // cause→effect link is EXPLICIT in the conversation. This MUST stay declarative
+  // (injection-safe: the model is told to EXTRACT a consequence as data, never to
+  // execute it) and MUST NOT regress the Phase-91 coreference/selectivity/language
+  // instructions asserted above.
+  // -------------------------------------------------------------------------
+
+  it("instructs the model to emit causal cause→effect relations via a `causes` field (EXTRACT-03)", () => {
+    expect(STRUCTURED_PROMPT).toContain("causes");
+    expect(STRUCTURED_PROMPT).toContain("effect");
+  });
+
+  it("keeps the causal instruction DECLARATIVE and explicit-only (injection-safe — extract, not execute)", () => {
+    // The paragraph must constrain emission to an EXPLICIT cause→effect link, so
+    // untrusted conversation content cannot coax a forged edge. Assert the
+    // explicit-only qualifier rides alongside the causal instruction.
+    expect(STRUCTURED_PROMPT).toMatch(/causes/);
+    expect(STRUCTURED_PROMPT).toMatch(/explicit/i);
+  });
+
+  it("adds `causes` to the per-fact output envelope line (the LLM knows the field is optional)", () => {
+    // The envelope line `output an object: { "content", ... }` must now list
+    // "causes" so the model emits it in the right place (omittable).
+    const envelopeLine = STRUCTURED_PROMPT.split("\n").find((l) => l.includes("output an object"));
+    expect(envelopeLine).toBeDefined();
+    expect(envelopeLine).toContain("causes");
+  });
+
+  it("does NOT regress the Phase-91 coreference + selectivity + language instructions when adding causes", () => {
+    // Zero-regression guard: the additive causal paragraph must leave the
+    // pre-existing Phase-91 instructions byte-present.
+    expect(STRUCTURED_PROMPT).toMatch(/coreference|pronoun|refers to/i);
+    expect(STRUCTURED_PROMPT).toMatch(/canonical/i);
+    expect(STRUCTURED_PROMPT).toContain("✅");
+    expect(STRUCTURED_PROMPT).toContain("❌");
+    expect(STRUCTURED_PROMPT).toContain("SAME LANGUAGE");
+    expect(STRUCTURED_PROMPT).toContain('{ "memories"');
+  });
 });
 
 describe("parseExtractionResult is total and zod-gated (EXTR-01/05)", () => {

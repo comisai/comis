@@ -363,6 +363,68 @@ describe("StructuredMemorySchema (lenient LLM output — EXTR-01)", () => {
     const bad = StructuredMemorySchema.safeParse({ content: "X", entities: [{ name: "" }] });
     expect(bad.success).toBe(false);
   });
+
+  // -------------------------------------------------------------------------
+  // EXTRACT-03 (Phase 96) — the additive LENIENT `causes` field.
+  //
+  // The fact stated in `content` is the CAUSE; each `effect` string is a
+  // consequence (A2 — the cause is the memory's own content). The field is
+  // ADDITIVE (defaults to []) and the schema stays LENIENT (`z.object`): an
+  // omitting LLM is unaffected, a benign extra key is still stripped (NOT
+  // rejected), but the typed `{ effect: string.min(1) }` shape still REJECTS
+  // garbage (injection-safe — a forged edge cannot smuggle a non-string body).
+  // -------------------------------------------------------------------------
+
+  it("accepts a causal pair on the additive `causes` field", () => {
+    const result = StructuredMemorySchema.safeParse({ content: "x", causes: [{ effect: "y" }] });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.causes).toEqual([{ effect: "y" }]);
+    }
+  });
+
+  it("defaults `causes` to [] when omitted (additive — an old extraction is unaffected)", () => {
+    const result = StructuredMemorySchema.safeParse({ content: "x" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.causes).toEqual([]);
+    }
+  });
+
+  it("STILL strips a benign extra LLM key alongside causes (LENIENT z.object preserved — NOT strictObject)", () => {
+    // Adding `causes` must not flip StructuredMemorySchema to strict: an
+    // unrequested top-level key (`confidence`) is dropped, not rejected.
+    const result = StructuredMemorySchema.safeParse({
+      content: "x",
+      causes: [{ effect: "y" }],
+      confidence: 0.9,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect("confidence" in result.data).toBe(false);
+      expect(result.data.causes).toEqual([{ effect: "y" }]);
+    }
+  });
+
+  it("rejects a causes entry with an empty effect (effect.min(1) — garbage still rejected)", () => {
+    const result = StructuredMemorySchema.safeParse({ content: "x", causes: [{ effect: "" }] });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a causes entry whose effect is not a string (typed — a forged non-string edge is rejected)", () => {
+    const result = StructuredMemorySchema.safeParse({ content: "x", causes: [{ effect: 42 }] });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a causes entry carrying an unknown key (the per-cause shape is strict)", () => {
+    // The inner cause object is strict (z.strictObject) — only `effect` is allowed;
+    // a `cause` key (the envelope-level shape we did NOT adopt, A2) is rejected.
+    const result = StructuredMemorySchema.safeParse({
+      content: "x",
+      causes: [{ effect: "y", cause: "z" }],
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("MemoryExtractionResultSchema (envelope — EXTR-01)", () => {
