@@ -30,6 +30,7 @@ export type {
   MemoryConsolidationStore,
   ConsolidationCandidate,
   ConsolidationPlan,
+  ConsolidationFoldPlan,
 } from "./memory-consolidation.js";
 export type { ContextStorePort } from "./context-store.js";
 export type { ContextEngineStore } from "./context-engine-store.js";
