@@ -128,6 +128,48 @@ export function ensureEntityTables(db: Database.Database): void {
 }
 
 /**
+ * Idempotently create the recall-utility usefulness table (Phase 93, FEED-02):
+ * `memory_usefulness` — one row per (tenant, agent, memory) carrying the durable
+ * used/ignored counts + last-useful-at that the recall-utility feedback loop
+ * learns from (the leapfrog Hindsight structurally cannot follow — its
+ * `access_count` is dead schema; HINDSIGHT_VS_COMIS.md #7). Mirrors
+ * `ensureEntityTables`'s forward-only, additive contract — the DDL is
+ * `CREATE TABLE IF NOT EXISTS`, so it is safe to run on every boot including a
+ * live `~/.comis` DB created before the feature existed (no backfill: existing
+ * memories simply have no usefulness row until first recalled).
+ *
+ * ## The PRIMARY KEY is the isolation boundary AND the upsert key (T-93-01)
+ *
+ * Comis runs many agents in one DB. `PRIMARY KEY (tenant_id, agent_id,
+ * memory_id)` is both the `ON CONFLICT` target for the adapter's idempotent
+ * upsert and the load-bearing isolation scope — two agents/tenants NEVER share
+ * a row even for the same `memory_id`, and the adapter additionally filters
+ * every read/write on all three columns (belt-and-braces).
+ *
+ * `ON DELETE CASCADE` on `memory_usefulness.memory_id → memories(id)` is the
+ * ENTIRE row-maintenance story (no orphan-sweep job): a memory delete drops its
+ * usefulness row automatically. It fires because `openSqliteDatabase` already
+ * sets `PRAGMA foreign_keys = ON` (sqlite-adapter-base.ts) — no pragma is set
+ * here.
+ *
+ * @param db - An open better-sqlite3 Database whose `memories` table already
+ *   exists (the FK target). Call AFTER `ensureEntityTables` in `initSchema`.
+ */
+export function ensureUsefulnessTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_usefulness (
+      tenant_id      TEXT NOT NULL,
+      agent_id       TEXT NOT NULL,
+      memory_id      TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+      used_count     INTEGER NOT NULL DEFAULT 0,
+      ignored_count  INTEGER NOT NULL DEFAULT 0,
+      last_useful_at INTEGER,
+      PRIMARY KEY (tenant_id, agent_id, memory_id)
+    );
+  `);
+}
+
+/**
  * Initialize the full memory schema on the given SQLite database.
  *
  * Creates:
@@ -278,6 +320,12 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   // Created right after the `memories` table (the FK target) exists, so the
   // ON DELETE CASCADE on memory_entity_links.memory_id is valid. Idempotent.
   ensureEntityTables(db);
+
+  // --- Recall-utility usefulness table (Phase 93, FEED-02) ---
+  // Created AFTER ensureEntityTables so the `memories` FK target already exists;
+  // its ON DELETE CASCADE fires via the PRAGMA foreign_keys=ON set by
+  // openSqliteDatabase. Brand-new additive table — no ALTER on memories.
+  ensureUsefulnessTable(db);
 
   // --- Observation partial indexes (Phase 84; design §4.1) ---
   // Created AFTER ensureMemoryColumns (the indexed columns must exist first).

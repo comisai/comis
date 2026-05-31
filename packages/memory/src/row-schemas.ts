@@ -120,6 +120,23 @@ export const MemoryEntityRowSchema = z.strictObject({
 });
 
 /**
+ * Schema for the `readUsefulness` projection (Phase 93, FEED-02). The scoped
+ * `SELECT memory_id, used_count, ignored_count, last_useful_at FROM
+ * memory_usefulness WHERE tenant_id=? AND agent_id=? AND memory_id IN (...)`
+ * read. `tenant_id`/`agent_id` are NOT projected — the WHERE already pins them
+ * (mirrors `EntityListRowSchema`'s drop of `canonical_key`). `last_useful_at` is
+ * nullable (NULL until the memory's first "used" attribution). Parsed via
+ * `createRowMapper` in the adapter — never `as Row[]`.
+ */
+export const MemoryUsefulnessRowSchema = z.strictObject({
+  memory_id: z.string(),
+  used_count: z.number(),
+  ignored_count: z.number(),
+  /** Epoch ms of the last "used" attribution; NULL until first use. */
+  last_useful_at: z.number().nullable(),
+});
+
+/**
  * Schema for the entity associative-lane self-join projection (Phase 83,
  * ENT-02; RESEARCH Pattern 2). The one-hop self-join over
  * `memory_entity_links` returns, per other memory, the count of distinct

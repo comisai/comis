@@ -56,6 +56,15 @@ export type { MemoryEntityStoreDeps } from "./sqlite-memory-entity-store.js";
 export { createSqliteMemoryConsolidationStore } from "./sqlite-memory-consolidation-store.js";
 export type { MemoryConsolidationStoreDeps } from "./sqlite-memory-consolidation-store.js";
 
+// Recall-utility usefulness store (sole MemoryUsefulnessStore impl; Phase 93,
+// FEED-02). Owns the idempotent used/ignored upsert (scoped to the
+// (tenant, agent, memory_id) PK) + the scoped absent-id-omitted bulk read. The
+// daemon (composition root) constructs it on the memory adapter's db handle; the
+// MemoryUsefulnessStore port TYPE lives in @comis/core (the agent↛memory cut —
+// the recall scoring path consumes the type only).
+export { createSqliteMemoryUsefulnessStore } from "./sqlite-memory-usefulness-store.js";
+export type { MemoryUsefulnessStoreDeps } from "./sqlite-memory-usefulness-store.js";
+
 // Embedding cache (LRU content-hash cache decorator)
 export { createCachedEmbeddingPort } from "./embedding-cache-lru.js";
 export type { EmbeddingCacheOptions, EmbeddingCacheStats } from "./embedding-cache-lru.js";
