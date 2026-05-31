@@ -111,6 +111,28 @@ export interface BenchmarkLatency {
 }
 
 /**
+ * BASE-01 (v2.8 Phase 98, Plan 02) control row: a Letta-style filesystem-baseline
+ * reference — the SAME questions answered from the FULL haystack ("filesystem
+ * dump", no recall ranking) by the SAME answer+judge models, recorded under an
+ * explicit `label` so it can NEVER be mistaken for Comis's own score (the headline
+ * `results` stays the recall accuracy). Its purpose is a sanity control: if a
+ * full-dump baseline ties/beats Comis's ranked recall, the *benchmark* is weak
+ * (T-98-02-01; .planning/MEMORY_BENCHMARK_CREDIBILITY.md — Letta's filesystem agent
+ * scored 74.0% on LoCoMo, above Mem0's self-reported 68.5%).
+ *
+ * SECURITY: `label` is a fixed identifier string and `results` is a pure
+ * {@link AccuracyResult} (numbers) — structurally secret-free, like
+ * {@link BenchmarkCost}/{@link BenchmarkLatency}. The existing secret-omission gate
+ * (Test 3/3b/8/12 in qa-report.test.ts) still holds with this block populated.
+ */
+export interface BenchmarkControl {
+  /** The control label (e.g. "filesystem-baseline-full-context-control") — never Comis's score. */
+  label: string;
+  /** The control's accuracy (the same AccuracyResult shape as the headline `results`). */
+  results: AccuracyResult;
+}
+
+/**
  * The BENCH-04 reproducibility object. Records WHAT built/answered/judged
  * (model identities), the dataset, the recall defaults, and the accuracy results
  * (carrying `invalid` + `validTotal` per the corrected denominator) -- with no
@@ -158,6 +180,13 @@ export interface BenchmarkReport {
    * only when the run measured it; omitted byte-identically otherwise.
    */
   latency?: BenchmarkLatency;
+  /**
+   * BASE-01 Letta-style filesystem-baseline CONTROL row. Present only when the run
+   * computed the control (full-haystack reference); omitted byte-identically
+   * otherwise. NEVER Comis's own score — the headline `results` is the recall
+   * accuracy (T-98-02-01).
+   */
+  control?: BenchmarkControl;
 }
 
 /**
@@ -182,6 +211,8 @@ export interface BenchmarkReportConfig {
   cost?: BenchmarkCost;
   /** BASE-01 latency block (optional — present only when measured). */
   latency?: BenchmarkLatency;
+  /** BASE-01 Letta-style filesystem-baseline control row (optional — present only when computed). */
+  control?: BenchmarkControl;
 }
 
 /** Rebuild a model role as a fresh identity-only record (drops any extra fields). */
@@ -269,6 +300,17 @@ function pickLatency(l: BenchmarkLatency): BenchmarkLatency {
 }
 
 /**
+ * Rebuild the control row structurally (never spreads the input config): a fresh
+ * `{ label, results }` carrying the explicit label string + the pure
+ * {@link AccuracyResult}. Both are secret-free (a fixed identifier + numbers), so
+ * this block cannot smuggle a credential into the persisted manifest (Test 12
+ * re-asserts the secret-omission gate with it populated).
+ */
+function pickControl(c: BenchmarkControl): BenchmarkControl {
+  return { label: c.label, results: c.results };
+}
+
+/**
  * Build the reproducible {@link BenchmarkReport} from the run config, the
  * accuracy metrics, and an injected `nowMs`.
  *
@@ -308,5 +350,11 @@ export function buildBenchmarkReport(
     // never spreading the config, consistent with the module no-secret doctrine.
     ...(config.cost !== undefined ? { cost: pickCost(config.cost) } : {}),
     ...(config.latency !== undefined ? { latency: pickLatency(config.latency) } : {}),
+    // BASE-01 control row: appended STRUCTURALLY (same as cost/latency) -- the key
+    // exists only when the run computed the Letta-style filesystem-baseline control,
+    // so a run without it is byte-identical. Recorded under an explicit label so it
+    // can NEVER be mistaken for Comis's score (the headline `results` above stays the
+    // recall accuracy); secret-free (label + pure AccuracyResult).
+    ...(config.control !== undefined ? { control: pickControl(config.control) } : {}),
   };
 }
