@@ -25,6 +25,7 @@ import {
   createBatchIndexer,
   createEmbeddingQueue,
   createLocalRerankerProvider,
+  rerankerModelPresent,
   createSqliteMemoryEntityStore,
   createSqliteMemoryConsolidationStore,
   type MemoryApi,
@@ -65,6 +66,11 @@ export interface MemoryResult {
    *  degrades to fusion order (RANK-03). The all-default (rerank-off) config NEVER builds
    *  it, so the ~606MB GGUF is not downloaded by default. */
   rerankerPort?: import("@comis/core").RerankerPort;
+  /** Phase 92 (RERANK-01/02): whether the reranker GGUF is ALREADY present locally — computed
+   *  ONCE here via the no-download `rerankerModelPresent` probe. The composition root threads
+   *  this SAME boolean to `setupAgents` so the per-agent effective `rag.rerank.enabled`
+   *  precedence and this build gate consult one source (T-92-06: no two-gate drift). */
+  rerankerModelPresent: boolean;
   /** Entity-associative store (Phase 83, ENT-01/02/03). The SOLE adapter for the segregated
    *  `MemoryEntityStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
    *  memory adapter (so entity tables + memories share one FK-enabled connection and the
@@ -222,13 +228,34 @@ export async function setupMemory(deps: {
   // reranker is built, recall degrades to fusion order (RANK-03).
   let rerankerPort: import("@comis/core").RerankerPort | undefined;
   let disposeReranker: (() => Promise<void>) | undefined;
-  const someAgentRerankEnabled = Object.values(container.config.agents ?? {}).some(
+  // Phase 92 (RERANK-01/02): the gate is no longer explicit-on ONLY — it also auto-builds
+  // when the GGUF is already cached locally, while still NEVER downloading on a fresh
+  // install. Resolve the models dir ONCE (the SAME safePath value the factory builds with —
+  // T-92-06: probe and build must consult one dir so the two gates can't drift) and probe
+  // presence ONCE (no download — rerankerModelPresent uses resolveModelFile{download:false}).
+  const rerankerModelsDir = safePath(container.config.dataDir || ".", memoryConfig.rerankerModelsDir);
+  const modelPresent = await rerankerModelPresent({
+    modelUri: memoryConfig.rerankerModel,
+    modelsDir: rerankerModelsDir,
+  });
+  // someAgentExplicitOn preserves the explicit opt-in DOWNLOAD path (operator set
+  // `rag.rerank.enabled: true` on a fresh machine still fetches — Pitfall 3 / T-92-05).
+  const someAgentExplicitOn = Object.values(container.config.agents ?? {}).some(
     (agent) => agent?.rag?.rerank?.enabled === true,
   );
-  if (someAgentRerankEnabled) {
+  const shouldBuildReranker = someAgentExplicitOn || modelPresent;
+  // Boundary decision an operator must be able to reconstruct (AGENTS.md §2.7). Booleans
+  // only — never the model-path body beyond the non-secret config path (T-92-07).
+  memoryLogger.debug(
+    { modelPresent, someAgentExplicitOn, willBuild: shouldBuildReranker },
+    modelPresent
+      ? "Reranker model present -> auto-enable candidate"
+      : "Reranker model absent -> no download",
+  );
+  if (shouldBuildReranker) {
     const rr = await createLocalRerankerProvider({
       modelUri: memoryConfig.rerankerModel,
-      modelsDir: safePath(container.config.dataDir || ".", memoryConfig.rerankerModelsDir),
+      modelsDir: rerankerModelsDir,
       gpu: memoryConfig.rerankerGpu,
       threads: memoryConfig.rerankerThreads,
     });
@@ -411,6 +438,7 @@ export async function setupMemory(deps: {
     embeddingCacheStats,
     embeddingCircuitBreakerState: embeddingCbRef ? () => embeddingCbRef!.getState() : undefined,
     rerankerPort,
+    rerankerModelPresent: modelPresent,
     disposeReranker,
     entityStore,
     consolidationStore,
