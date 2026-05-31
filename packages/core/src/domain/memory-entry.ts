@@ -132,6 +132,20 @@ export const StructuredMemorySchema = z.object({
   occurredAt: z.string().optional(),
   entities: z.array(ExtractedEntitySchema).default([]),
   memoryType: z.enum(["working", "episodic", "semantic", "procedural"]).default("semantic"),
+  /**
+   * Causal cause→effect relations emitted by extraction (P96/EXTRACT-03). The
+   * fact stated in `content` is the CAUSE; each entry's `effect` is a consequence
+   * stated as a concise fact (A2 — the cause is the memory's own content, so the
+   * just-stored memory id is the resolved edge source). ADDITIVE: `.default([])`
+   * — an extraction that omits it is unaffected, and the LENIENT `z.object`
+   * envelope (above) still STRIPS a benign extra key rather than rejecting it.
+   * The per-cause object is `z.strictObject` with a typed `effect: string.min(1)`
+   * so garbage is still rejected (an empty/non-string/extra-key entry fails) —
+   * injection-safe: untrusted conversation content cannot forge a malformed edge.
+   * The edge links MEMORY ids; the `effect` text is resolved to a stored memory
+   * id by the @comis/memory adapter (scoped FTS top-1) on the agent-side write.
+   */
+  causes: z.array(z.strictObject({ effect: z.string().min(1) })).default([]),
 });
 export type StructuredMemory = z.infer<typeof StructuredMemorySchema>;
 

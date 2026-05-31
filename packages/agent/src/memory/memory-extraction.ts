@@ -9,10 +9,10 @@
  *
  * Contents:
  * - {@link STRUCTURED_PROMPT}: the Hindsight-style system prompt instructing the
- *   LLM to emit `{ memories: [{ content, occurredAt?(ISO), entities[], memoryType? }] }`,
+ *   LLM to emit `{ memories: [{ content, occurredAt?(ISO), entities[], memoryType?, causes? }] }`,
  *   convert relative dates to absolute ISO 8601 (EXTR-02), always include the
- *   "user" entity (EXTR-04), apply ✅/❌ selectivity, and respond in the source
- *   language (EXTR-03).
+ *   "user" entity (EXTR-04), emit explicit cause→effect `causes` (EXTRACT-03),
+ *   apply ✅/❌ selectivity, and respond in the source language (EXTR-03).
  * - {@link parseExtractionResult}: a TOTAL parser — fence-strip + JSON.parse +
  *   `MemoryExtractionResultSchema.safeParse`. Returns `undefined` on ANY failure
  *   and NEVER throws (the EXTR-05 non-fatal contract at the parse boundary).
@@ -48,7 +48,7 @@ const ONE_HUNDRED_YEARS_MS = 100 * 365 * ONE_DAY_MS;
  */
 export const STRUCTURED_PROMPT = `You analyze chat session histories and extract durable facts about the user.
 
-For each fact, output an object: { "content", "occurredAt"?, "entities", "memoryType"? }
+For each fact, output an object: { "content", "occurredAt"?, "entities", "memoryType"?, "causes"? }
 - "content": the fact, stated concisely.
 - "occurredAt": if the fact references WHEN something happened, convert ALL relative temporal
   expressions ("yesterday", "last month", "two weeks ago") to an ABSOLUTE ISO 8601 timestamp.
@@ -59,6 +59,9 @@ For each fact, output an object: { "content", "occurredAt"?, "entities", "memory
   ("Dana", "Acme"), and use the SAME canonical spelling for every mention so repeat
   references fold together. Omit an entity you cannot concretely name.
 - "memoryType": one of working|episodic|semantic|procedural (default semantic).
+- "causes": if this fact CAUSES or leads to another durable fact, list each consequence as
+  { "effect": "<the consequence, stated as a concise fact>" }. Only include a causal link when
+  the cause→effect relationship is EXPLICIT in the conversation. Omit "causes" otherwise.
 
 ✅ Extract durable facts: stable preferences, identity facts, durable relationships,
    dated commitments, decisions.
