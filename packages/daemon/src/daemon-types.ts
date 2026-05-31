@@ -382,6 +382,11 @@ export interface BootContext {
   /** Entity-associative store (Phase 83) — threaded into setupAgents (executor recall
    *  read path) + the cron review (write path). Built in setup-memory on the shared db. */
   entityStore: Awaited<ReturnType<typeof setupMemory>>["entityStore"];
+  /** Temporal-spread store (Phase 95, LANES-02) — threaded into setupAgents (the executor recall
+   *  read path → createMemoryRecall) ONLY. NOT the cron/diagnostic paths. Built in setup-memory
+   *  on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until an operator
+   *  enables `agents.<id>.rag.lanes.temporal.enabled` (default OFF). */
+  temporalStore: Awaited<ReturnType<typeof setupMemory>>["temporalStore"];
   /** Usefulness store (Phase 93, FEED-03) — threaded into setupAgents (the executor recall
    *  read path → createMemoryRecall) + exposed to the memory.* diagnostic deps alongside its
    *  siblings. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory

@@ -112,8 +112,26 @@ export const RagConfigSchema = z.strictObject({
         fts: z.strictObject({ weight: z.number().min(0).default(1.0) }).default(() => ({ weight: 1.0 })),
         /** Vector (KNN) lane weight. Default 1.5 — the parity value (hybrid-search.ts:311). */
         vector: z.strictObject({ weight: z.number().min(0).default(1.5) }).default(() => ({ weight: 1.5 })),
+        /** Temporal-spread lane (LANES-02). Default-OFF; surfaces memories near the seed
+         *  hits' `occurred_at` event times (the "what else happened around then" spread). With
+         *  `enabled:false` the lane is never pushed → fuse() sees the same lanes as before this
+         *  plan → recall output is byte-identical (the ENT-04 no-op reused; a wrong default
+         *  ships dormant — no surprise ranking change on upgrade, T-95-07). `weight` is
+         *  `min(0)` (no negative RRF term, T-95-08); `windowDays` is `int().positive()` (no
+         *  zero/negative window). windowDays:7 surfaces neighbours within a week of the seeds. */
+        temporal: z
+          .strictObject({
+            enabled: z.boolean().default(false),
+            weight: z.number().min(0).default(1.0),
+            windowDays: z.number().int().positive().default(7),
+          })
+          .default(() => ({ enabled: false, weight: 1.0, windowDays: 7 })),
       })
-      .default(() => ({ fts: { weight: 1.0 }, vector: { weight: 1.5 } })),
+      .default(() => ({
+        fts: { weight: 1.0 },
+        vector: { weight: 1.5 },
+        temporal: { enabled: false, weight: 1.0, windowDays: 7 },
+      })),
     /** One-hop entity-associative lane (ENT-02). Default-OFF; the daemon enables it once
      *  the entity store is wired (Phase-83 Plan 05). Empty/disabled -> RRF unchanged (ENT-04). */
     entityLane: z

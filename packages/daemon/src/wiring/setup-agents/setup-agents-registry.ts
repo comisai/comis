@@ -192,6 +192,9 @@ export async function setupAgents(deps: {
   /** Entity-associative store (Phase 83). Threaded into each per-agent createPiExecutor
    *  like memoryPort (the recall read path). Built in setup-memory on the shared db. */
   entityStore?: import("@comis/core").MemoryEntityStore;
+  /** Temporal-spread store (Phase 95, LANES-02). Threaded into each per-agent createPiExecutor
+   *  like entityStore (the recall temporal-spread read path). Built in setup-memory on the shared db. */
+  temporalStore?: import("@comis/core").MemoryTemporalStore;
   /** Usefulness store (Phase 93, FEED-03). Threaded into each per-agent createPiExecutor
    *  like entityStore (the recall usefulness read path). Built in setup-memory on the shared db. */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
@@ -415,6 +418,7 @@ export async function setupAgents(deps: {
     rerankerPort: deps.rerankerPort,
     rerankerModelPresent: deps.rerankerModelPresent,
     entityStore: deps.entityStore,
+    temporalStore: deps.temporalStore,
     usefulnessStore: deps.usefulnessStore,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,

@@ -18,6 +18,7 @@ import type {
   TypedEventBus,
   MemoryPort,
   MemoryEntityStore,
+  MemoryTemporalStore,
   MemoryUsefulnessStore,
   RerankerPort,
   HookRunner,
@@ -99,6 +100,11 @@ export interface PiExecutorDeps {
    *  ToolAssemblyDeps. Absent -> no entity lane (recall RRF unchanged). TYPE-only from
    *  @comis/core — the agent never imports the memory package (the agent↛memory cut). */
   entityStore?: MemoryEntityStore;
+  /** Optional temporal-spread store (LANES-02). Built in the daemon on the shared memory db
+   *  handle; threaded into prompt-assembly's createMemoryRecall via ToolAssemblyDeps. Absent or
+   *  flag-off -> no temporal lane (recall RRF unchanged). TYPE-only from @comis/core — the agent
+   *  never imports the memory package (the agent↛memory cut). */
+  temporalStore?: MemoryTemporalStore;
   /** Optional usefulness store (FEED-03). Built in the daemon on the shared memory db handle;
    *  threaded into prompt-assembly's createMemoryRecall via ToolAssemblyDeps. Absent or flag-off
    *  -> no usefulness read (recall scoring unchanged). TYPE-only from @comis/core — the agent

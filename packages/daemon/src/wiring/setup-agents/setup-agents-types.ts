@@ -75,6 +75,11 @@ export interface SingleAgentDeps {
    *  shared db handle; the entity lane stays dormant until an operator enables
    *  `agents.<id>.rag.entityLane.enabled` (default OFF). */
   entityStore?: import("@comis/core").MemoryEntityStore;
+  /** Temporal-spread store (Phase 95, LANES-02). Threaded into each per-agent createPiExecutor
+   *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the shared
+   *  db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator enables
+   *  `agents.<id>.rag.lanes.temporal.enabled` (default OFF). */
+  temporalStore?: import("@comis/core").MemoryTemporalStore;
   /** Usefulness store (Phase 93, FEED-03). Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the
    *  shared db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator

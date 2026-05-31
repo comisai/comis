@@ -31,6 +31,7 @@ import type {
   MemoryPort,
   MemorySearchResult,
   MemoryEntityStore,
+  MemoryTemporalStore,
   MemoryUsefulnessStore,
   UsefulnessSignal,
   RerankerPort,
@@ -74,6 +75,15 @@ export interface MemoryRecallDeps {
    * the concrete adapter (Plan 05).
    */
   entityStore?: MemoryEntityStore;
+  /**
+   * Optional temporal-spread store (LANES-02). When present AND cfg.lanes.temporal.enabled,
+   * the read path queries `spreadLane(seedTimes, scope, windowMs, cap)` for memories near
+   * the seed hits' `occurred_at` event times and fuses them as a 4th lane. Absent / disabled
+   * / no seed times -> no temporal lane (graceful; RRF unchanged — the ENT-04 no-op). TYPE-only
+   * from @comis/core — the agent never imports the memory package (the agent↛memory build cut);
+   * the daemon injects the concrete adapter (the composition root).
+   */
+  temporalStore?: MemoryTemporalStore;
   /**
    * Optional usefulness store (FEED-03). When present AND cfg.feedback.enabled, recall does a
    * bulk read of the per-memory signal for the ranked ids and folds the used-rate into the
@@ -129,7 +139,16 @@ export interface MemoryRecallConfig {
    * (the parity defaults) apply. The defaults reproduce v2.6's pre-fused ranking
    * byte-for-byte (the parity guard, T-95-01).
    */
-  lanes?: { fts: { weight: number }; vector: { weight: number } };
+  lanes?: {
+    fts: { weight: number };
+    vector: { weight: number };
+    /**
+     * Temporal-spread lane knobs (LANES-02; from RagConfig.lanes.temporal). Default-OFF
+     * (`enabled:false`) -> the lane is never pushed -> RRF unchanged (the ENT-04 no-op).
+     * Optional so a caller predating the field leaves it absent -> no temporal lane.
+     */
+    temporal?: { enabled: boolean; weight: number; windowDays: number };
+  };
   /**
    * Entity-associative lane knobs (sourced from RagConfig.entityLane). Optional so
    * callers that predate the lane (or the daemon before Plan 05 wiring) leave it
@@ -196,7 +215,11 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // two paths differ in WHERE minScore is applied: searchLanes is PRE-filter (minScore
       // re-applied post-fuse below), search() applies minScore itself (no double-apply).
       const baseLanes: FusionLane[] = [];
-      let ftsCandidates = 0;
+      // ftsCandidates is assigned on BOTH reachable paths below (the searchLanes branch and
+      // the search() fallback) before any read, so a `= 0` initializer is provably dead
+      // (no-useless-assignment). vectorCandidates KEEPS its `0` initializer: on the search()
+      // fallback the split is not observable so it stays 0 (the WR-04 honest stub).
+      let ftsCandidates: number;
       let vectorCandidates = 0;
       // Tracks whether minScore still needs applying after fuse() (true on the searchLanes
       // path where the lanes were fetched pre-filter; false on the search() fallback where
@@ -230,6 +253,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       }
 
       let entityCandidates = 0;
+      let temporalCandidates = 0;
 
       // OBS-03 vec→FTS-only gap: the operator-facing degradation signal. We derive it from
       // the recall-layer-observable precondition: a query with no embeddable text
@@ -290,6 +314,59 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
                 hint: "entity lane failed; using search lane only",
               },
               "entity lane fallback",
+            );
+          }
+        }
+      }
+
+      // 2b. TEMPORAL-SPREAD lane (LANES-02) — the 4th fused lane, APPENDED after the
+      // fts/vector base lanes + the entity lane (order: fts, vector, entity, temporal).
+      // Composed LAZILY, exactly like the entity lane: only when a temporal store is
+      // injected, the lane is enabled, AND the top base hits carry `occurredAt` event times
+      // (the seeds). The store's windowed occurred_at read returns OTHER memories near those
+      // times (hydrated, nearest-first), which fuse() rebases onto the shared RRF rank scale.
+      //
+      // DEFAULT-OFF BYTE-IDENTITY (T-95-07): with `enabled:false` (the default) this block is
+      // SKIPPED — spreadLane is NEVER called, no 4th lane is pushed, and the fused output is
+      // byte-identical to the pre-temporal-lane path (the ENT-04 no-op reused). Every other
+      // no-op path (no store / no seed times / empty lane) falls through identically. A lane
+      // err is NON-FATAL — recall never fails because the temporal lane failed; we WARN and
+      // rank WITHOUT it. The lane SQL lives in the memory package behind the injected
+      // MemoryTemporalStore port — this file imports the TYPE only (the agent↛memory build cut).
+      const tl = cfg.lanes?.temporal;
+      if (tl?.enabled === true && deps.temporalStore !== undefined && seedPool.length > 0) {
+        // Seeds are the top hits' event TIMES (Pitfall 6: many memories lack occurredAt — they
+        // contribute no seed). Gate on a non-empty seed-time set so a query whose top hits all
+        // lack an event time skips the lane (no query) rather than windowing on nothing.
+        const seedTimes = seedPool
+          .slice(0, cfg.entityLane?.seedCount ?? 5)
+          .map((r) => r.entry.occurredAt)
+          .filter((t): t is number => typeof t === "number");
+        if (seedTimes.length > 0) {
+          // Scope mirrors the entity lane / memoryPort.search: tenant from the session key,
+          // agent from the recall arg (else the session key's agent, else "default"). The
+          // lane's WHERE enforces this in SQL — the load-bearing isolation (T-95-05).
+          const scope = {
+            tenantId: sessionKey.tenantId,
+            agentId: agentId ?? sessionKey.agentId ?? "default",
+          };
+          const windowMs = tl.windowDays * 86_400_000;
+          const laneRes = await deps.temporalStore.spreadLane(seedTimes, scope, windowMs, cfg.maxResults);
+          if (laneRes.ok) {
+            // The ENT-04 no-op: an empty lane pushes nothing -> fuse() ranking unchanged.
+            if (laneRes.value.length > 0) {
+              lanes.push({ results: laneRes.value, weight: tl.weight });
+              temporalCandidates = laneRes.value.length; // stage-1 lane-count snapshot
+            }
+          } else {
+            deps.logger.warn(
+              {
+                agentId,
+                seedCount: seedTimes.length,
+                errorKind: "internal" as const,
+                hint: "temporal lane failed; using other lanes only",
+              },
+              "temporal lane fallback",
             );
           }
         }
@@ -495,10 +572,11 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           query,
           agentId,
           sessionKey,
-          lanes: { fts: ftsCandidates, vector: vectorCandidates, entity: entityCandidates },
+          lanes: { fts: ftsCandidates, vector: vectorCandidates, entity: entityCandidates, temporal: temporalCandidates },
           ftsCandidates,
           vectorCandidates,
           entityCandidates,
+          temporalCandidates,
           vectorLaneActive,
           fusedOrder,
           rerankOutcome,
@@ -525,10 +603,11 @@ interface RecallCaptureCtx {
   query: string;
   agentId: string | undefined;
   sessionKey: SessionKey;
-  lanes: { fts: number; vector: number; entity: number };
+  lanes: { fts: number; vector: number; entity: number; temporal: number };
   ftsCandidates: number;
   vectorCandidates: number;
   entityCandidates: number;
+  temporalCandidates: number;
   vectorLaneActive: boolean;
   fusedOrder: string[];
   rerankOutcome: RecallRerankOutcome;

@@ -62,6 +62,9 @@ export interface RecallLaneCounts {
   fts: number;
   vector: number;
   entity: number;
+  /** Temporal-spread lane candidate count (LANES-02; append-only). 0 when the lane is
+   *  off / not pushed (default) — byte-identical to before this plan. */
+  temporal: number;
 }
 
 /** The collected pipeline observations the orchestrator hands to the assembler. */

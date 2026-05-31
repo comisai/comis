@@ -124,7 +124,7 @@ const RecallRankedEntrySchema = z.object({
  *
  * Recall-specific fields:
  *   - `queryDigest` — the query as a fingerprint (NEVER raw text).
- *   - `lanes` — candidate counts per retrieval lane (fts / vector / entity).
+ *   - `lanes` — candidate counts per retrieval lane (fts / vector / entity / temporal).
  *   - `vectorLaneActive` — false ⇒ vec-unavailable / FTS-only (OBS-03 surface).
  *   - `fusedOrder` — memory ids in fused order.
  *   - `rerank` — closed-union outcome + candidate count + optional pre/post scores.
@@ -152,6 +152,8 @@ export const RecallTraceEventSchema = z.object({
     fts: z.number().int().nonnegative(),
     vector: z.number().int().nonnegative(),
     entity: z.number().int().nonnegative(),
+    // LANES-02: the temporal-spread lane candidate count (append-only — types.ts:33).
+    temporal: z.number().int().nonnegative(),
   }),
   vectorLaneActive: z.boolean(),
   fusedOrder: z.array(z.string()),

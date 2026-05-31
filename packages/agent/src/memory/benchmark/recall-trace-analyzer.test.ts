@@ -54,7 +54,7 @@ describe("analyzeRecallTrace (rerank-lift-realized)", () => {
       sessionId: "s",
       traceId: "t",
       queryDigest: "d",
-      lanes: { fts: 1, vector: 0, entity: 0 },
+      lanes: { fts: 1, vector: 0, entity: 0, temporal: 0 },
       vectorLaneActive: true,
       fusedOrder: ["m1"],
       rerank: { outcome: "fell_back", candidateCount: 0 },
@@ -82,7 +82,7 @@ describe("analyzeRecallTrace (rerank-lift-realized)", () => {
       sessionId: "s",
       traceId: "t",
       queryDigest: "d",
-      lanes: { fts: 2, vector: 0, entity: 0 },
+      lanes: { fts: 2, vector: 0, entity: 0, temporal: 0 },
       vectorLaneActive: true,
       fusedOrder: ["m1", "m2"],
       rerank: { outcome: "ran", candidateCount: 2, preScores: [0.9], postScores: [0.9, 0.1] },
@@ -106,7 +106,7 @@ describe("analyzeRecallTrace (rerank-lift-realized)", () => {
       sessionId: "s",
       traceId: "t",
       queryDigest: "d",
-      lanes: { fts: 1, vector: 0, entity: 0 },
+      lanes: { fts: 1, vector: 0, entity: 0, temporal: 0 },
       vectorLaneActive: true,
       fusedOrder: ["m1"],
       rerank: { outcome: "ran", candidateCount: 0, preScores: [], postScores: [] },
@@ -138,7 +138,7 @@ describe("analyzeRecallTrace (trust-filtered + deduped rates)", () => {
       sessionId: "s",
       traceId: "t",
       queryDigest: "d",
-      lanes: { fts: 0, vector: 0, entity: 0 },
+      lanes: { fts: 0, vector: 0, entity: 0, temporal: 0 },
       vectorLaneActive: true,
       fusedOrder: [],
       rerank: { outcome: "fell_back", candidateCount: 0 },
@@ -200,8 +200,8 @@ describe("analyzeRecallTrace (robustness: malformed + foreign/sentinel lines)", 
 describe("analyzeRecallTrace (lanes + degradations)", () => {
   it("sums per-lane candidate totals and counts vector-lane-inactive recalls", () => {
     const view = analyzeRecallTrace(FIXTURE);
-    // fts: 3+2+1+1=7, vector: 2+0+1+0=3, entity: 1+0+0+0=1
-    expect(view.laneTotals).toEqual({ fts: 7, vector: 3, entity: 1 });
+    // fts: 3+2+1+1=7, vector: 2+0+1+0=3, entity: 1+0+0+0=1, temporal: 1+0+2+0=3
+    expect(view.laneTotals).toEqual({ fts: 7, vector: 3, entity: 1, temporal: 3 });
     // vectorLaneActive=false on line2 + line4.
     expect(view.vectorLaneInactiveCount).toBe(2);
   });

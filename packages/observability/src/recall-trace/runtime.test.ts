@@ -87,7 +87,7 @@ function makeTrace(opts: { enabled?: boolean; filePath?: string }) {
 function cleanRecord(): Record<string, unknown> {
   return {
     queryDigest: "a".repeat(64),
-    lanes: { fts: 3, vector: 2, entity: 1 },
+    lanes: { fts: 3, vector: 2, entity: 1, temporal: 0 },
     vectorLaneActive: true,
     fusedOrder: ["m-1", "m-2"],
     rerank: { outcome: "ran", candidateCount: 2, preScores: [0.9, 0.4], postScores: [0.95, 0.3] },
@@ -198,7 +198,7 @@ describe("createRecallTrace -- THE MANDATORY OBS-02 redaction proof", () => {
     // sanitizeForPersistence by the recorder.
     trace!.recordRecall({
       queryDigest: "d".repeat(64),
-      lanes: { fts: 1, vector: 0, entity: 0 },
+      lanes: { fts: 1, vector: 0, entity: 0, temporal: 0 },
       vectorLaneActive: false,
       fusedOrder: ["m-9"],
       rerank: { outcome: "fell_back", candidateCount: 1 },
@@ -277,7 +277,7 @@ describe("createRecallTrace -- bounded payload", () => {
     const huge = "z".repeat(40_000); // exceeds the 32 KB bounded-payload cap
     trace!.recordRecall({
       queryDigest: "d".repeat(64),
-      lanes: { fts: 1, vector: 0, entity: 0 },
+      lanes: { fts: 1, vector: 0, entity: 0, temporal: 0 },
       vectorLaneActive: true,
       fusedOrder: ["m-1"],
       rerank: { outcome: "ran", candidateCount: 1 },

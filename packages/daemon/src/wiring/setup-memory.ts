@@ -29,6 +29,7 @@ import {
   createSqliteMemoryEntityStore,
   createSqliteMemoryConsolidationStore,
   createSqliteMemoryUsefulnessStore,
+  createSqliteMemoryTemporalStore,
   type MemoryApi,
 } from "@comis/memory";
 import {
@@ -81,6 +82,16 @@ export interface MemoryResult {
    *  `agents.<id>.rag.entityLane.enabled` (default OFF) — see setup-agents-runtime / the cron
    *  review wiring, which thread this port into the read + write paths. */
   entityStore: import("@comis/core").MemoryEntityStore;
+  /** Temporal-spread store (Phase 95, LANES-02). The SOLE adapter for the segregated
+   *  `MemoryTemporalStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
+   *  memory adapter (so the windowed `occurred_at` read shares the (tenant, agent) isolation
+   *  + FK-enabled connection with the memory rows it spreads over). Unlike the entity store
+   *  there is NO `ensure*` DDL (the `occurred_at` column already exists) and no model/IO cost,
+   *  so it is always present; the temporal lane stays dormant until an operator opts in via
+   *  `agents.<id>.rag.lanes.temporal.enabled` (default OFF) — see setup-agents-runtime, which
+   *  threads this port into the recall read path. The agent receives the port TYPE only
+   *  (the agent↛memory cut). */
+  temporalStore: import("@comis/core").MemoryTemporalStore;
   /** Consolidation store (Phase 84, CONS-01..07). The SOLE adapter for the segregated
    *  `MemoryConsolidationStore` port — built UNCONDITIONALLY on the SAME shared `db` handle
    *  as the memory adapter + entity store (so the observation columns, the `(tenant, agent)`
@@ -355,6 +366,15 @@ export async function setupMemory(deps: {
   // operator enables `agents.<id>.rag.entityLane.enabled` (default OFF).
   const entityStore = createSqliteMemoryEntityStore({ db, logger: memoryLogger });
 
+  // 6.5.2b'. Temporal-spread store (Phase 95, LANES-02). Built on the SAME `db` handle the
+  // memory adapter owns — NOT a second Database — so the windowed `occurred_at` read shares
+  // one FK-enabled connection and the (tenant, agent) isolation scope is consistent with the
+  // memory rows it spreads over. Unlike the entity store there is NO `ensure*` DDL — the
+  // `occurred_at` column already exists (Phase 81). Always constructed (no model/IO cost); the
+  // temporal lane stays dormant until an operator enables `agents.<id>.rag.lanes.temporal.enabled`
+  // (default OFF). Composition-root join — the agent receives the port TYPE only.
+  const temporalStore = createSqliteMemoryTemporalStore({ db, logger: memoryLogger });
+
   // 6.5.2c. Consolidation store (Phase 84). Built on the SAME `db` handle the memory
   // adapter owns — NOT a second Database — so the observation columns (proof_count /
   // source_ids / consolidated_at / confidence / history) and the memories table share
@@ -537,6 +557,7 @@ export async function setupMemory(deps: {
     rerankerModelPresent: modelPresent,
     disposeReranker,
     entityStore,
+    temporalStore,
     consolidationStore,
     usefulnessStore,
     recallCounters,

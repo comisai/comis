@@ -1675,7 +1675,7 @@ async function bootFoundation(
     disposeEmbedding, cachedPort, memoryAdapter, db,
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
-    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, usefulnessStore, consolidationStore, recallCounters,
+    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, temporalStore, usefulnessStore, consolidationStore, recallCounters,
   } = await setupMemory({ container, memoryLogger, clock });
 
   // Observability persistence (dual-write to SQLite). obsStore +
@@ -1826,7 +1826,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, usefulnessStore, consolidationStore, recallCounters, maintenanceTick,
+    embeddingCircuitBreakerState, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, temporalStore, usefulnessStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence, contextStore,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
@@ -1878,6 +1878,7 @@ async function bootAgents(
     rerankerPort, // built in setup-memory; threaded into setupAgents -> createPiExecutor
     rerankerModelPresent, // Phase 92: model-present probe result; threaded into setupAgents -> per-agent effective rerank precedence (same value as the build gate)
     entityStore, // Phase 83: threaded into setupAgents -> createPiExecutor (recall read path) + the cron review (write path)
+    temporalStore, // Phase 95 (LANES-02): threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the recall temporal-spread read path); dormant until rag.lanes.temporal.enabled
     usefulnessStore, // Phase 93 (FEED-03): threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the recall usefulness read path); dormant until rag.feedback.enabled
     contextStore,
     activeRunRegistry, canaryFallbackSecret, injectionRateLimiter,
@@ -2015,7 +2016,7 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts,
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, usefulnessStore, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, temporalStore, usefulnessStore, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,
