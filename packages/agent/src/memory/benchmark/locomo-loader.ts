@@ -104,14 +104,33 @@ const MONTHS: Record<string, number> = {
 };
 
 /**
+ * Days in a given 0-based month for a given year (Gregorian, leap-aware). Pure
+ * arithmetic — no `Date` instance, so it stays clear of the `new Date` / `Date.now`
+ * globals ban (globals-classifier.ts:228-236) while still rejecting impossible
+ * calendar days (Feb 30, Apr 31) that `Date.UTC` would silently roll over.
+ */
+function daysInUtcMonth(year: number, monthIdx: number): number {
+  const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const lengths = [31, isLeap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return lengths[monthIdx];
+}
+
+/**
  * Parse the LoCoMo `session_N_date_time` form `"H:MM am|pm on D Month, YYYY"`
  * to epoch ms.
  *
  * Anchored, bounded regex (`^...$`, fixed-width/bounded classes, no nested
  * quantifiers) -> linear-time, no ReDoS (T-88-01-04). Builds the epoch with
  * `Date.UTC(...)` (a static-method call, NOT a flagged global — globals-
- * classifier.ts:228-236 flags only `Date.now` and `new Date`). Returns `err`
- * (no throw) on a structural mismatch, an unknown month, or a `NaN` result.
+ * classifier.ts:228-236 flags only `Date.now` and `new Date`).
+ *
+ * Returns `err` (no throw) on a structural mismatch, an unknown month, or an
+ * out-of-range component (WR-01 / IN-01). `Date.UTC` silently ROLLS OVER
+ * out-of-range-but-numeric components, so the `Number.isNaN` guard alone is dead
+ * code for those inputs. The day is bounded (1-31) consistently with hour/minute
+ * AND validated against the actual month length (leap-aware), so day 99 — or an
+ * impossible calendar day like Feb 30 — is rejected rather than rolled into a
+ * later month.
  */
 function parseLocomoDate(raw: string): Result<number, Error> {
   const match =
@@ -125,7 +144,14 @@ function parseLocomoDate(raw: string): Result<number, Error> {
   const day = Number(match[4]);
   const monthIdx = MONTHS[match[5].toLowerCase()];
   const year = Number(match[6]);
-  if (monthIdx === undefined || hour < 1 || hour > 12 || minute > 59) {
+  if (
+    monthIdx === undefined ||
+    hour < 1 ||
+    hour > 12 ||
+    minute > 59 ||
+    day < 1 ||
+    day > daysInUtcMonth(year, monthIdx)
+  ) {
     return err(new Error("unparseable locomo date"));
   }
   // 12-hour -> 24-hour: 12am -> 0, 12pm -> 12, else pm adds 12.

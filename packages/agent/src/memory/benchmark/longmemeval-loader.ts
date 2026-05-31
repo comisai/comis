@@ -64,14 +64,33 @@ export function stripHasAnswer(
 }
 
 /**
+ * Days in a given 0-based month for a given year (Gregorian, leap-aware). Pure
+ * arithmetic — no `Date` instance, so it stays clear of the `new Date` / `Date.now`
+ * globals ban (globals-classifier.ts:228-236) while still rejecting impossible
+ * calendar days (Feb 30, Apr 31) that `Date.UTC` would silently roll over.
+ */
+function daysInUtcMonth(year: number, monthIdx: number): number {
+  const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const lengths = [31, isLeap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return lengths[monthIdx];
+}
+
+/**
  * Parse the LongMemEval `"YYYY/MM/DD (Day) HH:MM"` date form to epoch ms.
  *
  * Anchored, bounded regex (`^...$`, fixed-width classes, no nested quantifiers)
  * -> linear-time, no ReDoS (T-88-01-04). Builds the epoch with `Date.UTC(...)`
  * (a static-method call, NOT a flagged global — the globals classifier flags
  * only `Date.now` among `Date.*` and `new Date(...)` as a NewExpression, neither
- * of which this uses; globals-classifier.ts:228-236). Returns `err` (no throw)
- * when the regex does not match or `Date.UTC` yields `NaN`.
+ * of which this uses; globals-classifier.ts:228-236).
+ *
+ * Returns `err` (no throw) when the regex does not match OR a component is out
+ * of range (WR-01). The `\d{2}` classes accept 00-99, and `Date.UTC` silently
+ * ROLLS OVER out-of-range-but-numeric components (month 13 -> next year, day 99,
+ * hour 99) — so the `Number.isNaN` guard alone is dead code for these inputs.
+ * Every component is range-checked BEFORE `Date.UTC`, and the day is validated
+ * against the actual month length (leap-aware) so impossible calendar days
+ * (Feb 30) are rejected rather than rolled into the next month.
  */
 export function parseHaystackDate(raw: string): Result<number, Error> {
   const match = /^(\d{4})\/(\d{2})\/(\d{2}) \([A-Za-z]{3}\) (\d{2}):(\d{2})$/.exec(raw);
@@ -83,6 +102,16 @@ export function parseHaystackDate(raw: string): Result<number, Error> {
   const day = Number(match[3]);
   const hour = Number(match[4]);
   const minute = Number(match[5]);
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > daysInUtcMonth(year, month - 1) ||
+    hour > 23 ||
+    minute > 59
+  ) {
+    return err(new Error("unparseable haystack date"));
+  }
   const epoch = Date.UTC(year, month - 1, day, hour, minute);
   if (Number.isNaN(epoch)) {
     return err(new Error("unparseable haystack date"));
