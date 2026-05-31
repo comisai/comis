@@ -452,7 +452,10 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
     datasetItemCount = answerables.length;
 
     await rerankerPort?.dispose?.();
-  }, 120_000);
+    // 2h hook timeout: full-set ingest + LLM-free recall for all items runs HERE in
+    // beforeAll (the it body only grades). The 2-min default trips on the real 500-item
+    // set before any grading begins — must match the raised it-body budget (BASE-01).
+  }, 7_200_000);
 
   it.skipIf(!haveAnswer || !haveJudge)(
     "drives recall->answer->judge->aggregate->report",

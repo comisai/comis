@@ -345,7 +345,10 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
     // Flush the recall-trace so the analyzer tie-in can read a complete JSONL.
     await trace?.flushAndClose?.();
     await rerankerPort?.dispose?.();
-  }, 120_000);
+    // 2h hook timeout: full-set ingestion (all 500 LongMemEval items + 10 LoCoMo,
+    // on-device embedding) runs in THIS beforeAll and far exceeds the 2-min default —
+    // it must match the raised it-body budget or the real run trips here (BASE-01).
+  }, 7_200_000);
 
   // The sync rankFn reads the same questionId memo (the closure keys on questionId).
   const rankFn = (q: EvalQuery & { questionId: string }): MemorySearchResult[] =>
