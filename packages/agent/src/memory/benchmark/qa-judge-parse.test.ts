@@ -20,7 +20,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { parseJudgeVerdict } from "./qa-judge-parse.js";
+import { parseJudgeVerdict, stripCodeFences } from "./qa-judge-parse.js";
 
 describe("parseJudgeVerdict -- TOTAL judge-output parser (BENCH-03)", () => {
   it("Test 1: valid JSON {correct:true, reasoning} maps to { correct: true, reasoning }", () => {
@@ -37,6 +37,48 @@ describe("parseJudgeVerdict -- TOTAL judge-output parser (BENCH-03)", () => {
     const fenced = ["```json", '{"correct":true,"reasoning":"fenced"}', "```"].join("\n");
     const v = parseJudgeVerdict(fenced);
     expect(v).toEqual({ correct: true, reasoning: "fenced" });
+  });
+
+  it("Test 3b (IN-01): an uppercase ```JSON fence parses to the structured verdict", () => {
+    const fenced = ["```JSON", '{"correct":true,"reasoning":"upper-fence"}', "```"].join("\n");
+    const v = parseJudgeVerdict(fenced);
+    expect(v).toEqual({ correct: true, reasoning: "upper-fence" });
+  });
+
+  it("Test 3c (IN-01): a non-JSON language tag (```python) fence parses to the structured verdict", () => {
+    const fenced = ["```python", '{"correct":false,"reasoning":"py-fence"}', "```"].join("\n");
+    const v = parseJudgeVerdict(fenced);
+    expect(v).toEqual({ correct: false, reasoning: "py-fence" });
+  });
+
+  it("Test 3d (IN-01): stripCodeFences removes an opening fence with ANY language tag, case-insensitively -- so the verdict reaches the PRIMARY whole-string JSON path, not the regex fallback", () => {
+    // The pre-fix regex /```json?\n?/ only matched lowercase `jso`+optional`n`, so
+    // ```JSON / ```python / ```JavaScript left the language word as a textual prefix
+    // and the verdict was recovered only by the firstJsonObject fallback. The broadened
+    // strip removes any [a-zA-Z]* tag so the cleaned text begins with the JSON object.
+    expect(stripCodeFences('```json\n{"correct":true}\n```')).toBe('{"correct":true}');
+    expect(stripCodeFences('```JSON\n{"correct":true}\n```')).toBe('{"correct":true}');
+    expect(stripCodeFences('```python\n{"correct":true}\n```')).toBe('{"correct":true}');
+    expect(stripCodeFences('```JavaScript\n{"correct":true}\n```')).toBe('{"correct":true}');
+    // A bare fence with no tag (and no newline) still strips.
+    expect(stripCodeFences('```{"correct":true}```')).toBe('{"correct":true}');
+    // No fence at all -> unchanged (after trim).
+    expect(stripCodeFences('{"correct":true}')).toBe('{"correct":true}');
+  });
+
+  it("Test 3e (IN-01): the broadened strip is ReDoS-free on a long tag run -- it terminates, never throws, and stays linear", () => {
+    // A pathological opening-fence-like prefix must not cause super-linear backtracking.
+    // We assert TERMINATION + correctness on a large input (the suite's no-timing style):
+    // a `[a-zA-Z]*` tag is a non-nested quantifier, so the match is a single linear pass.
+    const hostile = "```" + "a".repeat(200_000) + '\n{"correct":true}';
+    let out: string | undefined;
+    expect(() => {
+      out = stripCodeFences(hostile);
+    }).not.toThrow();
+    expect(out).toBe('{"correct":true}');
+    // And the full parser stays TOTAL on the same hostile fenced input.
+    expect(() => parseJudgeVerdict(hostile)).not.toThrow();
+    expect(parseJudgeVerdict(hostile)).toEqual({ correct: true, reasoning: "" });
   });
 
   it("Test 4: commentary-wrapped `correct: yes` (no valid JSON) falls back to regex, correct:true", () => {
