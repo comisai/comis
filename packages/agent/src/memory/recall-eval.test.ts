@@ -189,11 +189,11 @@ describe("temporal boost lift (recall@1 over fusion baseline)", () => {
   // Temporal boost ISOLATED: temporalAlpha>0, every other alpha 0 — so the only signal
   // moving the ranking is occurredAt proximity (plan-02 temporalProx).
   const temporalFn = (q: EvalQuery): MemorySearchResult[] =>
-    score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0.5, proofAlpha: 0, trustAlpha: 0 }, EVAL_NOW);
+    score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0.5, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 }, EVAL_NOW);
   // NEUTRAL guard ranker: same score() path but temporalAlpha 0 → temporalFactor ≡ 1.0,
   // so the boosted order collapses back to the base (= fusion) order.
   const neutralFn = (q: EvalQuery): MemorySearchResult[] =>
-    score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 }, EVAL_NOW);
+    score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 }, EVAL_NOW);
 
   it("carries a non-empty temporal fixture group", () => {
     expect(TEMPORAL_EVAL_FIXTURES.length).toBeGreaterThan(0);
@@ -302,11 +302,11 @@ describe("trust-first contradiction lift (recall@1 over fusion baseline)", () =>
   // Trust boost ISOLATED: trustAlpha>0, every other alpha 0 — so the only signal moving the
   // ranking is the trust tier (system > learned > external via score.ts trustWeight).
   const trustFn = (q: EvalQuery): MemorySearchResult[] =>
-    score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0.5 }, EVAL_NOW);
+    score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0.5, usefulnessAlpha: 0 }, EVAL_NOW);
   // NEUTRAL guard ranker: same score() path but trustAlpha 0 → trustFactor ≡ 1.0, so the
   // boosted order collapses back to the base (= fusion) order.
   const neutralFn = (q: EvalQuery): MemorySearchResult[] =>
-    score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0 }, EVAL_NOW);
+    score(q.candidates, { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 }, EVAL_NOW);
 
   it("carries a non-empty trust fixture group (all group 'temporal')", () => {
     expect(TEMPORAL_TRUST_EVAL_FIXTURES.length).toBeGreaterThan(0);

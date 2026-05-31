@@ -69,6 +69,8 @@ export interface TraceQualityView {
     temporal: number[];
     proof: number[];
     trust: number[];
+    /** Usefulness factor (FEED-03) values from every included entry carrying a breakdown. */
+    usefulness: number[];
   };
   /** Summed per-lane candidate counts across all recalls. */
   laneTotals: { fts: number; vector: number; entity: number };
@@ -126,6 +128,7 @@ export function analyzeRecallTrace(jsonlContent: string): TraceQualityView {
   const temporal: number[] = [];
   const proof: number[] = [];
   const trust: number[] = [];
+  const usefulness: number[] = [];
   let laneFts = 0;
   let laneVector = 0;
   let laneEntity = 0;
@@ -197,6 +200,7 @@ export function analyzeRecallTrace(jsonlContent: string): TraceQualityView {
         temporal.push(entry.breakdown.temporal);
         proof.push(entry.breakdown.proof);
         trust.push(entry.breakdown.trust);
+        usefulness.push(entry.breakdown.usefulness);
       }
     }
     // Guard the division: a 0-ranked recall contributes 0, never NaN.
@@ -230,7 +234,7 @@ export function analyzeRecallTrace(jsonlContent: string): TraceQualityView {
     // Guard the division: 0 recalls -> 0, never NaN.
     trustFilteredRate: recalls > 0 ? trustFilteredRateSum / recalls : 0,
     dedupedRate: recalls > 0 ? dedupedRateSum / recalls : 0,
-    scoreFactorDist: { recency, temporal, proof, trust },
+    scoreFactorDist: { recency, temporal, proof, trust, usefulness },
     laneTotals: { fts: laneFts, vector: laneVector, entity: laneEntity },
     vectorLaneInactiveCount,
     // Spread into a plain object so the returned value has a normal prototype

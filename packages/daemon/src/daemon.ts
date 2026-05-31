@@ -1130,10 +1130,10 @@ function buildRpcDispatchDeps(deps: {
     memoryApi: c.memoryApi, memoryAdapter: c.memoryAdapter, embeddingQueue: c.embeddingQueue,
     // OBS-06 memory-diagnostic deps: the scoped consolidation + entity stores
     // (provenance + entity-graph reads) and the live recall counters (OBS-07)
-    // for the 4 admin-gated memory.* diagnostic handlers. usefulnessStore (Phase 93,
-    // FEED-03) is exposed here alongside its siblings (dormant until a diagnostic reads it).
-    consolidationStore: c.consolidationStore, entityStore: c.entityStore,
-    usefulnessStore: c.usefulnessStore, recallCounters,
+    // for the 4 admin-gated memory.* diagnostic handlers. (usefulnessStore is NOT
+    // here — no diagnostic handler consumes it; FEED-03's read path is the setupAgents
+    // injection at the setupAgents({…}) call below, mirroring entityStore.)
+    consolidationStore: c.consolidationStore, entityStore: c.entityStore, recallCounters,
     tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
     sessionStore: g.sessionStoreBridge,

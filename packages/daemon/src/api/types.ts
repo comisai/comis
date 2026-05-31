@@ -159,11 +159,6 @@ export interface MemoryApiDeps {
    *  `listEntities(agentId, tenantId, limit)` (ENT-03 scoped). Optional for the
    *  same backward-compat reason. */
   entityStore?: import("@comis/core").MemoryEntityStore;
-  /** Usefulness store (Phase 93, FEED-03) — exposed to the memory.* diagnostic deps
-   *  alongside its siblings (consolidation/entity). Built in setup-memory on the shared
-   *  db handle; the segregated port TYPE (agent↛memory cut). Optional; dormant until a
-   *  diagnostic handler consumes it. */
-  usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
   /** Live in-process recall counters (OBS-07). The `memory.recall_stats`
    *  handler reads `snapshot()`; wired from `wireRecallCounters(eventBus)` at
    *  the composition root. Optional — when unset the handler returns zeroed

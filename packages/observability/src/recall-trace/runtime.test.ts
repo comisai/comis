@@ -92,7 +92,7 @@ function cleanRecord(): Record<string, unknown> {
     fusedOrder: ["m-1", "m-2"],
     rerank: { outcome: "ran", candidateCount: 2, preScores: [0.9, 0.4], postScores: [0.95, 0.3] },
     ranked: [
-      { id: "m-1", reason: "included", breakdown: { base: 1, recency: 1, temporal: 1, proof: 1, trust: 1, final: 1 } },
+      { id: "m-1", reason: "included", breakdown: { base: 1, recency: 1, temporal: 1, proof: 1, trust: 1, usefulness: 1, final: 1 } },
       { id: "m-2", reason: "deduped" },
     ],
     durationMs: 7,
