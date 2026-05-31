@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { MemoryEntry, MemoryConfig, SessionKey, EmbeddingPort } from "@comis/core";
 import type { Result } from "@comis/shared";
-import { ok } from "@comis/shared";
+import { ok, err } from "@comis/shared";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { chmodSync, existsSync } from "node:fs";
 import { isVecAvailable } from "./schema.js";
@@ -990,6 +990,77 @@ describe("SqliteMemoryAdapter.searchLanes (LANES-01 un-fused split)", () => {
       expect(lanes.value.fts.every((r) => r.entry.tenantId === "default")).toBe(true);
       expect(lanes.value.fts.some((r) => r.entry.content.includes("tenant-A"))).toBe(true);
       expect(lanes.value.fts.some((r) => r.entry.content.includes("tenant-B"))).toBe(false);
+    }
+  });
+
+  it("vector-only query (a number[]) populates the vector lane and leaves FTS empty", async () => {
+    if (!isVecAvailable()) return; // the vector lane requires sqlite-vec
+    const embeddingPort = createMockEmbeddingPort(4);
+    adapter = new SqliteMemoryAdapter(testConfig, embeddingPort);
+    await adapter.store(makeEntry({ content: "cat sat on the mat", embedding: [0.9, 0.1, 0, 0] }));
+
+    // Passing the embedding ARRAY directly exercises the vector-only branch:
+    // no FTS lane runs (the query is not a string), the array IS the embedding.
+    const lanes = await adapter.searchLanes!(testSessionKey, [0.9, 0.1, 0, 0], { limit: 10 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      expect(lanes.value.fts).toEqual([]); // no text query → empty FTS lane
+      expect(lanes.value.vector.length).toBeGreaterThan(0); // vector lane populated
+    }
+  });
+
+  it("returns err (not throw) when the underlying DB query fails", async () => {
+    adapter = new SqliteMemoryAdapter(testConfig);
+    await adapter.store(makeEntry({ content: "dentist appointment Tuesday" }));
+    // Close the handle out from under the adapter → the prepared query throws,
+    // which the searchLanes catch must collapse into an err Result (never escape).
+    adapter.getDb().close();
+
+    const lanes = await adapter.searchLanes!(testSessionKey, "dentist", { limit: 10 });
+    expect(lanes.ok).toBe(false);
+    if (!lanes.ok) {
+      expect(lanes.error).toBeInstanceOf(Error);
+    }
+  });
+
+  it("falls back to FTS-only (empty vector lane) when the embedding provider errors", async () => {
+    // An embedding port that rejects: searchLanes must NOT fail — it degrades to
+    // FTS-only (the vector lane stays empty), mirroring search()'s resilience.
+    const failingPort: EmbeddingPort = {
+      provider: "test",
+      dimensions: 4,
+      modelId: "test-embed-model",
+      embed: async () => err(new Error("embedding backend down")),
+      embedBatch: async () => err(new Error("embedding backend down")),
+    };
+    adapter = new SqliteMemoryAdapter(testConfig, failingPort);
+    await adapter.store(makeEntry({ content: "dentist appointment Tuesday" }));
+
+    const lanes = await adapter.searchLanes!(testSessionKey, "dentist", { limit: 10 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      expect(lanes.value.fts.length).toBeGreaterThan(0); // FTS lane still works
+      expect(lanes.value.vector).toEqual([]); // embedding failed → empty vector lane
+    }
+  });
+
+  it("falls back to FTS-only when the embedding provider returns a zero-length vector", async () => {
+    // A zero-length embedding (short/emoji input) → the FTS-only fallback branch.
+    const emptyVecPort: EmbeddingPort = {
+      provider: "test",
+      dimensions: 4,
+      modelId: "test-embed-model",
+      embed: async () => ok([] as number[]),
+      embedBatch: async () => ok([[]] as number[][]),
+    };
+    adapter = new SqliteMemoryAdapter(testConfig, emptyVecPort);
+    await adapter.store(makeEntry({ content: "dentist appointment Tuesday" }));
+
+    const lanes = await adapter.searchLanes!(testSessionKey, "dentist", { limit: 10 });
+    expect(lanes.ok).toBe(true);
+    if (lanes.ok) {
+      expect(lanes.value.fts.length).toBeGreaterThan(0);
+      expect(lanes.value.vector).toEqual([]); // zero-length embedding → no vector lane
     }
   });
 });

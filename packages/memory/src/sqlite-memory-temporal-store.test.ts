@@ -129,6 +129,23 @@ describe("createSqliteMemoryTemporalStore", () => {
       expect(res.value.map((r) => r.entry.id)).toEqual(["d1", "d2"]);
     });
 
+    it("tie-breaks equal-distance neighbours deterministically by id (stable order)", async () => {
+      // Two neighbours EQUIDISTANT from the seed (one before, one after) — the
+      // proximity sort's primary key (minDistance) ties, so the secondary
+      // id.localeCompare tie-break decides the order. "aaa" sorts before "zzz".
+      await seedMemory({ id: "seed", occurredAt: SEED });
+      await seedMemory({ id: "zzz", occurredAt: SEED + 2 * DAY });
+      await seedMemory({ id: "aaa", occurredAt: SEED - 2 * DAY });
+
+      const res = await store.spreadLane([SEED], SCOPE_A, 7 * DAY, 50);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      // Both are exactly 2 days away — equal minDistance → deterministic id order.
+      expect(res.value.map((r) => r.entry.id)).toEqual(["aaa", "zzz"]);
+      // Equal distance → equal score (the decay is a pure function of distance).
+      expect(res.value[0]?.score).toBeCloseTo(res.value[1]?.score ?? -1, 10);
+    });
+
     it("excludes a memory with NULL occurred_at (no event time to spread from)", async () => {
       await seedMemory({ id: "seed", occurredAt: SEED });
       // No occurredAt → stored as NULL occurred_at.
