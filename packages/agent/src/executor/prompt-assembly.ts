@@ -772,6 +772,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           includeTrustLevels: config.rag.includeTrustLevels,
           rerank: config.rag.rerank,
           scoring: config.rag.scoring,
+          lanes: config.rag.lanes,
           entityLane: config.rag.entityLane,
           ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
         },

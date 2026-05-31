@@ -122,6 +122,15 @@ export interface MemoryRecallConfig {
   /** Multiplicative scoring boost weights. */
   scoring: ScoringAlphas;
   /**
+   * Per-lane RRF weights for the FTS + vector fusion lanes (LANES-01; sourced from
+   * RagConfig.lanes). When the injected MemoryPort exposes `searchLanes`, recall builds
+   * TWO lanes (fts + vector) and fuses them with these weights. Optional so a caller
+   * predating the field leaves it absent -> the per-lane fallbacks {fts:1.0, vector:1.5}
+   * (the parity defaults) apply. The defaults reproduce v2.6's pre-fused ranking
+   * byte-for-byte (the parity guard, T-95-01).
+   */
+  lanes?: { fts: { weight: number }; vector: { weight: number } };
+  /**
    * Entity-associative lane knobs (sourced from RagConfig.entityLane). Optional so
    * callers that predate the lane (or the daemon before Plan 05 wiring) leave it
    * absent -> no entity lane. Default-OFF (`enabled: false`) -> RRF unchanged (ENT-04).
@@ -178,28 +187,56 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const limit = cfg.rerank.enabled
         ? Math.max(cfg.maxResults, cfg.rerank.maxCandidates)
         : cfg.maxResults;
-      const searched = await deps.memoryPort.search(sessionKey, query, {
-        limit,
-        minScore: cfg.minScore,
-        agentId,
-      });
-      if (!searched.ok) return searched;
 
-      // Lane-count snapshot (stage 1). `ftsCandidates` is the merged candidate count the
-      // recall layer sees (the MemoryPort fuses fts+vector internally and returns one
-      // scored list — it does NOT surface a vec-vs-fts split, so this is the honest
-      // recall-layer view). `entityCandidates` is set when the entity lane fires below.
-      const ftsCandidates = searched.value.length;
+      // LANES-01: when the MemoryPort exposes the un-fused split (searchLanes), build the
+      // FTS + vector lanes SEPARATELY so fuse() applies the operator-tunable weights and the
+      // recall-trace reports TRUE per-lane counts. When it is ABSENT (an older / search-only
+      // adapter), fall back to the single-lane search() path VERBATIM — a graceful degrade,
+      // NOT a compat toggle (mirrors the absent-reranker / absent-entityStore degrade). The
+      // two paths differ in WHERE minScore is applied: searchLanes is PRE-filter (minScore
+      // re-applied post-fuse below), search() applies minScore itself (no double-apply).
+      const baseLanes: FusionLane[] = [];
+      let ftsCandidates = 0;
+      let vectorCandidates = 0;
+      // Tracks whether minScore still needs applying after fuse() (true on the searchLanes
+      // path where the lanes were fetched pre-filter; false on the search() fallback where
+      // search() already applied it — gating prevents a double minScore filter).
+      let minScoreAppliedInSearch = false;
+
+      if (typeof deps.memoryPort.searchLanes === "function") {
+        // Two-lane path. NB: no minScore passed — the lanes are pre-filter candidate pools.
+        const laneRes = await deps.memoryPort.searchLanes(sessionKey, query, { limit, agentId });
+        if (!laneRes.ok) return laneRes;
+        const ftsWeight = cfg.lanes?.fts.weight ?? 1.0;
+        const vectorWeight = cfg.lanes?.vector.weight ?? 1.5;
+        ftsCandidates = laneRes.value.fts.length;
+        vectorCandidates = laneRes.value.vector.length;
+        // DROP EMPTY LANES before fuse() (Pitfall 1 subtlety 3): a lone non-empty FTS lane
+        // MUST hit fuse()'s single-lane pass-through (order + score preserved) rather than
+        // the multi-lane rank-ramp, so the FTS-only degrade keeps today's BM25-distributed
+        // scores. fuse() of [ftsLane, emptyVectorLane] would otherwise run the 2-lane RRF.
+        if (laneRes.value.fts.length > 0) baseLanes.push({ results: laneRes.value.fts, weight: ftsWeight });
+        if (laneRes.value.vector.length > 0) baseLanes.push({ results: laneRes.value.vector, weight: vectorWeight });
+      } else {
+        // Single-lane fallback (search-only adapter). search() applies minScore internally.
+        const searched = await deps.memoryPort.search(sessionKey, query, { limit, minScore: cfg.minScore, agentId });
+        if (!searched.ok) return searched;
+        ftsCandidates = searched.value.length;
+        // WR-04: the split is NOT observable on this path (search() returns ONE merged list),
+        // so vectorCandidates stays its honest initial value — the recall layer cannot break
+        // out a true vector count here. The searchLanes path above sets the real count.
+        minScoreAppliedInSearch = true;
+        baseLanes.push({ results: searched.value, weight: 1.0 });
+      }
+
       let entityCandidates = 0;
 
-      // OBS-03 vec→FTS-only gap: the operator-facing degradation signal lives where recall
-      // decides (the memory store's DEBUG fallback stays for the store). The MemoryPort
-      // boundary does not expose whether the vector lane fired, so we derive it
-      // conservatively from the recall-layer-observable precondition: a query with no
-      // embeddable text (empty/whitespace — the documented zero-length-embedding →
-      // FTS-only case). When candidates exist but the vector lane could not contribute, we
-      // log ONE WARN + record a vec_unavailable degradation. This fires only for a
-      // degenerate query, never as per-recall noise (see vectorLaneCouldContribute).
+      // OBS-03 vec→FTS-only gap: the operator-facing degradation signal. We derive it from
+      // the recall-layer-observable precondition: a query with no embeddable text
+      // (empty/whitespace — the documented zero-length-embedding → FTS-only case), OR the
+      // searchLanes split reporting an empty vector lane. When candidates exist but the
+      // vector lane could not contribute, log ONE WARN + record a vec_unavailable
+      // degradation. Fires only for a degenerate query, never as per-recall noise.
       const vectorLaneActive = vectorLaneCouldContribute(query);
       if (ftsCandidates > 0 && !vectorLaneActive) {
         const hint = "vector lane unavailable; recall used FTS only";
@@ -209,37 +246,26 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         );
         degradations.push({ kind: "vec_unavailable", errorKind: "dependency", hint });
       }
-      // WR-04: vectorCandidates is reported as 0 — HONEST until a real per-lane split
-      // exists. The MemoryPort fuses vec+fts internally and returns ONE merged scored
-      // list (no vec-vs-fts breakdown), so the recall layer cannot observe how many of
-      // the candidates came from the vector lane. Reporting the merged count as the
-      // "vector candidate" signal (the old `vectorLaneActive ? ftsCandidates : 0`) made
-      // `laneUsage.vector` a silent DUPLICATE of `laneUsage.fts` on every recall and
-      // inflated the fired-lane count by 1 — an operator-facing metric that implies a
-      // measurement that is not happening. Until the port surfaces a true per-lane
-      // breakdown, report 0; `vectorLaneActive` remains the separate, honest
-      // could-the-lane-contribute signal (OBS-03), and the trace's `lanes.vector`
-      // reflects the same honest 0.
-      const vectorCandidates = 0;
 
-      // 2. FUSE (N-lane RRF). The search lane is always present. The entity-associative
-      // lane (ENT-02) is composed LAZILY: only when an entity store is injected, the
-      // lane is enabled, AND the search produced seeds. The seeds are the top
-      // `seedCount` search hits; the store's scoped self-join returns OTHER memories
-      // sharing >= 1 entity (hydrated, most-shared-first), which fuse() rebases onto the
-      // shared RRF rank scale so a shared-entity memory can outrank a non-sharing one.
+      // 2. FUSE (N-lane RRF). The base lanes (the un-fused fts+vector split, or the single
+      // search lane on the fallback) are always present. The entity-associative lane
+      // (ENT-02) is composed LAZILY: only when an entity store is injected, the lane is
+      // enabled, AND the search produced seeds. The store's scoped self-join returns OTHER
+      // memories sharing >= 1 entity (hydrated, most-shared-first), which fuse() rebases onto
+      // the shared RRF rank scale so a shared-entity memory can outrank a non-sharing one.
       //
-      // Every no-op path leaves the fused output identical to the pre-Phase-83
-      // single-lane result (ENT-04): no store / disabled / no seeds / empty lane all
-      // fall through to `fuse([searchLane])`. A lane err is NON-FATAL — recall never
-      // fails because the entity lane failed (the search lane already succeeded); we
-      // WARN and fall back to the search lane only. The lane SQL lives in the memory
-      // package behind the injected MemoryEntityStore port — this file imports the TYPE
-      // only (the agent↛memory build cut).
-      const lanes: FusionLane[] = [{ results: searched.value, weight: 1.0 }];
+      // Every no-op path leaves the fused output identical to the no-entity-lane result
+      // (ENT-04): no store / disabled / no seeds / empty lane all fall through. A lane err is
+      // NON-FATAL — recall never fails because the entity lane failed; we WARN and fall back
+      // to the base lanes only. The lane SQL lives in the memory package behind the injected
+      // MemoryEntityStore port — this file imports the TYPE only (the agent↛memory build cut).
+      const lanes: FusionLane[] = baseLanes;
+      // Entity-lane seeds: the top hits of the primary (FTS / fallback search) lane — the
+      // same pool the pre-LANES-01 path seeded on (`searched.value`).
+      const seedPool = baseLanes[0]?.results ?? [];
       const el = cfg.entityLane;
-      if (el?.enabled === true && deps.entityStore !== undefined && searched.value.length > 0) {
-        const seedIds = searched.value.slice(0, el.seedCount).map((r) => r.entry.id);
+      if (el?.enabled === true && deps.entityStore !== undefined && seedPool.length > 0) {
+        const seedIds = seedPool.slice(0, el.seedCount).map((r) => r.entry.id);
         if (seedIds.length > 0) {
           // Scope mirrors memoryPort.search above: tenant from the session key, agent
           // from the recall arg (else the session key's agent, else "default"). The
@@ -269,6 +295,16 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         }
       }
       let ranked = fuse(lanes);
+
+      // LANES-01 minScore re-application (Pitfall 1 subtlety 2). On the searchLanes path the
+      // lanes were fetched PRE-filter (no minScore), so the adapter's old post-fusion
+      // minScore filter (sqlite-memory-adapter.ts:215) must be reproduced HERE, after fuse()
+      // normalizes RRF→[0,1] with the SAME (Σw)/(k+1) clamp the adapter used. GATED on
+      // !minScoreAppliedInSearch so the search() fallback (where search() already filtered)
+      // is NOT double-filtered. With default weights this reproduces v2.6's filtered set.
+      if (!minScoreAppliedInSearch) {
+        ranked = ranked.filter((r) => (r.score ?? 0) >= cfg.minScore);
+      }
 
       // Stage-2 snapshot: the post-fuse id order (the fused ranking before rerank/score).
       const fusedOrder = ranked.map((r) => r.entry.id);

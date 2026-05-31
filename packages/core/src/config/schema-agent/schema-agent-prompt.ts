@@ -98,6 +98,22 @@ export const RagConfigSchema = z.strictObject({
         trustAlpha: 0.1,
         usefulnessAlpha: 0.1,
       })),
+    /** Per-lane RRF weights for the FTS + vector fusion lanes (LANES-01). These REPLACE the
+     *  weights hybridSearch.ts hardcoded (computeRRF 1.0/1.5) — they now live at the agent's
+     *  fuse() seam so an operator can tune the fts-vs-vector balance. The DEFAULTS {fts:1.0,
+     *  vector:1.5} are the PARITY GUARD: with defaults the recall ranking is byte-for-byte
+     *  identical to v2.6 (the characterization test enforces it; T-95-01). Bounded `min(0)`
+     *  so a negative weight (which could invert RRF ordering) is rejected at parse (T-95-02);
+     *  the upper bound is left open like entityLane.weight (a large finite weight only
+     *  re-orders). NB: a `temporal` sub-lane is added under `lanes` by Phase 95-02 — additive. */
+    lanes: z
+      .strictObject({
+        /** FTS (BM25) lane weight. Default 1.0 — the parity value (hybrid-search.ts:310). */
+        fts: z.strictObject({ weight: z.number().min(0).default(1.0) }).default(() => ({ weight: 1.0 })),
+        /** Vector (KNN) lane weight. Default 1.5 — the parity value (hybrid-search.ts:311). */
+        vector: z.strictObject({ weight: z.number().min(0).default(1.5) }).default(() => ({ weight: 1.5 })),
+      })
+      .default(() => ({ fts: { weight: 1.0 }, vector: { weight: 1.5 } })),
     /** One-hop entity-associative lane (ENT-02). Default-OFF; the daemon enables it once
      *  the entity store is wired (Phase-83 Plan 05). Empty/disabled -> RRF unchanged (ENT-04). */
     entityLane: z
