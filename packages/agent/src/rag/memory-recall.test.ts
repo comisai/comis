@@ -28,6 +28,7 @@ import type {
   MemorySearchOptions,
   MemoryEntityStore,
   MemoryTemporalStore,
+  MemoryCausalStore,
   MemoryUsefulnessStore,
   UsefulnessSignal,
   RerankerPort,
@@ -1763,6 +1764,200 @@ describe("createMemoryRecall — temporal-spread lane (LANES-02)", () => {
     if (!got.ok) return;
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
     const warn = warns.find((w) => typeof w.hint === "string" && /temporal/.test(String(w.hint)));
+    expect(warn).toBeDefined();
+    expect(warn?.errorKind).toBe("internal");
+  });
+});
+
+// ===========================================================================
+// Causal lane (EXTRACT-03) — the 5th fused lane, APPENDED after the temporal
+// lane. Mirrors the temporal-spread block above tier-for-tier: a causal store
+// stub + the LANE-ON lift / DEFAULT-OFF byte-identity (the spy proves ZERO
+// calls) / EMPTY-lane neutral / NO-store / NON-FATAL invariants.
+// ===========================================================================
+
+/**
+ * A controllable MemoryCausalStore stub. `causalLane` returns a canned Result and records
+ * every call (seedMemoryIds + scope + cap) so the gate / scope / not-called invariants are
+ * assertable. `linkCausal` is the unused write-path half (recall never calls it). Mirrors
+ * {@link fakeTemporalStore}.
+ */
+function fakeCausalStore(laneResult: Result<MemorySearchResult[], Error>): {
+  store: MemoryCausalStore;
+  calls: { seedMemoryIds: string[]; scope: { tenantId: string; agentId: string }; cap: number }[];
+} {
+  const calls: { seedMemoryIds: string[]; scope: { tenantId: string; agentId: string }; cap: number }[] = [];
+  const store: MemoryCausalStore = {
+    async linkCausal() {
+      return ok(0);
+    },
+    async causalLane(seedMemoryIds, scope, cap) {
+      calls.push({ seedMemoryIds, scope, cap });
+      return laneResult;
+    },
+  };
+  return { store, calls };
+}
+
+describe("createMemoryRecall — causal lane (EXTRACT-03)", () => {
+  // Boosts neutralized so the FUSION verdict (not score() boosts) orders the output — the
+  // causal-lane RRF contribution is then the only thing under test.
+  const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
+  const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
+  const CAUSAL_ON = { enabled: true, weight: 1.0 };
+  const CAUSAL_OFF = { enabled: false, weight: 1.0 };
+
+  /**
+   * The pre-causal-lane fused output (fts + vector, no causal lane) — exactly what the
+   * default-OFF / empty / err paths must reproduce verbatim (the ENT-04 no-op).
+   */
+  function baseLaneReference(fts: MemorySearchResult[], vector: MemorySearchResult[]): string[] {
+    const lanes = [] as Parameters<typeof fuse>[0];
+    if (fts.length > 0) lanes.push({ results: fts, weight: 1.0 });
+    if (vector.length > 0) lanes.push({ results: vector, weight: 1.5 });
+    const fused = fuse(lanes);
+    const scored = score(fused, NEUTRAL, NOW);
+    const allowed = new Set<TrustLevel>(["system", "learned"]);
+    return deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel))).map(
+      (r) => r.entry.id,
+    );
+  }
+
+  it("LANE ON: a causally-linked memory (from the causal store, absent from search) appears in the fused output + trace lanes.causal counts it", async () => {
+    // Base lanes: a strong seed + a WEAK non-causal hit. Without the causal lane, fusion ranks
+    // [seed, weak] and `linked` is absent entirely.
+    const fts = [makeResult("seed", { base: 0.9 }), makeResult("weak", { base: 0.2 })];
+    // The causal store returns ONE causally-linked memory NOT in the base lanes, rank-1.
+    const { store, calls } = fakeCausalStore(ok([makeResult("linked", { base: 0.99 })]));
+    const { recallTrace, records } = recordingRecallTrace();
+    const recall = recallWithObs(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        causalStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+        recallTrace,
+      },
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, causal: CAUSAL_ON } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    const ids = got.value.map((r) => r.entry.id);
+    // The causal lane flipped it in: linked is present in the fused output.
+    expect(ids).toContain("linked");
+    // Lane invoked once, lazily, with the seed ids, the recall scope, and the maxResults cap.
+    expect(calls.length).toBe(1);
+    expect(calls[0]?.seedMemoryIds).toContain("seed");
+    expect(calls[0]?.scope).toEqual({ tenantId: "tenant_x", agentId: "agent_y" });
+    expect(calls[0]?.cap).toBe(5); // baseConfig.maxResults
+    // The trace lanes cluster reports the causal candidate count (= lane length).
+    const rec = records[0] as { lanes?: { causal?: number } };
+    expect(rec.lanes?.causal).toBe(1);
+  });
+
+  it("DEFAULT-OFF BYTE-IDENTITY: causal.enabled=false → causalLane NEVER called → output identical to the pre-causal-lane fused path", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const vector = [makeResult("b", { base: 0.5 }), makeResult("c", { base: 0.3 })];
+    // The store WOULD return a memory IF called — proving the disabled guard, not an empty lane.
+    const { store, calls } = fakeCausalStore(ok([makeResult("linked", { base: 0.99 })]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector }),
+        causalStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, causal: CAUSAL_OFF } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // The load-bearing neutrality: causalLane is NEVER called when off (the spy proves it).
+    expect(calls.length).toBe(0);
+    // Byte-identical to the pre-causal-lane fused path (the ENT-04 no-op reused).
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
+    expect(got.value.map((r) => r.entry.id)).not.toContain("linked");
+  });
+
+  it("NO CAUSAL CONFIG: an absent `lanes.causal` → causalLane NEVER called (byte-identical to before this plan)", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    const { store, calls } = fakeCausalStore(ok([makeResult("linked", { base: 0.99 })]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        causalStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      // lanes carries ONLY fts/vector — no causal sub-object.
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0);
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("EMPTY-LANE NEUTRAL: an injected store whose causalLane returns ok([]) pushes nothing → output unchanged (the ENT-04 no-op)", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const { store, calls } = fakeCausalStore(ok([]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        causalStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, causal: CAUSAL_ON } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // The lane WAS queried (enabled + seeds present) but returned empty → fuse() unchanged.
+    expect(calls.length).toBe(1);
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("NO causalStore: an undefined store → no causal lane, output identical to the base lanes", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    const recall = createMemoryRecall(
+      { memoryPort: fakeLaneMemoryPort({ fts, vector: [] }), clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, causal: CAUSAL_ON } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("NON-FATAL: a causalLane that returns err → recall WARNs and ranks WITHOUT the causal lane (never fails)", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const warns: Record<string, unknown>[] = [];
+    const capturingLogger = {
+      ...noopLogger,
+      warn: (obj: Record<string, unknown>) => {
+        warns.push(obj);
+      },
+    } as unknown as ComisLogger;
+    const { store } = fakeCausalStore(err(new Error("causal SQL exploded")));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        causalStore: store,
+        clock: fixedClock,
+        logger: capturingLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, causal: CAUSAL_ON } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    // The search/base lanes already succeeded — recall never fails because the causal lane
+    // failed; it WARNs and ranks WITHOUT the lane (the base order is preserved).
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+    const warn = warns.find((w) => typeof w.hint === "string" && /causal/.test(String(w.hint)));
     expect(warn).toBeDefined();
     expect(warn?.errorKind).toBe("internal");
   });

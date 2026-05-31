@@ -860,6 +860,50 @@ describe("RagConfigSchema.lanes.temporal", () => {
 });
 
 // ---------------------------------------------------------------------------
+// RagConfigSchema.lanes.causal (Phase-96/EXTRACT-03: the causal one-hop recall
+// lane, opt-in / default-OFF — the exact temporal-lane sibling; no windowDays)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.lanes.causal", () => {
+  it("defaults the causal lane OFF with weight 1.0 (byte-identical to before this plan when absent)", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Default-OFF: no agent gets the causal lane without an explicit opt-in (a wrong
+      // default ships dormant — no surprise ranking change on upgrade, T-96-10).
+      expect(result.data.lanes.causal.enabled).toBe(false);
+      expect(result.data.lanes.causal.weight).toBe(1.0);
+    }
+  });
+
+  it("accepts an explicit causal opt-in (enabled:true + tuned weight)", () => {
+    const result = RagConfigSchema.safeParse({
+      lanes: { causal: { enabled: true, weight: 2.0 } },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.lanes.causal.enabled).toBe(true);
+      expect(result.data.lanes.causal.weight).toBe(2.0);
+    }
+  });
+
+  it("rejects a negative causal weight (z.number().min(0) — no negative RRF term; T-95-08)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { causal: { weight: -1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown key inside causal (strictObject)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { causal: { bogus: 1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a zero causal weight at the boundary (min(0) inclusive — the lane contributes nothing)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { causal: { weight: 0 } } });
+    expect(result.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // RagConfigSchema.feedback (Phase-93/FEED-04: recall-utility feedback loop,
 // opt-in / default-OFF — mirrors rag.entityLane)
 // ---------------------------------------------------------------------------
