@@ -119,7 +119,7 @@ The agent space has split into three camps:
 | Multi-tenant primitives (shared install, isolated state) |    ✅    |        ❌        |   ✅   |    ❌    |   ❌   |
 | DAG pipelines from natural language                      |    ✅    |     partial      |partial |    ❌    |partial |
 | Prompt cache as a target architecture                    |    ✅    |        ❌        |   ❌   |    ✅    |partial |
-| Trust-first, on-device reranked recall that learns from use |    ✅    |        ❌        |   ❌   |    ❌    |   ❌   |
+| Trust-first, on-device reranked recall (opt-in learns-from-use) |    ✅    |        ❌        |   ❌   |    ❌    |   ❌   |
 
 [Side-by-side: Comis vs OpenClaw →](https://comis.ai/compare/openclaw) · [Comis vs Hermes →](https://comis.ai/compare/hermes)
 

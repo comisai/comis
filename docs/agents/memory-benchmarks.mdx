@@ -208,7 +208,7 @@ For diagnosing a recall regression rather than scoring it, the offline analyzer
   order counts as no lift).
 - **trust-filtered** and **deduped** rates.
 - per-factor **score-factor distributions** (recency, temporal, proof, trust).
-- per-lane **totals** (FTS, vector, entity, causal) and degradation counts.
+- per-lane **totals** (FTS, vector, entity, temporal, causal) and degradation counts.
 
 It reads ids, numeric breakdowns, and closed-union reason codes only -- never
 memory bodies -- so it is safe to run over a captured trace. It is the diagnostic
@@ -273,8 +273,8 @@ COMIS_BENCH=1 \
 ```
 
 The `*_API_KEY` values are read from your shell environment -- pass the env-var
-name, never an inline secret. The written report records only `{provider,
-modelId}` per role, so no credential reaches disk.
+name, never an inline secret. The written report records only
+`{provider, modelId}` per role, so no credential reaches disk.
 
 For the recall defaults the QA harness uses, see the
 [config reference](/reference/config-yaml).

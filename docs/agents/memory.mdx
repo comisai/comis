@@ -144,7 +144,7 @@ orchestrator runs these stages in order:
 ```mermaid
 flowchart LR
     A["SEARCH"] --> B["FUSE<br/>(N-lane RRF)"]
-    B --> C["RERANK<br/>(opt-in)"]
+    B --> C["RERANK<br/>(locally-gated)"]
     C --> D["SCORE"]
     D --> E["TRUST-FILTER"]
     E --> F["DEDUP"]
@@ -171,10 +171,11 @@ flowchart LR
 6. **DEDUP** -- near-duplicates are collapsed by content fingerprint, and the
    result is trimmed to `maxResults` / `maxContextChars`.
 
-The recall **core is always on** (as long as `rag.enabled` is `true`). Layered on
-top of it, each **opt-in** and described below: locally-gated reranking; the
-entity, temporal-spread, and causal lanes; the recall-utility feedback factor; and
-consolidation.
+The recall **core is always on** (as long as `rag.enabled` is `true`). Reranking
+is **locally-gated** — auto-on when its model is already present, off on a fresh
+install (see below). The remaining layers are each **opt-in** and described below:
+the entity, temporal-spread, and causal lanes; the recall-utility feedback factor;
+and consolidation.
 
 ### Reranking (locally-gated, default-on)
 
