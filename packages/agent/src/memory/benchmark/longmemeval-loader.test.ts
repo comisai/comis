@@ -86,6 +86,61 @@ describe("loadLongMemEval (one dated document per haystack session)", () => {
   });
 });
 
+describe("loadLongMemEval (BENCH-03: judge category + gold answer side-channel)", () => {
+  it("emits the judge category from question_type on questions[]", () => {
+    const parsed = loadLongMemEval(RAW);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    // The fixture carries `question_type: "single-session-user"` (:4) — the
+    // judge selects its per-category rubric from this. Pre-patch the field is
+    // dropped (the loader never read raw.question_type), so this is the RED case.
+    expect(parsed.value.questions[0].category).toBe("single-session-user");
+  });
+
+  it("emits the gold answer from top-level raw.answer on questions[]", () => {
+    const parsed = loadLongMemEval(RAW);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    // The fixture carries `answer: "placeholder topic alpha"` (:6) — the judge
+    // grades the model answer against this gold. Pre-patch the field is dropped.
+    expect(parsed.value.questions[0].answer).toBe("placeholder topic alpha");
+  });
+
+  it("falls back to the literal \"unknown\" when question_type is absent/non-string (total over untrusted input)", () => {
+    const base = {
+      question_id: "q1",
+      question: "q",
+      haystack_sessions: [[{ role: "user", content: "hi" }]],
+      haystack_session_ids: ["s1"],
+      haystack_dates: ["2023/05/20 (Sat) 02:21"],
+      answer_session_ids: ["s1"],
+    };
+    // No question_type field at all.
+    const noType = loadLongMemEval(base);
+    expect(noType.ok).toBe(true);
+    if (!noType.ok) return;
+    expect(noType.value.questions[0].category).toBe("unknown");
+    // A non-string question_type (hostile shape) also falls back, never throws.
+    const badType = loadLongMemEval({ ...base, question_type: 42 });
+    expect(badType.ok).toBe(true);
+    if (!badType.ok) return;
+    expect(badType.value.questions[0].category).toBe("unknown");
+    // A missing top-level answer falls back to the empty string (locomo parity).
+    expect(noType.value.questions[0].answer).toBe("");
+  });
+
+  it("ANTI-LEAK: the gold answer never appears in any docs[].content (T-89-01-01)", () => {
+    const parsed = loadLongMemEval(RAW);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const goldAnswer = parsed.value.questions[0].answer;
+    expect(goldAnswer.length).toBeGreaterThan(0);
+    // category/answer live ONLY on the questions[] channel; content is still
+    // JSON.stringify(stripHasAnswer(turns)) — gold must never re-enter doc.content.
+    expect(parsed.value.docs.every((d) => !d.content.includes(goldAnswer))).toBe(true);
+  });
+});
+
 describe("parseHaystackDate (YYYY/MM/DD (Day) HH:MM -> epoch ms)", () => {
   it("parses a well-formed date to a positive integer epoch-ms (UTC)", () => {
     const r = parseHaystackDate("2023/05/20 (Sat) 02:21");
