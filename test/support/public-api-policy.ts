@@ -1856,6 +1856,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // production consumer. The constructor-deps SHAPE type is part of its public API but
       // is referenced only via inline objects — baseline orphan (mirror MemoryEntityStoreDeps).
       "MemoryConsolidationStoreDeps",
+      // Recall-utility usefulness store (Phase 93-01, FEED-02). createSqliteMemoryUsefulnessStore
+      // is the sole MemoryUsefulnessStore adapter; the daemon composition root constructs it on
+      // the memory adapter's db handle (setup-memory) — so the FACTORY has a production consumer.
+      // The constructor-deps SHAPE type is part of its public API but is referenced only via
+      // inline objects — baseline orphan (mirror MemoryEntityStoreDeps / MemoryConsolidationStoreDeps).
+      "MemoryUsefulnessStoreDeps",
       "EmbeddingCacheOptions",
       "EmbeddingCacheStats",
       "SqliteEmbeddingCacheOptions",
@@ -1915,6 +1921,11 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // checker counts cross-package barrel consumers only).
       "MemoryEntityRowSchema",
       "EntityLaneRowSchema",
+      // Recall-utility usefulness row schema (Phase 93-01, FEED-02). Consumed
+      // intra-package by sqlite-memory-usefulness-store.ts via createRowMapper;
+      // barrel-surfaced through `export *` so tracked here like the sibling row
+      // schemas (the checker counts cross-package barrel consumers only).
+      "MemoryUsefulnessRowSchema",
       // OBS-06 entity-graph diagnostic row schema (Phase 86 / listEntities).
       // Consumed intra-package by sqlite-memory-entity-store.ts via
       // createRowMapper; barrel-surfaced like its Phase-83 siblings above.
