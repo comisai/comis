@@ -702,6 +702,27 @@ describe("RagConfigSchema.scoring", () => {
     }
   });
 
+  it("defaults the SINGLE canonical usefulnessAlpha to 0.1 next to the other alphas (FEED-04)", () => {
+    // The recall-utility feedback loop reads `rag.scoring.usefulnessAlpha` — the ONE
+    // magnitude knob, alongside recency/temporal/proof/trust. `rag.feedback` carries only
+    // the on/off toggle (no duplicate alpha — the W2 single-knob invariant).
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scoring.usefulnessAlpha).toBe(0.1);
+    }
+  });
+
+  it("rejects a usefulnessAlpha above 1 (out of [0,1])", () => {
+    const result = RagConfigSchema.safeParse({ scoring: { usefulnessAlpha: 1.5 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a negative usefulnessAlpha (out of [0,1])", () => {
+    const result = RagConfigSchema.safeParse({ scoring: { usefulnessAlpha: -0.1 } });
+    expect(result.success).toBe(false);
+  });
+
   it("rejects an alpha above 1 (recencyAlpha out of [0,1])", () => {
     const result = RagConfigSchema.safeParse({ scoring: { recencyAlpha: 1.5 } });
     expect(result.success).toBe(false);
@@ -726,6 +747,93 @@ describe("RagConfigSchema.scoring", () => {
   it("rejects an unknown key inside scoring (strictObject)", () => {
     const result = RagConfigSchema.safeParse({ scoring: { bogusAlpha: 0.5 } });
     expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RagConfigSchema.feedback (Phase-93/FEED-04: recall-utility feedback loop,
+// opt-in / default-OFF — mirrors rag.entityLane)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.feedback", () => {
+  it("defaults the feedback loop OFF (opt-in — byte-identical to v2.6 when absent)", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // FEED-04: the master toggle defaults false. No agent gets the feedback loop
+      // (turn-end attribution + write-back + the recall usefulnessFactor) without an
+      // explicit opt-in — no surprise ranking change on upgrade (T-93-15).
+      expect(result.data.feedback.enabled).toBe(false);
+    }
+  });
+
+  it("exposes ONLY the enabled toggle — no usefulnessAlpha on feedback (single-knob invariant)", () => {
+    // The magnitude knob lives at rag.scoring.usefulnessAlpha (the value score.ts reads),
+    // NOT here. `feedback` is the on/off switch only — a stray alpha must not silently
+    // shadow the canonical one (W2). `.strictObject` enforces this structurally.
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(Object.keys(result.data.feedback)).toEqual(["enabled"]);
+      expect(
+        (result.data.feedback as { usefulnessAlpha?: number }).usefulnessAlpha,
+      ).toBeUndefined();
+    }
+  });
+
+  it("rejects a stray usefulnessAlpha inside feedback (strictObject enforces single-knob)", () => {
+    // An operator who mistakenly adds feedback.usefulnessAlpha gets a parse error, not a
+    // silent no-op — the single canonical knob is rag.scoring.usefulnessAlpha.
+    const result = RagConfigSchema.safeParse({ feedback: { enabled: true, usefulnessAlpha: 0.5 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown key inside feedback (strictObject)", () => {
+    const result = RagConfigSchema.safeParse({ feedback: { bogusKey: 1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts an explicit feedback.enabled: true (the opt-in path)", () => {
+    const result = RagConfigSchema.safeParse({ feedback: { enabled: true } });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.feedback.enabled).toBe(true);
+      // Even opted-in, feedback still carries no alpha (the knob stays on scoring).
+      expect(
+        (result.data.feedback as { usefulnessAlpha?: number }).usefulnessAlpha,
+      ).toBeUndefined();
+    }
+  });
+
+  it("is additive — every pre-existing RagConfig default is unchanged when feedback is added", () => {
+    // Snapshot the existing defaults (rerank/scoring/entityLane + the top-level fields) so a
+    // regression on any of them trips here, not silently downstream (the schema-cascade class).
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Top-level defaults.
+      expect(result.data.enabled).toBe(true);
+      expect(result.data.maxResults).toBe(5);
+      expect(result.data.maxContextChars).toBe(4000);
+      expect(result.data.minScore).toBe(0.1);
+      expect(result.data.includeTrustLevels).toEqual(["system", "learned"]);
+      // rerank sub-object (default-OFF, Phase-79).
+      expect(result.data.rerank.enabled).toBe(false);
+      expect(result.data.rerank.maxCandidates).toBe(40);
+      expect(result.data.rerank.minResults).toBe(1);
+      expect(result.data.rerank.timeoutMs).toBe(800);
+      // scoring sub-object (the five canonical alphas).
+      expect(result.data.scoring.recencyAlpha).toBe(0.2);
+      expect(result.data.scoring.temporalAlpha).toBe(0.2);
+      expect(result.data.scoring.proofAlpha).toBe(0.1);
+      expect(result.data.scoring.trustAlpha).toBe(0.1);
+      expect(result.data.scoring.usefulnessAlpha).toBe(0.1);
+      // entityLane sub-object (default-OFF, the FEED-04 analog).
+      expect(result.data.entityLane.enabled).toBe(false);
+      expect(result.data.entityLane.seedCount).toBe(5);
+      expect(result.data.entityLane.perEntityCap).toBe(200);
+      expect(result.data.entityLane.weight).toBe(1.0);
+    }
   });
 });
 
