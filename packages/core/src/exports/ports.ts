@@ -28,6 +28,8 @@ export type {
   EntityScope,
   EntityRow,
   MemoryTemporalStore,
+  MemoryCausalStore,
+  CausalScope,
   MemoryUsefulnessStore,
   UsefulnessScope,
   UsefulnessSignal,
