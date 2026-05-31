@@ -89,6 +89,25 @@ export function minTrust(entries: MemoryEntry[]): TrustLevel {
   );
 }
 
+/**
+ * The 2-arg trust CEILING for a FOLD (FOLD-01): the LESS-trusted of two levels,
+ * on the same inverse {@link trustRank} ladder used by {@link minTrust} (no
+ * duplicated ladder — reuses `trustRank`).
+ *
+ * Carries the anti-trust-laundering invariant into the fold path: when a new
+ * corroborating cluster folds into an existing observation, the grown
+ * observation's trust is `minTrustLevel(existing, clusterTrust)` — so a fold can
+ * only LOWER trust, NEVER raise it. `minTrustLevel("system","learned")` →
+ * "learned"; `("learned","external")` → "external"; `("system","system")` →
+ * "system". Symmetric. (Fold targets are also restricted to SAME-trust
+ * observations upstream, so this is a no-op in the common case and a hard
+ * defense-in-depth ceiling otherwise.) Computed in CODE; the LLM has no trust
+ * field in its contract.
+ */
+export function minTrustLevel(a: TrustLevel, b: TrustLevel): TrustLevel {
+  return trustRank(a) > trustRank(b) ? a : b;
+}
+
 // ---------------------------------------------------------------------------
 // Trust/tag-scoped partition (CONS-06 — anti-trust-laundering)
 // ---------------------------------------------------------------------------
