@@ -154,6 +154,10 @@ export const RecallTraceEventSchema = z.object({
     entity: z.number().int().nonnegative(),
     // LANES-02: the temporal-spread lane candidate count (append-only — types.ts:33).
     temporal: z.number().int().nonnegative(),
+    // EXTRACT-03: the causal one-hop lane candidate count. OPTIONAL (append-only, types.ts:33):
+    // a pre-causal-lane trace omits it and still parses; the agent always writes it (0 when the
+    // lane is off) once Phase 96 ships. The analyzer coalesces an absent value to 0.
+    causal: z.number().int().nonnegative().optional(),
   }),
   vectorLaneActive: z.boolean(),
   fusedOrder: z.array(z.string()),

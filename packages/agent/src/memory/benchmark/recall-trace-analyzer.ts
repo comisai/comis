@@ -73,7 +73,7 @@ export interface TraceQualityView {
     usefulness: number[];
   };
   /** Summed per-lane candidate counts across all recalls. */
-  laneTotals: { fts: number; vector: number; entity: number; temporal: number };
+  laneTotals: { fts: number; vector: number; entity: number; temporal: number; causal: number };
   /** Count of recalls with `vectorLaneActive === false` (FTS-only / vec-unavailable). */
   vectorLaneInactiveCount: number;
   /** Tally of `degradations[].kind` occurrences across recalls (null-prototype map). */
@@ -133,6 +133,7 @@ export function analyzeRecallTrace(jsonlContent: string): TraceQualityView {
   let laneVector = 0;
   let laneEntity = 0;
   let laneTemporal = 0;
+  let laneCausal = 0;
   let vectorLaneInactiveCount = 0;
   // Null-prototype accumulator: only the Zod-validated closed-enum `kind` is
   // ever used as a key (no untrusted/prototype-chain write — T-88-02-04).
@@ -215,6 +216,9 @@ export function analyzeRecallTrace(jsonlContent: string): TraceQualityView {
     laneVector += event.lanes.vector;
     laneEntity += event.lanes.entity;
     laneTemporal += event.lanes.temporal;
+    // EXTRACT-03: causal is an APPEND-ONLY optional lane field on the recall-trace event
+    // schema, so a pre-causal-lane trace (or an off-lane recall) omits it -> coalesce to 0.
+    laneCausal += event.lanes.causal ?? 0;
     if (!event.vectorLaneActive) vectorLaneInactiveCount++;
 
     // --- degradation kinds -------------------------------------------------
@@ -237,7 +241,7 @@ export function analyzeRecallTrace(jsonlContent: string): TraceQualityView {
     trustFilteredRate: recalls > 0 ? trustFilteredRateSum / recalls : 0,
     dedupedRate: recalls > 0 ? dedupedRateSum / recalls : 0,
     scoreFactorDist: { recency, temporal, proof, trust, usefulness },
-    laneTotals: { fts: laneFts, vector: laneVector, entity: laneEntity, temporal: laneTemporal },
+    laneTotals: { fts: laneFts, vector: laneVector, entity: laneEntity, temporal: laneTemporal, causal: laneCausal },
     vectorLaneInactiveCount,
     // Spread into a plain object so the returned value has a normal prototype
     // for consumers/serializers while the accumulator stayed null-proto.

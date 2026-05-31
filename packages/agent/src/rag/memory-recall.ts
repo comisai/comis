@@ -32,6 +32,7 @@ import type {
   MemorySearchResult,
   MemoryEntityStore,
   MemoryTemporalStore,
+  MemoryCausalStore,
   MemoryUsefulnessStore,
   UsefulnessSignal,
   RerankerPort,
@@ -84,6 +85,16 @@ export interface MemoryRecallDeps {
    * the daemon injects the concrete adapter (the composition root).
    */
   temporalStore?: MemoryTemporalStore;
+  /**
+   * Optional causal store (EXTRACT-03). When present AND cfg.lanes.causal.enabled, the read
+   * path queries `causalLane(seedIds, scope, cap)` for memories causally linked (cause↔effect)
+   * to the top base hits and fuses them as a 5th lane. Absent / disabled / no seeds -> no causal
+   * lane (graceful; RRF unchanged — the ENT-04 no-op). TYPE-only from @comis/core — the agent
+   * never imports the memory package (the agent↛memory build cut); the daemon injects the
+   * concrete adapter (the composition root). The SAME store the cron-review write path injects
+   * for linkCausal — one segregated port, both halves.
+   */
+  causalStore?: MemoryCausalStore;
   /**
    * Optional usefulness store (FEED-03). When present AND cfg.feedback.enabled, recall does a
    * bulk read of the per-memory signal for the ranked ids and folds the used-rate into the
@@ -148,6 +159,12 @@ export interface MemoryRecallConfig {
      * Optional so a caller predating the field leaves it absent -> no temporal lane.
      */
     temporal?: { enabled: boolean; weight: number; windowDays: number };
+    /**
+     * Causal one-hop lane knobs (EXTRACT-03; from RagConfig.lanes.causal). Default-OFF
+     * (`enabled:false`) -> the lane is never pushed -> RRF unchanged (the ENT-04 no-op).
+     * Optional so a caller predating the field leaves it absent -> no causal lane.
+     */
+    causal?: { enabled: boolean; weight: number };
   };
   /**
    * Entity-associative lane knobs (sourced from RagConfig.entityLane). Optional so
@@ -276,6 +293,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
 
       let entityCandidates = 0;
       let temporalCandidates = 0;
+      let causalCandidates = 0;
 
       // OBS-03 vec→FTS-only gap: the operator-facing degradation signal. We derive it from
       // the recall-layer-observable precondition: a query with no embeddable text
@@ -392,6 +410,53 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
                 hint: "temporal lane failed; using other lanes only",
               },
               "temporal lane fallback",
+            );
+          }
+        }
+      }
+
+      // 2c. CAUSAL lane (EXTRACT-03) — the 5th fused lane, APPENDED after the temporal lane
+      // (order: fts, vector, entity, temporal, causal). Composed LAZILY, exactly like the
+      // entity/temporal lanes: only when a causal store is injected, the lane is enabled, AND
+      // the search produced seeds. The store's scoped one-hop edge lookup returns OTHER memories
+      // causally linked (cause↔effect) to the seeds (hydrated, confidence-first), which fuse()
+      // rebases onto the shared RRF rank scale so a causally-linked memory can outrank a
+      // non-linked one.
+      //
+      // DEFAULT-OFF BYTE-IDENTITY (T-96-10): with `enabled:false` (the default) this block is
+      // SKIPPED — causalLane is NEVER called, no 5th lane is pushed, and the fused output is
+      // byte-identical to the pre-causal-lane path (the ENT-04 no-op reused). Every other no-op
+      // path (no store / no seeds / empty lane) falls through identically. A lane err is
+      // NON-FATAL — recall never fails because the causal lane failed; we WARN and rank WITHOUT
+      // it. The lane SQL lives in the memory package behind the injected MemoryCausalStore port —
+      // this file imports the TYPE only (the agent↛memory build cut).
+      const cl = cfg.lanes?.causal;
+      if (cl?.enabled === true && deps.causalStore !== undefined && seedPool.length > 0) {
+        const seedIds = seedPool.slice(0, cfg.entityLane?.seedCount ?? 5).map((r) => r.entry.id);
+        if (seedIds.length > 0) {
+          // Scope mirrors the entity/temporal lanes / memoryPort.search: tenant from the session
+          // key, agent from the recall arg (else the session key's agent, else "default"). The
+          // lane's WHERE enforces this in SQL — the load-bearing isolation (T-96-11).
+          const scope = {
+            tenantId: sessionKey.tenantId,
+            agentId: agentId ?? sessionKey.agentId ?? "default",
+          };
+          const laneRes = await deps.causalStore.causalLane(seedIds, scope, cfg.maxResults);
+          if (laneRes.ok) {
+            // The ENT-04 no-op: an empty lane pushes nothing -> fuse() ranking unchanged.
+            if (laneRes.value.length > 0) {
+              lanes.push({ results: laneRes.value, weight: cl.weight });
+              causalCandidates = laneRes.value.length; // stage-1 lane-count snapshot
+            }
+          } else {
+            deps.logger.warn(
+              {
+                agentId,
+                seedCount: seedIds.length,
+                errorKind: "internal" as const,
+                hint: "causal lane failed; using other lanes only",
+              },
+              "causal lane fallback",
             );
           }
         }
@@ -595,11 +660,12 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           query,
           agentId,
           sessionKey,
-          lanes: { fts: ftsCandidates, vector: vectorCandidates, entity: entityCandidates, temporal: temporalCandidates },
+          lanes: { fts: ftsCandidates, vector: vectorCandidates, entity: entityCandidates, temporal: temporalCandidates, causal: causalCandidates },
           ftsCandidates,
           vectorCandidates,
           entityCandidates,
           temporalCandidates,
+          causalCandidates,
           vectorLaneActive,
           fusedOrder,
           rerankOutcome,
@@ -626,11 +692,12 @@ interface RecallCaptureCtx {
   query: string;
   agentId: string | undefined;
   sessionKey: SessionKey;
-  lanes: { fts: number; vector: number; entity: number; temporal: number };
+  lanes: { fts: number; vector: number; entity: number; temporal: number; causal: number };
   ftsCandidates: number;
   vectorCandidates: number;
   entityCandidates: number;
   temporalCandidates: number;
+  causalCandidates: number;
   vectorLaneActive: boolean;
   fusedOrder: string[];
   rerankOutcome: RecallRerankOutcome;
@@ -719,7 +786,10 @@ function captureRecallObservability(
     // I1: include the temporal lane so the counts-only memory:recalled event no longer
     // under-reports the active lane count by one when the temporal lane contributes. The
     // rich recall-trace record already counts lanes.temporal (:575); this aligns the event.
-    (ctx.temporalCandidates > 0 ? 1 : 0);
+    (ctx.temporalCandidates > 0 ? 1 : 0) +
+    // EXTRACT-03: likewise include the causal lane so the event's lane count counts the 5th
+    // lane when it contributes (the rich trace record already counts lanes.causal).
+    (ctx.causalCandidates > 0 ? 1 : 0);
   try {
     deps.eventBus.emit("memory:recalled", {
       agentId: ctx.agentId ?? "default",

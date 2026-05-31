@@ -30,7 +30,7 @@ const BREAKDOWN: ScoreBreakdown = {
 function obs(overrides: Partial<RecallObservations> = {}): RecallObservations {
   return {
     query: "the raw query text",
-    lanes: { fts: 2, vector: 2, entity: 0, temporal: 0 },
+    lanes: { fts: 2, vector: 2, entity: 0, temporal: 0, causal: 0 },
     vectorLaneActive: true,
     fusedOrder: ["a", "b"],
     rerankOutcome: "fell_back",
@@ -63,7 +63,7 @@ describe("buildRecallRecord", () => {
 
   it("carries lanes, fusedOrder, rerank.outcome, ranked[] with breakdown, and durationMs", () => {
     const rec = buildRecallRecord(obs());
-    expect(rec.lanes).toEqual({ fts: 2, vector: 2, entity: 0, temporal: 0 });
+    expect(rec.lanes).toEqual({ fts: 2, vector: 2, entity: 0, temporal: 0, causal: 0 });
     expect(rec.fusedOrder).toEqual(["a", "b"]);
     expect((rec.rerank as { outcome: string }).outcome).toBe("fell_back");
     const ranked = rec.ranked as Array<{ id: string; reason: string; breakdown?: ScoreBreakdown }>;

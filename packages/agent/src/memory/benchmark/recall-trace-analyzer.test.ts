@@ -200,8 +200,9 @@ describe("analyzeRecallTrace (robustness: malformed + foreign/sentinel lines)", 
 describe("analyzeRecallTrace (lanes + degradations)", () => {
   it("sums per-lane candidate totals and counts vector-lane-inactive recalls", () => {
     const view = analyzeRecallTrace(FIXTURE);
-    // fts: 3+2+1+1=7, vector: 2+0+1+0=3, entity: 1+0+0+0=1, temporal: 1+0+2+0=3
-    expect(view.laneTotals).toEqual({ fts: 7, vector: 3, entity: 1, temporal: 3 });
+    // fts: 3+2+1+1=7, vector: 2+0+1+0=3, entity: 1+0+0+0=1, temporal: 1+0+2+0=3, causal: 0
+    // (the fixtures omit the append-only causal field → coalesced to 0).
+    expect(view.laneTotals).toEqual({ fts: 7, vector: 3, entity: 1, temporal: 3, causal: 0 });
     // vectorLaneActive=false on line2 + line4.
     expect(view.vectorLaneInactiveCount).toBe(2);
   });

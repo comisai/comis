@@ -65,6 +65,9 @@ export interface RecallLaneCounts {
   /** Temporal-spread lane candidate count (LANES-02; append-only). 0 when the lane is
    *  off / not pushed (default) — byte-identical to before this plan. */
   temporal: number;
+  /** Causal one-hop lane candidate count (EXTRACT-03; append-only). 0 when the lane is
+   *  off / not pushed (default) — byte-identical to before this plan. */
+  causal: number;
 }
 
 /** The collected pipeline observations the orchestrator hands to the assembler. */

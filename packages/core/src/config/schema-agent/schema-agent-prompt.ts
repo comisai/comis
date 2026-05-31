@@ -126,11 +126,24 @@ export const RagConfigSchema = z.strictObject({
             windowDays: z.number().int().positive().default(7),
           })
           .default(() => ({ enabled: false, weight: 1.0, windowDays: 7 })),
+        /** Causal one-hop recall lane (EXTRACT-03). Default-OFF; surfaces memories causally
+         *  linked (cause↔effect) to the seeds via the additive memory_causal_edges table. With
+         *  `enabled:false` the lane is never pushed → fuse() unchanged → recall byte-identical
+         *  (the ENT-04 no-op reused; no surprise ranking change on upgrade, T-96-10). `weight` is
+         *  `min(0)` (no negative RRF term, T-95-08). The exact temporal-lane sibling, minus the
+         *  windowDays knob — a causal edge is a discrete one-hop link, not a time window. */
+        causal: z
+          .strictObject({
+            enabled: z.boolean().default(false),
+            weight: z.number().min(0).default(1.0),
+          })
+          .default(() => ({ enabled: false, weight: 1.0 })),
       })
       .default(() => ({
         fts: { weight: 1.0 },
         vector: { weight: 1.5 },
         temporal: { enabled: false, weight: 1.0, windowDays: 7 },
+        causal: { enabled: false, weight: 1.0 },
       })),
     /** One-hop entity-associative lane (ENT-02). Default-OFF; the daemon enables it once
      *  the entity store is wired (Phase-83 Plan 05). Empty/disabled -> RRF unchanged (ENT-04). */
