@@ -130,6 +130,22 @@ describe("buildBenchmarkReport -- BENCH-04 reproducibility object", () => {
     expect(report.results.perCategory).toEqual(metrics.perCategory);
   });
 
+  it("records a disabled local role (provider 'none', no modelUri) without inventing a URI", () => {
+    const cfg = cleanConfig();
+    const cfgNoLocal = {
+      ...cfg,
+      models: {
+        ...cfg.models,
+        embedding: { provider: "none" as const },
+        reranker: { provider: "none" as const },
+      },
+    };
+    const report = buildBenchmarkReport(cfgNoLocal, sampleMetrics(), NOW_MS);
+    expect(report.models.embedding).toEqual({ provider: "none" });
+    expect(report.models.reranker).toEqual({ provider: "none" });
+    expect(report.models.embedding.modelUri).toBeUndefined();
+  });
+
   it("omits a dataset.sha256 cleanly when not provided (optional reproducibility field)", () => {
     const cfg = cleanConfig();
     const cfgNoHash = { ...cfg, dataset: { name: cfg.dataset.name, itemCount: cfg.dataset.itemCount, source: cfg.dataset.source } };
