@@ -27,7 +27,7 @@
     "locomoQa": 15,
     "totalQuestionsPerJudgePass": 135,
     "datasetSha256_subset": "ed7de6818663718b9150895871f6f89d61ffdf8d9d0839f8e62b2d612df2fd8a",
-    "sampleNote": "Full-set sequential QA grading (~2,040 LongMemEval+LoCoMo questions x [answer + judge], DOUBLED by the full-haystack filesystem control = ~8,160 LLM calls per judge pass; the harness grades strictly sequentially) measured ~6-12h per pass, ~13-24h across both cross-judge passes on this machine -- genuinely infeasible in a single session. Per the J1 protocol's disclosed-subset fallback (full is the default; silent subsetting is forbidden), QA accuracy was measured on a CATEGORY-STRATIFIED subset: exactly 20 LongMemEval items per question_type (120 of 500, all 6 categories) + 1 LoCoMo sample truncated to 15 QA (LoCoMo is comparability-only, never headlined). Retrieval recall@k/MRR above is on the FULL 500+10 set. Selection method: first-N-per-category in file order (deterministic, reproducible). The full published head-to-head on the complete set is Phase 104 (PROVE). Per-category n=20 -> ~+-11pt SE; the cross-judge spread (cross-judge-spread.md) confirms every LongMemEval category is stable across two independent judges."
+    "sampleNote": "Full-set sequential QA grading (~2,040 LongMemEval+LoCoMo questions x [answer + judge], DOUBLED by the full-haystack filesystem control; the harness grades strictly sequentially) measured ~6-12h per pass, ~13-24h across both cross-judge passes on this machine -- genuinely infeasible in a single session. Per the J1 protocol's disclosed-subset fallback (full is the default; silent subsetting is forbidden), QA accuracy was measured on a CATEGORY-STRATIFIED subset: exactly 20 LongMemEval items per question_type (120 of 500, all 6 categories) + 1 LoCoMo sample truncated to 15 QA (LoCoMo is comparability-only, never headlined). Retrieval recall@k/MRR above is on the FULL 500+10 set. Selection method: first-N-per-category in file order (deterministic). The full published head-to-head on the complete set is Phase 104 (PROVE). Per-category n=20 -> ~+-11pt SE."
   },
   "models": {
     "answer": { "provider": "anthropic", "modelId": "claude-sonnet-4-6" },
@@ -45,13 +45,22 @@
   "crossJudge": {
     "judgeA": "openai/gpt-4o-2024-11-20",
     "judgeB": "openai/gpt-4.1",
-    "kind": "cross-model (same provider) — NOT cross-provider; see BUG-004. Cross-provider judging deferred to Phase 104.",
+    "kind": "cross-model (same provider) — NOT cross-provider; weaker independence test; see BUG-004. Cross-provider judging deferred to Phase 104.",
     "tolerance": "5.0 accuracy points",
-    "allLongMemEvalCategoriesSurvive": true,
-    "locomoSurvives": false,
-    "locomoNote": "locomo spread 6.7pt > tolerance; comparability-only, drives no decision.",
     "overallJudgeA": 71.1,
-    "overallJudgeB": 71.9,
+    "overallJudgeB": 73.3,
+    "longMemEvalOverallSpread": 1.7,
+    "perCategorySurvival": {
+      "single-session-user": "survives (5.0)",
+      "single-session-assistant": "survives (0.0)",
+      "knowledge-update": "survives (0.0)",
+      "multi-session": "survives (5.0)",
+      "temporal-reasoning": "survives (5.0)",
+      "single-session-preference": "DOES NOT SURVIVE (15.0) — judge-noisy; treated as unstable signal, drives no hard decision",
+      "locomo": "does not survive (6.7) — comparability-only",
+      "control": "does not survive (16.3) — sanity baseline only"
+    },
+    "stableWeakAxes": ["temporal-reasoning (40-45)", "multi-session (60-65)"],
     "bothManifestsValid": "invalid:0, validTotal:135 in both qa-report.judge-a.json and qa-report.judge-b.json"
   }
 }
