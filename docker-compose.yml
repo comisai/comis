@@ -81,18 +81,34 @@ services:
       # Gateway Auth
       - COMIS_GATEWAY_TOKEN=${COMIS_GATEWAY_TOKEN:-}
 
-    # Allow bubblewrap (the agent exec sandbox) to create user namespaces.
-    # Ubuntu 23.10+ hosts set kernel.apparmor_restrict_unprivileged_userns=1,
-    # and Docker's default seccomp profile blocks the unshare(2) flags bwrap
-    # needs. Without these opt-outs the in-container `bwrap` fails with
-    # "setting up uid map: Permission denied" and the daemon falls back to
-    # running agent-issued shell commands unsandboxed — which lets a
-    # prompt-injected exec read /home/comis/.comis/.env,
-    # /etc/comis/config.yaml, and the encrypted secrets store inside the
-    # same container.
+    # Allow bubblewrap (the agent exec sandbox) to create a user+pid namespace
+    # and mount a private /proc inside it. Docker's defaults block all three
+    # layers bwrap needs:
+    #   - apparmor=unconfined   : the docker-default AppArmor profile denies
+    #                             unprivileged user-namespace creation.
+    #   - seccomp=unconfined    : the default seccomp profile filters the
+    #                             unshare(2)/clone(2) flags bwrap uses.
+    #   - systempaths=unconfined: the default /proc masking blocks bwrap's
+    #                             `--proc /proc` mount in the new namespace
+    #                             ("Can't mount proc ... Operation not permitted").
+    # Without these the daemon falls back to running agent-issued shell commands
+    # UNSANDBOXED — a prompt-injected exec could then read
+    # /home/comis/.comis/.env, /etc/comis/config.yaml, and the encrypted secrets
+    # store inside the container.
+    #
+    # NOTE — Ubuntu 23.10+ / 24.04 hosts: the container opt-outs above are NOT
+    # sufficient on their own. The host sets
+    # kernel.apparmor_restrict_unprivileged_userns=1, which denies userns to the
+    # (now-unconfined) container bwrap, so bwrap still fails with "setting up uid
+    # map: Permission denied". On such hosts ALSO set, on the HOST:
+    #   sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+    # (persist via /etc/sysctl.d), or load an AppArmor profile that grants
+    # `userns` to /usr/bin/bwrap. Confirm with the daemon log line
+    # `Exec sandbox provider detected` ... `provider=bwrap`.
     security_opt:
       - apparmor=unconfined
       - seccomp=unconfined
+      - systempaths=unconfined
 
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:4766/health"]

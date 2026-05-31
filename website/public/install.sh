@@ -2477,7 +2477,24 @@ reexec_as_comis_user() {
     [[ -n "$INSTALL_METHOD" ]] && forwarded_args+=(--install-method "$INSTALL_METHOD")
     [[ "$COMIS_VERSION" != "latest" ]] && forwarded_args+=(--version "$COMIS_VERSION")
     [[ "$USE_BETA" == "1" ]] && forwarded_args+=(--beta)
-    [[ -n "$COMIS_TARBALL" ]] && forwarded_args+=(--tarball "$COMIS_TARBALL")
+    # Stage a local --tarball into the comis user's home so the re-exec (which
+    # runs as the unprivileged comis user) can read it. Operators commonly place
+    # the tarball under /root or another path the comis user cannot read; the
+    # forwarded path would then fail with "--tarball path does not exist". Copy
+    # it into the comis home (mirrors the install-script copy below) and forward
+    # that path instead.
+    local staged_tarball=""
+    if [[ -n "$COMIS_TARBALL" ]]; then
+        staged_tarball="${comis_home}/.comis-install-tarball.tgz"
+        if cp "$COMIS_TARBALL" "$staged_tarball" 2>/dev/null; then
+            chown "$COMIS_USER:$COMIS_USER" "$staged_tarball" 2>/dev/null || true
+            chmod 0644 "$staged_tarball" 2>/dev/null || true
+            forwarded_args+=(--tarball "$staged_tarball")
+        else
+            ui_warn "Could not stage tarball into ${comis_home}; forwarding original path"
+            forwarded_args+=(--tarball "$COMIS_TARBALL")
+        fi
+    fi
     # Browser-tool flags need to propagate so the reexec'd child's run of
     # install_cloakbrowser() (in the main flow) and register_service can see
     # them. `su -` strips most env so we forward as explicit args.
@@ -2514,6 +2531,7 @@ reexec_as_comis_user() {
     local rc=$?
 
     rm -f "$script_copy" 2>/dev/null || true
+    [[ -n "$staged_tarball" ]] && rm -f "$staged_tarball" 2>/dev/null || true
 
     return "$rc"
 }

@@ -61,7 +61,7 @@ const layers = [
     category: "Secrets",
     color: "teal",
     threat: "API key exposure via agentic CLIs",
-    how: "The real key never enters the exec sandbox. It lives in the daemon's AES-256-GCM encrypted store and is resolved per-request by the in-daemon HTTPS MITM broker. The CLI runs with a placeholder; the broker terminates TLS with its own CA, verifies the single-use proxy token, and injects the real credential for allow-listed hosts (`x-api-key`, `Authorization: Bearer`, or query param). On Linux, the credentialed sandbox runs in broker-only network mode (`--unshare-net`) — the broker unix socket is the designed-to-be-only destination (R1 validation in progress). Broker fails closed: bad token → 407, no binding → 403, missing secret → 502, request never forwarded. Every inject/deny/blocked-egress event is audited with `agentId` + `traceId`. Anthropic and Finnhub today.",
+    how: "The real key never enters the exec sandbox. It lives in the daemon's AES-256-GCM encrypted store and is resolved per-request by the in-daemon HTTPS MITM broker. The CLI runs with a placeholder; the broker terminates TLS with its own CA, verifies the single-use proxy token, and injects the real credential for allow-listed hosts (`x-api-key`, `Authorization: Bearer`, or query param). On Linux, the credentialed sandbox runs in broker-only network mode (`--unshare-net`) — the broker unix socket is the only reachable destination (kernel-enforced; validated on the Linux production host class). Broker fails closed: bad token → 407, no binding → 403, missing secret → 502, request never forwarded. Every inject/deny/blocked-egress event is audited with `agentId` + `traceId`. Anthropic and Finnhub today.",
   },
   {
     name: "Log Sanitizer",

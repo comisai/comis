@@ -18,7 +18,7 @@
  */
 import "reflect-metadata"; // required for createNodeCaManager / @peculiar/x509 / tsyringe
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as http from "node:http";
 import * as net from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -58,7 +58,11 @@ const LINUX_E2E_AVAILABLE = canLinuxSandboxE2ERun();
 
 const TEST_KEY = "test-key";
 const TEST_SECRET_REF = "test-key-ref";
-const FIXTURE_HOST = "fixture.local";
+// The broker (running on the host) must be able to dial the upstream after
+// matching the binding, so the CONNECT target must resolve. We use the loopback
+// address the fixture listens on — the binding matches on this host, injection
+// is host-pattern-agnostic, and no /etc/hosts alias is required.
+const FIXTURE_HOST = "127.0.0.1";
 
 function makeFixtureBinding(): BrokerBinding {
   return {
@@ -82,7 +86,9 @@ function makeUpstreamFixture(): Promise<{
   const server = http.createServer((req, res) => {
     receivedHeaders.push({ ...req.headers });
     res.writeHead(200, { "content-type": "text/plain" });
-    res.end("ok");
+    // Distinctive sentinel body — must NOT collide with common substrings like
+    // "ok" (which appears inside "br-ok-er" in the placeholder env value).
+    res.end("UPSTREAM_FIXTURE_OK");
   });
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
@@ -121,7 +127,7 @@ function minimalBwrapArgs(): string[] {
 describe.skipIf(!LINUX_E2E_AVAILABLE)(
   "INTEG-04 Linux-gated: full bwrap sandbox-driven broker E2E",
   () => {
-    let brokerPort: number;
+    let brokerSocketPath: string;
     let brokerStop: () => Promise<void>;
     let sessionMgr: ReturnType<typeof createSessionManager>;
     let upstream: Awaited<ReturnType<typeof makeUpstreamFixture>>;
@@ -146,7 +152,11 @@ describe.skipIf(!LINUX_E2E_AVAILABLE)(
         // for this harness. The bwrap sandbox tests target egress containment, not TLS.
       });
 
-      brokerPort = await broker.start();
+      await broker.start();
+      // Bind the broker's unix socket — this is how a --unshare-net sandbox
+      // reaches the broker (host TCP is unreachable from inside the namespace).
+      brokerSocketPath = join(tmpDir, "broker.sock");
+      await broker.startUnixSocket(brokerSocketPath);
       brokerStop = () => broker.stop();
     }, 30_000);
 
@@ -180,7 +190,9 @@ describe.skipIf(!LINUX_E2E_AVAILABLE)(
         // to the upstream fixture and assert the upstream received the real key.
         const nodeScript = `
           const net = require('net');
-          const sock = net.connect(${brokerPort}, '127.0.0.1', () => {
+          // Reach the broker ONLY via the bind-mounted unix socket — the
+          // namespace is --unshare-net, so the host's TCP broker is unreachable.
+          const sock = net.connect('${brokerSocketPath}', () => {
             sock.write('CONNECT ${FIXTURE_HOST}:${upstream.port} HTTP/1.1\\r\\nHost: ${FIXTURE_HOST}:${upstream.port}\\r\\nProxy-Authorization: Bearer ${proxyToken}\\r\\n\\r\\n');
           });
           let buf = '';
@@ -198,25 +210,40 @@ describe.skipIf(!LINUX_E2E_AVAILABLE)(
           sock.on('error', (err) => { process.stderr.write(err.message); process.exit(1); });
         `;
 
-        const result = spawnSync(
-          "bwrap",
-          [
-            ...minimalBwrapArgs(),
-            "node", "-e", nodeScript,
-          ],
-          {
-            encoding: "utf8",
-            timeout: 30_000,
-            env: {
-              // The sandbox process sees only placeholders — never the real key
-              ANTHROPIC_API_KEY: "comis-broker-placeholder",
-              COMIS_BROKER_TOKEN: proxyToken,
-              HTTPS_PROXY: `http://127.0.0.1:${brokerPort}`,
-              HTTP_PROXY: `http://127.0.0.1:${brokerPort}`,
-              PATH: process.env["PATH"] ?? "/usr/local/bin:/usr/bin:/bin",
+        // Drive bwrap ASYNCHRONOUSLY (spawn, not spawnSync): the broker runs on
+        // THIS process's event loop, so a synchronous spawnSync would block the
+        // loop and deadlock — the broker could never answer the sandbox's CONNECT.
+        const result = await new Promise<{
+          status: number | null;
+          stdout: string;
+          stderr: string;
+        }>((resolve) => {
+          const child = spawn(
+            "bwrap",
+            [
+              ...minimalBwrapArgs(),
+              // Bind-mount the broker's unix socket into the isolated namespace —
+              // the only egress path (mirrors the production broker-only profile).
+              "--bind", brokerSocketPath, brokerSocketPath,
+              "node", "-e", nodeScript,
+            ],
+            {
+              timeout: 30_000,
+              env: {
+                // The sandbox process sees only the placeholder — never the real key.
+                ANTHROPIC_API_KEY: "comis-broker-placeholder",
+                PATH: process.env["PATH"] ?? "/usr/local/bin:/usr/bin:/bin",
+              },
             },
-          },
-        );
+          );
+          let stdout = "";
+          let stderr = "";
+          child.stdout.setEncoding("utf8");
+          child.stderr.setEncoding("utf8");
+          child.stdout.on("data", (d: string) => (stdout += d));
+          child.stderr.on("data", (d: string) => (stderr += d));
+          child.on("close", (code) => resolve({ status: code, stdout, stderr }));
+        });
 
         // Allow time for the upstream to record the request
         await new Promise((r) => setTimeout(r, 300));
@@ -295,8 +322,8 @@ describe.skipIf(!LINUX_E2E_AVAILABLE)(
         // we assert the real key is not accessible, which is the security invariant.
         expect(
           output,
-          "sandboxed general exec must not receive HTTP 200 from upstream fixture (net isolated)",
-        ).not.toContain("ok");
+          "sandboxed general exec must not receive the upstream fixture body (net isolated)",
+        ).not.toContain("UPSTREAM_FIXTURE_OK");
       },
       60_000,
     );
