@@ -339,6 +339,10 @@ describe("trust-first contradiction lift (recall@1 over fusion baseline)", () =>
     // Trust-first must leave the pure recency cases byte-stable in ranking (success criterion 2).
     const report = compareRankings(TEMPORAL_EVAL_FIXTURES, fusionFn, trustFn);
     expect(report.recallAt1Lift, JSON.stringify(report)).toBe(0);
+    // Mirror the sibling lift tests' dual guard (WR-01): recallAt1Lift === 0 alone equals full
+    // rank-1 invariance only while each T1/T2 fixture has 2 candidates; the MRR guard pins
+    // no-reorder BELOW rank 1 too, so a future 3+-candidate sub-rank-1 reorder still trips it.
+    expect(report.mrrLift, JSON.stringify(report)).toBe(0);
   });
 });
 
