@@ -23,7 +23,10 @@ import type { MemoryPort, MemorySearchOptions } from "@comis/core";
 // The concrete adapter lives in the memory package; the agent↛memory build cut
 // forbids importing that package here (architecture-graph.test.ts). The daemon
 // (Plan 05) injects the adapter through `MemoryReviewDeps.entityStore`.
-import type { MemoryEntityStore } from "@comis/core";
+// EXTRACT-03 (Phase 96): the SEGREGATED causal-store port — likewise TYPE ONLY.
+// The agent reaches it as a @comis/core port type (NEVER `@comis/memory`); the
+// daemon (96-03) injects the concrete adapter via `MemoryReviewDeps.causalStore`.
+import type { MemoryEntityStore, MemoryCausalStore } from "@comis/core";
 import type { MemoryEntry, MemorySource, TrustLevel, ClockPort } from "@comis/core";
 import type { SessionData, SessionKey } from "@comis/core";
 import { STRUCTURED_PROMPT, parseExtractionResult, resolveOccurredAt } from "./memory-extraction.js";
@@ -64,6 +67,18 @@ export interface MemoryReviewDeps {
    * advances, so a resolver fault never stalls + reprocesses every cron tick.
    */
   entityStore?: MemoryEntityStore;
+  /**
+   * OPTIONAL causal-edge store (EXTRACT-03, Phase 96). When injected, each
+   * memory's emitted `causes` are persisted AFTER a successful store as directed
+   * cause→effect edges (`linkCausal(entry.id, effect, scope, confidence)`),
+   * populating `memory_causal_edges`. When ABSENT, the job behaves exactly as
+   * Phase 91 (causes are emit-only, not persisted) — so the daemon (96-03) can
+   * light this up independently. Injected as the @comis/core port TYPE (the
+   * agent↛memory cut: the concrete adapter is daemon-built). A link failure is
+   * NON-FATAL (mirrors the entity-store guard): the watermark still advances, so
+   * an edge-resolver fault never stalls + reprocesses every cron tick.
+   */
+  causalStore?: MemoryCausalStore;
   sessionStore: {
     listDetailed(tenantId?: string): SessionDetailedEntry[];
     loadByFormattedKey(sessionKey: string): SessionData | undefined;
@@ -584,6 +599,36 @@ export async function runMemoryReview(deps: MemoryReviewDeps): Promise<Result<vo
             // run counts toward `newEntities` (conservative create proxy above).
             entitiesLinked++;
             seenEntityNames.add(e.name);
+          }
+        }
+      }
+
+      // EXTRACT-03 (Phase 96): persist the causal edges. Guarded by
+      // `deps.causalStore` so an un-injected port reproduces Phase-91 behaviour
+      // EXACTLY (no write). The cause is THIS stored memory (`entry.id`, A2); each
+      // emitted `effect` is resolved to a counterpart memory id by the injected
+      // adapter (scoped FTS top-1 — the agent never sees the SQL). NON-FATAL
+      // (mirrors the entity guard above): a failing linkCausal — an `err` Result
+      // OR a rejecting adapter collapsed by `fromPromise` — WARNs (errorKind +
+      // hint only; NEVER the untrusted effect-text body, AGENTS.md §2.7) and the
+      // loop continues; the watermark below advances regardless, so an edge fault
+      // never stalls + reprocesses every cron tick. The edge SQL lives in
+      // @comis/memory behind the injected MemoryCausalStore port — this file
+      // imports the TYPE only (the agent↛memory build cut).
+      if (deps.causalStore && m.causes.length > 0) {
+        for (const c of m.causes) {
+          const linked = await fromPromise(
+            deps.causalStore.linkCausal(entry.id, c.effect, { tenantId, agentId, now: clock.now() }, 1),
+          );
+          if (!linked.ok || !linked.value.ok) {
+            logger.warn(
+              {
+                agentId,
+                errorKind: "dependency" as const,
+                hint: "causal link failed — memory stored, edge skipped",
+              },
+              "Causal link failed (non-fatal)",
+            );
           }
         }
       }
