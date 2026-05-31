@@ -117,10 +117,13 @@ function pickAccuracy(r: AccuracyResult): AccuracyResult {
     CategoryAccuracy
   >;
   for (const key of Object.keys(r.perCategory)) {
-    const bucket = r.perCategory[key];
-    if (bucket === undefined) continue;
-    // Literal-keyed write of a freshly-rebuilt numeric bucket (no input spread).
-    perCategory[key] = pickCategory(bucket);
+    // `Object.keys` yields only present keys and the project does not set
+    // `noUncheckedIndexedAccess`, so the indexed access is a defined
+    // `CategoryAccuracy` (no defensive `undefined` guard needed -- that branch
+    // would be unreachable). Literal-keyed write of a freshly-rebuilt numeric
+    // bucket (no input spread), so a `__proto__`/`constructor` key stays an
+    // ordinary own data property (T-99-01-03).
+    perCategory[key] = pickCategory(r.perCategory[key]);
   }
   return {
     overall: r.overall,
