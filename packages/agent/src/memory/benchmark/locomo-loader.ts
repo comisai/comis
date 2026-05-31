@@ -6,8 +6,10 @@
  * (`session_N` + `session_N_date_time`), ingesting ONLY `{speaker,text,dia_id}`
  * per turn — the `qa` block (answers + evidence) is NEVER serialized into
  * document content (the gold lives outside the conversation; Pitfall 1 /
- * T-88-01-02). Parses `qa[].evidence` `"D<sess>:<dia>"` strings to dia_ids and
- * excludes `category === 5` adversarial items from the recall-gold qa list.
+ * T-88-01-02). Normalizes `qa[].evidence` `"D<sess>:<dia>"` strings to
+ * SESSION-QUALIFIED gold refs (the full `"D<sess>:<dia>"`, NOT the bare dia
+ * index — the prefix prevents cross-session collisions, WR-02) and excludes
+ * `category === 5` adversarial items from the recall-gold qa list.
  *
  * PURE parser. Imports ONLY @comis/shared (Result) + Node stdlib types. The
  * agent->memory architecture cut (architecture-graph.test.ts:133) FORBIDS any
@@ -36,7 +38,11 @@ export interface LocomoDoc {
   content: string;
   /** Session date as positive epoch-ms (the dated-document createdAt). */
   createdAt: number;
-  /** The dia_ids contained in this session (for the harness to map gold -> uuid). */
+  /**
+   * The SESSION-QUALIFIED dia refs (`"D<sess>:<dia>"`) contained in this session
+   * — the harness keys the gold side-map on these verbatim, so they MUST match
+   * the form `parseLocomoEvidence` emits for `qa[].goldDiaIds` (WR-02).
+   */
   diaIds: string[];
 }
 
@@ -54,16 +60,28 @@ export interface LocomoParsed {
 }
 
 /**
- * Parse LoCoMo `evidence` `"D<session>:<dia>"` strings to dia_ids (Assumption A3).
+ * Normalize LoCoMo `evidence` `"D<session>:<dia>"` strings to SESSION-QUALIFIED
+ * gold refs (WR-02 / Assumption A3).
  *
- * Pure string ops: filter entries containing `":"`, take the 2nd colon-segment.
- * No regex -> no ReDoS surface. Returns `[]` for undefined/empty evidence.
+ * Keeps the FULL `"D<session>:<dia>"` ref (NOT the bare 2nd colon-segment). The
+ * session prefix is load-bearing: keying the gold side-map on only the dia index
+ * lets two sessions that share a dia index (or two degenerate `"D1:"`/`"D2:"`
+ * entries that both reduce to an empty index) silently overwrite each other,
+ * zeroing a recall lane against the WRONG document (WR-02). The full ref is
+ * unique by construction, and the loader's `doc.diaIds` carry the same full form,
+ * so both sides of the side-map key identically.
+ *
+ * Pure string ops: keep entries whose dia portion (everything after the FIRST
+ * colon) is non-empty — this drops the degenerate `"D1:"` (empty after the
+ * colon) so it can never produce a colliding empty key. No regex -> no ReDoS
+ * surface. Returns `[]` for undefined/empty evidence.
  */
 export function parseLocomoEvidence(evidence: string[] | undefined): string[] {
-  return (evidence ?? [])
-    .filter((e) => e.includes(":"))
-    .map((e) => e.split(":")[1])
-    .filter((d): d is string => d !== undefined);
+  return (evidence ?? []).filter((e) => {
+    const colon = e.indexOf(":");
+    // Must contain a colon AND a non-empty dia segment after it (drops "D1:").
+    return colon !== -1 && colon < e.length - 1;
+  });
 }
 
 /** Anchored allowlist for conversation session keys (no ReDoS — bounded `\d+`). */

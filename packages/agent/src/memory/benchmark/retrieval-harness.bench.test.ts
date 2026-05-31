@@ -60,7 +60,7 @@ import type { EvalQuery } from "../__fixtures__/recall-eval-fixtures.js";
 // RELATIVE Plan 01 loaders + gold-map (consumed verbatim — NO field-rename, NO
 // questionId synthesis in the harness; the loaders own those).
 import { loadLongMemEval } from "./longmemeval-loader.js";
-import { loadLocomo, parseLocomoEvidence } from "./locomo-loader.js";
+import { loadLocomo } from "./locomo-loader.js";
 import { buildGoldMap } from "./gold-map.js";
 // RELATIVE Plan 02 analyzer (the optional quality-view tie-in, step 8).
 import { analyzeRecallTrace } from "./recall-trace-analyzer.js";
@@ -189,10 +189,11 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
     // 4. INGEST (Patterns B + C) + record the datasetRef -> uuid side-map BEFORE
     // buildGoldMap, so the gold map resolves to REAL ingested ids (Pitfall 6 / Blocker-3).
     //   - LongMemEval: key by doc.sessionId (gold refs = answer_session_ids, same form).
-    //   - LoCoMo: key by the PARSED dia_id (parseLocomoEvidence of the raw doc.diaIds),
-    //     because the loader's qa[].goldDiaIds are the parsed 2nd colon-segments
-    //     ("D1:1" -> "1") — so the side-map key MUST be normalized to that same form,
-    //     else the gold set resolves empty and the LoCoMo lane silently zeros.
+    //   - LoCoMo: key by the SESSION-QUALIFIED dia ref (doc.diaIds, the full
+    //     "D<sess>:<dia>" form), the SAME form the loader emits for
+    //     qa[].goldDiaIds. Keying on the bare dia index would let two sessions
+    //     sharing an index silently overwrite each other and zero a lane (WR-02);
+    //     the full ref is unique by construction so both sides key identically.
     const ingestedIdByRef = new Map<string, string>();
 
     for (const doc of lme.docs) {
@@ -226,9 +227,10 @@ describe.skipIf(!COMIS_BENCH)("retrieval recall (LongMemEval + LoCoMo, gated)", 
         createdAt: doc.createdAt,
       });
       expect(stored.ok, "LoCoMo doc stored").toBe(true);
-      // Normalize each raw dia_id ("D2:3") to the gold-ref form ("3") so the
-      // buildGoldMap lookup resolves (see comment above).
-      for (const ref of parseLocomoEvidence(doc.diaIds)) {
+      // Key on the full session-qualified dia ref ("D2:3") verbatim — the SAME
+      // form the loader emits for qa[].goldDiaIds, so the buildGoldMap lookup
+      // resolves (see comment above; WR-02).
+      for (const ref of doc.diaIds) {
         ingestedIdByRef.set(ref, id);
       }
     }
