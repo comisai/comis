@@ -17,10 +17,15 @@
  * does so STRUCTURALLY: each model role is rebuilt as a fresh `{ provider,
  * modelId }` (or `{ provider, modelUri? }` for the local embed/rerank roles) --
  * the input config object is NEVER spread, and no credential / base-url field is
- * ever copied. Even when the operator config carries a per-role secret, it cannot
- * appear in `JSON.stringify(report)` because there is no path from the input
- * secret to the output object. (RED gate: the unit asserts the serialized report
- * contains none of the known secret substrings with a secret-bearing config.)
+ * ever copied. The one field that is itself free-form (`modelUri`, a HF URI or
+ * local path) is additionally run through `sanitizeModelUri`, which strips any
+ * URL userinfo + query/fragment so an authenticated-weights endpoint
+ * (`https://user:token@host/...?token=...`) cannot smuggle a credential through.
+ * Even when the operator config carries a per-role secret, it cannot appear in
+ * `JSON.stringify(report)` because there is no path from the input secret to the
+ * output object. (RED gate: the unit asserts the serialized report contains none
+ * of the known secret substrings -- apiKey/Bearer/base_url AND a credential-bearing
+ * modelUri -- with a secret-bearing config.)
  *
  * GLOBALS: `timestamp` is `systemDateFrom(nowMs).toISOString()` with `nowMs`
  * INJECTED by the caller -- never a wall-clock read (no raw Date constructor or
@@ -127,11 +132,47 @@ function pickIdentity(role: { provider: string; modelId: string }): ModelIdentit
   return { provider: role.provider, modelId: role.modelId };
 }
 
-/** Rebuild a local-weight role as provider + optional URI (drops any extra fields). */
+/**
+ * Strip any embedded credential from a model URI, keeping only the non-secret
+ * identity anchor (scheme + host + path) for reproducibility (WR-01, ASVS V7).
+ *
+ * `modelUri` is a free-form `z.string()` (schema-embedding.ts:14) -- a HuggingFace
+ * URI or a local GGUF path. An authenticated weights endpoint can carry a secret in
+ * BOTH the URL userinfo (`https://user:token@host/...`) AND a query param
+ * (`?token=...`, `?access_token=...`, `?api_key=...`). Without this, the secret
+ * flows verbatim into `JSON.stringify(report)` -- which is persisted via
+ * writeRegularFile, OUTSIDE Pino's redaction net -- defeating the module's
+ * structural no-secret guarantee.
+ *
+ * Strategy: only an AUTHORITY-bearing URL (`scheme://`) can hold userinfo/query
+ * credentials, so an authority-less scheme (`hf:org/model`) or a plain filesystem
+ * path (`/models/x.gguf`) is returned VERBATIM (it carries no credential, and is the
+ * exact reproducibility anchor). For an authority URL we drop userinfo AND the whole
+ * query+fragment (a query param can hold a secret under any name, so dropping the
+ * lot is the only structural no-leak choice), keeping scheme+host+path. The guard
+ * regex is anchored with non-nested quantifiers (ReDoS-free, the loaders' convention).
+ */
+function sanitizeModelUri(uri: string): string {
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(uri)) return uri; // no authority -> no embedded credential
+  try {
+    const u = new URL(uri);
+    u.username = "";
+    u.password = "";
+    u.search = "";
+    u.hash = "";
+    return u.toString();
+  } catch {
+    // Unparseable authority URL: fall back to a userinfo strip so a `user:pass@`
+    // credential still cannot survive (no worse than the input for anything else).
+    return uri.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^/@]*@/i, "$1");
+  }
+}
+
+/** Rebuild a local-weight role as provider + sanitized URI (drops any extra fields + credential). */
 function pickLocalIdentity(role: { provider: "local" | "none"; modelUri?: string }): LocalModelIdentity {
   return role.modelUri === undefined
     ? { provider: role.provider }
-    : { provider: role.provider, modelUri: role.modelUri };
+    : { provider: role.provider, modelUri: sanitizeModelUri(role.modelUri) };
 }
 
 /** Rebuild the dataset descriptor, carrying sha256 only when present. */
@@ -147,7 +188,8 @@ function pickDataset(d: BenchmarkReport["dataset"]): BenchmarkReport["dataset"] 
  * SECURITY: structurally selects only `{ provider, modelId }` / `{ provider,
  * modelUri }` per model role -- the input `config` is never spread, so no
  * credential or base-url field on `config.models.*` can reach the output (and
- * thus the persisted file). The timestamp uses the injected clock.
+ * thus the persisted file); the free-form `modelUri` is additionally sanitized
+ * (userinfo + query/fragment stripped). The timestamp uses the injected clock.
  */
 export function buildBenchmarkReport(
   config: BenchmarkReportConfig,
