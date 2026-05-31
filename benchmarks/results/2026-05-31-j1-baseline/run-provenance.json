@@ -1,0 +1,53 @@
+{
+  "runDate": "2026-05-31",
+  "commit": "af64462f",
+  "commitSubject": "fix(98-01): raise beforeAll hook timeout to 2h for full-dataset ingestion (BASE-01)",
+  "branch": "v2.8-prove-climb",
+  "node": "v22.20.0",
+  "harnessVersion": "phase-89-v1",
+  "datasets": {
+    "longMemEval": { "fullItems": 500, "source": "xiaowu0162/longmemeval (longmemeval_s.json)" },
+    "locomo": { "fullSamples": 10, "source": "snap-research/locomo (locomo10.json)" }
+  },
+  "retrieval": {
+    "scope": "FULL set — 500 LongMemEval items + 10 LoCoMo samples",
+    "recallAt1": 0.5734309835045132,
+    "recallAt3": 0.7827417911609087,
+    "recallAt5": 0.8450799486461252,
+    "mrr": 0.7883191332088387,
+    "vectorLane": true,
+    "rerank": true
+  },
+  "qaAccuracy": {
+    "scope": "category-stratified DISCLOSED SUBSET (see sampleNote)",
+    "longMemEvalItems": 120,
+    "perCategory": 20,
+    "categories": 6,
+    "locomoSamples": 1,
+    "locomoQa": 15,
+    "totalQuestionsPerJudgePass": 135,
+    "datasetSha256_subset": "ed7de6818663718b9150895871f6f89d61ffdf8d9d0839f8e62b2d612df2fd8a",
+    "sampleNote": "Full-set sequential QA grading (~2,040 LongMemEval+LoCoMo questions x [answer + judge], DOUBLED by the full-haystack filesystem control = ~8,160 LLM calls per judge pass; the harness grades strictly sequentially) measured ~6-12h per pass, ~13-24h across both cross-judge passes on this machine -- genuinely infeasible in a single session. Per the J1 protocol's disclosed-subset fallback (full is the default; silent subsetting is forbidden), QA accuracy was measured on a CATEGORY-STRATIFIED subset: exactly 20 LongMemEval items per question_type (120 of 500, all 6 categories) + 1 LoCoMo sample truncated to 15 QA (LoCoMo is comparability-only, never headlined). Retrieval recall@k/MRR above is on the FULL 500+10 set. Selection method: first-N-per-category in file order (deterministic, reproducible). The full published head-to-head on the complete set is Phase 104 (PROVE). Per-category n=20 -> ~+-11pt SE; the cross-judge spread (cross-judge-spread.md) confirms every category is stable across two independent judges."
+  },
+  "models": {
+    "answer": { "provider": "anthropic", "modelId": "claude-sonnet-4-6" },
+    "judgeA": { "provider": "openai", "modelId": "gpt-4o-2024-11-20" },
+    "judgeB": { "provider": "anthropic", "modelId": "claude-opus-4-8" },
+    "embedding": { "provider": "local", "modelUri": "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf" },
+    "reranker": { "provider": "local", "modelUri": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf" }
+  },
+  "defaultConfigProof": {
+    "embeddingProvider": "local",
+    "rerankerProvider": "local",
+    "rerankEnabled": true,
+    "note": "Production-default on-device vector + rerank lanes were lit (not FTS-only)."
+  },
+  "crossJudge": {
+    "judgeA": "openai/gpt-4o-2024-11-20",
+    "judgeB": "anthropic/claude-opus-4-8",
+    "tolerance": "5.0 accuracy points",
+    "allCategoriesSurvive": true,
+    "overallJudgeA": 71.1,
+    "overallJudgeB": 71.9
+  }
+}

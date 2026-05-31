@@ -1,0 +1,169 @@
+{
+  "benchmark": "combined",
+  "timestamp": "2026-05-31T21:05:08.748Z",
+  "models": {
+    "extraction": {
+      "provider": "none",
+      "modelId": "none"
+    },
+    "answer": {
+      "provider": "anthropic",
+      "modelId": "claude-sonnet-4-6"
+    },
+    "judge": {
+      "provider": "anthropic",
+      "modelId": "claude-opus-4-8"
+    },
+    "embedding": {
+      "provider": "local",
+      "modelUri": "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf"
+    },
+    "reranker": {
+      "provider": "local",
+      "modelUri": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+    }
+  },
+  "dataset": {
+    "name": "operator-haystack",
+    "itemCount": 135,
+    "source": "operator",
+    "sha256": "ed7de6818663718b9150895871f6f89d61ffdf8d9d0839f8e62b2d612df2fd8a"
+  },
+  "defaults": {
+    "maxResults": 5,
+    "includeTrustLevels": [
+      "system",
+      "learned"
+    ],
+    "rerankEnabled": true,
+    "scoringAlphas": {
+      "recency": 0.2,
+      "temporal": 0.2,
+      "proof": 0.1,
+      "trust": 0.1
+    }
+  },
+  "results": {
+    "overall": 0,
+    "correct": 0,
+    "total": 135,
+    "invalid": 135,
+    "validTotal": 0,
+    "perCategory": {
+      "single-session-user": {
+        "correct": 0,
+        "total": 20,
+        "invalid": 20,
+        "accuracy": 0
+      },
+      "multi-session": {
+        "correct": 0,
+        "total": 20,
+        "invalid": 20,
+        "accuracy": 0
+      },
+      "single-session-preference": {
+        "correct": 0,
+        "total": 20,
+        "invalid": 20,
+        "accuracy": 0
+      },
+      "temporal-reasoning": {
+        "correct": 0,
+        "total": 20,
+        "invalid": 20,
+        "accuracy": 0
+      },
+      "knowledge-update": {
+        "correct": 0,
+        "total": 20,
+        "invalid": 20,
+        "accuracy": 0
+      },
+      "single-session-assistant": {
+        "correct": 0,
+        "total": 20,
+        "invalid": 20,
+        "accuracy": 0
+      },
+      "locomo": {
+        "correct": 0,
+        "total": 15,
+        "invalid": 15,
+        "accuracy": 0
+      }
+    }
+  },
+  "harnessVersion": "phase-89-v1",
+  "cost": {
+    "answerTokensPerQuery": 0,
+    "judgeTokensPerQuery": 0,
+    "totalTokensPerQuery": 0,
+    "answerCostUsd": 0,
+    "judgeCostUsd": 0
+  },
+  "latency": {
+    "recallP50Ms": 0,
+    "recallP95Ms": 0,
+    "answerP50Ms": 0,
+    "answerP95Ms": 0,
+    "judgeP50Ms": 0,
+    "judgeP95Ms": 0,
+    "endToEndP50Ms": 0,
+    "endToEndP95Ms": 0
+  },
+  "control": {
+    "label": "filesystem-baseline-full-context-control",
+    "results": {
+      "overall": 0,
+      "correct": 0,
+      "total": 135,
+      "invalid": 135,
+      "validTotal": 0,
+      "perCategory": {
+        "single-session-user": {
+          "correct": 0,
+          "total": 20,
+          "invalid": 20,
+          "accuracy": 0
+        },
+        "multi-session": {
+          "correct": 0,
+          "total": 20,
+          "invalid": 20,
+          "accuracy": 0
+        },
+        "single-session-preference": {
+          "correct": 0,
+          "total": 20,
+          "invalid": 20,
+          "accuracy": 0
+        },
+        "temporal-reasoning": {
+          "correct": 0,
+          "total": 20,
+          "invalid": 20,
+          "accuracy": 0
+        },
+        "knowledge-update": {
+          "correct": 0,
+          "total": 20,
+          "invalid": 20,
+          "accuracy": 0
+        },
+        "single-session-assistant": {
+          "correct": 0,
+          "total": 20,
+          "invalid": 20,
+          "accuracy": 0
+        },
+        "locomo": {
+          "correct": 0,
+          "total": 15,
+          "invalid": 15,
+          "accuracy": 0
+        }
+      }
+    }
+  }
+}

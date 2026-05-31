@@ -1,0 +1,169 @@
+{
+  "benchmark": "combined",
+  "timestamp": "2026-05-31T20:57:11.628Z",
+  "models": {
+    "extraction": {
+      "provider": "none",
+      "modelId": "none"
+    },
+    "answer": {
+      "provider": "anthropic",
+      "modelId": "claude-sonnet-4-6"
+    },
+    "judge": {
+      "provider": "openai",
+      "modelId": "gpt-4o-2024-11-20"
+    },
+    "embedding": {
+      "provider": "local",
+      "modelUri": "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf"
+    },
+    "reranker": {
+      "provider": "local",
+      "modelUri": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+    }
+  },
+  "dataset": {
+    "name": "operator-haystack",
+    "itemCount": 135,
+    "source": "operator",
+    "sha256": "ed7de6818663718b9150895871f6f89d61ffdf8d9d0839f8e62b2d612df2fd8a"
+  },
+  "defaults": {
+    "maxResults": 5,
+    "includeTrustLevels": [
+      "system",
+      "learned"
+    ],
+    "rerankEnabled": true,
+    "scoringAlphas": {
+      "recency": 0.2,
+      "temporal": 0.2,
+      "proof": 0.1,
+      "trust": 0.1
+    }
+  },
+  "results": {
+    "overall": 71.11111111111111,
+    "correct": 96,
+    "total": 135,
+    "invalid": 0,
+    "validTotal": 135,
+    "perCategory": {
+      "single-session-user": {
+        "correct": 20,
+        "total": 20,
+        "invalid": 0,
+        "accuracy": 100
+      },
+      "multi-session": {
+        "correct": 12,
+        "total": 20,
+        "invalid": 0,
+        "accuracy": 60
+      },
+      "single-session-preference": {
+        "correct": 6,
+        "total": 20,
+        "invalid": 0,
+        "accuracy": 30
+      },
+      "temporal-reasoning": {
+        "correct": 9,
+        "total": 20,
+        "invalid": 0,
+        "accuracy": 45
+      },
+      "knowledge-update": {
+        "correct": 15,
+        "total": 20,
+        "invalid": 0,
+        "accuracy": 75
+      },
+      "single-session-assistant": {
+        "correct": 20,
+        "total": 20,
+        "invalid": 0,
+        "accuracy": 100
+      },
+      "locomo": {
+        "correct": 14,
+        "total": 15,
+        "invalid": 0,
+        "accuracy": 93.33333333333333
+      }
+    }
+  },
+  "harnessVersion": "phase-89-v1",
+  "cost": {
+    "answerTokensPerQuery": 15205.118518518519,
+    "judgeTokensPerQuery": 342.9259259259259,
+    "totalTokensPerQuery": 15548.044444444444,
+    "answerCostUsd": 7.868726250000004,
+    "judgeCostUsd": 0.15722000000000008
+  },
+  "latency": {
+    "recallP50Ms": 1459.6026669999992,
+    "recallP95Ms": 1859.3993750000081,
+    "answerP50Ms": 3864.3735829999205,
+    "answerP95Ms": 7715.654582999996,
+    "judgeP50Ms": 857.5686249999562,
+    "judgeP95Ms": 1575.5116250000428,
+    "endToEndP50Ms": 6253.116874999992,
+    "endToEndP95Ms": 9972.924250000025
+  },
+  "control": {
+    "label": "filesystem-baseline-full-context-control",
+    "results": {
+      "overall": 52.59259259259259,
+      "correct": 71,
+      "total": 135,
+      "invalid": 0,
+      "validTotal": 135,
+      "perCategory": {
+        "single-session-user": {
+          "correct": 11,
+          "total": 20,
+          "invalid": 0,
+          "accuracy": 55.00000000000001
+        },
+        "multi-session": {
+          "correct": 10,
+          "total": 20,
+          "invalid": 0,
+          "accuracy": 50
+        },
+        "single-session-preference": {
+          "correct": 0,
+          "total": 20,
+          "invalid": 0,
+          "accuracy": 0
+        },
+        "temporal-reasoning": {
+          "correct": 6,
+          "total": 20,
+          "invalid": 0,
+          "accuracy": 30
+        },
+        "knowledge-update": {
+          "correct": 11,
+          "total": 20,
+          "invalid": 0,
+          "accuracy": 55.00000000000001
+        },
+        "single-session-assistant": {
+          "correct": 18,
+          "total": 20,
+          "invalid": 0,
+          "accuracy": 90
+        },
+        "locomo": {
+          "correct": 15,
+          "total": 15,
+          "invalid": 0,
+          "accuracy": 100
+        }
+      }
+    }
+  }
+}
