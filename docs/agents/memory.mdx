@@ -328,6 +328,22 @@ entries. Each observation carries:
   than its least-trusted source, so `external` material cannot launder itself
   into a `system`-level fact.
 
+**Fold-into-existing (proof accrual).** When a fact is **corroborated across
+multiple runs**, consolidation **folds the new sources into the existing
+observation** — growing its `proof_count` and `source_ids` and appending to its
+`history` — instead of always creating a second observation. The fold is:
+
+- **idempotent** — re-running over the same sources never double-counts (the new
+  source IDs are diffed against the ones already recorded), so a repeated review
+  pass is a no-op;
+- **trust-ceiling preserving** — the folded trust level is `min(sources)`, so a
+  fold can only **lower** an observation's trust, never launder it upward;
+- **decay-refreshing** — it refreshes `confidence` and recency so the half-life
+  decay stays meaningful as proof accrues.
+
+Because the grown `proof_count` feeds the `proofAlpha` ranking boost, a fact
+corroborated across runs out-ranks a one-off mention at recall time.
+
 Consolidation is **non-destructive** (source memories are kept) and **opt-in
 (default off)** — it is a cost gate because it runs the LLM on a schedule. The
 configuration lives in the [config reference](/reference/config-yaml); this page
@@ -374,6 +390,63 @@ memory:
     targetSize: 500
   retention:
     maxAgeDays: 0     # No age limit
+```
+
+**Recall (`rag.*`) configuration.** Every knob that shapes the recall pipeline
+above, with its verified default. The full config reference lives at
+[`/reference/config-yaml`](/reference/config-yaml).
+
+| Option | Type | Default | What it does |
+|--------|------|---------|--------------|
+| `rag.enabled` | boolean | `true` | Enable automatic memory retrieval before LLM calls |
+| `rag.maxResults` | number | `5` | Max memory results to retrieve |
+| `rag.maxContextChars` | number | `4000` | Max characters of memory context injected |
+| `rag.minScore` | number | `0.1` | Minimum RRF score to include a result |
+| `rag.includeTrustLevels` | array | `["system","learned"]` | Trust levels eligible (external excluded by default) |
+| `rag.rerank.enabled` | boolean | `false` | Force the cross-encoder rerank on/off; UNSET = auto-on when the model is present locally (see [Reranking](#reranking-locally-gated-default-on)) |
+| `rag.rerank.maxCandidates` | number | `40` | Candidate cap for rerank |
+| `rag.rerank.minResults` | number | `1` | Skip rerank below this many candidates |
+| `rag.rerank.timeoutMs` | number | `800` | Rerank wall-clock budget; fall back to fusion on timeout |
+| `rag.scoring.recencyAlpha` | number | `0.2` | Recency (record-time) boost weight |
+| `rag.scoring.temporalAlpha` | number | `0.2` | Event-time proximity boost weight (neutral when `occurred_at` absent) |
+| `rag.scoring.proofAlpha` | number | `0.1` | Proof-count (consolidation) boost weight |
+| `rag.scoring.trustAlpha` | number | `0.1` | Trust-level boost + tie-break weight |
+| `rag.scoring.usefulnessAlpha` | number | `0.1` | Usefulness boost weight (feedback loop; neutral when absent) |
+| `rag.lanes.fts.weight` | number | `1.0` | FTS (BM25) lane RRF weight |
+| `rag.lanes.vector.weight` | number | `1.5` | Vector (KNN) lane RRF weight |
+| `rag.lanes.temporal.enabled` | boolean | `false` | Enable the temporal-spread lane (default off) |
+| `rag.lanes.temporal.weight` | number | `1.0` | Temporal-spread lane RRF weight |
+| `rag.lanes.temporal.windowDays` | number | `7` | Window (days) around seed event times |
+| `rag.lanes.causal.enabled` | boolean | `false` | Enable the one-hop causal lane (default off) |
+| `rag.lanes.causal.weight` | number | `1.0` | Causal lane RRF weight |
+| `rag.entityLane.enabled` | boolean | `false` | Enable the entity associative lane (default off) |
+| `rag.entityLane.seedCount` | number | `5` | Top hits that seed the entity self-join |
+| `rag.entityLane.perEntityCap` | number | `200` | Max shared-entity neighbour rows |
+| `rag.entityLane.weight` | number | `1.0` | Entity lane RRF weight |
+| `rag.feedback.enabled` | boolean | `false` | Enable the recall-utility feedback loop (default off; opt-in) |
+
+```yaml title="~/.comis/config.yaml"
+agents:
+  default:
+    rag:
+      enabled: true
+      maxResults: 5
+      lanes:
+        fts:
+          weight: 1.0
+        vector:
+          weight: 1.5
+        temporal:
+          enabled: false     # default off
+          weight: 1.0
+          windowDays: 7
+        causal:
+          enabled: false     # default off
+          weight: 1.0
+      feedback:
+        enabled: false       # default off — opt-in recall-utility loop
+      scoring:
+        usefulnessAlpha: 0.1
 ```
 
 <CardGroup cols={2}>
