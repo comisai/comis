@@ -35,6 +35,7 @@ import {
   wireRecallCounters,
   type RecallCountersWiring,
 } from "../observability/recall-counters-wiring.js";
+import { wireMemoryUsefulness } from "./setup-memory-usefulness-wiring.js";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -388,6 +389,29 @@ export async function setupMemory(deps: {
   // feed — never a fresh registry per call. The gauge is daemon-lifetime (resets
   // on restart, Assumption A2). Counts only ever cross the bus (AGENTS.md §2.7).
   const recallCounters = wireRecallCounters(container.eventBus);
+
+  // 6.5.2f. Recall-utility write-back subscriber (Phase 93, FEED-01 → FEED-02).
+  // Subscribe `memory:recall_used` (emitted by @comis/agent's postExecution) →
+  // usefulnessStore.recordUsage HERE — the composition root holds BOTH the bus
+  // AND the @comis/memory adapter (the agent↛memory cut: the agent emits ids+counts,
+  // the daemon writes). Mirrors the wireRecallCounters subscriber above. The
+  // `feedbackEnabled` gate scans the parsed per-agent config (mirroring the
+  // someAgentExplicitOn rerank-gate scan above) so default-off (no agent has
+  // feedback on) makes the subscriber a no-op write AND keeps the read-side off.
+  // (When Plan 93-04 adds the `feedback` schema field this access is live; until
+  // then the forward-declared view yields false = off.) Fire-and-forget/non-fatal.
+  wireMemoryUsefulness({
+    eventBus: container.eventBus,
+    usefulnessStore,
+    clock,
+    logger: memoryLogger,
+    feedbackEnabled: () =>
+      Object.values(container.config.agents ?? {}).some(
+        (a) =>
+          (a?.rag as ({ feedback?: { enabled?: boolean } } | undefined))?.feedback
+            ?.enabled === true,
+      ),
+  });
 
   // 6.5.3. Wire caching: L1(L2(provider)) when persistent, L1(provider) otherwise
   let cachedPort: EmbeddingPort | undefined;
