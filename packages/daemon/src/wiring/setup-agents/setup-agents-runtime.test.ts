@@ -457,18 +457,36 @@ describe("setupSingleAgent rerank auto-on precedence (RERANK-01)", () => {
     );
   });
 
-  it("reads the explicit signal from the RAW pre-parse config, NOT the zod-defaulted parse (Pitfall 1)", () => {
+  it("feeds resolveEffectiveRerank the GENUINE raw tri-state signal, not the zod-defaulted parse (CR-01)", () => {
+    // CR-01 fix: the precedence MUST read the RAW (pre-Zod-default) rerank value.
+    // The parsed agentConfig.rag.rerank.enabled is ALWAYS a concrete boolean
+    // (.default(false)), so reading it would erase the unset signal and make auto-on
+    // impossible. The raw value comes from the explicit `rawRerankEnabled` arg (hot-add)
+    // else the daemon-wide map on the container (boot path). The OLD broken code read
+    // `rawAgentConfig.rag?.rerank?.enabled` (a misnomer — that object was already parsed);
+    // assert that dead pattern is GONE.
     const fnStart = source.indexOf("export async function setupSingleAgent(");
     const fnBody = source.slice(fnStart);
-    // RawAgentConfig.rag?.rerank?.enabled is `undefined` when unset; the parsed
-    // agentConfig.rag.rerank.enabled is ALWAYS a concrete boolean (.default(false)),
-    // which would erase the unset signal and never auto-on. Must read raw.
-    expect(fnBody).toContain("rawAgentConfig.rag?.rerank?.enabled");
-    // And it feeds the threaded modelPresent (deps.rerankerModelPresent).
+    expect(fnBody).not.toContain("rawAgentConfig.rag?.rerank?.enabled");
+    // The resolved raw value (rawRerank) is what feeds resolveEffectiveRerank.
     const callStart = fnBody.indexOf("enabled: resolveEffectiveRerank(");
-    const callSlice = fnBody.slice(callStart, callStart + 140);
-    expect(callSlice).toContain("rawAgentConfig.rag?.rerank?.enabled");
+    const callSlice = fnBody.slice(callStart, callStart + 80);
+    expect(callSlice).toContain("rawRerank");
     expect(callSlice).toContain("deps.rerankerModelPresent");
+    // rawRerank resolves from the explicit arg first, then the container raw map.
+    expect(fnBody).toContain("rawRerankEnabled !== undefined");
+    expect(fnBody).toContain("container.rawAgentRerankEnabled?.get(agentId)");
+  });
+
+  it("threads the raw rerank signal from the boot loop and hot-add into setupSingleAgent (one source)", () => {
+    // The boot loop passes container.rawAgentRerankEnabled.get(agentId) as the 4th arg.
+    expect(registrySource).toContain("container.rawAgentRerankEnabled?.get(agentId)");
+    // The build gate (setup-memory) reads the SAME raw map, so the two gates can't desync.
+    const memorySource = readFileSync(
+      join(__dirname, "..", "setup-memory.ts"),
+      "utf-8",
+    );
+    expect(memorySource).toContain("container.rawAgentRerankEnabled");
   });
 
   it("still writes the effective config back to container.config.agents[agentId] (downstream contract)", () => {

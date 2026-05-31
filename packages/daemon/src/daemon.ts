@@ -991,19 +991,21 @@ function resolveGatewayTokens(deps: {
 function createHotAdd(deps: {
   channels: PostChannelsBootContext;
   shutdownRef: { value?: { readonly isShuttingDown: boolean } };
-}): (agentId: string, config: PerAgentConfig) => Promise<void> {
+}): (agentId: string, config: PerAgentConfig, rawRerankEnabled?: boolean | undefined) => Promise<void> {
   const { channels, shutdownRef } = deps;
   const {
     singleAgentDeps, executors, workspaceDirs, costTrackers, budgetGuards,
     stepCounters, piSessionAdapters, skillWatcherHandles, skillRegistries,
     toolCapabilityPorts, container, daemonLogger,
   } = channels;
-  return async (agentId, config) => {
+  return async (agentId, config, rawRerankEnabled) => {
     const startMs = systemNowMs();
     if (shutdownRef.value?.isShuttingDown) {
       throw new Error("Cannot hot-add agent during shutdown");
     }
-    const result = await setupSingleAgent(agentId, config, singleAgentDeps);
+    // Phase 92 (CR-01): forward the RAW rerank signal from the agents.create RPC input
+    // so the hot-added agent's effective-rerank precedence matches the boot path.
+    const result = await setupSingleAgent(agentId, config, singleAgentDeps, rawRerankEnabled);
     executors.set(agentId, result.executor);
     workspaceDirs.set(agentId, result.workspaceDir);
     costTrackers.set(agentId, result.costTracker);

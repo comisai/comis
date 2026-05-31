@@ -258,9 +258,19 @@ export async function setupMemory(deps: {
   }
   // someAgentExplicitOn preserves the explicit opt-in DOWNLOAD path (operator set
   // `rag.rerank.enabled: true` on a fresh machine still fetches — Pitfall 3 / T-92-05).
-  const someAgentExplicitOn = Object.values(container.config.agents ?? {}).some(
-    (agent) => agent?.rag?.rerank?.enabled === true,
-  );
+  // WR-03: read the SAME raw pre-Zod-default signal the per-agent effective-rerank
+  // precedence consumes (container.rawAgentRerankEnabled), NOT the parsed
+  // container.config.agents. Both gates therefore share ONE definition of "explicitly
+  // on" — a future change to the rerank schema default can no longer silently desync the
+  // build gate from the per-agent flip. Falls back to scanning the parsed config only
+  // when the raw map is absent (non-bootstrap AppContainer); there `=== true` is still
+  // correct because Zod defaults unset to false, so `true` can only be an explicit opt-in.
+  const rawRerankMap = container.rawAgentRerankEnabled;
+  const someAgentExplicitOn = rawRerankMap
+    ? [...rawRerankMap.values()].some((enabled) => enabled === true)
+    : Object.values(container.config.agents ?? {}).some(
+        (agent) => agent?.rag?.rerank?.enabled === true,
+      );
   const shouldBuildReranker = someAgentExplicitOn || modelPresent;
   // Boundary decision an operator must be able to reconstruct (AGENTS.md §2.7). Booleans
   // only — never the model-path body beyond the non-secret config path (T-92-07).

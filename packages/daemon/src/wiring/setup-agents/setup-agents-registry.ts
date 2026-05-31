@@ -447,7 +447,17 @@ export async function setupAgents(deps: {
   };
 
   for (const [agentId, agentConfig] of Object.entries(agents)) {
-    const result = await setupSingleAgent(agentId, agentConfig, singleAgentDeps);
+    // Phase 92 (CR-01): pass the RAW (pre-Zod-default) rerank signal from the
+    // daemon-wide map so the per-agent effective-rerank precedence sees genuine
+    // unset (undefined) vs explicit-off (false). `agentConfig` here is the PARSED
+    // config — its rag.rerank.enabled is always a concrete boolean and would erase
+    // the unset signal if read directly.
+    const result = await setupSingleAgent(
+      agentId,
+      agentConfig,
+      singleAgentDeps,
+      container.rawAgentRerankEnabled?.get(agentId),
+    );
     executors.set(agentId, result.executor);
     workspaceDirs.set(agentId, result.workspaceDir);
     costTrackers.set(agentId, result.costTracker);

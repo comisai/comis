@@ -91,6 +91,53 @@ describe("bootstrap", () => {
     }
   });
 
+  it("derives rawAgentRerankEnabled preserving the genuine unset/true/false tri-state (RERANK-01)", () => {
+    // Phase 92 (CR-01): the parsed config.agents.<id>.rag.rerank.enabled is ALWAYS a
+    // concrete boolean (.default(false)), so the unset signal is erased there. The raw map
+    // must be derived from the PRE-Zod merged config and keep `undefined` for an agent that
+    // never set it — that is what lets the daemon distinguish auto-on (unset + model present)
+    // from explicit force-off. Three agents pin the full tri-state.
+    const dir = makeTmpDir();
+    const configPath = writeYaml(
+      dir,
+      "config.yaml",
+      [
+        "tenantId: rerank-test",
+        "agents:",
+        "  unsetAgent:",
+        "    name: Unset",
+        "  onAgent:",
+        "    name: On",
+        "    rag:",
+        "      rerank:",
+        "        enabled: true",
+        "  offAgent:",
+        "    name: Off",
+        "    rag:",
+        "      rerank:",
+        "        enabled: false",
+        "",
+      ].join("\n"),
+    );
+
+    const result = bootstrap({ configPaths: [configPath], env: {} });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      containers.push(result.value);
+      const raw = result.value.rawAgentRerankEnabled;
+      expect(raw).toBeDefined();
+      // Genuine tri-state survives in the raw map.
+      expect(raw!.get("unsetAgent")).toBeUndefined();
+      expect(raw!.get("onAgent")).toBe(true);
+      expect(raw!.get("offAgent")).toBe(false);
+      // The PARSED config, by contrast, erased the unset agent's signal to a concrete false.
+      expect(result.value.config.agents.unsetAgent!.rag.rerank.enabled).toBe(false);
+      // Proving the raw map is NOT just a view of the parsed config: unset -> undefined,
+      // parsed -> false. That divergence is the whole point of CR-01's fix.
+      expect(raw!.get("unsetAgent")).not.toBe(result.value.config.agents.unsetAgent!.rag.rerank.enabled);
+    }
+  });
+
   it("container.eventBus is a TypedEventBus", () => {
     const dir = makeTmpDir();
     const configPath = writeYaml(dir, "config.yaml", "tenantId: evtest\n");

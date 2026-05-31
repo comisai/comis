@@ -135,8 +135,8 @@ function createMinimalContainer(overrides: Record<string, any> = {}) {
         rerankerThreads: 4,
         ...overrides.memory,
       },
-      // Per-agent configs scanned for rag.rerank.enabled (the build gate). Default:
-      // a single all-default agent with rerank OFF -> the factory must NOT be called.
+      // Per-agent configs scanned for rag.rerank.enabled (the build gate fallback path).
+      // Default: a single all-default agent with rerank OFF -> the factory must NOT be called.
       agents: overrides.agents ?? { default: { rag: { rerank: { enabled: false } } } },
       embedding: {
         enabled: false,
@@ -150,6 +150,10 @@ function createMinimalContainer(overrides: Record<string, any> = {}) {
       },
       dataDir: "/test/data",
     },
+    // Phase 92 (WR-03): the build gate reads this RAW (pre-Zod-default) map when present
+    // so it shares ONE definition of "explicitly on" with the per-agent precedence. When
+    // omitted (undefined), setupMemory falls back to scanning the parsed config.agents.
+    rawAgentRerankEnabled: overrides.rawAgentRerankEnabled,
     secretManager: {
       get: vi.fn(() => undefined),
       has: vi.fn(() => false),
@@ -839,6 +843,62 @@ describe("setupMemory", () => {
     );
     expect(result.rerankerPort).toBeDefined();
     expect(result.rerankerPort!.isAvailable()).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // WR-03: the build gate keys on the SAME raw pre-default signal the per-agent
+  // precedence consumes (container.rawAgentRerankEnabled), so the two gates share
+  // one definition of "explicitly on" and cannot desync on a future schema change.
+  // -------------------------------------------------------------------------
+
+  it("builds the reranker from the RAW map when an agent is explicitly on, model absent (opt-in download)", async () => {
+    // The raw map says `researcher` is explicit-on (true). modelPresent=false. The gate
+    // is `someAgentExplicitOn(true) || modelPresent(false)` = true → factory called. This
+    // exercises the WR-03 raw-map branch, NOT the parsed-config fallback.
+    mockRerankerModelPresent.mockResolvedValueOnce(false);
+    const container = createMinimalContainer({
+      // Parsed config carries concrete false for everyone (the Zod default) — proving the
+      // gate did NOT read the parsed config (which would yield someAgentExplicitOn=false).
+      agents: { default: { rag: { rerank: { enabled: false } } }, researcher: { rag: { rerank: { enabled: false } } } },
+      rawAgentRerankEnabled: new Map<string, boolean | undefined>([
+        ["default", undefined],
+        ["researcher", true],
+      ]),
+    });
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    expect(mockCreateLocalRerankerProvider).toHaveBeenCalledOnce();
+    expect(result.rerankerPort).toBeDefined();
+  });
+
+  it("does NOT build the reranker when the RAW map shows only unset agents and model absent (RERANK-02 via raw)", async () => {
+    // The raw map shows all agents UNSET (undefined) — none explicit-on. modelPresent=false.
+    // The gate is false → zero download. Crucially the parsed config below carries
+    // `enabled: true` for one agent, which the OLD parsed-config gate would have treated as
+    // explicit-on and built — so this asserts the gate truly reads the raw map (which says
+    // unset), preserving the zero-download posture keyed on the genuine operator signal.
+    mockRerankerModelPresent.mockResolvedValueOnce(false);
+    const container = createMinimalContainer({
+      agents: { default: { rag: { rerank: { enabled: true } } } },
+      rawAgentRerankEnabled: new Map<string, boolean | undefined>([["default", undefined]]),
+    });
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    expect(mockCreateLocalRerankerProvider).not.toHaveBeenCalled();
+    expect(result.rerankerPort).toBeUndefined();
+    expect(result.rerankerModelPresent).toBe(false);
   });
 
   it("leaves rerankerPort undefined + WARNs when the factory returns err", async () => {

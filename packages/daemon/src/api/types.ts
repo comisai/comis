@@ -216,8 +216,10 @@ export interface ChannelsApiDeps {
 export interface AgentsApiDeps {
   // Agent management
   suspendedAgents: Set<string>;
-  /** Hot-add callback passed through to agent handlers for runtime agent creation without restart. */
-  hotAdd?: (agentId: string, config: PerAgentConfig) => Promise<void>;
+  /** Hot-add callback passed through to agent handlers for runtime agent creation without restart.
+   *  `rawRerankEnabled` is the RAW (pre-Zod-default) rag.rerank.enabled from the RPC input so the
+   *  hot-added agent's effective-rerank precedence distinguishes unset from explicit-off (CR-01). */
+  hotAdd?: (agentId: string, config: PerAgentConfig, rawRerankEnabled?: boolean | undefined) => Promise<void>;
   /** Hot-remove callback passed through to agent handlers for runtime agent deletion without restart. */
   hotRemove?: (agentId: string) => Promise<void>;
   // Model management

@@ -551,7 +551,10 @@ export interface BootContext {
   // Session store bridge (1 field)
   sessionStoreBridge?: SessionStoreBridge;
   // Hot-add / hot-remove closures (2 fields)
-  hotAdd?: (agentId: string, config: PerAgentConfig) => Promise<void>;
+  // `rawRerankEnabled` is the RAW (pre-Zod-default) rag.rerank.enabled from the
+  // agents.create RPC input — threaded so the hot-added agent's effective-rerank
+  // precedence sees genuine unset (undefined) vs explicit-off, same as the boot path.
+  hotAdd?: (agentId: string, config: PerAgentConfig, rawRerankEnabled?: boolean | undefined) => Promise<void>;
   hotRemove?: (agentId: string) => Promise<void>;
   // RPC dispatch deps (1 field; mutated post-gateway-init for wsConnections/mediaDir/onGatewayAttachment)
   rpcDispatchDeps?: import("./api/rpc-dispatch.js").ApiDispatchDeps;
