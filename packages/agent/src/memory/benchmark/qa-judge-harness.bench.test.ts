@@ -170,6 +170,27 @@ function extractResponseText(response: { content?: unknown[] }): string {
 }
 
 /**
+ * Inline percentile over a numeric sample (BASE-01 latency p50/p95). Sorts a COPY
+ * ascending, index = ceil(p/100 * n) - 1 clamped to [0, n-1] (the nearest-rank
+ * method). Empty sample -> 0. Kept LOCAL to this `.bench.test.ts` (NOT a new src
+ * file) so it never becomes a 0%-coverage src module under the agent all:true
+ * floor (RESEARCH TDD hard rule). Inputs are real `performance.now()` deltas, never
+ * the fake clock.
+ */
+function percentile(samples: number[], p: number): number {
+  if (samples.length === 0) return 0;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[idx];
+}
+
+/** Mean of a numeric sample (BASE-01 tokens/query); empty -> 0. */
+function mean(samples: number[]): number {
+  if (samples.length === 0) return 0;
+  return samples.reduce((sum, x) => sum + x, 0) / samples.length;
+}
+
+/**
  * Read a vendored fixture (default) or an operator-placed dataset file under
  * `COMIS_BENCH_DATA`. When the operator base is set, resolve it and assert the
  * resolved file path stays under it BEFORE `readFileSync` -- this rejects a
@@ -228,6 +249,14 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
     category: string;
     goldAnswer: string;
     context: string;
+    /**
+     * Per-question recall wall-clock latency (ms), measured around `recall.recall`
+     * in `beforeAll` via real `performance.now()` (NOT the injected fake clock --
+     * the fake clock is for recency determinism and reads constant; RESEARCH
+     * Landmine 7). Carried on the answerable so the gated it body can fold recall
+     * latency into the end-to-end per-question total.
+     */
+    recallMs: number;
   }> = [];
   let reportDir = "";
   let datasetSha = "";
@@ -341,7 +370,11 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
       const adapter = await ingestItem(lme.docs);
       const recall = makeRecall(adapter);
       for (const q of lme.questions) {
+        // LATENCY (recall segment) -- real wall-clock around the LLM-free recall call
+        // (performance.now(), NOT the fake clock; RESEARCH Landmine 7).
+        const recallStart = performance.now();
         const r = await recall.recall(q.query, BENCH_SESSION_KEY);
+        const recallMs = performance.now() - recallStart;
         const ranked: MemorySearchResult[] = r.ok ? r.value : [];
         answerables.push({
           questionId: q.questionId,
@@ -349,6 +382,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
           category: q.category, // LongMemEval question_type -> per-category judge rubric
           goldAnswer: q.answer,
           context: formatAnswerContext(ranked),
+          recallMs,
         });
       }
       adapter.close();
@@ -357,7 +391,9 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
       const adapter = await ingestItem(locomo.docs);
       const recall = makeRecall(adapter);
       for (const qa of locomo.qa) {
+        const recallStart = performance.now();
         const r = await recall.recall(qa.query, BENCH_SESSION_KEY);
+        const recallMs = performance.now() - recallStart;
         const ranked: MemorySearchResult[] = r.ok ? r.value : [];
         answerables.push({
           questionId: qa.questionId,
@@ -365,6 +401,7 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
           category: "locomo", // LoCoMo qa carry NO category -> the DEFAULT (LoCoMo) rubric
           goldAnswer: qa.answer,
           context: formatAnswerContext(ranked),
+          recallMs,
         });
       }
       adapter.close();
@@ -393,6 +430,20 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
 
       const verdicts: CategorizedVerdict[] = [];
 
+      // BASE-01 measurement accumulators (valid questions only -- a question whose
+      // model lane failed to resolve is excluded from tokens + latency, exactly as it
+      // is excluded from the accuracy denominator). Tokens via `usage.totalTokens`
+      // (pi-ai returns it on every completeSimple); latency via real performance.now()
+      // wall-clock deltas (NOT the fake clock; RESEARCH Landmine 7).
+      const answerTokens: number[] = [];
+      const judgeTokens: number[] = [];
+      const answerCosts: number[] = [];
+      const judgeCosts: number[] = [];
+      const recallLatencies: number[] = [];
+      const answerLatencies: number[] = [];
+      const judgeLatencies: number[] = [];
+      const endToEndLatencies: number[] = [];
+
       for (const a of answerables) {
         // category + goldAnswer + the recalled `context` were all resolved per item in
         // beforeAll (recall is LLM-free and ran against each item's OWN store). Only the
@@ -415,6 +466,11 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
         const answerController = new AbortController();
         const answerTimer = setTimeout(() => answerController.abort(), LLM_TIMEOUT_MS);
         let modelAnswer = "";
+        // BASE-01 per-question answer measurements (tokens via usage.totalTokens;
+        // latency via real wall-clock around the completeSimple call).
+        let answerTokensThis = 0;
+        let answerCostThis = 0;
+        const answerStart = performance.now();
         try {
           const answerResp = await completeSimple(
             answerModel,
@@ -427,15 +483,24 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
             { apiKey: ANSWER_API_KEY, temperature: 0.0, maxTokens: 4096, signal: answerController.signal },
           );
           modelAnswer = extractResponseText(answerResp);
+          // usage is always present on a completeSimple AssistantMessage (pi-ai
+          // types.d.ts) -- currently discarded by extractResponseText. Numbers only;
+          // no secret reaches the report (the secret-omission assertion below proves it).
+          answerTokensThis = answerResp.usage.totalTokens;
+          answerCostThis = answerResp.usage.cost.total;
         } finally {
           clearTimeout(answerTimer);
         }
+        const answerMs = performance.now() - answerStart;
 
         // JUDGE LLM -- a SEPARATE model lane, temperature 0 (Pitfall 2 determinism). The
         // category-specific rubric is placed FIRST (prompt-injection ordering, Plan 01).
         const judgeController = new AbortController();
         const judgeTimer = setTimeout(() => judgeController.abort(), LLM_TIMEOUT_MS);
         let judgeText = "";
+        let judgeTokensThis = 0;
+        let judgeCostThis = 0;
+        const judgeStart = performance.now();
         try {
           const judgeResp = await completeSimple(
             judgeModel,
@@ -451,21 +516,62 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
             { apiKey: JUDGE_API_KEY, temperature: 0, maxTokens: 1024, signal: judgeController.signal },
           );
           judgeText = extractResponseText(judgeResp);
+          judgeTokensThis = judgeResp.usage.totalTokens;
+          judgeCostThis = judgeResp.usage.cost.total;
         } finally {
           clearTimeout(judgeTimer);
         }
+        const judgeMs = performance.now() - judgeStart;
 
         // PARSE -- undefined => INVALID (excluded from the denominator), NEVER wrong.
         const verdict = parseJudgeVerdict(judgeText);
+        const invalid = verdict === undefined;
         verdicts.push(
-          verdict === undefined
+          invalid
             ? { category: a.category, correct: false, invalid: true }
             : { category: a.category, correct: verdict.correct, invalid: false },
         );
+
+        // BASE-01: record tokens + latency for VALID questions only (same exclusion
+        // as the accuracy denominator). End-to-end = recall (from beforeAll) + answer +
+        // judge for this question.
+        if (!invalid) {
+          answerTokens.push(answerTokensThis);
+          judgeTokens.push(judgeTokensThis);
+          answerCosts.push(answerCostThis);
+          judgeCosts.push(judgeCostThis);
+          recallLatencies.push(a.recallMs);
+          answerLatencies.push(answerMs);
+          judgeLatencies.push(judgeMs);
+          endToEndLatencies.push(a.recallMs + answerMs + judgeMs);
+        }
       }
 
       // AGGREGATE -- overall + per-category, invalid-excluded denominator (Plan 02).
       metrics = aggregateAccuracy(verdicts);
+
+      // BASE-01 COST + LATENCY blocks -- mean tokens/query (answer + judge, valid
+      // questions only) and p50/p95 wall-clock latency (recall/answer/judge/end-to-end).
+      // Pure numbers; threaded into the builder so qa-report.json carries them.
+      const answerTokensPerQuery = mean(answerTokens);
+      const judgeTokensPerQuery = mean(judgeTokens);
+      const cost = {
+        answerTokensPerQuery,
+        judgeTokensPerQuery,
+        totalTokensPerQuery: answerTokensPerQuery + judgeTokensPerQuery,
+        answerCostUsd: answerCosts.reduce((sum, x) => sum + x, 0),
+        judgeCostUsd: judgeCosts.reduce((sum, x) => sum + x, 0),
+      };
+      const latency = {
+        recallP50Ms: percentile(recallLatencies, 50),
+        recallP95Ms: percentile(recallLatencies, 95),
+        answerP50Ms: percentile(answerLatencies, 50),
+        answerP95Ms: percentile(answerLatencies, 95),
+        judgeP50Ms: percentile(judgeLatencies, 50),
+        judgeP95Ms: percentile(judgeLatencies, 95),
+        endToEndP50Ms: percentile(endToEndLatencies, 50),
+        endToEndP95Ms: percentile(endToEndLatencies, 95),
+      };
 
       // REPORT -- record ONLY {provider,modelId} per role (Pitfall 6; the builder
       // structurally omits any api key even if one were passed). Dataset sha256 from
@@ -501,6 +607,8 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
             scoringAlphas: { recency: 0.2, temporal: 0.2, proof: 0.1, trust: 0.1 },
           },
           harnessVersion: HARNESS_VERSION,
+          cost: cost,
+          latency: latency,
         },
         metrics,
         Date.now(),
