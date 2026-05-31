@@ -80,7 +80,7 @@ describe("MemoryPort.searchLanes — the un-fused per-lane split (LANES-01)", ()
     }
   });
 
-  it("typechecks searchLanes as (sessionKey, query, options?) => Promise<Result<{fts,vector}, Error>>", () => {
+  it("checks searchLanes is typed (sessionKey, query, options?) => Promise of Result of fts+vector lanes", () => {
     const stub: MemoryPort = {
       store: async () => ok({} as MemorySearchResult["entry"]),
       search: async (): Promise<Result<MemorySearchResult[], Error>> => ok([]),
