@@ -1,0 +1,11 @@
+{
+  "harnessVersion": "phase-101-06-v1",
+  "benchmark": "reasoning-observations-default-off-byte-identity",
+  "scenario": "config.enabled=false => 0 reason() calls + unchanged row count",
+  "reasonCallCount": 0,
+  "memoriesBefore": 2,
+  "memoriesAfter": 2,
+  "triplesBefore": 0,
+  "triplesAfter": 0,
+  "defaultOffWroteNothing": true
+}

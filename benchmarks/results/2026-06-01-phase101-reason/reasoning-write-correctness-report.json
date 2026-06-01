@@ -1,0 +1,20 @@
+{
+  "harnessVersion": "phase-101-06-v1",
+  "benchmark": "reasoning-observations-write-correctness",
+  "scenario": "inductive <= learned + deductive current-truth + trust-first anti-poisoning",
+  "inductiveWritten": true,
+  "inductiveObservationKind": "inductive",
+  "inductiveTrust": "learned",
+  "inductiveTrustIsLearned": true,
+  "systemInductiveRows": 0,
+  "deductiveCurrentTruthObjects": [
+    "short replies"
+  ],
+  "deductiveIsCurrentTruth": true,
+  "trustFirst": {
+    "incumbent": "Paris (system)",
+    "newerClaim": "Berlin (external)",
+    "incumbentSurvived": true,
+    "externalIsCurrent": false
+  }
+}

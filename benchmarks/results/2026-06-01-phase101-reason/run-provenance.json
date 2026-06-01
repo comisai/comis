@@ -1,0 +1,44 @@
+{
+  "gate": "REASON-05 (Phase 101 benchmark regression gate)",
+  "date": "2026-06-01",
+  "harnessCommit": "8c4bbd53",
+  "branch": "v2.8-prove-climb",
+  "piAiVersion": "0.78.0",
+  "keyless": true,
+  "models": {
+    "note": "KEYLESS — no answer model, no judge, no provider call, no API key, no cost. The reasoning job's offline reason() seam is a DETERMINISTIC injected stub returning fixed typed candidates; the trust ceilings are computed in the job's CODE, not by any LLM."
+  },
+  "reasoningJob": {
+    "enabledForMeasurement": true,
+    "consolidationStoreInjected": true,
+    "tripleStoreInjected": true,
+    "note": "graph-spread/inductive writes exercised ONLY by the new keyless reasoning-observations.bench.test.ts this plan added. The shipped qa/retrieval/contradiction harnesses do NOT wire the reasoning observations into recall (the SAME KG-05 structural gap) — see GATE-REPORT.md §3."
+  },
+  "measurementsTaken": [
+    {
+      "name": "reasoning-observations WRITE-correctness",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "harness": "packages/agent/src/memory/benchmark/reasoning-observations.bench.test.ts",
+      "productionCodePath": "runMemoryReasoning (bare @comis/agent) + createSqliteMemoryConsolidationStore + createSqliteTripleStore (bare @comis/memory) over a shared db; the REAL applyConsolidation (inductive) + the REAL trust-first upsertTriple (deductive); trust ceilings computed in the job's CODE",
+      "report": "reasoning-write-correctness-report.json",
+      "result": "inductive observation written at trust 'learned' (NEVER 'system'; systemInductiveRows=0) with observationKind='inductive'; deductive S/P/O 'short replies' is current-truth; trust-first — Paris (system) stays current, Berlin (external) is NOT current"
+    },
+    {
+      "name": "reasoning-observations DEFAULT-OFF byte-identity",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "harness": "packages/agent/src/memory/benchmark/reasoning-observations.bench.test.ts",
+      "productionCodePath": "runMemoryReasoning with config.enabled=false over the same real stores",
+      "report": "reasoning-default-off-report.json",
+      "result": "reasonCallCount=0; memories 2->2; triples 0->0; defaultOffWroteNothing=true — the no-op proof by construction (the shipping default ships the job OFF)"
+    }
+  ],
+  "measurementsDeferredToOperatorCostedReRun": [
+    {
+      "name": "QA cross-judge multi-session accuracy lift from the reasoning observations",
+      "why": "The shipped qa-judge-harness.bench.test.ts does NOT wire the reasoning observations into recall (the SAME KG-05 structural gap, verified). Making a costed QA cross-judge measure a reasoning-ON lift requires FIRST (a) wiring the reasoning observations into the QA recall path AND (b) a costed reasoning pass over the corpus (the offline reason() seam needs a costed model — there is no keyless reasoner). That harness extension is beyond this regression-gate plan's scope. Therefore the costed QA cross-judge multi-session lift is an OPERATOR COSTED RE-RUN, scheduled after the QA harness is extended (a Phase-101 gap-closure or a follow-on plan). NO multi-session delta is quoted — quoting a guessed delta would be exactly the fabrication this gate exists to prevent.",
+      "baselineToDiffAgainst": "benchmarks/results/2026-05-31-j1-baseline/ (multi-session 60/65, overall 71.1/73.3, recall@5 0.845)"
+    }
+  ],
+  "baselineRef": "benchmarks/results/2026-05-31-j1-baseline/",
+  "honestyProtocol": "Every number in GATE-REPORT.md traces to a committed JSON in this directory (read back from disk + asserted in the harness before quoting). The bench is keyless — no QA accuracy number is produced or quoted; the QA cross-judge cell is explicitly 'not measured — operator costed re-run', NOT a guessed delta. A post-write credential-shape sweep over the manifest JSONs is clean (no secret-key prefixes, bearer tokens, or credential field markers)."
+}
