@@ -107,6 +107,7 @@ export const SecretsSetContract = defineContract({
   response: z.object({
     name: z.string(),
     stored: z.boolean(),
+    restarting: z.boolean(),
   }),
   scopes: ["admin"] as const,
 });
@@ -192,6 +193,7 @@ export const SecretsDeleteContract = defineContract({
   response: z.object({
     name: z.string(),
     deleted: z.boolean(),
+    restarting: z.boolean(),
   }),
   scopes: ["admin"] as const,
 });

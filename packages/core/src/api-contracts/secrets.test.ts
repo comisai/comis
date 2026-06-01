@@ -93,10 +93,18 @@ describe("secrets-domain contracts", () => {
 
   it("secrets.set: response shape requires { name, stored: boolean }", () => {
     expect(() =>
-      SecretsSetContract.response.parse({ name: "FOO", stored: true }),
+      SecretsSetContract.response.parse({
+        name: "FOO",
+        stored: true,
+        restarting: false,
+      }),
     ).not.toThrow();
     expect(() =>
-      SecretsSetContract.response.parse({ name: "FOO", stored: false }),
+      SecretsSetContract.response.parse({
+        name: "FOO",
+        stored: false,
+        restarting: true,
+      }),
     ).not.toThrow();
     expect(() =>
       SecretsSetContract.response.parse({ name: "FOO", stored: "yes" }),
@@ -251,10 +259,18 @@ describe("secrets-domain contracts", () => {
 
   it("secrets.delete: response shape requires { name, deleted: boolean }", () => {
     expect(() =>
-      SecretsDeleteContract.response.parse({ name: "FOO", deleted: true }),
+      SecretsDeleteContract.response.parse({
+        name: "FOO",
+        deleted: true,
+        restarting: false,
+      }),
     ).not.toThrow();
     expect(() =>
-      SecretsDeleteContract.response.parse({ name: "FOO", deleted: false }),
+      SecretsDeleteContract.response.parse({
+        name: "FOO",
+        deleted: false,
+        restarting: true,
+      }),
     ).not.toThrow();
     expect(() =>
       SecretsDeleteContract.response.parse({ name: "FOO", deleted: "yes" }),

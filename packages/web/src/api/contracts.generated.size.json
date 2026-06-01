@@ -1,6 +1,6 @@
 {
-  "totalMinified": 112396,
-  "totalGzipped": 10427,
+  "totalMinified": 112478,
+  "totalGzipped": 10442,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -165,10 +165,10 @@
     "providers.list": 703,
     "providers.update": 585,
     "scheduler.wake": 345,
-    "secrets.delete": 379,
+    "secrets.delete": 424,
     "secrets.get": 403,
     "secrets.list": 577,
-    "secrets.set": 516,
+    "secrets.set": 561,
     "session.compact": 639,
     "session.delete": 778,
     "session.export": 709,

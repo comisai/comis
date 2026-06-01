@@ -8130,11 +8130,15 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "deleted": {
           "type": "boolean"
+        },
+        "restarting": {
+          "type": "boolean"
         }
       },
       "required": [
         "name",
-        "deleted"
+        "deleted",
+        "restarting"
       ],
       "additionalProperties": false
     },
@@ -8272,11 +8276,15 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "stored": {
           "type": "boolean"
+        },
+        "restarting": {
+          "type": "boolean"
         }
       },
       "required": [
         "name",
-        "stored"
+        "stored",
+        "restarting"
       ],
       "additionalProperties": false
     },
