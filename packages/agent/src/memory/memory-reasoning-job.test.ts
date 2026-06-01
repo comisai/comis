@@ -360,5 +360,303 @@ describe("runMemoryReasoning — Task 1: default-OFF + deductive (upsertTriple)"
   });
 });
 
+describe("runMemoryReasoning — Task 2: inductive (≤ learned) + surprisal + scope + idempotency", () => {
+  let adapter: SqliteMemoryAdapter;
+  let db: Database.Database;
+  let tripleStore: ReturnType<typeof createSqliteTripleStore>;
+  let consolidationStore: ReturnType<typeof createSqliteMemoryConsolidationStore>;
+
+  async function seedMemory(overrides: Partial<MemoryEntry>): Promise<string> {
+    const id = overrides.id ?? randomUUID();
+    const entry: MemoryEntry = {
+      id,
+      tenantId: overrides.tenantId ?? TENANT,
+      agentId: overrides.agentId ?? AGENT,
+      userId: overrides.userId ?? "user_a",
+      content: overrides.content ?? "neutral content",
+      trustLevel: overrides.trustLevel ?? "learned",
+      source: overrides.source ?? { who: "agent", channel: "test" },
+      tags: overrides.tags ?? [],
+      createdAt: overrides.createdAt ?? 1_000,
+      ...(overrides.occurredAt !== undefined ? { occurredAt: overrides.occurredAt } : {}),
+      ...(overrides.embedding ? { embedding: overrides.embedding } : {}),
+    };
+    const r = await adapter.store(entry);
+    expect(r.ok).toBe(true);
+    return id;
+  }
+
+  /** Count inductive observation rows (observation_kind='inductive'). */
+  function inductiveObservationCount(): number {
+    const row = db
+      .prepare("SELECT COUNT(*) AS c FROM memories WHERE observation_kind = 'inductive'")
+      .get() as { c: number };
+    return row.c;
+  }
+
+  /** Rows that VIOLATE the binding constraint: inductive AND trust system. */
+  function inductiveSystemTrustCount(): number {
+    const row = db
+      .prepare("SELECT COUNT(*) AS c FROM memories WHERE observation_kind = 'inductive' AND trust_level = 'system'")
+      .get() as { c: number };
+    return row.c;
+  }
+
+  /** All inductive observation rows (trust_level + pattern_type + proof_count + content). */
+  function inductiveRows(): Array<{
+    trust_level: TrustLevel;
+    pattern_type: string | null;
+    proof_count: number | null;
+    content: string;
+  }> {
+    return db
+      .prepare(
+        "SELECT trust_level, pattern_type, proof_count, content FROM memories WHERE observation_kind = 'inductive'",
+      )
+      .all() as Array<{ trust_level: TrustLevel; pattern_type: string | null; proof_count: number | null; content: string }>;
+  }
+
+  function makeDeps(overrides: Partial<MemoryReasoningDeps> = {}): MemoryReasoningDeps {
+    return {
+      agentId: AGENT,
+      tenantId: TENANT,
+      config: { ...baseConfig, ...(overrides.config ?? {}) },
+      consolidationStore,
+      tripleStore,
+      clock: { now: () => NOW, nowDate: () => new Date(NOW) } as MemoryReasoningDeps["clock"],
+      logger: makeLogger(),
+      eventBus: overrides.eventBus ?? makeEventBus(),
+      reason: overrides.reason ?? makeReasonSpy().reason,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    adapter = new SqliteMemoryAdapter(memoryConfig);
+    db = adapter.getDb();
+    tripleStore = createSqliteTripleStore({ db });
+    consolidationStore = createSqliteMemoryConsolidationStore({ db });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  // -------------------------------------------------------------------------
+  // INDUCTIVE ≤ learned cap (T-101-05-01, the load-bearing binding constraint)
+  // -------------------------------------------------------------------------
+  it("inductive ≤ learned: an ALL-system cluster writes the observation at trust 'learned', NEVER 'system'", async () => {
+    // A cluster of ALL 'system'-trust sources.
+    await seedMemory({ content: "system fact one", createdAt: 100, trustLevel: "system" });
+    await seedMemory({ content: "system fact two", createdAt: 200, trustLevel: "system" });
+    const spy = makeReasonSpy(() => ({
+      inductive: [{ content: "alice prefers terse replies", patternType: "preference" }],
+    }));
+    const deps = makeDeps({ reason: spy.reason });
+
+    const result = await runMemoryReasoning(deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.inductiveWritten).toBe(1);
+
+    expect(inductiveObservationCount()).toBe(1);
+    const rows = inductiveRows();
+    expect(rows).toHaveLength(1);
+    // THE BINDING CONSTRAINT: an all-system cluster STILL yields 'learned'.
+    expect(rows[0].trust_level).toBe<TrustLevel>("learned");
+    expect(rows[0].trust_level).not.toBe("system");
+    expect(rows[0].pattern_type).toBe("preference");
+    expect(rows[0].proof_count).toBe(2); // evidence count = cluster size
+    // The invariant violation must NOT exist anywhere.
+    expect(inductiveSystemTrustCount()).toBe(0);
+  });
+
+  it("inductive ≤ learned: an external cluster stays at external (the cap LOWERS, never raises to learned)", async () => {
+    await seedMemory({ content: "external rumor one", createdAt: 100, trustLevel: "external" });
+    await seedMemory({ content: "external rumor two", createdAt: 200, trustLevel: "external" });
+    const spy = makeReasonSpy(() => ({ inductive: [{ content: "a tendency", patternType: "tendency" }] }));
+    // reasonExternal must be true for external sources to be reasoned at all.
+    const deps = makeDeps({ config: { ...baseConfig, reasonExternal: true }, reason: spy.reason });
+
+    const result = await runMemoryReasoning(deps);
+    expect(result.ok).toBe(true);
+    const rows = inductiveRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].trust_level).toBe<TrustLevel>("external"); // min(external, learned) = external
+  });
+
+  // -------------------------------------------------------------------------
+  // validateMemoryWrite on inductive content (T-101-05-02)
+  // -------------------------------------------------------------------------
+  it("validateMemoryWrite: a critical-pattern inductive content is BLOCKED (blocked++, nothing written)", async () => {
+    await seedMemory({ content: "notes", createdAt: 100, trustLevel: "learned" });
+    const spy = makeReasonSpy(() => ({ inductive: [{ content: "rm -rf /", patternType: "behavior" }] }));
+    const deps = makeDeps({ reason: spy.reason });
+
+    const result = await runMemoryReasoning(deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.blocked).toBeGreaterThanOrEqual(1);
+      expect(result.value.inductiveWritten).toBe(0);
+    }
+    expect(inductiveObservationCount()).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Scope partition BEFORE the seam (T-101-05-01)
+  // -------------------------------------------------------------------------
+  it("scope partition: a mixed-trust cluster is split by groupByTrustAndTagScope BEFORE the seam (homogeneous per call)", async () => {
+    // Two trust levels → groupByTrustAndTagScope must yield ≥2 sub-clusters, one homogeneous each.
+    await seedMemory({ content: "learned fact", createdAt: 100, trustLevel: "learned" });
+    await seedMemory({ content: "system fact", createdAt: 200, trustLevel: "system" });
+    // Record the cluster text per seam call; assert no single call mixes the two contents.
+    const spy = makeReasonSpy(() => ({}));
+    const deps = makeDeps({ reason: spy.reason });
+
+    await runMemoryReasoning(deps);
+
+    // The seam is called once per homogeneous scope → at least 2 calls, and no call
+    // contains BOTH the learned-fact AND the system-fact content (they never share a prompt).
+    expect(spy.calls.length).toBeGreaterThanOrEqual(2);
+    for (const text of spy.calls) {
+      const hasLearned = text.includes("learned fact");
+      const hasSystem = text.includes("system fact");
+      expect(hasLearned && hasSystem).toBe(false);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Surprisal gate (T-101-05-06)
+  // -------------------------------------------------------------------------
+  it("surprisal gate: with topFraction=0.5 only the top-half-by-novelty candidates reach the seam", async () => {
+    // 4 embedded candidates with distinct neighbour geometry → distinct surprisal.
+    await seedMemory({ content: "cand A", createdAt: 100, embedding: [1, 0, 0, 0] });
+    await seedMemory({ content: "cand B", createdAt: 200, embedding: [0.9, 0.1, 0, 0] });
+    await seedMemory({ content: "cand C", createdAt: 300, embedding: [0, 1, 0, 0] });
+    await seedMemory({ content: "cand D", createdAt: 400, embedding: [0, 0, 1, 0] });
+    const spy = makeReasonSpy(() => ({}));
+    const deps = makeDeps({ config: { ...baseConfig, surprisalTopFraction: 0.5 }, reason: spy.reason });
+
+    const result = await runMemoryReasoning(deps);
+    expect(result.ok).toBe(true);
+    // ceil(4 * 0.5) = 2 candidates selected → at most 2 distinct contents reached the seam.
+    if (result.ok) expect(result.value.surprisalSelected).toBe(2);
+    const seenContents = new Set(spy.calls.join("\n").match(/cand [A-D]/g) ?? []);
+    expect(seenContents.size).toBeLessThanOrEqual(2);
+  });
+
+  it("surprisal gate: un-embedded candidates are excluded from the reasoning set", async () => {
+    // 2 embedded + 1 un-embedded → the un-embedded one is never selected (101-04 policy).
+    await seedMemory({ content: "embedded one", createdAt: 100, embedding: [1, 0, 0, 0] });
+    await seedMemory({ content: "embedded two", createdAt: 200, embedding: [0, 1, 0, 0] });
+    await seedMemory({ content: "no embedding here", createdAt: 300 }); // no embedding
+    const spy = makeReasonSpy(() => ({}));
+    const deps = makeDeps({ config: { ...baseConfig, surprisalTopFraction: 1 }, reason: spy.reason });
+
+    const result = await runMemoryReasoning(deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.surprisalSelected).toBe(2); // only the 2 embedded
+    expect(spy.calls.join("\n").includes("no embedding here")).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Bounded (T-101-05-06)
+  // -------------------------------------------------------------------------
+  it("bounded: maxObservationsPerRun=1 with 3 inductive candidates writes exactly 1, counts the rest as skippedOverCap", async () => {
+    await seedMemory({ content: "fact one", createdAt: 100, trustLevel: "learned" });
+    const spy = makeReasonSpy(() => ({
+      inductive: [
+        { content: "pattern one", patternType: "behavior" },
+        { content: "pattern two", patternType: "behavior" },
+        { content: "pattern three", patternType: "behavior" },
+      ],
+    }));
+    const deps = makeDeps({ config: { ...baseConfig, maxObservationsPerRun: 1 }, reason: spy.reason });
+
+    const result = await runMemoryReasoning(deps);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.inductiveWritten).toBe(1);
+      expect(result.value.skippedOverCap).toBeGreaterThanOrEqual(2);
+    }
+    expect(inductiveObservationCount()).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Idempotent re-run (T-101-05-07, Pitfall 1)
+  // -------------------------------------------------------------------------
+  it("idempotent re-run: running the cycle TWICE writes 0 NEW inductive observations the second time", async () => {
+    await seedMemory({ content: "system fact one", createdAt: 100, trustLevel: "system" });
+    await seedMemory({ content: "system fact two", createdAt: 200, trustLevel: "system" });
+    const spy = makeReasonSpy(() => ({
+      inductive: [{ content: "alice prefers terse replies", patternType: "preference" }],
+    }));
+
+    const first = await runMemoryReasoning(makeDeps({ reason: spy.reason }));
+    expect(first.ok).toBe(true);
+    const afterFirst = inductiveObservationCount();
+    expect(afterFirst).toBe(1);
+
+    // Second run: the sources are now consolidated_at (they left the candidate pool).
+    const second = await runMemoryReasoning(makeDeps({ reason: spy.reason }));
+    expect(second.ok).toBe(true);
+    if (second.ok) expect(second.value.inductiveWritten).toBe(0);
+    expect(inductiveObservationCount()).toBe(afterFirst); // no double-create
+  });
+
+  // -------------------------------------------------------------------------
+  // Counts-only event (T-101-05-05)
+  // -------------------------------------------------------------------------
+  it("counts-only event: memory:reasoned carries only counts/durationMs/timestamp — NO S/P/O or content", async () => {
+    await seedMemory({ content: "secretive content xyz", createdAt: 100, trustLevel: "learned" });
+    const bus = makeEventBus();
+    const spy = makeReasonSpy(() => ({
+      deductive: [{ subject: "alice", predicate: "located_in", object: "Berlin" }],
+      inductive: [{ content: "alice prefers terse replies", patternType: "preference" }],
+    }));
+    const deps = makeDeps({ eventBus: bus, reason: spy.reason });
+
+    await runMemoryReasoning(deps);
+
+    const reasoned = bus.events.find((e) => e.event === "memory:reasoned");
+    expect(reasoned).toBeDefined();
+    const payload = reasoned!.payload as Record<string, unknown>;
+    // The exact counts-only key set.
+    expect(Object.keys(payload).sort()).toEqual(
+      [
+        "agentId",
+        "blocked",
+        "deductiveWritten",
+        "downgraded",
+        "durationMs",
+        "inductiveWritten",
+        "skippedOverCap",
+        "surprisalSelected",
+        "timestamp",
+      ].sort(),
+    );
+    // NO S/P/O body / content string anywhere in the serialized payload.
+    const serialized = JSON.stringify(payload);
+    expect(serialized.includes("Berlin")).toBe(false);
+    expect(serialized.includes("alice")).toBe(false);
+    expect(serialized.includes("located_in")).toBe(false);
+    expect(serialized.includes("prefers terse")).toBe(false);
+    expect(serialized.includes("secretive content")).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // grep guard: the ≤ learned cap is the imported clustering helper (not the TripleTrust ladder)
+  // -------------------------------------------------------------------------
+  it("the job source uses minTrustLevel(minTrust( for the inductive cap + applyConsolidation + the scope/surprisal pipeline", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(join(here, "memory-reasoning-job.ts"), "utf8");
+    expect(/minTrustLevel\(\s*(?:cluster)?[mM]inTrust/.test(src) || src.includes("minTrustLevel(clusterMinTrust(")).toBe(true);
+    expect(src.includes("applyConsolidation")).toBe(true);
+    expect(src.includes('observationKind: "inductive"')).toBe(true);
+    expect(src.includes("groupByTrustAndTagScope")).toBe(true);
+    expect(src.includes("surprisalSelect")).toBe(true);
+    expect(src.includes("deterministicDedupKey")).toBe(true);
+  });
+});
+
 // Keep a stable reference so unused-type lint does not trip on the imported alias.
 export type { TrustLevel as _TrustLevel };
