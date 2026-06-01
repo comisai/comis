@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Data-directory singleton lock (D14).
+ *
+ * Prevents two daemon instances from sharing the same dataDir.
+ * Uses an O_EXCL sentinel file (.daemon.lock) acquired BEFORE
+ * bootstrapSecretsAndEnv. Includes stale-lock recovery (PID-liveness
+ * check) to handle OOM-killed daemon without operator intervention.
+ *
+ * Single-retry semantic: after unlinking a stale lock, we retry once.
+ * If two daemons race to detect the same stale lock simultaneously,
+ * the O_EXCL at re-acquire serializes them — one wins the lock, the
+ * other throws a conflict error. This is correct behavior.
+ */
+import * as fs from "node:fs";
+import * as path from "node:path";
+
+const LOCK_FILE = ".daemon.lock";
+
+/**
+ * Returns true if the given PID is alive.
+ * - process.kill(pid, 0) succeeds → alive.
+ * - throws EPERM → alive (process exists, we lack permission to signal it).
+ * - throws ESRCH → dead.
+ */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    // EPERM = process exists but we can't signal it — treat as alive.
+    // ESRCH = no such process — dead.
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Acquire the data-dir singleton lock.
+ *
+ * Creates `<dataDir>/.daemon.lock` containing `process.pid` using
+ * O_EXCL to prevent two daemons from both claiming the directory.
+ *
+ * On EEXIST:
+ *   - Reads the PID from the lock file.
+ *   - If the PID is dead (ESRCH), unlinks the stale lock and retries once.
+ *   - If the PID is alive (or EPERM), throws with an actionable error.
+ *
+ * @throws Error if another daemon instance is already running on this dataDir.
+ */
+export function acquireDataDirLock(dataDir: string): void {
+  fs.mkdirSync(dataDir, { recursive: true });
+  const lockPath = path.join(dataDir, LOCK_FILE);
+
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(
+      lockPath,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+      0o600,
+    );
+    fs.writeSync(fd, String(process.pid));
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+  } catch (e) {
+    // Close the fd if it was opened before the error
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* ignore */ }
+    }
+
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") {
+      // Lock file exists — check if the holding PID is still alive
+      let otherPid: number | undefined;
+      let otherPidStr = "unknown";
+      try {
+        otherPidStr = fs.readFileSync(lockPath, "utf-8").trim();
+        otherPid = parseInt(otherPidStr, 10);
+      } catch {
+        // Cannot read the lock file — treat as active conflict
+      }
+
+      if (otherPid !== undefined && !isNaN(otherPid) && !isPidAlive(otherPid)) {
+        // Stale lock — dead PID. Unlink and retry once.
+        // If a concurrent daemon wins the subsequent O_EXCL, it holds the lock
+        // and this call will throw a conflict error — correct behavior.
+        try { fs.unlinkSync(lockPath); } catch { /* best-effort */ }
+        acquireDataDirLock(dataDir); // single recursive retry
+        return;
+      }
+
+      throw new Error(
+        `[FATAL] Another daemon instance is already running on dataDir '${dataDir}' ` +
+        `(lock held by PID ${otherPidStr}). ` +
+        "Stop the existing daemon before starting a new one.",
+      );
+    }
+    throw e;
+  }
+}
+
+/**
+ * Release the data-dir singleton lock.
+ *
+ * Unlinks `<dataDir>/.daemon.lock`. Best-effort: safe to call even if
+ * the lock was never acquired or has already been removed.
+ */
+export function releaseDataDirLock(dataDir: string): void {
+  try {
+    fs.unlinkSync(path.join(dataDir, LOCK_FILE));
+  } catch {
+    // best-effort — already gone or never created
+  }
+}
