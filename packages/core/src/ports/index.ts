@@ -24,6 +24,12 @@ export type { MemoryEntityStore, EntityScope, EntityRow } from "./memory-entity-
 export type { MemoryTemporalStore } from "./memory-temporal-store.js";
 export type { MemoryCausalStore, CausalScope } from "./memory-causal-store.js";
 export type {
+  TripleStorePort,
+  TripleScope,
+  TripleTrust,
+  TripleInput,
+} from "./triple-store.js";
+export type {
   MemoryUsefulnessStore,
   UsefulnessScope,
   UsefulnessSignal,
