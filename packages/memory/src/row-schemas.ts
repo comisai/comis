@@ -209,6 +209,34 @@ export const MemoryTripleRowSchema = z.strictObject({
 });
 
 /**
+ * Schema for a `user_representation` row projection (Phase 107, Track E1 —
+ * USER-01). The adapter's scoped read projects `id, entry_type, content, trust,
+ * source_memory_id, created_at, updated_at` (it does NOT re-project
+ * `tenant_id`/`agent_id`/`user_id` — the WHERE already pins them, mirroring
+ * `SpreadNodeRowSchema`'s minimal projection). `trust` is `z.enum(...)` matching
+ * the DDL high-trust CHECK (`'external'` structurally absent — it can never be on
+ * disk, so it is not in the schema either); `entry_type` matches the prefix-type
+ * CHECK. `source_memory_id`/`updated_at` are `.nullable()` (a fresh entry has a
+ * NULL `updated_at`; an entry not derived from a memory has a NULL
+ * `source_memory_id`). Parsed via `createRowMapper` in the adapter — never
+ * `as Row[]`.
+ */
+export const UserRepresentationRowSchema = z.strictObject({
+  id: z.string(),
+  /** The prefix type — matches the DDL CHECK (distinct from memory_type). */
+  entry_type: z.enum(["identity", "preference", "relationship", "instruction"]),
+  content: z.string(),
+  /** The high-trust floor — matches the DDL CHECK ('external' structurally absent). */
+  trust: z.enum(["system", "learned"]),
+  /** Provenance memory id (ON DELETE CASCADE); NULL when not from a memory. */
+  source_memory_id: z.string().nullable().optional(),
+  /** Epoch ms first written (the injected clock). */
+  created_at: z.number(),
+  /** Epoch ms of the last upsert; NULL when never updated. */
+  updated_at: z.number().nullable().optional(),
+});
+
+/**
  * Schema for the graph-spread recursive-CTE node projection (Phase 100, KG-04;
  * RESEARCH §Graph-spread lane). The bounded `WITH RECURSIVE walk(node, depth)`
  * walk over current-truth `subject → object` edges returns, per reached node, the
