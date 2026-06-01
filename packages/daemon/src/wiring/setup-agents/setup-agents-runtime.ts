@@ -463,7 +463,7 @@ export async function setupSingleAgent(
     mcpToolsInherited: deps.mcpToolsInherited,
     memoryPort: memoryAdapter,
     reranker: deps.rerankerPort,  // Cross-encoder reranker (built in setup-memory only when an agent enables rerank).
-    entityStore: deps.entityStore, temporalStore: deps.temporalStore, causalStore: deps.causalStore, usefulnessStore: deps.usefulnessStore,  // P83/rag.entityLane + P95·LANES-02/rag.lanes.temporal + P96·EXTRACT-03/rag.lanes.causal + P93·FEED-03/rag.feedback -> createMemoryRecall read (default-OFF; JSDoc on AgentSetupDeps).
+    entityStore: deps.entityStore, temporalStore: deps.temporalStore, causalStore: deps.causalStore, tripleStore: deps.tripleStore, usefulnessStore: deps.usefulnessStore,  // P83/rag.entityLane + P95·LANES-02/rag.lanes.temporal + P96·EXTRACT-03/rag.lanes.causal + P100·KG-01/rag.lanes.graphSpread + P93·FEED-03/rag.feedback -> createMemoryRecall read (default-OFF; JSDoc on AgentSetupDeps).
     secretManager: scopedManager,
     envelopeConfig: container.config.envelope,
     senderTrustDisplayConfig: container.config.senderTrustDisplay,

@@ -31,6 +31,7 @@ import {
   createSqliteMemoryUsefulnessStore,
   createSqliteMemoryTemporalStore,
   createSqliteMemoryCausalStore,
+  createSqliteTripleStore,
   type MemoryApi,
 } from "@comis/memory";
 import {
@@ -103,6 +104,20 @@ export interface MemoryResult {
    *  path (setup-agents-*) AND the cron-review write path (setup-channels-*). The agent receives
    *  the port TYPE only (the agent↛memory cut). */
   causalStore: import("@comis/core").MemoryCausalStore;
+  /** Triple store (Phase 100, KG-01). The SOLE adapter for the segregated
+   *  `TripleStorePort` (the trust-first bi-temporal knowledge graph: `upsertTriple` WRITE +
+   *  `asOf`/`currentTruth`/`spreadLane` READs) — built UNCONDITIONALLY on the SAME shared `db`
+   *  handle as the memory adapter (so `memory_triples` + memories share one FK-enabled
+   *  connection — the `source_memory_id` ON DELETE CASCADE fires — and the (tenant, agent)
+   *  isolation scope is consistent with the memory rows the triples reference and the
+   *  graph-spread walk hydrates through). No model/IO cost, so it is always present; the 6th
+   *  graph-spread recall lane stays dormant until an operator opts in via
+   *  `agents.<id>.rag.lanes.graphSpread.enabled` (default OFF), and the offline
+   *  triple-extraction job is its own default-OFF cost gate (never on the recall hot path).
+   *  Threaded into the recall read path (setup-agents-*) as the port TYPE only — the daemon
+   *  (composition root) is the one place this @comis/memory adapter and the @comis/agent
+   *  consumers are joined (the agent↛memory cut). */
+  tripleStore: import("@comis/core").TripleStorePort;
   /** Consolidation store (Phase 84, CONS-01..07). The SOLE adapter for the segregated
    *  `MemoryConsolidationStore` port — built UNCONDITIONALLY on the SAME shared `db` handle
    *  as the memory adapter + entity store (so the observation columns, the `(tenant, agent)`
@@ -397,6 +412,18 @@ export async function setupMemory(deps: {
   // write path (setup-channels-*).
   const causalStore = createSqliteMemoryCausalStore({ db, logger: memoryLogger });
 
+  // 6.5.2b'''. Triple store (Phase 100, KG-01). Built on the SAME shared `db` handle the
+  // memory adapter owns — so `memory_triples` + memories share one FK-enabled connection (the
+  // source_memory_id ON DELETE CASCADE fires when a source memory is deleted) and the
+  // (tenant, agent) isolation scope is consistent with the memory rows the triples reference
+  // AND the graph-spread walk hydrates through (the scoped JOIN memories ON
+  // source_memory_id = id). Always constructed (no model/IO cost); the 6th graph-spread recall
+  // lane stays dormant until an operator enables `agents.<id>.rag.lanes.graphSpread.enabled`
+  // (default OFF), and the offline triple-extraction job is its own default-OFF cost gate
+  // (NEVER on the recall hot path). Composition-root join — the agent receives the port TYPE
+  // only (the agent↛memory cut). Threaded into the recall read path (setup-agents-*).
+  const tripleStore = createSqliteTripleStore({ db, logger: memoryLogger });
+
   // 6.5.2c. Consolidation store (Phase 84). Built on the SAME `db` handle the memory
   // adapter owns — NOT a second Database — so the observation columns (proof_count /
   // source_ids / consolidated_at / confidence / history) and the memories table share
@@ -581,6 +608,7 @@ export async function setupMemory(deps: {
     entityStore,
     temporalStore,
     causalStore,
+    tripleStore,
     consolidationStore,
     usefulnessStore,
     recallCounters,

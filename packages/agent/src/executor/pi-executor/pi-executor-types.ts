@@ -20,6 +20,7 @@ import type {
   MemoryEntityStore,
   MemoryTemporalStore,
   MemoryCausalStore,
+  TripleStorePort,
   MemoryUsefulnessStore,
   RerankerPort,
   HookRunner,
@@ -111,6 +112,11 @@ export interface PiExecutorDeps {
    *  -> no causal lane (recall RRF unchanged). TYPE-only from @comis/core — the agent never
    *  imports the memory package (the agent↛memory cut). */
   causalStore?: MemoryCausalStore;
+  /** Optional triple store (KG-01/04). Built in the daemon on the shared memory db handle;
+   *  threaded into prompt-assembly's createMemoryRecall via ToolAssemblyDeps. Absent or flag-off
+   *  -> no graph-spread lane (recall RRF unchanged). TYPE-only from @comis/core — the agent
+   *  never imports the memory package (the agent↛memory cut). */
+  tripleStore?: TripleStorePort;
   /** Optional usefulness store (FEED-03). Built in the daemon on the shared memory db handle;
    *  threaded into prompt-assembly's createMemoryRecall via ToolAssemblyDeps. Absent or flag-off
    *  -> no usefulness read (recall scoring unchanged). TYPE-only from @comis/core — the agent

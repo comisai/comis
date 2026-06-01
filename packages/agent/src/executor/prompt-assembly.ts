@@ -283,6 +283,9 @@ export interface PromptAssemblyParams {
     /** Optional causal store for createMemoryRecall's 5th lane (EXTRACT-03;
      *  default-OFF via config.rag.lanes.causal). TYPE-only (the agent↛memory build cut). */
     causalStore?: import("@comis/core").MemoryCausalStore;
+    /** Optional triple store for createMemoryRecall's 6th graph-spread lane (KG-01/04;
+     *  default-OFF via config.rag.lanes.graphSpread). TYPE-only (the agent↛memory build cut). */
+    tripleStore?: import("@comis/core").TripleStorePort;
     /** Optional usefulness store for createMemoryRecall's usefulness read (FEED-03;
      *  default-OFF via config.rag.feedback). TYPE-only (the agent↛memory build cut). */
     usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
@@ -767,6 +770,7 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           entityStore: deps.entityStore,
           temporalStore: deps.temporalStore,
           causalStore: deps.causalStore,
+          tripleStore: deps.tripleStore,
           usefulnessStore: deps.usefulnessStore,
           timers: deps.timers,
           clock: deps.clock,

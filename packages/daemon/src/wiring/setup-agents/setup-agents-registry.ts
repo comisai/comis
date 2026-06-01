@@ -198,6 +198,9 @@ export async function setupAgents(deps: {
   /** Causal store (Phase 96, EXTRACT-03). Threaded into each per-agent createPiExecutor
    *  like entityStore (the recall 5th causal lane read path). Built in setup-memory on the shared db. */
   causalStore?: import("@comis/core").MemoryCausalStore;
+  /** Triple store (Phase 100, KG-01). Threaded into each per-agent createPiExecutor like
+   *  entityStore (the recall 6th graph-spread lane read path). Built in setup-memory on the shared db. */
+  tripleStore?: import("@comis/core").TripleStorePort;
   /** Usefulness store (Phase 93, FEED-03). Threaded into each per-agent createPiExecutor
    *  like entityStore (the recall usefulness read path). Built in setup-memory on the shared db. */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
@@ -423,6 +426,7 @@ export async function setupAgents(deps: {
     entityStore: deps.entityStore,
     temporalStore: deps.temporalStore,
     causalStore: deps.causalStore,
+    tripleStore: deps.tripleStore,
     usefulnessStore: deps.usefulnessStore,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
