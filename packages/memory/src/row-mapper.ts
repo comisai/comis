@@ -109,6 +109,12 @@ export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry {
     // DB CHECK(memory_type IN ('working','episodic','semantic','procedural')) guarantees
     // the in-set value; cast to the enum mirrors the trust_level mapping above.
     memoryType: row.memory_type as MemoryEntry["memoryType"],
+    // Typed-observation fields (P101/REASON-01). observation_kind NULL -> "merge"
+    // (the forward-only default for all pre-101 rows; the column has no CHECK, so
+    // the cast is total — an unexpected on-disk value degrades to itself, never
+    // throws on read, T-101-01-03). pattern_type spreads only when non-null.
+    observationKind: (row.observation_kind ?? "merge") as MemoryEntry["observationKind"],
+    ...(row.pattern_type !== null ? { patternType: row.pattern_type as MemoryEntry["patternType"] } : {}),
   };
 }
 
@@ -125,8 +131,8 @@ export function insertMemoryRow(
   memoryType: string,
 ): void {
   db.prepare(
-    `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_channel, source_session_key, tags, created_at, occurred_at, proof_count, source_ids, consolidated_at, confidence, history, updated_at, expires_at, has_embedding)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, source_channel, source_session_key, tags, created_at, occurred_at, proof_count, source_ids, consolidated_at, confidence, history, updated_at, expires_at, observation_kind, pattern_type, has_embedding)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
   ).run(
     entry.id,
     entry.tenantId,
@@ -151,6 +157,12 @@ export function insertMemoryRow(
     entry.history ? JSON.stringify(entry.history) : null,
     entry.updatedAt ?? null,
     entry.expiresAt ?? null,
+    // Typed-observation columns (P101/REASON-01). NULL persists; rowToEntry maps
+    // observation_kind NULL back to "merge". These two ? are the LAST bound args
+    // before the literal 0 (has_embedding) — keep this in lockstep with the two
+    // new columns + placeholders above (Pitfall-5 arg-shift guard, REASON-01 test).
+    entry.observationKind ?? null,
+    entry.patternType ?? null,
   );
 }
 

@@ -164,6 +164,86 @@ export function cosine(a: number[], b: number[]): number {
 }
 
 // ---------------------------------------------------------------------------
+// Surprisal novelty gate (Phase 101 — REASON-04)
+// ---------------------------------------------------------------------------
+
+/**
+ * Surprisal / novelty of one candidate from its k-NN cosine DISTANCES (the design
+ * formula S(e) ≈ dim · log(mean kNN distance), MEMORY_SUPREMACY_DESIGN.md). A
+ * higher score = MORE novel-vs-corpus (further from its nearest neighbours); the
+ * RELATIVE order is what the selector ranks on — the absolute value is often
+ * negative (ln of a sub-1 mean distance) and that is fine.
+ *
+ * TOTAL + guarded, mirroring {@link cosine}'s no-NaN discipline:
+ *   - empty distances (no neighbour) → 0: "not surprising-vs-corpus" — the
+ *     documented choice (a candidate with no neighbour is not treated as maximally
+ *     novel, which would let an isolated/un-indexed point dominate the gate).
+ *   - mean <= 0 (a zero-distance duplicate, or corrupt negative distances) → 0:
+ *     guards `Math.log` from yielding `-Infinity` (mean === 0) or `NaN` (mean < 0),
+ *     either of which would poison the selector's sort key.
+ *
+ * Pure: no IO, no clock, no RNG.
+ */
+export function surprisal(distances: number[], dim: number): number {
+  if (distances.length === 0) return 0; // no neighbour → not surprising-vs-corpus (documented choice)
+  let sum = 0;
+  for (const d of distances) sum += d;
+  const mean = sum / distances.length;
+  return mean <= 0 ? 0 : dim * Math.log(mean); // guard mean<=0 → 0 (no -Infinity/NaN)
+}
+
+/**
+ * Select the top fraction of candidates by surprisal, in a TOTAL, reproducible
+ * order — the REASON-04 novelty gate that bounds which raw candidates the costly
+ * reasoning LLM sees.
+ *
+ * `knnByCandidate` maps a candidate id → its k-NN cosine distances (the job fills
+ * this via the `knnDistances` port method, 101-03; the agent cannot run the SQL).
+ *
+ * **Missing-embedding policy (Pitfall 3, documented + RED-tested):** a candidate
+ * with no `embedding` is EXCLUDED *before* scoring — an un-indexed memory cannot
+ * be reasoned over until it has a vector (mirrors consolidation's degrade), so it
+ * is never selected and never counts toward the `topFraction` denominator. A
+ * candidate that has an embedding but no `knnByCandidate` entry (or an empty one)
+ * still participates with surprisal 0 — it is eligible but ranks last.
+ *
+ * Determinism (AGENTS.md §2.5): the eligible candidates are sorted by the
+ * `(surprisal desc, id asc)` TOTAL order — a surprisal tie breaks by id ascending,
+ * so two runs on the same input return the identical selected set AND order. The
+ * cut keeps `ceil(eligible.length · topFraction)` (ceil, not floor, so a non-empty
+ * eligible set with a tiny fraction still yields ≥1) and is therefore bounded.
+ *
+ * Pure: no IO, no clock, no RNG.
+ */
+export function surprisalSelect(
+  candidates: ConsolidationCandidate[],
+  knnByCandidate: Map<string, number[]>,
+  dim: number,
+  topFraction: number,
+): ConsolidationCandidate[] {
+  // 1. Drop un-embedded candidates BEFORE scoring (the missing-embedding policy).
+  const eligible = candidates.filter((c) => c.embedding !== undefined);
+  if (eligible.length === 0) return [];
+
+  // 2. Score each eligible candidate (no entry / empty distances → surprisal 0).
+  const scored = eligible.map((candidate) => ({
+    candidate,
+    score: surprisal(knnByCandidate.get(candidate.entry.id) ?? [], dim),
+  }));
+
+  // 3. Sort by the (surprisal desc, id asc) TOTAL order — reproducible run-to-run.
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score; // surprisal descending
+    return a.candidate.entry.id < b.candidate.entry.id ? -1 : 1; // id ascending (ids are unique → total)
+  });
+
+  // 4. Keep ceil(eligible · topFraction) — ceil so a non-empty set with a tiny
+  //    fraction still keeps ≥1; bounded by `eligible.length` for fraction >= 1.
+  const keep = Math.min(scored.length, Math.ceil(scored.length * topFraction));
+  return scored.slice(0, keep).map((s) => s.candidate);
+}
+
+// ---------------------------------------------------------------------------
 // Greedy single-link clustering (CONS-01)
 // ---------------------------------------------------------------------------
 

@@ -29,6 +29,7 @@ import type {
   MemoryEntityStore,
   MemoryTemporalStore,
   MemoryCausalStore,
+  MemoryEmbeddingStore,
   MemoryUsefulnessStore,
   UsefulnessSignal,
   RerankerPort,
@@ -38,6 +39,7 @@ import type {
   TimerHandle,
   ClockPort,
   ComisLogger,
+  TripleStorePort,
 } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { describe, it, expect, vi } from "vitest";
@@ -46,6 +48,7 @@ import { score, type ScoringAlphas } from "./score.js";
 import { deduplicateResults } from "./rag-retriever.js";
 import { createMemoryRecall, type MemoryRecallConfig } from "./memory-recall.js";
 import { appendCausalLane } from "./recall-causal-lane.js";
+import { expandSynonyms, parseTemporalRange } from "./query-understanding.js";
 import type { FusionLane } from "./fuse.js";
 
 const NOW = 1_700_000_000_000;
@@ -2006,5 +2009,720 @@ describe("appendCausalLane (the extracted 5th-lane helper)", () => {
     expect(count).toBe(2);
     expect(lanes.length).toBe(2);
     expect(lanes[1]?.weight).toBe(2.0);
+  });
+});
+
+// ===========================================================================
+// Graph-spread lane (KG-04) — the 6th fused lane, APPENDED after the causal
+// lane (fts, vector, entity, temporal, causal, graphSpread). Mirrors the causal
+// block tier-for-tier: a triple-store stub + the LANE-ON lift / DEFAULT-OFF
+// byte-identity (the spy proves ZERO calls) / NO-CONFIG / EMPTY-lane neutral /
+// NO-store / NON-FATAL invariants. The seeds are the top base hits' CONTENT
+// (subject strings), per the interfaces gate.
+// ===========================================================================
+
+/**
+ * A controllable TripleStorePort stub. `spreadLane` returns a canned Result and records
+ * every call (seedSubjects + scope + maxDepth + fanOut + cap) so the gate / scope /
+ * not-called invariants are assertable. The write/asOf/currentTruth methods are the
+ * unused halves (recall only calls spreadLane). Mirrors {@link fakeCausalStore}.
+ */
+function fakeTripleStore(laneResult: Result<MemorySearchResult[], Error>): {
+  store: TripleStorePort;
+  calls: {
+    seedSubjects: string[];
+    scope: { tenantId: string; agentId: string };
+    maxDepth: number;
+    fanOut: number;
+    cap: number;
+  }[];
+} {
+  const calls: {
+    seedSubjects: string[];
+    scope: { tenantId: string; agentId: string };
+    maxDepth: number;
+    fanOut: number;
+    cap: number;
+  }[] = [];
+  const store: TripleStorePort = {
+    async upsertTriple() {
+      return ok(undefined);
+    },
+    async asOf() {
+      return ok([]);
+    },
+    async currentTruth() {
+      return ok([]);
+    },
+    async spreadLane(seedSubjects, scope, maxDepth, fanOut, cap) {
+      calls.push({ seedSubjects, scope, maxDepth, fanOut, cap });
+      return laneResult;
+    },
+  };
+  return { store, calls };
+}
+
+describe("createMemoryRecall — graph-spread lane (KG-04)", () => {
+  // Boosts neutralized so the FUSION verdict (not score() boosts) orders the output — the
+  // graph-spread RRF contribution is then the only thing under test.
+  const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
+  const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
+  const GS_ON = { enabled: true, weight: 1.0, maxDepth: 2, fanOut: 8 };
+  const GS_OFF = { enabled: false, weight: 1.0, maxDepth: 2, fanOut: 8 };
+
+  /** The pre-graphSpread fused output (fts + vector, no spread lane) — the no-op reproduces this verbatim. */
+  function baseLaneReference(fts: MemorySearchResult[], vector: MemorySearchResult[]): string[] {
+    const lanes = [] as Parameters<typeof fuse>[0];
+    if (fts.length > 0) lanes.push({ results: fts, weight: 1.0 });
+    if (vector.length > 0) lanes.push({ results: vector, weight: 1.5 });
+    const fused = fuse(lanes);
+    const scored = score(fused, NEUTRAL, NOW);
+    const allowed = new Set<TrustLevel>(["system", "learned"]);
+    return deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel))).map(
+      (r) => r.entry.id,
+    );
+  }
+
+  it("LANE ON: a structurally-linked memory (from the triple store, absent from search) appears in the fused output + carries the seeds/scope/caps", async () => {
+    const fts = [makeResult("seed", { base: 0.9 }), makeResult("weak", { base: 0.2 })];
+    const { store, calls } = fakeTripleStore(ok([makeResult("spread", { base: 0.99 })]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        tripleStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_ON } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toContain("spread");
+    // Lane invoked once, lazily; seeds = top hits' CONTENT; scope = recall scope; caps from config.
+    expect(calls.length).toBe(1);
+    expect(calls[0]?.seedSubjects).toContain("content for seed");
+    expect(calls[0]?.scope).toEqual({ tenantId: "tenant_x", agentId: "agent_y" });
+    expect(calls[0]?.maxDepth).toBe(2);
+    expect(calls[0]?.fanOut).toBe(8);
+    expect(calls[0]?.cap).toBe(5); // baseConfig.maxResults
+  });
+
+  it("DEFAULT-OFF BYTE-IDENTITY: graphSpread.enabled=false → spreadLane NEVER called → output identical to the pre-graphSpread fused path", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const vector = [makeResult("b", { base: 0.5 }), makeResult("c", { base: 0.3 })];
+    const { store, calls } = fakeTripleStore(ok([makeResult("spread", { base: 0.99 })]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector }),
+        tripleStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_OFF } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0); // the spy proves the off path never queries
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
+    expect(got.value.map((r) => r.entry.id)).not.toContain("spread");
+  });
+
+  it("NO graphSpread CONFIG: an absent lanes.graphSpread → spreadLane NEVER called (byte-identical to before this plan)", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    const { store, calls } = fakeTripleStore(ok([makeResult("spread", { base: 0.99 })]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        tripleStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0);
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("EMPTY-LANE NEUTRAL: an injected store whose spreadLane returns ok([]) pushes nothing → output unchanged (the ENT-04 no-op)", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const { store, calls } = fakeTripleStore(ok([]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        tripleStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_ON } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(1); // queried (enabled + seeds) but empty
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("NO tripleStore: an undefined store → no graph-spread lane, output identical to the base lanes", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    const recall = createMemoryRecall(
+      { memoryPort: fakeLaneMemoryPort({ fts, vector: [] }), clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_ON } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("NON-FATAL: a spreadLane that returns err → recall WARNs and ranks WITHOUT the graph-spread lane (never fails)", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const warns: Record<string, unknown>[] = [];
+    const capturingLogger = {
+      ...noopLogger,
+      warn: (obj: Record<string, unknown>) => {
+        warns.push(obj);
+      },
+    } as unknown as ComisLogger;
+    const { store } = fakeTripleStore(err(new Error("spread CTE exploded")));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        tripleStore: store,
+        clock: fixedClock,
+        logger: capturingLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_ON } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+    const warn = warns.find((w) => typeof w.hint === "string" && /graph[- ]?spread/i.test(String(w.hint)));
+    expect(warn).toBeDefined();
+    expect(warn?.errorKind).toBe("internal");
+  });
+});
+
+// ── IQ-02/03: query-understanding wiring (intent reweight + synonyms + NL range) ──
+//
+// Three thin gated call-sites in createMemoryRecall, all DEFAULT-OFF byte-identical:
+//   IQ-02 intent reweight  — classifyIntent(query) once; intentMultiplier(intent, lane)
+//                            multiplies each lane's FusionLane weight (1.0 when off/factual).
+//   IQ-03a synonym         — expandSynonyms(query) replaces the search query string (whole-query).
+//   IQ-03b NL temporal     — parseTemporalRange(query, deps.clock.now()) → occurredAtRange on
+//                            the search options (no Phase-100 temporal-lane double-apply).
+//
+// The spy on fakeLaneMemoryPort records the (query, options) the search received, so the off-path
+// proof is: ORIGINAL query + NO occurredAtRange + the fused ids === baseLaneReference (mirror :2109).
+describe("createMemoryRecall — query understanding (IQ-02/03)", () => {
+  const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
+  const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
+  const QU_OFF = { intentReweight: false, synonyms: false, temporalParse: false };
+
+  /** The pre-IQ fused output (fts + vector, no reweight/expansion/range) — byte-identity reference. */
+  function baseLaneReference(fts: MemorySearchResult[], vector: MemorySearchResult[]): string[] {
+    const lanes = [] as Parameters<typeof fuse>[0];
+    if (fts.length > 0) lanes.push({ results: fts, weight: 1.0 });
+    if (vector.length > 0) lanes.push({ results: vector, weight: 1.5 });
+    const scored = score(fuse(lanes), NEUTRAL, NOW);
+    const allowed = new Set<TrustLevel>(["system", "learned"]);
+    return deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel))).map((r) => r.entry.id);
+  }
+
+  /** A temporal-spread store stub recording its calls (mirror fakeTripleStore). */
+  function fakeTemporalStore(
+    laneResult: Result<MemorySearchResult[], Error>,
+  ): { store: MemoryTemporalStore; calls: number } {
+    let calls = 0;
+    const store = {
+      async spreadLane() {
+        calls += 1;
+        return laneResult;
+      },
+    } as unknown as MemoryTemporalStore;
+    return {
+      store,
+      get calls() {
+        return calls;
+      },
+    };
+  }
+
+  it("DEFAULT-OFF BYTE-IDENTITY: queryUnderstanding all-false → search gets the ORIGINAL query + NO occurredAtRange + output === baseLaneReference", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const vector = [makeResult("b", { base: 0.5 }), makeResult("c", { base: 0.3 })];
+    const capture: { laneOpts?: MemorySearchOptions; searchOpts?: MemorySearchOptions } = {};
+    const port = fakeLaneMemoryPort({ fts, vector }, capture);
+    // Record the EXACT query string the searchLanes call received.
+    let seenQuery: string | undefined;
+    const recordingPort = {
+      ...port,
+      async searchLanes(key: SessionKey, q: string, opts?: MemorySearchOptions) {
+        seenQuery = q;
+        capture.laneOpts = opts;
+        return ok({ fts, vector });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, queryUnderstanding: QU_OFF } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("vps config db status", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // OFF ⇒ the search receives the ORIGINAL query (no synonym expansion) …
+    expect(seenQuery).toBe("vps config db status");
+    // … the options carry NO occurredAtRange (no temporal parse) …
+    expect(capture.laneOpts?.occurredAtRange).toBeUndefined();
+    // … and the fused output is byte-identical to the pre-IQ path (unmultiplied weights).
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
+  });
+
+  it("NO queryUnderstanding CONFIG: an absent queryUnderstanding → original query + no range (byte-identical)", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    const capture: { laneOpts?: MemorySearchOptions } = {};
+    let seenQuery: string | undefined;
+    const recordingPort = {
+      async search() {
+        return ok(fts);
+      },
+      async searchLanes(_key: SessionKey, q: string, opts?: MemorySearchOptions) {
+        seenQuery = q;
+        capture.laneOpts = opts;
+        return ok({ fts, vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("auth flow", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(seenQuery).toBe("auth flow");
+    expect(capture.laneOpts?.occurredAtRange).toBeUndefined();
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("INTENT-ON LIFT: a temporal-intent query with intentReweight=true up-weights the temporal lane so a temporal-lane candidate outranks where it didn't with reweight off (RED on pre-wiring)", async () => {
+    // A temporal-intent query ("when …") → classifyIntent → "temporal" → intentMultiplier
+    // ×1.5 on the temporal lane. The base lane has ONE strong fts hit; the temporal lane
+    // contributes a candidate at rank 1. With NO reweight the base hit leads; with the ×1.5
+    // temporal-lane weight the temporal candidate's RRF contribution overtakes it.
+    const fts = [makeResult("base_top", { base: 1 }), makeResult("base_mid", { base: 1 })];
+    // The seed needs an occurredAt so the temporal lane fires (Pitfall 6 — seed on event time).
+    const ftsSeeded = [
+      makeResult("base_top", { base: 1, occurredAt: NOW }),
+      makeResult("base_mid", { base: 1, occurredAt: NOW }),
+    ];
+    void fts;
+    const temporalLaneHit = [makeResult("temporal_cand", { base: 1 })];
+    const TL = { enabled: true, weight: 1.0, windowDays: 7 };
+    const makeRecall = (qu: { intentReweight: boolean; synonyms: boolean; temporalParse: boolean }) => {
+      const { store } = fakeTemporalStore(ok(temporalLaneHit));
+      return createMemoryRecall(
+        {
+          memoryPort: fakeLaneMemoryPort({ fts: ftsSeeded, vector: [] }),
+          temporalStore: store,
+          clock: fixedClock,
+          logger: noopLogger,
+        } as unknown as Parameters<typeof createMemoryRecall>[0],
+        baseConfig({
+          scoring: NEUTRAL,
+          lanes: { ...PARITY_LANES, temporal: TL },
+          queryUnderstanding: qu,
+        } as Partial<MemoryRecallConfig>),
+      );
+    };
+    const off = await makeRecall(QU_OFF).recall("when did the base happen", SESSION_KEY_OBJ, "agent_y");
+    const on = await makeRecall({ intentReweight: true, synonyms: false, temporalParse: false }).recall(
+      "when did the base happen",
+      SESSION_KEY_OBJ,
+      "agent_y",
+    );
+    expect(off.ok && on.ok).toBe(true);
+    if (!off.ok || !on.ok) return;
+    const offOrder = off.value.map((r) => r.entry.id);
+    const onOrder = on.value.map((r) => r.entry.id);
+    // The reweight CHANGES the fused order — the temporal candidate climbs vs the off baseline.
+    expect(onOrder).not.toEqual(offOrder);
+    const offRank = offOrder.indexOf("temporal_cand");
+    const onRank = onOrder.indexOf("temporal_cand");
+    expect(onRank).toBeLessThan(offRank); // strictly promoted by the ×1.5 temporal-lane weight
+  });
+
+  it("INTENT-OFF FACTUAL: a factual query (no markers) → multiplier 1.0 everywhere even with intentReweight=true → byte-identical to off", async () => {
+    // "what is the database name" classifies factual → every lane multiplier is 1.0, so even
+    // with intentReweight ON the fused order equals baseLaneReference (the neutral-intent proof).
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const vector = [makeResult("b", { base: 0.5 }), makeResult("c", { base: 0.3 })];
+    const recall = createMemoryRecall(
+      { memoryPort: fakeLaneMemoryPort({ fts, vector }), clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        queryUnderstanding: { intentReweight: true, synonyms: false, temporalParse: false },
+      } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("the project name", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
+  });
+
+  it("SYNONYM-ON: synonyms=true → the search receives expandSynonyms(query) (≠ the original for a mapped term)", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    let seenQuery: string | undefined;
+    const recordingPort = {
+      async search() {
+        return ok(fts);
+      },
+      async searchLanes(_key: SessionKey, q: string) {
+        seenQuery = q;
+        return ok({ fts, vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        queryUnderstanding: { intentReweight: false, synonyms: true, temporalParse: false },
+      } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("vps", SESSION_KEY_OBJ, "agent_y");
+    expect(seenQuery).toBe(expandSynonyms("vps"));
+    expect(seenQuery).not.toBe("vps"); // the expansion genuinely changed the query
+    expect(seenQuery).toContain("virtual"); // the mapped expansion is present
+  });
+
+  it("RANGE-ON: temporalParse=true + 'last week' → the search options carry the parsed occurredAtRange (from the fixedClock)", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    const capture: { laneOpts?: MemorySearchOptions } = {};
+    const recordingPort = {
+      async search() {
+        return ok(fts);
+      },
+      async searchLanes(_key: SessionKey, _q: string, opts?: MemorySearchOptions) {
+        capture.laneOpts = opts;
+        return ok({ fts, vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        queryUnderstanding: { intentReweight: false, synonyms: false, temporalParse: true },
+      } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("what happened last week", SESSION_KEY_OBJ, "agent_y");
+    // The range is computed from deps.clock.now() (= NOW), NEVER Date.now().
+    expect(capture.laneOpts?.occurredAtRange).toEqual(parseTemporalRange("what happened last week", NOW));
+  });
+
+  it("RANGE-ON UNPARSEABLE: temporalParse=true but no time expression → NO occurredAtRange (byte-identity)", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    const capture: { laneOpts?: MemorySearchOptions } = {};
+    const recordingPort = {
+      async search() {
+        return ok(fts);
+      },
+      async searchLanes(_key: SessionKey, _q: string, opts?: MemorySearchOptions) {
+        capture.laneOpts = opts;
+        return ok({ fts, vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        queryUnderstanding: { intentReweight: false, synonyms: false, temporalParse: true },
+      } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("what is the database name", SESSION_KEY_OBJ, "agent_y");
+    expect(capture.laneOpts?.occurredAtRange).toBeUndefined();
+  });
+
+  it("SYNONYM-OFF byte-identity: synonyms=false → the search receives the ORIGINAL (even for a mapped term)", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    let seenQuery: string | undefined;
+    const recordingPort = {
+      async search() {
+        return ok(fts);
+      },
+      async searchLanes(_key: SessionKey, q: string) {
+        seenQuery = q;
+        return ok({ fts, vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, queryUnderstanding: QU_OFF } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("vps", SESSION_KEY_OBJ, "agent_y");
+    expect(seenQuery).toBe("vps"); // unexpanded — the mapped term is NOT expanded when off
+  });
+});
+
+// ── IQ-01: MMR diversity re-rank slot (gated, scoped, non-fatal) ──────────────
+//
+// A gated scoped embedding read + mmrRerank, placed AFTER the trust-filter and BEFORE dedup
+// (FORK 1 — diversify EXACTLY the set that will be injected). DEFAULT-OFF byte-identity is the
+// load-bearing discipline: with mmr.enabled=false / no embeddingStore / <2 candidates, the block
+// is SKIPPED — readEmbeddings is NEVER called (the spy proves it) and `ranked` is unchanged.
+describe("createMemoryRecall — MMR diversity re-rank (IQ-01)", () => {
+  const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
+  const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
+
+  /** A segregated embedding store stub: canned id→vector Map, records every readEmbeddings call. */
+  function fakeEmbeddingStore(embeddingsById: Map<string, number[]>): {
+    store: MemoryEmbeddingStore;
+    calls: { ids: string[]; scope: { tenantId: string; agentId: string } }[];
+  } {
+    const calls: { ids: string[]; scope: { tenantId: string; agentId: string } }[] = [];
+    const store = {
+      async readEmbeddings(ids: string[], scope: { tenantId: string; agentId: string }) {
+        calls.push({ ids, scope });
+        return ok(embeddingsById as ReadonlyMap<string, number[]>);
+      },
+    } as unknown as MemoryEmbeddingStore;
+    return { store, calls };
+  }
+
+  /** An embedding store whose read fails (the non-fatal degrade fixture). */
+  function failingEmbeddingStore(): { store: MemoryEmbeddingStore; calls: number } {
+    let calls = 0;
+    const store = {
+      async readEmbeddings() {
+        calls += 1;
+        return err(new Error("vec read exploded"));
+      },
+    } as unknown as MemoryEmbeddingStore;
+    return {
+      store,
+      get calls() {
+        return calls;
+      },
+    };
+  }
+
+  /** The pre-MMR fused output (fts + vector, no MMR) — the off-path/λ=1 byte-identity reference. */
+  function baseLaneReference(fts: MemorySearchResult[], vector: MemorySearchResult[]): string[] {
+    const lanes = [] as Parameters<typeof fuse>[0];
+    if (fts.length > 0) lanes.push({ results: fts, weight: 1.0 });
+    if (vector.length > 0) lanes.push({ results: vector, weight: 1.5 });
+    const scored = score(fuse(lanes), NEUTRAL, NOW);
+    const allowed = new Set<TrustLevel>(["system", "learned"]);
+    return deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel))).map((r) => r.entry.id);
+  }
+
+  it("DEFAULT-OFF BYTE-IDENTITY: mmr.enabled=false → readEmbeddings NEVER called → output === baseLaneReference", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const vector = [makeResult("b", { base: 0.5 }), makeResult("c", { base: 0.3 })];
+    const { store, calls } = fakeEmbeddingStore(
+      new Map([
+        ["a", [1, 0]],
+        ["b", [1, 0]],
+        ["c", [0, 1]],
+      ]),
+    );
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: false, lambda: 0.7 } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0); // THE load-bearing proof: off path never reads
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
+  });
+
+  it("NO mmr CONFIG: an absent cfg.mmr → readEmbeddings NEVER called (byte-identical to before this plan)", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const { store, calls } = fakeEmbeddingStore(new Map([["a", [1, 0]], ["b", [0, 1]]]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0);
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("λ=1 NEUTRAL: mmr.enabled=true, lambda=1 → readEmbeddings IS called but the order is UNCHANGED (mmrRerank λ=1 identity)", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 }), makeResult("c", { base: 0.2 })];
+    const { store, calls } = fakeEmbeddingStore(
+      new Map([
+        ["a", [1, 0]],
+        ["b", [1, 0]],
+        ["c", [0, 1]],
+      ]),
+    );
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 1 } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(1); // ON ⇒ the read happens …
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, [])); // … but λ=1 is identity
+  });
+
+  it("<2 CANDIDATES GUARD: a single-candidate recall with mmr.enabled=true → ranked.length<2 → readEmbeddings NEVER called", async () => {
+    const fts = [makeResult("only", { base: 0.9 })];
+    const { store, calls } = fakeEmbeddingStore(new Map([["only", [1, 0]]]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 0.5 } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0); // the <2 guard short-circuits before the read
+    expect(got.value.map((r) => r.entry.id)).toEqual(["only"]);
+  });
+
+  it("MMR-ON DIVERSITY LIFT: an orthogonal candidate is promoted ahead of a near-duplicate vs the OFF order (RED on pre-wiring)", async () => {
+    // Single FTS lane (pass-through preserves the base scores as rel). A and B are near-duplicate-
+    // embedded (cos≈1), C is orthogonal (cos 0). With λ=0.5: round 1 picks A (highest rel); round 2
+    // B = 0.5·relB − 0.5·1 (penalized to A), C = 0.5·relC − 0.5·0 (no penalty) → C overtakes B.
+    const fts = [
+      makeResult("A", { base: 0.9, trustLevel: "learned" }),
+      makeResult("B", { base: 0.85, trustLevel: "learned" }),
+      makeResult("C", { base: 0.8, trustLevel: "learned" }),
+    ];
+    const embeddings = new Map<string, number[]>([
+      ["A", [1, 0]],
+      ["B", [1, 0]], // identical to A → cos 1 (near-duplicate)
+      ["C", [0, 1]], // orthogonal to A → cos 0 (diverse)
+    ]);
+    const offRecall = createMemoryRecall(
+      { memoryPort: fakeLaneMemoryPort({ fts, vector: [] }), clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, minScore: 0, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const off = await offRecall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const { store } = fakeEmbeddingStore(embeddings);
+    const onRecall = createMemoryRecall(
+      { memoryPort: fakeLaneMemoryPort({ fts, vector: [] }), embeddingStore: store, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, minScore: 0, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 0.5 } } as Partial<MemoryRecallConfig>),
+    );
+    const on = await onRecall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(off.ok && on.ok).toBe(true);
+    if (!off.ok || !on.ok) return;
+    const offOrder = off.value.map((r) => r.entry.id);
+    const onOrder = on.value.map((r) => r.entry.id);
+    expect(offOrder).toEqual(["A", "B", "C"]); // relevance order (no diversity)
+    expect(onOrder).toEqual(["A", "C", "B"]); // MMR promotes the orthogonal C ahead of the near-dup B
+    expect(onOrder).not.toEqual(offOrder); // the reorder is real (RED on pre-wiring)
+  });
+
+  it("SCOPE: the recorded readEmbeddings call's scope === {tenantId: SESSION_KEY_OBJ.tenantId, agentId: <recall agentId>}", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const { store, calls } = fakeEmbeddingStore(new Map([["a", [1, 0]], ["b", [0, 1]]]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 0.5 } } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(calls.length).toBe(1);
+    // The load-bearing scope derivation: tenant from the session key, agent from the recall arg.
+    expect(calls[0]?.scope).toEqual({ tenantId: "tenant_x", agentId: "agent_y" });
+    // The read is of the POST-trust-filter candidate ids (both survive the learned/system filter).
+    expect(calls[0]?.ids.sort()).toEqual(["a", "b"]);
+  });
+
+  it("NON-FATAL: a readEmbeddings that returns err → recall returns ok with the pre-MMR order + a WARN was logged", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 }), makeResult("c", { base: 0.2 })];
+    const warns: Record<string, unknown>[] = [];
+    const capturingLogger = {
+      ...noopLogger,
+      warn: (obj: Record<string, unknown>) => {
+        warns.push(obj);
+      },
+    } as unknown as ComisLogger;
+    const failing = failingEmbeddingStore();
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        embeddingStore: failing.store,
+        clock: fixedClock,
+        logger: capturingLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 0.5 } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true); // recall NEVER fails because the embedding read failed
+    if (!got.ok) return;
+    expect(failing.calls).toBe(1); // the read was attempted (live getter, read post-recall) …
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, [])); // … and we ranked WITHOUT MMR
+    const warn = warns.find((w) => typeof w.hint === "string" && /mmr|diversity/i.test(String(w.hint)));
+    expect(warn).toBeDefined();
+    expect(warn?.errorKind).toBe("internal");
+  });
+
+  it("PLACEMENT: MMR re-orders ONLY the post-trust-filter survivors (an excluded candidate is never re-surfaced)", async () => {
+    // An "external" candidate is dropped by the trust filter BEFORE MMR. Even though it would be
+    // maximally diverse (orthogonal embedding), MMR can never re-surface it — FORK 1 placement.
+    const fts = [
+      makeResult("A", { base: 0.9, trustLevel: "learned" }),
+      makeResult("B", { base: 0.85, trustLevel: "learned" }),
+      makeResult("EXT", { base: 0.99, trustLevel: "external" }), // dropped by the trust filter
+    ];
+    const embeddings = new Map<string, number[]>([
+      ["A", [1, 0]],
+      ["B", [1, 0]],
+      ["EXT", [0, 1]],
+    ]);
+    const { store, calls } = fakeEmbeddingStore(embeddings);
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, minScore: 0, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 0.5 } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).not.toContain("EXT"); // never re-surfaced
+    // The read saw ONLY the post-trust-filter ids (EXT was already excluded — security boundary).
+    expect(calls[0]?.ids).not.toContain("EXT");
   });
 });

@@ -1,0 +1,36 @@
+{
+  "harnessVersion": "phase-104-prove-v1",
+  "benchmark": "ablation-contribution",
+  "factors": [
+    {
+      "factor": "kg-graph-spread",
+      "knobPath": "lanes.graphSpread.enabled",
+      "writeSide": false,
+      "offIsByteIdentityToBaseline": true
+    },
+    {
+      "factor": "iq-mmr",
+      "knobPath": "mmr.enabled",
+      "writeSide": false,
+      "offIsByteIdentityToBaseline": true
+    },
+    {
+      "factor": "iq-intent",
+      "knobPath": "queryUnderstanding.intentReweight",
+      "writeSide": false,
+      "offIsByteIdentityToBaseline": true
+    },
+    {
+      "factor": "iq-temporal-parse",
+      "knobPath": "queryUnderstanding.temporalParse",
+      "writeSide": false,
+      "offIsByteIdentityToBaseline": true
+    },
+    {
+      "factor": "reason-observations",
+      "knobPath": "memoryReasoning.enabled",
+      "writeSide": true,
+      "offIsByteIdentityToBaseline": true
+    }
+  ]
+}

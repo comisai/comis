@@ -87,6 +87,10 @@ export const MemoryRowSchema = z.strictObject({
   confidence: z.number().nullable(),
   /** JSON-encoded audit array — consumer parses; null on raw (P84/CONS-05). */
   history: z.string().nullable(),
+  /** Reasoning-observation kind TEXT; null = "merge" (P101/REASON-01). */
+  observation_kind: z.string().nullable(),
+  /** Inductive pattern class TEXT; null unless observationKind="inductive" (P101/REASON-01). */
+  pattern_type: z.string().nullable(),
   /** Unix timestamp in milliseconds, null if never updated. */
   updated_at: z.number().nullable(),
   /** Unix timestamp in milliseconds, null if no expiry. */
@@ -163,6 +167,63 @@ export const CausalLaneRowSchema = z.strictObject({
   linked: z.string(),
   /** The edge confidence (REAL) — drives confidence-desc intra-lane ordering. */
   confidence: z.number(),
+});
+
+/**
+ * Schema for the `memory_triples` table (Phase 100, KG-01). The segregated
+ * bi-temporal knowledge-graph row: an S/P/O assertion with the FOUR bi-temporal
+ * timestamps (`t_valid_start`/`t_valid_end` valid-time, `t_ingested`/`expired_at`
+ * txn-time) + the occurred range (`t_occurred`/`t_occurred_end`) + the Comis
+ * `trust` ladder + optional `source_memory_id` provenance + `confidence`.
+ * `tenant_id`/`agent_id` ARE projected (the adapter maps a full row back to the
+ * camelCase `TripleInput` for `asOf`). The end-stamps + occurred range +
+ * provenance + confidence are `.nullable()` (a current-truth row has
+ * `t_valid_end`/`expired_at` NULL); `trust` is `z.enum(...)` matching the DDL
+ * CHECK. Parsed via `createRowMapper` in the adapter — never `as Row[]`.
+ */
+export const MemoryTripleRowSchema = z.strictObject({
+  id: z.string(),
+  tenant_id: z.string(),
+  agent_id: z.string(),
+  subject: z.string(),
+  predicate: z.string(),
+  object: z.string(),
+  /** The Comis trust ladder — matches the DDL CHECK constraint. */
+  trust: z.enum(["system", "learned", "external"]),
+  /** Valid-time start: epoch ms when the fact became true. */
+  t_valid_start: z.number(),
+  /** Valid-time end: epoch ms; NULL = currently believed (KG-03 default filter). */
+  t_valid_end: z.number().nullable(),
+  /** Txn-time start: epoch ms when we learned it. */
+  t_ingested: z.number(),
+  /** Txn-time end: epoch ms when we stopped believing it; NULL = live record. */
+  expired_at: z.number().nullable(),
+  /** Occurred range start: epoch ms; NULL when unknown. */
+  t_occurred: z.number().nullable(),
+  /** Occurred range end: epoch ms; NULL = point/unknown. */
+  t_occurred_end: z.number().nullable(),
+  /** Provenance memory id (ON DELETE CASCADE); NULL when not from a memory. */
+  source_memory_id: z.string().nullable(),
+  /** Optional corroboration confidence 0..1; NULL when unset. */
+  confidence: z.number().nullable(),
+});
+
+/**
+ * Schema for the graph-spread recursive-CTE node projection (Phase 100, KG-04;
+ * RESEARCH §Graph-spread lane). The bounded `WITH RECURSIVE walk(node, depth)`
+ * walk over current-truth `subject → object` edges returns, per reached node, the
+ * node string (a triple `object`) and its hop `depth` (`SELECT DISTINCT node,
+ * depth FROM walk WHERE depth > 0`). `tenant_id`/`agent_id` are NOT projected —
+ * the recursive arm's WHERE already pins them (mirrors `CausalLaneRowSchema`'s
+ * minimal projection). The full memory hydrate happens via a second scoped SELECT
+ * on the reached node's `source_memory_id`. Parsed via `createRowMapper` in
+ * `spreadLane` — never `as Row[]`.
+ */
+export const SpreadNodeRowSchema = z.strictObject({
+  /** A reached node (a triple `object` string) — drives the hydrate + dedup. */
+  node: z.string(),
+  /** Hop depth from the seed (>=1 after the WHERE depth>0) — drives 1/(1+depth) scoring. */
+  depth: z.number(),
 });
 
 /**

@@ -45,6 +45,10 @@ export function isVecAvailable(): boolean {
  *   into an observation; the state predicate for candidate selection.
  * - `confidence REAL` (P84/CONS-08): observation confidence 0..1.
  * - `history TEXT` (P84/CONS-05): JSON audit array of prior contents.
+ * - `observation_kind TEXT` (P101/REASON-01): reasoning-observation kind
+ *   ({merge,deductive,inductive}); NULL = "merge" (the default for pre-101 rows).
+ * - `pattern_type TEXT` (P101/REASON-01): inductive pattern class; NULL unless
+ *   observationKind="inductive". No CHECK — the enum is the Zod domain type's job.
  *
  * @param db - An open better-sqlite3 Database instance whose `memories`
  *   table already exists (created by `initSchema`'s `CREATE TABLE IF NOT EXISTS`).
@@ -67,6 +71,13 @@ export function ensureMemoryColumns(db: Database.Database): void {
   if (!cols.has("consolidated_at")) db.exec(`ALTER TABLE memories ADD COLUMN consolidated_at INTEGER`);
   if (!cols.has("confidence")) db.exec(`ALTER TABLE memories ADD COLUMN confidence REAL`);
   if (!cols.has("history")) db.exec(`ALTER TABLE memories ADD COLUMN history TEXT`);
+  // Typed-observation columns (P101/REASON-01). Both nullable → O(1) ADD, no
+  // rewrite, no backfill (existing rows get NULL: observation_kind NULL = "merge"
+  // on read, the forward-only default). Forward-only. NO CHECK — the enum is
+  // enforced in the MemoryEntry Zod domain type + the lenient LLM parser (101-04),
+  // following the occurred_at/proof_count no-CHECK ALTER precedent.
+  if (!cols.has("observation_kind")) db.exec(`ALTER TABLE memories ADD COLUMN observation_kind TEXT`);
+  if (!cols.has("pattern_type")) db.exec(`ALTER TABLE memories ADD COLUMN pattern_type TEXT`);
 }
 
 /**
@@ -211,6 +222,72 @@ export function ensureCausalTables(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_causal_target
       ON memory_causal_edges(tenant_id, agent_id, target_memory_id);
+  `);
+}
+
+/**
+ * Create the segregated bi-temporal knowledge-graph triple table (Phase 100,
+ * Track F — KG-01/KG-02/KG-03). Forward-only additive, idempotent (every
+ * `CREATE TABLE/INDEX IF NOT EXISTS`), safe on every boot — the same path serves
+ * a fresh DB and a live DB that predates the table (existing `~/.comis` DBs gain
+ * the empty table with no backfill; mirrors `ensureCausalTables`).
+ *
+ * ## Schema shape (the contract the other Phase-100 plans build on)
+ *
+ * One row = one S/P/O assertion with the FOUR bi-temporal timestamps (Graphiti's
+ * model, epoch ms): the VALID-time pair `t_valid_start` / `t_valid_end`
+ * (`t_valid_end IS NULL` = currently believed — the KG-03 default recall filter)
+ * and the TXN-time pair `t_ingested` / `expired_at` (when we learned it / when we
+ * stopped believing it). Plus the world OCCURRED range `t_occurred` /
+ * `t_occurred_end`, the Comis `trust` ladder, optional `source_memory_id`
+ * provenance, and a `confidence`.
+ *
+ * ## The PRIMARY KEY is per-row `id`, NOT the current-truth tuple (T-100-01)
+ *
+ * History is NON-DESTRUCTIVE — many superseded versions of a
+ * (tenant, agent, subject, predicate) coexist, so the PK is the row `id`.
+ * "Single current truth" is enforced by the partial index `idx_triples_current`
+ * (on `t_valid_end IS NULL`) + the Plan-02 upsert transaction, NOT a UNIQUE
+ * constraint. The `ON DELETE CASCADE` on `source_memory_id -> memories(id)`
+ * fires via the `PRAGMA foreign_keys = ON` already set by `openSqliteDatabase`
+ * (no pragma is set here) — deleting a source memory drops its derived triples.
+ *
+ * ## Isolation (T-100-01-01, the §5.2 invariant)
+ *
+ * Every row carries `tenant_id` + `agent_id`, and every index leads with them —
+ * the adapter (sqlite-triple-store.ts) filters every statement on
+ * `(tenant_id, agent_id)`. The `trust` CHECK rejects an out-of-ladder value at
+ * write (T-100-01-04).
+ *
+ * @param db - An open better-sqlite3 Database whose `memories` table already
+ *   exists (the FK target). Call AFTER `ensureCausalTables` in `initSchema`.
+ */
+export function ensureTripleTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memory_triples (
+      id               TEXT NOT NULL,
+      tenant_id        TEXT NOT NULL,
+      agent_id         TEXT NOT NULL,
+      subject          TEXT NOT NULL,
+      predicate        TEXT NOT NULL,
+      object           TEXT NOT NULL,
+      trust            TEXT NOT NULL CHECK(trust IN ('system','learned','external')),
+      t_valid_start    INTEGER NOT NULL,
+      t_valid_end      INTEGER,
+      t_ingested       INTEGER NOT NULL,
+      expired_at       INTEGER,
+      t_occurred       INTEGER,
+      t_occurred_end   INTEGER,
+      source_memory_id TEXT REFERENCES memories(id) ON DELETE CASCADE,
+      confidence       REAL,
+      PRIMARY KEY (id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_triples_current
+      ON memory_triples(tenant_id, agent_id, subject, predicate) WHERE t_valid_end IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_triples_validtime
+      ON memory_triples(tenant_id, agent_id, t_valid_start, t_valid_end);
+    CREATE INDEX IF NOT EXISTS idx_triples_subject
+      ON memory_triples(tenant_id, agent_id, subject) WHERE t_valid_end IS NULL;
   `);
 }
 
@@ -378,6 +455,13 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   // foreign_keys=ON set by openSqliteDatabase. Brand-new additive table — no
   // ALTER on memories.
   ensureCausalTables(db);
+
+  // --- Bi-temporal knowledge-graph triple table (Phase 100, KG-01) ---
+  // Created AFTER ensureCausalTables so the `memories` FK target already exists;
+  // the source_memory_id FK's ON DELETE CASCADE fires via the PRAGMA
+  // foreign_keys=ON set by openSqliteDatabase. Brand-new additive table — no
+  // ALTER on memories.
+  ensureTripleTable(db);
 
   // --- Observation partial indexes (Phase 84; design §4.1) ---
   // Created AFTER ensureMemoryColumns (the indexed columns must exist first).

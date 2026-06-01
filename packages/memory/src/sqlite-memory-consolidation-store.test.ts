@@ -466,6 +466,150 @@ describe("createSqliteMemoryConsolidationStore", () => {
   });
 
   // =====================================================================
+  // Phase 101 (REASON-01/03) — the INDUCTIVE WRITE PATH through applyConsolidation.
+  // The reasoning job (101-05) writes an inductive observation by setting
+  // observationKind="inductive" + patternType on plan.observation and calling the
+  // SHIPPED applyConsolidation (NOT a parallel write path). applyConsolidation
+  // delegates to insertMemoryRow (101-01 threaded the 2 columns there), so it
+  // persists the typed fields with NO adapter logic change. These tests lock that
+  // contract end-to-end through the REAL atomic create+mark path — the read-back
+  // proves observationKind/patternType survive (Pitfall 5: an insertMemoryRow
+  // arg-shift would write the kind into the wrong column).
+  // =====================================================================
+
+  describe("applyConsolidation — inductive observation persistence (REASON-01/03)", () => {
+    /**
+     * Build an observation MemoryEntry carrying the typed-observation fields.
+     * makeEntry does not spread observationKind/patternType, so they are set here
+     * directly on the returned entry.
+     */
+    function makeTypedObservation(
+      sourceIds: string[],
+      overrides: Partial<MemoryEntry> = {},
+    ): MemoryEntry {
+      const base = makeEntry({
+        content: overrides.content ?? "user_a prefers concise replies",
+        createdAt: overrides.createdAt ?? 2_000,
+        proofCount: overrides.proofCount ?? sourceIds.length,
+        sourceIds,
+        confidence: overrides.confidence ?? 0.9,
+        trustLevel: overrides.trustLevel ?? "learned",
+        ...overrides,
+      });
+      return {
+        ...base,
+        ...(overrides.observationKind !== undefined
+          ? { observationKind: overrides.observationKind }
+          : {}),
+        ...(overrides.patternType !== undefined ? { patternType: overrides.patternType } : {}),
+      };
+    }
+
+    /** Read the typed-observation columns straight from the row (raw SQL). */
+    function typedColsOf(
+      id: string,
+    ): { observation_kind: string | null; pattern_type: string | null } | undefined {
+      return db
+        .prepare("SELECT observation_kind, pattern_type FROM memories WHERE id = ?")
+        .get(id) as
+        | { observation_kind: string | null; pattern_type: string | null }
+        | undefined;
+    }
+
+    it("RED 1 (inductive round-trip): an observation with observationKind='inductive' + patternType='preference' persists BOTH columns and reads back intact", async () => {
+      const s1 = await seedMemory({ content: "i like short answers", createdAt: 100 });
+      const s2 = await seedMemory({ content: "keep it brief please", createdAt: 200 });
+      const obs = makeTypedObservation([s1, s2], {
+        observationKind: "inductive",
+        patternType: "preference",
+        proofCount: 2,
+        trustLevel: "learned",
+      });
+
+      const res = await store.applyConsolidation({
+        observation: obs,
+        markConsolidated: [s1, s2],
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+
+      // Raw column check — the 2 new columns physically persisted (no arg-shift).
+      const cols = typedColsOf(obs.id);
+      expect(cols).toBeDefined();
+      expect(cols?.observation_kind).toBe("inductive");
+      expect(cols?.pattern_type).toBe("preference");
+
+      // Domain round-trip via listObservations -> rowToEntry (the read path the
+      // recall side uses): both typed fields survive.
+      const listed = await store.listObservations(AGENT_A, TENANT_A, 10);
+      expect(listed.ok).toBe(true);
+      if (!listed.ok) return;
+      const readBack = listed.value.find((e) => e.id === obs.id);
+      expect(readBack).toBeDefined();
+      expect(readBack?.observationKind).toBe("inductive");
+      expect(readBack?.patternType).toBe("preference");
+      // The trust ceiling the job set (≤ learned, REASON-03) is written verbatim.
+      expect(readBack?.trustLevel).toBe("learned");
+    });
+
+    it("RED 2 (merge default not regressed): a legacy merge observation (no observationKind set) reads back observationKind='merge'", async () => {
+      const s1 = await seedMemory({ content: "source one", createdAt: 100 });
+      const s2 = await seedMemory({ content: "source two", createdAt: 200 });
+      // A consolidation observation with NO observationKind/patternType — the
+      // Phase-84 merge path. observation_kind persists NULL; rowToEntry maps NULL
+      // back to "merge" (the forward-only default), pattern_type stays absent.
+      const obs = makeTypedObservation([s1, s2], { proofCount: 2 });
+      expect(obs.observationKind).toBeUndefined(); // precondition — a merge default
+
+      const res = await store.applyConsolidation({
+        observation: obs,
+        markConsolidated: [s1, s2],
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(res.ok).toBe(true);
+
+      // The column persisted NULL (no value written for a merge observation).
+      const cols = typedColsOf(obs.id);
+      expect(cols?.observation_kind).toBeNull();
+      expect(cols?.pattern_type).toBeNull();
+
+      // rowToEntry maps the NULL kind to "merge"; patternType is absent.
+      const listed = await store.listObservations(AGENT_A, TENANT_A, 10);
+      expect(listed.ok).toBe(true);
+      if (!listed.ok) return;
+      const readBack = listed.value.find((e) => e.id === obs.id);
+      expect(readBack?.observationKind).toBe("merge");
+      expect(readBack?.patternType).toBeUndefined();
+    });
+
+    it("RED 3 (deductive kind persists too): observationKind='deductive' round-trips (the third enum member is not dropped)", async () => {
+      const s1 = await seedMemory({ content: "fact source", createdAt: 100 });
+      const obs = makeTypedObservation([s1], {
+        observationKind: "deductive",
+        proofCount: 1,
+      });
+
+      const res = await store.applyConsolidation({
+        observation: obs,
+        markConsolidated: [s1],
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(res.ok).toBe(true);
+
+      const listed = await store.listObservations(AGENT_A, TENANT_A, 10);
+      expect(listed.ok).toBe(true);
+      if (!listed.ok) return;
+      const readBack = listed.value.find((e) => e.id === obs.id);
+      expect(readBack?.observationKind).toBe("deductive");
+      expect(readBack?.patternType).toBeUndefined(); // deductive carries no patternType
+    });
+  });
+
+  // =====================================================================
   // Task 2 (Phase 94) — foldIntoExisting (the proof-accrual dual of
   // applyConsolidation): grow an EXISTING observation atomically + idempotently
   // instead of creating a second one (FOLD-01/02). The load-bearing invariants:
@@ -1362,6 +1506,265 @@ describe("createSqliteMemoryConsolidationStore", () => {
       const cand = r.value.find((c) => c.entry.id === truncId);
       expect(cand).toBeDefined();
       expect(cand?.embedding).toBeUndefined();
+    });
+  });
+
+  // Phase 101 (REASON-04): the corpus-wide k-NN cosine DISTANCES read — the
+  // surprisal-gate engine the agent cannot run as SQL. The 101-02 wave landed
+  // the type-only port method + a contract-satisfying graceful-degrade adapter
+  // body (ok([])); THIS wave (101-03) wires the real sqlite-vec searchByVector
+  // surprisal query (the GLOBAL vec table, ascending distances). The first test
+  // pins the FORWARD-COMPATIBLE contract surface that holds for BOTH the degrade
+  // body and the real impl; the RED tests below additionally PROVE the real
+  // read returns actual neighbour distances (the 101-02 stub returned ok([]),
+  // so they FAIL on the pre-patch adapter — a clean RED).
+  describe("knnDistances — surprisal k-NN read (REASON-04)", () => {
+    it("returns ok with a sorted non-negative number[] of distances and never throws (the surprisal-gate contract)", async () => {
+      await seedMemory({ content: "a neighbour candidate", createdAt: 100 });
+      const res = await store.knnDistances([0.1, 0.2, 0.3, 0.4], 5, AGENT_A, TENANT_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(Array.isArray(res.value)).toBe(true);
+      // An empty list is valid (sqlite-vec unavailable / no neighbours); a
+      // non-empty list MUST be sorted ascending (closer first) and non-negative —
+      // the invariant both the 101-02 degrade body and the 101-03 impl uphold.
+      for (let i = 1; i < res.value.length; i++) {
+        expect(res.value[i]).toBeGreaterThanOrEqual(res.value[i - 1]!);
+      }
+      for (const d of res.value) {
+        expect(d).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it("RED (real read): with embedded neighbours seeded, returns ≤k cosine distances sorted ASCENDING, each ≥ 0", async () => {
+      // sqlite-vec must be available for searchByVector to return rows.
+      expect(isVecAvailable()).toBe(true);
+
+      // Seed 4 memories WITH embeddings (adapter.store writes them into the
+      // GLOBAL vec_memories table — the same table searchByVector reads). The
+      // dims (4) match memoryConfig.embeddingDimensions.
+      await seedMemory({ content: "near A", createdAt: 100, embedding: [0.10, 0.20, 0.30, 0.40] });
+      await seedMemory({ content: "near B", createdAt: 200, embedding: [0.11, 0.21, 0.31, 0.41] });
+      await seedMemory({ content: "far C", createdAt: 300, embedding: [0.90, 0.10, 0.05, 0.02] });
+      await seedMemory({ content: "far D", createdAt: 400, embedding: [-0.5, -0.4, -0.3, -0.2] });
+
+      const k = 3;
+      const res = await store.knnDistances([0.10, 0.20, 0.30, 0.40], k, AGENT_A, TENANT_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+
+      // The 101-02 stub returned ok([]) — THIS is the RED-distinguishing
+      // assertion: the real searchByVector read surfaces actual neighbours.
+      expect(res.value.length).toBeGreaterThan(0);
+      expect(res.value.length).toBeLessThanOrEqual(k); // ≤ k neighbours (the cap)
+      // Sorted ASCENDING (closer first — searchByVector's contract, passed through).
+      for (let i = 1; i < res.value.length; i++) {
+        expect(res.value[i]).toBeGreaterThanOrEqual(res.value[i - 1]!);
+      }
+      // Every value is a real cosine distance ≥ 0.
+      for (const d of res.value) {
+        expect(typeof d).toBe("number");
+        expect(Number.isFinite(d)).toBe(true);
+        expect(d).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it("RED (determinism): two calls with the same embedding + k return identical distance arrays (the surprisal gate depends on reproducibility, Pitfall 3)", async () => {
+      expect(isVecAvailable()).toBe(true);
+      await seedMemory({ content: "n1", createdAt: 100, embedding: [0.10, 0.20, 0.30, 0.40] });
+      await seedMemory({ content: "n2", createdAt: 200, embedding: [0.40, 0.30, 0.20, 0.10] });
+      await seedMemory({ content: "n3", createdAt: 300, embedding: [0.05, 0.05, 0.05, 0.05] });
+
+      const q = [0.10, 0.20, 0.30, 0.40];
+      const first = await store.knnDistances(q, 3, AGENT_A, TENANT_A);
+      const second = await store.knnDistances(q, 3, AGENT_A, TENANT_A);
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      if (!first.ok || !second.ok) return;
+      // Non-empty (the real read ran) AND byte-identical across the two calls.
+      expect(first.value.length).toBeGreaterThan(0);
+      expect(second.value).toEqual(first.value);
+    });
+
+    it("graceful degrade: with NO embedded rows in the vec table, returns ok([]) (never err, never throws)", async () => {
+      // Seed only raw memories WITHOUT embeddings — searchByVector finds no
+      // neighbours, so the distance list is empty. ok([]) is the valid degrade.
+      await seedMemory({ content: "no embedding here", createdAt: 100 });
+      const res = await store.knnDistances([0.1, 0.2, 0.3, 0.4], 5, AGENT_A, TENANT_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value).toEqual([]);
+    });
+
+    it("logs a counts-only step:'reason-knn' DEBUG on a successful read (never the embedding values)", async () => {
+      await seedMemory({ content: "neighbour", createdAt: 100, embedding: [0.1, 0.2, 0.3, 0.4] });
+      const debugs: { obj: Record<string, unknown>; msg: string }[] = [];
+      const logger = {
+        info: () => {},
+        warn: () => {},
+        debug: (obj: Record<string, unknown>, msg: string) => debugs.push({ obj, msg }),
+      };
+      const s = createSqliteMemoryConsolidationStore({ db, logger });
+      const r = await s.knnDistances([0.1, 0.2, 0.3, 0.4], 3, AGENT_A, TENANT_A);
+      expect(r.ok).toBe(true);
+      const line = debugs.find((d) => d.obj.step === "reason-knn");
+      expect(line).toBeDefined();
+      // Counts/duration metadata only — the embedding values are NEVER logged.
+      expect(typeof line?.obj.count).toBe("number");
+      const serialized = JSON.stringify(line?.obj ?? {});
+      expect(serialized).not.toContain("0.1");
+      expect(serialized).not.toContain("0.2");
+    });
+
+    it("returns err (never throws) when the underlying vec query throws", async () => {
+      // Monkeypatch db.prepare so the vec MATCH query throws on execution; the
+      // adapter must catch it and return err — the surprisal gate degrades for
+      // that candidate, the run never crashes (T-101-03-03).
+      await seedMemory({ content: "neighbour", createdAt: 100, embedding: [0.1, 0.2, 0.3, 0.4] });
+      const warns: { obj: Record<string, unknown>; msg: string }[] = [];
+      const logger = {
+        info: () => {},
+        warn: (obj: Record<string, unknown>, msg: string) => warns.push({ obj, msg }),
+        debug: () => {},
+      };
+      const realPrepare = db.prepare.bind(db);
+      const spy = (sql: string) => {
+        const stmt = realPrepare(sql);
+        if (/vec_memories/.test(sql) && /embedding MATCH/.test(sql)) {
+          return {
+            ...stmt,
+            all: () => {
+              throw new Error("injected vec query failure");
+            },
+          } as unknown as ReturnType<typeof realPrepare>;
+        }
+        return stmt;
+      };
+      // @ts-expect-error -- test-only monkeypatch of the prepared-statement factory
+      db.prepare = spy;
+      try {
+        const s = createSqliteMemoryConsolidationStore({ db, logger });
+        const r = await s.knnDistances([0.1, 0.2, 0.3, 0.4], 3, AGENT_A, TENANT_A);
+        expect(r.ok).toBe(false); // returns err, never throws
+        expect(warns.some((w) => w.obj.step === "reason-knn")).toBe(true);
+      } finally {
+        db.prepare = realPrepare;
+      }
+    });
+  });
+
+  // =====================================================================
+  // markReasoned — the deductive-only drain (WR-01, REASON-02). Marks
+  // sources consolidated_at WITHOUT creating an observation, so a scope that
+  // yielded only a deductive triple (no inductive observation to create) still
+  // leaves the candidate pool. Reuses the SAME scoped, fail-closed,
+  // non-destructive markConsolidated UPDATE as the apply/fold paths.
+  // =====================================================================
+
+  describe("markReasoned — deductive-only drain (WR-01)", () => {
+    it("marks in-scope sources consolidated_at == now and returns the changed count", async () => {
+      const a = await seedMemory({ content: "deductive src one", createdAt: 100 });
+      const b = await seedMemory({ content: "deductive src two", createdAt: 200 });
+      expect(consolidatedAtOf(a)).toBeNull();
+      expect(consolidatedAtOf(b)).toBeNull();
+
+      const res = await store.markReasoned([a, b], TENANT_A, 4242);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value).toBe(2); // both rows changed
+      expect(consolidatedAtOf(a)).toBe(4242);
+      expect(consolidatedAtOf(b)).toBe(4242);
+    });
+
+    it("drains the candidate pool: a marked source is no longer a consolidation candidate", async () => {
+      const a = await seedMemory({ content: "drain me", createdAt: 100 });
+      const before = await store.listConsolidationCandidates(AGENT_A, TENANT_A, 10);
+      expect(before.ok && before.value.some((c) => c.entry.id === a)).toBe(true);
+
+      const res = await store.markReasoned([a], TENANT_A, 5000);
+      expect(res.ok).toBe(true);
+
+      // consolidated_at IS NULL predicate now excludes it.
+      const after = await store.listConsolidationCandidates(AGENT_A, TENANT_A, 10);
+      expect(after.ok && after.value.some((c) => c.entry.id === a)).toBe(false);
+    });
+
+    it("scope isolation: a cross-TENANT id is a fail-closed no-op (count 0, source untouched)", async () => {
+      const other = await seedMemory({ content: "other tenant src", createdAt: 100, tenantId: "tenant_b" });
+      // Caller's tenant is TENANT_A — the cross-tenant id must NOT be marked.
+      const res = await store.markReasoned([other], TENANT_A, 6000);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value).toBe(0); // tenant_id predicate → no row changed
+      expect(consolidatedAtOf(other)).toBeNull(); // untouched under its own tenant
+    });
+
+    it("NON-DESTRUCTIVE (CONS-05): the source row + content survive — only consolidated_at changes", async () => {
+      const a = await seedMemory({ content: "keep my content", createdAt: 100 });
+      const before = memoriesCount();
+
+      const res = await store.markReasoned([a], TENANT_A, 7000);
+      expect(res.ok).toBe(true);
+
+      expect(rowExists(a)).toBe(true); // never deleted
+      expect(contentOf(a)).toBe("keep my content"); // content untouched
+      expect(memoriesCount()).toBe(before); // no row added/removed
+      expect(consolidatedAtOf(a)).toBe(7000); // only the mark changed
+    });
+
+    it("idempotent: re-marking an already-marked source re-writes the same column (no error)", async () => {
+      const a = await seedMemory({ content: "remark me", createdAt: 100 });
+      const first = await store.markReasoned([a], TENANT_A, 8000);
+      expect(first.ok).toBe(true);
+      if (first.ok) expect(first.value).toBe(1);
+
+      // A second mark with a later `now` is a harmless re-write (the candidate
+      // predicate already excludes the row from re-selection).
+      const second = await store.markReasoned([a], TENANT_A, 9000);
+      expect(second.ok).toBe(true);
+      if (second.ok) expect(second.value).toBe(1); // the UPDATE still matches the row
+      expect(consolidatedAtOf(a)).toBe(9000);
+    });
+
+    it("empty source list is a no-op that returns 0", async () => {
+      const res = await store.markReasoned([], TENANT_A, 1000);
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.value).toBe(0);
+    });
+
+    it("returns err (never throws) when the source-mark UPDATE fails", async () => {
+      const a = await seedMemory({ content: "boom", createdAt: 100 });
+      const warns: Array<{ obj: Record<string, unknown> }> = [];
+      const logger = {
+        info: () => {},
+        debug: () => {},
+        warn: (obj: Record<string, unknown>) => warns.push({ obj }),
+      };
+      const realPrepare = db.prepare.bind(db);
+      const spy = (sql: string) => {
+        const stmt = realPrepare(sql);
+        if (/UPDATE memories SET consolidated_at/.test(sql)) {
+          return {
+            ...stmt,
+            run: () => {
+              throw new Error("injected mark failure");
+            },
+          } as unknown as ReturnType<typeof realPrepare>;
+        }
+        return stmt;
+      };
+      // @ts-expect-error -- test-only monkeypatch of the prepared-statement factory
+      db.prepare = spy;
+      try {
+        const s = createSqliteMemoryConsolidationStore({ db, logger });
+        const r = await s.markReasoned([a], TENANT_A, 100);
+        expect(r.ok).toBe(false); // returns err, never throws
+        expect(warns.some((w) => w.obj.step === "reason-mark")).toBe(true);
+        // ROLLBACK: the failed transaction left the source unmarked.
+        expect(consolidatedAtOf(a)).toBeNull();
+      } finally {
+        db.prepare = realPrepare;
+      }
     });
   });
 });

@@ -1,0 +1,9 @@
+{
+  "recallAt1": 0.5734309835045132,
+  "recallAt3": 0.7827417911609087,
+  "recallAt5": 0.8450799486461252,
+  "mrr": 0.7883191332088387,
+  "vectorLane": true,
+  "rerank": true,
+  "harnessVersion": "phase-89-v1"
+}

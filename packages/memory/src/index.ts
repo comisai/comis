@@ -67,6 +67,27 @@ export type { MemoryTemporalStoreDeps } from "./sqlite-memory-temporal-store.js"
 export { createSqliteMemoryCausalStore } from "./sqlite-memory-causal-store.js";
 export type { MemoryCausalStoreDeps } from "./sqlite-memory-causal-store.js";
 
+// Trust-first bi-temporal knowledge-graph triple store (sole TripleStorePort
+// impl; Phase 100, Track F — KG-01/KG-02/KG-03/KG-04). Owns ALL the S/P/O triple
+// SQL over the additive `memory_triples` table: the trust-first single-current-
+// truth upsert (Plan 100-01 skeleton = INSERT-only; invalidation = Plan 100-02),
+// the valid-time `asOf(t)` read, and the bounded recursive-CTE `spreadLane`
+// (Plan 100-04). The daemon (composition root, Plan 100-03) constructs it on the
+// memory adapter's db handle; the TripleStorePort TYPE lives in @comis/core (the
+// agent↛memory cut — the offline writer + the recall lane consume the type only).
+export { createSqliteTripleStore } from "./sqlite-triple-store.js";
+export type { MemoryTripleStoreDeps } from "./sqlite-triple-store.js";
+
+// Scoped embedding-read store (sole MemoryEmbeddingStore impl; Phase 102, IQ-01).
+// Owns the (tenant, agent)-scoped LEFT JOIN vec_memories bulk read that hydrates
+// the MMR diversity re-rank (returns id->vector for the caller's scope ONLY — the
+// load-bearing T-102-03-01 isolation, UNLIKE the corpus-wide distances-only
+// knnDistances). The daemon (composition root, Plan 102-05) constructs it on the
+// memory adapter's db handle; the MemoryEmbeddingStore port TYPE lives in
+// @comis/core (the agent↛memory cut — the recall MMR read path consumes the type only).
+export { createSqliteMemoryEmbeddingStore } from "./sqlite-memory-embedding-store.js";
+export type { MemoryEmbeddingStoreDeps } from "./sqlite-memory-embedding-store.js";
+
 // Memory consolidation store (sole MemoryConsolidationStore impl; Phase 84).
 // Owns the scoped, state-predicate (consolidated_at IS NULL) candidate selection
 // + the atomic applyConsolidation transaction. The daemon (Plan 05) constructs

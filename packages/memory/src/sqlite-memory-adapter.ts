@@ -196,6 +196,9 @@ export class SqliteMemoryAdapter implements MemoryPort {
         trustLevel: options?.trustLevel,
         tenantId,
         agentId: options?.agentId,
+        // IQ-03b: forward the NL temporal range into the post-fusion WHERE
+        // (occurred_at BETWEEN ? AND ?, ANDed onto the scope — never widens).
+        ...(options?.occurredAtRange ? { occurredAtRange: options.occurredAtRange } : {}),
       }, this.vecAvailable);
 
       // Build full MemorySearchResult with entries
@@ -318,6 +321,16 @@ export class SqliteMemoryAdapter implements MemoryPort {
       if (row.expires_at !== null && row.expires_at <= now) continue;
       if (options?.agentId && row.agent_id !== options.agentId) continue;
       if (options?.trustLevel && row.trust_level !== options.trustLevel) continue;
+      // IQ-03b: the NL temporal range ANDs onto the ALREADY-(tenant, agent)-scoped
+      // per-id read above — it can only NARROW (never widens scope). A NULL
+      // occurred_at (no event time) fails the range and drops out, matching the
+      // `occurred_at BETWEEN ? AND ?` semantics on the fused search() path. (The
+      // searchLanes path resolves ids via searchByText/searchByVector, NOT
+      // hybridSearch, so the filter is applied here at hydration, not in SQL.)
+      if (options?.occurredAtRange) {
+        const { start, end } = options.occurredAtRange;
+        if (row.occurred_at === null || row.occurred_at < start || row.occurred_at > end) continue;
+      }
       rank += 1;
       // Rank-preserving intra-lane score in (0,1], strictly decreasing with rank.
       out.push({ entry: rowToEntry(row), score: 1 / rank });

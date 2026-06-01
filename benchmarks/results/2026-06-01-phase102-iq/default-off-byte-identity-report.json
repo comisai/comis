@@ -1,0 +1,11 @@
+{
+  "harnessVersion": "phase-102-06-v1",
+  "benchmark": "recall-iq-default-off-byte-identity",
+  "scenario": "shipping config (every IQ knob off, stores present) vs the IQ-features-absent path",
+  "absentOrderLength": 3,
+  "shippingOrderLength": 3,
+  "defaultOffByteIdentical": true,
+  "readEmbeddingsCalls": 0,
+  "baselineHeld": "Phase-98: overall ~71% (71.1/73.3), temporal 45/40, recall@5 0.845",
+  "vectorLane": false
+}

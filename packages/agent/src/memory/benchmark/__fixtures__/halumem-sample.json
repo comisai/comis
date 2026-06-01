@@ -1,0 +1,24 @@
+{
+  "_provenance": "Derived from the HaluMem format (memory-hallucination eval at extract/update/QA stages; github.com/MemTensor/HaluMem, CC-BY-NC-ND with COI caveats — see MEMORY_BENCHMARK_CREDIBILITY.md); neutral placeholder content, NOT the real dataset. The full corpus is operator-placed under $COMIS_BENCH_DATA (see Plan 08 DATASETS.md) and never committed. The hallucination_labels ride a SEPARATE gold channel and are NEVER ingested into doc content.",
+  "session_id": "halumem_user_a",
+  "memory_ops": [
+    { "op": "extract", "content": "Placeholder extracted memory: user_a's placeholder pet is a cat named Whiskers." },
+    { "op": "update", "content": "Placeholder updated memory: user_a's placeholder pet name corrected to Mittens." }
+  ],
+  "qa": [
+    {
+      "question_id": "halumem_q1",
+      "question": "What is the placeholder name of user_a's pet after the update?",
+      "answer": "Mittens"
+    },
+    {
+      "question_id": "halumem_q2",
+      "question": "What did the placeholder system originally extract as the pet name?",
+      "answer": "Whiskers"
+    }
+  ],
+  "hallucination_labels": [
+    { "question_id": "halumem_q1", "hallucinated": false, "stage": "qa" },
+    { "question_id": "halumem_q2", "hallucinated": true, "stage": "update" }
+  ]
+}

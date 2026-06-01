@@ -1,0 +1,34 @@
+{
+  "_provenance": "Derived from the PersonaMem / PersonaMem-v2 format (evolving-persona long-context personalization eval, github.com/bowen-upenn/PersonaMem); neutral placeholder content, NOT the real dataset. The full corpus is operator-placed under $COMIS_BENCH_DATA (see Plan 08 DATASETS.md) and never committed.",
+  "persona_id": "personamem_user_a",
+  "persona_sessions": [
+    {
+      "session_id": "pm_sess_1",
+      "date": "2024/02/10 (Sat) 09:00",
+      "turns": [
+        { "role": "user", "content": "Early placeholder: user_a says their placeholder hobby is hiking." },
+        { "role": "assistant", "content": "Noted placeholder hobby hiking." }
+      ]
+    },
+    {
+      "session_id": "pm_sess_2",
+      "date": "2024/03/12 (Tue) 14:30",
+      "turns": [
+        { "role": "user", "content": "Later placeholder: user_a updated their placeholder hobby to climbing." },
+        { "role": "assistant", "content": "Updated placeholder hobby to climbing." }
+      ]
+    }
+  ],
+  "probes": [
+    {
+      "probe_id": "pm_probe_1",
+      "question": "What is user_a's current placeholder hobby after the latest session?",
+      "answer": "climbing"
+    },
+    {
+      "probe_id": "pm_probe_2",
+      "question": "What placeholder hobby did user_a originally state?",
+      "answer": "hiking"
+    }
+  ]
+}

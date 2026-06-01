@@ -586,6 +586,86 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // 13.4b. Memory reasoning cron — the opt-in gate (Phase 101, REASON-02/03 / 101-06)
+  // OFF by default: a default-config agent registers NO reasoning job; an
+  // operator-enabled agent registers __MEMORY_REASONING__ (default 0 4 * * *,
+  // AFTER consolidation's 30 3 so reasoning runs over freshly-consolidated
+  // observations). Mirrors the consolidation gate 1:1.
+  // -------------------------------------------------------------------------
+
+  it("registers NO reasoning cron for a default (reasoning-off) agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // memoryReasoning undefined => default OFF (the cost gate — byte-identical).
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    // No __MEMORY_REASONING__ job is ever added.
+    const reasoningAdds = addJob.mock.calls.filter(
+      (c) => (c[0] as any)?.payload?.text === "__MEMORY_REASONING__",
+    );
+    expect(reasoningAdds.length).toBe(0);
+  });
+
+  it("registers the __MEMORY_REASONING__ cron (default 0 4 * * *) for an enabled agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryReasoning: { enabled: true },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const reasoningAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__MEMORY_REASONING__");
+    expect(reasoningAdd).toBeDefined();
+    expect(reasoningAdd.id).toBe("memory-reasoning-agent-1");
+    expect(reasoningAdd.name).toBe("Memory reasoning");
+    // Default schedule runs AFTER consolidation's 30 3 so reasoning works over
+    // freshly-consolidated observations the same night.
+    expect(reasoningAdd.schedule).toEqual({ kind: "cron", expr: "0 4 * * *" });
+    expect(reasoningAdd.sessionTarget).toBe("isolated");
+    expect(reasoningAdd.sessionStrategy).toBe("fresh");
+    expect(reasoningAdd.payload).toEqual({ kind: "system_event", text: "__MEMORY_REASONING__" });
+  });
+
+  it("honors a custom reasoning schedule when the operator overrides it", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryReasoning: { enabled: true, schedule: "45 5 * * 0" },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const reasoningAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__MEMORY_REASONING__");
+    expect(reasoningAdd?.schedule).toEqual({ kind: "cron", expr: "45 5 * * 0" });
+  });
+
+  // -------------------------------------------------------------------------
   // 13.5. sessionStrategy and maxHistoryTurns propagated in event emission
   // -------------------------------------------------------------------------
 

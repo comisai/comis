@@ -138,12 +138,32 @@ export const RagConfigSchema = z.strictObject({
             weight: z.number().min(0).default(1.0),
           })
           .default(() => ({ enabled: false, weight: 1.0 })),
+        /** Graph-spread recall lane (Phase-100/KG-04). Default-OFF; surfaces memories
+         *  STRUCTURALLY connected to the seeds via a bounded recursive-CTE walk over the
+         *  trust-first triple store's OWN current-truth `subject → object` edges
+         *  (`t_valid_end IS NULL`), depth- + fan-out-capped so it stays O(bounded) on-device,
+         *  LLM-free. With `enabled:false` the lane is never pushed → fuse() unchanged → recall
+         *  byte-identical (the ENT-04 no-op reused; no surprise ranking change on upgrade,
+         *  T-100-04-06). `weight` is `min(0)` (no negative RRF term, T-95-08). `maxDepth` (the
+         *  hop cap, default 2 — the "bounded 2-hop weighted spread" of KG-04) and `fanOut` (the
+         *  per-node expansion cap, default 8 — a hub can't blow the recursive frontier,
+         *  T-100-04-01) are `int().positive()` (no zero/negative bound). The triple/causal/
+         *  temporal-lane sibling, plus the two walk caps. */
+        graphSpread: z
+          .strictObject({
+            enabled: z.boolean().default(false),
+            weight: z.number().min(0).default(1.0),
+            maxDepth: z.number().int().positive().default(2),
+            fanOut: z.number().int().positive().default(8),
+          })
+          .default(() => ({ enabled: false, weight: 1.0, maxDepth: 2, fanOut: 8 })),
       })
       .default(() => ({
         fts: { weight: 1.0 },
         vector: { weight: 1.5 },
         temporal: { enabled: false, weight: 1.0, windowDays: 7 },
         causal: { enabled: false, weight: 1.0 },
+        graphSpread: { enabled: false, weight: 1.0, maxDepth: 2, fanOut: 8 },
       })),
     /** One-hop entity-associative lane (ENT-02). Default-OFF; the daemon enables it once
      *  the entity store is wired (Phase-83 Plan 05). Empty/disabled -> RRF unchanged (ENT-04). */
@@ -173,6 +193,30 @@ export const RagConfigSchema = z.strictObject({
         enabled: z.boolean().default(false),
       })
       .default(() => ({ enabled: false })),
+    /** MMR diversity re-rank (IQ-01). Default-OFF; λ=1.0 = pure relevance = byte-identical
+     *  to the post-rerank order (the neutral guarantee, RESEARCH §IQ-01). λ bounded [0,1]
+     *  (T-95-08 style: an out-of-range λ would invert the rel/diversity balance — rejected
+     *  at parse). The daemon constructs the embedding store unconditionally; this knob is the
+     *  cost/behavior gate — OFF ⇒ no embedding read, no MMR, byte-identical recall. */
+    mmr: z
+      .strictObject({
+        enabled: z.boolean().default(false),
+        lambda: z.number().min(0).max(1).default(0.7),
+      })
+      .default(() => ({ enabled: false, lambda: 0.7 })),
+    /** LLM-free query understanding (IQ-02/03). All default-OFF; each toggle is an additive
+     *  deterministic capability over the existing recall path (byte-identical when off — the
+     *  ENT-04 no-op discipline). `intentReweight` multiplies the existing lane weights by a
+     *  pure intent classifier; `synonyms` expands the FTS query terms via a bounded static
+     *  map; `temporalParse` parses NL time expressions into an occurred_at range filter. NO
+     *  LLM call on the recall hot path (binding constraint #1). */
+    queryUnderstanding: z
+      .strictObject({
+        intentReweight: z.boolean().default(false),
+        synonyms: z.boolean().default(false),
+        temporalParse: z.boolean().default(false),
+      })
+      .default(() => ({ intentReweight: false, synonyms: false, temporalParse: false })),
   });
 
 export type RagConfig = z.infer<typeof RagConfigSchema>;

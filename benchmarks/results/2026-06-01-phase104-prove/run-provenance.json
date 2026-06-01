@@ -1,0 +1,104 @@
+{
+  "gate": "PROVE (Phase 104 head-to-head + continuous gate)",
+  "date": "2026-06-01",
+  "commit": "56d0f473",
+  "harnessCommit": "db8ba5b3",
+  "branch": "v2.8-prove-climb",
+  "piAiVersion": "0.78.0",
+  "keyless": true,
+  "models": {
+    "answer": { "provider": "anthropic", "modelId": "claude-sonnet-4-6" },
+    "judges": [
+      { "provider": "openai", "modelId": "gpt-4o-2024-11-20" },
+      { "provider": "openai", "modelId": "gpt-4.1" }
+    ],
+    "note": "The model block records the INTENDED costed-pass configuration (the same answerer + cross-MODEL judge pair as the 2026-05-31-j1-baseline / phase100-kg). The KEYLESS proving machine in this manifest calls NO model: the judge is an injected deterministic verdict stub, the competitor presence probe defaults to () => false, and the only adapter that runs is the pure letta-fs control. cross-PROVIDER judging with claude-opus-4-8 (pi 0.78.0) is the costed re-run — opus is used as a judge ONLY when the answer lane is non-Anthropic (BUG-004: an answerer must never be its own provider's judge)."
+  },
+  "provingMachine": {
+    "verdict": "PARTIAL",
+    "ranKeylessAt0": true,
+    "comisCellRanRealPipeline": true,
+    "absentCompetitorSkipped": true,
+    "controlRan": true,
+    "ledgerNeverOverwrite": true,
+    "ablationOffByteIdentityAllFactors": true,
+    "categoriesSurvived": 3,
+    "categoriesTotal": 4,
+    "note": "The whole believability machine (cross-judge spread + significance + append-only ledger + ablation sweep + skip-with-disclosure adapters + letta-fs control + a real Comis recall cell with the v2.8 lanes ON) is MEASURED to run keyless, deterministically, at $0 — exercised by head-to-head.bench.test.ts (7/7 green with COMIS_BENCH=1). The cross-judge spread is computed over INJECTED deterministic judge verdicts (NO LLM); the actual cross-JUDGED numbers come from the costed re-run."
+  },
+  "measurementsTaken": [
+    {
+      "name": "cross-judge spread survival fold (over injected deterministic verdicts)",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "harness": "packages/agent/src/memory/benchmark/head-to-head.bench.test.ts",
+      "productionCodePath": "computeCrossJudgeSpread (cross-judge-spread.ts) over two fixed per-category accuracy maps",
+      "report": "cross-judge-spread.json",
+      "result": "4 categories; single-session-user (0pt) + knowledge-update (0pt) + temporal-reasoning (3pt) SURVIVE (<=5pt); single-session-preference (15pt) does NOT survive (must not headline). 3/4 survived. These are INJECTED verdicts proving the FOLD, NOT a measured cross-judged number."
+    },
+    {
+      "name": "two-proportion significance + Wilson CI (n-dependence)",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "harness": "packages/agent/src/memory/benchmark/head-to-head.bench.test.ts",
+      "productionCodePath": "twoProportionTest + wilsonInterval (significance.ts)",
+      "report": "(asserted in-harness; no separate JSON — folded into the machine proof)",
+      "result": "a 19pt gap at n=100 is significant; a comparable gap at n=20 is NOT (small-N noise); Wilson hi is finite and <=1 on the (20,20) boundary (never NaN)."
+    },
+    {
+      "name": "append-only ledger never-overwrite (end-to-end)",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "harness": "packages/agent/src/memory/benchmark/head-to-head.bench.test.ts",
+      "productionCodePath": "buildLedgerRow + appendLedgerRow + ledgerRowPath (results-ledger.ts) over a fresh tmp history dir",
+      "report": "(asserted in-harness — the keyless proof writes a SYNTHETIC dated row to a tmp dir, NOT the committed benchmarks/results/history/)",
+      "result": "row1 (2026-06-01-aaa1111) wrote ok; a 2nd write to the SAME dated path was REFUSED and the 1st file's bytes stayed byte-identical; a DIFFERENT-date row (2026-06-02-bbb2222) coexisted. The never-overwrite invariant holds end-to-end."
+    },
+    {
+      "name": "ablation off=byte-identity for every v2.8 factor",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "harness": "packages/agent/src/memory/benchmark/head-to-head.bench.test.ts",
+      "productionCodePath": "V28_ABLATION_FACTORS + applyFactor + sweepCells (ablation-sweep.ts) over the explicit-off recall baseline",
+      "report": "ablation-contribution-report.json",
+      "result": "all 5 factors (kg-graph-spread -> lanes.graphSpread.enabled; iq-mmr -> mmr.enabled; iq-intent -> queryUnderstanding.intentReweight; iq-temporal-parse -> queryUnderstanding.temporalParse; reason-observations -> memoryReasoning.enabled, writeSide) are byte-identical to the baseline when toggled OFF — a mistyped knob leaf would set a phantom key and diverge."
+    },
+    {
+      "name": "absent-competitor skip-with-disclosure + letta-fs control",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "harness": "packages/agent/src/memory/benchmark/head-to-head.bench.test.ts",
+      "productionCodePath": "createMem0Adapter (skip path) + createLettaFsBaselineAdapter (the pure formatFilesystemContext control)",
+      "report": "adapter-conformance-report.json",
+      "result": "the absent mem0 adapter returned { ran:false, skipped:true, system:'mem0', reason, disclosure } with NO numeric field (fabricatedNumber:false); the letta-fs baseline ran keyless at $0 as the control (isControl:true) — never Comis's headline."
+    },
+    {
+      "name": "real Comis recall cell drives the v2.8 lanes ON (lanes-not-dormant wiring proof)",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "harness": "packages/agent/src/memory/benchmark/head-to-head.bench.test.ts",
+      "productionCodePath": "createMemoryRecall (bare @comis/agent) + SqliteMemoryAdapter + createSqliteTripleStore (bare @comis/memory) with lanes.graphSpread + mmr enabled, over a fresh mkdtempSync db",
+      "report": "(asserted in-harness — the head-to-head-report.json machine.comisCellRanRealPipeline flag)",
+      "result": "the real production recall pipeline returned ranked results with the v2.8 lanes ON (Pitfall-2 guard: the shipped lanes are wired into recall, not dormant). A number is NOT quoted — this is a wiring proof, not an accuracy measurement."
+    }
+  ],
+  "measurementsDeferredToOperatorCostedReRun": [
+    {
+      "name": "the ACTUAL competitor numbers (mem0 / zep / hindsight / mnemosyne under one protocol)",
+      "why": "Each competitor adapter is a skip-with-disclosure skeleton: mem0/zep need an external package + a hosted key, hindsight/mnemosyne are sibling clones (../hindsight, ../mnemosyne) the operator builds — NONE is a Comis dependency (the supply-chain invariant). The keyless CI always hits the skip branch (that IS the wiring proof). Running a real competitor cell needs the operator's installs + keys + LLM spend. Quoting a vendor self-reported number would be NON-COMPARABLE across protocols (the COI); fabricating one would be exactly the integrity threat this gate exists to prevent. Therefore the actual competitor numbers are an OPERATOR COSTED RE-RUN.",
+      "reproductionCommand": "populate scripts/bench-memory.env (answer + 2 judge providers/keys) + install the competitor systems, then `scripts/bench-memory.sh gate`"
+    },
+    {
+      "name": "the cross-JUDGED headline spread over two REAL judge passes",
+      "why": "The cross-judge spread in this manifest is computed over INJECTED deterministic verdicts (proving the FOLD at $0). The real headline spread requires answering the J1 corpus with the answer model and grading with >=2 independent judges (gpt-4o + gpt-4.1, cross-MODEL; claude-opus-4-8 cross-PROVIDER per BUG-004) — there is no keyless judge. That costed cross-judge pass produces the believable headline number; it is honestly DEFERRED, never guessed.",
+      "reproductionCommand": "`scripts/bench-memory.sh gate` with the populated bench-memory.env (answer + 2 judges)"
+    },
+    {
+      "name": "the KG-05 / REASON-05 / IQ-04 deferred QA lifts (the home for the three prior PARTIAL verdicts)",
+      "why": "Phases 100/101/102 each MEASURED their mechanical claims keyless (graph-spread lane contribution, trust-first invalidation, reasoning byte-identity, MMR/intent/temporal-range lifts) but DEFERRED the end-to-end QA cross-judge accuracy lift, because the shipped QA harness does not wire the new lanes and a lane-ON QA cross-judge needs a costed harness extension + judge spend. This head-to-head gate is the convergence point for all three: the same costed re-run (QA harness wired with the v2.8 lanes + 2 judges) fills the KG / REASON / IQ headline lifts together.",
+      "baselineToDiffAgainst": "benchmarks/results/2026-05-31-j1-baseline/ (temporal-reasoning 45/40, knowledge-update 75/75, overall 71.1/73.3, recall@5 0.845; control row 52.6/36.3)"
+    }
+  ],
+  "coi": {
+    "authoredBy": "Comis",
+    "disclosure": "Comis authored this benchmark and this proving machine. Vendor-reported competitor numbers are NON-COMPARABLE across protocols and harnesses; competitors are invited to reproduce on their own harness. No competitor number, no cross-judged delta, and no superiority-comparison framing appears anywhere in this manifest (binding constraint #8). The letta-fs filesystem-tool baseline is recorded ONLY as a labelled control, never as Comis's score.",
+    "ossLicense": "The proving harness (head-to-head.bench.test.ts) and every Wave-1 module carry an SPDX-License-Identifier: Apache-2.0 header — the harness is OSS-licensed so the protocol is independently reproducible (PROVE-03).",
+    "rawTranscriptRelease": "On the operator-costed re-run, the raw answer + judge transcripts are released alongside the dated row under benchmarks/results/history/<date>-<commit>.json (one immutable dated row per release) so any number is auditable end-to-end."
+  },
+  "baselineRef": "benchmarks/results/2026-05-31-j1-baseline/",
+  "honestyProtocol": "Every number in GATE-REPORT.md traces to a committed JSON in this directory, read back from disk and asserted before quoting. No competitor/QA number is quoted that was not produced by a real, invalid==0 run — the competitor numbers + the cross-judged headline spread are explicitly 'not measured — operator costed re-run', NOT a guessed delta. A post-run credential-shape sweep over the manifest is clean: no secret-key prefixes, bearer-token markers, or credential field names — the manifest carries pure numbers + booleans + a coi block."
+}

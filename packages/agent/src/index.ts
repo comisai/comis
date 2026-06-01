@@ -166,6 +166,33 @@ export type { MemoryReviewDeps } from "./memory/memory-review-job.js";
 export { runMemoryConsolidation } from "./memory/memory-consolidation-job.js";
 export type { MemoryConsolidationDeps } from "./memory/memory-consolidation-job.js";
 
+// Offline triple extraction (Phase 100, KG-01 — conversation text → S/P/O triples
+// written into the trust-first bi-temporal KG; default-OFF, NEVER on the recall path)
+export { runMemoryTripleExtraction } from "./memory/memory-triple-extraction-job.js";
+export type {
+  MemoryTripleExtractionDeps,
+  MemoryTripleExtractionConfig,
+  MemoryTripleExtractionStats,
+  TripleCandidate,
+} from "./memory/memory-triple-extraction-job.js";
+
+// Offline reasoning (Phase 101, REASON-02/03/04 — typed deductive + inductive
+// observations: deductive → trust-first upsertTriple, inductive → applyConsolidation
+// (≤ learned); default-OFF, surprisal-gated, NEVER on the recall path)
+export { runMemoryReasoning } from "./memory/memory-reasoning-job.js";
+export type {
+  MemoryReasoningDeps,
+  MemoryReasoningConfig,
+  MemoryReasoningStats,
+  MemoryReasoningResult,
+  ReasoningOutput,
+} from "./memory/memory-reasoning-job.js";
+// The daemon-injected reasoning seam factory (101-06): builds the OFFLINE
+// reason() seam from a cheap resolved model, keeping the specialist prompts +
+// parsers agent-internal. Consumed by the daemon __MEMORY_REASONING__ sentinel.
+export { createReasoningSeam } from "./memory/memory-reasoning-seam.js";
+export type { ReasoningSeamDeps } from "./memory/memory-reasoning-seam.js";
+
 // RAG (Retrieval-Augmented Generation)
 export { formatMemorySection } from "./rag/rag-retriever.js";
 

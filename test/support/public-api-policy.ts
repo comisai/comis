@@ -169,6 +169,36 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // but it is called with an inline object, so the named Deps SHAPE type has no
       // production consumer — baseline orphan (mirror MemoryReviewDeps).
       "MemoryConsolidationDeps",
+      // Offline triple-extraction job (Phase 100-05, Track F — KG-01, decision 6).
+      // runMemoryTripleExtraction is the offline writer; its daemon cron wiring is
+      // OPTIONAL in Plan 100-05 (the job is default-OFF and the benchmark in Plan
+      // 100-06 calls runMemoryTripleExtraction directly / seeds via tripleStore.upsertTriple).
+      // Surfaced here AHEAD of that consumer — the factory-orphan dance (mirror
+      // runMemoryConsolidation @ 84-03 before its sentinel landed): this entry
+      // SHRINKS when Plan 100-06 (or a later cron-wiring plan) lands the consumer.
+      // The Deps/Config/Stats SHAPE types + the TripleCandidate extractor-output type
+      // are referenced via inline objects only — baseline orphans (mirror MemoryConsolidationDeps).
+      "runMemoryTripleExtraction",
+      "MemoryTripleExtractionDeps",
+      "MemoryTripleExtractionConfig",
+      "MemoryTripleExtractionStats",
+      "TripleCandidate",
+      // Offline reasoning job (Phase 101, Track D — REASON-02/03/04). runMemoryReasoning
+      // is now CONSUMED by the daemon __MEMORY_REASONING__ sentinel dispatch (101-06),
+      // so it SHRANK out of this baseline (no longer an orphan). createReasoningSeam
+      // (101-06, the daemon-injected reason() seam factory) is likewise consumed by the
+      // dispatch — no entry needed. The Deps/Config/Stats/Result SHAPE types + the
+      // ReasoningOutput seam-output type are referenced via inline objects only (the
+      // dispatch + the gated bench construct them structurally / import them
+      // same-package) — baseline orphans (mirror MemoryTripleExtractionDeps).
+      // ReasoningSeamDeps (101-06) is the createReasoningSeam input shape — the daemon
+      // calls it with an inline object, so the TYPE itself has no cross-package importer.
+      "MemoryReasoningDeps",
+      "MemoryReasoningConfig",
+      "MemoryReasoningStats",
+      "MemoryReasoningResult",
+      "ReasoningOutput",
+      "ReasoningSeamDeps",
       "formatMemorySection",
       "CommandQueueDeps",
       "QueueStats",
@@ -1104,6 +1134,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // INFERRED config TYPE, not the schema value. The schema value therefore has no
       // out-of-package consumer — baseline orphan (mirror MemoryReviewConfigSchema).
       "MemoryConsolidationConfigSchema",
+      // Per-agent reasoning config schema + type (Phase 101-02, REASON-04). Wired into
+      // PerAgentConfig (schema-agent-runtime) WITHIN @comis/core; the schema-runtime attach
+      // is a self-import (the public-export-consumers gate skips same-package imports), so
+      // both the schema value AND the inferred config TYPE are surfaced AHEAD of their
+      // cross-package consumers — the reasoning job reads MemoryReasoningConfig in 101-04/06
+      // (the factory-orphan dance, mirror MemoryConsolidationConfigSchema @ 84-04 +
+      // runMemoryTripleExtraction @ 100-05). Shrink when the 101-04/06 consumer lands.
+      "MemoryReasoningConfigSchema",
+      "MemoryReasoningConfig",
       "ProvidersConfigSchema",
       "UserModelSchema",
       "ModelCostSchema",
@@ -1612,6 +1651,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // validation site outside @comis/core emerges (e.g. a CLI `broker validate`
       // command or a broker health-check handler in Phase 9).
       "BrokerBindingConfigSchema",
+      // Trust-first bi-temporal KG port (Phase 100-01, Track F — KG-01). The
+      // TripleStorePort interface + TripleScope + TripleInput already have real
+      // in-repo consumers (the @comis/memory adapter imports them by TYPE). The
+      // TripleTrust ladder alias is referenced only INSIDE TripleInput.trust (a
+      // field type, not a standalone import), so the export-graph walker counts
+      // it as an orphan. It is part of the documented port API surface (callers
+      // construct a TripleInput by naming the trust literal) — tracked here.
+      // Shrinks when the Plan-02 offline writer / Plan-04 lane reference it directly.
+      "TripleTrust",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
@@ -1876,6 +1924,29 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // The constructor-deps SHAPE type is part of its public API but is referenced only via
       // inline objects — baseline orphan (mirror MemoryEntityStoreDeps / MemoryConsolidationStoreDeps).
       "MemoryUsefulnessStoreDeps",
+      // Trust-first bi-temporal KG triple store (Phase 100-01, Track F — KG-01).
+      // createSqliteTripleStore NOW has a production consumer — the daemon
+      // composition root constructs it on the memory adapter's db handle in
+      // setup-memory (Plan 100-05) — so its orphan entry was REMOVED here (the
+      // factory-orphan dance SHRANK on schedule, mirror createSqliteMemoryCausalStore
+      // @ 96-03). MemoryTripleStoreDeps is the constructor-deps SHAPE (referenced via
+      // inline objects only) — PERMANENT baseline orphan (mirror MemoryCausalStoreDeps).
+      // MemoryTripleRowSchema is the row schema consumed by createRowMapper inside the
+      // adapter (an intra-file value reference, not a cross-file import), so the
+      // export-graph walker counts it as an orphan — tracked here (mirror the other
+      // *RowSchema entries).
+      "MemoryTripleStoreDeps",
+      "MemoryTripleRowSchema",
+      // Scoped embedding-read store (Phase 102-03/05, IQ-01). createSqliteMemoryEmbeddingStore
+      // is the sole MemoryEmbeddingStore adapter — the (tenant, agent)-scoped LEFT JOIN
+      // vec_memories bulk read that hydrates the MMR diversity re-rank. Its daemon
+      // composition-root consumer LANDED in Plan 102-05 (setup-memory, the same db handle as
+      // the temporal/causal/triple stores) — so the FACTORY orphan was REMOVED here (the
+      // factory-orphan dance SHRANK on schedule, mirror createSqliteTripleStore @ 100-05).
+      // MemoryEmbeddingStoreDeps is the constructor-deps SHAPE (referenced via inline objects
+      // only) — PERMANENT baseline orphan (mirror MemoryTripleStoreDeps /
+      // MemoryConsolidationStoreDeps).
+      "MemoryEmbeddingStoreDeps",
       "EmbeddingCacheOptions",
       "EmbeddingCacheStats",
       "SqliteEmbeddingCacheOptions",
@@ -1939,6 +2010,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // intra-package by sqlite-memory-causal-store.ts via createRowMapper;
       // barrel-surfaced through `export *` so tracked here like its Phase-83 siblings.
       "CausalLaneRowSchema",
+      // Graph-spread recursive-CTE node projection schema (Phase 100-04, KG-04).
+      // Consumed intra-package by sqlite-triple-store.ts (the spreadLane walk) via
+      // createRowMapper; barrel-surfaced through `export *` so tracked here like the
+      // MemoryTripleRowSchema / CausalLaneRowSchema siblings (the checker counts
+      // cross-package barrel consumers only).
+      "SpreadNodeRowSchema",
       // Recall-utility usefulness row schema (Phase 93-01, FEED-02). Consumed
       // intra-package by sqlite-memory-usefulness-store.ts via createRowMapper;
       // barrel-surfaced through `export *` so tracked here like the sibling row

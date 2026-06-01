@@ -1,0 +1,32 @@
+{
+  "harnessVersion": "phase-104-prove-v1",
+  "benchmark": "head-to-head",
+  "verdict": "PARTIAL",
+  "scope": {
+    "measuredKeylessAt0": [
+      "cross-judge spread survival fold",
+      "two-proportion significance",
+      "append-only ledger never-overwrite",
+      "ablation off=byte-identity for every v2.8 factor",
+      "absent-competitor skip-with-disclosure",
+      "letta-fs baseline control runs",
+      "real Comis recall cell drives the v2.8 lanes ON"
+    ],
+    "deferredToOperatorCostedReRun": [
+      "actual competitor numbers (mem0/zep/hindsight/mnemosyne)",
+      "cross-judged headline spread over two real judge passes"
+    ]
+  },
+  "machine": {
+    "comisCellRanRealPipeline": true,
+    "absentCompetitorSkipped": true,
+    "controlRan": true,
+    "ledgerNeverOverwrite": true,
+    "categoriesSurvived": 3,
+    "categoriesTotal": 4
+  },
+  "coi": {
+    "authoredBy": "Comis",
+    "note": "Comis authored this benchmark. Vendor-reported numbers are NON-COMPARABLE across protocols; competitors are invited to reproduce on their own harness. The keyless machine quotes NO competitor number and NO cross-judged delta."
+  }
+}

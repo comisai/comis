@@ -85,6 +85,9 @@ import { loadLocomoDataset } from "./locomo-loader.js";
 // RELATIVE Plan 01 prompt builders (the system/user answer split + the per-category judge rubric).
 import { ANSWER_SYSTEM_PROMPT, formatAnswerContext, buildAnswerPrompt } from "./qa-answer-prompt.js";
 import { buildJudgePrompt } from "./qa-judge-prompt.js";
+// RELATIVE Plan 98-02 control formatter — the Letta-style FULL-haystack dump (no
+// recall ranking). Builds the parallel CONTROL answerables alongside the recall path.
+import { formatFilesystemContext } from "./filesystem-baseline.js";
 // RELATIVE Plan 02 pure logic (verdict parse -> accuracy -> reproducible report).
 import { parseJudgeVerdict } from "./qa-judge-parse.js";
 import { aggregateAccuracy, type CategorizedVerdict } from "./qa-accuracy.js";
@@ -121,6 +124,13 @@ const BENCH_NOW = 1_700_000_000_000;
 const LLM_TIMEOUT_MS = 120_000;
 /** Harness version stamp -- a number is always attributable to fixed harness code. */
 const HARNESS_VERSION = "phase-89-v1";
+/**
+ * BASE-01 (Plan 98-02) control label — the explicit, immutable identifier under
+ * which the Letta-style filesystem-baseline control row is recorded in the
+ * manifest. Pinned as a constant so Plan 03's run + Plan 05's gap report cite it
+ * verbatim and it can NEVER be confused with Comis's recall score (T-98-02-01).
+ */
+const CONTROL_LABEL = "filesystem-baseline-full-context-control";
 
 /**
  * The bench store config (mirrors the Phase-88 sibling). `as MemoryConfig`:
@@ -167,6 +177,27 @@ function extractResponseText(response: { content?: unknown[] }): string {
     }
   }
   return text;
+}
+
+/**
+ * Inline percentile over a numeric sample (BASE-01 latency p50/p95). Sorts a COPY
+ * ascending, index = ceil(p/100 * n) - 1 clamped to [0, n-1] (the nearest-rank
+ * method). Empty sample -> 0. Kept LOCAL to this `.bench.test.ts` (NOT a new src
+ * file) so it never becomes a 0%-coverage src module under the agent all:true
+ * floor (RESEARCH TDD hard rule). Inputs are real `performance.now()` deltas, never
+ * the fake clock.
+ */
+function percentile(samples: number[], p: number): number {
+  if (samples.length === 0) return 0;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[idx];
+}
+
+/** Mean of a numeric sample (BASE-01 tokens/query); empty -> 0. */
+function mean(samples: number[]): number {
+  if (samples.length === 0) return 0;
+  return samples.reduce((sum, x) => sum + x, 0) / samples.length;
 }
 
 /**
@@ -223,6 +254,27 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
   // per item against its own store, and the formatted context is captured so the gated
   // it body only drives the answer + judge LLMs (never recall).
   let answerables: Array<{
+    questionId: string;
+    query: string;
+    category: string;
+    goldAnswer: string;
+    context: string;
+    /**
+     * Per-question recall wall-clock latency (ms), measured around `recall.recall`
+     * in `beforeAll` via real `performance.now()` (NOT the injected fake clock --
+     * the fake clock is for recency determinism and reads constant; RESEARCH
+     * Landmine 7). Carried on the answerable so the gated it body can fold recall
+     * latency into the end-to-end per-question total.
+     */
+    recallMs: number;
+  }> = [];
+  // BASE-01 (Plan 98-02): the PARALLEL control answerables — the SAME questions, but
+  // each `context` is the FULL-haystack filesystem dump (formatFilesystemContext over
+  // ALL of the item's docs, no recall, no ranking) instead of the ranked top-5. Built
+  // ONCE in beforeAll alongside `answerables`; the gated it body grades them with the
+  // SAME answer+judge models and records the aggregate as a labelled CONTROL row —
+  // NEVER as Comis's score. No `recallMs` (there is no recall step for the control).
+  const controlAnswerables: Array<{
     questionId: string;
     query: string;
     category: string;
@@ -340,8 +392,15 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
     for (const lme of lmeItems) {
       const adapter = await ingestItem(lme.docs);
       const recall = makeRecall(adapter);
+      // CONTROL context for THIS item: the full filesystem dump of ALL its docs,
+      // built ONCE per item (the same dump answers every question of the item).
+      const controlContext = formatFilesystemContext(lme.docs);
       for (const q of lme.questions) {
+        // LATENCY (recall segment) -- real wall-clock around the LLM-free recall call
+        // (performance.now(), NOT the fake clock; RESEARCH Landmine 7).
+        const recallStart = performance.now();
         const r = await recall.recall(q.query, BENCH_SESSION_KEY);
+        const recallMs = performance.now() - recallStart;
         const ranked: MemorySearchResult[] = r.ok ? r.value : [];
         answerables.push({
           questionId: q.questionId,
@@ -349,6 +408,16 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
           category: q.category, // LongMemEval question_type -> per-category judge rubric
           goldAnswer: q.answer,
           context: formatAnswerContext(ranked),
+          recallMs,
+        });
+        // PARALLEL control answerable: SAME question, FULL-haystack dump context (no
+        // recall ranking). Recorded as the labelled control row, never Comis's score.
+        controlAnswerables.push({
+          questionId: q.questionId,
+          query: q.query,
+          category: q.category,
+          goldAnswer: q.answer,
+          context: controlContext,
         });
       }
       adapter.close();
@@ -356,8 +425,11 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
     for (const locomo of locomoItems) {
       const adapter = await ingestItem(locomo.docs);
       const recall = makeRecall(adapter);
+      const controlContext = formatFilesystemContext(locomo.docs);
       for (const qa of locomo.qa) {
+        const recallStart = performance.now();
         const r = await recall.recall(qa.query, BENCH_SESSION_KEY);
+        const recallMs = performance.now() - recallStart;
         const ranked: MemorySearchResult[] = r.ok ? r.value : [];
         answerables.push({
           questionId: qa.questionId,
@@ -365,6 +437,14 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
           category: "locomo", // LoCoMo qa carry NO category -> the DEFAULT (LoCoMo) rubric
           goldAnswer: qa.answer,
           context: formatAnswerContext(ranked),
+          recallMs,
+        });
+        controlAnswerables.push({
+          questionId: qa.questionId,
+          query: qa.query,
+          category: "locomo",
+          goldAnswer: qa.answer,
+          context: controlContext,
         });
       }
       adapter.close();
@@ -372,7 +452,10 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
     datasetItemCount = answerables.length;
 
     await rerankerPort?.dispose?.();
-  }, 120_000);
+    // 2h hook timeout: full-set ingest + LLM-free recall for all items runs HERE in
+    // beforeAll (the it body only grades). The 2-min default trips on the real 500-item
+    // set before any grading begins — must match the raised it-body budget (BASE-01).
+  }, 7_200_000);
 
   it.skipIf(!haveAnswer || !haveJudge)(
     "drives recall->answer->judge->aggregate->report",
@@ -392,6 +475,20 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
       }
 
       const verdicts: CategorizedVerdict[] = [];
+
+      // BASE-01 measurement accumulators (valid questions only -- a question whose
+      // model lane failed to resolve is excluded from tokens + latency, exactly as it
+      // is excluded from the accuracy denominator). Tokens via `usage.totalTokens`
+      // (pi-ai returns it on every completeSimple); latency via real performance.now()
+      // wall-clock deltas (NOT the fake clock; RESEARCH Landmine 7).
+      const answerTokens: number[] = [];
+      const judgeTokens: number[] = [];
+      const answerCosts: number[] = [];
+      const judgeCosts: number[] = [];
+      const recallLatencies: number[] = [];
+      const answerLatencies: number[] = [];
+      const judgeLatencies: number[] = [];
+      const endToEndLatencies: number[] = [];
 
       for (const a of answerables) {
         // category + goldAnswer + the recalled `context` were all resolved per item in
@@ -415,6 +512,11 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
         const answerController = new AbortController();
         const answerTimer = setTimeout(() => answerController.abort(), LLM_TIMEOUT_MS);
         let modelAnswer = "";
+        // BASE-01 per-question answer measurements (tokens via usage.totalTokens;
+        // latency via real wall-clock around the completeSimple call).
+        let answerTokensThis = 0;
+        let answerCostThis = 0;
+        const answerStart = performance.now();
         try {
           const answerResp = await completeSimple(
             answerModel,
@@ -427,15 +529,24 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
             { apiKey: ANSWER_API_KEY, temperature: 0.0, maxTokens: 4096, signal: answerController.signal },
           );
           modelAnswer = extractResponseText(answerResp);
+          // usage is always present on a completeSimple AssistantMessage (pi-ai
+          // types.d.ts) -- currently discarded by extractResponseText. Numbers only;
+          // no secret reaches the report (the secret-omission assertion below proves it).
+          answerTokensThis = answerResp.usage.totalTokens;
+          answerCostThis = answerResp.usage.cost.total;
         } finally {
           clearTimeout(answerTimer);
         }
+        const answerMs = performance.now() - answerStart;
 
         // JUDGE LLM -- a SEPARATE model lane, temperature 0 (Pitfall 2 determinism). The
         // category-specific rubric is placed FIRST (prompt-injection ordering, Plan 01).
         const judgeController = new AbortController();
         const judgeTimer = setTimeout(() => judgeController.abort(), LLM_TIMEOUT_MS);
         let judgeText = "";
+        let judgeTokensThis = 0;
+        let judgeCostThis = 0;
+        const judgeStart = performance.now();
         try {
           const judgeResp = await completeSimple(
             judgeModel,
@@ -451,21 +562,135 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
             { apiKey: JUDGE_API_KEY, temperature: 0, maxTokens: 1024, signal: judgeController.signal },
           );
           judgeText = extractResponseText(judgeResp);
+          judgeTokensThis = judgeResp.usage.totalTokens;
+          judgeCostThis = judgeResp.usage.cost.total;
         } finally {
           clearTimeout(judgeTimer);
         }
+        const judgeMs = performance.now() - judgeStart;
 
         // PARSE -- undefined => INVALID (excluded from the denominator), NEVER wrong.
         const verdict = parseJudgeVerdict(judgeText);
+        const invalid = verdict === undefined;
         verdicts.push(
-          verdict === undefined
+          invalid
             ? { category: a.category, correct: false, invalid: true }
             : { category: a.category, correct: verdict.correct, invalid: false },
         );
+
+        // BASE-01: record tokens + latency for VALID questions only (same exclusion
+        // as the accuracy denominator). End-to-end = recall (from beforeAll) + answer +
+        // judge for this question.
+        if (!invalid) {
+          answerTokens.push(answerTokensThis);
+          judgeTokens.push(judgeTokensThis);
+          answerCosts.push(answerCostThis);
+          judgeCosts.push(judgeCostThis);
+          recallLatencies.push(a.recallMs);
+          answerLatencies.push(answerMs);
+          judgeLatencies.push(judgeMs);
+          endToEndLatencies.push(a.recallMs + answerMs + judgeMs);
+        }
       }
 
       // AGGREGATE -- overall + per-category, invalid-excluded denominator (Plan 02).
       metrics = aggregateAccuracy(verdicts);
+
+      // ─────────────────────────────────────────────────────────────────────
+      // BASE-01 CONTROL (Plan 98-02): the Letta-style filesystem-baseline. Run the
+      // SAME answer->judge->parse loop over `controlAnswerables` (full-haystack dump
+      // context, NO recall), with the SAME models + temperature 0, and aggregate as a
+      // SEPARATE `controlMetrics`. This roughly DOUBLES the answer+judge LLM calls for
+      // the run (≈2040 -> ≈4080 each). It is recorded under an explicit CONTROL label,
+      // NEVER as Comis's recall score (the headline `metrics`/`report.results` above is
+      // unchanged). No tokens/latency capture here — the cost/latency blocks measure
+      // Comis's recall path, not the control.
+      const controlVerdicts: CategorizedVerdict[] = [];
+      for (const a of controlAnswerables) {
+        // A model lane that failed to resolve makes the question INVALID (excluded),
+        // never wrong — same discipline as the recall loop above.
+        if (!answerModel || !judgeModel) {
+          controlVerdicts.push({ category: a.category, correct: false, invalid: true });
+          continue;
+        }
+
+        // ANSWER LLM over the FULL-haystack control context (same call shape as the
+        // recall path; the operator key is forwarded only to pi-ai's apiKey option,
+        // never stored/logged/reported).
+        const cAnswerController = new AbortController();
+        const cAnswerTimer = setTimeout(() => cAnswerController.abort(), LLM_TIMEOUT_MS);
+        let controlAnswer = "";
+        try {
+          const cAnswerResp = await completeSimple(
+            answerModel,
+            {
+              systemPrompt: ANSWER_SYSTEM_PROMPT,
+              messages: [
+                { role: "user" as const, content: buildAnswerPrompt(a.query, a.context), timestamp: Date.now() },
+              ],
+            },
+            { apiKey: ANSWER_API_KEY, temperature: 0.0, maxTokens: 4096, signal: cAnswerController.signal },
+          );
+          controlAnswer = extractResponseText(cAnswerResp);
+        } finally {
+          clearTimeout(cAnswerTimer);
+        }
+
+        // JUDGE LLM -- same separate judge model lane, temperature 0, rubric-first.
+        const cJudgeController = new AbortController();
+        const cJudgeTimer = setTimeout(() => cJudgeController.abort(), LLM_TIMEOUT_MS);
+        let controlJudgeText = "";
+        try {
+          const cJudgeResp = await completeSimple(
+            judgeModel,
+            {
+              messages: [
+                {
+                  role: "user" as const,
+                  content: buildJudgePrompt(a.category, a.query, a.goldAnswer, controlAnswer),
+                  timestamp: Date.now(),
+                },
+              ],
+            },
+            { apiKey: JUDGE_API_KEY, temperature: 0, maxTokens: 1024, signal: cJudgeController.signal },
+          );
+          controlJudgeText = extractResponseText(cJudgeResp);
+        } finally {
+          clearTimeout(cJudgeTimer);
+        }
+
+        const cVerdict = parseJudgeVerdict(controlJudgeText);
+        controlVerdicts.push(
+          cVerdict === undefined
+            ? { category: a.category, correct: false, invalid: true }
+            : { category: a.category, correct: cVerdict.correct, invalid: false },
+        );
+      }
+      // The control's aggregate accuracy (the labelled control row's `results`).
+      const controlMetrics = aggregateAccuracy(controlVerdicts);
+
+      // BASE-01 COST + LATENCY blocks -- mean tokens/query (answer + judge, valid
+      // questions only) and p50/p95 wall-clock latency (recall/answer/judge/end-to-end).
+      // Pure numbers; threaded into the builder so qa-report.json carries them.
+      const answerTokensPerQuery = mean(answerTokens);
+      const judgeTokensPerQuery = mean(judgeTokens);
+      const cost = {
+        answerTokensPerQuery,
+        judgeTokensPerQuery,
+        totalTokensPerQuery: answerTokensPerQuery + judgeTokensPerQuery,
+        answerCostUsd: answerCosts.reduce((sum, x) => sum + x, 0),
+        judgeCostUsd: judgeCosts.reduce((sum, x) => sum + x, 0),
+      };
+      const latency = {
+        recallP50Ms: percentile(recallLatencies, 50),
+        recallP95Ms: percentile(recallLatencies, 95),
+        answerP50Ms: percentile(answerLatencies, 50),
+        answerP95Ms: percentile(answerLatencies, 95),
+        judgeP50Ms: percentile(judgeLatencies, 50),
+        judgeP95Ms: percentile(judgeLatencies, 95),
+        endToEndP50Ms: percentile(endToEndLatencies, 50),
+        endToEndP95Ms: percentile(endToEndLatencies, 95),
+      };
 
       // REPORT -- record ONLY {provider,modelId} per role (Pitfall 6; the builder
       // structurally omits any api key even if one were passed). Dataset sha256 from
@@ -501,6 +726,12 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
             scoringAlphas: { recency: 0.2, temporal: 0.2, proof: 0.1, trust: 0.1 },
           },
           harnessVersion: HARNESS_VERSION,
+          cost: cost,
+          latency: latency,
+          // BASE-01 CONTROL row (Plan 98-02): the Letta-style filesystem-baseline,
+          // recorded under an explicit label so it is impossible to mistake for Comis's
+          // score. The headline `report.results` stays the recall accuracy (`metrics`).
+          control: { label: CONTROL_LABEL, results: controlMetrics },
         },
         metrics,
         Date.now(),
@@ -527,6 +758,15 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
         "rerank:",
         !!LLAMA_RERANKER_MODEL_PATH,
       );
+      // BASE-01 CONTROL line (Plan 98-02) -- printed SEPARATELY under an explicit
+      // "CONTROL (filesystem baseline, NOT Comis)" prefix so the run output can NEVER
+      // conflate the full-haystack control with Comis's recall score (T-98-02-01).
+      // eslint-disable-next-line no-console -- gated bench harness reports the control number alongside Comis's
+      console.log(
+        "BENCH QA accuracy — CONTROL (filesystem baseline, NOT Comis):",
+        CONTROL_LABEL,
+        JSON.stringify(controlMetrics),
+      );
 
       // STRUCTURAL invariants ONLY (Anti-Pattern: never a hard accuracy floor -- the
       // number is machine/model-dependent).
@@ -543,7 +783,15 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
       expect(reportJson).not.toMatch(/apiKey|sk-|Bearer/);
       // (Per-item bench stores were already closed in beforeAll; nothing to close here.)
     },
-    600_000,
+    // BASE-01 / RESEARCH Landmine 6: the full ~4080-call run (≈2040 answer + ≈2040
+    // judge LLM round-trips, serial) exceeds the prior ten-minute Vitest `it`
+    // ceiling. Raise to a 2h bound sized for the full set: ≈2040 calls × up to 120s
+    // each (worst case) still fits, while the per-call LLM_TIMEOUT_MS=120_000
+    // AbortController (above) keeps bounding any single hung call — only the aggregate
+    // serial loop is bounded by this ceiling. (Sharding by dataset across separate
+    // retrieval/qa invocations is the run plan's alternative; raising this `it` ceiling
+    // is the minimal change that lets one `pnpm bench:memory qa` complete.)
+    7_200_000,
   );
 
   // INGEST-ONCE structural witness (BENCH-03 SC-3): the store-call count equals the

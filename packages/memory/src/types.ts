@@ -36,6 +36,10 @@ export interface MemoryRow {
   confidence: number | null;
   /** JSON-encoded audit array of prior contents (P84/CONS-05); null on raw memories. */
   history: string | null;
+  /** Reasoning-observation kind TEXT; null = "merge" (P101/REASON-01). */
+  observation_kind: string | null;
+  /** Inductive pattern class TEXT; null unless observationKind="inductive" (P101/REASON-01). */
+  pattern_type: string | null;
   /** Unix timestamp in milliseconds, null if never updated */
   updated_at: number | null;
   /** Unix timestamp in milliseconds, null if no expiry */

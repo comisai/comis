@@ -42,6 +42,10 @@ export type { MemoryReviewConfig } from "./schema-memory-review.js";
 export { MemoryConsolidationConfigSchema } from "./schema-memory-consolidation.js";
 export type { MemoryConsolidationConfig } from "./schema-memory-consolidation.js";
 
+// Memory reasoning schema (Phase 101 — REASON-04)
+export { MemoryReasoningConfigSchema } from "./schema-memory-reasoning.js";
+export type { MemoryReasoningConfig } from "./schema-memory-reasoning.js";
+
 // Agent schemas: model selection, session lifecycle, context engine, context guard, agent features
 export {
   AgentConfigSchema,

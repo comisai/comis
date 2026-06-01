@@ -1,0 +1,14 @@
+{
+  "harnessVersion": "phase-104-prove-v1",
+  "benchmark": "adapter-conformance",
+  "absentCompetitor": {
+    "system": "mem0",
+    "skippedWithDisclosure": true,
+    "fabricatedNumber": false
+  },
+  "control": {
+    "system": "letta-fs-baseline",
+    "ran": true,
+    "isControl": true
+  }
+}

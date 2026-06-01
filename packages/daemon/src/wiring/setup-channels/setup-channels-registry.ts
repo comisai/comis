@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -193,6 +193,14 @@ export interface ChannelsDeps {
    *  TYPE (agent↛memory cut). Absent => the consolidation sentinel cannot run (the cron is
    *  off-by-default anyway, so a default-config agent never reaches it). */
   consolidationStore?: MemoryConsolidationStore;
+  /** Triple store (Phase 101, REASON-02) — forwarded to registerCronEventListeners so
+   *  the opt-in __MEMORY_REASONING__ sentinel runs runMemoryReasoning's DEDUCTIVE write
+   *  via the trust-first upsertTriple. Built in setup-memory on the shared db handle;
+   *  injected as the port TYPE (agent↛memory cut). Threaded the full daemon → registry →
+   *  credentials chain (T-101-06-01) — a missing thread silently disables the deductive
+   *  write path. Absent => the reasoning sentinel cannot run (the cron is off-by-default
+   *  anyway, so a default-config agent never reaches it). */
+  tripleStore?: TripleStorePort;
   /** Default tenant ID for memory storage. */
   tenantId?: string;
   /** Embedding queue for new memory entries (optional). */
@@ -341,6 +349,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     entityStore: deps.entityStore,
     causalStore: deps.causalStore,
     consolidationStore: deps.consolidationStore,
+    tripleStore: deps.tripleStore,
     tenantId: deps.tenantId,
     piSessionAdapters: deps.piSessionAdapters,
     cronExecutionTrackers: deps.cronExecutionTrackers,

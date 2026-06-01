@@ -80,6 +80,19 @@ export interface ToolAssemblyDeps {
   /** Optional entity-associative store (ENT-02), threaded into prompt-assembly's
    *  createMemoryRecall. TYPE-only from @comis/core (the agent↛memory build cut). */
   entityStore?: import("@comis/core").MemoryEntityStore;
+  /** Optional temporal-spread store (LANES-02), threaded into prompt-assembly's
+   *  createMemoryRecall (the 4th temporal lane). TYPE-only from @comis/core (the agent↛memory cut). */
+  temporalStore?: import("@comis/core").MemoryTemporalStore;
+  /** Optional causal store (EXTRACT-03), threaded into prompt-assembly's createMemoryRecall
+   *  (the 5th causal lane). TYPE-only from @comis/core (the agent↛memory build cut). */
+  causalStore?: import("@comis/core").MemoryCausalStore;
+  /** Optional triple store (KG-01/04), threaded into prompt-assembly's createMemoryRecall
+   *  (the 6th graph-spread lane). TYPE-only from @comis/core (the agent↛memory build cut). */
+  tripleStore?: import("@comis/core").TripleStorePort;
+  /** Optional embedding read store (IQ-01), threaded into prompt-assembly's createMemoryRecall
+   *  (the MMR diversity re-rank's scoped embedding read). TYPE-only from @comis/core (the
+   *  agent↛memory build cut). */
+  embeddingStore?: import("@comis/core").MemoryEmbeddingStore;
   /** Optional usefulness store (FEED-03), threaded into prompt-assembly's createMemoryRecall.
    *  TYPE-only from @comis/core (the agent↛memory build cut). */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
@@ -377,6 +390,19 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       memoryPort: deps.memoryPort,
       reranker: deps.reranker,
       entityStore: deps.entityStore,
+      // The lane stores ride the SAME forwarded subset as entityStore/usefulnessStore.
+      // temporalStore (LANES-02) + causalStore (EXTRACT-03) were previously DROPPED here
+      // (a latent field-plumbing no-op: ToolAssemblyDeps carried them and
+      // prompt-assembly's createMemoryRecall reads them, but this enumeration omitted
+      // them, so both lanes were dead via the real pi-executor path). tripleStore
+      // (KG-01/04, the 6th graph-spread lane) is forwarded the same way — a missing
+      // forward leaves the lane dormant even when its config flag is on. embeddingStore
+      // (IQ-01, the MMR diversity re-rank's scoped embedding read) is forwarded the same
+      // way — a missing forward leaves MMR a silent no-op even when rag.mmr.enabled is on.
+      temporalStore: deps.temporalStore,
+      causalStore: deps.causalStore,
+      tripleStore: deps.tripleStore,
+      embeddingStore: deps.embeddingStore,
       usefulnessStore: deps.usefulnessStore,
       timers: deps.timers,
       hookRunner: deps.hookRunner,

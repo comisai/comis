@@ -76,6 +76,7 @@ import type {
 import { systemNowMs } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { createRowMapper, rowToEntry, insertMemoryRow } from "./row-mapper.js";
+import { searchByVector } from "./hybrid-search.js";
 import { MemoryRowSchema } from "./row-schemas.js";
 import { isVecAvailable } from "./schema.js";
 
@@ -442,6 +443,130 @@ export function createSqliteMemoryConsolidationStore(
             hint: "fold transaction failed — rolled back, no partial state",
           },
           "Consolidation fold failed",
+        );
+        return err(error);
+      }
+    },
+
+    /**
+     * READ (REASON-04 — the surprisal-gate engine). The k nearest-neighbour
+     * cosine DISTANCES for one embedding, returned sorted ascending (closer
+     * first), or `ok([])` when sqlite-vec is unavailable (graceful degrade — the
+     * caller's missing-embedding policy then applies). The `(agentId, tenantId)`
+     * args are carried for parity + a future filtered variant (V4 access
+     * control); the surprisal score is per-candidate, so the caller already holds
+     * in-scope embeddings.
+     *
+     * Backed by the shipped sqlite-vec `searchByVector` (hybrid-search.ts:155) —
+     * `SELECT memory_id, distance FROM vec_memories WHERE embedding MATCH ? AND
+     * k = ?` with the embedding bound as a Float32Array `?` parameter (NEVER
+     * concatenated — T-101-03-02). `searchByVector` returns rows sorted by
+     * distance ASCENDING and degrades to `[]` on any row-validation error, so we
+     * pass its distances straight through (the agent-side `surprisalSelect`
+     * applies its own `(surprisal desc, id asc)` total order).
+     *
+     * ## Scope (T-101-03-01)
+     * The `vec_memories` virtual table is GLOBAL (no tenant/agent column on the
+     * vec0 table), so this read is corpus-wide. That is by design: it returns
+     * ONLY DISTANCES (floats), never ids or content — a non-identifying scalar
+     * cannot leak another scope's memory body. The caller (101-04) holds only
+     * in-scope candidate embeddings and uses the distances for a per-candidate
+     * novelty SCORE; no cross-scope content crosses the boundary. A future
+     * filtered-vec variant (V4) can use the carried `(agentId, tenantId)` args
+     * for hard access control.
+     *
+     * ## Result discipline (T-101-03-03)
+     * A pure read wrapped in try/catch → `err`; `isVecAvailable()` false → `ok([])`.
+     * NEVER throws out — a corrupt vec table degrades the surprisal gate for that
+     * candidate (the caller's run continues), it never crashes the reasoning job.
+     */
+    async knnDistances(
+      embedding: number[],
+      k: number,
+      _agentId: string,
+      _tenantId: string,
+    ): Promise<Result<number[], Error>> {
+      const startMs = systemNowMs();
+      try {
+        if (!isVecAvailable()) {
+          logger?.debug(
+            { step: "reason-knn", errorKind: "precondition" as const },
+            "knnDistances: sqlite-vec unavailable — degrading to no neighbours",
+          );
+          return ok([]); // graceful degrade — no vec, no neighbours
+        }
+        // searchByVector returns {id, distance}[] sorted by distance ASCENDING
+        // (hybrid-search.ts:153) and binds the embedding as a Float32Array `?`
+        // (no string concat). We need only the distances for the surprisal score.
+        const neighbours = searchByVector(db, embedding, k);
+        logger?.debug(
+          { step: "reason-knn", durationMs: systemNowMs() - startMs, count: neighbours.length },
+          "knnDistances complete",
+        );
+        // Already sorted ascending — pass the distances through (counts-only log;
+        // never the embedding values, §2.7).
+        return ok(neighbours.map((n) => n.distance));
+      } catch (e) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "reason-knn",
+            durationMs: systemNowMs() - startMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "k-NN distance read failed — surprisal gate degrades to no neighbours",
+          },
+          "knnDistances failed",
+        );
+        return err(error);
+      }
+    },
+
+    /**
+     * Mark source memories `consolidated_at` WITHOUT creating an observation
+     * (REASON-02 — the deductive-only drain). Reuses the SAME scoped, fail-closed
+     * `markConsolidated` UPDATE as the apply/fold paths (sets `consolidated_at`
+     * only; never deletes — CONS-05), in ONE `db.transaction` so a partial mark
+     * cannot commit. Scoped on `tenant_id` (a cross-tenant id is a no-op), the
+     * value bound as a `?` parameter. Idempotent: re-marking an already-marked
+     * source re-writes the same column (the candidate predicate
+     * `consolidated_at IS NULL` already excludes it from re-selection). Returns
+     * the number of rows actually changed.
+     */
+    async markReasoned(
+      sourceIds: string[],
+      tenantId: string,
+      now: number,
+    ): Promise<Result<number, Error>> {
+      const startMs = systemNowMs();
+      try {
+        const tx = db.transaction(() => {
+          let changed = 0;
+          for (const id of sourceIds) {
+            // Scoped on (tenant_id) — a cross-tenant id is a fail-closed no-op
+            // (changes === 0). NON-DESTRUCTIVE: sets consolidated_at only.
+            changed += markConsolidated.run(now, id, tenantId).changes;
+          }
+          return changed;
+        });
+        const changed = tx();
+
+        logger?.debug(
+          { step: "reason-mark", durationMs: systemNowMs() - startMs, markedCount: changed },
+          "markReasoned complete (deductive-only sources marked consolidated)",
+        );
+        return ok(changed);
+      } catch (e: unknown) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "reason-mark",
+            durationMs: systemNowMs() - startMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "markReasoned transaction failed — rolled back, sources stay unconsolidated for retry next run",
+          },
+          "markReasoned failed",
         );
         return err(error);
       }

@@ -85,6 +85,17 @@ export interface SingleAgentDeps {
    *  setup-memory on the shared db handle; the segregated port TYPE (agent↛memory cut). Dormant
    *  until an operator enables `agents.<id>.rag.lanes.causal.enabled` (default OFF). */
   causalStore?: import("@comis/core").MemoryCausalStore;
+  /** Triple store (Phase 100, KG-01). Threaded into each per-agent createPiExecutor (the
+   *  executor recall read path -> createMemoryRecall, the 6th graph-spread lane). Built in
+   *  setup-memory on the shared db handle; the segregated port TYPE (agent↛memory cut). Dormant
+   *  until an operator enables `agents.<id>.rag.lanes.graphSpread.enabled` (default OFF). */
+  tripleStore?: import("@comis/core").TripleStorePort;
+  /** Embedding read store (Phase 102, IQ-01). Threaded into each per-agent createPiExecutor
+   *  (the executor recall read path -> createMemoryRecall, the MMR diversity re-rank's scoped
+   *  embedding read). Built in setup-memory on the shared db handle; the segregated port TYPE
+   *  (agent↛memory cut). Dormant until an operator enables `agents.<id>.rag.mmr.enabled`
+   *  (default OFF). */
+  embeddingStore?: import("@comis/core").MemoryEmbeddingStore;
   /** Usefulness store (Phase 93, FEED-03). Threaded into each per-agent createPiExecutor
    *  (the executor recall read path -> createMemoryRecall). Built in setup-memory on the
    *  shared db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator

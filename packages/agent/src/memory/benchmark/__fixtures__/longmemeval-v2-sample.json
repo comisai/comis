@@ -1,0 +1,20 @@
+{
+  "_provenance": "Derived from the LongMemEval-V2 format (HuggingFace LongMemEval / github.com/xiaowu0162/LongMemEval, the v2/_s split); neutral placeholder content, NOT the real dataset. The full corpus is operator-placed under $COMIS_BENCH_DATA (see Plan 08 DATASETS.md) and never committed.",
+  "question_id": "q2_example_1",
+  "question_type": "multi-session",
+  "question": "Across the placeholder sessions, what favorite placeholder topic did user_a name?",
+  "answer": "placeholder topic beta",
+  "haystack_sessions": [
+    [
+      { "role": "user", "content": "Hello again, neutral placeholder v2 opening." },
+      { "role": "assistant", "content": "Acknowledged placeholder v2 reply." }
+    ],
+    [
+      { "role": "user", "content": "My favorite placeholder topic is beta.", "has_answer": true },
+      { "role": "assistant", "content": "Noted, placeholder topic beta." }
+    ]
+  ],
+  "haystack_session_ids": ["session_v2_0001", "session_v2_0002"],
+  "haystack_dates": ["2024/01/14 (Sun) 10:15", "2024/01/15 (Mon) 03:42"],
+  "answer_session_ids": ["session_v2_0002"]
+}

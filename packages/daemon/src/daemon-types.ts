@@ -393,6 +393,16 @@ export interface BootContext {
    *  shared db; injected as the port TYPE (agent↛memory cut). Dormant until an operator enables
    *  `agents.<id>.rag.lanes.causal.enabled` (default OFF); the write guards on extracted causes. */
   causalStore: Awaited<ReturnType<typeof setupMemory>>["causalStore"];
+  /** Triple store (Phase 100, KG-01) — threaded into setupAgents (the executor recall read
+   *  path → createMemoryRecall, the 6th graph-spread lane). Built in setup-memory on the shared
+   *  db; injected as the port TYPE (agent↛memory cut). Dormant until an operator enables
+   *  `agents.<id>.rag.lanes.graphSpread.enabled` (default OFF). */
+  tripleStore: Awaited<ReturnType<typeof setupMemory>>["tripleStore"];
+  /** Embedding read store (Phase 102, IQ-01) — threaded into setupAgents (the executor recall
+   *  read path → createMemoryRecall, the MMR diversity re-rank). Built in setup-memory on the
+   *  shared db; injected as the port TYPE (agent↛memory cut). Dormant until an operator enables
+   *  `agents.<id>.rag.mmr.enabled` (default OFF). */
+  embeddingStore: Awaited<ReturnType<typeof setupMemory>>["embeddingStore"];
   /** Usefulness store (Phase 93, FEED-03) — threaded into setupAgents (the executor recall
    *  read path → createMemoryRecall) + exposed to the memory.* diagnostic deps alongside its
    *  siblings. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory

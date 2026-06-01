@@ -1,0 +1,10 @@
+{
+  "harnessVersion": "phase-102-06-v1",
+  "benchmark": "recall-iq-intent-reweight",
+  "scenario": "temporal-marker query up-weights the temporal lane (intentMultiplier=1.5)",
+  "classifiedIntent": "temporal",
+  "temporalCandidateRankOff": 2,
+  "temporalCandidateRankOn": 1,
+  "reweightRankLift": 1,
+  "vectorLane": false
+}

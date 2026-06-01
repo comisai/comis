@@ -1,0 +1,25 @@
+{
+  "harnessVersion": "phase-102-06-v1",
+  "benchmark": "recall-iq-temporal-range",
+  "scenario": "in-window + out-of-window docs; dated query narrows, unparseable query no-ops",
+  "datedQuery": {
+    "parseOff": {
+      "inWindowPresent": true,
+      "outWindowPresent": true,
+      "inWindowCount": 2
+    },
+    "parseOn": {
+      "inWindowPresent": true,
+      "outWindowPresent": false,
+      "inWindowCount": 1
+    },
+    "inWindowPrecisionOff": 0.5,
+    "inWindowPrecisionOn": 1
+  },
+  "unparseableQuery": {
+    "countOn": 2,
+    "countOff": 2,
+    "byteIdentity": true
+  },
+  "vectorLane": false
+}

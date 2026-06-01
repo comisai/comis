@@ -283,6 +283,12 @@ export interface PromptAssemblyParams {
     /** Optional causal store for createMemoryRecall's 5th lane (EXTRACT-03;
      *  default-OFF via config.rag.lanes.causal). TYPE-only (the agent↛memory build cut). */
     causalStore?: import("@comis/core").MemoryCausalStore;
+    /** Optional triple store for createMemoryRecall's 6th graph-spread lane (KG-01/04;
+     *  default-OFF via config.rag.lanes.graphSpread). TYPE-only (the agent↛memory build cut). */
+    tripleStore?: import("@comis/core").TripleStorePort;
+    /** Optional embedding read store for createMemoryRecall's MMR diversity re-rank (IQ-01;
+     *  default-OFF via config.rag.mmr). TYPE-only (the agent↛memory build cut). */
+    embeddingStore?: import("@comis/core").MemoryEmbeddingStore;
     /** Optional usefulness store for createMemoryRecall's usefulness read (FEED-03;
      *  default-OFF via config.rag.feedback). TYPE-only (the agent↛memory build cut). */
     usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
@@ -767,6 +773,8 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           entityStore: deps.entityStore,
           temporalStore: deps.temporalStore,
           causalStore: deps.causalStore,
+          tripleStore: deps.tripleStore,
+          embeddingStore: deps.embeddingStore,
           usefulnessStore: deps.usefulnessStore,
           timers: deps.timers,
           clock: deps.clock,
@@ -782,6 +790,13 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           scoring: config.rag.scoring,
           lanes: config.rag.lanes,
           entityLane: config.rag.entityLane,
+          // IQ-01 MMR diversity re-rank + IQ-02/03 query understanding. Both are
+          // fully-defaulted RagConfig fields (102-01: .strictObject + .default() on every
+          // field), so they pass DIRECTLY — no optional-chaining / structural widening like
+          // `feedback` above (which predates its config landing). Default-OFF ⇒ recall is
+          // byte-identical until an operator opts in (rag.mmr.enabled / rag.queryUnderstanding.*).
+          mmr: config.rag.mmr,
+          queryUnderstanding: config.rag.queryUnderstanding,
           ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
         },
       );

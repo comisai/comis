@@ -1,0 +1,17 @@
+{
+  "harnessVersion": "phase-102-06-v1",
+  "benchmark": "recall-iq-mmr-diversity",
+  "scenario": "two near-duplicates + one diverse-but-relevant doc; query closest to the dupes",
+  "vecAvailable": true,
+  "vectorLane": false,
+  "offDiverseRank": 3,
+  "offNearDuplicateRank": 2,
+  "lambdaSweepDiverseRank": {
+    "1": 3,
+    "0.7": 2,
+    "0.5": 2,
+    "0.3": 2
+  },
+  "diversityRankLift": 1,
+  "lambdaOneIsIdentity": true
+}

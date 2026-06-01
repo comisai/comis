@@ -26,6 +26,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockRunMemoryConsolidation = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
 const mockRunMemoryReview = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
+// Phase 101-06: the reasoning job + its injected-seam factory. runMemoryReasoning
+// is the spy the __MEMORY_REASONING__ dispatch tests assert against;
+// createReasoningSeam returns a sentinel fn the dispatch must pass as deps.reason.
+const mockReasonSeam = vi.hoisted(() => vi.fn(async () => ({ deductive: [], inductive: [] })));
+const mockCreateReasoningSeam = vi.hoisted(() => vi.fn(() => mockReasonSeam));
+const mockRunMemoryReasoning = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
 const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({
   provider: "anthropic",
   modelId: "anthropic:claude-haiku",
@@ -40,6 +46,8 @@ vi.mock("@comis/agent", () => ({
   resolveProviderFamily: vi.fn(() => "anthropic"),
   runMemoryReview: mockRunMemoryReview,
   runMemoryConsolidation: mockRunMemoryConsolidation,
+  runMemoryReasoning: mockRunMemoryReasoning,
+  createReasoningSeam: mockCreateReasoningSeam,
   classifyError: vi.fn(() => ({ userMessage: "error" })),
 }));
 
@@ -85,11 +93,22 @@ function makeConsolidationStore() {
   };
 }
 
+/** A stub triple store — its methods must NEVER be reached on the short-circuit
+ *  path; on the enabled path runMemoryReasoning is mocked so these are not called
+ *  by the daemon test directly either. */
+function makeTripleStore() {
+  return {
+    upsertTriple: vi.fn(async () => ({ ok: true as const, value: undefined })),
+    currentTruth: vi.fn(async () => ({ ok: true as const, value: [] })),
+  };
+}
+
 function makeDeps(overrides: {
   agents?: Record<string, any>;
   apiKey?: string | undefined;
   eventBus?: ReturnType<typeof makeEventBus>;
   consolidationStore?: ReturnType<typeof makeConsolidationStore>;
+  tripleStore?: ReturnType<typeof makeTripleStore>;
 } = {}): CronEventListenerDeps & { __eventBus: ReturnType<typeof makeEventBus> } {
   const eventBus = overrides.eventBus ?? makeEventBus();
   const logger = {
@@ -117,6 +136,7 @@ function makeDeps(overrides: {
     deliveryService: {} as any,
     tenantId: "tenant-a",
     consolidationStore: (overrides.consolidationStore ?? makeConsolidationStore()) as any,
+    tripleStore: (overrides.tripleStore ?? makeTripleStore()) as any,
     __eventBus: eventBus,
   };
 }
@@ -129,6 +149,8 @@ describe("setup-channels-credentials", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRunMemoryConsolidation.mockResolvedValue({ ok: true as const, value: undefined });
+    mockRunMemoryReasoning.mockResolvedValue({ ok: true as const, value: undefined });
+    mockCreateReasoningSeam.mockReturnValue(mockReasonSeam);
     mockResolveOperationModel.mockReturnValue({
       provider: "anthropic", modelId: "anthropic:claude-haiku", model: "anthropic:claude-haiku",
       timeoutMs: 60_000, source: "default",
@@ -164,12 +186,16 @@ describe("setup-channels-credentials", () => {
       // Phase 84 (CONS-07): the consolidation store injected into the
       // __MEMORY_CONSOLIDATION__ sentinel → runMemoryConsolidation.
       consolidationStore: true,
+      // Phase 101 (REASON-02): the triple store injected into the
+      // __MEMORY_REASONING__ sentinel → runMemoryReasoning (the deductive
+      // current-truth write path). Threaded daemon → registry → credentials.
+      tripleStore: true,
       tenantId: true,
       piSessionAdapters: true,
       cronExecutionTrackers: true,
       activeRunRegistry: true,
     };
-    expect(Object.keys(witness).length).toBe(19);
+    expect(Object.keys(witness).length).toBe(20);
   });
 
   // -------------------------------------------------------------------------
@@ -302,5 +328,148 @@ describe("setup-channels-credentials", () => {
 
     expect(mockRunMemoryConsolidation).not.toHaveBeenCalled();
     expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for memory consolidation" });
+  });
+
+  // -------------------------------------------------------------------------
+  // __MEMORY_REASONING__ sentinel (Phase 101, REASON-02/03 — 101-06).
+  // Mirrors the consolidation block: the opt-in cost gate (a disabled/default
+  // agent does NO LLM work) + the enabled path (runMemoryReasoning runs with
+  // BOTH the consolidation store AND the triple store injected + the built
+  // reason() seam). The triple-store thread is the deductive write path — a
+  // missing thread would make the deductive path a silent no-op (T-101-06-01).
+  // -------------------------------------------------------------------------
+
+  it("short-circuits ok and does NOT run reasoning when the agent has it disabled (opt-in gate)", async () => {
+    const consolidationStore = makeConsolidationStore();
+    const tripleStore = makeTripleStore();
+    const deps = makeDeps({
+      // memoryReasoning undefined => default OFF.
+      agents: { "agent-1": { name: "Agent 1" } },
+      consolidationStore,
+      tripleStore,
+    });
+    registerCronEventListeners(deps);
+
+    const onComplete = vi.fn();
+    await deps.__eventBus.fire("scheduler:job_result", {
+      result: "__MEMORY_REASONING__",
+      agentId: "agent-1",
+      onComplete,
+    });
+
+    // The opt-in cost gate: no LLM work, no store reads, clean ok.
+    expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
+    expect(mockCreateReasoningSeam).not.toHaveBeenCalled();
+    expect(consolidationStore.listConsolidationCandidates).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
+  });
+
+  it("short-circuits ok for an explicitly disabled (enabled:false) reasoning agent", async () => {
+    const deps = makeDeps({
+      agents: { "agent-1": { name: "Agent 1", memoryReasoning: { enabled: false } } },
+    });
+    registerCronEventListeners(deps);
+
+    const onComplete = vi.fn();
+    await deps.__eventBus.fire("scheduler:job_result", {
+      result: "__MEMORY_REASONING__",
+      agentId: "agent-1",
+      onComplete,
+    });
+
+    expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
+  });
+
+  it("runs runMemoryReasoning with BOTH stores + the built reason seam when the agent has it enabled", async () => {
+    const consolidationStore = makeConsolidationStore();
+    const tripleStore = makeTripleStore();
+    const deps = makeDeps({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryReasoning: { enabled: true, maxObservationsPerRun: 25 } } },
+      apiKey: "test-key",
+      consolidationStore,
+      tripleStore,
+    });
+    registerCronEventListeners(deps);
+
+    const onComplete = vi.fn();
+    await deps.__eventBus.fire("scheduler:job_result", {
+      result: "__MEMORY_REASONING__",
+      agentId: "agent-1",
+      onComplete,
+    });
+
+    expect(mockRunMemoryReasoning).toHaveBeenCalledOnce();
+    const arg = mockRunMemoryReasoning.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.agentId).toBe("agent-1");
+    expect(arg.tenantId).toBe("tenant-a");
+    // BOTH stores injected (the field-plumbing chain is complete) — the deductive
+    // write path (tripleStore) AND the inductive write path (consolidationStore).
+    expect(arg.consolidationStore).toBe(consolidationStore);
+    expect(arg.tripleStore).toBe(tripleStore);
+    expect(arg.clock).toBe(deps.clock);
+    // The injected reason seam was built from the resolved cheap model + key, and
+    // is the exact fn passed as deps.reason.
+    expect(mockCreateReasoningSeam).toHaveBeenCalledOnce();
+    const seamArg = mockCreateReasoningSeam.mock.calls[0][0] as Record<string, unknown>;
+    expect(seamArg.apiKey).toBe("test-key");
+    expect(seamArg.provider).toBe("anthropic");
+    expect(arg.reason).toBe(mockReasonSeam);
+    expect(arg.config).toEqual({ enabled: true, maxObservationsPerRun: 25 });
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
+  });
+
+  it("reports an error onComplete when runMemoryReasoning returns err", async () => {
+    mockRunMemoryReasoning.mockResolvedValueOnce({ ok: false as const, error: new Error("boom") });
+    const deps = makeDeps({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryReasoning: { enabled: true } } },
+      apiKey: "test-key",
+    });
+    registerCronEventListeners(deps);
+
+    const onComplete = vi.fn();
+    await deps.__eventBus.fire("scheduler:job_result", {
+      result: "__MEMORY_REASONING__",
+      agentId: "agent-1",
+      onComplete,
+    });
+
+    expect(mockRunMemoryReasoning).toHaveBeenCalledOnce();
+    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "boom" });
+  });
+
+  it("skips reasoning with an error when an enabled agent has no API key (no key value logged)", async () => {
+    const deps = makeDeps({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryReasoning: { enabled: true } } },
+      apiKey: undefined, // secretManager.get returns undefined
+    });
+    registerCronEventListeners(deps);
+
+    const onComplete = vi.fn();
+    await deps.__eventBus.fire("scheduler:job_result", {
+      result: "__MEMORY_REASONING__",
+      agentId: "agent-1",
+      onComplete,
+    });
+
+    // No LLM work without a key; the seam is never built, the job never runs.
+    expect(mockCreateReasoningSeam).not.toHaveBeenCalled();
+    expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No API key for anthropic" });
+  });
+
+  it("warns + errors when the reasoning sentinel fires without an agentId", async () => {
+    const deps = makeDeps();
+    registerCronEventListeners(deps);
+
+    const onComplete = vi.fn();
+    await deps.__eventBus.fire("scheduler:job_result", {
+      result: "__MEMORY_REASONING__",
+      agentId: undefined,
+      onComplete,
+    });
+
+    expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for memory reasoning" });
   });
 });

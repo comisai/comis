@@ -43,6 +43,8 @@ function makeRow(overrides?: Partial<MemoryRow>): MemoryRow {
     consolidated_at: null,
     confidence: null,
     history: null,
+    observation_kind: null,
+    pattern_type: null,
     updated_at: 1700001000000,
     expires_at: 1700090000000,
     has_embedding: 0,
@@ -414,6 +416,106 @@ describe("observation columns round-trip (domain -> INSERT -> SELECT * -> rowToE
     const withBogus = { ...base, bogus_col: "surprise" } as unknown;
     const parsed = MemoryRowSchema.safeParse(withBogus);
     expect(parsed.success).toBe(false);
+  });
+});
+
+// ── Typed-observation columns full round-trip (Phase 101 REASON-01) ──
+//
+// THE LOCKSTEP guard for the 2 typed-observation columns (observation_kind,
+// pattern_type): domain MemoryEntry -> insertMemoryRow -> SELECT * ->
+// MemoryRowSchema (z.strictObject) -> rowToEntry. If observation_kind/
+// pattern_type are added to the table but NOT to MemoryRowSchema, the strict
+// parse below FAILS -> the adapter skips the row -> recall silently returns [].
+// These fail loudly instead. The third test is the Pitfall-5 ARG-SHIFT guard:
+// a misaligned INSERT column/placeholder/run triplet would write a kind string
+// into has_embedding or expires_at (an unrelated field) — asserting those two
+// are unshifted catches it.
+
+describe("typed-observation columns round-trip (domain -> INSERT -> SELECT * -> rowToEntry, REASON-01)", () => {
+  let db: Database.Database;
+  const memoryRowMapper = createRowMapper(MemoryRowSchema);
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, DIMS);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  function selectAndParse(id: string): MemoryRow {
+    const raw = db.prepare("SELECT * FROM memories WHERE id = ?").get(id);
+    const parsed = memoryRowMapper.parseOptionalRow(raw);
+    // The strict schema MUST accept the SELECT * shape (incl. the 2 new cols).
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(`row parse failed: ${parsed.error.message}`);
+    expect(parsed.value).toBeDefined();
+    return parsed.value!;
+  }
+
+  it("preserves observationKind='inductive' AND patternType='preference' through a store/read cycle", () => {
+    const entry: MemoryEntry = {
+      ...makeEntry({ id: crypto.randomUUID(), createdAt: 1700000000000 }),
+      observationKind: "inductive",
+      patternType: "preference",
+    };
+    insertMemoryRow(db, entry, "semantic");
+
+    const row = selectAndParse(entry.id);
+    expect(row.observation_kind).toBe("inductive");
+    expect(row.pattern_type).toBe("preference");
+
+    const back = rowToEntry(row);
+    expect(back.observationKind).toBe("inductive");
+    expect(back.patternType).toBe("preference");
+  });
+
+  it("reads back observationKind='merge' (NULL default) and NO patternType when both are omitted (pre-101 row behavior)", () => {
+    const entry = makeEntry({ id: "rt-merge-default" });
+    expect("observationKind" in entry).toBe(false);
+    expect("patternType" in entry).toBe(false);
+    insertMemoryRow(db, entry, "semantic");
+
+    const row = selectAndParse("rt-merge-default");
+    // Both columns persist NULL when the entry omits the fields.
+    expect(row.observation_kind).toBeNull();
+    expect(row.pattern_type).toBeNull();
+
+    const back = rowToEntry(row);
+    // NULL observation_kind -> "merge" (the forward-only default for pre-101 rows).
+    expect(back.observationKind).toBe("merge");
+    // NULL pattern_type -> the key is ABSENT (conditional spread), not present-undefined.
+    expect("patternType" in back).toBe(false);
+  });
+
+  it("does NOT shift has_embedding or expires_at when an inductive observation is inserted (Pitfall-5 arg-alignment guard)", () => {
+    // A misaligned INSERT column/placeholder/run triplet would write the kind
+    // string ("inductive") into has_embedding (the literal 0, last) or into
+    // expires_at — corrupting an unrelated column. Assert both are intact.
+    const entry: MemoryEntry = {
+      ...makeEntry({ id: "rt-no-shift" }),
+      observationKind: "inductive",
+      patternType: "behavior",
+    };
+    // makeEntry omits expiresAt unless overridden -> expires_at must read NULL.
+    expect("expiresAt" in entry).toBe(false);
+    insertMemoryRow(db, entry, "semantic");
+
+    const row = selectAndParse("rt-no-shift");
+    expect(row.has_embedding).toBe(0);
+    expect(row.expires_at).toBeNull();
+    // And the new columns DID land where intended (positive control).
+    expect(row.observation_kind).toBe("inductive");
+    expect(row.pattern_type).toBe("behavior");
+  });
+
+  it("still rejects an unknown extra column after the 2 typed-observation columns are added (strict-reject intact)", () => {
+    // Adding observation_kind/pattern_type must not loosen MemoryRowSchema:
+    // z.strictObject must still reject an unknown column.
+    const base = makeRow();
+    const withBogus = { ...base, surprise_col: "x" } as unknown;
+    expect(MemoryRowSchema.safeParse(withBogus).success).toBe(false);
   });
 });
 

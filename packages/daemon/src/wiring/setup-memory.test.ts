@@ -110,6 +110,28 @@ const mockCreateSqliteMemoryCausalStore = vi.hoisted(() => vi.fn(() => ({
   linkCausal: vi.fn(async () => ({ ok: true, value: 0 })),
   causalLane: vi.fn(async () => ({ ok: true, value: [] })),
 })));
+// Triple store factory (Phase 100, KG-01) — mocked so setup wires it without a real DB.
+// setupMemory builds this on the shared db handle (mirror the entity/temporal/causal/
+// consolidation/usefulness stores); without the mock entry the @comis/memory factory is
+// undefined and EVERY setup call throws `createSqliteTripleStore is not a function` (the
+// MEMORY.md "setup-memory mock" gate — Pitfall 4). All four port methods are stubbed
+// (the write upsertTriple + the reads asOf / currentTruth / spreadLane — one segregated
+// bi-temporal KG port, all halves).
+const mockCreateSqliteTripleStore = vi.hoisted(() => vi.fn(() => ({
+  upsertTriple: vi.fn(async () => ({ ok: true, value: undefined })),
+  asOf: vi.fn(async () => ({ ok: true, value: [] })),
+  currentTruth: vi.fn(async () => ({ ok: true, value: [] })),
+  spreadLane: vi.fn(async () => ({ ok: true, value: [] })),
+})));
+// Embedding store factory (Phase 102, IQ-01) — mocked so setup wires it without a real DB.
+// setupMemory builds this on the shared db handle (mirror the entity/temporal/causal/triple/
+// consolidation/usefulness stores); without the mock entry the @comis/memory factory is
+// undefined and EVERY setup call throws `createSqliteMemoryEmbeddingStore is not a function`
+// (the MEMORY.md "setup-memory mock" gate — Pitfall 4). The sole port method is stubbed (the
+// bulk-scoped readEmbeddings the MMR diversity re-rank hydrates from).
+const mockCreateSqliteMemoryEmbeddingStore = vi.hoisted(() => vi.fn(() => ({
+  readEmbeddings: vi.fn(async () => ({ ok: true, value: new Map() })),
+})));
 
 vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
@@ -128,6 +150,8 @@ vi.mock("@comis/memory", () => ({
   createSqliteMemoryUsefulnessStore: mockCreateSqliteMemoryUsefulnessStore,
   createSqliteMemoryTemporalStore: mockCreateSqliteMemoryTemporalStore,
   createSqliteMemoryCausalStore: mockCreateSqliteMemoryCausalStore,
+  createSqliteTripleStore: mockCreateSqliteTripleStore,
+  createSqliteMemoryEmbeddingStore: mockCreateSqliteMemoryEmbeddingStore,
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));
@@ -1103,6 +1127,60 @@ describe("setupMemory", () => {
       expect.objectContaining({ db: mockDb }),
     );
     expect(result.causalStore).toBeDefined();
+  });
+
+  it("builds the triple store on the SAME shared db handle and returns it (Phase 100, KG-01)", async () => {
+    const container = createMinimalContainer(); // all-default config (graphSpread lane OFF)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // Built UNCONDITIONALLY (no opt-in gate at build time — only the 6th graphSpread lane
+    // push in memory-recall.ts is gated on rag.lanes.graphSpread.enabled, default OFF, and
+    // the offline triple-extraction job is its own default-OFF cost gate). Without the
+    // mock-map entry this call throws "createSqliteTripleStore is not a function" (Pitfall 4).
+    expect(mockCreateSqliteTripleStore).toHaveBeenCalledOnce();
+    // The SOLE adapter must share the memory adapter's db handle (the same mockDb the
+    // entity/temporal/causal/consolidation/usefulness stores receive) — NOT a second
+    // Database. This keeps the (tenant, agent) isolation scope + the source_memory_id ON
+    // DELETE CASCADE consistent with the memory rows the triples reference, AND means the
+    // graph-spread read lane shares one FK-enabled connection with those rows.
+    expect(mockCreateSqliteTripleStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb }),
+    );
+    expect(result.tripleStore).toBeDefined();
+  });
+
+  it("builds the embedding store on the SAME shared db handle and returns it (Phase 102, IQ-01)", async () => {
+    const container = createMinimalContainer(); // all-default config (rag.mmr OFF)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // Built UNCONDITIONALLY (no opt-in gate at build time — only the MMR slot in
+    // memory-recall.ts is gated on rag.mmr.enabled, default OFF, so the embedding read never
+    // runs until an operator opts in). Without the mock-map entry this call throws
+    // "createSqliteMemoryEmbeddingStore is not a function" (Pitfall 4).
+    expect(mockCreateSqliteMemoryEmbeddingStore).toHaveBeenCalledOnce();
+    // The SOLE adapter must share the memory adapter's db handle (the same mockDb the
+    // entity/temporal/causal/triple/consolidation/usefulness stores receive) — NOT a second
+    // Database. This keeps the (tenant, agent) isolation scope consistent with the memory rows
+    // whose embeddings the scoped LEFT JOIN vec_memories read hydrates for the MMR re-rank.
+    expect(mockCreateSqliteMemoryEmbeddingStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb }),
+    );
+    expect(result.embeddingStore).toBeDefined();
+    // The bulk-scoped read the MMR diversity re-rank hydrates from (mirror the temporal/triple
+    // presence assertions — a defined port method proves the store, not just a truthy field).
+    expect(result.embeddingStore.readEmbeddings).toBeTypeOf("function");
   });
 });
 

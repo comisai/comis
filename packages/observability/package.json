@@ -44,8 +44,8 @@
   "dependencies": {
     "@comis/core": "workspace:*",
     "@comis/shared": "workspace:*",
-    "@earendil-works/pi-agent-core": "0.75.3",
-    "@earendil-works/pi-coding-agent": "0.75.3",
+    "@earendil-works/pi-agent-core": "0.78.0",
+    "@earendil-works/pi-coding-agent": "0.78.0",
     "zod": "4.4.3"
   },
   "devDependencies": {

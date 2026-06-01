@@ -15,6 +15,34 @@
 #              vector/rerank lanes if LLAMA_MODEL_PATH / LLAMA_RERANKER_MODEL_PATH are set).
 #   qa         end-to-end QA + LLM-judge accuracy — REQUIRES the answer + judge env.
 #   all        retrieval + qa.
+#   suite <tier>  run one v2.8 SUITE tier by name and write a committed, secret-free
+#              report under benchmarks/results/<tier>/. Tiers:
+#                poisoning            (answer+judge env) — adversarial ASR (security flagship)
+#                recall-learning      KEYLESS              — FEED-loop gold-rank lift
+#                trust-contradiction  (answer+judge env) — older-high-trust-wins rate
+#                redaction            KEYLESS              — privacy/redaction leak-rate
+#                beam                 KEYLESS              — long-context scale probe (COMIS_BENCH_BEAM_10M lights the 10M tier)
+#                longmemeval-v2 | memoryagentbench | pref | perltqa | personamem | halumem
+#                                     external loaders — with $COMIS_BENCH_DATA + answer+judge env
+#                                     they run the QA harness against the operator corpus; UNSET runs the
+#                                     loader's structural test as the keyless proof (see benchmarks/DATASETS.md).
+#              `suite all` runs every tier in sequence. After each tier the runner greps
+#              its committed report dir for credential SHAPES and FAILS on any match
+#              (belt-and-suspenders over the harnesses' in-test omission gate).
+#   head-to-head  PROVE (Phase 104) KEYLESS ($0): drive the head-to-head proving machine
+#              (real runner + cross-judge spread + significance + append-only ledger +
+#              ablation sweep + skip-with-disclosure adapters + letta-fs control + a real
+#              Comis recall cell) and write the committable PARTIAL manifest under
+#              benchmarks/results/2026-06-01-phase104-prove/ (override via COMIS_PROVE_REPORT_DIR).
+#              No keys, no provider call, no cost. Then the credential-shape sweep over the dir.
+#   gate       PROVE-03 per-release CONTINUOUS REGRESSION GATE: run the keyless machine,
+#              which PROVES the append-only never-overwrite ledger MECHANISM over a fresh
+#              tmp dir. The keyless run writes NO dated row to benchmarks/results/history/
+#              (it does not exist on the keyless path) — the real dated append is the
+#              operator-COSTED pass (GATE-REPORT.md §4). When that committed history dir
+#              exists, the gate sweeps it for credential shapes. Wiring a CI `schedule:`
+#              cron is an OPERATOR step (the COSTED run with real competitor installs +
+#              judge spend) — the `gate` MODE itself is the in-scope $0-testable unit.
 #
 # Config: copy scripts/bench-memory.env.example → scripts/bench-memory.env and fill it
 # (the runner sources it automatically), or export the COMIS_BENCH_* / LLAMA_* vars yourself.
@@ -31,8 +59,27 @@ cd "$ROOT"
 
 MODE="${1:-dry}"
 ENV_FILE="$ROOT/scripts/bench-memory.env"
-QA="packages/agent/src/memory/benchmark/qa-judge-harness.bench.test.ts"
-RET="packages/agent/src/memory/benchmark/retrieval-harness.bench.test.ts"
+BENCH_DIR="packages/agent/src/memory/benchmark"
+QA="$BENCH_DIR/qa-judge-harness.bench.test.ts"
+RET="$BENCH_DIR/retrieval-harness.bench.test.ts"
+
+# v2.8 SUITE tier harnesses (Wave 1–2) routed by `suite <tier>` below.
+POISONING_HARNESS="$BENCH_DIR/poisoning-harness.bench.test.ts"
+LEARNING_HARNESS="$BENCH_DIR/learning-lift-harness.bench.test.ts"
+CONTRADICTION_HARNESS="$BENCH_DIR/contradiction-harness.bench.test.ts"
+REDACTION_HARNESS="$BENCH_DIR/redaction-harness.bench.test.ts"
+BEAM_HARNESS="$BENCH_DIR/beam-harness.bench.test.ts"
+# External-loader structural tests — the KEYLESS proof when $COMIS_BENCH_DATA is unset.
+LONGMEMEVAL_V2_TEST="$BENCH_DIR/longmemeval-v2-loader.test.ts"
+MEMORYAGENTBENCH_TEST="$BENCH_DIR/memoryagentbench-loader.test.ts"
+PERSONALIZATION_TEST="$BENCH_DIR/personalization-loaders.test.ts"
+# PROVE (Phase 104, Track J) — the keyless head-to-head proving-machine harness + the
+# per-release continuous gate (routed by the `head-to-head` / `gate` modes below).
+HEAD_TO_HEAD="$BENCH_DIR/head-to-head.bench.test.ts"
+
+# The full tier allowlist (drives `suite all` + the usage line). The order is the
+# keyless tiers first, then the answer+judge tiers, then the external loaders.
+SUITE_TIERS="recall-learning redaction beam poisoning trust-contradiction longmemeval-v2 memoryagentbench pref perltqa personamem halumem"
 
 # 1. Operator config. The env file (if present) is applied; comment out a line to fall
 #    back to whatever is already exported in your shell.
@@ -50,6 +97,101 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
 fi
 
 run() { echo "→ vitest run $*"; pnpm exec vitest run "$@"; }
+
+# Guard the answer+judge env for the LLM-judged tiers — same pattern as qa/all modes.
+require_answer_judge_env() {
+  : "${COMIS_BENCH_ANSWER_PROVIDER:?suite '$1' needs COMIS_BENCH_ANSWER_* — see scripts/bench-memory.env.example}"
+  : "${COMIS_BENCH_JUDGE_PROVIDER:?suite '$1' needs COMIS_BENCH_JUDGE_* — see scripts/bench-memory.env.example}"
+}
+
+# POST-RUN SECRET SWEEP (T-99-08-01). Belt-and-suspenders over the harnesses' in-test
+# JSON.stringify omission gate (mirrors Plan 05's redaction double-sweep): grep the tier's
+# committed report dir for credential SHAPES only — sk-…{16,} / Bearer … / apiKey — and FAIL
+# the run on any match. Anchored to credential shapes, NEVER the bare word `token` (a field
+# like answerTokensPerQuery must not false-positive). A missing dir is a no-op.
+sweep_tier_report() {
+  local tier="$1" dir="$ROOT/benchmarks/results/$1"
+  [ -d "$dir" ] || return 0
+  if grep -REn 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|apiKey' "$dir" 2>/dev/null; then
+    echo "✗ SECRET LEAK in benchmarks/results/$tier — failing the run (T-99-08-01)." >&2
+    exit 1
+  fi
+}
+
+# Absolute-path variant of the credential-shape sweep (IN-01). The head-to-head /
+# gate modes let the operator override the output dir (COMIS_PROVE_REPORT_DIR);
+# this sweeps the dir that was ACTUALLY written rather than a desynced hardcoded
+# tier name, so the belt-and-suspenders sweep never skips the live dir. Same shapes
+# (sk-…{16,} / Bearer … / apiKey), same FAIL-on-match. A missing dir is a no-op.
+sweep_dir() {
+  local dir="$1"
+  [ -d "$dir" ] || return 0
+  if grep -REn 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|apiKey' "$dir" 2>/dev/null; then
+    echo "✗ SECRET LEAK in $dir — failing the run (T-99-08-01)." >&2
+    exit 1
+  fi
+}
+
+# The usage line for `suite` with no/unknown tier — lists EVERY tier (the allowlist).
+suite_usage() {
+  echo "usage: $0 suite <tier>" >&2
+  echo "  tiers: $SUITE_TIERS all" >&2
+  echo "  keyless: recall-learning redaction beam (+ external tiers when \$COMIS_BENCH_DATA is unset)" >&2
+  echo "  answer+judge env required: poisoning trust-contradiction (+ external tiers when \$COMIS_BENCH_DATA is set)" >&2
+  echo "  see benchmarks/DATASETS.md for per-tier dataset placement under \$COMIS_BENCH_DATA" >&2
+}
+
+# Run a single external-loader tier. With $COMIS_BENCH_DATA set + the answer/judge env,
+# run the QA harness against the operator-placed corpus; UNSET → echo the DATASETS.md
+# placement pointer and run the matching loader's structural test (the keyless proof).
+run_external_tier() {
+  local tier="$1" loader_test="$2"
+  if [ -n "${COMIS_BENCH_DATA:-}" ]; then
+    require_answer_judge_env "$tier"
+    echo "→ suite $tier: \$COMIS_BENCH_DATA set → QA harness over the operator corpus."
+    run "$QA"
+  else
+    echo "→ suite $tier: \$COMIS_BENCH_DATA UNSET → keyless structural proof ($loader_test)."
+    echo "  Place the full $tier corpus under \$COMIS_BENCH_DATA to run the gated QA harness — see benchmarks/DATASETS.md."
+    run "$loader_test"
+  fi
+}
+
+# Dispatch ONE tier by name. A fixed nested case over the known tier allowlist — the
+# arg is never eval'd (T-99-08-03). Unknown/empty tier → usage + exit 2.
+run_suite_tier() {
+  local TIER="$1"
+  case "$TIER" in
+    poisoning)
+      require_answer_judge_env "$TIER"
+      run "$POISONING_HARNESS"
+      ;;
+    recall-learning)
+      run "$LEARNING_HARNESS"   # KEYLESS — FEED-loop gold-rank lift
+      ;;
+    trust-contradiction)
+      require_answer_judge_env "$TIER"
+      run "$CONTRADICTION_HARNESS"
+      ;;
+    redaction)
+      run "$REDACTION_HARNESS"  # KEYLESS — leak detection is a deterministic string check
+      ;;
+    beam)
+      # KEYLESS scale probe. COMIS_BENCH_BEAM_10M=1 additionally lights the 10M stretch tier.
+      run "$BEAM_HARNESS"
+      ;;
+    longmemeval-v2)      run_external_tier "$TIER" "$LONGMEMEVAL_V2_TEST" ;;
+    memoryagentbench)    run_external_tier "$TIER" "$MEMORYAGENTBENCH_TEST" ;;
+    pref|perltqa|personamem|halumem)
+      run_external_tier "$TIER" "$PERSONALIZATION_TEST" ;;
+    *)
+      suite_usage
+      exit 2
+      ;;
+  esac
+  sweep_tier_report "$TIER"
+  echo "  → report (when written): benchmarks/results/$TIER/"
+}
 
 case "$MODE" in
   dry)
@@ -70,8 +212,71 @@ case "$MODE" in
     : "${COMIS_BENCH_JUDGE_PROVIDER:?qa/all mode needs COMIS_BENCH_JUDGE_* — see scripts/bench-memory.env.example}"
     run "$RET" "$QA"
     ;;
+  head-to-head)
+    # PROVE (Phase 104, Track J) — the KEYLESS ($0) proving-machine run. Drives the
+    # real runner + cross-judge spread + significance + append-only ledger + ablation
+    # sweep + the skip-with-disclosure adapters + the letta-fs control + a real Comis
+    # recall cell, all at $0 (no key, no provider call). Writes the committable PARTIAL
+    # manifest to benchmarks/results/2026-06-01-phase104-prove (default when unset), then
+    # greps that dir for credential SHAPES and FAILS on any match (T-99-08-01).
+    export COMIS_PROVE_REPORT_DIR="${COMIS_PROVE_REPORT_DIR:-$ROOT/benchmarks/results/2026-06-01-phase104-prove}"
+    run "$HEAD_TO_HEAD"
+    # IN-01: sweep the dir the run ACTUALLY wrote (the same override the harness
+    # used), not a desynced hardcoded tier name — so an overridden output dir is
+    # always the dir that gets credential-swept.
+    sweep_dir "$COMIS_PROVE_REPORT_DIR"
+    echo "  → manifest: $COMIS_PROVE_REPORT_DIR"
+    ;;
+  gate)
+    # PROVE-03 — the per-release CONTINUOUS REGRESSION GATE entry point. Runs the
+    # keyless proving machine, which PROVES the append-only never-overwrite ledger
+    # MECHANISM over a fresh tmp history dir (head-to-head.bench.test.ts: write a
+    # dated row, refuse a 2nd same-path write with prior bytes byte-identical, let a
+    # different-date row coexist). The keyless run writes a SYNTHETIC row to a tmp
+    # dir — it does NOT touch the committed benchmarks/results/history/ (that real
+    # dated append is the operator-COSTED pass; see GATE-REPORT.md §4).
+    #
+    # OPERATOR/FOLLOW-UP: wiring a CI `schedule:` cron to run this `gate` mode is an
+    # OPERATOR step, NOT shipped here — the COSTED head-to-head (real competitor installs
+    # + keys + LLM judge spend) is what fills the real cross-judged numbers, and a keyless
+    # scheduled run would never produce a useful headline. The `gate` MODE is the in-scope,
+    # $0-testable unit; the scheduled spend is deferred to the operator (RESEARCH Open Q #2).
+    run "$HEAD_TO_HEAD"
+    HISTORY_DIR="$ROOT/benchmarks/results/history"
+    # HONESTY (WR-01): only claim a dated row + a history sweep when the dir actually
+    # exists with operator-costed rows. The keyless run never writes here, so by
+    # default we say plainly that the gate proves the MECHANISM and the real append
+    # is the costed pass — never success-shaped text after appending nothing.
+    if [ -d "$HISTORY_DIR" ] && [ -n "$(ls -A "$HISTORY_DIR" 2>/dev/null)" ]; then
+      sweep_dir "$HISTORY_DIR"
+      echo "  → swept benchmarks/results/history/ (operator-costed dated rows)"
+    else
+      echo "  → keyless gate: the append-only never-overwrite ledger MECHANISM is"
+      echo "    PROVEN over a fresh tmp dir (the keyless run writes NO dated row to"
+      echo "    benchmarks/results/history/). The real dated append is the operator-"
+      echo "    costed pass — reproduce with the steps in"
+      echo "    benchmarks/results/2026-06-01-phase104-prove/GATE-REPORT.md §4."
+    fi
+    ;;
+  suite)
+    TIER="${2:-}"
+    if [ -z "$TIER" ]; then
+      suite_usage
+      exit 2
+    fi
+    if [ "$TIER" = "all" ]; then
+      echo "→ suite all — running every tier in sequence: $SUITE_TIERS"
+      for t in $SUITE_TIERS; do
+        echo ""
+        echo "──────── suite $t ────────"
+        run_suite_tier "$t"
+      done
+    else
+      run_suite_tier "$TIER"
+    fi
+    ;;
   *)
-    echo "usage: $0 [dry|retrieval|qa|all]" >&2
+    echo "usage: $0 [dry|retrieval|qa|all|suite <tier>|head-to-head|gate]" >&2
     exit 2
     ;;
 esac

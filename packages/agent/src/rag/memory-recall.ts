@@ -27,171 +27,38 @@
  * @module
  */
 
-import type {
-  MemoryPort,
-  MemorySearchResult,
-  MemoryEntityStore,
-  MemoryTemporalStore,
-  MemoryCausalStore,
-  MemoryUsefulnessStore,
-  UsefulnessSignal,
-  RerankerPort,
-  TrustLevel,
-  TimerPort,
-  ClockPort,
-  SessionKey,
-  ComisLogger,
-  TypedEventBus,
-} from "@comis/core";
-import { tryGetContext } from "@comis/core";
-// TYPE-only import of the recall-trace recorder from @comis/observability — an EXISTING
-// production dep of @comis/agent (verified). This does NOT touch the agent↛MEMORY cut:
-// the recorder imports @comis/observability, never @comis/memory.
-import type { RecallTrace } from "@comis/observability";
-import { ok, withTimeout, TimeoutError, type Result } from "@comis/shared";
+// The recall DEPS/CONFIG/SURFACE types (and the store ports they reference) live in
+// recall-types.ts — see the re-export below. memory-recall.ts itself imports only the
+// @comis/core types it uses DIRECTLY in the pipeline body (the usefulness side-map +
+// the trust-filter set); the agent↛memory cut holds (every store is a @comis/core port TYPE).
+import type { UsefulnessSignal, TrustLevel } from "@comis/core";
+import { ok, withTimeout, TimeoutError } from "@comis/shared";
 import { fuse, type FusionLane } from "./fuse.js";
-import { scoreWithBreakdown, type ScoringAlphas, type ScoreBreakdown } from "./score.js";
+import { scoreWithBreakdown, type ScoreBreakdown } from "./score.js";
 import { deduplicateResults } from "./rag-retriever.js";
-import { appendCausalLane } from "./recall-causal-lane.js";
 import {
-  buildRecallRecord,
-  recallQueryDigest,
+  classifyIntent,
+  intentMultiplier,
+  expandSynonyms,
+  parseTemporalRange,
+  type ReweightLane,
+} from "./query-understanding.js";
+import { mmrRerank } from "./mmr.js";
+import { appendCausalLane } from "./recall-causal-lane.js";
+import { appendGraphSpreadLane } from "./recall-graph-spread-lane.js";
+import { captureRecallObservability } from "./recall-observability.js";
+import {
   vectorLaneCouldContribute,
   type RecallDegradation,
-  type RecallRankedEntry,
   type RecallRerankOutcome,
 } from "./recall-record.js";
 
-/** Injected dependencies for the recall orchestrator. */
-export interface MemoryRecallDeps {
-  /** Tenant+agent-scoped memory search port (the candidate supply). */
-  memoryPort: MemoryPort;
-  /** Optional cross-encoder reranker. Absent/unavailable -> fusion order (RANK-03). */
-  reranker?: RerankerPort;
-  /**
-   * Optional entity-associative store (ENT-02). When present AND entityLane.enabled,
-   * the read path queries `associativeLane(seedIds, scope, cap)` for memories sharing
-   * an entity with the top search hits and fuses them as a 2nd lane. Absent -> no
-   * entity lane (graceful; RRF unchanged). TYPE-only from @comis/core — the agent
-   * never imports the memory package (the agent↛memory build cut); the daemon injects
-   * the concrete adapter (Plan 05).
-   */
-  entityStore?: MemoryEntityStore;
-  /**
-   * Optional temporal-spread store (LANES-02). When present AND cfg.lanes.temporal.enabled,
-   * the read path queries `spreadLane(seedTimes, scope, windowMs, cap)` for memories near
-   * the seed hits' `occurred_at` event times and fuses them as a 4th lane. Absent / disabled
-   * / no seed times -> no temporal lane (graceful; RRF unchanged — the ENT-04 no-op). TYPE-only
-   * from @comis/core — the agent never imports the memory package (the agent↛memory build cut);
-   * the daemon injects the concrete adapter (the composition root).
-   */
-  temporalStore?: MemoryTemporalStore;
-  /**
-   * Optional causal store (EXTRACT-03). When present AND cfg.lanes.causal.enabled, the read path
-   * queries `causalLane` (in appendCausalLane) for memories causally linked to the top base hits
-   * and fuses them as a 5th lane; absent / disabled / no seeds -> no causal lane (RRF unchanged).
-   * TYPE-only (the agent↛memory cut); the daemon injects the SAME store the write path uses for linkCausal.
-   */
-  causalStore?: MemoryCausalStore;
-  /**
-   * Optional usefulness store (FEED-03). When present AND cfg.feedback.enabled, recall does a
-   * bulk read of the per-memory signal for the ranked ids and folds the used-rate into the
-   * usefulnessFactor in score.ts. Absent or flag-off -> no read, usefulnessById stays
-   * undefined, every usefulnessNorm(undefined) -> factor 1.0 (byte-identical to v2.6).
-   * TYPE-only from @comis/core — the agent never imports the memory package (the agent↛memory
-   * build cut); the daemon injects the concrete adapter (Plan 03 wiring).
-   */
-  usefulnessStore?: MemoryUsefulnessStore;
-  /** Timer port for the rerank wall-clock deadline. Absent -> no timeout wrap. */
-  timers?: TimerPort;
-  /** Wall-clock reads for the recency boost (never Date.now()). */
-  clock: ClockPort;
-  /** Structural logger (WARN on degrade/timeout with errorKind + hint, counts only). */
-  logger: ComisLogger;
-  /**
-   * Optional recall-trace recorder (OBS-01/02). When present, recall writes ONE rich
-   * record per call (lanes+counts, fused order, rerank pre/post + outcome, the final
-   * ranked set with per-memory breakdown + include/exclude reason, degradations). The
-   * recorder is `null` when `diagnostics.recallTrace.enabled` is false at the
-   * construction site, so an ABSENT recorder reproduces today's behavior exactly
-   * (no record, zero overhead). TYPE-only from @comis/observability — the agent↛memory
-   * cut is untouched. recordRecall is wrapped non-fatal: a recorder failure NEVER fails
-   * the recall hot path (observability degrades, never errors — T-86-13).
-   */
-  recallTrace?: RecallTrace;
-  /**
-   * Optional event bus (OBS-04). When present, recall emits the counts-only
-   * `memory:recalled` (once per recall) and `memory:reranked` (only when a rerank stage
-   * was attempted). Payloads are counts/booleans/ids ONLY — never the query text or
-   * memory bodies. Absent -> no emit (today's behavior). The emit is wrapped non-fatal.
-   */
-  eventBus?: TypedEventBus;
-}
-
-/** Recall configuration (sourced from RagConfig at the call site). */
-export interface MemoryRecallConfig {
-  /** Maximum results to surface (the default-path search pool size). */
-  maxResults: number;
-  /** Minimum RRF score threshold passed to search. */
-  minScore: number;
-  /** Trust levels permitted into recall (external excluded by default). */
-  includeTrustLevels: TrustLevel[];
-  /** Cross-encoder rerank knobs (opt-in; default-OFF). */
-  rerank: { enabled: boolean; maxCandidates: number; minResults: number; timeoutMs: number };
-  /** Multiplicative scoring boost weights. */
-  scoring: ScoringAlphas;
-  /**
-   * Per-lane RRF weights for the FTS + vector fusion lanes (LANES-01; sourced from
-   * RagConfig.lanes). When the injected MemoryPort exposes `searchLanes`, recall builds
-   * TWO lanes (fts + vector) and fuses them with these weights. Optional so a caller
-   * predating the field leaves it absent -> the per-lane fallbacks {fts:1.0, vector:1.5}
-   * (the parity defaults) apply. The defaults reproduce v2.6's pre-fused ranking
-   * byte-for-byte (the parity guard, T-95-01).
-   */
-  lanes?: {
-    fts: { weight: number };
-    vector: { weight: number };
-    /**
-     * Temporal-spread lane knobs (LANES-02; from RagConfig.lanes.temporal). Default-OFF
-     * (`enabled:false`) -> the lane is never pushed -> RRF unchanged (the ENT-04 no-op).
-     * Optional so a caller predating the field leaves it absent -> no temporal lane.
-     */
-    temporal?: { enabled: boolean; weight: number; windowDays: number };
-    /** Causal one-hop lane knobs (EXTRACT-03; from RagConfig.lanes.causal). Default-OFF
-     *  (`enabled:false`) -> the lane is never pushed -> RRF unchanged (the ENT-04 no-op). */
-    causal?: { enabled: boolean; weight: number };
-  };
-  /**
-   * Entity-associative lane knobs (sourced from RagConfig.entityLane). Optional so
-   * callers that predate the lane (or the daemon before Plan 05 wiring) leave it
-   * absent -> no entity lane. Default-OFF (`enabled: false`) -> RRF unchanged (ENT-04).
-   */
-  entityLane?: { enabled: boolean; seedCount: number; perEntityCap: number; weight: number };
-  /**
-   * Recall-utility feedback toggle (FEED-03; sourced from RagConfig.feedback). The toggle
-   * ONLY — there is NO usefulnessAlpha here. The boost MAGNITUDE is the single canonical
-   * `rag.scoring.usefulnessAlpha` (on {@link MemoryRecallConfig.scoring}, exactly like the
-   * other alphas), so there is no second knob and no drift. Optional so a caller predating
-   * the field (or the daemon before Plan 03 wiring) leaves it absent -> off (no read). The
-   * primary default-off guard is skipping the read entirely, so the alpha is irrelevant off.
-   */
-  feedback?: { enabled: boolean };
-}
-
-/** The recall orchestrator surface — a single `recall` method. */
-export interface MemoryRecall {
-  /**
-   * Run the full recall pipeline for a query. Returns the ranked, trust-filtered,
-   * deduped results that the hybrid memory injector consumes. Chains by early-return
-   * on a search error; a reranker failure/timeout degrades to fusion order (never
-   * an error, never empty when the search itself succeeded with results).
-   */
-  recall(
-    query: string,
-    sessionKey: SessionKey,
-    agentId?: string,
-  ): Promise<Result<MemorySearchResult[], Error>>;
-}
+// The recall public types (deps + config + surface) live in recall-types.ts so the
+// extracted observability tail (recall-observability.ts) can share them WITHOUT a
+// source-level import cycle (ARCH-BASE-05). Re-exported here so existing consumers
+// (the daemon composition, prompt-assembly, the index barrel) import them unchanged.
+export type { MemoryRecallDeps, MemoryRecallConfig, MemoryRecall } from "./recall-types.js";
+import type { MemoryRecallDeps, MemoryRecallConfig, MemoryRecall } from "./recall-types.js";
 
 /**
  * Build a recall orchestrator from injected deps + recall config.
@@ -213,6 +80,25 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // non-fatal at the end so observability NEVER fails the recall hot path (T-86-13).
       const recallStart = deps.clock.now();
       const degradations: RecallDegradation[] = [];
+
+      // IQ-02/03 query understanding (DEFAULT-OFF byte-identity per knob). All three are pure
+      // fns over the query string + the injected clock — NO LLM, NO globals (Date.now()).
+      const qu = cfg.queryUnderstanding;
+      // IQ-02: classify ONCE (a pure fn over `query`); the per-lane multiplier is applied at the
+      // lane-push sites below via laneWeight(). When off, `intent` stays undefined → laneWeight
+      // returns the base weight unchanged → byte-identity. A factual/unmatched intent also yields
+      // multiplier 1.0 on every lane (intentMultiplier), so an ON-but-factual query is byte-identical.
+      const intent = qu?.intentReweight === true ? classifyIntent(query) : undefined;
+      // IQ-03a: expand the query string (whole-query, FORK 2) when synonyms on; else the ORIGINAL.
+      // expandSynonyms returns the input verbatim when no token maps, so this is the identity off.
+      const searchQuery = qu?.synonyms === true ? expandSynonyms(query) : query;
+      // IQ-03b: parse an occurred_at range from the (ORIGINAL) query when temporalParse on; nowMs is
+      // the injected clock's recallStart (never Date.now()). Unparseable → undefined → no filter.
+      const occurredAtRange = qu?.temporalParse === true ? parseTemporalRange(query, recallStart) : undefined;
+      // The lane-reweight closure: OFF (intent === undefined) → returns `base` unchanged (byte-
+      // identity); ON → base × intentMultiplier(intent, lane) (1.0 for any unboosted pair).
+      const laneWeight = (base: number, lane: ReweightLane): number =>
+        intent !== undefined ? base * intentMultiplier(intent, lane) : base;
 
       // 1. SEARCH — overfetch only when rerank is enabled (default pool size unchanged).
       const limit = cfg.rerank.enabled
@@ -247,10 +133,18 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // and v2.6 never minScore-filtered the entity/temporal lane contributions post-fuse.
       if (typeof deps.memoryPort.searchLanes === "function") {
         // Two-lane path. NB: no minScore passed — the lanes are pre-filter candidate pools.
-        const laneRes = await deps.memoryPort.searchLanes(sessionKey, query, { limit, agentId });
+        // IQ-03: searchQuery is the synonym-expanded query (or the original when off); the spread
+        // adds occurredAtRange ONLY when temporalParse parsed one (so OFF ⇒ the options object is
+        // byte-identical to today — byte-identity by construction, never `occurredAtRange: undefined`).
+        const laneRes = await deps.memoryPort.searchLanes(sessionKey, searchQuery, {
+          limit,
+          agentId,
+          ...(occurredAtRange !== undefined ? { occurredAtRange } : {}),
+        });
         if (!laneRes.ok) return laneRes;
-        const ftsWeight = cfg.lanes?.fts.weight ?? 1.0;
-        const vectorWeight = cfg.lanes?.vector.weight ?? 1.5;
+        // IQ-02: each lane's RRF weight is multiplied by intentMultiplier(intent, lane) (1.0 off).
+        const ftsWeight = laneWeight(cfg.lanes?.fts.weight ?? 1.0, "fts");
+        const vectorWeight = laneWeight(cfg.lanes?.vector.weight ?? 1.5, "vector");
         ftsCandidates = laneRes.value.fts.length;
         vectorCandidates = laneRes.value.vector.length;
         // DROP EMPTY LANES before fuse() (Pitfall 1 subtlety 3): a lone non-empty FTS lane
@@ -277,7 +171,13 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         // Single-lane fallback (search-only adapter). search()->hybridSearch applies BOTH the
         // slice(0, limit=maxResults) cap and the minScore filter internally, so searched.value
         // is ALREADY the capped+filtered base — wrap it verbatim (no second cap/filter here).
-        const searched = await deps.memoryPort.search(sessionKey, query, { limit, minScore: cfg.minScore, agentId });
+        // IQ-03: same searchQuery + spread-guarded occurredAtRange as the searchLanes path above.
+        const searched = await deps.memoryPort.search(sessionKey, searchQuery, {
+          limit,
+          minScore: cfg.minScore,
+          agentId,
+          ...(occurredAtRange !== undefined ? { occurredAtRange } : {}),
+        });
         if (!searched.ok) return searched;
         ftsCandidates = searched.value.length;
         // WR-04: the split is NOT observable on this path (search() returns ONE merged list),
@@ -289,6 +189,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       let entityCandidates = 0;
       let temporalCandidates = 0;
       let causalCandidates = 0;
+      let graphSpreadCandidates = 0;
 
       // OBS-03 vec→FTS-only gap: the operator-facing degradation signal. We derive it from
       // the recall-layer-observable precondition: a query with no embeddable text
@@ -340,7 +241,8 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           if (laneRes.ok) {
             // ENT-04: an empty lane pushes nothing -> fuse() stays single-lane, unchanged.
             if (laneRes.value.length > 0) {
-              lanes.push({ results: laneRes.value, weight: el.weight });
+              // IQ-02: reweight the entity lane (1.0 off; ×1.5 for a "preference" intent).
+              lanes.push({ results: laneRes.value, weight: laneWeight(el.weight, "entity") });
               entityCandidates = laneRes.value.length; // stage-1 lane-count snapshot
             }
           } else {
@@ -393,7 +295,8 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           if (laneRes.ok) {
             // The ENT-04 no-op: an empty lane pushes nothing -> fuse() ranking unchanged.
             if (laneRes.value.length > 0) {
-              lanes.push({ results: laneRes.value, weight: tl.weight });
+              // IQ-02: reweight the temporal lane (1.0 off; ×1.5 for a "temporal" intent).
+              lanes.push({ results: laneRes.value, weight: laneWeight(tl.weight, "temporal") });
               temporalCandidates = laneRes.value.length; // stage-1 lane-count snapshot
             }
           } else {
@@ -416,7 +319,23 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const cl = cfg.lanes?.causal;
       if (cl?.enabled === true && deps.causalStore !== undefined && seedPool.length > 0) {
         const seedIds = seedPool.slice(0, cfg.entityLane?.seedCount ?? 5).map((r) => r.entry.id);
-        causalCandidates = await appendCausalLane(lanes, deps.causalStore, cl.weight, cfg.maxResults, seedIds, sessionKey, agentId, deps.logger);
+        // IQ-02: reweight the causal lane (1.0 off; no boosted intent today → 1.0 by construction).
+        causalCandidates = await appendCausalLane(lanes, deps.causalStore, laneWeight(cl.weight, "causal"), cfg.maxResults, seedIds, sessionKey, agentId, deps.logger);
+      }
+
+      // 2d. GRAPH-SPREAD lane (KG-04) — the 6th fused lane (…, causal, graphSpread), in
+      // appendGraphSpreadLane (full contract + DEFAULT-OFF byte-identity T-100-04-06 there). The
+      // precondition gate is HERE so the off path stays synchronous. Seeds = the top base hits'
+      // CONTENT (the subject strings the triple store's current-truth subject→object edges walk
+      // from); the bounded recursive-CTE walk returns structurally-linked memories, LLM-free.
+      const gs = cfg.lanes?.graphSpread;
+      if (gs?.enabled === true && deps.tripleStore !== undefined && seedPool.length > 0) {
+        const seedSubjects = seedPool
+          .slice(0, cfg.entityLane?.seedCount ?? 5)
+          .map((r) => r.entry.content)
+          .filter((s): s is string => typeof s === "string");
+        // IQ-02: reweight the graph-spread lane (1.0 off; no boosted intent today → 1.0).
+        graphSpreadCandidates = await appendGraphSpreadLane(lanes, deps.tripleStore, laneWeight(gs.weight, "graphSpread"), cfg.maxResults, gs.maxDepth, gs.fanOut, seedSubjects, sessionKey, agentId, deps.logger);
       }
       // FUSE the base lane (already capped + minScore-filtered) with any entity/temporal
       // lanes. minScore is NOT re-applied here: v2.6 filtered minScore exactly once on the
@@ -603,6 +522,37 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const trustFilteredIds = ranked.filter((r) => !allowed.has(r.entry.trustLevel)).map((r) => r.entry.id);
       ranked = ranked.filter((r) => allowed.has(r.entry.trustLevel));
 
+      // 5b. MMR (IQ-01) — diversity re-rank over the post-trust-filter candidates' embeddings.
+      //     DEFAULT-OFF BYTE-IDENTITY: with mmr.enabled=false, no embeddingStore, or <2 candidates,
+      //     this block is SKIPPED — readEmbeddings is NEVER called (the spy proves it) and `ranked`
+      //     is unchanged. The read is SCOPED (tenant, agent) — the adapter returns this scope's
+      //     vectors only (the load-bearing isolation, mirror the usefulness read L322-325). A FAILED
+      //     read is NON-FATAL: WARN + rank WITHOUT MMR (recall never fails because the read failed).
+      //     λ=1 / <2 embedded → mmrRerank returns the input order (byte-identity). Placed AFTER the
+      //     trust-filter (FORK 1) so MMR diversifies EXACTLY the set that will be injected and can
+      //     never re-surface a candidate the trust filter excluded; BEFORE dedup's exact-prefix
+      //     collapse, which stays the final pass. TYPE-only embeddingStore port (the agent↛memory cut).
+      if (cfg.mmr?.enabled === true && deps.embeddingStore !== undefined && ranked.length >= 2) {
+        const ids = ranked.map((r) => r.entry.id);
+        const scope = {
+          tenantId: sessionKey.tenantId,
+          agentId: agentId ?? sessionKey.agentId ?? "default",
+        };
+        const e = await deps.embeddingStore.readEmbeddings(ids, scope);
+        if (e.ok) {
+          ranked = mmrRerank(ranked, e.value, cfg.mmr.lambda);
+        } else {
+          deps.logger.warn(
+            {
+              agentId,
+              errorKind: "internal" as const,
+              hint: "embedding read failed; ranking without MMR diversity",
+            },
+            "mmr embedding read fallback",
+          );
+        }
+      }
+
       // 6. DEDUP (reuse; kept last to match the injector's expectation). Diff pre/post to
       //    recover the deduped ids (reason "deduped") for the trace.
       const preDedupIds = ranked.map((r) => r.entry.id);
@@ -623,6 +573,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           entityCandidates,
           temporalCandidates,
           causalCandidates,
+          graphSpreadCandidates,
           vectorLaneActive,
           fusedOrder,
           rerankOutcome,
@@ -644,156 +595,3 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
   };
 }
 
-/** Internal capture context handed to {@link captureRecallObservability}. */
-interface RecallCaptureCtx {
-  query: string;
-  agentId: string | undefined;
-  sessionKey: SessionKey;
-  lanes: { fts: number; vector: number; entity: number; temporal: number; causal: number };
-  ftsCandidates: number;
-  vectorCandidates: number;
-  entityCandidates: number;
-  temporalCandidates: number;
-  causalCandidates: number;
-  vectorLaneActive: boolean;
-  fusedOrder: string[];
-  rerankOutcome: RecallRerankOutcome;
-  rerankAttempted: boolean;
-  rerankCandidateCount: number;
-  preScores: number[] | undefined;
-  postScores: number[] | undefined;
-  finalRanked: MemorySearchResult[];
-  trustFilteredIds: string[];
-  dedupedIds: string[];
-  breakdownById: Map<string, ScoreBreakdown>;
-  degradations: RecallDegradation[];
-  durationMs: number;
-}
-
-/**
- * Assemble + write the recall-trace record and emit the counts-only memory:recalled /
- * memory:reranked events. ALL of this is observability: a recorder or emit failure is
- * caught and logged at DEBUG so it NEVER fails the recall hot path (T-86-13 / RANK-03
- * spirit: degrade, never error). The query is recorded as a sha256 DIGEST, never raw
- * text (T-86-10). Event payloads are counts/booleans only — never query text or memory
- * bodies (T-86-11).
- */
-function captureRecallObservability(
-  deps: MemoryRecallDeps,
-  cfg: MemoryRecallConfig,
-  ctx: RecallCaptureCtx,
-): void {
-  // Build the per-memory ranked explanation: included (with breakdown) + excluded
-  // (trust_filtered / deduped) so the trace explains every memory's fate, not just the
-  // survivors. "below_budget" applies when a maxResults cap drops tail items from the
-  // final set (the injector's char budget is applied downstream; the count cap is here).
-  const ranked: RecallRankedEntry[] = ctx.finalRanked
-    .slice(0, cfg.maxResults)
-    .map((r) => {
-      const breakdown = ctx.breakdownById.get(r.entry.id);
-      return breakdown !== undefined
-        ? { id: r.entry.id, reason: "included" as const, breakdown }
-        : { id: r.entry.id, reason: "included" as const };
-    });
-  for (const r of ctx.finalRanked.slice(cfg.maxResults)) {
-    ranked.push({ id: r.entry.id, reason: "below_budget" });
-  }
-  for (const id of ctx.trustFilteredIds) ranked.push({ id, reason: "trust_filtered" });
-  for (const id of ctx.dedupedIds) ranked.push({ id, reason: "deduped" });
-
-  try {
-    deps.recallTrace?.recordRecall(
-      buildRecallRecord({
-        query: ctx.query,
-        lanes: ctx.lanes,
-        vectorLaneActive: ctx.vectorLaneActive,
-        fusedOrder: ctx.fusedOrder,
-        rerankOutcome: ctx.rerankOutcome,
-        rerankCandidateCount: ctx.rerankCandidateCount,
-        ...(ctx.preScores !== undefined ? { preScores: ctx.preScores } : {}),
-        ...(ctx.postScores !== undefined ? { postScores: ctx.postScores } : {}),
-        ranked,
-        degradations: ctx.degradations,
-        durationMs: ctx.durationMs,
-      }),
-    );
-  } catch (e) {
-    deps.logger.debug(
-      {
-        agentId: ctx.agentId,
-        err: e instanceof Error ? e : new Error(String(e)),
-        errorKind: "internal" as const,
-        hint: "recall-trace recordRecall failed; the recall itself is unaffected",
-      },
-      "recall-trace capture failed (non-fatal)",
-    );
-  }
-
-  if (deps.eventBus === undefined) return;
-  // queryDigest is computed but intentionally NOT placed on the bus payload — the events
-  // are counts-only. It exists here only to prove (in tests) that the raw query never
-  // leaves this function except as a digest in the trace record above.
-  void recallQueryDigest(ctx.query);
-  const rerankerAvailable = deps.reranker?.isAvailable() === true;
-  const traceId = tryGetContext()?.traceId ?? ctx.sessionKey.tenantId ?? ctx.agentId ?? "default";
-  const laneCount =
-    (ctx.ftsCandidates > 0 ? 1 : 0) +
-    (ctx.vectorCandidates > 0 ? 1 : 0) +
-    (ctx.entityCandidates > 0 ? 1 : 0) +
-    // I1: include the temporal lane so the counts-only memory:recalled event no longer
-    // under-reports the active lane count by one when the temporal lane contributes. The
-    // rich recall-trace record already counts lanes.temporal (:575); this aligns the event.
-    (ctx.temporalCandidates > 0 ? 1 : 0) +
-    // EXTRACT-03: likewise include the causal lane so the event's lane count counts the 5th
-    // lane when it contributes (the rich trace record already counts lanes.causal).
-    (ctx.causalCandidates > 0 ? 1 : 0);
-  try {
-    deps.eventBus.emit("memory:recalled", {
-      agentId: ctx.agentId ?? "default",
-      sessionKey: formatTenantSessionKey(ctx.sessionKey),
-      traceId,
-      lanes: laneCount,
-      ftsCandidates: ctx.ftsCandidates,
-      vectorCandidates: ctx.vectorCandidates,
-      entityCandidates: ctx.entityCandidates,
-      finalCount: ctx.finalRanked.length,
-      rerankerAvailable,
-      durationMs: ctx.durationMs,
-      timestamp: deps.clock.now(),
-    });
-    // memory:reranked emits ONLY when a rerank stage was attempted.
-    if (ctx.rerankAttempted) {
-      deps.eventBus.emit("memory:reranked", {
-        agentId: ctx.agentId ?? "default",
-        traceId,
-        candidateCount: ctx.rerankCandidateCount,
-        hitCount: ctx.finalRanked.length,
-        rerankerAvailable,
-        timedOut: ctx.rerankOutcome === "timed_out",
-        fellBack: ctx.rerankOutcome === "fell_back",
-        durationMs: ctx.durationMs,
-        timestamp: deps.clock.now(),
-      });
-    }
-  } catch (e) {
-    deps.logger.debug(
-      {
-        agentId: ctx.agentId,
-        err: e instanceof Error ? e : new Error(String(e)),
-        errorKind: "internal" as const,
-        hint: "memory:recalled/reranked emit failed; the recall itself is unaffected",
-      },
-      "recall event emit failed (non-fatal)",
-    );
-  }
-}
-
-/**
- * Format a SessionKey into the counts-only sessionKey string for the event envelope.
- * Best-effort: a non-string field falls back to the tenant id so the emit never throws.
- */
-function formatTenantSessionKey(key: SessionKey): string {
-  const k = key as unknown as { tenantId?: string; agentId?: string; channelId?: string; userId?: string };
-  const parts = [k.tenantId, k.channelId ?? k.agentId, k.userId].filter((p): p is string => typeof p === "string");
-  return parts.length > 0 ? parts.join(":") : (k.tenantId ?? "default");
-}

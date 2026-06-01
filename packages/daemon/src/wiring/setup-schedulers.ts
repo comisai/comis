@@ -321,6 +321,39 @@ export async function setupSchedulers(deps: {
         schedulerLogger.info({ agentId, schedule: memoryConsolidationConfig.schedule ?? "30 3 * * *" }, "Registered memory consolidation cron job");
       }
     }
+
+    // -- Memory reasoning cron job (Phase 101, REASON-02/03 — 101-06) --
+    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron — NOT back-compat).
+    // Registered ONLY when the operator sets memoryReasoning.enabled; a default agent
+    // registers NO job (T-101-06-02) → byte-identical behavior with the config absent.
+    // Default schedule 0 4 * * * runs AFTER consolidation's 30 3 so reasoning works
+    // over freshly-consolidated observations the same night. Job options mirror the
+    // consolidation job 1:1 (isolated / next-heartbeat / no forward-to-main / fresh
+    // session); the __MEMORY_REASONING__ sentinel is intercepted in
+    // setup-channels-credentials → runMemoryReasoning (both stores + the reason seam).
+    const memoryReasoningConfig = agentConfig.memoryReasoning;
+    if (memoryReasoningConfig?.enabled) {
+      const memReasoningJobId = `memory-reasoning-${agentId}`;
+      const existingJobs = scheduler.getJobs();
+      const alreadyRegistered = existingJobs.some((j) => j.id === memReasoningJobId);
+      if (!alreadyRegistered) {
+        await scheduler.addJob({
+          id: memReasoningJobId,
+          name: "Memory reasoning",
+          agentId,
+          schedule: { kind: "cron", expr: memoryReasoningConfig.schedule ?? "0 4 * * *" },
+          payload: { kind: "system_event", text: "__MEMORY_REASONING__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: memoryReasoningConfig.schedule ?? "0 4 * * *" }, "Registered memory reasoning cron job");
+      }
+    }
   }
 
   /** Resolve the CronScheduler for a given agent ID. Throws descriptive error if not found. */
