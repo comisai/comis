@@ -282,7 +282,7 @@ export function hardenDataDirPermissions(dataDir: string): PermissionCorrection[
   } catch { /* best-effort */ }
 
   // Fix known sensitive files
-  const sensitiveFiles = ["config.yaml", "config.local.yaml", ".env", "secrets.db"];
+  const sensitiveFiles = ["config.yaml", "config.local.yaml", ".env", "secrets.db", "secrets.json"];
   for (const filename of sensitiveFiles) {
     try {
       const filePath = `${dataDir}/${filename}`;

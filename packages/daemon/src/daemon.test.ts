@@ -648,6 +648,24 @@ describe("hardenDataDirPermissions", () => {
       expect(c.newMode).toBe(0o600);
     }
   });
+
+  it("hardens secrets.json to 0o600 when present with loose permissions (CR-02)", () => {
+    fs.chmodSync(testDir, 0o700);
+    const secretsJsonPath = nodePath.join(testDir, "secrets.json");
+    fs.writeFileSync(secretsJsonPath, '{"schemaVersion":1,"secrets":{}}');
+    // Simulate a file written with a loose umask (e.g. operator ran mkdir manually)
+    fs.chmodSync(secretsJsonPath, 0o644);
+
+    const corrections = hardenDataDirPermissions(testDir);
+
+    const secretsCorrection = corrections.find((c) => c.file === secretsJsonPath);
+    expect(secretsCorrection).toBeDefined();
+    expect(secretsCorrection!.oldMode).toBe(0o644);
+    expect(secretsCorrection!.newMode).toBe(0o600);
+
+    const stat = fs.statSync(secretsJsonPath);
+    expect(stat.mode & 0o777).toBe(0o600);
+  });
 });
 
 describe("runPreflightDoctor", () => {
