@@ -21,7 +21,7 @@
  *   3.  hardenDataDirPermissions
  *   4.  runPreflightDoctor
  *   5.  process.env scrub helpers (SENSITIVE_PREFIXES, SENSITIVE_EXACT_KEYS,
- *       scrubProcessEnv, bootstrapSecretsAndEnv)
+ *       scrubProcessEnv, buildMergedEnv)
  *   6.  Agents-stage helpers (restoreApprovalState, wirePostAgentsCleanup)
  *   7.  Channels-stage helpers (buildChannelManagerDeps,
  *       buildGraphCoordinatorDeps, setupChannelHealthMonitor,
@@ -55,7 +55,7 @@
  *     single boot* function but whose body is large enough to deserve a
  *     named scope. Each lives in the helper section above the boot*
  *     blocks, grouped by which stage consumes them (foundation / agents /
- *     channels / gateway / shutdown). Examples: `bootstrapSecretsAndEnv`,
+ *     channels / gateway / shutdown). Examples: `buildMergedEnv`,
  *     `restoreApprovalState`, `buildChannelManagerDeps`, `createHotAdd`,
  *     `emitStartupBanner`.
  *
@@ -101,6 +101,7 @@ import {
   selectOAuthCredentialStore,
   createFileLock,
   type SecretStorePort,
+  type CredentialStorageMode,
   type ToolCapabilityPort,
   type PerAgentConfig,
   type WrapExternalContentOptions,
@@ -116,6 +117,7 @@ import {
   createObservabilityStore,
   createSqliteSecretStore,
   createOAuthProfileStoreEncrypted,
+  selectSecretStore,
 } from "@comis/memory";
 import { createGatewayServer } from "@comis/gateway";
 import {
@@ -350,21 +352,7 @@ export async function runPreflightDoctor(
 }
 
 // ---------------------------------------------------------------------------
-// Foundation helpers
-// ---------------------------------------------------------------------------
-// Helpers consumed by `bootFoundation`. Layout (top-down):
-//   1. SENSITIVE_PREFIXES / SENSITIVE_EXACT_KEYS + scrubProcessEnv —
-//      process.env hygiene; sole caller is `bootstrapSecretsAndEnv`. Kept
-//      adjacent to its caller to avoid hint-of-cycle when the daemon module
-//      grew its `./stages/` extraction (the helper was pulled to a sibling
-//      file then re-inlined). The two constants are file-private to keep
-//      the surface tight.
-//   2. bootstrapSecretsAndEnv — opens the encrypted secrets DB if present,
-//      decrypts all secrets, builds the merged env snapshot, and scrubs
-//      process.env so credentials do not propagate to subprocess inherit.
-//      Returns the secret store + crypto handle + raw db handle so the
-//      caller can thread them into setupAgents (the OAuth credential
-//      store shares the better-sqlite3 connection in encrypted mode).
+// Foundation helpers — scrub + store-wins env merge
 // ---------------------------------------------------------------------------
 
 /**
@@ -394,23 +382,10 @@ const SENSITIVE_EXACT_KEYS = new Set([
 ]);
 
 /**
- * Remove sensitive environment variables from process.env.
- * Called AFTER mergedEnv snapshot is built but BEFORE bootstrap().
- * Preserves operational vars: COMIS_*, PATH, HOME, NODE_ENV, etc.
- *
- * COMIS_* PRESERVATION: `COMIS_DATA_DIR` and `COMIS_CONFIG_PATHS` are
- * INTENTIONALLY preserved across the scrub. They are filesystem-layout
- * pointers, not credentials -- subprocesses (MCP stdio servers, exec tools,
- * the apply-patch helper) need them to locate the daemon's data dir.
- *
- * Filesystem-layout pointers are still mildly sensitive (a misbehaving
- * subprocess could log them, surfacing the daemon's on-disk location). The
- * mitigation is per-spawn-site: untrusted-child spawns (exec-tool, MCP stdio
- * adapters, ffmpeg, etc.) MUST go through `envSubset(secretManager,
- * [...SUBPROCESS_SYSTEM])` -- see bootAgents -- which yields a minimal env
- * (PATH, HOME, LANG, ...) and explicitly EXCLUDES COMIS_*. New subprocess
- * spawn sites MUST follow this pattern; do NOT pass `process.env` directly
- * to a child even after scrub, because COMIS_* values are still present.
+ * Stage-1 scrub: remove sensitive env vars from process.env (ALL storage modes).
+ * Preserves COMIS_* (filesystem-layout pointers, not credentials — kept for
+ * subprocess path resolution; per-spawn-site envSubset() excludes them from
+ * untrusted-child envs). Preserves PATH, HOME, NODE_ENV, etc.
  */
 function scrubProcessEnv(): void {
 
@@ -430,56 +405,35 @@ function scrubProcessEnv(): void {
   }
 }
 
-/**
- * Bootstrap secrets and build merged-env / process.env scrub. Returns a
- * bundle of the secret store + crypto + db handle and the merged-env map.
- * Control flow: decryptAll throws → fatal; null secretsBootResult → no-op.
- */
-function bootstrapSecretsAndEnv(deps: {
-  setupSecrets: typeof _setupSecretsImpl;
-  dataDir: string;
-  /** undefined on normal boot; 64-char hex string on first-boot auto-init */
-  seedKeyHex?: string;
-}): {
-  mergedEnv: Record<string, string | undefined>;
-  secretStore: SecretStorePort | undefined;
-  secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
-  secretsDb: import("better-sqlite3").Database | undefined;
-} {
-  const secretsBootResult = deps.setupSecrets({
-    env: process.env as Record<string, string | undefined>,
-    dataDir: deps.dataDir,
-    seedKeyHex: deps.seedKeyHex, // thread first-boot key for same-boot usability
-  });
-  if (!secretsBootResult.ok) {
-    throw new Error(`Secrets bootstrap failed: ${secretsBootResult.error.message}`);
+/** Build mergedEnv: store-wins (REQ-16/D12), stage-1 scrub for ALL modes.
+ * Returns shadowed names for deferred WARN logging (logger not yet available). */
+function buildMergedEnv(
+  secretStore: SecretStorePort,
+  mode: CredentialStorageMode,
+): { mergedEnv: Record<string, string | undefined>; shadowedNames: string[] } {
+  const merged: Record<string, string | undefined> = {
+    ...(process.env as Record<string, string | undefined>),
+  };
+  if (mode === "env") {
+    // Env mode: env IS the source. No store values to overlay.
+    scrubProcessEnv();
+    return { mergedEnv: merged, shadowedNames: [] };
   }
-  if (secretsBootResult.value === null) {
-    return {
-      mergedEnv: process.env as Record<string, string | undefined>,
-      secretStore: undefined,
-      secretsCrypto: undefined,
-      secretsDb: undefined,
-    };
-  }
-  const { crypto, dbPath } = secretsBootResult.value;
-  const store = createSqliteSecretStore(dbPath, crypto);
-  const decryptResult = store.decryptAll();
+  // file / encrypted: store is authoritative (REQ-16/D12).
+  const decryptResult = secretStore.decryptAll();
   if (!decryptResult.ok) {
     throw new Error(`Secret decryption failed: ${decryptResult.error.message}`);
   }
-  const merged: Record<string, string | undefined> = {};
-  for (const [name, value] of decryptResult.value) merged[name] = value;
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) merged[key] = value;
+  const shadowedNames: string[] = [];
+  for (const [name, value] of decryptResult.value) {
+    if (merged[name] !== undefined && merged[name] !== value) {
+      // REQ-16: store wins; collect name for deferred WARN (logger not yet available).
+      shadowedNames.push(name);
+    }
+    merged[name] = value;
   }
   scrubProcessEnv();
-  return {
-    mergedEnv: merged,
-    secretStore: store as SecretStorePort,
-    secretsCrypto: crypto,
-    secretsDb: store.db,
-  };
+  return { mergedEnv: merged, shadowedNames };
 }
 
 // ---------------------------------------------------------------------------
@@ -1446,7 +1400,6 @@ async function bootFoundation(
 ): Promise<void> {
   const { overrides, startupStartMs, instanceId } = input;
   const _bootstrap = overrides.bootstrap ?? bootstrap;
-  const _setupSecrets = overrides.setupSecrets ?? _setupSecretsImpl;
   const _preReadStorageMode = overrides.preReadStorageMode ?? preReadStorageMode;
   const _writeMasterKeyIfAbsent = overrides.writeMasterKeyIfAbsent ?? writeMasterKeyIfAbsent;
   const _createTracingLogger = overrides.createTracingLogger ?? createTracingLogger;
@@ -1491,11 +1444,10 @@ async function bootFoundation(
 
   // Step 4: Write master key ONLY when storageMode is "encrypted" (REQ-17).
   // file/env modes create NO key material on first boot.
-  // NEVER log autoInitKeyHex — it is raw 32-byte key material.
-  let autoInitKeyHex: string | undefined;
   if (storageMode === "encrypted") {
-    const writeResult = _writeMasterKeyIfAbsent(dataDir);
-    autoInitKeyHex = writeResult.keyHex; // defined iff written===true (first boot only)
+    _writeMasterKeyIfAbsent(dataDir);
+    // loadEnvFile below picks up the freshly-written key from the .env file,
+    // so selectSecretStore can read SECRETS_MASTER_KEY from process.env.
   }
 
   loadEnvFile(envPath);
@@ -1507,25 +1459,43 @@ async function bootFoundation(
     throw new Error("[MIGRATION_ERROR] COMIS_DISABLE_ENCRYPTED_SECRETS found in .env file. This env var is no longer supported. Set security.storage: env in your config.yaml and remove the env var from ~/.comis/.env. See the migration guide in the changelog."); // MIGRATION-GATE
   }
 
-  // 0.5. Decrypt secrets, merge with env, scrub process.env.
+  // 0.5. Select secret store by mode, merge with env, scrub process.env.
   const permissionCorrections = hardenDataDirPermissions(dataDir);
   // D14 singleton lock — must run before any store bootstrap (REQ-03).
   acquireDataDirLock(dataDir);
-  let mergedEnv: Record<string, string | undefined>;
-  let secretStore: import("@comis/core").SecretStorePort | undefined;
+
+  // selectSecretStore is called BEFORE scrubProcessEnv so encrypted mode
+  // can still read SECRETS_MASTER_KEY from process.env (Pitfall 5 in RESEARCH).
+  //
+  // sensitiveNames: built here at the composition root (a sanctioned process.env
+  // access point per AGENTS.md §2.8). In file/encrypted modes the names are
+  // passed to the env adapter via selectSecretStore but ignored there.
+  const sensitiveNames = new Set<string>([
+    ...SENSITIVE_EXACT_KEYS,
+    ...Object.keys(process.env).filter(k =>
+      SENSITIVE_PREFIXES.some(p => k.startsWith(p))
+    ),
+  ]);
+  const storeResult = selectSecretStore({
+    mode: storageMode,
+    dataDir,
+    env: process.env as Record<string, string | undefined>,
+    sensitiveNames,
+  });
+  if (!storeResult.ok) {
+    throw new Error(`Failed to open secret store (mode: ${storageMode}): ${storeResult.error.message}`);
+  }
+  const selected = storeResult.value;
+  const secretStore: import("@comis/core").SecretStorePort = selected.secretStore;
   let secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
   let secretsDb: import("better-sqlite3").Database | undefined;
-  if (storageMode !== "encrypted") {
-    // file/env modes: no store construction. Keep loadEnvFile output (non-secret vars) in mergedEnv.
-    // eslint-disable-next-line no-restricted-syntax -- building mergedEnv from process.env after loadEnvFile
-    mergedEnv = process.env as Record<string, string | undefined>;
-  } else {
-    ({ mergedEnv, secretStore, secretsCrypto, secretsDb } = bootstrapSecretsAndEnv({
-      setupSecrets: _setupSecrets,
-      dataDir,
-      seedKeyHex: autoInitKeyHex, // undefined on normal boot; hex string on first boot
-    }));
+  if (selected.kind === "encrypted") {
+    secretsCrypto = selected.secretsCrypto;
+    secretsDb = selected.secretsDb;
   }
+
+  // Build mergedEnv (store-wins, REQ-16/D12) + stage-1 scrub.
+  const { mergedEnv, shadowedNames } = buildMergedEnv(secretStore, storageMode);
 
   // 0.6. Runtime adapter construction (composition root). overrides.timers is opt-in for test fake-timers; never set in production.
   const clock = createSystemClock(); const env = createSystemEnv(mergedEnv); const timers = overrides.timers ?? createSystemTimers();
@@ -1558,6 +1528,14 @@ async function bootFoundation(
     throw new Error(`SecretRef resolution failed: ${refResult.error.message}`);
   }
   const container = { ...initialContainer, config: refResult.value as unknown as typeof initialContainer.config };
+
+  // Stage-2 scrub: remove all config-referenced SecretRef names from process.env (REQ-15).
+  // Runs after config parse so platformSecretNames is populated. Catches custom secret
+  // names (e.g. MY_TOKEN referenced as ${MY_TOKEN} in config.yaml) that the prefix list misses.
+  for (const name of container.platformSecretNames) {
+    // eslint-disable-next-line no-restricted-syntax -- stage-2 scrub per REQ-15
+    delete process.env[name];
+  }
 
   // 1.5. Config git versioning (inlined wireConfigGitManager).
   const execGit = createExecGit();
@@ -1601,6 +1579,16 @@ async function bootFoundation(
         `Fixed permissions on ${c.file}: 0o${c.oldMode.toString(8)} -> 0o${c.newMode.toString(8)}`,
       );
     }
+  }
+
+  // Deferred REQ-16 WARNs: store-wins shadow notifications (collected pre-logger).
+  // Log name only — never value (residency invariant).
+  for (const name of shadowedNames) {
+    daemonLogger.warn(
+      { module: "daemon", secretName: name },
+      `Secret '${name}' defined in both the active store and process.env — ` +
+      "store value is authoritative (REQ-16). The env var is ignored.",
+    );
   }
 
   // P0 boot: file/env storage mode INFO log (logger now available).

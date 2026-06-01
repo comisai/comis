@@ -178,6 +178,9 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
       get: vi.fn().mockReturnValue(undefined),
       keys: vi.fn().mockReturnValue([]),
     } as unknown as AppContainer["secretManager"],
+    // Stage-2 scrub reads container.platformSecretNames after bootstrap.
+    // Provide an empty set so the scrub loop is a no-op in unit tests.
+    platformSecretNames: new Set<string>(),
     shutdown: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   };
 }
@@ -255,6 +258,9 @@ function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
   const gatewayHandle = createMockGatewayHandle();
 
   const overrides: DaemonOverrides = {
+    // Default to "file" mode in tests — avoids requiring SECRETS_MASTER_KEY
+    // in the environment. Tests that need a specific mode override this field.
+    preReadStorageMode: vi.fn().mockReturnValue("file"),
     setupMedia: vi.fn().mockResolvedValue(createMockMediaResult()),
     bootstrap: vi.fn().mockImplementation(() => {
       callOrder.push("bootstrap");
@@ -480,9 +486,10 @@ describe("daemon main()", () => {
     // P0: preReadStorageMode reads the default config files (if they exist) before
     // bootstrap. If the developer's real ~/.comis/config.yaml contains legacy keys,
     // the migration guard throws before bootstrap is called, breaking this test.
-    // Use the override seam to return "encrypted" so the boot gate passes
-    // regardless of the actual ~/.comis/config.yaml content on this machine.
-    overrides.preReadStorageMode = vi.fn().mockReturnValue("encrypted");
+    // Use the override seam to return "file" so the boot gate passes
+    // regardless of the actual ~/.comis/config.yaml content on this machine
+    // (file mode does not require SECRETS_MASTER_KEY).
+    overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
 
     try {
       instances.push(await main(overrides));
@@ -845,28 +852,29 @@ describe("opt-out and same-boot init", () => {
     rmSync(freshDataDir, { recursive: true, force: true });
   });
 
-  it("passes seedKeyHex to setupSecrets on first boot with a fresh data directory", async () => {
+  it("calls writeMasterKeyIfAbsent on first boot with a fresh data directory (encrypted mode)", async () => {
     // Fresh tmpdir — no .env file present; use a subdirectory so writeMasterKeyIfAbsent
     // writes there rather than the shared sandbox COMIS_DATA_DIR.
+    const { randomBytes } = await import("node:crypto");
+    const keyHex = randomBytes(32).toString("hex");
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-first-boot-test-"));
     process.env["COMIS_DATA_DIR"] = freshDataDir;
+    process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+    process.env["SECRETS_MASTER_KEY"] = keyHex;
     // Ensure opt-out is NOT set so writeMasterKeyIfAbsent is called
     delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
     const { overrides } = buildOverrides();
-    const mockSetupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
-    overrides.setupSecrets = mockSetupSecrets;
+    overrides.preReadStorageMode = vi.fn().mockReturnValue("encrypted");
+    const mockWriteMasterKeyIfAbsent = vi.fn().mockReturnValue({ written: true, keyHex });
+    overrides.writeMasterKeyIfAbsent = mockWriteMasterKeyIfAbsent;
 
     const instance = await main(overrides);
     instances.push(instance);
 
-    // Capture the call args to setupSecrets
-    const calls = mockSetupSecrets.mock.calls;
-    expect(calls.length).toBeGreaterThan(0);
-    const firstCallOpts = calls[0]![0] as Record<string, unknown>;
-    // seedKeyHex must be a 64-char hex string on first boot.
-    expect(typeof firstCallOpts["seedKeyHex"]).toBe("string");
-    expect(String(firstCallOpts["seedKeyHex"])).toMatch(/^[0-9a-f]{64}$/);
+    // writeMasterKeyIfAbsent must have been called with the dataDir on first boot.
+    expect(mockWriteMasterKeyIfAbsent).toHaveBeenCalledWith(freshDataDir);
 
+    delete process.env["SECRETS_MASTER_KEY"];
     rmSync(freshDataDir, { recursive: true, force: true });
   });
 
@@ -888,6 +896,8 @@ describe("opt-out and same-boot init", () => {
     delete process.env["SECRETS_MASTER_KEY"];
 
     const { overrides } = buildOverrides();
+    // Use the real preReadStorageMode so the legacy-key detection fires.
+    delete overrides.preReadStorageMode;
     await expect(main(overrides)).rejects.toThrow(/MIGRATION_ERROR/);
 
     // writeMasterKeyIfAbsent must NOT have run — no SECRETS_MASTER_KEY in .env
