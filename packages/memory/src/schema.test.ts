@@ -762,7 +762,7 @@ describe("ensureTripleTable (Phase 100, KG-01)", () => {
     expect(tableNames()).toContain("memory_triples");
   });
 
-  it("gives memory_triples all 14 columns incl. S/P/O + the four bi-temporal timestamps + occurred range", () => {
+  it("gives memory_triples all 15 columns incl. S/P/O + the four bi-temporal timestamps + occurred range", () => {
     initSchema(db, 1536);
     const cols = tripleCols();
     // identity + scope
@@ -786,7 +786,9 @@ describe("ensureTripleTable (Phase 100, KG-01)", () => {
     // provenance + confidence
     expect(cols).toContain("source_memory_id");
     expect(cols).toContain("confidence");
-    expect(cols).toHaveLength(14);
+    // id + 3 scope/identity (id, tenant_id, agent_id) + S/P/O (3) + trust (1)
+    // + 4 bi-temporal stamps + 2 occurred range + source_memory_id + confidence = 15.
+    expect(cols).toHaveLength(15);
   });
 
   it("marks tenant_id/agent_id/subject/predicate/object/trust/t_valid_start/t_ingested NOT NULL; the end-stamps nullable", () => {

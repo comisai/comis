@@ -166,6 +166,48 @@ export const CausalLaneRowSchema = z.strictObject({
 });
 
 /**
+ * Schema for the `memory_triples` table (Phase 100, KG-01). The segregated
+ * bi-temporal knowledge-graph row: an S/P/O assertion with the FOUR bi-temporal
+ * timestamps (`t_valid_start`/`t_valid_end` valid-time, `t_ingested`/`expired_at`
+ * txn-time) + the world occurred range (`t_occurred`/`t_occurred_end`) + the
+ * Comis `trust` ladder + optional `source_memory_id` provenance + `confidence`.
+ *
+ * `tenant_id`/`agent_id` ARE projected here (unlike the minimal lane projections)
+ * — the adapter maps a full row back to the camelCase `TripleInput` (@comis/core)
+ * for `asOf`. The end-stamps + occurred range + provenance + confidence are
+ * `.nullable()` (SQLite NULL: a current-truth row has `t_valid_end`/`expired_at`
+ * NULL; `t_occurred*`/`source_memory_id`/`confidence` are absent when unknown).
+ * `trust` is `z.enum(...)` matching the DDL CHECK. Parsed via `createRowMapper`
+ * in the adapter — never `as Row[]`.
+ */
+export const MemoryTripleRowSchema = z.strictObject({
+  id: z.string(),
+  tenant_id: z.string(),
+  agent_id: z.string(),
+  subject: z.string(),
+  predicate: z.string(),
+  object: z.string(),
+  /** The Comis trust ladder — matches the DDL CHECK constraint. */
+  trust: z.enum(["system", "learned", "external"]),
+  /** Valid-time start: epoch ms when the fact became true. */
+  t_valid_start: z.number(),
+  /** Valid-time end: epoch ms; NULL = currently believed (KG-03 default filter). */
+  t_valid_end: z.number().nullable(),
+  /** Txn-time start: epoch ms when we learned it. */
+  t_ingested: z.number(),
+  /** Txn-time end: epoch ms when we stopped believing it; NULL = live record. */
+  expired_at: z.number().nullable(),
+  /** Occurred range start: epoch ms; NULL when unknown. */
+  t_occurred: z.number().nullable(),
+  /** Occurred range end: epoch ms; NULL = point/unknown. */
+  t_occurred_end: z.number().nullable(),
+  /** Provenance memory id (ON DELETE CASCADE); NULL when not from a memory. */
+  source_memory_id: z.string().nullable(),
+  /** Optional corroboration confidence 0..1; NULL when unset. */
+  confidence: z.number().nullable(),
+});
+
+/**
  * Schema for the `listEntities` diagnostic projection (Phase 86, OBS-06). The
  * scoped `SELECT id, canonical_name, mention_count, first_seen, last_seen FROM
  * memory_entities WHERE tenant_id=? AND agent_id=? ORDER BY mention_count DESC`
