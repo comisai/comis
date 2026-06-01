@@ -622,6 +622,27 @@ describe("assembleTools — recall-store passthrough to prompt assembly (KG-01/0
       }),
     );
   });
+
+  it("forwards deps.embeddingStore into assembleExecutionPrompt.deps so the MMR diversity re-rank reaches createMemoryRecall (IQ-01)", async () => {
+    // RED on pre-patch code: ToolAssemblyDeps had no embeddingStore field and
+    // assembleTools never forwarded it, so the prompt-assembly site always saw
+    // deps.embeddingStore === undefined → the MMR slot gate
+    // (`deps.embeddingStore !== undefined`) short-circuited and the scoped
+    // embedding read never ran (MMR a silent no-op even when the daemon injected
+    // the store and an operator flipped rag.mmr.enabled). The SAME field-plumbing
+    // hazard the temporal/causal/triple forwards above guard against (100-05).
+    const embeddingStore = {
+      readEmbeddings: vi.fn(),
+    } as unknown as import("@comis/core").MemoryEmbeddingStore;
+    await assembleTools(makeParams({
+      deps: makeDeps({ embeddingStore }),
+    }));
+    expect(mocks.assembleExecutionPromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deps: expect.objectContaining({ embeddingStore }),
+      }),
+    );
+  });
 });
 
 describe("assembleTools — capability-index render result + deferred-context passthrough", () => {

@@ -337,6 +337,55 @@ describe("assembleExecutionPrompt", () => {
     expect(recallDeps.tripleStore).toBe(tripleStore);
   });
 
+  it("threads deps.embeddingStore + config.rag.mmr/queryUnderstanding into createMemoryRecall so the MMR re-rank has its store and knobs (IQ-01)", async () => {
+    // Production-wiring regression guard for the LAST link of the chain:
+    // PromptAssemblyParams.deps.embeddingStore → createMemoryRecall's deps.embeddingStore,
+    // and config.rag.mmr / config.rag.queryUnderstanding → createMemoryRecall's config.
+    // RED on pre-patch code: the createMemoryRecall call object listed
+    // entityStore/temporalStore/causalStore/tripleStore/usefulnessStore but NOT
+    // embeddingStore, and its config object omitted mmr + queryUnderstanding, so the
+    // MMR slot gate (`deps.embeddingStore !== undefined && cfg.mmr?.enabled`) was always
+    // false and the diversity re-rank never ran — a silent no-op even with the store
+    // injected and rag.mmr.enabled flipped on (the field-plumbing hazard, mirror 100-05).
+    const memoryPort = {
+      search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+      store: vi.fn(),
+    } as any;
+    const embeddingStore = {
+      readEmbeddings: vi.fn(),
+    } as unknown as import("@comis/core").MemoryEmbeddingStore;
+    mockRecall.mockResolvedValue({ ok: true, value: [] });
+    const params = makeParams({
+      config: makeConfig({
+        rag: {
+          enabled: true,
+          maxResults: 5,
+          minScore: 0.3,
+          includeTrustLevels: ["learned"],
+          maxContextChars: 5000,
+          mmr: { enabled: true, lambda: 0.7 },
+          queryUnderstanding: { intentReweight: true, synonyms: false, temporalParse: true },
+        },
+      }),
+      deps: { workspaceDir: "/workspace", memoryPort, embeddingStore },
+    });
+    await assembleExecutionPrompt(params);
+
+    expect(mockCreateMemoryRecall).toHaveBeenCalledOnce();
+    const recallDeps = mockCreateMemoryRecall.mock.calls[0][0] as { embeddingStore?: unknown };
+    expect(recallDeps.embeddingStore).toBe(embeddingStore);
+    const recallCfg = mockCreateMemoryRecall.mock.calls[0][1] as {
+      mmr?: unknown;
+      queryUnderstanding?: unknown;
+    };
+    expect(recallCfg.mmr).toEqual({ enabled: true, lambda: 0.7 });
+    expect(recallCfg.queryUnderstanding).toEqual({
+      intentReweight: true,
+      synonyms: false,
+      temporalParse: true,
+    });
+  });
+
   // -----------------------------------------------------------------
   // 4b. memory:injected event emit
   // -----------------------------------------------------------------
