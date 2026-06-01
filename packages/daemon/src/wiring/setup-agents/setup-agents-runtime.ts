@@ -212,7 +212,7 @@ export async function setupSingleAgent(
 
   // FIRST daemon-side OAuth wiring — see setup-agents-oauth.ts for the full
   // rationale (unwired-OAuth gap closure + closure-stability invariant).
-  const oauthStorageMode = container.config.oauth.storage;
+  const oauthStorageMode: import("@comis/core").CredentialStorageMode = container.config.security.storage;
   const dataDirAbs =
     container.config.dataDir && container.config.dataDir.length > 0
       ? container.config.dataDir
