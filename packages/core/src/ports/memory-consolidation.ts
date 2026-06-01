@@ -149,10 +149,25 @@ export interface MemoryConsolidationStore {
 
   /**
    * READ (REASON-04 — the surprisal-gate engine). The k nearest-neighbour cosine
-   * DISTANCES for one embedding, scoped to (tenantId, agentId). Backed by the
-   * shipped sqlite-vec searchByVector (hybrid-search.ts). Returns the distances
-   * sorted ASCENDING (closer first); `ok([])` when sqlite-vec is unavailable
-   * (graceful degrade — the caller's missing-embedding policy then applies).
+   * DISTANCES for one embedding. Backed by the shipped sqlite-vec searchByVector
+   * (hybrid-search.ts). Returns the distances sorted ASCENDING (closer first);
+   * `ok([])` when sqlite-vec is unavailable (graceful degrade — the caller's
+   * missing-embedding policy then applies).
+   *
+   * ## Surprisal novelty is CORPUS-RELATIVE by design (T-101-03-01)
+   * The `agentId`/`tenantId` parameters are RESERVED — they are NOT currently
+   * applied. The shipped `vec_memories` vec0 table is GLOBAL (no tenant/agent
+   * column), so this read ranks the embedding against the ENTIRE multi-tenant
+   * corpus, and a cross-tenant near-duplicate intentionally INFLUENCES this
+   * candidate's surprisal ranking. This is the sanctioned design (plan
+   * T-101-03-01, plan-checker risk-accepted): the threat model is distances-only
+   * — ONLY scalar float distances are read, NEVER ids or content, so no other
+   * scope's memory body crosses the boundary; it is a side-channel on the
+   * per-agent SELECTION decision, never an exfiltration. A future filtered-vec
+   * variant (V4 access control) can JOIN `memories` and apply the carried
+   * `(agentId, tenantId)` to make the read scope-isolated — the parameters are
+   * threaded now so that change needs no signature break. Do NOT assume the
+   * isolation the signature might imply: it is corpus-wide today.
    */
   knnDistances(
     embedding: number[],
