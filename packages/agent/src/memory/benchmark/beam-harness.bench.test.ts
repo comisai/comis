@@ -317,7 +317,7 @@ describe.skipIf(!COMIS_BENCH)("BEAM scale probe (gated)", () => {
   };
 
   it(
-    "BEAM 1M per-ability recall",
+    "recalls per-ability hits at BEAM 1M scale",
     async () => {
       const score = await runBeam(1_000_000);
       // eslint-disable-next-line no-console -- gated bench harness reports its number (this is a .test.ts, not packages/cli)
