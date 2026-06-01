@@ -26,6 +26,7 @@ import {
   ContextConversationsContract,
   ContextTreeContract,
   ContextSearchByConversationContract,
+  MemoryAskContract,
   MEMORY_CONTRACTS,
   MemoryRecallTraceContract,
   MemoryObservationsContract,
@@ -795,5 +796,58 @@ describe("memory diagnostic contracts (OBS-06) — admin-scoped", () => {
         recallHitRate: 0,
       }),
     ).toThrow();
+  });
+});
+
+// ===========================================================================
+// memory.ask — the dialectic grounded-Q&A contract (Phase 109 — DIAL-01/02).
+//
+// INTERFACE-FIRST: the contract SHAPE ships in Plan 01; its daemon handler
+// lands in Plan 03. Per the OBS-06 cross-wave-seam precedent above, the
+// contract is tagged `@contract-deferred-handler: 109-03` and is kept OUT of
+// `MEMORY_CONTRACTS` (the registry that feeds `API_CONTRACTS`) until that
+// handler lands — registering it before the handler exists would RED-gate the
+// repo (contract-handler-parity + bidirectional 1:1). Plan 03 spreads it into
+// MEMORY_CONTRACTS in the SAME diff that lands the handler.
+// ===========================================================================
+
+describe("memory.ask dialectic contract (DIAL-01/02)", () => {
+  it("method is memory.ask, scoped rpc", () => {
+    expect(MemoryAskContract.method).toBe("memory.ask");
+    expect(MemoryAskContract.scopes).toEqual(["rpc"]);
+  });
+
+  it("request requires a question (parsing {} throws)", () => {
+    expect(() => MemoryAskContract.request.parse({ question: "x" })).not.toThrow();
+    expect(() => MemoryAskContract.request.parse({})).toThrow();
+  });
+
+  it("request accepts an optional numeric limit", () => {
+    expect(() => MemoryAskContract.request.parse({ question: "x", limit: 5 })).not.toThrow();
+  });
+
+  it("response carries { answer, citations: string[], abstained } — abstained is required", () => {
+    expect(() =>
+      MemoryAskContract.response.parse({ answer: "a", citations: ["id1"], abstained: false }),
+    ).not.toThrow();
+    // abstention is an explicit, required boolean — never inferred from an
+    // empty answer string. A response MISSING `abstained` throws.
+    expect(() =>
+      MemoryAskContract.response.parse({ answer: "a", citations: ["id1"] }),
+    ).toThrow();
+  });
+
+  it("response accepts the abstain sentinel { answer:'', citations:[], abstained:true }", () => {
+    expect(() =>
+      MemoryAskContract.response.parse({ answer: "", citations: [], abstained: true }),
+    ).not.toThrow();
+  });
+
+  it("is NOT yet in MEMORY_CONTRACTS (cross-wave seam — handler lands in Plan 03)", () => {
+    // @contract-deferred-handler: 109-03 — the contract MUST stay out of the
+    // registry until its handler exists (the bidirectional 1:1 + parity gates
+    // enforce that side). Plan 03 adds it here in the same diff as the handler.
+    const registered = new Set(MEMORY_CONTRACTS.map((c) => c.method));
+    expect(registered.has("memory.ask")).toBe(false);
   });
 });
