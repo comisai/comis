@@ -11,12 +11,12 @@
  * Layered-config precedence: later files override earlier ones, matching
  * `bootstrap()`'s YAML merge semantics.
  *
- * The function also detects legacy keys (`security.secrets.enabled`, `oauth.storage`)
- * in the YAML files and returns `"legacy"` so the daemon boot gate can fail cleanly
- * before any key material is written. The specific migration error is emitted by the
+ * The function also detects legacy credential-storage keys in the YAML files
+ * and returns `"legacy"` so the daemon boot gate can fail cleanly before any
+ * key material is written. The specific migration error is emitted by the
  * daemon gate (not here) to keep this pre-read function pure.
  *
- * Note: `COMIS_DISABLE_ENCRYPTED_SECRETS` (env var) is NOT checked here — the
+ * Note: the legacy env var (removed in v1.5) is NOT checked here — the
  * daemon reads it separately via `systemGetEnv` before calling this function
  * (same pattern as the replaced `preReadSecretsEnabled`).
  *
@@ -54,7 +54,7 @@ export type StorageModePreRead = CredentialStorageMode | "legacy";
  * @returns
  *   - `"encrypted"` (schema default) when no config path explicitly sets the mode
  *   - `"file"` / `"env"` when `security.storage` is set to that value
- *   - `"legacy"` when `security.secrets.enabled` or `oauth.storage` is present
+ *   - `"legacy"` when a removed legacy credential-storage key is present in the YAML
  */
 export function preReadStorageMode(
   configPaths: readonly string[],
@@ -80,7 +80,7 @@ export function preReadStorageMode(
     }
     const raw = parsed as Record<string, unknown>;
 
-    // Detect legacy key: oauth.storage at root level
+    // Detect removed legacy key: root "oauth" section with "storage" field
     if (
       typeof raw["oauth"] === "object" &&
       raw["oauth"] !== null &&
@@ -100,7 +100,7 @@ export function preReadStorageMode(
     }
     const sec = secSection as Record<string, unknown>;
 
-    // Detect legacy key: security.secrets.enabled
+    // Detect removed legacy key: security.secrets "enabled" boolean field
     const secretsSection = sec["secrets"];
     if (
       typeof secretsSection === "object" &&

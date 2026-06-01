@@ -67,7 +67,7 @@ export interface SelectOAuthCredentialStoreInput {
 
 /**
  * Select and instantiate the right OAuthCredentialStorePort adapter from
- * `appConfig.oauth.storage`. Used by both the daemon (setup-agents.ts) and
+ * `appConfig.security.storage`. Used by both the daemon (setup-agents.ts) and
  * the CLI commands (`comis auth login/list/logout/status`).
  *
  * The encrypted-mode store is constructed by the daemon composition root

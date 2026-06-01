@@ -103,8 +103,8 @@ export type ActionConfirmationConfig = z.infer<typeof ActionConfirmationConfigSc
  * Shared credential storage mode type — derived from the security.storage enum
  * so the type and the valid values stay in sync automatically.
  *
- * Replaces `OAuthStorageMode` (which only covered "file" | "encrypted") and
- * extends it with "env" as a first-class read-only mode.
+ * Supersedes the former two-value type that only covered "file" | "encrypted"
+ * and extends it with "env" as a first-class read-only mode.
  *
  * Used by all three credential stores: secrets, OAuth profiles, MCP tokens.
  */

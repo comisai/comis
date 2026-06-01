@@ -13,6 +13,8 @@ import type { SecurityEvent, InputSecurityGuardSummary, ProviderHealthCard, Fail
 interface SecurityConfig {
   logRedaction?: boolean;
   auditLog?: boolean;
+  /** Credential storage mode — runtime-immutable (D17); operator must edit config + restart. */
+  storage?: string;
   permission?: {
     enableNodePermissions?: boolean;
     allowedFsPaths?: string[];
@@ -34,7 +36,6 @@ interface SecurityConfig {
     subAgentMcpTools?: string;
   };
   secrets?: {
-    enabled?: boolean;
     dbPath?: string;
   };
   approvalRules?: {
@@ -593,29 +594,27 @@ export class IcSecurityView extends LitElement {
 
   // --- Secrets tab (kept in coordinator -- small, tightly coupled) ---
 
-  private async _onSecretsEnabledChange(enabled: boolean): Promise<void> {
-    const updated = { ...this._securityConfig.secrets, enabled };
-    const ok = await this._patchConfig("security.secrets", updated);
-    if (ok) {
-      this._securityConfig = { ...this._securityConfig, secrets: updated };
-    }
-  }
-
   private _renderSecretsTab() {
     const secrets = this._securityConfig.secrets ?? {};
+    // security.storage is runtime-immutable (D17) — mode change requires
+    // a config.yaml edit + daemon restart. Display as read-only; no write
+    // control offered here. Full web parity (REQ-11) is Phase 7 scope.
+    const storageMode = this._securityConfig.storage ?? "encrypted";
     return html`
       <div class="policy-section">
-        <div class="section-header">Encrypted Secrets Store</div>
-        <ic-toggle
-          label="Enabled"
-          .checked=${secrets.enabled ?? false}
-          @change=${(e: CustomEvent<boolean>) => this._onSecretsEnabledChange(e.detail)}
-        ></ic-toggle>
+        <div class="section-header">Credential Storage</div>
         <div style="margin-top: var(--ic-space-md);">
+          <div class="tls-row">
+            <span class="tls-label">Storage Mode</span>
+            <span class="tls-value">${storageMode}</span>
+          </div>
           <div class="tls-row">
             <span class="tls-label">DB Path</span>
             <span class="tls-value">${secrets.dbPath ?? "secrets.db"}</span>
           </div>
+        </div>
+        <div style="margin-top: var(--ic-space-sm); font-size: 0.85em; color: var(--ic-color-text-secondary, #666);">
+          Storage mode is set in config.yaml (security.storage) and requires a daemon restart to change.
         </div>
       </div>
     `;

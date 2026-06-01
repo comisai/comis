@@ -365,9 +365,10 @@ export function createGatewayTool(
                 hint:
                   "The encrypted secrets store is not configured on this daemon. " +
                   "On first boot, the store is auto-generated — if this error persists, check that " +
-                  "COMIS_DISABLE_ENCRYPTED_SECRETS is not set and that ~/.comis/.env contains " +
-                  "SECRETS_MASTER_KEY. Restart the daemon after adding the key. " +
-                  "Until then, secrets can be set manually in ~/.comis/.env (envfile mode).",
+                  "security.storage is set to 'encrypted' (or omitted, as it defaults to encrypted) " +
+                  "in config.yaml, and that ~/.comis/.env contains SECRETS_MASTER_KEY. " +
+                  "Restart the daemon after adding the key. " +
+                  "To use envfile mode instead, set security.storage: env in config.yaml.",
               };
             }
 
