@@ -531,6 +531,31 @@ describe("daemon main()", () => {
     await expect(main(overrides)).rejects.toThrow("Bootstrap failed: Config file not found");
   });
 
+  it("releases the singleton lock when a post-foundation boot stage throws (CR-01)", async () => {
+    // Use an isolated temp dataDir so the lock file doesn't collide with other tests.
+    const freshDataDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "daemon-cr01-lock-test-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+
+      const { overrides } = buildOverrides();
+      // Inject a failure inside bootAgents (stage 2) via setupMedia — this fires
+      // after bootFoundation acquires the lock, simulating a post-foundation throw.
+      (overrides.setupMedia as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("simulated post-foundation boot failure"),
+      );
+
+      await expect(main(overrides)).rejects.toThrow("simulated post-foundation boot failure");
+
+      // The singleton lock must have been released — if not, the lock file survives
+      // and subsequent daemon starts would need stale-PID recovery.
+      const lockPath = nodePath.join(freshDataDir, ".daemon.lock");
+      expect(fs.existsSync(lockPath)).toBe(false);
+    } finally {
+      delete process.env["COMIS_DATA_DIR"];
+      try { fs.rmSync(freshDataDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  });
+
   // The two assertions previously here checked
   // `overrides.registerGracefulShutdown.toHaveBeenCalledWith(...)` to verify
   // that container/processMonitor/exit flowed through the factory seam. After

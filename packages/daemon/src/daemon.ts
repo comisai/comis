@@ -2930,25 +2930,28 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // mirroring + Gemini cache + background tasks + deferred refs.
   await bootFoundation(boot, { overrides, startupStartMs, instanceId });
 
-  // Stage 2: agents. Owns agent executors + mcpClientManager + schedulers +
-  // media + RPC bridge + approval gate (with restore) + delivery queue.
-  await bootAgents(boot, { overrides });
-
-  // Stage 3: channels. Owns sandbox/image-gen + tools (HOISTED) + channel
-  // adapters + notifications + bg completion runner + cross-session + graph
-  // + monitoring + heartbeat + wake coalescer + agent runtime state.
-  await bootChannels(boot);
-
-  // Stage 4: gateway. Owns token registry + session store bridge + shutdown
-  // ref slot + hot-add/hot-remove closures + RPC dispatch deps assembly +
-  // gateway server + restart continuation replay.
-  await bootGateway(boot, { overrides, startupStartMs, instanceId });
-
-  // Stage 5: shutdown. Constructs shutdown handle, populates
-  // boot.shutdownRef.value (cross-stage deferred-ref), wires health logging,
-  // emits the startup banner ("Comis daemon started"), and returns the
-  // DaemonInstance.
-  return await bootShutdown(boot, { overrides, startupStartMs, instanceId });
+  // Stages 2-5: wrapped so a failure in any post-foundation stage releases the
+  // singleton lock (CR-01). Under normal boot, setupShutdown.onShutdown owns
+  // the release; this catch handles partial-boot failures before that fires.
+  try {
+    // Stage 2: agents. Owns agent executors + mcpClientManager + schedulers +
+    // media + RPC bridge + approval gate (with restore) + delivery queue.
+    await bootAgents(boot, { overrides });
+    // Stage 3: channels. Owns sandbox/image-gen + tools (HOISTED) + channel
+    // adapters + notifications + bg completion runner + cross-session + graph
+    // + monitoring + heartbeat + wake coalescer + agent runtime state.
+    await bootChannels(boot);
+    // Stage 4: gateway. Owns token registry + session store bridge + shutdown
+    // ref slot + hot-add/hot-remove closures + RPC dispatch deps assembly +
+    // gateway server + restart continuation replay.
+    await bootGateway(boot, { overrides, startupStartMs, instanceId });
+    // Stage 5: shutdown. Constructs shutdown handle, wires health logging,
+    // emits the startup banner ("Comis daemon started"), returns DaemonInstance.
+    return await bootShutdown(boot, { overrides, startupStartMs, instanceId });
+  } catch (e: unknown) {
+    releaseDataDirLock(boot.dataDir);
+    throw e;
+  }
 }
 
 // Only run when invoked directly (not imported).
