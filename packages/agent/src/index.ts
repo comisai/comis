@@ -166,6 +166,16 @@ export type { MemoryReviewDeps } from "./memory/memory-review-job.js";
 export { runMemoryConsolidation } from "./memory/memory-consolidation-job.js";
 export type { MemoryConsolidationDeps } from "./memory/memory-consolidation-job.js";
 
+// Offline triple extraction (Phase 100, KG-01 — conversation text → S/P/O triples
+// written into the trust-first bi-temporal KG; default-OFF, NEVER on the recall path)
+export { runMemoryTripleExtraction } from "./memory/memory-triple-extraction-job.js";
+export type {
+  MemoryTripleExtractionDeps,
+  MemoryTripleExtractionConfig,
+  MemoryTripleExtractionStats,
+  TripleCandidate,
+} from "./memory/memory-triple-extraction-job.js";
+
 // RAG (Retrieval-Augmented Generation)
 export { formatMemorySection } from "./rag/rag-retriever.js";
 
