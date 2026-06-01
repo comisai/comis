@@ -1,0 +1,62 @@
+{
+  "gate": "IQ-04 (Phase 102 benchmark regression gate)",
+  "date": "2026-06-01",
+  "harnessCommit": "dee50e97",
+  "branch": "v2.8-prove-climb",
+  "piAiVersion": "0.78.0",
+  "keyless": true,
+  "models": {
+    "note": "KEYLESS — no answer model, no judge, no provider call, no API key, no cost. The MMR-diversity probe supplies EXPLICIT 4-dim embedding vectors at store time and the candidates are FTS-ranked (no model query embedding needed), so the diversity claim is exercised whenever sqlite-vec is available (vecAvailable). The intent classifier + temporal-range grammar are LLM-free deterministic code."
+  },
+  "recallIq": {
+    "enabledForMeasurement": true,
+    "embeddingStoreInjected": true,
+    "temporalStoreInjected": true,
+    "vecAvailable": true,
+    "vectorLane": false,
+    "note": "MMR/intent/range exercised ONLY by the new keyless recall-iq-contribution.bench.test.ts this plan added. The shipped qa/retrieval/contradiction harnesses construct createMemoryRecall WITHOUT mmr/queryUnderstanding/embeddingStore (verified retrieval-harness.bench.test.ts:225-247) — the SAME KG-05 / REASON-05 structural gap — so they exercise the IQ features NOT AT ALL. See GATE-REPORT.md §3. vectorLane is the model-driven text->embedding boolean (false: no LLAMA_MODEL_PATH); the deterministic diversity claim does not depend on it (it supplies its own vectors)."
+  },
+  "measurementsTaken": [
+    {
+      "name": "MMR diversity contribution (lambda-sweep)",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "harness": "packages/agent/src/memory/benchmark/recall-iq-contribution.bench.test.ts",
+      "productionCodePath": "createMemoryRecall (bare @comis/agent) + SqliteMemoryAdapter + createSqliteMemoryEmbeddingStore (bare @comis/memory) over a shared db; the REAL post-trust-filter/pre-dedup mmrRerank over the REAL scoped readEmbeddings",
+      "report": "mmr-diversity-report.json",
+      "result": "diverse-doc rank OFF=3 -> ON(lambda=0.3)=2 (diversityRankLift=1); lambda=1.0 byte-identical to OFF (lambdaOneIsIdentity=true); lambda-sweep {1.0:3, 0.7:2, 0.5:2, 0.3:2}"
+    },
+    {
+      "name": "intent-reweight contribution",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "harness": "packages/agent/src/memory/benchmark/recall-iq-contribution.bench.test.ts",
+      "productionCodePath": "createMemoryRecall + createSqliteMemoryTemporalStore over a shared db; the REAL classifyIntent + intentMultiplier laneWeight closure on the temporal lane",
+      "report": "intent-reweight-report.json",
+      "result": "temporal-marker query classified 'temporal'; temporal-lane candidate rank OFF=2 -> ON=1 (reweightRankLift=1)"
+    },
+    {
+      "name": "NL temporal-range filter",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "harness": "packages/agent/src/memory/benchmark/recall-iq-contribution.bench.test.ts",
+      "productionCodePath": "createMemoryRecall + SqliteMemoryAdapter over a shared db; the REAL parseTemporalRange -> occurredAtRange ANDed onto the scoped query (search + searchLanes/hydrateLane)",
+      "report": "temporal-range-report.json",
+      "result": "dated query in-window precision OFF=0.5 (both surface) -> ON=1.0 (out-of-window filtered); unparseable query ON applies no range -> recall byte-identical (countOn=countOff=2)"
+    },
+    {
+      "name": "DEFAULT-OFF byte-identity",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "harness": "packages/agent/src/memory/benchmark/recall-iq-contribution.bench.test.ts",
+      "productionCodePath": "createMemoryRecall with the shipping config (every IQ knob off, stores injected) vs the IQ-features-absent path over the same real adapter",
+      "report": "default-off-byte-identity-report.json",
+      "result": "defaultOffByteIdentical=true (shipping order identical to the IQ-absent path); readEmbeddingsCalls=0 (the cost gate — a spy proves the off path never reads)"
+    }
+  ],
+  "measurementsDeferredToOperatorCostedReRun": [
+    {
+      "name": "QA cross-judge accuracy lift on temporal / IE-precision / abstention from the IQ knobs",
+      "why": "The shipped qa/retrieval/contradiction harnesses do NOT wire the new recall knobs (no mmr, no queryUnderstanding, no embeddingStore — verified retrieval-harness.bench.test.ts:225-247), the SAME KG-05 / REASON-05 structural gap. Making a costed QA cross-judge measure an IQ-ON lift requires FIRST (a) wiring the QA recall path with mmr/queryUnderstanding/embeddingStore AND (b) a costed cross-judge re-run (answer model + >=2 judges) over the J1 corpus — there is no keyless judge. That harness extension is beyond this regression-gate plan's scope. Therefore the costed QA cross-judge temporal/IE/abstention lift is an OPERATOR COSTED RE-RUN, scheduled after the QA harness is extended (a Phase-102 gap-closure or a follow-on plan). NO accuracy delta is quoted — quoting a guessed delta would be exactly the fabrication this gate exists to prevent.",
+      "baselineToDiffAgainst": "benchmarks/results/2026-05-31-j1-baseline/ (temporal-reasoning 45/40, overall 71.1/73.3, recall@5 0.845)"
+    }
+  ],
+  "baselineRef": "benchmarks/results/2026-05-31-j1-baseline/",
+  "honestyProtocol": "Every number in GATE-REPORT.md traces to a committed JSON in this directory (read back from disk + asserted in the harness before quoting). The bench is keyless — no QA accuracy number is produced or quoted; the QA cross-judge cell is explicitly 'not measured — operator costed re-run', NOT a guessed delta. A post-run credential-shape sweep over the manifest is clean: no secret-key prefixes, bearer-token markers, or credential field names — the manifest carries pure numbers + booleans."
+}
