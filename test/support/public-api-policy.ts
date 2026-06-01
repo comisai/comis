@@ -2115,6 +2115,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "IdProjectionRowFromSchema",
       "CountProjectionRowSchema",
       "CountProjectionRowFromSchema",
+      // File-backed SecretStore (Phase 02-01, REQ-03/REQ-10). createFileSecretStore is the sole
+      // FileSecretStore adapter; the daemon composition root wires it via selectSecretStore
+      // in Plan 02-04 (bootstrapSecretsAndEnv). selectSecretStore and SelectedSecretStore are
+      // the factory + discriminated-union type consumed by the daemon wiring. Baseline orphans
+      // until Plan 02-04 adds the daemon consumer.
+      "createFileSecretStore",
+      "selectSecretStore",
+      "SelectedSecretStore",
     ])],
     // @comis/scheduler: baseline orphans tracked here.
     ["@comis/scheduler", new Set<string>([

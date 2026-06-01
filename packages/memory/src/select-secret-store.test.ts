@@ -8,7 +8,7 @@
  * getDecrypted, close no-op).
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -306,5 +306,49 @@ describe("selectSecretStore — encrypted mode", () => {
     // setupSecrets returns ok(null) when key is absent → selectSecretStore returns err
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error.message).toContain("SECRETS_MASTER_KEY");
+  });
+
+  it("selectSecretStore encrypted mode returns err when SECRETS_MASTER_KEY is invalid (setupSecrets returns err)", () => {
+    const result = selectSecretStore({
+      mode: "encrypted",
+      dataDir: "/tmp/unused-encrypted",
+      env: { SECRETS_MASTER_KEY: "not-a-valid-hex-key-short" }, // Present but invalid
+    });
+
+    // setupSecrets returns err(Error) for invalid key → selectSecretStore propagates
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error.message).toContain("SECRETS_MASTER_KEY");
+  });
+
+  it("selectSecretStore encrypted mode succeeds when valid SECRETS_MASTER_KEY is provided", () => {
+    const validKey = randomBytes(32).toString("hex"); // 64-char hex key
+    const tmpDir = path.join(os.tmpdir(), `comis-enc-test-${randomBytes(8).toString("hex")}`);
+
+    try {
+      const result = selectSecretStore({
+        mode: "encrypted",
+        dataDir: tmpDir,
+        env: { SECRETS_MASTER_KEY: validKey },
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const selected = result.value;
+      expect(selected.kind).toBe("encrypted");
+      if (selected.kind === "encrypted") {
+        expect(selected.secretStore).toBeDefined();
+        expect(selected.secretsDb).toBeDefined();
+        expect(selected.secretsCrypto).toBeDefined();
+        // Close the db to release file handles
+        selected.secretStore.close();
+      }
+    } finally {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
   });
 });

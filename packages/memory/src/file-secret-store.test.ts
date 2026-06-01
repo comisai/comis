@@ -291,4 +291,65 @@ describe("createFileSecretStore", () => {
     expect(listResult.ok).toBe(true);
     expect(listResult.ok && listResult.value).toHaveLength(0);
   });
+
+  it("loadSecretsFile returns err when secrets.json contains invalid JSON (non-parseable content)", () => {
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    const secretsPath = path.join(dataDir, "secrets.json");
+    fs.writeFileSync(secretsPath, "NOT VALID JSON {{{{", { mode: 0o600 });
+
+    const store = createFileSecretStore({ dataDir });
+    // Any read operation should surface the JSON parse error
+    const result = store.getDecrypted("ANY_KEY");
+    expect(result.ok).toBe(false);
+  });
+
+  it("loadSecretsFile returns err for corrupted file on decryptAll call", () => {
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    const secretsPath = path.join(dataDir, "secrets.json");
+    fs.writeFileSync(secretsPath, "NOT VALID JSON", { mode: 0o600 });
+
+    const store = createFileSecretStore({ dataDir });
+    const result = store.decryptAll();
+    expect(result.ok).toBe(false);
+  });
+
+  it("loadSecretsFile returns err for corrupted file on list call", () => {
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    const secretsPath = path.join(dataDir, "secrets.json");
+    fs.writeFileSync(secretsPath, "INVALID", { mode: 0o600 });
+
+    const store = createFileSecretStore({ dataDir });
+    const result = store.list();
+    expect(result.ok).toBe(false);
+  });
+
+  it("loadSecretsFile returns err for corrupted file on delete call", () => {
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    const secretsPath = path.join(dataDir, "secrets.json");
+    fs.writeFileSync(secretsPath, "{INVALID", { mode: 0o600 });
+
+    const store = createFileSecretStore({ dataDir });
+    const result = store.delete("ANY_KEY");
+    expect(result.ok).toBe(false);
+  });
+
+  it("persistSecretsFile error path propagates when dataDir cannot be created (mkdir failure)", () => {
+    // Use a path that can't be created — a file exists at the parent
+    const blockingFile = path.join(os.tmpdir(), `comis-blocking-${randomBytes(4).toString("hex")}`);
+    fs.writeFileSync(blockingFile, "blocking");
+
+    try {
+      // Try to use the blocking file as a parent directory
+      const impossibleDir = path.join(blockingFile, "subdir");
+      const store = createFileSecretStore({ dataDir: impossibleDir });
+      const result = store.set("KEY", "value");
+      expect(result.ok).toBe(false);
+    } finally {
+      try {
+        fs.unlinkSync(blockingFile);
+      } catch {
+        // ignore
+      }
+    }
+  });
 });

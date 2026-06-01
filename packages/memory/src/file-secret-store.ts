@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: createFileSecretStore path-containment guard; dataDir escaping the resolved base is a hard precondition violation (path traversal attack guard); the factory return type is SecretStorePort (not Result), so err() cannot be used here — this throw fires only for programmer errors at wiring time, never for user-supplied secret values.
 /**
  * FileSecretStore — SecretStorePort implementation with plaintext JSON storage.
  * File-mode is the documented plaintext-at-rest bargain (DESIGN §5.1).
@@ -42,17 +43,9 @@ interface SecretsFile {
 // ---------------------------------------------------------------------------
 
 function loadSecretsFile(canonicalPath: string): Result<SecretsFile, Error> {
+  let raw: string;
   try {
-    const raw = fs.readFileSync(canonicalPath, "utf-8");
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      (parsed as Record<string, unknown>).schemaVersion !== 1
-    ) {
-      throw new Error("Unknown schema version in secrets.json");
-    }
-    return ok(parsed as SecretsFile);
+    raw = fs.readFileSync(canonicalPath, "utf-8");
   } catch (e) {
     if (
       e !== null &&
@@ -64,6 +57,23 @@ function loadSecretsFile(canonicalPath: string): Result<SecretsFile, Error> {
     }
     return err(e instanceof Error ? e : new Error(String(e)));
   }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    return err(e instanceof Error ? e : new Error(String(e)));
+  }
+
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    (parsed as Record<string, unknown>).schemaVersion !== 1
+  ) {
+    return err(new Error("Unknown schema version in secrets.json"));
+  }
+
+  return ok(parsed as SecretsFile);
 }
 
 function persistSecretsFile(
