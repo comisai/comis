@@ -17,7 +17,7 @@ import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, Executio
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
-import type { createSessionStore } from "@comis/memory";
+import type { createSessionStore, MemoryApi } from "@comis/memory";
 import type { CommandQueue } from "@comis/orchestrator";
 import type { VoiceResponsePipelineDeps, LifecycleReactor } from "@comis/channels";
 import type { ChannelManager, ActivityBreakerGate } from "@comis/orchestrator";
@@ -178,6 +178,10 @@ export interface ChannelsDeps {
   defaultWorkspaceDir?: string;
   /** Memory adapter for storing media file references. */
   memoryAdapter?: MemoryPort;
+  /** Memory read API (Phase 107, USER-04) — the __USER_REPRESENTATION__ sentinel scopes the
+   *  per-(tenant, agent, user) high-trust source read over `inspect`. Built in setup-memory;
+   *  daemon-side (the agent imports no memory package). */
+  memoryApi?: MemoryApi;
   /** Entity-associative store (Phase 83) — forwarded to registerCronEventListeners so
    *  runMemoryReview (the write path) populates entity links after each successful store.
    *  Built in setup-memory on the shared db handle. */
@@ -358,6 +362,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     consolidationStore: deps.consolidationStore,
     tripleStore: deps.tripleStore,
     userRepresentationStore: deps.userRepresentationStore,
+    memoryApi: deps.memoryApi,
     tenantId: deps.tenantId,
     piSessionAdapters: deps.piSessionAdapters,
     cronExecutionTrackers: deps.cronExecutionTrackers,

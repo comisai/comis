@@ -354,6 +354,38 @@ export async function setupSchedulers(deps: {
         schedulerLogger.info({ agentId, schedule: memoryReasoningConfig.schedule ?? "0 4 * * *" }, "Registered memory reasoning cron job");
       }
     }
+
+    // -- Per-user representation cron job (Phase 107, USER-03/04 — Track E1) --
+    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron — NOT back-compat). Registered ONLY
+    // when the operator sets memoryUserRepresentation.enabled; a default agent registers NO job →
+    // byte-identical behavior with the config absent. Default schedule 0 5 * * * runs AFTER reasoning's
+    // 0 4 so the profile is built over freshly-reasoned memories. Job options mirror the reasoning job
+    // 1:1 (isolated / next-heartbeat / no forward-to-main / fresh session); the __USER_REPRESENTATION__
+    // sentinel is intercepted in setup-channels-credentials → runUserRepresentationBuild (the per-user
+    // offline upsert write, source-scoped via memoryApi.inspect + the createUserRepresentationSeam).
+    const memoryUserRepresentationConfig = agentConfig.memoryUserRepresentation;
+    if (memoryUserRepresentationConfig?.enabled) {
+      const memUserReprJobId = `memory-user-representation-${agentId}`;
+      const existingJobs = scheduler.getJobs();
+      const alreadyRegistered = existingJobs.some((j) => j.id === memUserReprJobId);
+      if (!alreadyRegistered) {
+        await scheduler.addJob({
+          id: memUserReprJobId,
+          name: "Memory user representation",
+          agentId,
+          schedule: { kind: "cron", expr: memoryUserRepresentationConfig.schedule ?? "0 5 * * *" },
+          payload: { kind: "system_event", text: "__USER_REPRESENTATION__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: memoryUserRepresentationConfig.schedule ?? "0 5 * * *" }, "Registered memory user representation cron job");
+      }
+    }
   }
 
   /** Resolve the CronScheduler for a given agent ID. Throws descriptive error if not found. */

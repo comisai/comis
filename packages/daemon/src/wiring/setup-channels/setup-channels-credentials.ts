@@ -18,7 +18,7 @@ import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, Memo
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry } from "@comis/agent";
-import type { createSessionStore } from "@comis/memory";
+import type { createSessionStore, MemoryApi } from "@comis/memory";
 import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, classifyError } from "@comis/agent";
 import { applyToolPolicy } from "@comis/skills";
 import { filterResponse } from "@comis/channels";
@@ -78,6 +78,10 @@ export interface CronEventListenerDeps {
    *  no-op (Pitfall 1). Absent => the representation sentinel cannot run, but the cron is
    *  off-by-default so a default-config agent never reaches it. */
   userRepresentationStore?: UserRepresentationStore;
+  /** Per-user representation read surface (Phase 107, USER-04) — the __USER_REPRESENTATION__
+   *  sentinel scopes the per-(tenant, agent, user) high-trust source read over `inspect`.
+   *  Built in setup-memory; daemon-side (the agent imports no memory package). */
+  memoryApi?: MemoryApi;
   tenantId?: string;
   piSessionAdapters?: Map<string, {
     getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
@@ -204,6 +208,8 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       tenantId: deps.tenantId,
       consolidationStore: deps.consolidationStore,
       tripleStore: deps.tripleStore,
+      userRepresentationStore: deps.userRepresentationStore,
+      memoryApi: deps.memoryApi,
     });
     if (handledMemoryCron) return;
 

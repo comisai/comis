@@ -199,19 +199,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryReasoningResult",
       "ReasoningOutput",
       "ReasoningSeamDeps",
-      // Offline per-user representation builder (Phase 107-03, Track E1 — USER-02).
-      // runUserRepresentationBuild is the offline profile WRITE path; its daemon
-      // __USER_REPRESENTATION__ cron-sentinel consumer lands in Plan 107-05. Surfaced
-      // here AHEAD of that consumer — the factory-orphan dance (mirror
-      // runMemoryTripleExtraction @ 100-05 before its sentinel landed): REMOVE this
-      // entry when 107-05 (setup-channels-memory-crons.ts) dispatches the job.
-      // buildUserRepresentationPrompt + parseUserRepresentationOutput are the builder
-      // prompt+parser the 107-05 createUserRepresentationSeam imports (agent-internal);
-      // they are surfaced ahead of that seam too — REMOVE when the seam lands.
-      // The Deps/Config/Stats/Result SHAPE types + the Candidate/BuildOutput seam-output
-      // types + the SourceMemory read-shape are referenced via inline objects only —
-      // baseline orphans (mirror MemoryReasoningDeps / ReasoningOutput).
-      "runUserRepresentationBuild",
+      // Offline per-user representation builder (Phase 107, Track E1 — USER-02/04).
+      // runUserRepresentationBuild is now CONSUMED by the daemon __USER_REPRESENTATION__
+      // cron-sentinel dispatch (107-05), so it SHRANK out of this baseline (no longer an
+      // orphan). createUserRepresentationSeam (the daemon-injected build() seam factory) is
+      // consumed by the dispatch too. buildUserRepresentationPrompt + parseUserRepresentationOutput
+      // are imported by createUserRepresentationSeam via the RELATIVE same-package path (the prompt
+      // stays agent-internal), so their @comis/agent index re-exports have no cross-package importer
+      // — baseline orphans (mirror DEDUCTIVE_PROMPT/parseDeductiveResult being relative-only). The
+      // Deps/Config/Stats/Result SHAPE types + the Candidate/BuildOutput seam-output types + the
+      // SourceMemory read-shape are referenced via inline objects only (the dispatch + the gated
+      // bench construct them structurally) — baseline orphans (mirror MemoryReasoningDeps).
+      // UserRepresentationSeamDeps (the createUserRepresentationSeam input shape) is called with an
+      // inline object, so the TYPE itself has no cross-package importer (mirror ReasoningSeamDeps).
       "buildUserRepresentationPrompt",
       "parseUserRepresentationOutput",
       "MemoryUserRepresentationDeps",
@@ -221,6 +221,7 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "UserRepresentationSourceMemory",
       "UserRepresentationCandidate",
       "UserRepresentationBuildOutput",
+      "UserRepresentationSeamDeps",
       "formatMemorySection",
       "CommandQueueDeps",
       "QueueStats",

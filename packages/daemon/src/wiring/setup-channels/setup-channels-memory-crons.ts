@@ -21,9 +21,10 @@
  * @module
  */
 
-import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort } from "@comis/core";
+import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam } from "@comis/agent";
+import type { MemoryApi } from "@comis/memory";
+import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, type UserRepresentationSourceMemory } from "@comis/agent";
 
 /** The minimal `scheduler:job_result` payload shape the sentinel handlers read. */
 interface MemoryCronPayload {
@@ -44,6 +45,14 @@ export interface MemoryCronContext {
   consolidationStore?: MemoryConsolidationStore;
   /** Injected from setup-memory (REASON-02): the deductive trust-first upsertTriple write. */
   tripleStore?: TripleStorePort;
+  /** Injected from setup-memory (USER-03): the per-user profile upsert write path
+   *  (the __USER_REPRESENTATION__ sentinel). The agent receives the port TYPE only. */
+  userRepresentationStore?: UserRepresentationStore;
+  /** Injected from setup-memory (USER-04): the read surface the __USER_REPRESENTATION__
+   *  sentinel scopes the per-(tenant, agent, user) high-trust source read over (the
+   *  concrete `readSources` seam runUserRepresentationBuild injects — kept daemon-side so
+   *  the agent imports no memory package). */
+  memoryApi?: MemoryApi;
 }
 
 /**
@@ -57,7 +66,7 @@ export async function handleMemoryCronSentinel(
   payload: MemoryCronPayload,
   ctx: MemoryCronContext,
 ): Promise<boolean> {
-  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore } = ctx;
+  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore, userRepresentationStore, memoryApi } = ctx;
 
   // -- Memory consolidation sentinel intercept (Phase 84, CONS-07) --
   if (resultText === "__MEMORY_CONSOLIDATION__") {
@@ -194,6 +203,113 @@ export async function handleMemoryCronSentinel(
       logger.error({ agentId, err: reasoningResult.error, hint: "Memory reasoning failed -- will retry next cycle", errorKind: "internal" as const }, "Memory reasoning error");
     }
     payload.onComplete?.({ status: reasoningResult.ok ? "ok" : "error", error: reasoningResult.ok ? undefined : reasoningResult.error?.message });
+    return true;
+  }
+
+  // -- Per-user representation sentinel intercept (Phase 107, USER-03/04 — Track E1) --
+  // Mirrors the reasoning branch above 1:1: the opt-in cost gate (re-check enabled), the cheap
+  // "cron" model + key (resolved by NAME, never logged), then the OFFLINE build() seam
+  // (createUserRepresentationSeam keeps USER_REPRESENTATION_PROMPT agent-internal). The cron
+  // fires per (tenant, agent); it builds a profile for EACH distinct user the agent has
+  // high-trust memories for — runUserRepresentationBuild is invoked once per userId, scoped to
+  // (tenant, agent, user), with a readSources seam that yields ONLY that user's high-trust
+  // sources (the anti-poisoning external-exclude + the redaction firewall live in the job).
+  if (resultText === "__USER_REPRESENTATION__") {
+    const { agentId } = payload;
+    if (!agentId) {
+      logger.warn({ hint: "User representation job fired without agentId", errorKind: "config" as const }, "Skipping user representation build -- no agentId");
+      payload.onComplete?.({ status: "error", error: "No agentId for user representation build" });
+      return true;
+    }
+
+    const agentConfig = agents[agentId];
+    const userReprConfig = agentConfig?.memoryUserRepresentation;
+    if (!userReprConfig?.enabled) {
+      // The opt-in cost gate: a disabled (or default-config) agent does NO LLM work —
+      // short-circuit ok so the scheduler records a clean run (mirror the reasoning gate).
+      logger.debug({ agentId }, "User representation build disabled for agent, skipping");
+      payload.onComplete?.({ status: "ok" });
+      return true;
+    }
+
+    // The read surface MUST be present (injected from setup-memory). Absent => cannot scope
+    // the per-user source read — surface a clean error rather than silently no-op.
+    if (!memoryApi || !userRepresentationStore) {
+      logger.warn({ agentId, hint: "memoryApi/userRepresentationStore not injected -- cannot build per-user profile", errorKind: "config" as const }, "Skipping user representation build -- store/read surface missing");
+      payload.onComplete?.({ status: "error", error: "User representation read/write surface not wired" });
+      return true;
+    }
+
+    // Resolve the cheap model via the "cron" operation type (IDENTICAL to the reasoning block).
+    const resolved = resolveOperationModel({
+      operationType: "cron",
+      agentProvider: agentConfig.provider ?? "anthropic",
+      agentModel: agentConfig.model ?? "anthropic:claude-sonnet-4-20250514",
+      operationModels: agentConfig.operationModels ?? {},
+      providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
+    });
+
+    const providerEntry = container.config.providers?.entries?.[resolved.provider];
+    const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
+    const apiKey = container.secretManager.get(apiKeyName) ?? "";
+    if (!apiKey) {
+      logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for user representation build`, errorKind: "config" as const }, "Skipping user representation build -- no API key");
+      payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
+      return true;
+    }
+
+    const reprTenantId = tenantId ?? container.config.tenantId ?? "default";
+    const reprLogger = logger.child({ agentId, submodule: "user-representation" });
+
+    // Read the agent's HIGH-TRUST source memories (system + learned) once, then group by user.
+    // InspectFilters has no userId axis, so the read is per-(tenant, agent) and the grouping is
+    // done here; each user's slice becomes that user's readSources seam (the anti-poisoning
+    // external-exclude is the job's, but inspecting only system|learned is a first belt).
+    const sourcesByUser = new Map<string, UserRepresentationSourceMemory[]>();
+    for (const trustLevel of ["system", "learned"] as const) {
+      const rows = memoryApi.inspect({ tenantId: reprTenantId, agentId, trustLevel, limit: 1000 });
+      for (const row of rows) {
+        const list = sourcesByUser.get(row.userId) ?? [];
+        list.push({ id: row.id, content: row.content, trustLevel: row.trustLevel as "system" | "learned" | "external" });
+        sourcesByUser.set(row.userId, list);
+      }
+    }
+
+    // Build the cheap-model seam ONCE (reused across users — the prompt is per-source-text).
+    const build = createUserRepresentationSeam({
+      provider: resolved.provider,
+      modelId: resolved.modelId,
+      apiKey,
+      maxOutputTokens: 1024,
+      clock,
+      logger: reprLogger,
+      agentId,
+    });
+
+    let anyError = false;
+    for (const [userId, sources] of sourcesByUser) {
+      const result = await runUserRepresentationBuild({
+        agentId,
+        tenantId: reprTenantId,
+        userId,
+        config: { enabled: userReprConfig.enabled, maxEntriesPerRun: userReprConfig.maxEntriesPerRun },
+        // Injected from setup-memory (the composition-root join) — the port TYPE only.
+        userRepresentationStore,
+        // The scoped read seam: this user's already-fetched high-trust sources (the job
+        // runs its own external-exclude + redaction firewall over them).
+        readSources: () => Promise.resolve({ ok: true as const, value: sources }),
+        clock,
+        logger: reprLogger,
+        eventBus: container.eventBus,
+        build,
+      });
+      if (!result.ok) {
+        anyError = true;
+        reprLogger.error({ agentId, userId, err: result.error, hint: "User representation build failed for user -- will retry next cycle", errorKind: "internal" as const }, "User representation build error");
+      }
+    }
+
+    payload.onComplete?.({ status: anyError ? "error" : "ok", error: anyError ? "One or more per-user representation builds failed" : undefined });
     return true;
   }
 

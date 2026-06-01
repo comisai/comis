@@ -651,7 +651,7 @@ function buildChannelManagerDeps(deps: {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
-    workspaceDirs, defaultWorkspaceDir, memoryAdapter, entityStore, causalStore, consolidationStore, tripleStore, userRepresentationStore, embeddingQueue,
+    workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, tripleStore, userRepresentationStore, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
@@ -723,10 +723,10 @@ function buildChannelManagerDeps(deps: {
     // Forwarded into registerCronEventListeners -> runMemoryConsolidation (the opt-in
     // __MEMORY_CONSOLIDATION__ cron path). The executor recall path does NOT receive it.
     consolidationStore,
-    // Phase 101 (REASON-02) tripleStore + Phase 107 (USER-03) userRepresentationStore ride the SAME
-    // cron-deps chain (daemon → registry → credentials) → the __MEMORY_REASONING__ / __USER_REPRESENTATION__
-    // sentinels (the offline DEDUCTIVE upsertTriple + the offline-builder upsert writes). Port TYPE only.
-    tripleStore, userRepresentationStore,
+    // Phase 101 (REASON-02) tripleStore + Phase 107 (USER-03/04) userRepresentationStore + memoryApi
+    // ride the SAME cron-deps chain → the __MEMORY_REASONING__ / __USER_REPRESENTATION__ sentinels
+    // (the DEDUCTIVE upsertTriple + the per-user profile upsert, source-scoped via memoryApi.inspect).
+    tripleStore, userRepresentationStore, memoryApi,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,
