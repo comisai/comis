@@ -24,6 +24,21 @@ import type {
   UserRepresentationEntry,
   UserRepresentationInput,
 } from "./user-representation-store.js";
+// Public-surface RED proof (Task 3): the port types + the prefix-type enum must
+// be re-exported on the @comis/core barrel (../index.js is the in-package
+// equivalent of the bare `@comis/core` specifier — index.ts `export *`s the
+// curated exports/ports.js + exports/domain.js). These imports fail to resolve
+// (a tsc build error) until the export-wiring in ports/index.ts + exports/ports.ts
+// + the domain barrels lands. The value import of the enum schema also forces
+// runtime resolution of the public barrel.
+import {
+  UserRepresentationTypeSchema as PublicUserRepresentationTypeSchema,
+  type UserRepresentationStore as PublicUserRepresentationStore,
+  type UserRepresentationScope as PublicUserRepresentationScope,
+  type UserRepresentationEntry as PublicUserRepresentationEntry,
+  type UserRepresentationInput as PublicUserRepresentationInput,
+  type UserRepresentationType as PublicUserRepresentationType,
+} from "../index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const portSrc = readFileSync(resolve(here, "./user-representation-store.ts"), "utf8");
@@ -181,5 +196,41 @@ describe("UserRepresentationStore — type-only segregated per-user port (USER-0
     expectTypeOf(entry.createdAt).toEqualTypeOf<number>();
     expectTypeOf(entry.updatedAt).toEqualTypeOf<number | undefined>();
     expect(entry.id).toBe("rep-9");
+  });
+});
+
+/**
+ * Phase 107 (USER-01) — the public @comis/core surface re-export.
+ *
+ * The offline builder (Plan 03), the prompt-assembly injection (Plan 04), and
+ * the daemon wiring (Plan 05) import these TYPES from `@comis/core` (never
+ * @comis/memory). This block proves the port types AND the prefix-type enum are
+ * on the public barrel — the same names, structurally identical to the
+ * relative-path types.
+ */
+describe("UserRepresentationStore — public @comis/core re-export (USER-01)", () => {
+  it("re-exports the port types on the public barrel, identical to the relative-path types", () => {
+    // Structural identity: the public-barrel types equal the relative-path types.
+    expectTypeOf<PublicUserRepresentationStore>().toEqualTypeOf<UserRepresentationStore>();
+    expectTypeOf<PublicUserRepresentationScope>().toEqualTypeOf<UserRepresentationScope>();
+    expectTypeOf<PublicUserRepresentationEntry>().toEqualTypeOf<UserRepresentationEntry>();
+    expectTypeOf<PublicUserRepresentationInput>().toEqualTypeOf<UserRepresentationInput>();
+
+    // A downstream consumer can name the port type from the public surface.
+    const _check: PublicUserRepresentationStore = {
+      upsert: async () => ok(undefined),
+      read: async () => ok([]),
+    };
+    void _check;
+  });
+
+  it("re-exports the UserRepresentationType enum (value + type) on the public barrel", () => {
+    // The runtime enum schema is reachable from the public surface (value import).
+    expect(PublicUserRepresentationTypeSchema.parse("preference")).toBe("preference");
+    expect(PublicUserRepresentationTypeSchema.safeParse("semantic").success).toBe(false);
+    // The inferred type is reachable too.
+    const t: PublicUserRepresentationType = "identity";
+    expectTypeOf(t).toEqualTypeOf<UserRepresentationInput["entryType"]>();
+    expect(t).toBe("identity");
   });
 });
