@@ -153,6 +153,7 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
           subAgentRetentionMs: 3_600_000,
           waitTimeoutMs: 60_000,
         },
+        storage: "file" as const,
       },
       approvals: {
         enabled: false,
@@ -167,9 +168,6 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
       tenantId: "default",
       logLevel: "info",
       agentDir: "/tmp/test-agent-dir",
-      // setupSingleAgent now reads container.config.oauth.storage for OAuth
-      // credential store wiring. Default to "file" (the YAML default).
-      oauth: { storage: "file" as const },
       // setupSingleAgent reads container.config.tooling to construct the
       // per-agent ToolCapabilityPort adapter. Use the schema's full-default
       // tree so tests don't pin individual cluster IDs.

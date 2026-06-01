@@ -1490,7 +1490,7 @@ async function bootFoundation(
   if (storageMode === "legacy") {
     throw new Error(
       "[MIGRATION_ERROR] Legacy config keys detected in your config.yaml. " +
-        "The keys oauth.storage and security.secrets.enabled were removed in v1.5. " +
+        "[MIGRATION] The keys oauth.storage and security.secrets.enabled were removed in v1.5. " +
         "Replace with: security.storage: encrypted|file|env (default: encrypted). " +
         "See the migration guide in the changelog.",
     );
@@ -1963,9 +1963,9 @@ async function bootAgents(
   // OAuthCredentialStorePort (not the disk-default fallback).
   //
   // All dependencies are available here from `foundation`:
-  //   - container.config.oauth.storage, dataDir  → already in scope
-  //   - secretsCrypto, secretsDb                 → from foundation (line ~1713)
-  //   - createFileLock()                         → pure factory, no deps
+  //   - container.config.security.storage, dataDir  → already in scope
+  //   - secretsCrypto, secretsDb                    → from foundation (line ~1713)
+  //   - createFileLock()                            → pure factory, no deps
   //
   // The same store instance is later consumed by setupAgents (threaded into
   // singleAgentDeps.oauthCredentialStore) and the RPC dispatcher. This is
@@ -1974,19 +1974,19 @@ async function bootAgents(
   // since we declare it here, we pass it through so both sites share one
   // instance (no duplicate SQLite handles for the encrypted-mode store).
   let encryptedStoreForMcp: import("@comis/core").OAuthCredentialStorePort | undefined;
-  if (container.config.oauth.storage === "encrypted") {
+  if (container.config.security.storage === "encrypted") {
     if (!secretsCrypto || !secretsDb) {
       throw new Error(
         "OAuth storage mode is 'encrypted' but secretsDb/secretsCrypto were not initialized. " +
           "Hint: set SECRETS_MASTER_KEY env var (and restart the daemon) so the encrypted " +
-          "secrets store boots, or change appConfig.oauth.storage to 'file' to use the " +
+          "secrets store boots, or change security.storage to 'file' in your config.yaml to use the " +
           "plaintext file backend.",
       );
     }
     encryptedStoreForMcp = createOAuthProfileStoreEncrypted(secretsDb, secretsCrypto);
   }
   const oauthCredentialStoreForceMcp = selectOAuthCredentialStore({
-    storage: container.config.oauth.storage,
+    storage: container.config.security.storage,
     dataDir: container.config.dataDir && container.config.dataDir.length > 0
       ? container.config.dataDir
       : dataDir,
