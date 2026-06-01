@@ -248,8 +248,8 @@ export function createAuthHandlers(
 
       if (!deps.oauthCredentialStore) {
         throw new Error(
-          "Encrypted OAuth store not configured (SECRETS_MASTER_KEY missing or oauth.storage is 'file'). " +
-            "Run `comis secrets init --write` then restart the daemon, or switch oauth.storage to 'file'.",
+          "Encrypted OAuth store not configured (SECRETS_MASTER_KEY missing or security.storage is 'file' or 'env'). " +
+            "Run `comis secrets init --write` then restart the daemon, or set security.storage: file in your config.yaml.",
         );
       }
 

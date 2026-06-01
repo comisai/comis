@@ -17,7 +17,7 @@
  */
 
 import { createAuthProvider, type AuthProvider, type AuthProviderConfig } from "@comis/agent";
-import { safePath, type AppContainer, type FileLockPort, type OAuthCredentialStorePort } from "@comis/core";
+import { safePath, type AppContainer, type CredentialStorageMode, type FileLockPort, type OAuthCredentialStorePort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
 /** Inputs for {@link wireAuthProvider} — exactly the locals the OAuth block needs. */
@@ -34,8 +34,8 @@ export interface WireAuthProviderArgs {
   fileLock: FileLockPort;
   /** Resolved absolute data dir (defaults to ~/.comis upstream). */
   dataDirAbs: string;
-  /** OAuth storage mode ("file" enables the auth-profiles.json watcher). */
-  oauthStorageMode: "file" | "encrypted";
+  /** OAuth storage mode ("file" enables the auth-profiles.json watcher; "env"/"encrypted" → no watcher). */
+  oauthStorageMode: CredentialStorageMode;
   /** Agent-scoped logger. */
   agentLogger: ComisLogger;
 }

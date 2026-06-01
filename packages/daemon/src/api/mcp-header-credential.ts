@@ -68,7 +68,7 @@ export interface ProcessHeaderCredentialsOpts {
   headers: Record<string, string>;
   /** The server name (used in error messages and variable naming). */
   serverName: string;
-  /** Encrypted secret store for static-secret extraction. Undefined when COMIS_DISABLE_ENCRYPTED_SECRETS=1. */
+  /** Encrypted secret store for static-secret extraction. Undefined when security.storage is 'file' or 'env'. */
   secretStore: SecretStorePort | undefined;
   /** When true, static-secret detection logs WARN and passes through (operator bears risk). OAuth-bearer refusal is NOT affected. */
   plaintextOptOut: boolean;
@@ -167,7 +167,7 @@ export function processHeaderCredentials(opts: ProcessHeaderCredentialsOpts): Pr
       throw new Error(
         `[plaintext_secret_in_headers] headers.${headerName} (server "${serverName}") ` +
         `looks like a plaintext credential and no encrypted secret store is available. ` +
-        `Hint: ensure COMIS_DISABLE_ENCRYPTED_SECRETS is not set (or is "0"), or store ` +
+        `Hint: ensure security.storage is not set to 'file' or 'env' in your config.yaml, or store ` +
         `the secret via secrets_manage and reference it as "\${VAR}".`,
       );
     }
