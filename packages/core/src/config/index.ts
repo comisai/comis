@@ -50,6 +50,10 @@ export type { MemoryReasoningConfig } from "./schema-memory-reasoning.js";
 export { MemoryUserRepresentationConfigSchema } from "./schema-memory-user-representation.js";
 export type { MemoryUserRepresentationConfig } from "./schema-memory-user-representation.js";
 
+// Social-modeling schema (Phase 108 — SOCIAL-03)
+export { SocialModelingConfigSchema } from "./schema-social-modeling.js";
+export type { SocialModelingConfig } from "./schema-social-modeling.js";
+
 // Agent schemas: model selection, session lifecycle, context engine, context guard, agent features
 export {
   AgentConfigSchema,
