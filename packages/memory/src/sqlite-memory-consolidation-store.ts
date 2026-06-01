@@ -76,6 +76,7 @@ import type {
 import { systemNowMs } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { createRowMapper, rowToEntry, insertMemoryRow } from "./row-mapper.js";
+import { searchByVector } from "./hybrid-search.js";
 import { MemoryRowSchema } from "./row-schemas.js";
 import { isVecAvailable } from "./schema.js";
 
@@ -456,35 +457,61 @@ export function createSqliteMemoryConsolidationStore(
      * control); the surprisal score is per-candidate, so the caller already holds
      * in-scope embeddings.
      *
-     * Wave 101-02 lands this contract-satisfying graceful-degrade body so the
-     * widened `MemoryConsolidationStore` port builds across the workspace; the
-     * sqlite-vec `searchByVector`-backed surprisal query (hybrid-search.ts) is
-     * wired in 101-03 (its own RED test). NEVER throws — a pure read wrapped in
-     * try/catch → `err`.
+     * Backed by the shipped sqlite-vec `searchByVector` (hybrid-search.ts:155) —
+     * `SELECT memory_id, distance FROM vec_memories WHERE embedding MATCH ? AND
+     * k = ?` with the embedding bound as a Float32Array `?` parameter (NEVER
+     * concatenated — T-101-03-02). `searchByVector` returns rows sorted by
+     * distance ASCENDING and degrades to `[]` on any row-validation error, so we
+     * pass its distances straight through (the agent-side `surprisalSelect`
+     * applies its own `(surprisal desc, id asc)` total order).
+     *
+     * ## Scope (T-101-03-01)
+     * The `vec_memories` virtual table is GLOBAL (no tenant/agent column on the
+     * vec0 table), so this read is corpus-wide. That is by design: it returns
+     * ONLY DISTANCES (floats), never ids or content — a non-identifying scalar
+     * cannot leak another scope's memory body. The caller (101-04) holds only
+     * in-scope candidate embeddings and uses the distances for a per-candidate
+     * novelty SCORE; no cross-scope content crosses the boundary. A future
+     * filtered-vec variant (V4) can use the carried `(agentId, tenantId)` args
+     * for hard access control.
+     *
+     * ## Result discipline (T-101-03-03)
+     * A pure read wrapped in try/catch → `err`; `isVecAvailable()` false → `ok([])`.
+     * NEVER throws out — a corrupt vec table degrades the surprisal gate for that
+     * candidate (the caller's run continues), it never crashes the reasoning job.
      */
     async knnDistances(
-      _embedding: number[],
-      _k: number,
+      embedding: number[],
+      k: number,
       _agentId: string,
       _tenantId: string,
     ): Promise<Result<number[], Error>> {
+      const startMs = systemNowMs();
       try {
         if (!isVecAvailable()) {
           logger?.debug(
             { step: "reason-knn", errorKind: "precondition" as const },
             "knnDistances: sqlite-vec unavailable — degrading to no neighbours",
           );
-          return ok([]);
+          return ok([]); // graceful degrade — no vec, no neighbours
         }
-        // 101-03 wires the real searchByVector(db, embedding, k) surprisal read
-        // here (sorted-ascending distances). Until then the contract degrades to
-        // an empty neighbour set — a valid, sorted, non-negative distance list.
-        return ok([]);
+        // searchByVector returns {id, distance}[] sorted by distance ASCENDING
+        // (hybrid-search.ts:153) and binds the embedding as a Float32Array `?`
+        // (no string concat). We need only the distances for the surprisal score.
+        const neighbours = searchByVector(db, embedding, k);
+        logger?.debug(
+          { step: "reason-knn", durationMs: systemNowMs() - startMs, count: neighbours.length },
+          "knnDistances complete",
+        );
+        // Already sorted ascending — pass the distances through (counts-only log;
+        // never the embedding values, §2.7).
+        return ok(neighbours.map((n) => n.distance));
       } catch (e) {
         const error = e instanceof Error ? e : new Error(String(e));
         logger?.warn(
           {
             step: "reason-knn",
+            durationMs: systemNowMs() - startMs,
             err: error,
             errorKind: "internal" as const,
             hint: "k-NN distance read failed — surprisal gate degrades to no neighbours",
