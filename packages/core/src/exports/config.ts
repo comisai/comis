@@ -117,6 +117,8 @@ export {
   formatMissingEnvRefError,
   loadConfigFile,
   preReadSecretsEnabled,
+  preReadStorageMode,
+  checkLegacyConfigKeys,
   validateConfig,
   deepMerge,
   mergeLayered,
@@ -277,4 +279,6 @@ export type {
   ToolingConfig,
   // Broker binding config type (INTEG-02/03)
   BrokerBindingConfig,
+  // Pre-read storage mode (pre-Zod boot gate)
+  StorageModePreRead,
 } from "../config/index.js";
