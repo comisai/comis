@@ -266,6 +266,58 @@ describe("MemoryEntry", () => {
       expect(result.ok).toBe(false);
     });
   });
+
+  describe("observationKind + patternType fields (REASON-01 — typed reasoning observations)", () => {
+    it("accepts MemoryEntry with an inductive observationKind AND a patternType (both round-trip through safeParse)", () => {
+      const result = parseMemoryEntry(
+        validEntry({ observationKind: "inductive", patternType: "preference" }),
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.observationKind).toBe("inductive");
+        expect(result.value.patternType).toBe("preference");
+      }
+    });
+
+    it("MemoryEntry without observationKind/patternType still parses (the fields are optional — additive, existing callers unaffected)", () => {
+      const result = parseMemoryEntry(validEntry());
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.observationKind).toBeUndefined();
+        expect(result.value.patternType).toBeUndefined();
+      }
+    });
+
+    it("accepts all valid observationKind values (the closed reasoning-kind set)", () => {
+      for (const observationKind of ["merge", "deductive", "inductive"] as const) {
+        const result = parseMemoryEntry(validEntry({ observationKind }));
+        expect(result.ok).toBe(true);
+      }
+    });
+
+    it("accepts all valid patternType values (the Honcho-derived inductive pattern class set)", () => {
+      for (const patternType of [
+        "preference",
+        "behavior",
+        "personality",
+        "tendency",
+        "correlation",
+      ] as const) {
+        const result = parseMemoryEntry(validEntry({ patternType }));
+        expect(result.ok).toBe(true);
+      }
+    });
+
+    it("rejects an out-of-set observationKind value (the enum is closed)", () => {
+      const result = parseMemoryEntry(validEntry({ observationKind: "bogus" }));
+      expect(result.ok).toBe(false);
+    });
+
+    it("rejects an out-of-set patternType value (the enum is closed)", () => {
+      const result = parseMemoryEntry(validEntry({ patternType: "bogus" }));
+      expect(result.ok).toBe(false);
+    });
+  });
 });
 
 describe("ExtractedEntitySchema", () => {
