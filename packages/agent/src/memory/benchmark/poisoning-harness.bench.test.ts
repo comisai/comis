@@ -51,7 +51,8 @@
  * - GATED (this file): `COMIS_BENCH=1` enables the describe; the provider-backed
  *   `it` additionally nests behind `COMIS_BENCH_ANSWER_*` + `COMIS_BENCH_JUDGE_*`.
  *   Judge/answer model ids MUST be pi-ai-registry ids (gpt-4o / gpt-4.1;
- *   `claude-opus-4-8` is ABSENT from the 0.75.3 catalog, BUG-004) -- an unresolved
+ *   `claude-opus-4-8` entered the pi-ai registry in 0.78.0; under 0.75.3 it graded
+ *   all-invalid as a same-provider answer+judge pair on one Anthropic key, BUG-004) -- an unresolved
  *   id makes every probe `invalid` (excluded), never a silent wrong number.
  *
  * SECURITY:
@@ -365,7 +366,7 @@ describe.skipIf(!COMIS_BENCH)("poisoning resistance (gated)", () => {
     "measures poisoning ASR over the shipped pipeline (filter ON vs OFF)",
     async () => {
       // Resolve BOTH model lanes up front (the getModel guard). The judge/answer ids
-      // MUST be pi-ai-registry ids (gpt-4o / gpt-4.1; claude-opus-4-8 is ABSENT,
+      // MUST be pi-ai-registry ids (gpt-4o / gpt-4.1; claude-opus-4-8 is now a registry id as of pi 0.78.0 but graded all-invalid as a same-provider judge,
       // BUG-004) -- an unresolved id makes every probe invalid (excluded), never a
       // silent wrong number.
       let answerModel: ReturnType<typeof getModel> | undefined;

@@ -50,7 +50,8 @@
  * - GATED (this file): `COMIS_BENCH=1` enables the describe; the provider-backed
  *   `it` additionally nests behind `COMIS_BENCH_ANSWER_*` + `COMIS_BENCH_JUDGE_*`.
  *   Judge/answer model ids MUST be pi-ai-registry ids (gpt-4o / gpt-4.1;
- *   `claude-opus-4-8` is ABSENT from the 0.75.3 catalog, BUG-004) -- an unresolved
+ *   `claude-opus-4-8` entered the pi-ai registry in 0.78.0; under 0.75.3 it graded
+ *   all-invalid as a same-provider answer+judge pair on one Anthropic key, BUG-004) -- an unresolved
  *   id makes every probe `invalid` (excluded), never a silent wrong number. The
  *   no-LLM structural witness lives inside the gated describe (it imports
  *   @comis/memory); it proves the SHIPPED trust filter without a provider.
@@ -339,7 +340,7 @@ describe.skipIf(!COMIS_BENCH)("trust-first contradiction correctness (gated)", (
     "measures trust-first contradiction correctness (older high-trust fact wins)",
     async () => {
       // Resolve BOTH model lanes up front (the getModel guard). The judge/answer ids
-      // MUST be pi-ai-registry ids (gpt-4o / gpt-4.1; claude-opus-4-8 is ABSENT,
+      // MUST be pi-ai-registry ids (gpt-4o / gpt-4.1; claude-opus-4-8 is now a registry id as of pi 0.78.0 but graded all-invalid as a same-provider judge,
       // BUG-004) -- an unresolved id makes every probe invalid (excluded), never a
       // silent wrong number.
       let answerModel: ReturnType<typeof getModel> | undefined;
