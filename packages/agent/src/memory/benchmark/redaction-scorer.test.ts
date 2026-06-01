@@ -68,8 +68,12 @@ describe("scoreRedaction", () => {
     expect(score.leakRate).toBe(50);
     expect(score.validTotal).toBe(2);
     expect(score.leakedCount).toBe(1);
-    // The serialized score carries ONLY numbers — no string field that could
-    // smuggle a secret out (the report-omission invariant, proven structurally).
-    expect(JSON.stringify(score)).not.toMatch(/[A-Za-z]/);
+    // Every field is a NUMBER — there is no string-typed field a secret could
+    // ride on (the report-omission invariant, proven structurally). The VALUES
+    // (not the JSON keys, which are naturally alphabetic) carry no letters.
+    for (const value of Object.values(score)) {
+      expect(typeof value).toBe("number");
+    }
+    expect(JSON.stringify(Object.values(score))).not.toMatch(/[A-Za-z]/);
   });
 });
