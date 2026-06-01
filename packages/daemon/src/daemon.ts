@@ -1471,13 +1471,8 @@ async function bootFoundation(
   // Step 1 (pre-loadEnvFile): If the legacy env var COMIS_DISABLE_ENCRYPTED_SECRETS
   // is set at this point (before .env is loaded), fail with a migration error.
   // This var was removed in v1.5 — operators must use security.storage: env instead.
-  if (systemGetEnv("COMIS_DISABLE_ENCRYPTED_SECRETS")) {
-    throw new Error(
-      "[MIGRATION_ERROR] COMIS_DISABLE_ENCRYPTED_SECRETS is no longer supported. " +
-        "Set security.storage: env in your config.yaml and remove " +
-        "COMIS_DISABLE_ENCRYPTED_SECRETS from your environment. " +
-        "See the migration guide in the changelog.",
-    );
+  if (systemGetEnv("COMIS_DISABLE_ENCRYPTED_SECRETS")) { // MIGRATION-GATE: detect legacy env var
+    throw new Error("[MIGRATION_ERROR] COMIS_DISABLE_ENCRYPTED_SECRETS is no longer supported. Set security.storage: env in your config.yaml and remove the env var. See the migration guide in the changelog."); // MIGRATION-GATE
   }
 
   // Step 2: Pre-read security.storage from YAML (layered, last-wins).
@@ -1507,16 +1502,11 @@ async function bootFoundation(
 
   loadEnvFile(envPath);
 
-  // Step 5 (post-loadEnvFile): Re-check for COMIS_DISABLE_ENCRYPTED_SECRETS that
-  // may have been loaded from ~/.comis/.env. Fail with migration error if present.
+  // Step 5 (post-loadEnvFile): Re-check for COMIS_DISABLE_ENCRYPTED_SECRETS (MIGRATION-GATE)
+  // that may have been loaded from ~/.comis/.env. Fail with migration error if present.
   // eslint-disable-next-line no-restricted-syntax -- must re-read process.env after loadEnvFile
-  if (process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"]) {
-    throw new Error(
-      "[MIGRATION_ERROR] COMIS_DISABLE_ENCRYPTED_SECRETS found in .env file. " +
-        "This env var is no longer supported. Set security.storage: env in your " +
-        "config.yaml and remove COMIS_DISABLE_ENCRYPTED_SECRETS from ~/.comis/.env. " +
-        "See the migration guide in the changelog.",
-    );
+  if (process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"]) { // MIGRATION-GATE: detect legacy env var in .env
+    throw new Error("[MIGRATION_ERROR] COMIS_DISABLE_ENCRYPTED_SECRETS found in .env file. This env var is no longer supported. Set security.storage: env in your config.yaml and remove the env var from ~/.comis/.env. See the migration guide in the changelog."); // MIGRATION-GATE
   }
 
   // 0.5. Decrypt secrets, merge with env, scrub process.env.
