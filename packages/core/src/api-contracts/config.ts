@@ -473,11 +473,12 @@ export const ConfigGcContract = defineContract({
  * sections[], secretsStoreAvailable }` (handler). `pid` is the daemon
  * process id; `uptime` is `process.uptime()` seconds; `memoryUsage` is
  * `process.memoryUsage().rss`; `nodeVersion` is `process.version`.
- * `secretsStoreAvailable` is `true` when an encrypted SecretStorePort
- * is wired into the daemon — used by the `env_set` preflight in
- * gateway-tool.ts to distinguish "store ready" from "envfile-only mode"
- * without relying on internal manifest fields. Dev-mode strict
- * `response.parse(result)` ensures the handler MUST populate this field.
+ * `secretsStoreAvailable` is `true` when a writable store (file or
+ * encrypted) is wired — used by the `env_set` preflight in
+ * gateway-tool.ts to distinguish "writable store ready" from "env-only
+ * (read-only) mode". In env mode this is `false` (adapter present but
+ * read-only). Dev-mode strict `response.parse(result)` ensures the
+ * handler MUST populate this field.
  */
 export const GatewayStatusContract = defineContract({
   method: "gateway.status",
@@ -489,7 +490,7 @@ export const GatewayStatusContract = defineContract({
     nodeVersion: z.string(),
     configPaths: z.array(z.string()),
     sections: z.array(z.string()),
-    /** True when the encrypted SecretStorePort is wired (store active). */
+    /** True when a writable store (file or encrypted) is wired and available for env.set. In env mode this is false (adapter present but read-only). */
     secretsStoreAvailable: z.boolean(),
   }),
   scopes: ["admin"] as const,
@@ -525,8 +526,8 @@ export const GatewayRestartContract = defineContract({
 // ---------------------------------------------------------------------------
 
 /**
- * `env.set` — write a secret to the encrypted SecretStorePort OR the
- * legacy .env file. Admin-only. Rate-limited (5/min — env-handlers.ts:90).
+ * `env.set` — write a secret to the active writable SecretStorePort.
+ * Admin-only. Rate-limited (5/min — env-handlers.ts:90).
  * Triggers SIGUSR2 restart on success (env-handlers.ts:191).
  *
  * Request: `{ key, value }`. `key` is a uppercase + digits +
@@ -536,9 +537,14 @@ export const GatewayRestartContract = defineContract({
  * env-handlers.ts:120-156 (key-format, max-length, placeholder
  * rejection) produce operator-actionable error messages.
  *
- * Response: `{ set: true, key, storage, restarting: true }`
- * (env-handlers.ts:195-200). `storage` is `"encrypted"` when the
- * SecretStorePort is wired, `"envfile"` otherwise.
+ * Response: `{ set: true, key, storage, restarting }`.
+ * `storage` is `"encrypted"` (AES-256-GCM) or `"file"` (plaintext
+ * 0600 `secrets.json`). Rejected in `env` mode with an actionable
+ * error — `env` is not a member of the storage enum, and the
+ * preflight in `gateway-tool.ts` blocks the call before it reaches
+ * the handler. `restarting` is a boolean (secret writes still trigger
+ * restart in P1; the TYPE widens now so Plan 04 can flip the value
+ * without a schema change).
  *
  * **Residency canary.** The contract response schema deliberately
  * omits a `value` field — env.set NEVER returns the secret value
@@ -546,6 +552,11 @@ export const GatewayRestartContract = defineContract({
  * `value` to the return, dev-mode `response.parse(...)` rejects
  * (the absent key is not in the schema; strict mode is implicit
  * because we don't `.passthrough()`).
+ *
+ * **Dev-mode canary (T-02-06).** `EnvSetContract.response.parse(result)` in
+ * env-handlers.ts:237-238 acts as a residency canary and defense-in-depth
+ * type guard. If a handler mistakenly returns `storage: "env"` the dev-mode
+ * parse throws immediately — `"env"` is not in the enum.
  */
 export const EnvSetContract = defineContract({
   method: "env.set",
@@ -556,11 +567,12 @@ export const EnvSetContract = defineContract({
   response: z.object({
     set: z.literal(true),
     key: z.string(),
-    // The only storage backend is the encrypted SecretStorePort. The
-    // legacy "envfile" mode was removed alongside the .env-file fallback
-    // in env-handlers.ts.
-    storage: z.literal("encrypted"),
-    restarting: z.literal(true),
+    // Writable storage backends only: "encrypted" (AES-256-GCM via SecretStorePort)
+    // or "file" (plaintext 0600 secrets.json). "env" is intentionally excluded —
+    // env mode is read-only; any handler returning storage:"env" would fail the
+    // dev-mode parse (T-02-06 canary).
+    storage: z.enum(["encrypted", "file"]),
+    restarting: z.boolean(),
   }),
   scopes: ["admin"] as const,
 });
