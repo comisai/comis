@@ -86,8 +86,12 @@ export function preReadStorageMode(
       raw["oauth"] !== null &&
       typeof (raw["oauth"] as Record<string, unknown>)["storage"] === "string"
     ) {
-      mode = "legacy";
-      continue;
+      // STICKY/TERMINAL (CR-01): a legacy key in ANY layer must win over a
+      // later valid `security.storage`. Returning early prevents a subsequent
+      // overlay's `security.storage: encrypted` from masking the legacy key,
+      // which would let the daemon boot gate write key material BEFORE the
+      // migration guard fails the boot (REQ-17 violation).
+      return "legacy";
     }
 
     const secSection = raw["security"];
@@ -108,8 +112,8 @@ export function preReadStorageMode(
       !Array.isArray(secretsSection) &&
       typeof (secretsSection as Record<string, unknown>)["enabled"] === "boolean"
     ) {
-      mode = "legacy";
-      continue;
+      // STICKY/TERMINAL (CR-01): see the oauth.storage branch above.
+      return "legacy";
     }
 
     // Read security.storage if present and valid
