@@ -207,6 +207,10 @@ export async function setupAgents(deps: {
   /** Usefulness store (Phase 93, FEED-03). Threaded into each per-agent createPiExecutor
    *  like entityStore (the recall usefulness read path). Built in setup-memory on the shared db. */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
+  /** Per-user representation store (Phase 107, USER-03 — Track E1). Threaded into each per-agent
+   *  createPiExecutor like entityStore (the recall LLM-free `<user_profile>` injection read path).
+   *  Built in setup-memory on the shared db. */
+  userRepresentationStore?: import("@comis/core").UserRepresentationStore;
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */
@@ -432,6 +436,7 @@ export async function setupAgents(deps: {
     tripleStore: deps.tripleStore,
     embeddingStore: deps.embeddingStore,
     usefulnessStore: deps.usefulnessStore,
+    userRepresentationStore: deps.userRepresentationStore,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
     geminiCacheManager: deps.geminiCacheManager,

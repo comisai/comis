@@ -101,6 +101,12 @@ export interface SingleAgentDeps {
    *  shared db handle; the segregated port TYPE (agent↛memory cut). Dormant until an operator
    *  enables `agents.<id>.rag.feedback.enabled` (default OFF). */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
+  /** Per-user representation store (Phase 107, USER-03 — Track E1). Threaded into each per-agent
+   *  createPiExecutor (the executor recall read path -> prompt-assembly's LLM-free `<user_profile>`
+   *  standing-block injection). Built in setup-memory on the shared db handle; the segregated port
+   *  TYPE (agent↛memory cut). Dormant until the offline builder writes rows (default-OFF cost gate);
+   *  absent ⇒ no read, no push, byte-identical prompt. */
+  userRepresentationStore?: import("@comis/core").UserRepresentationStore;
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */

@@ -33,6 +33,7 @@ import {
   createSqliteMemoryCausalStore,
   createSqliteTripleStore,
   createSqliteMemoryEmbeddingStore,
+  createSqliteUserRepresentationStore,
   type MemoryApi,
 } from "@comis/memory";
 import {
@@ -131,6 +132,17 @@ export interface MemoryResult {
    *  the one place this @comis/memory adapter and the @comis/agent recall consumer are joined
    *  (the agent↛memory cut). */
   embeddingStore: import("@comis/core").MemoryEmbeddingStore;
+  /** Per-user representation store (Phase 107, USER-01/03 — Track E1). The SOLE adapter for the
+   *  segregated `UserRepresentationStore` port (the `(tenant, agent, user)`-scoped upsert/read over
+   *  the additive `user_representation` table) — built UNCONDITIONALLY on the SAME shared `db`
+   *  handle as the memory adapter (so the `source_memory_id` ON DELETE CASCADE + the 3-way
+   *  isolation scope stay consistent with the memory rows the profile is distilled from — a read on
+   *  a DIFFERENT handle would silently return empty, T-107-05-02). No model/IO cost, so it is always
+   *  present; the LLM-free `<user_profile>` injection stays dormant until the offline builder writes
+   *  rows (its own default-OFF cost gate). Threaded into the recall read path (setup-agents-*) as the
+   *  port TYPE only AND into the offline-builder cron — the daemon (composition root) is the one
+   *  place this @comis/memory adapter and the @comis/agent consumers are joined (the agent↛memory cut). */
+  userRepresentationStore: import("@comis/core").UserRepresentationStore;
   /** Consolidation store (Phase 84, CONS-01..07). The SOLE adapter for the segregated
    *  `MemoryConsolidationStore` port — built UNCONDITIONALLY on the SAME shared `db` handle
    *  as the memory adapter + entity store (so the observation columns, the `(tenant, agent)`
@@ -447,6 +459,17 @@ export async function setupMemory(deps: {
   // only (the agent↛memory cut). Threaded into the recall read path (setup-agents-*).
   const embeddingStore = createSqliteMemoryEmbeddingStore({ db, logger: memoryLogger });
 
+  // 6.5.2b'''''. Per-user representation store (Phase 107, USER-01/03 — Track E1). Built on the
+  // SAME shared `db` handle the memory adapter owns — NEVER a second Database (T-107-05-02): the
+  // `source_memory_id` ON DELETE CASCADE + the `(tenant, agent, user)` 3-way isolation scope must
+  // stay consistent with the memory rows the profile is distilled from; a read on a DIFFERENT
+  // handle would silently return empty (the same hazard as the embedding store above). Always
+  // constructed (no model/IO cost); the LLM-free `<user_profile>` injection stays dormant until the
+  // offline builder writes rows (its own default-OFF cost gate, `memoryUserRepresentation.enabled`).
+  // Composition-root join — the agent receives the port TYPE only (the agent↛memory cut). Threaded
+  // into the recall read path (setup-agents-*) AND the offline-builder cron (setup-channels).
+  const userRepresentationStore = createSqliteUserRepresentationStore({ db, logger: memoryLogger });
+
   // 6.5.2c. Consolidation store (Phase 84). Built on the SAME `db` handle the memory
   // adapter owns — NOT a second Database — so the observation columns (proof_count /
   // source_ids / consolidated_at / confidence / history) and the memories table share
@@ -633,6 +656,7 @@ export async function setupMemory(deps: {
     causalStore,
     tripleStore,
     embeddingStore,
+    userRepresentationStore,
     consolidationStore,
     usefulnessStore,
     recallCounters,

@@ -96,6 +96,13 @@ export interface ToolAssemblyDeps {
   /** Optional usefulness store (FEED-03), threaded into prompt-assembly's createMemoryRecall.
    *  TYPE-only from @comis/core (the agent↛memory build cut). */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
+  /** Optional per-user representation store (USER-03), threaded into prompt-assembly's LLM-free
+   *  `<user_profile>` standing-block injection (a deterministic scoped read + pure formatter, NO
+   *  model call). Absent -> no read, no push, byte-identical prompt. TYPE-only from @comis/core
+   *  (the agent↛memory build cut). A missing forward here leaves the profile injection a silent
+   *  no-op even when the store is wired in the daemon (the documented latent field-plumbing drop —
+   *  Pitfall 1). */
+  userRepresentationStore?: import("@comis/core").UserRepresentationStore;
   /** Timer port for the rerank wall-clock deadline (createMemoryRecall). */
   timers?: import("@comis/core").TimerPort;
   hookRunner?: HookRunner;
@@ -404,6 +411,11 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       tripleStore: deps.tripleStore,
       embeddingStore: deps.embeddingStore,
       usefulnessStore: deps.usefulnessStore,
+      // USER-03: forward the per-user representation store the SAME way as usefulnessStore — a
+      // missing forward here is a silent no-op (the profile <user_profile> block never renders even
+      // with the store wired in the daemon). prompt-assembly's deps.userRepresentationStore.read is
+      // the LLM-free standing-block read (107-04); the daemon construct + thread is 107-05.
+      userRepresentationStore: deps.userRepresentationStore,
       timers: deps.timers,
       hookRunner: deps.hookRunner,
       secretManager: deps.secretManager,

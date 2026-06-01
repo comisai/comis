@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -201,6 +201,13 @@ export interface ChannelsDeps {
    *  write path. Absent => the reasoning sentinel cannot run (the cron is off-by-default
    *  anyway, so a default-config agent never reaches it). */
   tripleStore?: TripleStorePort;
+  /** Per-user representation store (Phase 107, USER-03 — Track E1) — forwarded to the cron path
+   *  so the opt-in __USER_REPRESENTATION__ sentinel runs runUserRepresentationBuild's offline
+   *  upsert write. Built in setup-memory on the shared db handle; injected as the port TYPE
+   *  (agent↛memory cut). Threaded the full daemon → registry → credentials chain — a missing
+   *  thread silently disables the offline-builder write path (Pitfall 1). Absent => the
+   *  representation sentinel cannot run (the cron is off-by-default anyway). */
+  userRepresentationStore?: UserRepresentationStore;
   /** Default tenant ID for memory storage. */
   tenantId?: string;
   /** Embedding queue for new memory entries (optional). */
@@ -350,6 +357,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     causalStore: deps.causalStore,
     consolidationStore: deps.consolidationStore,
     tripleStore: deps.tripleStore,
+    userRepresentationStore: deps.userRepresentationStore,
     tenantId: deps.tenantId,
     piSessionAdapters: deps.piSessionAdapters,
     cronExecutionTrackers: deps.cronExecutionTrackers,

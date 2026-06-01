@@ -1985,12 +1985,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryTripleStoreDeps",
       "MemoryTripleRowSchema",
       // Per-user representation store (Phase 107-02, Track E1 — USER-01).
-      // createSqliteUserRepresentationStore is the sole UserRepresentationStore
-      // adapter — the (tenant, agent, user)-scoped upsert/read over the additive
-      // user_representation table. AHEAD of its daemon consumer (107-05) — the
-      // factory-orphan dance; REMOVE this entry when setup-memory.ts constructs it
-      // (mirror createSqliteTripleStore @ 100-05 / the entry above).
-      "createSqliteUserRepresentationStore",
+      // createSqliteUserRepresentationStore's daemon consumer LANDED in Plan 107-05
+      // (setup-memory.ts constructs the SOLE adapter on the shared db handle) — the
+      // factory-orphan SHRANK on schedule (mirror createSqliteTripleStore @ 100-05 /
+      // the entry above); its entry is removed.
       // MemoryUserRepresentationStoreDeps is the constructor-deps SHAPE type
       // (referenced via inline objects only); UserRepresentationRowSchema is the row
       // schema consumed by createRowMapper inside the adapter (an intra-file value

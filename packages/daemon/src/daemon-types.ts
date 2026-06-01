@@ -408,6 +408,12 @@ export interface BootContext {
    *  siblings. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory
    *  cut). Dormant until an operator enables `agents.<id>.rag.feedback.enabled` (default OFF). */
   usefulnessStore: Awaited<ReturnType<typeof setupMemory>>["usefulnessStore"];
+  /** Per-user representation store (Phase 107, USER-03 — Track E1) — threaded into setupAgents (the
+   *  executor recall read path -> prompt-assembly's LLM-free `<user_profile>` standing-block injection)
+   *  AND the offline-builder cron (setup-channels -> the __USER_REPRESENTATION__ sentinel). Built in
+   *  setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until the
+   *  offline builder writes rows (default-OFF cost gate). */
+  userRepresentationStore: Awaited<ReturnType<typeof setupMemory>>["userRepresentationStore"];
   /** Consolidation store (Phase 84, CONS-07) — threaded into the cron path ONLY (the
    *  registerCronEventListeners → runMemoryConsolidation sentinel). NOT the executor recall
    *  path. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). */

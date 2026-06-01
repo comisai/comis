@@ -23,6 +23,7 @@ import type {
   TripleStorePort,
   MemoryEmbeddingStore,
   MemoryUsefulnessStore,
+  UserRepresentationStore,
   RerankerPort,
   HookRunner,
   SecretManager,
@@ -128,6 +129,11 @@ export interface PiExecutorDeps {
    *  -> no usefulness read (recall scoring unchanged). TYPE-only from @comis/core — the agent
    *  never imports the memory package (the agent↛memory cut). */
   usefulnessStore?: MemoryUsefulnessStore;
+  /** Optional per-user representation store (USER-03). Built in the daemon on the shared memory db
+   *  handle; threaded into prompt-assembly's LLM-free `<user_profile>` injection via ToolAssemblyDeps.
+   *  Absent -> no profile read, no push, byte-identical prompt (the default-OFF cost gate). TYPE-only
+   *  from @comis/core — the agent never imports the memory package (the agent↛memory cut). */
+  userRepresentationStore?: UserRepresentationStore;
   hookRunner?: HookRunner;
   // System prompt config
   outboundMediaEnabled?: boolean;

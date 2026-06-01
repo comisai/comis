@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry } from "@comis/agent";
@@ -70,6 +70,14 @@ export interface CronEventListenerDeps {
    *  write a silent no-op. Absent => the reasoning sentinel cannot run, but the cron is
    *  off-by-default so a default-config agent never reaches it. */
   tripleStore?: TripleStorePort;
+  /** Per-user representation store (Phase 107, USER-03 — Track E1) — the offline-builder
+   *  upsert write path. Threaded into runUserRepresentationBuild by the opt-in
+   *  `__USER_REPRESENTATION__` sentinel below. Built in setup-memory on the SAME db handle the
+   *  memory adapter owns; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
+   *  registry → credentials chain — a missing thread would make the offline-builder write a silent
+   *  no-op (Pitfall 1). Absent => the representation sentinel cannot run, but the cron is
+   *  off-by-default so a default-config agent never reaches it. */
+  userRepresentationStore?: UserRepresentationStore;
   tenantId?: string;
   piSessionAdapters?: Map<string, {
     getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
