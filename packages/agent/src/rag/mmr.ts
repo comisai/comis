@@ -52,6 +52,14 @@ export function mmrRerank(
       }
       const mmr = lambda * rel - (1 - lambda) * maxSim;
       // Strictly-greater wins; an EXACT tie resolves by entry.id ascending (deterministic).
+      // CONTRACT (do NOT relax without revisiting the tiebreak): `rel` and `cos` are used RAW
+      // (≈[0,1], NO min-max normalization — RESEARCH Open Q3 starts raw). Under raw scores the
+      // `mmr === bestScore` exact-float compare engages ONLY on bit-identical MMR — i.e. genuine
+      // duplicates (equal `rel` + both unembedded → maxSim 0 for each) — so the id tiebreak is a
+      // determinism backstop, not a frequent path. IF a future change introduces score
+      // normalization (the Open Q3 door), this exact `===` MUST be revisited (replace with an
+      // epsilon band, advancing `bestIdx` but NOT `bestScore` on the tie) or genuine near-ties
+      // will silently fall to scan order instead of id order and be mis-ordered.
       if (mmr > bestScore || (mmr === bestScore && d.entry.id < remaining[bestIdx].entry.id)) {
         bestScore = mmr;
         bestIdx = i;
