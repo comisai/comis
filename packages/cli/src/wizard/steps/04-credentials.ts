@@ -442,7 +442,7 @@ const wizardLogger = createConsoleLogger("info", { name: "wizard-oauth" });
 /**
  * Open the OAuth credential store from the current config (mirrors the
  * helper installed in `auth.ts`). Defaults to file storage when config
- * is absent or doesn't set `oauth.storage`. Encrypted-mode CLI wiring
+ * is absent or doesn't set `security.storage`. Encrypted-mode CLI wiring
  * requires SECRETS_MASTER_KEY + secretsDb — if `storage='encrypted'`,
  * the wizard surfaces a fail-fast error (operator can switch to file mode
  * for the wizard, then back to encrypted after).
@@ -461,11 +461,11 @@ async function openWizardOAuthStore(): Promise<OAuthCredentialStorePort> {
   if (!validated.ok) {
     return selectOAuthCredentialStore({ storage: "file", dataDir, fileLock });
   }
-  const storage = validated.value.oauth?.storage ?? "file";
+  const storage = validated.value.security?.storage ?? ("file" as const);
   if (storage === "encrypted") {
     throw new Error(
       "OAuth storage mode is 'encrypted' but the wizard cannot bootstrap the encrypted store. " +
-        "Hint: set appConfig.oauth.storage to 'file' temporarily for the wizard, or run " +
+        "Hint: set security.storage to 'file' in config.yaml temporarily for the wizard, or run " +
         "`comis auth login --provider openai-codex` from a shell where SECRETS_MASTER_KEY is exported.",
     );
   }

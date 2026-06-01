@@ -25,7 +25,7 @@
  *                          daemon RPC method.
  *
  * Storage-mode branching: every store-backed subcommand reads
- * `config.oauth.storage` via `loadOAuthStorageMode()` and either routes
+ * `config.security.storage` via `loadStorageMode()` and either routes
  * through `withClient` (after `requireDaemonOrExit`) or uses the existing
  * `openOAuthStoreFromConfig` helper unchanged. The helper itself fails fast
  * on encrypted storage (defense-in-depth) — encrypted mode never reaches
@@ -53,6 +53,7 @@ import {
   redactEmailForLog,
   type OAuthCredentialStorePort,
   type OAuthProfile,
+  type CredentialStorageMode,
 } from "@comis/core";
 import {
   selectOAuthCredentialStore,
@@ -158,7 +159,7 @@ const logger = createConsoleLogger("info", { name: "auth-cli" });
 
 // ---------------------------------------------------------------------------
 // Internal: open the OAuth credential store using the same selector the
-// daemon uses. Reads appConfig.oauth.storage from the user's config file
+// daemon uses. Reads appConfig.security.storage from the user's config file
 // with safe defaults when no config exists (e.g., daemon never set up).
 //
 // Both loadConfigFile and validateConfig are Result-typed (per @comis/core),
@@ -178,7 +179,7 @@ const logger = createConsoleLogger("info", { name: "auth-cli" });
  * Returns synchronously today; declared async to leave headroom for a
  * future config-fetch-via-RPC path without breaking call sites.
  */
-async function loadOAuthStorageMode(): Promise<"file" | "encrypted"> {
+async function loadStorageMode(): Promise<CredentialStorageMode> {
   // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
   const envPaths = process.env.COMIS_CONFIG_PATHS;
   const configPath =
@@ -198,7 +199,7 @@ async function loadOAuthStorageMode(): Promise<"file" | "encrypted"> {
     );
     process.exit(1);
   }
-  return validateResult.value.oauth.storage;
+  return validateResult.value.security.storage;
 }
 
 function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
@@ -231,7 +232,7 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
     process.exit(1);
   }
 
-  const storage = validateResult.value.oauth.storage;
+  const storage = validateResult.value.security.storage;
 
   if (storage === "encrypted") {
     // Encrypted-mode bootstrap from CLI requires SECRETS_MASTER_KEY + the
@@ -243,7 +244,7 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
     error(
       "OAuth storage mode is 'encrypted' but the CLI cannot bootstrap the encrypted store. " +
         "Hint: Either (1) export SECRETS_MASTER_KEY in this shell and rerun, or (2) change " +
-        "appConfig.oauth.storage to 'file' for `comis auth login` flows.",
+        "security.storage to 'file' in config.yaml for `comis auth login` flows.",
     );
     process.exit(1);
   }
@@ -463,11 +464,11 @@ export function registerAuthCommand(program: Command): void {
   auth
     .command("list")
     .description(
-      "List stored OAuth profiles. Requires the comis daemon to be running when oauth.storage is 'encrypted'.",
+      "List stored OAuth profiles. Requires the comis daemon to be running when security.storage is 'encrypted'.",
     )
     .option("--provider <id>", "Filter to one provider")
     .action(async (opts: { provider?: string }) => {
-      const storage = await loadOAuthStorageMode();
+      const storage = await loadStorageMode();
       // ----- Encrypted branch: daemon RPC ----------------------------------
       if (storage === "encrypted") {
         await requireDaemonOrExit();
@@ -524,14 +525,14 @@ export function registerAuthCommand(program: Command): void {
   auth
     .command("logout")
     .description(
-      "Remove a stored OAuth profile. Requires the comis daemon to be running when oauth.storage is 'encrypted'.",
+      "Remove a stored OAuth profile. Requires the comis daemon to be running when security.storage is 'encrypted'.",
     )
     .requiredOption(
       "--profile <id>",
       "Profile ID to remove (e.g., openai-codex:user@example.com)",
     )
     .action(async (opts: { profile: string }) => {
-      const storage = await loadOAuthStorageMode();
+      const storage = await loadStorageMode();
       // ----- Encrypted branch: daemon RPC ----------------------------------
       if (storage === "encrypted") {
         await requireDaemonOrExit();
@@ -608,7 +609,7 @@ export function registerAuthCommand(program: Command): void {
   auth
     .command("status")
     .description(
-      "Show per-provider OAuth status. Requires the comis daemon to be running when oauth.storage is 'encrypted'.",
+      "Show per-provider OAuth status. Requires the comis daemon to be running when security.storage is 'encrypted'.",
     )
     .option("--provider <id>", "Filter to one provider")
     .action(async (opts: { provider?: string }) => {
@@ -617,7 +618,7 @@ export function registerAuthCommand(program: Command): void {
       // no "active profile" concept -- status is just `profileStatus(expires)`
       // applied to each row of the profile list.
       let profiles: DisplayProfile[];
-      const storage = await loadOAuthStorageMode();
+      const storage = await loadStorageMode();
       if (storage === "encrypted") {
         await requireDaemonOrExit();
         try {

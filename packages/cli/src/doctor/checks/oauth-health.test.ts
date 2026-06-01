@@ -268,9 +268,9 @@ describe("oauthHealthCheck — encrypted-mode skip", () => {
   it("encrypted storage yields one skip explaining CLI cannot read", async () => {
     const ctx: DoctorContext = {
       ...baseContext,
-      // Minimal config shape that exposes oauth.storage; cast to avoid
+      // Minimal config shape that exposes security.storage; cast to avoid
       // building a full AppConfig.
-      config: { oauth: { storage: "encrypted" } } as unknown as DoctorContext["config"],
+      config: { security: { storage: "encrypted" } } as unknown as DoctorContext["config"],
     };
     const findings = await oauthHealthCheck.run(ctx);
     const skip = findings.find(
