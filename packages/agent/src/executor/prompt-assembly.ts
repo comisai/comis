@@ -70,6 +70,7 @@ import {
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createMemoryRecall } from "../rag/memory-recall.js";
 import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
+import { buildUserRepresentationBlock } from "./user-representation-block.js";
 import { BOOTSTRAP_BUDGET_WARN_PERCENT, CHARS_PER_TOKEN_RATIO } from "../context-engine/index.js";
 import { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "../workspace/boot-file.js";
 import { detectOnboardingState } from "../workspace/onboarding-detector.js";
@@ -292,6 +293,12 @@ export interface PromptAssemblyParams {
     /** Optional usefulness store for createMemoryRecall's usefulness read (FEED-03;
      *  default-OFF via config.rag.feedback). TYPE-only (the agent↛memory build cut). */
     usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
+    /** Optional per-user profile store for the LLM-free standing-block injection
+     *  (USER-03; default-OFF). Absent ⇒ no read, no push, byte-identical prompt
+     *  (the cost gate). The agent receives the port TYPE only — the agent↛memory
+     *  build cut. The read is a deterministic store.read + a pure formatter; NO
+     *  model call crosses onto the recall hot path (the milestone's #1 constraint). */
+    userRepresentationStore?: import("@comis/core").UserRepresentationStore;
     timers?: import("@comis/core").TimerPort;
     hookRunner?: HookRunner;
     secretManager?: SecretManager;
@@ -827,6 +834,27 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         // FIXED guidance text, NOT a retrieved memory — excluded from telemetry above.
         const temporalGuidance = buildTemporalGuidanceBlock(ranked);
         if (temporalGuidance) memorySections.push(temporalGuidance);
+
+        // USER-03: the LLM-free per-user-profile standing block. Default-OFF — gated
+        // on the optional store dep (absent ⇒ no read, no push ⇒ byte-identity, the
+        // cost gate). When present, a DETERMINISTIC store.read scoped to THIS prompt's
+        // own (tenant, agent, user) + the pure buildUserRepresentationBlock formatter
+        // (NO model call — the recall hot path stays LLM-free, mirror the temporal
+        // block push above). The formatter returns null on an empty profile ⇒ nothing
+        // pushed ⇒ byte-identity. Non-fatal: a read err is swallowed by the outer
+        // try/catch (the agent proceeds without the profile). The profile content was
+        // redaction-checked + validateMemoryWrite-clean + high-trust at WRITE time.
+        if (deps.userRepresentationStore) {
+          const profile = await deps.userRepresentationStore.read({
+            tenantId: deps.tenantId ?? sessionKey.tenantId,
+            agentId: agentId ?? config.name,
+            userId: sessionKey.userId,
+          });
+          if (profile.ok && profile.value.length > 0) {
+            const profileBlock = buildUserRepresentationBlock(profile.value);
+            if (profileBlock) memorySections.push(profileBlock);
+          }
+        }
 
         // Emit memory:injected observability event so the trajectory bridge
         // can record one line per RAG injection. Fires only on turns where
