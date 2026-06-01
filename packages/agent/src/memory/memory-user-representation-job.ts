@@ -95,9 +95,34 @@ export interface UserRepresentationSourceMemory {
 export interface MemoryUserRepresentationConfig {
   /** DEFAULT-OFF cost gate. When false: no build() call, no write, no spend. */
   enabled: boolean;
-  /** Upper bound on entries written per run (the DoS cost bound). */
+  /** Upper bound on entries WRITTEN per run (the DoS cost bound on the write side). */
   maxEntriesPerRun: number;
+  /**
+   * MR-02 INPUT bound: the max number of source memories fed into ONE build()
+   * prompt. The sources arrive newest-first (the cron's `inspect` orders
+   * `created_at DESC`), so the cap keeps the NEWEST `maxSourceMemories` and drops
+   * the older tail — the build prompt can never grow unbounded with a chatty user's
+   * full history (an over-context prompt silently fails the build → no profile).
+   * Optional: absent ⇒ {@link DEFAULT_MAX_SOURCE_MEMORIES}.
+   */
+  maxSourceMemories?: number;
+  /**
+   * MR-02 INPUT bound: the max total characters of the concatenated `sourceText`
+   * fed into ONE build() prompt. Applied AFTER the count cap — sources are admitted
+   * newest-first until the next one would exceed the budget. Optional: absent ⇒
+   * {@link DEFAULT_MAX_SOURCE_CHARS}.
+   */
+  maxSourceChars?: number;
 }
+
+/**
+ * MR-02 default input bounds. Conservative caps that keep ONE distillation prompt
+ * well within a cheap model's context window while admitting a rich profile's worth
+ * of recent high-trust sources. An operator can widen/narrow them via config; they
+ * mirror `maxEntriesPerRun`'s DoS-bound intent on the INPUT axis.
+ */
+const DEFAULT_MAX_SOURCE_MEMORIES = 200;
+const DEFAULT_MAX_SOURCE_CHARS = 24_000;
 
 /** Dependencies injected into the offline representation-build handler. */
 export interface MemoryUserRepresentationDeps {
@@ -140,6 +165,12 @@ export interface MemoryUserRepresentationStats {
   blocked: number;
   /** Candidates skipped because they exceeded maxEntriesPerRun. */
   skippedOverCap: number;
+  /** MR-02: surviving (post-external-exclude) high-trust sources for this user. */
+  sourcesConsidered: number;
+  /** MR-02: sources actually fed into the bounded build() prompt. */
+  sourcesUsed: number;
+  /** MR-02: true when the input bound dropped one or more sources from the prompt. */
+  sourcesTruncated: boolean;
 }
 
 /** The job's Result alias (exported for the test + the daemon onComplete mapping). */
@@ -174,6 +205,10 @@ export async function runUserRepresentationBuild(
   let written = 0;
   let blocked = 0;
   let skippedOverCap = 0;
+  // MR-02 input-bound counters (counts-only; never carry source content).
+  let sourcesConsidered = 0;
+  let sourcesUsed = 0;
+  let sourcesTruncated = false;
 
   const emit = (): void => {
     eventBus?.emit("memory:user_representation_built", {
@@ -182,12 +217,23 @@ export async function runUserRepresentationBuild(
       written,
       blocked,
       skippedOverCap,
+      sourcesConsidered,
+      sourcesUsed,
+      sourcesTruncated,
       durationMs: clock.now() - startMs,
       timestamp: clock.now(),
     });
   };
 
-  const stats = (): MemoryUserRepresentationStats => ({ built, written, blocked, skippedOverCap });
+  const stats = (): MemoryUserRepresentationStats => ({
+    built,
+    written,
+    blocked,
+    skippedOverCap,
+    sourcesConsidered,
+    sourcesUsed,
+    sourcesTruncated,
+  });
 
   // T-107-03-04: the DEFAULT-OFF cost gate. No build() call, no write, no spend.
   if (!config.enabled) {
@@ -211,27 +257,69 @@ export async function runUserRepresentationBuild(
   //    for USER. An `external` claim can NEVER enter the profile. The build seam
   //    never sees the excluded content.
   const sources = allSources.filter((s) => s.trustLevel !== "external");
+  sourcesConsidered = sources.length;
 
   if (sources.length === 0) {
     emit();
     return ok(stats());
   }
 
-  // 3. The source-trust ceiling, computed in CODE over the SURVIVING sources
-  //    (T-107-03-03). All survivors are high-trust (external already excluded), so
-  //    the ceiling is the floor of the survivors — a system+learned mix yields
+  // 3. MR-02 INPUT BOUND: cap the source set fed into ONE build() prompt so it can
+  //    never grow unbounded (an over-context prompt silently fails the build → no
+  //    profile; mirrors maxEntriesPerRun's DoS intent, on the INPUT axis). Sources are
+  //    newest-first (the cron orders `created_at DESC`), so we keep the NEWEST and drop
+  //    the older tail: first the count cap, then a cumulative-char budget. Truncation is
+  //    surfaced as a counts-only WARN + on the event so an operator can diagnose a thin
+  //    profile (a chatty user is no longer silently windowed away).
+  const maxSourceMemories = config.maxSourceMemories ?? DEFAULT_MAX_SOURCE_MEMORIES;
+  const maxSourceChars = config.maxSourceChars ?? DEFAULT_MAX_SOURCE_CHARS;
+  const countCapped = sources.slice(0, maxSourceMemories);
+  const usedSources: UserRepresentationSourceMemory[] = [];
+  let sourceText = "";
+  for (const s of countCapped) {
+    const line = usedSources.length === 0 ? `- ${s.content}` : `\n- ${s.content}`;
+    // Always admit the FIRST (newest) source even if it alone exceeds the char
+    // budget — never send an empty prompt; thereafter the budget gates the rest.
+    if (usedSources.length > 0 && sourceText.length + line.length > maxSourceChars) {
+      break; // char budget reached
+    }
+    sourceText += line;
+    usedSources.push(s);
+  }
+  sourcesUsed = usedSources.length;
+  sourcesTruncated = sourcesUsed < sources.length;
+  if (sourcesTruncated) {
+    logger.warn(
+      {
+        agentId,
+        errorKind: "validation" as const,
+        step: "user-repr" as const,
+        sourcesConsidered,
+        sourcesUsed,
+        maxSourceMemories,
+        maxSourceChars,
+        hint: "high-trust source set exceeded the per-build input bound — distilling over the NEWEST sources only; raise maxSourceMemories/maxSourceChars (or page the cron read) for a fuller profile",
+      },
+      "User representation source set truncated to the per-build input bound",
+    );
+  }
+
+  // 4. The source-trust ceiling, computed in CODE over the USED sources
+  //    (T-107-03-03) — the candidates are distilled from exactly these, so the
+  //    ceiling must reflect them. All are high-trust (external already excluded), so
+  //    the ceiling is the floor of the used sources — a system+learned mix yields
   //    `learned`; the writer can never raise trust above its sources, and the LLM
-  //    has no say (the parser stripped any trust field).
+  //    has no say (the parser stripped any trust field). `usedSources` is non-empty
+  //    here (sources.length > 0 and the first line always fits — see below).
   let sourceTrust: UserRepresentationTrust = "system";
-  for (const s of sources) {
+  for (const s of usedSources) {
     // s.trustLevel is one of system|learned here (external filtered out above).
     sourceTrust = minTrust(sourceTrust, s.trustLevel as UserRepresentationTrust);
   }
 
-  // 4. The INJECTED offline build() seam over the surviving source text. Non-fatal:
-  //    a thrown/aborted build → WARN + return ok with nothing written
-  //    (mirrors reasoning-job.ts:407-420).
-  const sourceText = sources.map((s) => `- ${s.content}`).join("\n");
+  // The INJECTED offline build() seam over the BOUNDED source text. Non-fatal: a
+  // thrown/aborted build → WARN + return ok with nothing written (mirrors
+  // reasoning-job.ts:407-420).
   const builtResult = await fromPromise(deps.build(sourceText));
   if (!builtResult.ok) {
     logger.warn(
@@ -320,7 +408,13 @@ export async function runUserRepresentationBuild(
     // Trust is CODE-computed at the source ceiling (T-107-03-03) — NEVER from the
     // LLM, NEVER `external`. `sourceMemoryId` is omitted: a profile entry is
     // distilled from the FUSED source set, not a single message (provenance to a
-    // single id would be misleading; the table column is optional).
+    // single id would be misleading; the table column is optional). CONSEQUENCE
+    // (LR-02): because `source_memory_id` is NULL here, the table's ON DELETE
+    // CASCADE does NOT retire these rows when their source memories are deleted —
+    // an offline-built entry persists until the next run upsert-replaces it (keyed
+    // on (scope, entryType, content)). There is no orphan-sweep; do not rely on
+    // CASCADE to garbage-collect builder-produced rows (the adapter docstring
+    // carries the full caveat).
     const entry: UserRepresentationInput = {
       entryType: candidate.entryType,
       content: candidate.content,

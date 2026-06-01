@@ -10,7 +10,22 @@ describe("MemoryUserRepresentationConfigSchema", () => {
       enabled: false,
       schedule: "0 5 * * *",
       maxEntriesPerRun: 50,
+      // MR-02 per-build INPUT bounds (default-bounded so the prompt is never unbounded).
+      maxSourceMemories: 200,
+      maxSourceChars: 24_000,
     });
+  });
+
+  it("MR-02: defaults the per-build input bounds (maxSourceMemories / maxSourceChars)", () => {
+    const result = MemoryUserRepresentationConfigSchema.parse({});
+    expect(result.maxSourceMemories).toBe(200);
+    expect(result.maxSourceChars).toBe(24_000);
+  });
+
+  it("MR-02: rejects a non-positive / fractional input bound (the DoS bound is a positive int)", () => {
+    expect(() => MemoryUserRepresentationConfigSchema.parse({ maxSourceMemories: 0 })).toThrow();
+    expect(() => MemoryUserRepresentationConfigSchema.parse({ maxSourceChars: -1 })).toThrow();
+    expect(() => MemoryUserRepresentationConfigSchema.parse({ maxSourceMemories: 1.5 })).toThrow();
   });
 
   it("defaults enabled to false (the per-user profile build is opt-in, a cost gate not back-compat)", () => {

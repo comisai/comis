@@ -314,7 +314,14 @@ export async function handleMemoryCronSentinel(
         agentId,
         tenantId: reprTenantId,
         userId,
-        config: { enabled: userReprConfig.enabled, maxEntriesPerRun: userReprConfig.maxEntriesPerRun },
+        config: {
+          enabled: userReprConfig.enabled,
+          maxEntriesPerRun: userReprConfig.maxEntriesPerRun,
+          // MR-02 per-build INPUT bounds (forwarded so an operator's knobs reach the
+          // job; the job also defaults them when absent).
+          maxSourceMemories: userReprConfig.maxSourceMemories,
+          maxSourceChars: userReprConfig.maxSourceChars,
+        },
         // Injected from setup-memory (the composition-root join) — the port TYPE only.
         userRepresentationStore,
         // The scoped read seam: this user's already-fetched high-trust sources (the job

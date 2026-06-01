@@ -393,6 +393,111 @@ describe("runUserRepresentationBuild — Task 2: gate / anti-poisoning / validat
     }
   });
 
+  it("MR-02 input bound (count): with more sources than maxSourceMemories, build() sees only the capped HEAD and the event flags truncation", async () => {
+    // RED-first (MR-02): the whole high-trust source set was concatenated into ONE
+    // unbounded build() prompt → an arbitrarily large prompt (over-context → silent
+    // no-build / runaway cost). The input MUST be bounded (mirroring maxEntriesPerRun's
+    // DoS intent), truncating to the newest-first HEAD, with the truncation surfaced in
+    // the counts-only event so an operator can see a thin profile's cause.
+    const buildSpy = makeBuildSpy(() => [{ entryType: "identity", content: "distilled" }]);
+    const fake = makeFakeStore();
+    const bus = makeEventBus();
+    // 5 sources, cap of 2: only the first 2 (newest-first) reach build().
+    const sources = [
+      makeSource({ id: "s0", content: "SRC_KEEP_0", trustLevel: "learned" }),
+      makeSource({ id: "s1", content: "SRC_KEEP_1", trustLevel: "learned" }),
+      makeSource({ id: "s2", content: "SRC_DROP_2", trustLevel: "learned" }),
+      makeSource({ id: "s3", content: "SRC_DROP_3", trustLevel: "learned" }),
+      makeSource({ id: "s4", content: "SRC_DROP_4", trustLevel: "learned" }),
+    ];
+    const deps = makeDeps({
+      config: { ...baseConfig, maxSourceMemories: 2 },
+      build: buildSpy.build,
+      userRepresentationStore: fake.store,
+      eventBus: bus,
+      sources,
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    expect(result.ok).toBe(true);
+    // build() was called once, over ONLY the first two sources (the bounded HEAD).
+    expect(buildSpy.calls).toHaveLength(1);
+    const sentText = buildSpy.calls[0]!;
+    expect(sentText).toContain("SRC_KEEP_0");
+    expect(sentText).toContain("SRC_KEEP_1");
+    expect(sentText).not.toContain("SRC_DROP_2");
+    expect(sentText).not.toContain("SRC_DROP_3");
+    expect(sentText).not.toContain("SRC_DROP_4");
+    // The counts-only event flags that the source set was truncated (observability).
+    const ev = bus.events.find((e) => e.event === "memory:user_representation_built");
+    const payload = ev?.payload as { sourcesConsidered: number; sourcesUsed: number; sourcesTruncated: boolean };
+    expect(payload.sourcesConsidered).toBe(5);
+    expect(payload.sourcesUsed).toBe(2);
+    expect(payload.sourcesTruncated).toBe(true);
+    // It carries NO source CONTENT (counts-only, §2.7).
+    expect(JSON.stringify(ev?.payload)).not.toContain("SRC_");
+  });
+
+  it("MR-02 input bound (chars): a maxSourceChars budget truncates the per-user sourceText and flags truncation", async () => {
+    const buildSpy = makeBuildSpy(() => [{ entryType: "identity", content: "distilled" }]);
+    const fake = makeFakeStore();
+    const bus = makeEventBus();
+    // Two ~30-char sources; a 40-char budget admits only the first.
+    const sources = [
+      makeSource({ id: "s0", content: "X".repeat(30), trustLevel: "learned" }),
+      makeSource({ id: "s1", content: "Y".repeat(30), trustLevel: "learned" }),
+    ];
+    const deps = makeDeps({
+      config: { ...baseConfig, maxSourceChars: 40 },
+      build: buildSpy.build,
+      userRepresentationStore: fake.store,
+      eventBus: bus,
+      sources,
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    expect(result.ok).toBe(true);
+    const sentText = buildSpy.calls[0]!;
+    // The char budget bounds the prompt: the first source fits, the second is dropped.
+    expect(sentText.length).toBeLessThanOrEqual(40);
+    expect(sentText).toContain("X".repeat(30));
+    expect(sentText).not.toContain("Y".repeat(30));
+    const ev = bus.events.find((e) => e.event === "memory:user_representation_built");
+    const payload = ev?.payload as { sourcesUsed: number; sourcesTruncated: boolean };
+    expect(payload.sourcesUsed).toBe(1);
+    expect(payload.sourcesTruncated).toBe(true);
+  });
+
+  it("MR-02 no truncation: a source set within both bounds is passed whole and the event flags NO truncation", async () => {
+    const buildSpy = makeBuildSpy(() => [{ entryType: "identity", content: "distilled" }]);
+    const fake = makeFakeStore();
+    const bus = makeEventBus();
+    const sources = [
+      makeSource({ id: "s0", content: "alpha", trustLevel: "learned" }),
+      makeSource({ id: "s1", content: "beta", trustLevel: "learned" }),
+    ];
+    const deps = makeDeps({
+      build: buildSpy.build,
+      userRepresentationStore: fake.store,
+      eventBus: bus,
+      sources,
+    });
+
+    const result = await runUserRepresentationBuild(deps);
+
+    expect(result.ok).toBe(true);
+    const sentText = buildSpy.calls[0]!;
+    expect(sentText).toContain("alpha");
+    expect(sentText).toContain("beta");
+    const ev = bus.events.find((e) => e.event === "memory:user_representation_built");
+    const payload = ev?.payload as { sourcesConsidered: number; sourcesUsed: number; sourcesTruncated: boolean };
+    expect(payload.sourcesConsidered).toBe(2);
+    expect(payload.sourcesUsed).toBe(2);
+    expect(payload.sourcesTruncated).toBe(false);
+  });
+
   it("counts-only event: the emitted payload carries counts/metadata ONLY — never candidate content", async () => {
     const SECRET_CONTENT = "the user's name is Alice and their pet is Rex";
     const buildSpy = makeBuildSpy(() => [{ entryType: "identity", content: SECRET_CONTENT }]);

@@ -26,15 +26,22 @@ import { z } from "zod";
  * - enabled: opt-in (default false — a cost gate, not back-compat)
  * - schedule: cron expression, after reasoning's "0 4" daily slot so the profile
  *   is built over freshly-reasoned/consolidated memories the same night
- * - maxEntriesPerRun: max profile entries written per run (the DoS cost bound)
+ * - maxEntriesPerRun: max profile entries WRITTEN per run (the DoS cost bound, write axis)
+ * - maxSourceMemories / maxSourceChars: the per-build INPUT bound (MR-02) — the most
+ *   source memories / total chars fed into ONE distillation prompt, so an over-context
+ *   prompt can never silently fail the build (the same DoS-bound intent on the read axis)
  */
 export const MemoryUserRepresentationConfigSchema = z.strictObject({
   /** Enable the periodic per-user profile build for this agent. Default: false (cost opt-in). */
   enabled: z.boolean().default(false),
   /** Cron schedule for profile builds. Default: daily at 05:00 UTC (after reasoning's 04:00). */
   schedule: z.string().default("0 5 * * *"),
-  /** Maximum profile entries written per run (the DoS cost bound). */
+  /** Maximum profile entries written per run (the DoS cost bound, write axis). */
   maxEntriesPerRun: z.number().int().positive().default(50),
+  /** MR-02 INPUT bound: max source memories fed into one build() prompt (newest-first). */
+  maxSourceMemories: z.number().int().positive().default(200),
+  /** MR-02 INPUT bound: max total chars of the concatenated build() source text. */
+  maxSourceChars: z.number().int().positive().default(24_000),
 });
 
 export type MemoryUserRepresentationConfig = z.infer<typeof MemoryUserRepresentationConfigSchema>;
