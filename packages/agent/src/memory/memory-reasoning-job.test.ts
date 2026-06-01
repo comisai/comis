@@ -607,6 +607,46 @@ describe("runMemoryReasoning — Task 2: inductive (≤ learned) + surprisal + s
   });
 
   // -------------------------------------------------------------------------
+  // WR-01: a DEDUCTIVE-ONLY scope (a deductive write, NO inductive pattern) must
+  // also drain the candidate pool — otherwise its sources stay
+  // consolidated_at IS NULL and are re-selected + re-fed to the paid seam every
+  // run, forever. The candidate predicate is `consolidated_at IS NULL AND
+  // proof_count IS NULL`; only the inductive applyConsolidation marked sources
+  // pre-fix. This RED asserts a deductive-only scope's sources are marked so a
+  // 2nd pass does NOT re-call the seam over the same evidence.
+  // -------------------------------------------------------------------------
+  it("deductive-only scope marks its sources consolidated so a re-run does NOT re-call the seam (WR-01)", async () => {
+    // One raw source whose ONLY output is a deductive triple (empty inductive).
+    const sourceId = await seedMemory({ content: "alice moved to berlin", createdAt: 100, trustLevel: "learned" });
+    const spy = makeReasonSpy(() => ({
+      deductive: [{ subject: "alice", predicate: "located_in", object: "Berlin" }],
+      // NO inductive pattern — so applyConsolidation (the only pre-fix marker) never runs.
+    }));
+
+    const first = await runMemoryReasoning(makeDeps({ reason: spy.reason }));
+    expect(first.ok).toBe(true);
+    if (first.ok) {
+      expect(first.value.deductiveWritten).toBe(1);
+      expect(first.value.inductiveWritten).toBe(0);
+    }
+    const callsAfterFirst = spy.calls.length;
+    expect(callsAfterFirst).toBeGreaterThanOrEqual(1);
+
+    // The source must have left the candidate pool: consolidated_at is now set.
+    const consolidatedAt = db
+      .prepare("SELECT consolidated_at AS ts FROM memories WHERE id = ?")
+      .get(sourceId) as { ts: number | null };
+    expect(consolidatedAt.ts).not.toBeNull();
+
+    // Second pass over the SAME (now-unchanged) evidence: the candidate must NOT
+    // be re-selected, so the paid seam is NOT called again for it.
+    const second = await runMemoryReasoning(makeDeps({ reason: spy.reason }));
+    expect(second.ok).toBe(true);
+    // The seam call count did NOT grow on the 2nd run (no re-feed of the drained pool).
+    expect(spy.calls.length).toBe(callsAfterFirst);
+  });
+
+  // -------------------------------------------------------------------------
   // Counts-only event (T-101-05-05)
   // -------------------------------------------------------------------------
   it("counts-only event: memory:reasoned carries only counts/durationMs/timestamp — NO S/P/O or content", async () => {
