@@ -28,6 +28,14 @@ import { handleMemoryCronSentinel } from "./setup-channels-memory-crons.js";
 /**
  * Closure-captured dependencies for the cron delivery listeners.
  */
+// @optional-field-count: 14 optional fields — CronEventListenerDeps is a composition-root cron-deps
+// bag that accretes the OFFLINE memory-cron sentinels' injected ports (consolidationStore for
+// __MEMORY_CONSOLIDATION__; tripleStore for __MEMORY_REASONING__; userRepresentationStore + memoryApi
+// for __USER_REPRESENTATION__) alongside the channel/media optionals. Each is an optional injected
+// port (absent on a default-config agent => that sentinel short-circuits). Tightening them to
+// required would force every non-cron caller to fabricate stub stores; splitting would create N
+// parallel cron-deps bags. The optional-field cap flags undermodeled types, NOT a well-bounded
+// composition-root deps accumulator like this (mirror BootContext / MemoryApiDeps).
 export interface CronEventListenerDeps {
   container: AppContainer;
   executors: Map<string, AgentExecutor>;

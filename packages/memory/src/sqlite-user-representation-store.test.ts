@@ -209,6 +209,49 @@ describe("createSqliteUserRepresentationStore", () => {
       expect(reprCount()).toBe(0);
     });
 
+    it("REJECTS a redaction-firewall hit at the WRITE boundary (a secret-shaped body returns err; nothing persisted; WARN logged)", async () => {
+      // The adapter's OWN validateMemoryWrite belt (T-107-02-04) — separate from the
+      // offline builder's. A non-`clean` verdict is REJECTED (no `external` tier to
+      // down-store into); the WARN branch (counts-only) fires with a logger present.
+      const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
+      const loggingStore = createSqliteUserRepresentationStore({ db, logger });
+      // A synthetic secret-shaped body the redaction firewall flags (NOT a real key).
+      const SECRET_SHAPED = "token sk-abcdefghijklmnop1234 and AKIAIOSFODNN7EXAMPLE";
+      const r = await loggingStore.upsert(
+        { entryType: "identity", content: SECRET_SHAPED, trust: "learned" },
+        SCOPE_A,
+      );
+      expect(r.ok).toBe(false);
+
+      // Nothing persisted (the reject ran BEFORE the INSERT).
+      const res = await loggingStore.read(READ_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value).toHaveLength(0);
+      expect(reprCount()).toBe(0);
+
+      // The WARN branch fired counts-only — and NEVER carries the secret-shaped body.
+      const warn = logger.warn.mock.calls.find((c) => c[0]?.step === "user-repr-upsert");
+      expect(warn?.[0]).toMatchObject({ step: "user-repr-upsert", errorKind: "validation" });
+      expect(JSON.stringify(warn?.[0] ?? {})).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    });
+
+    it("never throws on a forced upsert fault — an upsert after db.close() returns err + WARNs counts-only", async () => {
+      const localAdapter = new SqliteMemoryAdapter(memoryConfig);
+      const localDb = localAdapter.getDb();
+      const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
+      const localStore = createSqliteUserRepresentationStore({ db: localDb, logger });
+      localDb.close(); // force the prepared INSERT to fault inside the try/catch
+
+      const r = await localStore.upsert(
+        { entryType: "preference", content: "x", trust: "learned" },
+        SCOPE_A,
+      );
+      expect(r.ok).toBe(false); // the outer try/catch caught it -> err, never a throw
+      const warn = logger.warn.mock.calls.find((c) => c[0]?.step === "user-repr-upsert");
+      expect(warn?.[0]).toMatchObject({ step: "user-repr-upsert", errorKind: "internal" });
+    });
+
     it("parses rows through createRowMapper — a returned entry has the exact typed shape (no drift)", async () => {
       await store.upsert({ entryType: "instruction", content: "be concise", trust: "system" }, SCOPE_A);
       const res = await store.read(READ_A);

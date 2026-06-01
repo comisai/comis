@@ -7,7 +7,7 @@
  * source-memory text → typed {@link UserRepresentationBuildOutput} candidates). This
  * module is the factory the daemon's `__USER_REPRESENTATION__` sentinel calls to BUILD
  * that seam from a cheap resolved model — so the daemon stays thin and the builder
- * prompt ({@link USER_REPRESENTATION_PROMPT}) + its lenient/total parser
+ * prompt (`USER_REPRESENTATION_PROMPT`, embedded by {@link buildUserRepresentationPrompt}) + its lenient/total parser
  * ({@link parseUserRepresentationOutput}) stay AGENT-INTERNAL (the prompt string never
  * crosses the package boundary, mirroring how {@link createReasoningSeam} keeps
  * `DEDUCTIVE_PROMPT`/`INDUCTIVE_PROMPT` private).
@@ -31,7 +31,6 @@ import { systemSetTimeout, systemClearTimeout } from "@comis/core";
 import type { ClockPort, ComisLogger } from "@comis/core";
 import { completeSimple, getModel } from "@earendil-works/pi-ai";
 import {
-  USER_REPRESENTATION_PROMPT,
   buildUserRepresentationPrompt,
   parseUserRepresentationOutput,
   type UserRepresentationBuildOutput,
@@ -82,7 +81,7 @@ function extractResponseText(response: { content?: unknown[] }): string {
  *
  * Returns the `build(sourceText)` function {@link runUserRepresentationBuild} injects: it
  * issues ONE cheap-model call over the source-memory text (the system prompt is
- * {@link buildUserRepresentationPrompt}, which embeds {@link USER_REPRESENTATION_PROMPT}),
+ * {@link buildUserRepresentationPrompt}, which embeds `USER_REPRESENTATION_PROMPT`),
  * parses the response via the lenient/total {@link parseUserRepresentationOutput}, and
  * returns the typed {@link UserRepresentationBuildOutput}. A model-resolution failure, a
  * thrown/aborted call, or a malformed payload degrades to `[]` — the seam NEVER throws out
