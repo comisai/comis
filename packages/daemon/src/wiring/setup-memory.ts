@@ -135,9 +135,11 @@ export interface MemoryResult {
   /** Per-user representation store (Phase 107, USER-01/03 — Track E1). The SOLE adapter for the
    *  segregated `UserRepresentationStore` port (the `(tenant, agent, user)`-scoped upsert/read over
    *  the additive `user_representation` table) — built UNCONDITIONALLY on the SAME shared `db`
-   *  handle as the memory adapter (so the `source_memory_id` ON DELETE CASCADE + the 3-way
-   *  isolation scope stay consistent with the memory rows the profile is distilled from — a read on
-   *  a DIFFERENT handle would silently return empty, T-107-05-02). No model/IO cost, so it is always
+   *  handle as the memory adapter (so the `source_memory_id` ON DELETE CASCADE — which fires ONLY
+   *  for single-source rows; the offline builder omits `sourceMemoryId`, see the adapter's LR-02
+   *  provenance caveat — and the 3-way isolation scope stay consistent with the memory rows the
+   *  profile is distilled from — a read on a DIFFERENT handle would silently return empty,
+   *  T-107-05-02). No model/IO cost, so it is always
    *  present; the LLM-free `<user_profile>` injection stays dormant until the offline builder writes
    *  rows (its own default-OFF cost gate). Threaded into the recall read path (setup-agents-*) as the
    *  port TYPE only AND into the offline-builder cron — the daemon (composition root) is the one

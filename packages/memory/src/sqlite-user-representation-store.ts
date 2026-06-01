@@ -25,8 +25,21 @@
  * It shares the `better-sqlite3` handle of the `SqliteMemoryAdapter` (passed in
  * via `getDb()`), so it runs against the same schema with `PRAGMA foreign_keys =
  * ON` already set — that pragma is what makes the `source_memory_id ->
- * memories(id)` `ON DELETE CASCADE` fire (deleting a source memory drops its
- * derived representation entries; no orphan-sweep job).
+ * memories(id)` `ON DELETE CASCADE` fire.
+ *
+ * ## Provenance / retirement caveat (LR-02)
+ *
+ * The `ON DELETE CASCADE` ONLY retires rows that carry a non-NULL
+ * `source_memory_id` — i.e. the single-source write path. The PRIMARY producer,
+ * the offline profile builder (`runUserRepresentationBuild`), DELIBERATELY omits
+ * `sourceMemoryId` (a profile fact is distilled from the FUSED high-trust source
+ * set, not one message — single-id provenance would be misleading), so its rows
+ * have `source_memory_id = NULL` and the CASCADE NEVER fires for them. Those rows
+ * have NO automatic retirement: when the underlying source memories are deleted or
+ * expire, the distilled profile entry persists until the next builder run
+ * upsert-replaces it (the upsert is keyed on `(scope, entryType, content)`). There
+ * is no orphan-sweep job. Do not assume CASCADE garbage-collects offline-built
+ * rows — it does not.
  *
  * ## Isolation is the load-bearing security boundary (T-107-02-01, the §5.2 /
  *    ENT-03 pattern, EXTENDED with `user_id`)
