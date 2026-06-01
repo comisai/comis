@@ -1660,6 +1660,31 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // construct a TripleInput by naming the trust literal) — tracked here.
       // Shrinks when the Plan-02 offline writer / Plan-04 lane reference it directly.
       "TripleTrust",
+      // Per-user representation port + prefix-type enum (Phase 107-01, Track E1 —
+      // USER-01). This is the FIRST plan of the phase (Wave 1): the type-only
+      // UserRepresentationStore port + the UserRepresentationType prefix-type enum
+      // are the contract every later piece consumes — the SOLE @comis/memory
+      // adapter (Plan 02), the offline profile-builder (Plan 03), the LLM-free
+      // prompt-assembly injection (Plan 04), and the daemon wiring (Plan 05) all
+      // import these from @comis/core BY TYPE (never @comis/memory — the agent↛
+      // memory build cut). No in-repo consumer exists yet (the adapter lands in
+      // Plan 02), so the export-graph walker counts them as orphans. They are the
+      // documented Phase-107 port API surface — tracked here as planned-orphans,
+      // mirror the TripleStorePort / MemoryEmbeddingStore ahead-of-consumer dance.
+      // Shrinks as Plan 02 (adapter, by TYPE) → Plan 03/04 (builder/injection) →
+      // Plan 05 (daemon wiring) reference each name directly.
+      "UserRepresentationStore",
+      "UserRepresentationScope",
+      // UserRepresentationTrust is referenced only INSIDE UserRepresentationInput.trust
+      // (a field type, not a standalone import) — the same orphan shape as TripleTrust.
+      "UserRepresentationTrust",
+      "UserRepresentationEntry",
+      "UserRepresentationInput",
+      // The prefix-type enum (value schema + inferred type). The builder (Plan 03)
+      // classifies entries with UserRepresentationTypeSchema; the port consumes the
+      // inferred UserRepresentationType. Shrinks when those consumers land.
+      "UserRepresentationTypeSchema",
+      "UserRepresentationType",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,

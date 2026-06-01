@@ -31,6 +31,13 @@ export type {
   TripleInput,
 } from "./triple-store.js";
 export type {
+  UserRepresentationStore,
+  UserRepresentationScope,
+  UserRepresentationTrust,
+  UserRepresentationEntry,
+  UserRepresentationInput,
+} from "./user-representation-store.js";
+export type {
   MemoryUsefulnessStore,
   UsefulnessScope,
   UsefulnessSignal,
