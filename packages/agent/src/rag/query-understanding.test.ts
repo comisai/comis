@@ -17,11 +17,18 @@ import { describe, it, expect } from "vitest";
 import {
   classifyIntent,
   intentMultiplier,
+  expandSynonyms,
+  parseTemporalRange,
   type Intent,
   type ReweightLane,
 } from "./query-understanding.js";
 
 const ALL_LANES: ReweightLane[] = ["fts", "vector", "entity", "temporal", "causal", "graphSpread"];
+
+// A FIXED nowMs whose UTC calendar components are known, so every expected range is exact.
+// 2024-03-15 (Friday) 13:30:00.000 UTC.
+const NOW_MS = Date.UTC(2024, 2, 15, 13, 30, 0, 0);
+const DAY_MS = 86_400_000;
 
 describe("classifyIntent", () => {
   const cases: { query: string; expected: Intent; why: string }[] = [
@@ -93,5 +100,131 @@ describe("intentMultiplier", () => {
   it("keeps the targeted-lane boost modest (<= 2.0) so it composes without overpowering trust-first", () => {
     expect(intentMultiplier("temporal", "temporal")).toBeLessThanOrEqual(2.0);
     expect(intentMultiplier("preference", "entity")).toBeLessThanOrEqual(2.0);
+  });
+});
+
+describe("expandSynonyms", () => {
+  it("appends the mapped expansion(s) for a mapped acronym so the FTS OR-join surfaces both", () => {
+    // "vps" → "virtual private server" (a domain acronym in the bounded static map).
+    const out = expandSynonyms("restart my vps");
+    const tokens = out.toLowerCase().split(/\s+/);
+    expect(tokens).toContain("vps"); // original term retained
+    expect(out.toLowerCase()).toContain("virtual"); // expansion appended
+    expect(out.toLowerCase()).toContain("server");
+  });
+
+  it("expands a common synonym term (config → configuration/settings)", () => {
+    const out = expandSynonyms("update the config").toLowerCase();
+    expect(out).toContain("config");
+    expect(out).toContain("configuration");
+  });
+
+  it("returns the query UNCHANGED (byte-identity) when no term is in the map", () => {
+    const q = "the quick brown fox jumps";
+    expect(expandSynonyms(q)).toBe(q);
+  });
+
+  it("caps the per-term fan-out (a heavily-mapped term does not blow up the query)", () => {
+    // "db" maps to several synonyms; the expansion is capped at the documented per-term N.
+    const out = expandSynonyms("db");
+    const tokens = out.split(/\s+/).filter((t) => t.length > 0);
+    // original token + at most N (=3) appended expansion tokens-worth; bound the total tokens.
+    expect(tokens.length).toBeLessThanOrEqual(1 + 3 * 4); // generous upper bound on cap×words-per-synonym
+    // and it must be strictly bounded (not unbounded) — fewer than a runaway expansion.
+    expect(tokens.length).toBeGreaterThan(1); // it DID expand
+  });
+
+  it("de-duplicates so a synonym already present is not added twice", () => {
+    const out = expandSynonyms("config configuration").toLowerCase().split(/\s+/);
+    const configurationCount = out.filter((t) => t === "configuration").length;
+    expect(configurationCount).toBe(1);
+  });
+
+  it("introduces no FTS5 special characters / unbalanced quotes (injection-safe plain tokens)", () => {
+    const out = expandSynonyms('drop"; vps "config');
+    expect(out).not.toContain('"'); // double-quotes stripped (the buildFtsQuery shape)
+  });
+
+  it("returns a string and never throws for an empty query", () => {
+    expect(typeof expandSynonyms("")).toBe("string");
+  });
+});
+
+describe("parseTemporalRange", () => {
+  const startOfToday = Date.UTC(2024, 2, 15, 0, 0, 0, 0);
+  const cases: { query: string; expected: { start: number; end: number } | undefined; why: string }[] = [
+    {
+      query: "what did I do today",
+      expected: { start: startOfToday, end: startOfToday + DAY_MS - 1 },
+      why: "today → [00:00, 23:59:59.999] UTC",
+    },
+    {
+      query: "what happened yesterday",
+      expected: { start: startOfToday - DAY_MS, end: startOfToday - 1 },
+      why: "yesterday → the prior calendar day",
+    },
+    {
+      query: "show me the last 7 days",
+      expected: { start: NOW_MS - 7 * DAY_MS, end: NOW_MS },
+      why: "last N days → rolling [now-N*day, now]",
+    },
+    {
+      query: "what did I do last week",
+      expected: { start: NOW_MS - 7 * DAY_MS, end: NOW_MS },
+      why: "last week → rolling 7-day window ending now",
+    },
+    {
+      query: "anything from last month",
+      expected: { start: NOW_MS - 30 * DAY_MS, end: NOW_MS },
+      why: "last month → rolling 30-day window (documented approximation)",
+    },
+    {
+      query: "what have I done this year",
+      expected: { start: Date.UTC(2024, 0, 1, 0, 0, 0, 0), end: Date.UTC(2025, 0, 1, 0, 0, 0, 0) - 1 },
+      why: "this year → [Jan 1, Dec 31 23:59:59.999] of nowMs's year",
+    },
+    {
+      query: "everything since Monday",
+      expected: { start: Date.UTC(2024, 2, 11, 0, 0, 0, 0), end: NOW_MS },
+      why: "since DOW → [start of the most-recent past Monday, now]",
+    },
+    {
+      query: "what happened in 2023",
+      expected: { start: Date.UTC(2023, 0, 1, 0, 0, 0, 0), end: Date.UTC(2024, 0, 1, 0, 0, 0, 0) - 1 },
+      why: "in YYYY → the full year span",
+    },
+    {
+      query: "what did I do in March",
+      expected: { start: Date.UTC(2024, 2, 1, 0, 0, 0, 0), end: Date.UTC(2024, 3, 1, 0, 0, 0, 0) - 1 },
+      why: "in <Month> (current year) → that month's span",
+    },
+    {
+      query: "events in March 2023",
+      expected: { start: Date.UTC(2023, 2, 1, 0, 0, 0, 0), end: Date.UTC(2023, 3, 1, 0, 0, 0, 0) - 1 },
+      why: "in <Month> <YYYY> → that month's span in that year",
+    },
+    {
+      query: "logs from 2023-01",
+      expected: { start: Date.UTC(2023, 0, 1, 0, 0, 0, 0), end: Date.UTC(2023, 1, 1, 0, 0, 0, 0) - 1 },
+      why: "YYYY-MM → that month's span",
+    },
+    { query: "what is the capital of France", expected: undefined, why: "no time expression → undefined" },
+    { query: "", expected: undefined, why: "empty query → undefined (never throws)" },
+  ];
+
+  for (const c of cases) {
+    it(`parses "${c.query || "<empty>"}" to the expected range (${c.why})`, () => {
+      expect(parseTemporalRange(c.query, NOW_MS)).toEqual(c.expected);
+    });
+  }
+
+  it("uses nowMs as the only time source — a different nowMs yields a different today range", () => {
+    const otherNow = Date.UTC(2020, 5, 10, 9, 0, 0, 0); // 2020-06-10
+    const got = parseTemporalRange("today", otherNow);
+    expect(got).toEqual({ start: Date.UTC(2020, 5, 10, 0, 0, 0, 0), end: Date.UTC(2020, 5, 10, 0, 0, 0, 0) + DAY_MS - 1 });
+  });
+
+  it("is deterministic — the same (query, nowMs) yields the same range on repeated calls", () => {
+    expect(parseTemporalRange("last week", NOW_MS)).toEqual(parseTemporalRange("last week", NOW_MS));
   });
 });

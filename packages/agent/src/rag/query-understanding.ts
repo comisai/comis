@@ -142,3 +142,22 @@ export function intentMultiplier(intent: Intent, lane: ReweightLane): number {
     }
   }
 }
+
+/**
+ * RED stub (102-02 Task 3). Replaced in the GREEN commit. Returns the query unchanged so the
+ * mapped-term expansion assertions fail on the unimplemented function.
+ */
+export function expandSynonyms(query: string): string {
+  return query;
+}
+
+/**
+ * RED stub (102-02 Task 3). Replaced in the GREEN commit. Returns `undefined` for ALL inputs so
+ * the positive-range assertions fail on the unimplemented function.
+ */
+export function parseTemporalRange(
+  _query: string,
+  _nowMs: number,
+): { start: number; end: number } | undefined {
+  return undefined;
+}
