@@ -1,0 +1,35 @@
+{
+  "harnessVersion": "phase-104-prove-v1",
+  "benchmark": "cross-judge-spread",
+  "tolerancePts": 5,
+  "spread": [
+    {
+      "category": "single-session-user",
+      "judgeA": 100,
+      "judgeB": 100,
+      "spread": 0,
+      "survives": true
+    },
+    {
+      "category": "knowledge-update",
+      "judgeA": 75,
+      "judgeB": 75,
+      "spread": 0,
+      "survives": true
+    },
+    {
+      "category": "temporal-reasoning",
+      "judgeA": 45,
+      "judgeB": 42,
+      "spread": 3,
+      "survives": true
+    },
+    {
+      "category": "single-session-preference",
+      "judgeA": 30,
+      "judgeB": 45,
+      "spread": 15,
+      "survives": false
+    }
+  ]
+}
