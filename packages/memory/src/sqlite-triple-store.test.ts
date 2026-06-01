@@ -830,17 +830,27 @@ describe("createSqliteTripleStore", () => {
       return id;
     }
 
-    /** Write a current-truth edge subject-knows->object, sourced from object's memory (so the hydrate resolves). */
+    /**
+     * Write a current-truth edge subject-PRED->object, sourced from object's memory (so the
+     * hydrate resolves). The walk follows `subject → object` across ALL predicates, so each
+     * chain edge uses a DISTINCT predicate (default uuid) to stay its own current-truth row
+     * rather than contradicting (soft-closing) a sibling edge from the same subject.
+     */
     async function edge(
       subject: string,
       object: string,
-      opts: { scope?: typeof SCOPE_A; trust?: TripleInput["trust"]; sourceMemoryId?: string } = {},
+      opts: {
+        scope?: typeof SCOPE_A;
+        predicate?: string;
+        trust?: TripleInput["trust"];
+        sourceMemoryId?: string;
+      } = {},
     ): Promise<void> {
       const scope = opts.scope ?? SCOPE_A;
       const wrote = await store.upsertTriple(
         makeTriple({
           subject,
-          predicate: "knows",
+          predicate: opts.predicate ?? `rel_${object}`,
           object,
           trust: opts.trust ?? "learned",
           ...(opts.sourceMemoryId !== undefined ? { sourceMemoryId: opts.sourceMemoryId } : {}),
@@ -858,15 +868,14 @@ describe("createSqliteTripleStore", () => {
       await seedMemory("memX");
       const memZ = await seedMemory("memZ", { tenantId: "tenant_b", agentId: "agent_a", now: T0 });
 
-      // Current-truth chain A→B→C→D (each edge sourced from the OBJECT's memory).
+      // Current-truth chain A→B→C→D (distinct predicates so all coexist as current-truth).
       await edge("A", "B", { sourceMemoryId: "memB" });
       await edge("B", "C", { sourceMemoryId: "memC" });
       await edge("C", "D", { sourceMemoryId: "memD" });
-      // A→X then soft-close it (a higher-trust A→X' supersedes → X edge expired). Simpler:
-      // write A→X already-superseded by writing a contradicting higher-trust A→X2 — but the
-      // walk follows object, so instead expire the A→X edge by writing it then a system A→X2.
-      await edge("A", "X", { sourceMemoryId: "memX" });
-      await edge("A", "X2", { trust: "system" }); // supersedes A→X (same s+p, higher trust) → A→X soft-closed
+      // A→X on its OWN predicate, then a higher-trust A→X2 on that SAME predicate supersedes it
+      // → the A→X edge is soft-closed (t_valid_end set), so the current-truth walk skips it.
+      await edge("A", "X", { predicate: "knows_old", sourceMemoryId: "memX" });
+      await edge("A", "X2", { predicate: "knows_old", trust: "system" });
       // Cross-scope edge A→Z under (tenant_b, agent_a) — must never be traversed under SCOPE_A.
       await edge("A", "Z", { scope: { tenantId: "tenant_b", agentId: "agent_a", now: T0 }, sourceMemoryId: memZ });
 

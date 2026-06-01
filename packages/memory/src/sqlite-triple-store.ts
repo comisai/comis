@@ -28,8 +28,16 @@
  *   only `t_valid_end IS NULL` rows — superseded losers and recorded-but-not-
  *   believed rows are DEFAULT-FILTERED out (the Graphiti opt-in-leak fix). As-of
  *   history is reachable only via an explicit `asOf(t)`. Scoped, capped.
- * - `spreadLane` returns `[]` — the bounded recursive-CTE neighbourhood spread is
- *   Plan 100-04.
+ * - `spreadLane(seedSubjects, scope, maxDepth, fanOut, cap)` is the read-side
+ *   graph-spread lane (Plan 100-04 / KG-04): a bounded `WITH RECURSIVE walk`
+ *   over current-truth `subject → object` edges from the seed subjects. The
+ *   recursive arm is scoped on `(tenant_id, agent_id)` AND filtered on
+ *   `t_valid_end IS NULL` (scope + current-truth ON THE RECURSIVE STEP, not just
+ *   the base case), depth-capped (`walk.depth < maxDepth`) and per-node fan-out-
+ *   capped (top-F current-truth out-edges by trust then recency). Reached nodes
+ *   hydrate back to their source `memories` rows (scoped) as
+ *   `MemorySearchResult[]` scored `1/(1+depth)` with IDF seed-damping — LLM-free,
+ *   O(bounded), so it fuses directly into the agent's weighted RRF.
  *
  * It shares the `better-sqlite3` handle of the `SqliteMemoryAdapter` (passed in
  * via `getDb()`), so it runs against the same schema with `PRAGMA foreign_keys =
@@ -56,11 +64,11 @@
  */
 
 import type Database from "better-sqlite3";
-import type { TripleStorePort, TripleScope, TripleInput } from "@comis/core";
+import type { TripleStorePort, TripleScope, TripleInput, MemorySearchResult } from "@comis/core";
 import { systemNowMs } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
-import { createRowMapper } from "./row-mapper.js";
-import { MemoryTripleRowSchema } from "./row-schemas.js";
+import { createRowMapper, rowToEntry } from "./row-mapper.js";
+import { MemoryTripleRowSchema, MemoryRowSchema, SpreadNodeRowSchema } from "./row-schemas.js";
 
 /** Minimal pino-compatible logger (mirrors sqlite-memory-causal-store.ts). */
 interface MemoryLogger {
@@ -81,6 +89,19 @@ export interface MemoryTripleStoreDeps {
 // asOf window read AND the single current-truth incumbent (SELECT *) in the
 // invalidation transaction (`parseOptionalRow`).
 const tripleRowMapper = createRowMapper(MemoryTripleRowSchema);
+// Graph-spread (KG-04) read mappers: the recursive-CTE node projection
+// (node + depth) and the full `memories` row hydrate (→ rowToEntry). Both
+// parse via createRowMapper (no `as Foo[]`).
+const spreadNodeRowMapper = createRowMapper(SpreadNodeRowSchema);
+const memoryRowMapper = createRowMapper(MemoryRowSchema);
+
+/**
+ * Default per-node fan-out cap for the graph-spread walk — bounds each node's
+ * expansion to its top-F current-truth out-edges (by trust then recency) so a
+ * dense hub cannot blow the recursive frontier (T-100-04-01). The caller passes
+ * an explicit `fanOut` (the lane config default is 8).
+ */
+const DEFAULT_SPREAD_FANOUT = 8;
 
 /**
  * The decided branch of a `upsertTriple` invalidation, logged as metadata (never
@@ -240,6 +261,25 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
     "SELECT * FROM memory_triples " +
       "WHERE tenant_id = ? AND agent_id = ? AND t_valid_end IS NULL " +
       "ORDER BY t_valid_start DESC LIMIT ?",
+  );
+  // Graph-spread hydrate (KG-04): resolve a reached node (a triple `object`) →
+  // its source memory row. Pick the highest-trust, most-recent current-truth
+  // triple whose `object` is the node AND that carries a source_memory_id, then
+  // join `memories` re-asserting the FULL (tenant, agent) scope (self-sufficient
+  // hydrate — LO-01, no fail-open if the CTE is ever refactored). Bound params only.
+  const hydrateSpreadNode = db.prepare(
+    "SELECT m.* FROM memories m " +
+      "JOIN memory_triples t ON t.source_memory_id = m.id " +
+      "WHERE t.tenant_id = ? AND t.agent_id = ? AND t.object = ? AND t.t_valid_end IS NULL " +
+      "AND m.tenant_id = ? AND m.agent_id = ? " +
+      "ORDER BY t.trust DESC, t.t_ingested DESC LIMIT 1",
+  );
+  // IDF seed-damp helper (KG-04, HippoRAG): a seed's current-truth out-edge
+  // count — the spread weight is divided by this so a hub seed (many edges)
+  // damps its neighbours vs a sparse seed. Scoped + current-truth; bound params.
+  const seedOutEdgeCount = db.prepare(
+    "SELECT COUNT(*) AS c FROM memory_triples " +
+      "WHERE tenant_id = ? AND agent_id = ? AND subject = ? AND t_valid_end IS NULL",
   );
 
   return {
@@ -486,20 +526,123 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
 
     async spreadLane(
       seedSubjects: string[],
-      _scope: Omit<TripleScope, "now">,
-      _maxDepth: number,
-      _fanOut: number,
-      _cap: number,
-    ): Promise<Result<import("@comis/core").MemorySearchResult[], Error>> {
-      // Plan 100-04: bounded recursive-CTE neighbourhood spread goes here (the
-      // scoped `WITH RECURSIVE walk(...)` over current-truth subject->object
-      // edges, depth/fan-out capped, hydrated into MemorySearchResult[]). For now
-      // it stubs to ok([]) — the empty-lane no-op leaves RRF ranking unchanged.
-      logger?.debug(
-        { step: "triple-spread", seedCount: seedSubjects.length, count: 0, durationMs: 0 },
-        "Triple spreadLane stub (Plan 100-04)",
-      );
-      return ok([]);
+      scope: Omit<TripleScope, "now">,
+      maxDepth: number,
+      fanOut: number = DEFAULT_SPREAD_FANOUT,
+      cap: number,
+    ): Promise<Result<MemorySearchResult[], Error>> {
+      const startMs = systemNowMs();
+      const { tenantId, agentId } = scope;
+      try {
+        // ENT-04 (reused): no seeds -> empty lane (no query). RRF unchanged.
+        if (seedSubjects.length === 0) {
+          logger?.debug(
+            { step: "triple-spread", seedCount: 0, reachedCount: 0, durationMs: 0 },
+            "Triple spreadLane skipped (no seeds)",
+          );
+          return ok([]);
+        }
+
+        // The bounded recursive-CTE neighbourhood walk (RESEARCH §Graph-spread
+        // lane — VERIFIED in better-sqlite3 12.9.0). Seeds bound as ONE JSON
+        // array `?` to json_each (NEVER concatenated — T-100-04-05). The
+        // RECURSIVE arm's WHERE carries the (tenant, agent) scope + the
+        // current-truth filter (t_valid_end IS NULL) + the depth cap — the scope
+        // is on the RECURSIVE JOIN, not just the base case (T-100-04-02, the
+        // easy one to forget). The FAN-OUT cap (T-100-04-01) is a correlated
+        // subquery in the recursive arm bounding each node to its top-F
+        // current-truth out-edges (trust DESC, then recency) so a dense hub
+        // cannot blow the frontier. Final `WHERE depth > 0 LIMIT ?` bounds the
+        // returned node count. All five `?` are bound params (no string SQL).
+        const walkSql =
+          "WITH RECURSIVE walk(node, depth) AS (" +
+          "  SELECT value AS node, 0 AS depth FROM json_each(?)" +
+          "  UNION" +
+          "  SELECT t.object, walk.depth + 1" +
+          "    FROM memory_triples t" +
+          "    JOIN walk ON t.subject = walk.node" +
+          "   WHERE t.tenant_id = ? AND t.agent_id = ?" +
+          "     AND t.t_valid_end IS NULL" +
+          "     AND walk.depth < ?" +
+          "     AND t.id IN (" +
+          "       SELECT t2.id FROM memory_triples t2" +
+          "        WHERE t2.subject = walk.node" +
+          "          AND t2.tenant_id = ? AND t2.agent_id = ?" +
+          "          AND t2.t_valid_end IS NULL" +
+          "        ORDER BY t2.trust DESC, t2.t_ingested DESC" +
+          "        LIMIT ?" +
+          "     )" +
+          ") SELECT DISTINCT node, depth FROM walk WHERE depth > 0 ORDER BY depth ASC LIMIT ?";
+        const nodeRows = db
+          .prepare(walkSql)
+          .all(JSON.stringify(seedSubjects), tenantId, agentId, maxDepth, tenantId, agentId, fanOut, cap);
+
+        const parsedNodes = spreadNodeRowMapper.parseRows(nodeRows);
+        if (!parsedNodes.ok) return err(new Error(parsedNodes.error.message));
+
+        // Keep the SHALLOWEST depth per node (a node reachable at depth 1 and 2
+        // surfaces once, at depth 1 — its strongest 1/(1+depth) score).
+        const depthByNode = new Map<string, number>();
+        for (const { node, depth } of parsedNodes.value) {
+          const prior = depthByNode.get(node);
+          if (prior === undefined || depth < prior) depthByNode.set(node, depth);
+        }
+
+        // IDF seed-damp factor (HippoRAG): the average seed's current-truth
+        // out-edge count, used to divide the spread weight so a dense-seed walk
+        // damps its neighbours. Scoped + current-truth; >=1 to avoid /0.
+        let seedEdgeTotal = 0;
+        for (const seed of seedSubjects) {
+          const raw = seedOutEdgeCount.get(tenantId, agentId, seed) as { c: number } | undefined;
+          seedEdgeTotal += raw?.c ?? 0;
+        }
+        const idfDamp = Math.max(1, seedEdgeTotal / seedSubjects.length);
+
+        // Hydrate each reached node → its source memory (scoped), score
+        // 1/(1+depth) IDF-damped. A node whose triples carry no source_memory_id
+        // (or whose memory is gone) is skipped (defensive hydrate miss).
+        const scored: Array<{ result: MemorySearchResult; score: number }> = [];
+        for (const [node, depth] of depthByNode) {
+          const memParsed = memoryRowMapper.parseOptionalRow(
+            hydrateSpreadNode.get(tenantId, agentId, node, tenantId, agentId),
+          );
+          if (!memParsed.ok) return err(new Error(memParsed.error.message));
+          const row = memParsed.value;
+          if (!row) continue; // no in-scope source memory for this node -> skip
+          const score = 1 / (1 + depth) / idfDamp;
+          scored.push({ result: { entry: rowToEntry(row), score }, score });
+        }
+
+        // Sort score-desc; deterministic id tie-break (stable order for equal
+        // depth). Then bound by cap (the node walk already LIMIT-capped, but the
+        // hydrate could fan a node to one memory — keep the cap defensive).
+        scored.sort((a, b) => {
+          if (a.score !== b.score) return b.score - a.score;
+          return a.result.entry.id.localeCompare(b.result.entry.id);
+        });
+        const results = scored.slice(0, cap).map((s) => s.result);
+
+        const durationMs = systemNowMs() - startMs;
+        logger?.debug(
+          { step: "triple-spread", seedCount: seedSubjects.length, reachedCount: results.length, durationMs },
+          "Triple spreadLane complete",
+        );
+        return ok(results);
+      } catch (e: unknown) {
+        const durationMs = systemNowMs() - startMs;
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "triple-spread",
+            durationMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "triple spreadLane CTE failed — graph-spread lane unavailable",
+          },
+          "Triple spreadLane failed",
+        );
+        return err(error);
+      }
     },
   };
 }

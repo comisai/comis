@@ -208,6 +208,24 @@ export const MemoryTripleRowSchema = z.strictObject({
 });
 
 /**
+ * Schema for the graph-spread recursive-CTE node projection (Phase 100, KG-04;
+ * RESEARCH §Graph-spread lane). The bounded `WITH RECURSIVE walk(node, depth)`
+ * walk over current-truth `subject → object` edges returns, per reached node, the
+ * node string (a triple `object`) and its hop `depth` (`SELECT DISTINCT node,
+ * depth FROM walk WHERE depth > 0`). `tenant_id`/`agent_id` are NOT projected —
+ * the recursive arm's WHERE already pins them (mirrors `CausalLaneRowSchema`'s
+ * minimal projection). The full memory hydrate happens via a second scoped SELECT
+ * on the reached node's `source_memory_id`. Parsed via `createRowMapper` in
+ * `spreadLane` — never `as Row[]`.
+ */
+export const SpreadNodeRowSchema = z.strictObject({
+  /** A reached node (a triple `object` string) — drives the hydrate + dedup. */
+  node: z.string(),
+  /** Hop depth from the seed (>=1 after the WHERE depth>0) — drives 1/(1+depth) scoring. */
+  depth: z.number(),
+});
+
+/**
  * Schema for the `listEntities` diagnostic projection (Phase 86, OBS-06). The
  * scoped `SELECT id, canonical_name, mention_count, first_seen, last_seen FROM
  * memory_entities WHERE tenant_id=? AND agent_id=? ORDER BY mention_count DESC`
