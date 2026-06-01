@@ -1,0 +1,15 @@
+{
+  "_provenance": "Derived from the PrefEval format (ICLR 2025 Oral; preference-following / preference-adherence eval, github.com/amazon-science/PrefEval); neutral placeholder content, NOT the real dataset. The full corpus is operator-placed under $COMIS_BENCH_DATA (see Plan 08 DATASETS.md) and never committed.",
+  "items": [
+    {
+      "preference": "user_a prefers concise, bulleted placeholder answers over long prose.",
+      "query": "Summarize the placeholder onboarding steps for user_a.",
+      "gold": "A short bulleted list of placeholder onboarding steps (preference-adherent)."
+    },
+    {
+      "preference": "user_a prefers metric units in all placeholder examples.",
+      "query": "Give user_a a placeholder distance example.",
+      "gold": "A placeholder distance expressed in kilometres (metric, preference-adherent)."
+    }
+  ]
+}

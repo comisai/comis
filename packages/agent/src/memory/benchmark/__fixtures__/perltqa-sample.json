@@ -1,0 +1,23 @@
+{
+  "_provenance": "Derived from the PerLTQA format (Personal Long-Term memory QA, a Chinese-origin episodic+semantic personal-QA corpus; github.com/Elvin-Yiming-Du/PerLTQA); neutral placeholder content, NOT the real dataset. PerLTQA is Chinese-origin and this loader is language-agnostic — the non-ASCII placeholder below proves the content string round-trips any encoding unharmed. The full corpus is operator-placed under $COMIS_BENCH_DATA (see Plan 08 DATASETS.md) and never committed.",
+  "profile": {
+    "name": "user_a",
+    "bio": "Neutral placeholder profile for user_a. 占位符简介（non-ASCII placeholder).",
+    "attributes": {
+      "favorite_placeholder_topic": "topic beta",
+      "placeholder_city": "占位城市"
+    }
+  },
+  "qa": [
+    {
+      "question_id": "perltqa_1",
+      "question": "What is user_a's favorite placeholder topic?",
+      "answer": "topic beta"
+    },
+    {
+      "question_id": "perltqa_2",
+      "question": "占位符问题：user_a 的占位城市是哪里？",
+      "answer": "占位城市"
+    }
+  ]
+}
