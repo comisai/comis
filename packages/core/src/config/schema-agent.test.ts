@@ -904,6 +904,70 @@ describe("RagConfigSchema.lanes.causal", () => {
 });
 
 // ---------------------------------------------------------------------------
+// RagConfigSchema.lanes.graphSpread (Phase-100/KG-04: the recursive-CTE graph-
+// spread recall lane, opt-in / default-OFF — the temporal/causal-lane sibling,
+// plus maxDepth + fanOut caps for the bounded walk)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.lanes.graphSpread", () => {
+  it("defaults the graph-spread lane OFF with weight 1.0 / maxDepth 2 / fanOut 8 (byte-identical to before this plan when absent)", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Default-OFF: no agent gets the graph-spread lane without an explicit opt-in (a
+      // wrong default ships dormant — no surprise ranking change on upgrade, T-100-04-06).
+      expect(result.data.lanes.graphSpread.enabled).toBe(false);
+      expect(result.data.lanes.graphSpread.weight).toBe(1.0);
+      expect(result.data.lanes.graphSpread.maxDepth).toBe(2);
+      expect(result.data.lanes.graphSpread.fanOut).toBe(8);
+    }
+  });
+
+  it("accepts an explicit graph-spread opt-in (enabled:true + tuned weight/maxDepth/fanOut)", () => {
+    const result = RagConfigSchema.safeParse({
+      lanes: { graphSpread: { enabled: true, weight: 2.0, maxDepth: 3, fanOut: 12 } },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.lanes.graphSpread.enabled).toBe(true);
+      expect(result.data.lanes.graphSpread.weight).toBe(2.0);
+      expect(result.data.lanes.graphSpread.maxDepth).toBe(3);
+      expect(result.data.lanes.graphSpread.fanOut).toBe(12);
+    }
+  });
+
+  it("rejects a negative graph-spread weight (z.number().min(0) — no negative RRF term; T-95-08)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { graphSpread: { weight: -1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a zero / negative maxDepth (z.number().int().positive() — no empty walk; T-100-04-01)", () => {
+    expect(RagConfigSchema.safeParse({ lanes: { graphSpread: { maxDepth: 0 } } }).success).toBe(false);
+    expect(RagConfigSchema.safeParse({ lanes: { graphSpread: { maxDepth: -2 } } }).success).toBe(false);
+  });
+
+  it("rejects a zero / negative fanOut (z.number().int().positive() — the fan-out cap must bound expansion; T-100-04-01)", () => {
+    expect(RagConfigSchema.safeParse({ lanes: { graphSpread: { fanOut: 0 } } }).success).toBe(false);
+    expect(RagConfigSchema.safeParse({ lanes: { graphSpread: { fanOut: -8 } } }).success).toBe(false);
+  });
+
+  it("rejects a non-integer maxDepth / fanOut (z.number().int())", () => {
+    expect(RagConfigSchema.safeParse({ lanes: { graphSpread: { maxDepth: 2.5 } } }).success).toBe(false);
+    expect(RagConfigSchema.safeParse({ lanes: { graphSpread: { fanOut: 8.5 } } }).success).toBe(false);
+  });
+
+  it("rejects an unknown key inside graphSpread (strictObject)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { graphSpread: { bogus: 1 } } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a zero graph-spread weight at the boundary (min(0) inclusive — the lane contributes nothing)", () => {
+    const result = RagConfigSchema.safeParse({ lanes: { graphSpread: { weight: 0 } } });
+    expect(result.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // RagConfigSchema.feedback (Phase-93/FEED-04: recall-utility feedback loop,
 // opt-in / default-OFF — mirrors rag.entityLane)
 // ---------------------------------------------------------------------------
@@ -986,12 +1050,17 @@ describe("RagConfigSchema.feedback", () => {
       expect(result.data.entityLane.seedCount).toBe(5);
       expect(result.data.entityLane.perEntityCap).toBe(200);
       expect(result.data.entityLane.weight).toBe(1.0);
-      // lanes sub-object (LANES-01 parity defaults + LANES-02 temporal default-OFF).
+      // lanes sub-object (LANES-01 parity defaults + LANES-02 temporal default-OFF +
+      // KG-04 graphSpread default-OFF).
       expect(result.data.lanes.fts.weight).toBe(1.0);
       expect(result.data.lanes.vector.weight).toBe(1.5);
       expect(result.data.lanes.temporal.enabled).toBe(false);
       expect(result.data.lanes.temporal.weight).toBe(1.0);
       expect(result.data.lanes.temporal.windowDays).toBe(7);
+      expect(result.data.lanes.graphSpread.enabled).toBe(false);
+      expect(result.data.lanes.graphSpread.weight).toBe(1.0);
+      expect(result.data.lanes.graphSpread.maxDepth).toBe(2);
+      expect(result.data.lanes.graphSpread.fanOut).toBe(8);
     }
   });
 });

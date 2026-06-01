@@ -38,6 +38,7 @@ import type {
   TimerHandle,
   ClockPort,
   ComisLogger,
+  TripleStorePort,
 } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { describe, it, expect, vi } from "vitest";
@@ -2006,5 +2007,201 @@ describe("appendCausalLane (the extracted 5th-lane helper)", () => {
     expect(count).toBe(2);
     expect(lanes.length).toBe(2);
     expect(lanes[1]?.weight).toBe(2.0);
+  });
+});
+
+// ===========================================================================
+// Graph-spread lane (KG-04) — the 6th fused lane, APPENDED after the causal
+// lane (fts, vector, entity, temporal, causal, graphSpread). Mirrors the causal
+// block tier-for-tier: a triple-store stub + the LANE-ON lift / DEFAULT-OFF
+// byte-identity (the spy proves ZERO calls) / NO-CONFIG / EMPTY-lane neutral /
+// NO-store / NON-FATAL invariants. The seeds are the top base hits' CONTENT
+// (subject strings), per the interfaces gate.
+// ===========================================================================
+
+/**
+ * A controllable TripleStorePort stub. `spreadLane` returns a canned Result and records
+ * every call (seedSubjects + scope + maxDepth + fanOut + cap) so the gate / scope /
+ * not-called invariants are assertable. The write/asOf/currentTruth methods are the
+ * unused halves (recall only calls spreadLane). Mirrors {@link fakeCausalStore}.
+ */
+function fakeTripleStore(laneResult: Result<MemorySearchResult[], Error>): {
+  store: TripleStorePort;
+  calls: {
+    seedSubjects: string[];
+    scope: { tenantId: string; agentId: string };
+    maxDepth: number;
+    fanOut: number;
+    cap: number;
+  }[];
+} {
+  const calls: {
+    seedSubjects: string[];
+    scope: { tenantId: string; agentId: string };
+    maxDepth: number;
+    fanOut: number;
+    cap: number;
+  }[] = [];
+  const store: TripleStorePort = {
+    async upsertTriple() {
+      return ok(undefined);
+    },
+    async asOf() {
+      return ok([]);
+    },
+    async currentTruth() {
+      return ok([]);
+    },
+    async spreadLane(seedSubjects, scope, maxDepth, fanOut, cap) {
+      calls.push({ seedSubjects, scope, maxDepth, fanOut, cap });
+      return laneResult;
+    },
+  };
+  return { store, calls };
+}
+
+describe("createMemoryRecall — graph-spread lane (KG-04)", () => {
+  // Boosts neutralized so the FUSION verdict (not score() boosts) orders the output — the
+  // graph-spread RRF contribution is then the only thing under test.
+  const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
+  const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
+  const GS_ON = { enabled: true, weight: 1.0, maxDepth: 2, fanOut: 8 };
+  const GS_OFF = { enabled: false, weight: 1.0, maxDepth: 2, fanOut: 8 };
+
+  /** The pre-graphSpread fused output (fts + vector, no spread lane) — the no-op reproduces this verbatim. */
+  function baseLaneReference(fts: MemorySearchResult[], vector: MemorySearchResult[]): string[] {
+    const lanes = [] as Parameters<typeof fuse>[0];
+    if (fts.length > 0) lanes.push({ results: fts, weight: 1.0 });
+    if (vector.length > 0) lanes.push({ results: vector, weight: 1.5 });
+    const fused = fuse(lanes);
+    const scored = score(fused, NEUTRAL, NOW);
+    const allowed = new Set<TrustLevel>(["system", "learned"]);
+    return deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel))).map(
+      (r) => r.entry.id,
+    );
+  }
+
+  it("LANE ON: a structurally-linked memory (from the triple store, absent from search) appears in the fused output + carries the seeds/scope/caps", async () => {
+    const fts = [makeResult("seed", { base: 0.9 }), makeResult("weak", { base: 0.2 })];
+    const { store, calls } = fakeTripleStore(ok([makeResult("spread", { base: 0.99 })]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        tripleStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_ON } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toContain("spread");
+    // Lane invoked once, lazily; seeds = top hits' CONTENT; scope = recall scope; caps from config.
+    expect(calls.length).toBe(1);
+    expect(calls[0]?.seedSubjects).toContain("content for seed");
+    expect(calls[0]?.scope).toEqual({ tenantId: "tenant_x", agentId: "agent_y" });
+    expect(calls[0]?.maxDepth).toBe(2);
+    expect(calls[0]?.fanOut).toBe(8);
+    expect(calls[0]?.cap).toBe(5); // baseConfig.maxResults
+  });
+
+  it("DEFAULT-OFF BYTE-IDENTITY: graphSpread.enabled=false → spreadLane NEVER called → output identical to the pre-graphSpread fused path", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const vector = [makeResult("b", { base: 0.5 }), makeResult("c", { base: 0.3 })];
+    const { store, calls } = fakeTripleStore(ok([makeResult("spread", { base: 0.99 })]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector }),
+        tripleStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_OFF } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0); // the spy proves the off path never queries
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
+    expect(got.value.map((r) => r.entry.id)).not.toContain("spread");
+  });
+
+  it("NO graphSpread CONFIG: an absent lanes.graphSpread → spreadLane NEVER called (byte-identical to before this plan)", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    const { store, calls } = fakeTripleStore(ok([makeResult("spread", { base: 0.99 })]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        tripleStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0);
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("EMPTY-LANE NEUTRAL: an injected store whose spreadLane returns ok([]) pushes nothing → output unchanged (the ENT-04 no-op)", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const { store, calls } = fakeTripleStore(ok([]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        tripleStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_ON } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(1); // queried (enabled + seeds) but empty
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("NO tripleStore: an undefined store → no graph-spread lane, output identical to the base lanes", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    const recall = createMemoryRecall(
+      { memoryPort: fakeLaneMemoryPort({ fts, vector: [] }), clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_ON } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("NON-FATAL: a spreadLane that returns err → recall WARNs and ranks WITHOUT the graph-spread lane (never fails)", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const warns: Record<string, unknown>[] = [];
+    const capturingLogger = {
+      ...noopLogger,
+      warn: (obj: Record<string, unknown>) => {
+        warns.push(obj);
+      },
+    } as unknown as ComisLogger;
+    const { store } = fakeTripleStore(err(new Error("spread CTE exploded")));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        tripleStore: store,
+        clock: fixedClock,
+        logger: capturingLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: { ...PARITY_LANES, graphSpread: GS_ON } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+    const warn = warns.find((w) => typeof w.hint === "string" && /graph[- ]?spread/i.test(String(w.hint)));
+    expect(warn).toBeDefined();
+    expect(warn?.errorKind).toBe("internal");
   });
 });

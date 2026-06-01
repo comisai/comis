@@ -52,6 +52,18 @@ const PHRASES = [
   "say so rather than guess",
 ];
 
+// KG-04 read-side: the current-truth / as-of section composed into the block (RESEARCH
+// §temporal-guidance). Fixed prose — it tells the LLM HOW to read current-truth vs history
+// (the higher-trust value is the CURRENT answer; superseded values still exist as history,
+// reachable as-of a past time). NEVER interpolates entry.content (T-81-08).
+const KG_PHRASES = [
+  // The current believed value of a contested fact is the higher-trust one.
+  "current believed value",
+  // Older superseded values still EXIST as history — reachable as-of a past time, but not the answer.
+  "history",
+  "as of a past time",
+];
+
 describe("buildTemporalGuidanceBlock — read-time §7.3 contradiction guidance", () => {
   it("returns the §7.3 block (all load-bearing phrases) when >=2 memories are surfaced", () => {
     const block = buildTemporalGuidanceBlock([
@@ -60,6 +72,17 @@ describe("buildTemporalGuidanceBlock — read-time §7.3 contradiction guidance"
     ]);
     expect(typeof block).toBe("string");
     for (const phrase of PHRASES) {
+      expect(block).toContain(phrase);
+    }
+  });
+
+  it("ALSO composes the KG-04 current-truth/as-of section (current value = higher-trust; history reachable as-of)", () => {
+    const block = buildTemporalGuidanceBlock([
+      makeResult("m1", "user_a lives in Berlin"),
+      makeResult("m2", "user_a lives in Munich"),
+    ]);
+    expect(typeof block).toBe("string");
+    for (const phrase of KG_PHRASES) {
       expect(block).toContain(phrase);
     }
   });
