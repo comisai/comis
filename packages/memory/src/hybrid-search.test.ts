@@ -19,20 +19,24 @@ function insertMemory(
     trustLevel?: string;
     memoryType?: string;
     tenantId?: string;
+    agentId?: string;
     userId?: string;
+    occurredAt?: number | null;
   },
 ): void {
   db.prepare(
-    `INSERT INTO memories (id, tenant_id, user_id, content, trust_level, memory_type, source_who, tags, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'agent', '[]', ?)`,
+    `INSERT INTO memories (id, tenant_id, agent_id, user_id, content, trust_level, memory_type, source_who, tags, created_at, occurred_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'agent', '[]', ?, ?)`,
   ).run(
     id,
     opts?.tenantId ?? "default",
+    opts?.agentId ?? "default",
     opts?.userId ?? "u1",
     content,
     opts?.trustLevel ?? "learned",
     opts?.memoryType ?? "semantic",
     Date.now(),
+    opts?.occurredAt === undefined ? null : opts.occurredAt,
   );
 }
 
@@ -619,5 +623,92 @@ describe("RRF score normalization", () => {
     // Raw RRF score: (1.0 / 61) + (1.5 / 61) = 2.5 / 61 = ~0.04098
     expect(results[0]!.rrfScore).toBeLessThan(0.05);
     expect(results[0]!.rrfScore).toBeGreaterThan(0);
+  });
+});
+
+// ── occurredAtRange filter (IQ-03b) ──────────────────────────────────
+//
+// The read-side NL temporal-range filter ANDs `occurred_at BETWEEN ? AND ?`
+// onto the ALREADY-scoped post-fusion WHERE (bound params; never widens scope —
+// the range can only NARROW). NULL occurred_at rows fail BETWEEN and drop out
+// (no event time ⇒ not in any range). RED on the pre-patch hybridSearch (it
+// ignores the range field entirely).
+
+describe("hybridSearch occurredAtRange (IQ-03b)", () => {
+  let db: Database.Database;
+  const DAY = 86_400_000;
+  const T0 = 100 * DAY;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    initSchema(db, 4);
+  });
+
+  it("narrows to ONLY the rows whose occurred_at is inside {start,end}", () => {
+    insertMemory(db, "in1", "cat in window one", { occurredAt: T0 + 1 * DAY });
+    insertMemory(db, "in2", "cat in window two", { occurredAt: T0 + 3 * DAY });
+    insertMemory(db, "before", "cat before window", { occurredAt: T0 - 10 * DAY });
+    insertMemory(db, "after", "cat after window", { occurredAt: T0 + 30 * DAY });
+
+    const ranged = hybridSearch(db, "cat", undefined, {
+      limit: 10,
+      occurredAtRange: { start: T0, end: T0 + 7 * DAY },
+    });
+    const ids = ranged.map((r) => r.id).sort();
+    expect(ids).toEqual(["in1", "in2"]);
+
+    // Without the range, ALL four match the FTS query (proving the range narrowed).
+    const unranged = hybridSearch(db, "cat", undefined, { limit: 10 });
+    expect(unranged.length).toBe(4);
+  });
+
+  it("a NULL occurred_at row is NOT returned when a range is set (fails BETWEEN)", () => {
+    insertMemory(db, "timed", "cat with a time", { occurredAt: T0 + 1 * DAY });
+    insertMemory(db, "untimed", "cat without a time", { occurredAt: null });
+
+    const ranged = hybridSearch(db, "cat", undefined, {
+      limit: 10,
+      occurredAtRange: { start: T0, end: T0 + 7 * DAY },
+    });
+    const ids = ranged.map((r) => r.id);
+    expect(ids).toContain("timed");
+    expect(ids).not.toContain("untimed"); // NULL ⇒ not in any range
+  });
+
+  it("the range ANDs onto the (tenant_id, agent_id) scope — never widens it (T-102-03-02)", () => {
+    // Two agents, both with an in-window row at the SAME occurred_at.
+    insertMemory(db, "mine", "shared cat token", {
+      tenantId: "default",
+      agentId: "agent_x",
+      occurredAt: T0 + 1 * DAY,
+    });
+    insertMemory(db, "foreign", "shared cat token", {
+      tenantId: "default",
+      agentId: "agent_y",
+      occurredAt: T0 + 1 * DAY,
+    });
+
+    const ranged = hybridSearch(db, "cat", undefined, {
+      limit: 10,
+      tenantId: "default",
+      agentId: "agent_x",
+      occurredAtRange: { start: T0, end: T0 + 7 * DAY },
+    });
+    const ids = ranged.map((r) => r.id);
+    expect(ids).toContain("mine");
+    expect(ids).not.toContain("foreign"); // the range did NOT widen past the agent scope
+  });
+
+  it("triggers the post-fusion WHERE even when no other filter is present (range-only)", () => {
+    // No trustLevel/memoryType/tenantId/agentId — only the range. The WHERE-build
+    // guard must include occurredAtRange or the filter is a silent no-op.
+    insertMemory(db, "in", "lone cat", { occurredAt: T0 + 1 * DAY });
+    insertMemory(db, "out", "lone cat", { occurredAt: T0 + 30 * DAY });
+
+    const ranged = hybridSearch(db, "cat", undefined, {
+      limit: 10,
+      occurredAtRange: { start: T0, end: T0 + 7 * DAY },
+    });
+    expect(ranged.map((r) => r.id)).toEqual(["in"]);
   });
 });

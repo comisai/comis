@@ -33,6 +33,7 @@ function makeEntry(
     createdAt: overrides?.createdAt ?? Date.now(),
     ...(overrides?.updatedAt !== undefined ? { updatedAt: overrides.updatedAt } : {}),
     ...(overrides?.expiresAt !== undefined ? { expiresAt: overrides.expiresAt } : {}),
+    ...(overrides?.occurredAt !== undefined ? { occurredAt: overrides.occurredAt } : {}),
     ...(overrides?.embedding ? { embedding: overrides.embedding } : {}),
     ...(overrides?.memoryType ? { memoryType: overrides.memoryType } : {}),
   };
@@ -1061,6 +1062,121 @@ describe("SqliteMemoryAdapter.searchLanes (LANES-01 un-fused split)", () => {
     if (lanes.ok) {
       expect(lanes.value.fts.length).toBeGreaterThan(0);
       expect(lanes.value.vector).toEqual([]); // zero-length embedding → no vector lane
+    }
+  });
+});
+
+// ── occurredAtRange filter threaded into search + searchLanes (IQ-03b) ────
+//
+// The MemorySearchOptions.occurredAtRange field ANDs an `occurred_at BETWEEN`
+// onto the ALREADY-scoped query on BOTH the search() and searchLanes() paths
+// (recall prefers searchLanes when present, falls back to search — missing one
+// is a silent no-op on that path; the MEMORY.md mcp_field_plumbing lesson).
+// T-102-03-02: the range can only NARROW — a multi-agent range query returns
+// ONLY the caller's agent's in-window rows. RED on pre-patch (the range is
+// ignored on both paths).
+
+describe("SqliteMemoryAdapter occurredAtRange (IQ-03b) — narrows on search + searchLanes", () => {
+  let adapter: SqliteMemoryAdapter;
+  const DAY = 86_400_000;
+  const T0 = 100 * DAY;
+
+  beforeEach(() => {
+    adapter = new SqliteMemoryAdapter(testConfig);
+  });
+
+  afterEach(() => {
+    try { adapter.close(); } catch { /* already closed */ }
+  });
+
+  it("search(): narrows to ONLY the in-window rows (out-of-window dropped)", async () => {
+    await adapter.store(makeEntry({ id: "in1", content: "dentist appointment", occurredAt: T0 + 1 * DAY }));
+    await adapter.store(makeEntry({ id: "after", content: "dentist appointment", occurredAt: T0 + 30 * DAY }));
+
+    const ranged = await adapter.search(testSessionKey, "dentist", {
+      limit: 10,
+      occurredAtRange: { start: T0, end: T0 + 7 * DAY },
+    });
+    expect(ranged.ok).toBe(true);
+    if (!ranged.ok) return;
+    const ids = ranged.value.map((r) => r.entry.id);
+    expect(ids).toContain("in1");
+    expect(ids).not.toContain("after");
+
+    // Without the range, both match (proving the range narrowed, not the query).
+    const unranged = await adapter.search(testSessionKey, "dentist", { limit: 10 });
+    expect(unranged.ok).toBe(true);
+    if (unranged.ok) expect(unranged.value.length).toBe(2);
+  });
+
+  it("searchLanes(): narrows the FTS lane to ONLY the in-window rows (the recall hot path)", async () => {
+    await adapter.store(makeEntry({ id: "in1", content: "dentist appointment", occurredAt: T0 + 1 * DAY }));
+    await adapter.store(makeEntry({ id: "after", content: "dentist appointment", occurredAt: T0 + 30 * DAY }));
+
+    const ranged = await adapter.searchLanes!(testSessionKey, "dentist", {
+      limit: 10,
+      occurredAtRange: { start: T0, end: T0 + 7 * DAY },
+    });
+    expect(ranged.ok).toBe(true);
+    if (!ranged.ok) return;
+    const ids = ranged.value.fts.map((r) => r.entry.id);
+    expect(ids).toContain("in1");
+    expect(ids).not.toContain("after"); // RED on pre-patch: searchLanes ignores the range
+
+    // Without the range, both surface in the FTS lane.
+    const unranged = await adapter.searchLanes!(testSessionKey, "dentist", { limit: 10 });
+    expect(unranged.ok).toBe(true);
+    if (unranged.ok) expect(unranged.value.fts.length).toBe(2);
+  });
+
+  it("a NULL occurred_at row drops out of BOTH paths when a range is set", async () => {
+    await adapter.store(makeEntry({ id: "timed", content: "dentist appointment", occurredAt: T0 + 1 * DAY }));
+    await adapter.store(makeEntry({ id: "untimed", content: "dentist appointment" })); // no occurredAt → NULL
+
+    const s = await adapter.search(testSessionKey, "dentist", {
+      limit: 10,
+      occurredAtRange: { start: T0, end: T0 + 7 * DAY },
+    });
+    expect(s.ok).toBe(true);
+    if (s.ok) {
+      const ids = s.value.map((r) => r.entry.id);
+      expect(ids).toContain("timed");
+      expect(ids).not.toContain("untimed");
+    }
+
+    const l = await adapter.searchLanes!(testSessionKey, "dentist", {
+      limit: 10,
+      occurredAtRange: { start: T0, end: T0 + 7 * DAY },
+    });
+    expect(l.ok).toBe(true);
+    if (l.ok) {
+      const ids = l.value.fts.map((r) => r.entry.id);
+      expect(ids).toContain("timed");
+      expect(ids).not.toContain("untimed");
+    }
+  });
+
+  it("T-102-03-02: range + agent scope returns ONLY the caller's agent's in-window rows (never widens scope)", async () => {
+    // Two agents, both with an in-window row at the SAME occurred_at + same text.
+    await adapter.store(makeEntry({ id: "mine", agentId: "agent_x", content: "dentist appointment", occurredAt: T0 + 1 * DAY }));
+    await adapter.store(makeEntry({ id: "foreign", agentId: "agent_y", content: "dentist appointment", occurredAt: T0 + 1 * DAY }));
+
+    const opts = { limit: 10, agentId: "agent_x", occurredAtRange: { start: T0, end: T0 + 7 * DAY } };
+
+    const s = await adapter.search(testSessionKey, "dentist", opts);
+    expect(s.ok).toBe(true);
+    if (s.ok) {
+      const ids = s.value.map((r) => r.entry.id);
+      expect(ids).toContain("mine");
+      expect(ids).not.toContain("foreign"); // range did NOT widen past the agent scope
+    }
+
+    const l = await adapter.searchLanes!(testSessionKey, "dentist", opts);
+    expect(l.ok).toBe(true);
+    if (l.ok) {
+      const ids = l.value.fts.map((r) => r.entry.id);
+      expect(ids).toContain("mine");
+      expect(ids).not.toContain("foreign");
     }
   });
 });
