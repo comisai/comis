@@ -835,27 +835,6 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
         const temporalGuidance = buildTemporalGuidanceBlock(ranked);
         if (temporalGuidance) memorySections.push(temporalGuidance);
 
-        // USER-03: the LLM-free per-user-profile standing block. Default-OFF — gated
-        // on the optional store dep (absent ⇒ no read, no push ⇒ byte-identity, the
-        // cost gate). When present, a DETERMINISTIC store.read scoped to THIS prompt's
-        // own (tenant, agent, user) + the pure buildUserRepresentationBlock formatter
-        // (NO model call — the recall hot path stays LLM-free, mirror the temporal
-        // block push above). The formatter returns null on an empty profile ⇒ nothing
-        // pushed ⇒ byte-identity. Non-fatal: a read err is swallowed by the outer
-        // try/catch (the agent proceeds without the profile). The profile content was
-        // redaction-checked + validateMemoryWrite-clean + high-trust at WRITE time.
-        if (deps.userRepresentationStore) {
-          const profile = await deps.userRepresentationStore.read({
-            tenantId: deps.tenantId ?? sessionKey.tenantId,
-            agentId: agentId ?? config.name,
-            userId: sessionKey.userId,
-          });
-          if (profile.ok && profile.value.length > 0) {
-            const profileBlock = buildUserRepresentationBlock(profile.value);
-            if (profileBlock) memorySections.push(profileBlock);
-          }
-        }
-
         // Emit memory:injected observability event so the trajectory bridge
         // can record one line per RAG injection. Fires only on turns where
         // the injector actually produced content (inline OR sections) —
@@ -891,6 +870,48 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       logger.debug({ agentId, resultCount: recalled.ok ? recalled.value.length : 0, durationMs: deps.clock.now() - ragStart }, "RAG recall complete");
     } catch (err) {
       logger.warn({ agentId, err, durationMs: deps.clock.now() - ragStart, hint: "RAG recall failed — agent will proceed without memory context", errorKind: "dependency" as const }, "RAG recall failed (non-fatal)");
+    }
+  }
+
+  // USER-03 STANDING BLOCK (HR-01): the LLM-free per-user-profile block is a DURABLE
+  // standing block ("what we know about this user"), NOT a per-recall-conditional one.
+  // It is injected on its OWN gate — `config.memoryUserRepresentation.enabled` (the
+  // 107-05 knob) AND the optional store dep — INDEPENDENT of whether RAG ran, whether
+  // recall hit, and independent of `rag.enabled`. This is why it lives OUTSIDE the
+  // `if (deps.memoryPort && config.rag?.enabled ...)` recall block above: nesting it
+  // there silently dropped the profile on every zero-recall turn (greetings/off-topic/
+  // sparse store) and gave RAG-off deployments ZERO injection (HR-01).
+  //
+  // Default-OFF byte-identity (the cost gate): with the knob off OR no store dep,
+  // read() is NEVER called and the prompt is byte-identical. When ON, a DETERMINISTIC
+  // store.read scoped to THIS prompt's own (tenant, agent, user) + the pure
+  // buildUserRepresentationBlock formatter (NO model call — the recall hot path stays
+  // LLM-free). The formatter returns null on an empty profile ⇒ nothing pushed ⇒
+  // byte-identity. Non-fatal: a read err is swallowed so the agent proceeds without the
+  // profile. The profile content was redaction-checked + validateMemoryWrite-clean +
+  // high-trust at WRITE time. memorySections is seeded by the recall block (or empty),
+  // so the profile appends after any retrieved sections + temporal guidance.
+  if (config.memoryUserRepresentation?.enabled && deps.userRepresentationStore) {
+    try {
+      const profile = await deps.userRepresentationStore.read({
+        tenantId: deps.tenantId ?? sessionKey.tenantId,
+        agentId: agentId ?? config.name,
+        userId: sessionKey.userId,
+      });
+      if (profile.ok && profile.value.length > 0) {
+        const profileBlock = buildUserRepresentationBlock(profile.value);
+        if (profileBlock) memorySections.push(profileBlock);
+      }
+    } catch (profileErr) {
+      logger.debug(
+        {
+          agentId,
+          err: profileErr,
+          hint: "user-profile read failed; proceeding without the standing block",
+          errorKind: "dependency" as const,
+        },
+        "User-representation standing-block read failed (non-fatal)",
+      );
     }
   }
 

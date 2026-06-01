@@ -396,9 +396,17 @@ describe("assembleExecutionPrompt", () => {
   // (a store.read + the pure formatter — never a model call).
   // -----------------------------------------------------------------
   describe("USER-03 per-user-profile injection (LLM-free standing block)", () => {
-    /** A recall-enabled config so the recall block (the profile push site) runs. */
+    /**
+     * The standing-block config: the profile's OWN gate
+     * (`memoryUserRepresentation.enabled`) is ON. HR-01 fix — the profile push
+     * site is gated on this knob + the store dep, INDEPENDENT of recall hits and
+     * independent of `rag.enabled`. `rag.enabled` is left ON here only so the
+     * recall path also runs (the prior tests asserted recall is still constructed
+     * exactly once); the standing block no longer NEEDS a recall hit to inject.
+     */
     function ragConfig() {
       return makeConfig({
+        memoryUserRepresentation: { enabled: true },
         rag: {
           enabled: true,
           maxResults: 5,
@@ -406,6 +414,18 @@ describe("assembleExecutionPrompt", () => {
           includeTrustLevels: ["learned"],
           maxContextChars: 5000,
         },
+      });
+    }
+    /**
+     * The standing-block config WITHOUT a recall hit: the profile knob is ON but
+     * `rag.enabled` is OFF (no recall, no recall hits). HR-01 — the durable
+     * profile MUST still inject on a zero-recall turn. The push must NOT be nested
+     * inside the recall-hit branch.
+     */
+    function userReprOnlyConfig() {
+      return makeConfig({
+        memoryUserRepresentation: { enabled: true },
+        rag: { enabled: false },
       });
     }
     /** A memoryPort + a non-empty recall result so `recalled.value.length > 0`. */
@@ -549,6 +569,139 @@ describe("assembleExecutionPrompt", () => {
       // exactly once (the profile path is a store.read + the pure formatter, never a
       // second createMemoryRecall / reasoning call).
       expect(mockCreateMemoryRecall).toHaveBeenCalledOnce();
+    });
+
+    it("HR-01 standing block: a populated profile injects on a ZERO-recall turn (recall returns ok([])) — the profile is NOT recall-conditional", async () => {
+      // RED-first (HR-01): the profile <user_profile> block was wrongly NESTED inside
+      // the `recalled.value.length > 0` recall-hit branch, so it silently dropped on
+      // every zero-recall turn (greetings/off-topic/sparse store). The durable per-user
+      // profile is a STANDING block — it must inject whenever its OWN knob is on + the
+      // store has rows, independent of whether THIS turn's recall hit. This test wires a
+      // populated store + a recall that returns ok([]) (the beforeEach default) and asserts
+      // the block IS present. On the pre-fix (nested) code this FAILS (the push site is
+      // unreachable when recalled.value.length === 0).
+      const memoryPort = ragMemoryPort(); // builds the port (and sets a recall hit)
+      // Force ZERO recall hits AFTER ragMemoryPort() (which set a non-empty result):
+      // recall succeeds but returns nothing this turn — the recall-hit branch is NOT
+      // entered, so the pre-fix (nested) profile push is unreachable here.
+      mockRecall.mockResolvedValue({ ok: true, value: [] });
+      const spy = makeSpyStore([
+        {
+          id: "p1",
+          entryType: "identity",
+          content: "name is Sam",
+          trust: "learned",
+          createdAt: 1_000,
+        },
+      ]);
+      const result = await assembleExecutionPrompt(
+        makeParams({
+          config: ragConfig(),
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort,
+            userRepresentationStore: spy.store,
+          },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      // The standing block injects even though recall returned NOTHING this turn.
+      expect(result.dynamicPreamble).toContain("<user_profile>");
+      expect(result.dynamicPreamble).toContain("name is Sam");
+      expect(spy.reads(), "the standing-block read runs on a zero-recall turn").toBe(1);
+    });
+
+    it("HR-01 standing block: injects with rag.enabled=false (no memoryPort recall path) — decoupled from the RAG knob", async () => {
+      // The other half of HR-01: the block was ALSO gated behind `rag.enabled` +
+      // `deps.memoryPort` (the outer recall guard). An operator who enables
+      // `memoryUserRepresentation` but runs `rag.enabled: false` got ZERO profile
+      // injection (the offline builder wrote rows nothing ever read). The standing
+      // block must inject on its OWN knob + store, with NO RAG/memoryPort at all.
+      const spy = makeSpyStore([
+        {
+          id: "p1",
+          entryType: "identity",
+          content: "name is Sam",
+          trust: "learned",
+          createdAt: 1_000,
+        },
+      ]);
+      const result = await assembleExecutionPrompt(
+        makeParams({
+          config: userReprOnlyConfig(), // rag.enabled = false, NO memoryPort wired
+          deps: {
+            workspaceDir: "/workspace",
+            userRepresentationStore: spy.store,
+          },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      expect(result.dynamicPreamble).toContain("<user_profile>");
+      expect(result.dynamicPreamble).toContain("name is Sam");
+      expect(spy.reads(), "the standing-block read runs even with rag.enabled=false").toBe(1);
+    });
+
+    it("HR-01 cost gate: knob OFF + store present + recall HIT ⇒ read() NEVER called and the prompt is byte-identical (the OWN-knob gate, not store-presence)", async () => {
+      // The HR-01 gate moved from store-presence-only to (knob && store). Prove the
+      // knob is load-bearing — and that this is a true regression guard: wire the store
+      // AND drive a recall HIT (so the OLD nested push site WOULD have run), but leave
+      // `memoryUserRepresentation` OFF. The cost gate must hold: read() is NEVER called
+      // and the prompt equals the knob-off baseline (default-OFF byte-identity). On the
+      // pre-fix code (gated on store-presence inside the recall-hit branch) this FAILS —
+      // it would read once and inject. The recall block itself still runs (rag.enabled),
+      // so the baseline includes the recalled section; only the profile is gated off.
+      const memoryPort = ragMemoryPort(); // sets a non-empty recall hit
+      const spy = makeSpyStore([
+        {
+          id: "p1",
+          entryType: "identity",
+          content: "name is Sam",
+          trust: "learned",
+          createdAt: 1_000,
+        },
+      ]);
+      const knobOff = await assembleExecutionPrompt(
+        makeParams({
+          // knobOffRagConfig: rag.enabled ON (recall hits) but the profile knob OFF.
+          config: makeConfig({
+            rag: {
+              enabled: true,
+              maxResults: 5,
+              minScore: 0.3,
+              includeTrustLevels: ["learned"],
+              maxContextChars: 5000,
+            },
+          }),
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort,
+            userRepresentationStore: spy.store,
+          },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+      const baseline = await assembleExecutionPrompt(
+        makeParams({
+          config: makeConfig({
+            rag: {
+              enabled: true,
+              maxResults: 5,
+              minScore: 0.3,
+              includeTrustLevels: ["learned"],
+              maxContextChars: 5000,
+            },
+          }),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      expect(spy.reads(), "knob off ⇒ read() NEVER called even on a recall hit (the cost gate)").toBe(0);
+      expect(knobOff.dynamicPreamble).not.toContain("<user_profile>");
+      expect(knobOff.dynamicPreamble).toEqual(baseline.dynamicPreamble);
+      expect(knobOff.systemPrompt).toEqual(baseline.systemPrompt);
     });
 
     it("forward-presence: deps.userRepresentationStore reaches the read site with the prompt's own (tenant, agent, user) scope", async () => {
