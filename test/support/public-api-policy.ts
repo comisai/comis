@@ -1118,6 +1118,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // INFERRED config TYPE, not the schema value. The schema value therefore has no
       // out-of-package consumer — baseline orphan (mirror MemoryReviewConfigSchema).
       "MemoryConsolidationConfigSchema",
+      // Per-agent reasoning config schema + type (Phase 101-02, REASON-04). Wired into
+      // PerAgentConfig (schema-agent-runtime) WITHIN @comis/core; the schema-runtime attach
+      // is a self-import (the public-export-consumers gate skips same-package imports), so
+      // both the schema value AND the inferred config TYPE are surfaced AHEAD of their
+      // cross-package consumers — the reasoning job reads MemoryReasoningConfig in 101-04/06
+      // (the factory-orphan dance, mirror MemoryConsolidationConfigSchema @ 84-04 +
+      // runMemoryTripleExtraction @ 100-05). Shrink when the 101-04/06 consumer lands.
+      "MemoryReasoningConfigSchema",
+      "MemoryReasoningConfig",
       "ProvidersConfigSchema",
       "UserModelSchema",
       "ModelCostSchema",
