@@ -1612,6 +1612,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // validation site outside @comis/core emerges (e.g. a CLI `broker validate`
       // command or a broker health-check handler in Phase 9).
       "BrokerBindingConfigSchema",
+      // Trust-first bi-temporal KG port (Phase 100-01, Track F — KG-01). The
+      // TripleStorePort interface + TripleScope + TripleInput already have real
+      // in-repo consumers (the @comis/memory adapter imports them by TYPE). The
+      // TripleTrust ladder alias is referenced only INSIDE TripleInput.trust (a
+      // field type, not a standalone import), so the export-graph walker counts
+      // it as an orphan. It is part of the documented port API surface (callers
+      // construct a TripleInput by naming the trust literal) — tracked here.
+      // Shrinks when the Plan-02 offline writer / Plan-04 lane reference it directly.
+      "TripleTrust",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
@@ -1876,6 +1885,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // The constructor-deps SHAPE type is part of its public API but is referenced only via
       // inline objects — baseline orphan (mirror MemoryEntityStoreDeps / MemoryConsolidationStoreDeps).
       "MemoryUsefulnessStoreDeps",
+      // Trust-first bi-temporal KG triple store (Phase 100-01, Track F — KG-01).
+      // createSqliteTripleStore is the sole TripleStorePort adapter; the daemon
+      // composition root constructs it on the memory adapter's db handle in Plan
+      // 100-03 (setup-memory). Surfaced here AHEAD of that wiring — the
+      // factory-orphan dance (mirror createSqliteMemoryCausalStore @ 96-01): this
+      // entry SHRINKS when 100-03 lands the daemon consumer. MemoryTripleStoreDeps
+      // is the constructor-deps SHAPE (referenced via inline objects only) —
+      // PERMANENT baseline orphan (mirror MemoryCausalStoreDeps). MemoryTripleRowSchema
+      // is the row schema consumed by createRowMapper inside the adapter (an
+      // intra-file value reference, not a cross-file import), so the export-graph
+      // walker counts it as an orphan until a cross-file consumer (the Plan-02/04
+      // projection reads) lands — tracked here (mirror the other *RowSchema entries).
+      "createSqliteTripleStore",
+      "MemoryTripleStoreDeps",
+      "MemoryTripleRowSchema",
       "EmbeddingCacheOptions",
       "EmbeddingCacheStats",
       "SqliteEmbeddingCacheOptions",
