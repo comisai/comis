@@ -187,6 +187,11 @@ export type {
   MemoryReasoningResult,
   ReasoningOutput,
 } from "./memory/memory-reasoning-job.js";
+// The daemon-injected reasoning seam factory (101-06): builds the OFFLINE
+// reason() seam from a cheap resolved model, keeping the specialist prompts +
+// parsers agent-internal. Consumed by the daemon __MEMORY_REASONING__ sentinel.
+export { createReasoningSeam } from "./memory/memory-reasoning-seam.js";
+export type { ReasoningSeamDeps } from "./memory/memory-reasoning-seam.js";
 
 // RAG (Retrieval-Augmented Generation)
 export { formatMemorySection } from "./rag/rag-retriever.js";
