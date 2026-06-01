@@ -107,7 +107,6 @@ export {
   AgentSecretsConfigSchema,
   SecretsConfigSchema,
 } from "./schema-secrets.js";
-export { preReadSecretsEnabled } from "./pre-read-secrets-enabled.js";
 export { preReadStorageMode } from "./pre-read-storage-mode.js";
 export type { StorageModePreRead } from "./pre-read-storage-mode.js";
 export { checkLegacyConfigKeys } from "./migration-guard.js";

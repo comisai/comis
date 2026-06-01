@@ -53,6 +53,7 @@ import type {
   createAuditAggregator,
   createApprovalGate,
   createModelCatalog,
+  preReadStorageMode,
 } from "@comis/core";
 import type { createActiveRunRegistry } from "@comis/agent";
 import type { setupSecrets, ObservabilityStore } from "@comis/memory";
@@ -197,6 +198,8 @@ export interface DaemonOverrides {
   bootstrap?: typeof bootstrap;
   /** Override setupSecrets for test isolation */
   setupSecrets?: typeof setupSecrets;
+  /** Override preReadStorageMode for test isolation (avoids reading real ~/.comis/config.yaml). */
+  preReadStorageMode?: typeof preReadStorageMode;
   /** Override createTracingLogger. */
   createTracingLogger?: typeof createTracingLogger;
   /** Override createLogLevelManager. */

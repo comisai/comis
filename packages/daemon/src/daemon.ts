@@ -95,7 +95,7 @@ import {
   themeForName,
   BackgroundTasksConfigSchema,
   writeMasterKeyIfAbsent,
-  preReadSecretsEnabled,
+  preReadStorageMode,
   systemGetEnv,
   systemNowMs,
   selectOAuthCredentialStore,
@@ -1446,6 +1446,7 @@ async function bootFoundation(
   const { overrides, startupStartMs, instanceId } = input;
   const _bootstrap = overrides.bootstrap ?? bootstrap;
   const _setupSecrets = overrides.setupSecrets ?? _setupSecretsImpl;
+  const _preReadStorageMode = overrides.preReadStorageMode ?? preReadStorageMode;
   const _createTracingLogger = overrides.createTracingLogger ?? createTracingLogger;
   const _createLogLevelManager = overrides.createLogLevelManager ?? createLogLevelManager;
   const _createTokenTracker = overrides.createTokenTracker ?? createTokenTracker;
@@ -1456,60 +1457,79 @@ async function bootFoundation(
   const dataDir = process.env["COMIS_DATA_DIR"] ?? safePath(os.homedir(), ".comis");
   const envPath = safePath(dataDir, ".env");
 
-  // Resolve config paths up front so we can pre-read security.secrets.enabled
-  // before writeMasterKeyIfAbsent. The full bootstrap (which validates the
+  // Resolve config paths up front so we can pre-read security.storage
+  // before writeMasterKeyIfAbsent (REQ-17). The full bootstrap (which validates the
   // whole config + does ${VAR} substitution) runs later — it depends on
   // mergedEnv, which depends on whether the encrypted store opened.
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution + VITEST guard
   const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"]; if (process.env["VITEST"] === "true" && !rawConfigPaths) throw new Error("VITEST=true and COMIS_CONFIG_PATHS unset — refusing to read ~/.comis/config.yaml from a test process. Set COMIS_CONFIG_PATHS to a sandbox path in your test setup, or import test/support/vitest-process-listeners.ts.");
   const requestedConfigPaths = rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS;
 
-  // Opt-out checks — TWO independent paths, either disables the store:
-  //   1. env: COMIS_DISABLE_ENCRYPTED_SECRETS=1|true|on
-  //   2. config: security.secrets.enabled: false (in any YAML config path)
-  // Both are evaluated BEFORE writeMasterKeyIfAbsent so an opt-out leaves
-  // ~/.comis/.env completely untouched (no SECRETS_MASTER_KEY line appended).
-  const parseDisableFlag = (raw: string | undefined): boolean => {
-    if (typeof raw !== "string") return false;
-    const norm = raw.trim().toLowerCase();
-    return norm === "1" || norm === "true" || norm === "on";
-  };
-  const disableEncryptedPreLoad = parseDisableFlag(systemGetEnv("COMIS_DISABLE_ENCRYPTED_SECRETS"));
-  const secretsEnabledByConfig = preReadSecretsEnabled(requestedConfigPaths);
-  const disableEncryptedAtStart = disableEncryptedPreLoad || !secretsEnabledByConfig;
+  // P0 boot gate: REQ-17 — ensure file/env first boot creates no key material.
+  //
+  // Step 1 (pre-loadEnvFile): If the legacy env var COMIS_DISABLE_ENCRYPTED_SECRETS
+  // is set at this point (before .env is loaded), fail with a migration error.
+  // This var was removed in v1.5 — operators must use security.storage: env instead.
+  if (systemGetEnv("COMIS_DISABLE_ENCRYPTED_SECRETS")) {
+    throw new Error(
+      "[MIGRATION_ERROR] COMIS_DISABLE_ENCRYPTED_SECRETS is no longer supported. " +
+        "Set security.storage: env in your config.yaml and remove " +
+        "COMIS_DISABLE_ENCRYPTED_SECRETS from your environment. " +
+        "See the migration guide in the changelog.",
+    );
+  }
 
-  // Auto-generate master key on first boot (before loadEnvFile — key must be in
-  // memory, not re-read from env, for same-boot usability).
+  // Step 2: Pre-read security.storage from YAML (layered, last-wins).
+  // Returns "encrypted" | "file" | "env" | "legacy".
+  // NEVER writes key material before this check — the storageMode gates the write.
+  const storageMode = _preReadStorageMode(requestedConfigPaths);
+
+  // Step 3: If legacy keys detected in YAML, fail with migration error before
+  // any key material is written (REQ-17 criterion: no key material in file/env mode).
+  if (storageMode === "legacy") {
+    throw new Error(
+      "[MIGRATION_ERROR] Legacy config keys detected in your config.yaml. " +
+        "The keys oauth.storage and security.secrets.enabled were removed in v1.5. " +
+        "Replace with: security.storage: encrypted|file|env (default: encrypted). " +
+        "See the migration guide in the changelog.",
+    );
+  }
+
+  // Step 4: Write master key ONLY when storageMode is "encrypted" (REQ-17).
+  // file/env modes create NO key material on first boot.
   // NEVER log autoInitKeyHex — it is raw 32-byte key material.
   let autoInitKeyHex: string | undefined;
-  if (!disableEncryptedAtStart) {
+  if (storageMode === "encrypted") {
     const writeResult = writeMasterKeyIfAbsent(dataDir);
     autoInitKeyHex = writeResult.keyHex; // defined iff written===true (first boot only)
   }
 
   loadEnvFile(envPath);
 
-  // Re-evaluate opt-out after loadEnvFile so COMIS_DISABLE_ENCRYPTED_SECRETS in
-  // ~/.comis/.env is honoured for the store-construction gate (not just key auto-gen).
-  // The config-driven opt-out (`secretsEnabledByConfig`) is fixed once at pre-read
-  // time — YAML is read directly off disk and is not affected by loadEnvFile.
+  // Step 5 (post-loadEnvFile): Re-check for COMIS_DISABLE_ENCRYPTED_SECRETS that
+  // may have been loaded from ~/.comis/.env. Fail with migration error if present.
   // eslint-disable-next-line no-restricted-syntax -- must re-read process.env after loadEnvFile
-  const disableEncryptedByEnvAfterLoad = parseDisableFlag(process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"]);
-  const disableEncrypted = disableEncryptedAtStart || disableEncryptedByEnvAfterLoad;
+  if (process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"]) {
+    throw new Error(
+      "[MIGRATION_ERROR] COMIS_DISABLE_ENCRYPTED_SECRETS found in .env file. " +
+        "This env var is no longer supported. Set security.storage: env in your " +
+        "config.yaml and remove COMIS_DISABLE_ENCRYPTED_SECRETS from ~/.comis/.env. " +
+        "See the migration guide in the changelog.",
+    );
+  }
 
   // 0.5. Decrypt secrets, merge with env, scrub process.env.
   const permissionCorrections = hardenDataDirPermissions(dataDir);
-  // Gate the entire store bootstrap on disableEncrypted: when opt-out is true,
-  // skip store construction entirely (mergedEnv = process.env). Otherwise
-  // bootstrapSecretsAndEnv would run unconditionally — after loadEnvFile loaded
-  // SECRETS_MASTER_KEY from ~/.comis/.env, setupSecrets would find it and build
-  // a live store even when the opt-out was set.
+  // Gate the entire store bootstrap on storageMode: only "encrypted" mode uses
+  // bootstrapSecretsAndEnv. file/env modes skip it entirely (mergedEnv = process.env).
+  // Phase 2 will wire the actual file/env store implementations; for P0 the daemon
+  // simply does not call bootstrapSecretsAndEnv in non-encrypted modes.
   let mergedEnv: Record<string, string | undefined>;
   let secretStore: import("@comis/core").SecretStorePort | undefined;
   let secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
   let secretsDb: import("better-sqlite3").Database | undefined;
-  if (disableEncrypted) {
-    // Opt-out: no store construction. Keep loadEnvFile output (non-secret vars) in mergedEnv.
+  if (storageMode !== "encrypted") {
+    // file/env modes: no store construction. Keep loadEnvFile output (non-secret vars) in mergedEnv.
     // eslint-disable-next-line no-restricted-syntax -- building mergedEnv from process.env after loadEnvFile
     mergedEnv = process.env as Record<string, string | undefined>;
   } else {
@@ -1596,24 +1616,16 @@ async function bootFoundation(
     }
   }
 
-  // Deferred opt-out WARN (logger not available before setupLogging).
-  // Two opt-out sources, surfaced separately so the hint matches the reason:
-  //   - env: COMIS_DISABLE_ENCRYPTED_SECRETS=1 (process.env or ~/.comis/.env)
-  //   - config: security.secrets.enabled: false (YAML, applied at boot)
-  if (disableEncrypted) {
-    const envDisabled = disableEncryptedPreLoad || disableEncryptedByEnvAfterLoad;
-    const source = envDisabled ? "env" : "config";
-    daemonLogger.warn(
+  // P0 boot: file/env storage mode INFO log (logger now available).
+  // No WARN needed — the legacy opt-out path now fails at the boot gate above.
+  // If we reach here with storageMode !== "encrypted", it is a valid P0 mode.
+  if (storageMode !== "encrypted") {
+    daemonLogger.info(
       {
-        errorKind: "config" as const,
-        optOutSource: source,
-        hint: envDisabled
-          ? "Back up ~/.comis/.env immediately. Losing SECRETS_MASTER_KEY makes secrets.db permanently unreadable. To re-enable, unset COMIS_DISABLE_ENCRYPTED_SECRETS and restart."
-          : "Back up ~/.comis/.env immediately. Losing SECRETS_MASTER_KEY makes secrets.db permanently unreadable. To re-enable, set security.secrets.enabled: true (or remove the field) and restart.",
+        storageMode,
+        hint: "Credential stores operating in non-encrypted mode. SECRETS_MASTER_KEY and secrets.db are not created.",
       },
-      envDisabled
-        ? "COMIS_DISABLE_ENCRYPTED_SECRETS=1: encrypted secrets store disabled. Daemon running in envfile-only mode. Backup obligation is on the operator."
-        : "security.secrets.enabled=false: encrypted secrets store disabled by config. Daemon running in envfile-only mode. Backup obligation is on the operator.",
+      `security.storage: ${storageMode} — no key material created (REQ-17).`,
     );
   }
 

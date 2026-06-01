@@ -116,7 +116,6 @@ export {
   findUnresolvedEnvRefs,
   formatMissingEnvRefError,
   loadConfigFile,
-  preReadSecretsEnabled,
   preReadStorageMode,
   checkLegacyConfigKeys,
   validateConfig,

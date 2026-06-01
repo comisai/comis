@@ -470,7 +470,21 @@ describe("daemon main()", () => {
     // we drop VITEST for the duration of the call.
     const prevVitest = process.env["VITEST"];
     delete process.env["VITEST"];
+    // P0: preReadStorageMode reads the default config files (if they exist) before
+    // bootstrap. If the developer's real ~/.comis/config.yaml contains legacy keys,
+    // the migration guard throws before bootstrap is called, breaking this test.
+    // Override COMIS_DATA_DIR to a fresh tmpdir so the default paths point at
+    // non-existent files, which preReadStorageMode silently skips (returns "encrypted").
+    // Note: DEFAULT_CONFIG_PATHS is based on os.homedir(), not COMIS_DATA_DIR —
+    // the path assert below is still valid because we are testing the shape of
+    // DEFAULT_CONFIG_PATHS, not the actual file location.
     const { overrides } = buildOverrides();
+    // P0: preReadStorageMode reads the default config files (if they exist) before
+    // bootstrap. If the developer's real ~/.comis/config.yaml contains legacy keys,
+    // the migration guard throws before bootstrap is called, breaking this test.
+    // Use the override seam to return "encrypted" so the boot gate passes
+    // regardless of the actual ~/.comis/config.yaml content on this machine.
+    overrides.preReadStorageMode = vi.fn().mockReturnValue("encrypted");
 
     try {
       instances.push(await main(overrides));
@@ -807,94 +821,28 @@ describe("opt-out and same-boot init", () => {
     process.env = originalEnv;
   });
 
-  it("emits WARN with hint about backup obligation when COMIS_DISABLE_ENCRYPTED_SECRETS=1", async () => {
-    // Set opt-out flag
+  it("fails boot with MIGRATION_ERROR when COMIS_DISABLE_ENCRYPTED_SECRETS=1 (P0: legacy env var removed)", async () => {
+    // P0: COMIS_DISABLE_ENCRYPTED_SECRETS is no longer supported — daemon boot
+    // must throw a migration error instead of continuing with opt-out behavior.
     process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"] = "1";
-    const { overrides, mocks } = buildOverrides();
-    const mockSetupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
-    overrides.setupSecrets = mockSetupSecrets;
+    const { overrides } = buildOverrides();
 
-    const instance = await main(overrides);
-    instances.push(instance);
-
-    // daemonLogger (obtained from logLevelManager.getLogger) emits warn with
-    // backup-obligation message. Access pattern mirrors daemon.test.ts:437.
-    const daemonLogger = (mocks.logLevelManager.getLogger as ReturnType<typeof vi.fn>).mock.results[0]?.value;
-    const warnCalls = (daemonLogger.warn as ReturnType<typeof vi.fn>).mock.calls;
-    // Must find a warn whose message (2nd arg) OR hint (in 1st arg object) contains
-    // "COMIS_DISABLE_ENCRYPTED_SECRETS" — specifically the opt-out WARN, not generic
-    // config warns (none of which mention this flag).
-    const optOutWarn = warnCalls.find((args: unknown[]) => {
-      const msg = String(args[1] ?? "");
-      const hint = typeof args[0] === "object" && args[0] !== null
-        ? String((args[0] as Record<string, unknown>)["hint"] ?? "")
-        : "";
-      return msg.includes("COMIS_DISABLE_ENCRYPTED_SECRETS") ||
-             hint.includes("COMIS_DISABLE_ENCRYPTED_SECRETS") ||
-             hint.includes("backup obligation");
-    });
-    expect(optOutWarn).toBeDefined();
+    await expect(main(overrides)).rejects.toThrow(/MIGRATION_ERROR.*COMIS_DISABLE_ENCRYPTED_SECRETS/);
   });
 
-  // COMIS_DISABLE_ENCRYPTED_SECRETS=1 must make secretStore=undefined EVEN when
-  // SECRETS_MASTER_KEY already exists in the environment (the common post-first-boot case).
-  // When disableEncrypted=true, the store construction must be skipped entirely; otherwise
-  // bootstrapSecretsAndEnv would run unconditionally, find the env key, and build a live
-  // store. The WARN says "disabled" but a live store would be contradictory and dangerous.
-  //
-  // The test seeds a real SECRETS_MASTER_KEY into process.env and passes the REAL setupSecrets
-  // through a spy-wrapper so we can observe whether a live store was returned. We assert via the
-  // daemonLogger banner that secrets.encrypted === false.
-  it("COMIS_DISABLE_ENCRYPTED_SECRETS=1 with existing SECRETS_MASTER_KEY must yield secretStore=undefined", async () => {
+  // P0: COMIS_DISABLE_ENCRYPTED_SECRETS is no longer supported — daemon boot
+  // must throw a migration error, even when SECRETS_MASTER_KEY already exists.
+  it("fails boot with MIGRATION_ERROR when COMIS_DISABLE_ENCRYPTED_SECRETS=1 even with existing SECRETS_MASTER_KEY", async () => {
     const { randomBytes: cryptoRandomBytes } = await import("node:crypto");
     const existingKeyHex = cryptoRandomBytes(32).toString("hex");
 
-    // Use a fresh tmpdir so there is no pre-existing secrets.db to collide with.
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-cr02-test-"));
     process.env["COMIS_DATA_DIR"] = freshDataDir;
-    // Plant a real key in the test env BEFORE setting the opt-out flag (simulates
-    // the post-first-boot state where the key was already loaded from ~/.comis/.env)
     process.env["SECRETS_MASTER_KEY"] = existingKeyHex;
     process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"] = "1";
 
-    const { overrides, mocks } = buildOverrides();
-    // Use real setupSecrets via spy: do NOT mock it to null (that hides the bug).
-    // Track whether the real setupSecrets returned a live SecretsBootResult.
-    let setupSecretsReturnedStore = false;
-    const { setupSecrets: realSetupSecrets } = await import("@comis/memory");
-    overrides.setupSecrets = vi.fn((opts) => {
-      const result = realSetupSecrets(opts);
-      if (result.ok && result.value !== null) {
-        setupSecretsReturnedStore = true;
-      }
-      return result;
-    });
-
-    const instance = await main(overrides);
-    instances.push(instance);
-
-    // Access the daemonLogger (index 0 from logLevelManager.getLogger calls)
-    const daemonLogger = (mocks.logLevelManager.getLogger as ReturnType<typeof vi.fn>).mock.results[0]?.value;
-    const infoCallArgs = (daemonLogger.info as ReturnType<typeof vi.fn>).mock.calls;
-    // Find the startup banner call — it logs { manifest: { secrets: { encrypted: bool } } }
-    const bannerCall = infoCallArgs.find((args: unknown[]) => {
-      if (typeof args[0] !== "object" || args[0] === null) return false;
-      const obj = args[0] as Record<string, unknown>;
-      const manifest = obj["manifest"] as Record<string, unknown> | undefined;
-      return manifest !== undefined && typeof (manifest["secrets"] as Record<string, unknown> | undefined)?.["encrypted"] === "boolean";
-    });
-
-    // With disableEncrypted=1, secrets.encrypted MUST be false even though a
-    // real SECRETS_MASTER_KEY was planted in the env. The expected state is
-    // setupSecretsCalled=false OR banner shows encrypted=false (store inactive).
-    if (bannerCall) {
-      const bannerManifest = (bannerCall[0] as Record<string, unknown>)["manifest"] as Record<string, unknown>;
-      const secretsEncrypted = (bannerManifest["secrets"] as Record<string, unknown>)["encrypted"];
-      expect(secretsEncrypted).toBe(false);
-    } else {
-      // Banner not found → check the spy: setupSecrets must not have returned a live store
-      expect(setupSecretsReturnedStore).toBe(false);
-    }
+    const { overrides } = buildOverrides();
+    await expect(main(overrides)).rejects.toThrow(/MIGRATION_ERROR.*COMIS_DISABLE_ENCRYPTED_SECRETS/);
 
     rmSync(freshDataDir, { recursive: true, force: true });
   });
@@ -924,18 +872,10 @@ describe("opt-out and same-boot init", () => {
     rmSync(freshDataDir, { recursive: true, force: true });
   });
 
-  // Config-driven opt-out: when YAML sets `security.secrets.enabled: false`,
-  // the encrypted secrets store must NOT bootstrap — even with no env var set
-  // and even on a fresh data directory. The daemon must consult the YAML
-  // BEFORE writeMasterKeyIfAbsent so `.env` is left untouched (no SECRETS_MASTER_KEY
-  // line is appended) and setupSecrets is never called.
-  //
-  // Pre-fix, the schema field `secrets.enabled` was read only by the web view
-  // and the daemon ignored it — secrets.db would be created on first boot
-  // regardless of what config said. This test pins the contract that the
-  // daemon honors the config-level opt-out.
-  it("YAML security.secrets.enabled=false skips writeMasterKeyIfAbsent and setupSecrets on a fresh data dir", async () => {
-    // Fresh data dir (no pre-existing .env), and a YAML that explicitly opts out.
+  // P0: security.secrets.enabled is a legacy key removed in v1.5.
+  // The daemon must throw a migration error when the YAML contains this key,
+  // ensuring no key material is created before the error is emitted (REQ-17).
+  it("fails boot with MIGRATION_ERROR when YAML sets security.secrets.enabled=false (legacy key removed in v1.5)", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-cfg-opt-out-test-"));
     const configPath = nodePath.resolve(freshDataDir, "config.yaml");
     fs.writeFileSync(
@@ -947,27 +887,15 @@ describe("opt-out and same-boot init", () => {
     process.env["COMIS_DATA_DIR"] = freshDataDir;
     process.env["COMIS_CONFIG_PATHS"] = configPath;
     delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
-    // Ensure no SECRETS_MASTER_KEY leaks from the test runner env into the daemon.
     delete process.env["SECRETS_MASTER_KEY"];
 
     const { overrides } = buildOverrides();
-    const mockSetupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
-    overrides.setupSecrets = mockSetupSecrets;
+    await expect(main(overrides)).rejects.toThrow(/MIGRATION_ERROR/);
 
-    const instance = await main(overrides);
-    instances.push(instance);
-
-    // 1. The daemon must NOT have invoked setupSecrets — the store-bootstrap
-    //    branch is gated entirely behind the combined disable check, which is
-    //    now true because YAML explicitly opted out.
-    expect(mockSetupSecrets).not.toHaveBeenCalled();
-
-    // 2. writeMasterKeyIfAbsent must NOT have run, so `.env` either does not
-    //    exist or contains no SECRETS_MASTER_KEY line. We assert the strict
-    //    form: no key written.
-    const envPath = nodePath.resolve(freshDataDir, ".env");
-    if (fs.existsSync(envPath)) {
-      const contents = fs.readFileSync(envPath, "utf-8");
+    // writeMasterKeyIfAbsent must NOT have run — no SECRETS_MASTER_KEY in .env
+    const envFilePath = nodePath.resolve(freshDataDir, ".env");
+    if (fs.existsSync(envFilePath)) {
+      const contents = fs.readFileSync(envFilePath, "utf-8");
       expect(contents).not.toMatch(/^SECRETS_MASTER_KEY=/m);
     }
 
