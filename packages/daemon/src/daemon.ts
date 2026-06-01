@@ -725,8 +725,7 @@ function buildChannelManagerDeps(deps: {
     consolidationStore,
     // P101·REASON-02 tripleStore + P107·USER-03/04 userRepresentationStore + P108·SOCIAL-01/02
     // relationshipStore + memoryApi ride the SAME cron-deps chain → the __MEMORY_REASONING__ /
-    // __USER_REPRESENTATION__ / __SOCIAL_MODELING__ sentinels (the DEDUCTIVE upsertTriple + the
-    // per-user profile upsert + the per-channel directional edge upsert, source-scoped via inspect).
+    // __USER_REPRESENTATION__ / __SOCIAL_MODELING__ sentinels (deductive upsertTriple + per-user profile + per-channel directional edge, source-scoped via inspect).
     tripleStore, userRepresentationStore, relationshipStore, memoryApi,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,

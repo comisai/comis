@@ -142,6 +142,16 @@ const mockCreateSqliteUserRepresentationStore = vi.hoisted(() => vi.fn(() => ({
   upsert: vi.fn(async () => ({ ok: true, value: undefined })),
   read: vi.fn(async () => ({ ok: true, value: [] })),
 })));
+// Directional relationship store factory (Phase 108, SOCIAL-01/02 — Track E2) — mocked so setup
+// wires it without a real DB. setupMemory builds this on the shared db handle (mirror the
+// triple/embedding/user-representation stores); without the mock entry the @comis/memory factory is
+// undefined and EVERY setup call throws `createSqliteRelationshipStore is not a function` (the
+// MEMORY.md "setup-memory mock" gate — Pitfall 4). The two segregated port halves are stubbed (the
+// directional upsert write + the (tenant, agent, channel)-scoped read the prompt-assembly injection reads).
+const mockCreateSqliteRelationshipStore = vi.hoisted(() => vi.fn(() => ({
+  upsert: vi.fn(async () => ({ ok: true, value: undefined })),
+  read: vi.fn(async () => ({ ok: true, value: [] })),
+})));
 
 vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
@@ -163,6 +173,7 @@ vi.mock("@comis/memory", () => ({
   createSqliteTripleStore: mockCreateSqliteTripleStore,
   createSqliteMemoryEmbeddingStore: mockCreateSqliteMemoryEmbeddingStore,
   createSqliteUserRepresentationStore: mockCreateSqliteUserRepresentationStore,
+  createSqliteRelationshipStore: mockCreateSqliteRelationshipStore,
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));
