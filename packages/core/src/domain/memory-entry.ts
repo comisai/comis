@@ -69,6 +69,20 @@ export const MemoryEntrySchema = z.strictObject({
      * the adapter's `?? "semantic"` fallback), so existing rows + callers are unaffected.
      */
     memoryType: z.enum(["working", "episodic", "semantic", "procedural"]).optional(),
+    /**
+     * Reasoning-observation kind (P101/REASON-01). Absent/NULL = "merge" (the
+     * default for all pre-101 rows; the @comis/memory adapter applies the
+     * `?? "merge"` fallback on read). Additive `.optional()` — an omitting write
+     * is unaffected; the enum is enforced HERE + the lenient LLM parser (101-04),
+     * NOT a SQLite CHECK (the occurred_at/proof_count ALTER-ADD-COLUMN no-CHECK
+     * precedent — a post-hoc enum CHECK is unreliable across existing rows).
+     */
+    observationKind: z.enum(["merge", "deductive", "inductive"]).optional(),
+    /**
+     * Inductive pattern class (P101/REASON-01, Honcho-derived). Only set when
+     * observationKind="inductive". Additive `.optional()` closed enum.
+     */
+    patternType: z.enum(["preference", "behavior", "personality", "tendency", "correlation"]).optional(),
   });
 
 export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
