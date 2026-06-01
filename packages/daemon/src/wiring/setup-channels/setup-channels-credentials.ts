@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry } from "@comis/agent";
@@ -86,9 +86,17 @@ export interface CronEventListenerDeps {
    *  no-op (Pitfall 1). Absent => the representation sentinel cannot run, but the cron is
    *  off-by-default so a default-config agent never reaches it. */
   userRepresentationStore?: UserRepresentationStore;
+  /** Directional relationship store (Phase 108, SOCIAL-01/02) — the __SOCIAL_MODELING__ sentinel's
+   *  per-(tenant, agent, channel) directional-edge upsert write path. Built in setup-memory on the
+   *  shared db handle; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
+   *  registry → credentials chain — a missing thread would make the offline-builder write a silent
+   *  no-op (Pitfall 6). Absent => the relationship sentinel cannot run, but the cron is off-by-default
+   *  AND sign-off-gated so a default-config agent never reaches it. */
+  relationshipStore?: RelationshipStore;
   /** Per-user representation read surface (Phase 107, USER-04) — the __USER_REPRESENTATION__
    *  sentinel scopes the per-(tenant, agent, user) high-trust source read over `inspect`.
-   *  Built in setup-memory; daemon-side (the agent imports no memory package). */
+   *  Built in setup-memory; daemon-side (the agent imports no memory package). The SAME `inspect`
+   *  surface backs the __SOCIAL_MODELING__ sentinel (grouped by resolved channelId). */
   memoryApi?: MemoryApi;
   tenantId?: string;
   piSessionAdapters?: Map<string, {
@@ -217,6 +225,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       consolidationStore: deps.consolidationStore,
       tripleStore: deps.tripleStore,
       userRepresentationStore: deps.userRepresentationStore,
+      relationshipStore: deps.relationshipStore,
       memoryApi: deps.memoryApi,
     });
     if (handledMemoryCron) return;

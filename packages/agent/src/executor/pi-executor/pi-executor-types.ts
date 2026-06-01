@@ -24,6 +24,7 @@ import type {
   MemoryEmbeddingStore,
   MemoryUsefulnessStore,
   UserRepresentationStore,
+  RelationshipStore,
   RerankerPort,
   HookRunner,
   SecretManager,
@@ -134,6 +135,13 @@ export interface PiExecutorDeps {
    *  Absent -> no profile read, no push, byte-identical prompt (the default-OFF cost gate). TYPE-only
    *  from @comis/core — the agent never imports the memory package (the agent↛memory cut). */
   userRepresentationStore?: UserRepresentationStore;
+  /** Optional directional relationship store (SOCIAL-02/03). Built in the daemon on the shared memory
+   *  db handle; threaded into prompt-assembly's LLM-free `<channel_relationships>` injection via
+   *  ToolAssemblyDeps. Absent -> no relationship read, no push, byte-identical prompt (the default-OFF
+   *  + sign-off-gated cost gate). TYPE-only from @comis/core — the agent never imports the memory
+   *  package (the agent↛memory cut). A missing forward here is a silent no-op even with the store wired
+   *  in the daemon (the documented latent field-plumbing drop — Pitfall 6). */
+  relationshipStore?: RelationshipStore;
   hookRunner?: HookRunner;
   // System prompt config
   outboundMediaEnabled?: boolean;

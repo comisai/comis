@@ -21,7 +21,7 @@
  * @module
  */
 
-import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore } from "@comis/core";
+import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
 import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, type UserRepresentationSourceMemory } from "@comis/agent";
@@ -48,10 +48,15 @@ export interface MemoryCronContext {
   /** Injected from setup-memory (USER-03): the per-user profile upsert write path
    *  (the __USER_REPRESENTATION__ sentinel). The agent receives the port TYPE only. */
   userRepresentationStore?: UserRepresentationStore;
+  /** Injected from setup-memory (Phase 108, SOCIAL-01/02): the per-(tenant, agent, channel)
+   *  directional-edge upsert write path the __SOCIAL_MODELING__ sentinel drives. The agent
+   *  receives the port TYPE only (the agent↛memory cut). */
+  relationshipStore?: RelationshipStore;
   /** Injected from setup-memory (USER-04): the read surface the __USER_REPRESENTATION__
    *  sentinel scopes the per-(tenant, agent, user) high-trust source read over (the
    *  concrete `readSources` seam runUserRepresentationBuild injects — kept daemon-side so
-   *  the agent imports no memory package). */
+   *  the agent imports no memory package). The SAME `inspect` surface backs the
+   *  __SOCIAL_MODELING__ sentinel (grouped by resolved channelId in Task 2). */
   memoryApi?: MemoryApi;
 }
 

@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -212,6 +212,13 @@ export interface ChannelsDeps {
    *  thread silently disables the offline-builder write path (Pitfall 1). Absent => the
    *  representation sentinel cannot run (the cron is off-by-default anyway). */
   userRepresentationStore?: UserRepresentationStore;
+  /** Directional relationship store (Phase 108, SOCIAL-01/02 — Track E2) — forwarded to the cron path
+   *  so the opt-in + sign-off-gated __SOCIAL_MODELING__ sentinel runs runRelationshipBuild's offline
+   *  per-channel directional-edge upsert write. Built in setup-memory on the shared db handle; injected
+   *  as the port TYPE (agent↛memory cut). Threaded the full daemon → registry → credentials chain — a
+   *  missing thread silently disables the offline-builder write path (Pitfall 6). Absent => the
+   *  relationship sentinel cannot run (the cron is off-by-default + sign-off-gated anyway). */
+  relationshipStore?: RelationshipStore;
   /** Default tenant ID for memory storage. */
   tenantId?: string;
   /** Embedding queue for new memory entries (optional). */
@@ -362,6 +369,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     consolidationStore: deps.consolidationStore,
     tripleStore: deps.tripleStore,
     userRepresentationStore: deps.userRepresentationStore,
+    relationshipStore: deps.relationshipStore,
     memoryApi: deps.memoryApi,
     tenantId: deps.tenantId,
     piSessionAdapters: deps.piSessionAdapters,

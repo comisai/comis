@@ -103,6 +103,12 @@ export interface ToolAssemblyDeps {
    *  no-op even when the store is wired in the daemon (the documented latent field-plumbing drop —
    *  Pitfall 1). */
   userRepresentationStore?: import("@comis/core").UserRepresentationStore;
+  /** Optional directional relationship store (SOCIAL-02/03 — Track E2). Forwarded into
+   *  prompt-assembly's LLM-free `<channel_relationships>` standing-block injection (a deterministic
+   *  channel-scoped read + pure formatter, NO model call). Absent -> no read, no push, byte-identical
+   *  prompt. TYPE-only from @comis/core (the agent↛memory build cut). A missing forward here leaves the
+   *  relationship injection a silent no-op even when the store is wired in the daemon (Pitfall 6). */
+  relationshipStore?: import("@comis/core").RelationshipStore;
   /** Timer port for the rerank wall-clock deadline (createMemoryRecall). */
   timers?: import("@comis/core").TimerPort;
   hookRunner?: HookRunner;
@@ -416,6 +422,12 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       // with the store wired in the daemon). prompt-assembly's deps.userRepresentationStore.read is
       // the LLM-free standing-block read (107-04); the daemon construct + thread is 107-05.
       userRepresentationStore: deps.userRepresentationStore,
+      // SOCIAL-02/03: forward the directional relationship store the SAME way as
+      // userRepresentationStore — a missing forward here is a silent no-op (the
+      // <channel_relationships> block never renders even with the store wired in the daemon).
+      // prompt-assembly's deps.relationshipStore.read is the LLM-free standing-block read (108-04);
+      // the daemon construct + thread is 108-05.
+      relationshipStore: deps.relationshipStore,
       timers: deps.timers,
       hookRunner: deps.hookRunner,
       secretManager: deps.secretManager,

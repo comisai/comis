@@ -34,6 +34,7 @@ import {
   createSqliteTripleStore,
   createSqliteMemoryEmbeddingStore,
   createSqliteUserRepresentationStore,
+  createSqliteRelationshipStore,
   type MemoryApi,
 } from "@comis/memory";
 import {
@@ -145,6 +146,20 @@ export interface MemoryResult {
    *  port TYPE only AND into the offline-builder cron — the daemon (composition root) is the one
    *  place this @comis/memory adapter and the @comis/agent consumers are joined (the agent↛memory cut). */
   userRepresentationStore: import("@comis/core").UserRepresentationStore;
+  /** Directional relationship store (Phase 108, SOCIAL-01/02 — Track E2). The SOLE adapter for the
+   *  segregated `RelationshipStore` port (the `(tenant, agent, channel)`-scoped upsert/read over the
+   *  additive `relationship` table of directional `(subjectUserId, aboutUserId)` edges) — built
+   *  UNCONDITIONALLY on the SAME shared `db` handle the memory adapter owns (so the
+   *  `source_memory_id` ON DELETE CASCADE + the channel-scoped isolation stay consistent with the
+   *  memory rows the edges are distilled from — a read on a DIFFERENT handle would silently return
+   *  empty, T-108-16). No model/IO cost, so it is always present; the LLM-free
+   *  `<channel_relationships>` injection stays dormant until the offline builder writes rows AND an
+   *  operator both enables `agents.<id>.socialModeling.enabled` AND records a privacy-review sign-off
+   *  (`privacyReviewSignedOffBy`) — the SOCIAL-03 dual gate. Threaded into the recall read path
+   *  (setup-agents-*) as the port TYPE only AND into the offline-builder `__SOCIAL_MODELING__` cron —
+   *  the daemon (composition root) is the one place this memory-package adapter and the agent-package
+   *  consumers are joined (the agent↛memory cut). */
+  relationshipStore: import("@comis/core").RelationshipStore;
   /** Consolidation store (Phase 84, CONS-01..07). The SOLE adapter for the segregated
    *  `MemoryConsolidationStore` port — built UNCONDITIONALLY on the SAME shared `db` handle
    *  as the memory adapter + entity store (so the observation columns, the `(tenant, agent)`
@@ -472,6 +487,18 @@ export async function setupMemory(deps: {
   // into the recall read path (setup-agents-*) AND the offline-builder cron (setup-channels).
   const userRepresentationStore = createSqliteUserRepresentationStore({ db, logger: memoryLogger });
 
+  // 6.5.2b''''''. Directional relationship store (Phase 108, SOCIAL-01/02 — Track E2). Built on the
+  // SAME shared `db` handle the memory adapter owns — NEVER a second Database (T-108-16): the
+  // `source_memory_id` ON DELETE CASCADE + the `(tenant, agent, channel)` channel-scoped isolation
+  // must stay consistent with the memory rows the directional edges are distilled from; a read on a
+  // DIFFERENT handle would silently return empty (the same hazard as the embedding / user-representation
+  // stores above). Always constructed (no model/IO cost); the LLM-free `<channel_relationships>`
+  // injection stays dormant until the offline builder writes rows AND the operator enables the
+  // SOCIAL-03 dual gate (`socialModeling.enabled` + a recorded `privacyReviewSignedOffBy`). Composition-
+  // root join — the agent receives the port TYPE only (the agent↛memory cut). Threaded into the recall
+  // read path (setup-agents-*) AND the `__SOCIAL_MODELING__` offline-builder cron (setup-channels).
+  const relationshipStore = createSqliteRelationshipStore({ db, logger: memoryLogger });
+
   // 6.5.2c. Consolidation store (Phase 84). Built on the SAME `db` handle the memory
   // adapter owns — NOT a second Database — so the observation columns (proof_count /
   // source_ids / consolidated_at / confidence / history) and the memories table share
@@ -659,6 +686,7 @@ export async function setupMemory(deps: {
     tripleStore,
     embeddingStore,
     userRepresentationStore,
+    relationshipStore,
     consolidationStore,
     usefulnessStore,
     recallCounters,

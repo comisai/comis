@@ -211,6 +211,10 @@ export async function setupAgents(deps: {
    *  createPiExecutor like entityStore (the recall LLM-free `<user_profile>` injection read path).
    *  Built in setup-memory on the shared db. */
   userRepresentationStore?: import("@comis/core").UserRepresentationStore;
+  /** Directional relationship store (Phase 108, SOCIAL-02/03 — Track E2). Threaded into each per-agent
+   *  createPiExecutor like userRepresentationStore (the recall LLM-free `<channel_relationships>`
+   *  injection read path). Built in setup-memory on the shared db. */
+  relationshipStore?: import("@comis/core").RelationshipStore;
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */
@@ -437,6 +441,7 @@ export async function setupAgents(deps: {
     embeddingStore: deps.embeddingStore,
     usefulnessStore: deps.usefulnessStore,
     userRepresentationStore: deps.userRepresentationStore,
+    relationshipStore: deps.relationshipStore,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
     geminiCacheManager: deps.geminiCacheManager,
