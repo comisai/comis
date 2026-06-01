@@ -1096,6 +1096,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
         "fts": {
           "weight": 1
         },
+        "graphSpread": {
+          "enabled": false,
+          "fanOut": 8,
+          "maxDepth": 2,
+          "weight": 1
+        },
         "temporal": {
           "enabled": false,
           "weight": 1,
@@ -1199,6 +1205,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       "fts": {
         "weight": 1
       },
+      "graphSpread": {
+        "enabled": false,
+        "fanOut": 8,
+        "maxDepth": 2,
+        "weight": 1
+      },
       "temporal": {
         "enabled": false,
         "weight": 1,
@@ -1245,6 +1257,41 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "default": 1,
     "immutable": true,
     "path": "agents.rag.lanes.fts.weight",
+    "type": "number"
+  },
+  {
+    "default": {
+      "enabled": false,
+      "fanOut": 8,
+      "maxDepth": 2,
+      "weight": 1
+    },
+    "immutable": true,
+    "path": "agents.rag.lanes.graphSpread",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.rag.lanes.graphSpread.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 8,
+    "immutable": true,
+    "path": "agents.rag.lanes.graphSpread.fanOut",
+    "type": "integer"
+  },
+  {
+    "default": 2,
+    "immutable": true,
+    "path": "agents.rag.lanes.graphSpread.maxDepth",
+    "type": "integer"
+  },
+  {
+    "default": 1,
+    "immutable": true,
+    "path": "agents.rag.lanes.graphSpread.weight",
     "type": "number"
   },
   {
@@ -7039,6 +7086,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
               "weight": 1
             },
             "fts": {
+              "weight": 1
+            },
+            "graphSpread": {
+              "enabled": false,
+              "fanOut": 8,
+              "maxDepth": 2,
               "weight": 1
             },
             "temporal": {
@@ -15093,6 +15146,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "fts": {
             "weight": 1
           },
+          "graphSpread": {
+            "enabled": false,
+            "fanOut": 8,
+            "maxDepth": 2,
+            "weight": 1
+          },
           "temporal": {
             "enabled": false,
             "weight": 1,
@@ -15204,6 +15263,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "fts": {
               "weight": 1
             },
+            "graphSpread": {
+              "enabled": false,
+              "fanOut": 8,
+              "maxDepth": 2,
+              "weight": 1
+            },
             "temporal": {
               "enabled": false,
               "weight": 1,
@@ -15251,6 +15316,45 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
               },
               "required": [
                 "weight"
+              ],
+              "type": "object"
+            },
+            "graphSpread": {
+              "additionalProperties": false,
+              "default": {
+                "enabled": false,
+                "fanOut": 8,
+                "maxDepth": 2,
+                "weight": 1
+              },
+              "properties": {
+                "enabled": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "fanOut": {
+                  "default": 8,
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "maxDepth": {
+                  "default": 2,
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991,
+                  "type": "integer"
+                },
+                "weight": {
+                  "default": 1,
+                  "minimum": 0,
+                  "type": "number"
+                }
+              },
+              "required": [
+                "enabled",
+                "weight",
+                "maxDepth",
+                "fanOut"
               ],
               "type": "object"
             },
@@ -15307,7 +15411,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "fts",
             "vector",
             "temporal",
-            "causal"
+            "causal",
+            "graphSpread"
           ],
           "type": "object"
         },
@@ -24257,6 +24362,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "fts": {
                   "weight": 1
                 },
+                "graphSpread": {
+                  "enabled": false,
+                  "fanOut": 8,
+                  "maxDepth": 2,
+                  "weight": 1
+                },
                 "temporal": {
                   "enabled": false,
                   "weight": 1,
@@ -24368,6 +24479,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "fts": {
                     "weight": 1
                   },
+                  "graphSpread": {
+                    "enabled": false,
+                    "fanOut": 8,
+                    "maxDepth": 2,
+                    "weight": 1
+                  },
                   "temporal": {
                     "enabled": false,
                     "weight": 1,
@@ -24415,6 +24532,45 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                     },
                     "required": [
                       "weight"
+                    ],
+                    "type": "object"
+                  },
+                  "graphSpread": {
+                    "additionalProperties": false,
+                    "default": {
+                      "enabled": false,
+                      "fanOut": 8,
+                      "maxDepth": 2,
+                      "weight": 1
+                    },
+                    "properties": {
+                      "enabled": {
+                        "default": false,
+                        "type": "boolean"
+                      },
+                      "fanOut": {
+                        "default": 8,
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "maxDepth": {
+                        "default": 2,
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991,
+                        "type": "integer"
+                      },
+                      "weight": {
+                        "default": 1,
+                        "minimum": 0,
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "enabled",
+                      "weight",
+                      "maxDepth",
+                      "fanOut"
                     ],
                     "type": "object"
                   },
@@ -24471,7 +24627,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "fts",
                   "vector",
                   "temporal",
-                  "causal"
+                  "causal",
+                  "graphSpread"
                 ],
                 "type": "object"
               },
@@ -25864,6 +26021,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "weight": 1
               },
               "fts": {
+                "weight": 1
+              },
+              "graphSpread": {
+                "enabled": false,
+                "fanOut": 8,
+                "maxDepth": 2,
                 "weight": 1
               },
               "temporal": {

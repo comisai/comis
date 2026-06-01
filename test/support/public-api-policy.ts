@@ -1963,6 +1963,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // intra-package by sqlite-memory-causal-store.ts via createRowMapper;
       // barrel-surfaced through `export *` so tracked here like its Phase-83 siblings.
       "CausalLaneRowSchema",
+      // Graph-spread recursive-CTE node projection schema (Phase 100-04, KG-04).
+      // Consumed intra-package by sqlite-triple-store.ts (the spreadLane walk) via
+      // createRowMapper; barrel-surfaced through `export *` so tracked here like the
+      // MemoryTripleRowSchema / CausalLaneRowSchema siblings (the checker counts
+      // cross-package barrel consumers only).
+      "SpreadNodeRowSchema",
       // Recall-utility usefulness row schema (Phase 93-01, FEED-02). Consumed
       // intra-package by sqlite-memory-usefulness-store.ts via createRowMapper;
       // barrel-surfaced through `export *` so tracked here like the sibling row
