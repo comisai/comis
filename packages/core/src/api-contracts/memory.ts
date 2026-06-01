@@ -130,6 +130,60 @@ export const MemorySearchFilesContract = defineContract({
 });
 
 // ---------------------------------------------------------------------------
+// memory.ask  (Phase 109 — DIAL-01/02, the dialectic grounded-Q&A surface)
+// ---------------------------------------------------------------------------
+
+/**
+ * `memory.ask` — the dialectic: a grounded, cited NL answer over the agent's
+ * LLM-free recall pipeline. The handler runs `createMemoryRecall` for the
+ * question (the SAME trust-filtered + redacted recall the prompt path uses),
+ * then synthesizes the answer via the ONE allowed query-time LLM seam, and
+ * returns it WITH citations.
+ *
+ * Request: `{ question, limit? }` — `question` is the (untrusted) NL query;
+ * `limit` optionally caps the grounding-set size.
+ *
+ * Response: `{ answer, citations, abstained }`.
+ *   - `citations` are recalled memory IDS (the entry id is a `z.guid()` at the
+ *     source, but the contract types it as opaque `string` — citations are ids,
+ *     never free text; DIAL-02). The cited ids traverse `sourceIds` in the
+ *     recall-trace (DIAL-03).
+ *   - `abstained` is the EXPLICIT DIAL-01 mandatory-abstention signal — a
+ *     required boolean, never inferred from an empty `answer`. Insufficient
+ *     grounding ⇒ `{ answer: "", citations: [], abstained: true }`, never a
+ *     fabricated answer.
+ *   - the `answer` text is built ONLY from the trust-filtered + redacted recall
+ *     output (enforced in the Plan 03 handler), with the higher-trust source
+ *     winning on conflict (trust-first, a HARD boundary).
+ *
+ * Registered via agent tool dispatch (the `memory_ask` tool); contract scope
+ * `["rpc"]` documents the intended trust model.
+ *
+ * INTERFACE-FIRST: this contract's SHAPE ships in Plan 01; its daemon handler
+ * lands in Plan 03. Until then it is tagged `@contract-deferred-handler: 109-03`
+ * and is kept OUT of `MEMORY_CONTRACTS` (the registry that feeds
+ * `API_CONTRACTS`) — registering it before its handler exists would RED-gate
+ * the repo (contract-handler-parity + bidirectional 1:1). Plan 03 spreads it
+ * into `MEMORY_CONTRACTS` in the SAME diff that adds the handler and removes
+ * this tag. (Mirrors the OBS-06 cross-wave seam closed in Phase 86 Plan 05.)
+ *
+ * @contract-deferred-handler: 109-03
+ */
+export const MemoryAskContract = defineContract({
+  method: "memory.ask",
+  request: z.object({
+    question: z.string(),
+    limit: z.number().optional(),
+  }),
+  response: z.object({
+    answer: z.string(),
+    citations: z.array(z.string()),
+    abstained: z.boolean(),
+  }),
+  scopes: ["rpc"] as const,
+});
+
+// ---------------------------------------------------------------------------
 // memory.get_file
 // ---------------------------------------------------------------------------
 
