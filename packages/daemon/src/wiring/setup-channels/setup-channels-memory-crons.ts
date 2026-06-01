@@ -265,9 +265,31 @@ export async function handleMemoryCronSentinel(
     // InspectFilters has no userId axis, so the read is per-(tenant, agent) and the grouping is
     // done here; each user's slice becomes that user's readSources seam (the anti-poisoning
     // external-exclude is the job's, but inspecting only system|learned is a first belt).
+    //
+    // MR-01: `inspect` orders `created_at DESC` and applies `limit` BEFORE grouping, so a
+    // trust level with > SOURCE_READ_LIMIT rows is SILENTLY truncated to the newest window
+    // across ALL users (a chatty user can crowd out a quieter one; older identity/preference
+    // facts never reach the builder). We cannot page here without an offset axis on
+    // InspectFilters, so at minimum we make the truncation OBSERVABLE: when a read returns
+    // exactly the cap, emit a counts-only WARN with a hint so an operator can diagnose a thin
+    // profile (per AGENTS.md §2.7 observability discipline — no SILENT truncation).
+    const SOURCE_READ_LIMIT = 1000;
     const sourcesByUser = new Map<string, UserRepresentationSourceMemory[]>();
     for (const trustLevel of ["system", "learned"] as const) {
-      const rows = memoryApi.inspect({ tenantId: reprTenantId, agentId, trustLevel, limit: 1000 });
+      const rows = memoryApi.inspect({ tenantId: reprTenantId, agentId, trustLevel, limit: SOURCE_READ_LIMIT });
+      if (rows.length >= SOURCE_READ_LIMIT) {
+        reprLogger.warn(
+          {
+            agentId,
+            trustLevel,
+            limit: SOURCE_READ_LIMIT,
+            returned: rows.length,
+            errorKind: "validation" as const,
+            hint: "high-trust source read hit the per-trust-level cap — only the NEWEST sources are distilled into per-user profiles this run; older facts are dropped and per-user profiles may be incomplete/non-deterministic. Reduce retention or split the agent if this persists",
+          },
+          "User representation source read truncated at the per-trust-level cap (MR-01)",
+        );
+      }
       for (const row of rows) {
         const list = sourcesByUser.get(row.userId) ?? [];
         list.push({ id: row.id, content: row.content, trustLevel: row.trustLevel as "system" | "learned" | "external" });
