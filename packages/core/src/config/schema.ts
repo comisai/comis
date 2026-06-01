@@ -21,7 +21,6 @@ import { MessagesConfigSchema } from "./schema-messages.js";
 import { ModelsConfigSchema } from "./schema-models.js";
 import { MonitoringConfigSchema } from "./schema-observability.js";
 import { ObservabilityConfigSchema } from "./schema-observability.js";
-import { OAuthConfigSchema } from "./schema-oauth.js";
 import { PluginsConfigSchema } from "./schema-plugins.js";
 import { ProvidersConfigSchema } from "./schema-providers.js";
 import { QueueConfigSchema } from "./schema-queue.js";
@@ -84,8 +83,6 @@ export const AppConfigSchema = z.strictObject({
      * Defaults are sticky so an empty `diagnostics: {}` block is valid.
      */
     diagnostics: DiagnosticsConfigSchema.default(() => DiagnosticsConfigSchema.parse({})),
-    /** OAuth credential storage configuration (storage backend selector) */
-    oauth: OAuthConfigSchema.default(() => OAuthConfigSchema.parse({})),
     /** Plugin system configuration */
     plugins: PluginsConfigSchema.default(() => PluginsConfigSchema.parse({})),
     /** Command queue configuration for session serialization and concurrency control */

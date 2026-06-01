@@ -100,6 +100,7 @@ export {
   ActionConfirmationConfigSchema,
   AgentToAgentConfigSchema,
 } from "./schema-security.js";
+export type { CredentialStorageMode } from "./schema-security.js";
 export { SubagentContextConfigSchema } from "../domain/subagent-context-config.js";
 export type { SubagentContextConfig } from "../domain/subagent-context-config.js";
 export {
@@ -153,8 +154,6 @@ export {
 export { MonitoringConfigSchema } from "./schema-observability.js";
 export { ObservabilityConfigSchema } from "./schema-observability.js";
 export type { ObservabilityConfig, ObservabilityPersistenceConfig, TrajectoryObservabilityConfig } from "./schema-observability.js";
-export { OAuthConfigSchema } from "./schema-oauth.js";
-export type { OAuthConfig } from "./schema-oauth.js";
 export { PluginsConfigSchema, PluginEntrySchema } from "./schema-plugins.js";
 export {
   QueueConfigSchema,

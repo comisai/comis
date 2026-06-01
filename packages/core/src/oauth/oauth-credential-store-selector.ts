@@ -26,17 +26,17 @@
 import type { OAuthCredentialStorePort } from "../ports/oauth-credential-store.js";
 import type { FileLockPort } from "../ports/file-lock.js";
 import { createOAuthCredentialStoreFile } from "./oauth-credential-store-file.js";
+import type { CredentialStorageMode } from "../config/schema-security.js";
 
-/** Storage backend selector from `appConfig.oauth.storage`. */
-export type OAuthStorageMode = "file" | "encrypted";
+export type { CredentialStorageMode };
 
 /**
  * Inputs for selectOAuthCredentialStore. Extracted to a typed shape so the
  * helper can be unit-tested without spinning up a full setupSingleAgent path.
  */
 export interface SelectOAuthCredentialStoreInput {
-  /** Storage backend selector from `appConfig.oauth.storage`. */
-  storage: OAuthStorageMode;
+  /** Storage backend selector from `appConfig.security.storage`. */
+  storage: CredentialStorageMode;
   /** Absolute data directory (e.g. ~/.comis). Constructed via `safePath` upstream. */
   dataDir: string;
   /**

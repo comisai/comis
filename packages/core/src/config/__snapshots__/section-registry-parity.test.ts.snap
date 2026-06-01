@@ -6803,8 +6803,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
   },
   {
     "default": {
-      "dbPath": "secrets.db",
-      "enabled": true
+      "dbPath": "secrets.db"
     },
     "immutable": true,
     "path": "security.secrets",
@@ -6817,10 +6816,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
     "type": "string"
   },
   {
-    "default": true,
+    "default": "encrypted",
     "immutable": true,
-    "path": "security.secrets.enabled",
-    "type": "boolean"
+    "path": "security.storage",
+    "type": "string"
   },
   {
     "default": "warn",
@@ -11917,20 +11916,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
-      "storage": "encrypted"
-    },
-    "immutable": false,
-    "path": "oauth",
-    "type": "object"
-  },
-  {
-    "default": "encrypted",
-    "immutable": false,
-    "path": "oauth.storage",
-    "type": "string"
-  },
-  {
-    "default": {
       "alertBudget": {
         "enabled": true,
         "thresholds": {
@@ -12757,9 +12742,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "enableNodePermissions": false
       },
       "secrets": {
-        "dbPath": "secrets.db",
-        "enabled": true
+        "dbPath": "secrets.db"
       },
+      "storage": "encrypted",
       "writeSecretGuard": "warn"
     },
     "immutable": true,
@@ -13086,8 +13071,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
-      "dbPath": "secrets.db",
-      "enabled": true
+      "dbPath": "secrets.db"
     },
     "immutable": true,
     "path": "security.secrets",
@@ -13100,10 +13084,10 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
-    "default": true,
+    "default": "encrypted",
     "immutable": true,
-    "path": "security.secrets.enabled",
-    "type": "boolean"
+    "path": "security.storage",
+    "type": "string"
   },
   {
     "default": "warn",
@@ -22791,24 +22775,27 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
     "secrets": {
       "additionalProperties": false,
       "default": {
-        "dbPath": "secrets.db",
-        "enabled": true
+        "dbPath": "secrets.db"
       },
       "properties": {
         "dbPath": {
           "default": "secrets.db",
           "type": "string"
-        },
-        "enabled": {
-          "default": true,
-          "type": "boolean"
         }
       },
       "required": [
-        "enabled",
         "dbPath"
       ],
       "type": "object"
+    },
+    "storage": {
+      "default": "encrypted",
+      "enum": [
+        "encrypted",
+        "file",
+        "env"
+      ],
+      "type": "string"
     },
     "writeSecretGuard": {
       "default": "warn",
@@ -22826,7 +22813,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
     "permission",
     "actionConfirmation",
     "agentToAgent",
-    "secrets"
+    "secrets",
+    "storage"
   ],
   "type": "object"
 }"
@@ -32531,26 +32519,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       ],
       "type": "object"
     },
-    "oauth": {
-      "additionalProperties": false,
-      "default": {
-        "storage": "encrypted"
-      },
-      "properties": {
-        "storage": {
-          "default": "encrypted",
-          "enum": [
-            "file",
-            "encrypted"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "storage"
-      ],
-      "type": "object"
-    },
     "observability": {
       "additionalProperties": false,
       "default": {
@@ -33858,9 +33826,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "enableNodePermissions": false
         },
         "secrets": {
-          "dbPath": "secrets.db",
-          "enabled": true
+          "dbPath": "secrets.db"
         },
+        "storage": "encrypted",
         "writeSecretGuard": "warn"
       },
       "properties": {
@@ -34230,24 +34198,27 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "secrets": {
           "additionalProperties": false,
           "default": {
-            "dbPath": "secrets.db",
-            "enabled": true
+            "dbPath": "secrets.db"
           },
           "properties": {
             "dbPath": {
               "default": "secrets.db",
               "type": "string"
-            },
-            "enabled": {
-              "default": true,
-              "type": "boolean"
             }
           },
           "required": [
-            "enabled",
             "dbPath"
           ],
           "type": "object"
+        },
+        "storage": {
+          "default": "encrypted",
+          "enum": [
+            "encrypted",
+            "file",
+            "env"
+          ],
+          "type": "string"
         },
         "writeSecretGuard": {
           "default": "warn",
@@ -34265,7 +34236,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "permission",
         "actionConfirmation",
         "agentToAgent",
-        "secrets"
+        "secrets",
+        "storage"
       ],
       "type": "object"
     },
@@ -35269,7 +35241,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "monitoring",
     "observability",
     "diagnostics",
-    "oauth",
     "plugins",
     "queue",
     "streaming",

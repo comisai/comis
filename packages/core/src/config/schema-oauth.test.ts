@@ -1,40 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect } from "vitest";
-import { z } from "zod";
-import { OAuthConfigSchema } from "./schema-oauth.js";
+/**
+ * schema-oauth.test.ts
+ *
+ * The `OAuthConfigSchema` and root `oauth` config section were removed in v1.5
+ * (P0 — unified storage mode). The storage backend is now controlled by
+ * `security.storage: encrypted | file | env`.
+ *
+ * The old tests for `OAuthConfigSchema` have been removed along with the schema
+ * itself. The behavior they covered (credential storage mode) is now tested in
+ * `schema-security.test.ts`.
+ */
+import { describe, it } from "vitest";
 
-describe("OAuthConfigSchema", () => {
-  it("parses an empty object and applies the default storage = 'encrypted'", () => {
-    const parsed = OAuthConfigSchema.parse({});
-    expect(parsed).toEqual({ storage: "encrypted" });
-  });
-
-  it("accepts storage = 'file' explicitly", () => {
-    const parsed = OAuthConfigSchema.parse({ storage: "file" });
-    expect(parsed).toEqual({ storage: "file" });
-  });
-
-  it("accepts storage = 'encrypted'", () => {
-    const parsed = OAuthConfigSchema.parse({ storage: "encrypted" });
-    expect(parsed).toEqual({ storage: "encrypted" });
-  });
-
-  it("rejects an invalid storage value with a ZodError", () => {
-    expect(() => OAuthConfigSchema.parse({ storage: "invalid" })).toThrow(z.ZodError);
-  });
-
-  it("rejects extra fields with a ZodError (strictObject)", () => {
-    expect(() => OAuthConfigSchema.parse({ storage: "file", extraField: "x" })).toThrow(z.ZodError);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// oauth.storage default is "encrypted" for provider tokens
-// ---------------------------------------------------------------------------
-
-describe("OAuthConfigSchema provider default", () => {
-  it("oauth.storage defaults to 'encrypted' when not specified (provider token default)", () => {
-    const parsed = OAuthConfigSchema.parse({});
-    expect(parsed.storage).toBe("encrypted");
+describe("OAuthConfigSchema removal (v1.5 P0)", () => {
+  it("root oauth config section removed — credential storage unified under security.storage", () => {
+    // No assertions needed: the entire OAuthConfigSchema has been removed.
+    // This placeholder ensures vitest finds a valid test suite.
+    // See schema-security.test.ts for CredentialStorageMode tests.
   });
 });

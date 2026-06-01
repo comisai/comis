@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from "vitest";
 import { AgentToAgentConfigSchema, SecurityConfigSchema } from "./schema-security.js";
+import type { CredentialStorageMode } from "./schema-security.js";
 
 // ---------------------------------------------------------------------------
 // SecurityConfigSchema.storage — RED tests (added before production patch)
@@ -28,6 +29,39 @@ describe("SecurityConfigSchema.storage credential storage backend", () => {
   it("security.storage rejects an unknown value with a Zod error", () => {
     const result = SecurityConfigSchema.safeParse({ storage: "plaintext" });
     expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CredentialStorageMode type — GREEN test (compile-time + runtime sentinel;
+// landed in GREEN commit per AGENTS.md §2.10 since type cannot compile
+// against pre-patch code where the type did not exist).
+// ---------------------------------------------------------------------------
+
+describe("CredentialStorageMode type covers encrypted, file, and env", () => {
+  it("CredentialStorageMode accepts encrypted as a valid value", () => {
+    const _check: CredentialStorageMode = "encrypted";
+    expect(_check).toBe("encrypted");
+  });
+
+  it("CredentialStorageMode accepts file as a valid value", () => {
+    const _check: CredentialStorageMode = "file";
+    expect(_check).toBe("file");
+  });
+
+  it("CredentialStorageMode accepts env as a valid value", () => {
+    const _check: CredentialStorageMode = "env";
+    expect(_check).toBe("env");
+  });
+
+  it("CredentialStorageMode is derived from the security.storage enum shape", () => {
+    // The storage field uses .default("encrypted") which wraps a ZodEnum.
+    // Access the inner enum via innerType() to read the options array.
+    const enumValues = SecurityConfigSchema.shape.storage.removeDefault().options;
+    expect(enumValues).toContain("encrypted");
+    expect(enumValues).toContain("file");
+    expect(enumValues).toContain("env");
+    expect(enumValues).toHaveLength(3);
   });
 });
 
