@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { createEnvHandlers, type EnvHandlerDeps } from "./env-handlers.js";
 import type { ComisLogger } from "@comis/infra";
 import type { SecretStorePort, AppContainer } from "@comis/core";
+import { createSecretManagerWithMutableHandle } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { readFileSync, statSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -705,5 +706,83 @@ describe("env.list handler", () => {
     for (const call of allCalls) {
       expect(JSON.stringify(call)).not.toContain(CANARY_VALUE);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 03-03 — additive restart rule (RED: handler doesn't implement this yet)
+// ---------------------------------------------------------------------------
+
+describe("03-03 — additive restart rule (env.set)", () => {
+  let killSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function makeContainerWithManager(
+    initialEnv: Record<string, string> = {},
+    eventBus = createMockEventBus(),
+  ): AppContainer {
+    const { secretManager, mutableHandle: _mutableHandle } = createSecretManagerWithMutableHandle(initialEnv);
+    return {
+      eventBus,
+      config: { tenantId: "test-tenant", security: { storage: "encrypted" } },
+      secretManager,
+    } as unknown as AppContainer;
+  }
+
+  it("env.set on a key not in secretManager returns restarting false and does not call SIGUSR2", async () => {
+    const eventBus = createMockEventBus();
+    const container = makeContainerWithManager({}, eventBus);
+    const mutableSecretManager = createSecretManagerWithMutableHandle({}).mutableHandle;
+    const deps = makeDeps({ container, mutableSecretManager } as unknown as Partial<EnvHandlerDeps>);
+    const handlers = createEnvHandlers(deps);
+
+    const result = await handlers["env.set"]!({ key: "BRAND_NEW_KEY", value: "new-value", _trustLevel: "admin" }) as Record<string, unknown>;
+
+    expect(result.restarting).toBe(false);
+    vi.advanceTimersByTime(200);
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  it("env.set on a key already in secretManager returns restarting true and schedules SIGUSR2", async () => {
+    const eventBus = createMockEventBus();
+    const container = makeContainerWithManager({ EXISTING_KEY: "old-value" }, eventBus);
+    const mutableSecretManager = createSecretManagerWithMutableHandle({}).mutableHandle;
+    const deps = makeDeps({ container, mutableSecretManager } as unknown as Partial<EnvHandlerDeps>);
+    const handlers = createEnvHandlers(deps);
+
+    const result = await handlers["env.set"]!({ key: "EXISTING_KEY", value: "new-value", _trustLevel: "admin" }) as Record<string, unknown>;
+
+    expect(result.restarting).toBe(true);
+    vi.advanceTimersByTime(200);
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
+  });
+
+  it("env.set on new key emits secret:changed with action upserted and no value field", async () => {
+    const eventBus = createMockEventBus();
+    const container = makeContainerWithManager({}, eventBus);
+    const mutableSecretManager = createSecretManagerWithMutableHandle({}).mutableHandle;
+    const deps = makeDeps({ container, mutableSecretManager } as unknown as Partial<EnvHandlerDeps>);
+    const handlers = createEnvHandlers(deps);
+
+    await handlers["env.set"]!({ key: "BRAND_NEW_KEY_2", value: "some-secret-val", _trustLevel: "admin" });
+
+    const changedCalls = (eventBus.emit.mock.calls as Array<[string, unknown]>).filter(
+      (c) => c[0] === "secret:changed",
+    );
+    expect(changedCalls.length).toBeGreaterThanOrEqual(1);
+    const payload = changedCalls[0]![1] as Record<string, unknown>;
+    expect(payload.name).toBe("BRAND_NEW_KEY_2");
+    expect(payload.action).toBe("upserted");
+    expect(payload).not.toHaveProperty("value");
+    expect(JSON.stringify(payload)).not.toContain("some-secret-val");
   });
 });

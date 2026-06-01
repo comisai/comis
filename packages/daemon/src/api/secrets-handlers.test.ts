@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { SecretStorePort, AppContainer, SecretMetadata } from "@comis/core";
+import { createSecretManagerWithMutableHandle } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { createSecretsHandlers } from "./secrets-handlers.js";
+import type { SecretsHandlerDeps } from "./secrets-handlers.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 
@@ -334,5 +336,168 @@ describe("createSecretsHandlers", () => {
       expect(audit.classification).toBe("destructive");
       expect(audit.outcome).toBe("failure");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 03-03 — secrets restart-truth and event emit (RED: handlers don't implement yet)
+// ---------------------------------------------------------------------------
+
+describe("03-03 — secrets restart-truth and event emit", () => {
+  let killSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function makeHandlersWithSecretManager(
+    initialEnv: Record<string, string> = {},
+    secretStoreOverrides?: Partial<SecretStorePort>,
+  ): { handlers: ReturnType<typeof createSecretsHandlers>; eventBus: ReturnType<typeof createMockEventBus> } {
+    const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle(initialEnv);
+    const capturedEvents: unknown[] = [];
+    const eventBus = createMockEventBus({
+      emit: vi.fn((kind: string, evt: unknown) => {
+        if (kind === "audit:event" || kind === "secret:changed") capturedEvents.push({ kind, evt });
+        return false;
+      }),
+    });
+    const container = {
+      config: { tenantId: "test-tenant" },
+      eventBus,
+      secretManager,
+    } as unknown as AppContainer;
+    const secretStore = createMockSecretStore(secretStoreOverrides);
+    const deps: SecretsHandlerDeps = {
+      secretStore,
+      container,
+      logger: createMockLogger(),
+      mutableSecretManager: mutableHandle,
+    } as unknown as SecretsHandlerDeps;
+    const handlers = createSecretsHandlers(deps);
+    return { handlers, eventBus };
+  }
+
+  it("secrets.set on a new name returns restarting false with stored true", async () => {
+    const { handlers } = makeHandlersWithSecretManager({});
+    const result = await handlers["secrets.set"]!({
+      _trustLevel: "admin",
+      name: "BRAND_NEW_SECRET",
+      value: "top-secret-value",
+    }) as Record<string, unknown>;
+
+    expect(result.stored).toBe(true);
+    expect(result.restarting).toBe(false);
+  });
+
+  it("secrets.set on an existing name returns restarting true", async () => {
+    const { handlers } = makeHandlersWithSecretManager({ EXISTING_SECRET: "old-val" });
+    const result = await handlers["secrets.set"]!({
+      _trustLevel: "admin",
+      name: "EXISTING_SECRET",
+      value: "new-val",
+    }) as Record<string, unknown>;
+
+    expect(result.restarting).toBe(true);
+  });
+
+  it("secrets.set on existing name schedules SIGUSR2 restart", async () => {
+    const { handlers } = makeHandlersWithSecretManager({ EXISTING_SECRET: "old-val" });
+
+    await handlers["secrets.set"]!({
+      _trustLevel: "admin",
+      name: "EXISTING_SECRET",
+      value: "new-val",
+    });
+
+    vi.advanceTimersByTime(200);
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
+  });
+
+  it("secrets.delete on an existing name returns restarting true", async () => {
+    const { handlers } = makeHandlersWithSecretManager({ TO_DELETE: "val" }, {
+      delete: vi.fn(() => ok(true)),
+    });
+    const result = await handlers["secrets.delete"]!({
+      _trustLevel: "admin",
+      name: "TO_DELETE",
+    }) as Record<string, unknown>;
+
+    expect(result.restarting).toBe(true);
+  });
+
+  it("secrets.delete on a name not in secretManager returns restarting false and deleted false", async () => {
+    const { handlers } = makeHandlersWithSecretManager({}, {
+      delete: vi.fn(() => ok(false)),
+    });
+    const result = await handlers["secrets.delete"]!({
+      _trustLevel: "admin",
+      name: "NONEXISTENT_SECRET",
+    }) as Record<string, unknown>;
+
+    expect(result.deleted).toBe(false);
+    expect(result.restarting).toBe(false);
+    vi.advanceTimersByTime(200);
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  it("secrets.delete on existing name emits secret:changed with action removed", async () => {
+    const { handlers, eventBus } = makeHandlersWithSecretManager({ DELETE_ME: "val" }, {
+      delete: vi.fn(() => ok(true)),
+    });
+
+    await handlers["secrets.delete"]!({
+      _trustLevel: "admin",
+      name: "DELETE_ME",
+    });
+
+    const changedCalls = (eventBus.emit.mock.calls as Array<[string, unknown]>).filter(
+      (c) => c[0] === "secret:changed",
+    );
+    expect(changedCalls.length).toBeGreaterThanOrEqual(1);
+    const payload = changedCalls[0]![1] as Record<string, unknown>;
+    expect(payload.name).toBe("DELETE_ME");
+    expect(payload.action).toBe("removed");
+  });
+
+  it("secrets.set new name emits secret:changed with action upserted", async () => {
+    const { handlers, eventBus } = makeHandlersWithSecretManager({});
+
+    await handlers["secrets.set"]!({
+      _trustLevel: "admin",
+      name: "FRESH_SECRET",
+      value: "new-secret-val",
+    });
+
+    const changedCalls = (eventBus.emit.mock.calls as Array<[string, unknown]>).filter(
+      (c) => c[0] === "secret:changed",
+    );
+    expect(changedCalls.length).toBeGreaterThanOrEqual(1);
+    const payload = changedCalls[0]![1] as Record<string, unknown>;
+    expect(payload.name).toBe("FRESH_SECRET");
+    expect(payload.action).toBe("upserted");
+    expect(payload).not.toHaveProperty("value");
+  });
+
+  it("secrets.delete no-op does not emit secret:changed when name not in secretManager", async () => {
+    const { handlers, eventBus } = makeHandlersWithSecretManager({}, {
+      delete: vi.fn(() => ok(false)),
+    });
+
+    await handlers["secrets.delete"]!({
+      _trustLevel: "admin",
+      name: "ABSENT_KEY",
+    });
+
+    const changedCalls = (eventBus.emit.mock.calls as Array<[string, unknown]>).filter(
+      (c) => c[0] === "secret:changed",
+    );
+    expect(changedCalls).toHaveLength(0);
   });
 });
