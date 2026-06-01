@@ -183,21 +183,22 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryTripleExtractionConfig",
       "MemoryTripleExtractionStats",
       "TripleCandidate",
-      // Offline reasoning job (Phase 101-05, Track D — REASON-02/03/04). runMemoryReasoning
-      // is the offline deductive+inductive writer; its daemon cron wiring lands in Plan
-      // 101-06 (the __MEMORY_REASONING__ sentinel, mirroring __MEMORY_CONSOLIDATION__).
-      // Within THIS plan the only consumer is the non-gated unit test — surfaced here
-      // AHEAD of the cross-package consumer (the factory-orphan dance, mirror
-      // runMemoryTripleExtraction @ 100-05 + runMemoryConsolidation @ 84-03). SHRINKS
-      // when 101-06 wires the daemon sentinel. The Deps/Config/Stats/Result SHAPE types +
-      // the ReasoningOutput seam-output type are referenced via inline objects only —
-      // baseline orphans (mirror MemoryTripleExtractionDeps).
-      "runMemoryReasoning",
+      // Offline reasoning job (Phase 101, Track D — REASON-02/03/04). runMemoryReasoning
+      // is now CONSUMED by the daemon __MEMORY_REASONING__ sentinel dispatch (101-06),
+      // so it SHRANK out of this baseline (no longer an orphan). createReasoningSeam
+      // (101-06, the daemon-injected reason() seam factory) is likewise consumed by the
+      // dispatch — no entry needed. The Deps/Config/Stats/Result SHAPE types + the
+      // ReasoningOutput seam-output type are referenced via inline objects only (the
+      // dispatch + the gated bench construct them structurally / import them
+      // same-package) — baseline orphans (mirror MemoryTripleExtractionDeps).
+      // ReasoningSeamDeps (101-06) is the createReasoningSeam input shape — the daemon
+      // calls it with an inline object, so the TYPE itself has no cross-package importer.
       "MemoryReasoningDeps",
       "MemoryReasoningConfig",
       "MemoryReasoningStats",
       "MemoryReasoningResult",
       "ReasoningOutput",
+      "ReasoningSeamDeps",
       "formatMemorySection",
       "CommandQueueDeps",
       "QueueStats",

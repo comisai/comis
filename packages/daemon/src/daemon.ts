@@ -723,11 +723,9 @@ function buildChannelManagerDeps(deps: {
     // Forwarded into registerCronEventListeners -> runMemoryConsolidation (the opt-in
     // __MEMORY_CONSOLIDATION__ cron path). The executor recall path does NOT receive it.
     consolidationStore,
-    // Phase 101 (REASON-02): the triple store (built in setup-memory on the shared db).
-    // Forwarded into registerCronEventListeners -> runMemoryReasoning (the opt-in
-    // __MEMORY_REASONING__ cron path) for the DEDUCTIVE trust-first upsertTriple write.
-    // Completes the field-plumbing chain daemon -> registry -> credentials (the SAME
-    // store also rides the setupAgents read path as the 6th graph-spread recall lane).
+    // Phase 101 (REASON-02): the triple store → registerCronEventListeners →
+    // runMemoryReasoning (the opt-in __MEMORY_REASONING__ cron, DEDUCTIVE upsertTriple
+    // write) — completes the field-plumbing chain daemon → registry → credentials.
     tripleStore,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
