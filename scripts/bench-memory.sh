@@ -35,11 +35,14 @@
 #              Comis recall cell) and write the committable PARTIAL manifest under
 #              benchmarks/results/2026-06-01-phase104-prove/ (override via COMIS_PROVE_REPORT_DIR).
 #              No keys, no provider call, no cost. Then the credential-shape sweep over the dir.
-#   gate       PROVE-03 per-release CONTINUOUS REGRESSION GATE: run the keyless machine and
-#              append ONE dated row to benchmarks/results/history/ (append-only, never-
-#              overwrite). Wiring a CI `schedule:` cron is an OPERATOR step (the COSTED run
-#              with real competitor installs + judge spend) — the `gate` MODE itself is the
-#              in-scope $0-testable unit.
+#   gate       PROVE-03 per-release CONTINUOUS REGRESSION GATE: run the keyless machine,
+#              which PROVES the append-only never-overwrite ledger MECHANISM over a fresh
+#              tmp dir. The keyless run writes NO dated row to benchmarks/results/history/
+#              (it does not exist on the keyless path) — the real dated append is the
+#              operator-COSTED pass (GATE-REPORT.md §4). When that committed history dir
+#              exists, the gate sweeps it for credential shapes. Wiring a CI `schedule:`
+#              cron is an OPERATOR step (the COSTED run with real competitor installs +
+#              judge spend) — the `gate` MODE itself is the in-scope $0-testable unit.
 #
 # Config: copy scripts/bench-memory.env.example → scripts/bench-memory.env and fill it
 # (the runner sources it automatically), or export the COMIS_BENCH_* / LLAMA_* vars yourself.
@@ -111,6 +114,20 @@ sweep_tier_report() {
   [ -d "$dir" ] || return 0
   if grep -REn 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|apiKey' "$dir" 2>/dev/null; then
     echo "✗ SECRET LEAK in benchmarks/results/$tier — failing the run (T-99-08-01)." >&2
+    exit 1
+  fi
+}
+
+# Absolute-path variant of the credential-shape sweep (IN-01). The head-to-head /
+# gate modes let the operator override the output dir (COMIS_PROVE_REPORT_DIR);
+# this sweeps the dir that was ACTUALLY written rather than a desynced hardcoded
+# tier name, so the belt-and-suspenders sweep never skips the live dir. Same shapes
+# (sk-…{16,} / Bearer … / apiKey), same FAIL-on-match. A missing dir is a no-op.
+sweep_dir() {
+  local dir="$1"
+  [ -d "$dir" ] || return 0
+  if grep -REn 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|apiKey' "$dir" 2>/dev/null; then
+    echo "✗ SECRET LEAK in $dir — failing the run (T-99-08-01)." >&2
     exit 1
   fi
 }
@@ -204,14 +221,20 @@ case "$MODE" in
     # greps that dir for credential SHAPES and FAILS on any match (T-99-08-01).
     export COMIS_PROVE_REPORT_DIR="${COMIS_PROVE_REPORT_DIR:-$ROOT/benchmarks/results/2026-06-01-phase104-prove}"
     run "$HEAD_TO_HEAD"
-    sweep_tier_report "2026-06-01-phase104-prove"
-    echo "  → manifest: benchmarks/results/2026-06-01-phase104-prove/"
+    # IN-01: sweep the dir the run ACTUALLY wrote (the same override the harness
+    # used), not a desynced hardcoded tier name — so an overridden output dir is
+    # always the dir that gets credential-swept.
+    sweep_dir "$COMIS_PROVE_REPORT_DIR"
+    echo "  → manifest: $COMIS_PROVE_REPORT_DIR"
     ;;
   gate)
-    # PROVE-03 — the per-release CONTINUOUS REGRESSION GATE entry point. Runs the same
-    # keyless proving machine and appends ONE dated row to benchmarks/results/history/
-    # (the append-only, never-overwrite ledger — a prior dated row is never clobbered),
-    # then sweeps the history dir for credential shapes.
+    # PROVE-03 — the per-release CONTINUOUS REGRESSION GATE entry point. Runs the
+    # keyless proving machine, which PROVES the append-only never-overwrite ledger
+    # MECHANISM over a fresh tmp history dir (head-to-head.bench.test.ts: write a
+    # dated row, refuse a 2nd same-path write with prior bytes byte-identical, let a
+    # different-date row coexist). The keyless run writes a SYNTHETIC row to a tmp
+    # dir — it does NOT touch the committed benchmarks/results/history/ (that real
+    # dated append is the operator-COSTED pass; see GATE-REPORT.md §4).
     #
     # OPERATOR/FOLLOW-UP: wiring a CI `schedule:` cron to run this `gate` mode is an
     # OPERATOR step, NOT shipped here — the COSTED head-to-head (real competitor installs
@@ -219,8 +242,21 @@ case "$MODE" in
     # scheduled run would never produce a useful headline. The `gate` MODE is the in-scope,
     # $0-testable unit; the scheduled spend is deferred to the operator (RESEARCH Open Q #2).
     run "$HEAD_TO_HEAD"
-    sweep_tier_report "history"
-    echo "  → appended dated row (when written): benchmarks/results/history/"
+    HISTORY_DIR="$ROOT/benchmarks/results/history"
+    # HONESTY (WR-01): only claim a dated row + a history sweep when the dir actually
+    # exists with operator-costed rows. The keyless run never writes here, so by
+    # default we say plainly that the gate proves the MECHANISM and the real append
+    # is the costed pass — never success-shaped text after appending nothing.
+    if [ -d "$HISTORY_DIR" ] && [ -n "$(ls -A "$HISTORY_DIR" 2>/dev/null)" ]; then
+      sweep_dir "$HISTORY_DIR"
+      echo "  → swept benchmarks/results/history/ (operator-costed dated rows)"
+    else
+      echo "  → keyless gate: the append-only never-overwrite ledger MECHANISM is"
+      echo "    PROVEN over a fresh tmp dir (the keyless run writes NO dated row to"
+      echo "    benchmarks/results/history/). The real dated append is the operator-"
+      echo "    costed pass — reproduce with the steps in"
+      echo "    benchmarks/results/2026-06-01-phase104-prove/GATE-REPORT.md §4."
+    fi
     ;;
   suite)
     TIER="${2:-}"

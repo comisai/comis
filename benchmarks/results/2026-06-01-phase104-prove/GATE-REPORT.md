@@ -88,11 +88,14 @@ cp scripts/bench-memory.env.example scripts/bench-memory.env
 #    zep:       set ZEP_API_KEY + install the @getzep/zep-js SDK
 #    hindsight: clone + build ../hindsight
 #    mnemosyne: clone + build ../mnemosyne
-# 3. Run the per-release continuous gate (appends ONE dated row to the history ledger):
+# 3. Run the per-release continuous gate. KEYLESS, it PROVES the never-overwrite
+#    ledger MECHANISM over a tmp dir (it writes NO row to benchmarks/results/history/).
+#    The COSTED pass (this command with the env + competitor installs above) is what
+#    appends the real dated row to benchmarks/results/history/<date>-<commit>.json:
 scripts/bench-memory.sh gate
 ```
 
-The `gate` mode appends an immutable dated row to `benchmarks/results/history/<date>-<commit>.json` and releases the raw answer + judge transcripts alongside it. Wiring a CI `schedule:` cron to run `gate` automatically is an **operator/follow-up** step (it costs real spend — a keyless scheduled run would never produce a useful headline); the `gate` MODE itself is built + proven at $0 here (§1c is its ledger invariant).
+The **keyless** `gate` run proves the append-only never-overwrite ledger *mechanism* (§1c) over a fresh tmp dir — it deliberately writes **no** row to `benchmarks/results/history/` (the dir does not exist on the keyless path), and its console output says so honestly rather than claiming a dated append. The **operator-costed** pass (the command above, with the answer/judge env + the competitor installs) is what appends the immutable dated row to `benchmarks/results/history/<date>-<commit>.json` and releases the raw answer + judge transcripts alongside it; when that history dir exists, the gate also credential-sweeps it. Wiring a CI `schedule:` cron to run the costed `gate` automatically is an **operator/follow-up** step (it costs real spend — a keyless scheduled run would never produce a useful headline); the `gate` MODE itself is built + proven at $0 here.
 
 ## 5. Verdict against the PROVE gate
 
