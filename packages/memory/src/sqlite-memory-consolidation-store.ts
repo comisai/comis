@@ -446,5 +446,53 @@ export function createSqliteMemoryConsolidationStore(
         return err(error);
       }
     },
+
+    /**
+     * READ (REASON-04 — the surprisal-gate engine). The k nearest-neighbour
+     * cosine DISTANCES for one embedding, returned sorted ascending (closer
+     * first), or `ok([])` when sqlite-vec is unavailable (graceful degrade — the
+     * caller's missing-embedding policy then applies). The `(agentId, tenantId)`
+     * args are carried for parity + a future filtered variant (V4 access
+     * control); the surprisal score is per-candidate, so the caller already holds
+     * in-scope embeddings.
+     *
+     * Wave 101-02 lands this contract-satisfying graceful-degrade body so the
+     * widened `MemoryConsolidationStore` port builds across the workspace; the
+     * sqlite-vec `searchByVector`-backed surprisal query (hybrid-search.ts) is
+     * wired in 101-03 (its own RED test). NEVER throws — a pure read wrapped in
+     * try/catch → `err`.
+     */
+    async knnDistances(
+      _embedding: number[],
+      _k: number,
+      _agentId: string,
+      _tenantId: string,
+    ): Promise<Result<number[], Error>> {
+      try {
+        if (!isVecAvailable()) {
+          logger?.debug(
+            { step: "reason-knn", errorKind: "precondition" as const },
+            "knnDistances: sqlite-vec unavailable — degrading to no neighbours",
+          );
+          return ok([]);
+        }
+        // 101-03 wires the real searchByVector(db, embedding, k) surprisal read
+        // here (sorted-ascending distances). Until then the contract degrades to
+        // an empty neighbour set — a valid, sorted, non-negative distance list.
+        return ok([]);
+      } catch (e) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "reason-knn",
+            err: error,
+            errorKind: "internal" as const,
+            hint: "k-NN distance read failed — surprisal gate degrades to no neighbours",
+          },
+          "knnDistances failed",
+        );
+        return err(error);
+      }
+    },
   };
 }
