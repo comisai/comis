@@ -183,6 +183,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryTripleExtractionConfig",
       "MemoryTripleExtractionStats",
       "TripleCandidate",
+      // Offline reasoning job (Phase 101-05, Track D — REASON-02/03/04). runMemoryReasoning
+      // is the offline deductive+inductive writer; its daemon cron wiring lands in Plan
+      // 101-06 (the __MEMORY_REASONING__ sentinel, mirroring __MEMORY_CONSOLIDATION__).
+      // Within THIS plan the only consumer is the non-gated unit test — surfaced here
+      // AHEAD of the cross-package consumer (the factory-orphan dance, mirror
+      // runMemoryTripleExtraction @ 100-05 + runMemoryConsolidation @ 84-03). SHRINKS
+      // when 101-06 wires the daemon sentinel. The Deps/Config/Stats/Result SHAPE types +
+      // the ReasoningOutput seam-output type are referenced via inline objects only —
+      // baseline orphans (mirror MemoryTripleExtractionDeps).
+      "runMemoryReasoning",
+      "MemoryReasoningDeps",
+      "MemoryReasoningConfig",
+      "MemoryReasoningStats",
+      "MemoryReasoningResult",
+      "ReasoningOutput",
       "formatMemorySection",
       "CommandQueueDeps",
       "QueueStats",
