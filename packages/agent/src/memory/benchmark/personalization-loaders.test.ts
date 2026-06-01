@@ -167,12 +167,21 @@ describe("loadPerLtqa (personal episodic+semantic QA -> dated profile doc + qa[]
     expect(r.value.qa[0].answer).toBe("");
   });
 
-  it("never serializes the qa gold (answers) into profile doc content (anti-leak)", () => {
+  it("never serializes the qa gold metadata block into profile doc content (anti-leak)", () => {
+    // The anti-leak invariant (T-99-07-03) is about the gold CHANNEL: the loader
+    // must never fold the qa block (questions + their `answer`/`question_id` gold
+    // keys) into the ingested profile document — the gold rides the qa[] channel
+    // only. (The answer's natural-language VALUE may legitimately appear in the
+    // profile/corpus, since retrieval requires the fact to be ingested — exactly
+    // as LoCoMo's dialogue contains the spoken answer; LoCoMo's anti-leak test
+    // likewise asserts the qa BLOCK, not the answer string.)
     const r = loadPerLtqa(PERLTQA);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     for (const doc of r.value.docs) {
-      expect(doc.content).not.toContain("topic beta");
+      expect(doc.content).not.toContain("question_id");
+      expect(doc.content).not.toContain("perltqa_1");
+      expect(doc.content).not.toContain("What is user_a's favorite placeholder topic?");
     }
   });
 
@@ -243,12 +252,21 @@ describe("loadPersonaMem (evolving persona -> dated session docs + probe questio
     expect(r.value.docs[0].createdAt).toBeLessThan(r.value.docs[1].createdAt);
   });
 
-  it("never serializes the probe gold (answers) into session doc content (anti-leak)", () => {
+  it("never serializes the probe gold metadata block into session doc content (anti-leak)", () => {
+    // Anti-leak (T-99-07-03): the loader serializes ONLY the session turns, never
+    // the probes (their `answer`/`probe_id` gold keys). The gold value `climbing`
+    // legitimately appears in the LATER session's turns — that is the evolving
+    // fact the agent must ingest and recall — so the invariant is that the probe
+    // BLOCK is absent, not the spoken value.
     const r = loadPersonaMem(PERSONAMEM);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     for (const doc of r.value.docs) {
-      expect(doc.content).not.toContain("climbing");
+      expect(doc.content).not.toContain("probe_id");
+      expect(doc.content).not.toContain("pm_probe_1");
+      expect(doc.content).not.toContain(
+        "What is user_a's current placeholder hobby after the latest session?",
+      );
     }
   });
 
@@ -303,15 +321,22 @@ describe("loadHaluMem (memory hallucination -> { docs, qa, hallucinationLabels }
     expect(r.value.hallucinationLabels.get("halumem_q2")).toBe(true);
   });
 
-  it("keeps the hallucination labels OFF document content (the anti-leak invariant)", () => {
+  it("keeps the hallucination labels + qa gold OFF document content (the anti-leak invariant)", () => {
+    // Anti-leak (T-99-07-03): the loader ingests ONLY the memory ops; the
+    // faithfulness gold (the `hallucination_labels` / `hallucinated` flags) and
+    // the qa block ride SEPARATE channels and are never folded into doc content.
+    // The answer VALUE `Mittens` is the corrected fact inside the update op the
+    // agent must ingest — so the invariant is that the LABEL channel + qa block
+    // are absent, not the fact stated by the memory op.
     const r = loadHaluMem(HALUMEM);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     for (const doc of r.value.docs) {
       expect(doc.content).not.toContain("hallucinated");
       expect(doc.content).not.toContain("hallucination_labels");
-      // The gold answers are likewise never in doc content.
-      expect(doc.content).not.toContain("Mittens");
+      // The qa block (questions + their gold) is likewise never in doc content.
+      expect(doc.content).not.toContain("question_id");
+      expect(doc.content).not.toContain("halumem_q1");
     }
   });
 
