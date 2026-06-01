@@ -71,6 +71,11 @@ describe("TripleStorePort — type-only segregated KG port (KG-01/KG-03)", () =>
       asOf: async (
         _t: number,
         _scope: Omit<TripleScope, "now">,
+        _mode?: "valid" | "txn",
+      ): Promise<Result<TripleInput[], Error>> => ok([sampleTriple]),
+      currentTruth: async (
+        _scope: Omit<TripleScope, "now">,
+        _cap?: number,
       ): Promise<Result<TripleInput[], Error>> => ok([sampleTriple]),
       spreadLane: async (
         _seedSubjects: string[],
@@ -105,6 +110,7 @@ describe("TripleStorePort — type-only segregated KG port (KG-01/KG-03)", () =>
     const stub: TripleStorePort = {
       upsertTriple: async (): Promise<Result<void, Error>> => ok(undefined),
       asOf: async (): Promise<Result<TripleInput[], Error>> => ok([]),
+      currentTruth: async (): Promise<Result<TripleInput[], Error>> => ok([]),
       spreadLane: async (): Promise<Result<MemorySearchResult[], Error>> => ok([]),
     };
     expectTypeOf(stub.upsertTriple).parameters.toEqualTypeOf<[TripleInput, TripleScope]>();
@@ -115,6 +121,7 @@ describe("TripleStorePort — type-only segregated KG port (KG-01/KG-03)", () =>
     const stub: TripleStorePort = {
       upsertTriple: async (): Promise<Result<void, Error>> => ok(undefined),
       asOf: async (): Promise<Result<TripleInput[], Error>> => ok([]),
+      currentTruth: async (): Promise<Result<TripleInput[], Error>> => ok([]),
       spreadLane: async (): Promise<Result<MemorySearchResult[], Error>> => ok([]),
     };
     expectTypeOf(stub.asOf).parameters.toEqualTypeOf<[number, Omit<TripleScope, "now">]>();
@@ -125,6 +132,7 @@ describe("TripleStorePort — type-only segregated KG port (KG-01/KG-03)", () =>
     const stub: TripleStorePort = {
       upsertTriple: async (): Promise<Result<void, Error>> => ok(undefined),
       asOf: async (): Promise<Result<TripleInput[], Error>> => ok([]),
+      currentTruth: async (): Promise<Result<TripleInput[], Error>> => ok([]),
       spreadLane: async (): Promise<Result<MemorySearchResult[], Error>> => ok([]),
     };
     expectTypeOf(stub.spreadLane).returns.toEqualTypeOf<Promise<Result<MemorySearchResult[], Error>>>();
@@ -169,5 +177,68 @@ describe("TripleStorePort — type-only segregated KG port (KG-01/KG-03)", () =>
     expectTypeOf(full.sourceMemoryId).toEqualTypeOf<string | undefined>();
     expectTypeOf(full.confidence).toEqualTypeOf<number | undefined>();
     expect(full.confidence).toBe(0.5);
+  });
+});
+
+/**
+ * Phase 100 (KG-03) — the as-of time-travel contract completion.
+ *
+ * Plan 01 shipped the valid-time `asOf`; Plan 03 adds (a) a txn-time variant of
+ * `asOf` (the `mode: "valid" | "txn"` discriminator — valid-time answers "what
+ * was BELIEVED true at instant t", txn-time answers "what the system had
+ * RECORDED as of t") and (b) `currentTruth`, the default-recall read that
+ * default-filters expired/invalidated edges (`t_valid_end IS NULL`) — the fix
+ * for Graphiti's opt-in-filter stale-fact leak (where default search leaks
+ * superseded edges). All three reads stay (tenant, agent) scoped.
+ */
+describe("TripleStorePort — as-of time-travel + current-truth default-filter (KG-03)", () => {
+  const portSrcKg03 = readFileSync(resolve(here, "./triple-store.ts"), "utf8");
+
+  it("declares currentTruth + the asOf txn-time mode and stays type-only (no zod, no @comis/memory)", () => {
+    // Runtime RED proof: fails on pre-patch source where the new symbol/literals
+    // do not exist yet. `currentTruth` is the default-recall current-truth read;
+    // the `mode` discriminator distinguishes the valid-time vs txn-time as-of.
+    expect(portSrcKg03, "currentTruth method must be on the port").toMatch(/\bcurrentTruth\s*\(/);
+    expect(portSrcKg03, "asOf must take a valid|txn mode discriminator").toMatch(
+      /mode\??\s*:\s*["']valid["']\s*\|\s*["']txn["']/,
+    );
+    // The default-recall current-truth filter is documented as `t_valid_end IS
+    // NULL` (the Graphiti leak fix) — keep the contract self-describing.
+    expect(portSrcKg03, "currentTruth doc cites the t_valid_end IS NULL default filter").toMatch(
+      /t_valid_end IS NULL/,
+    );
+    // The port must stay type-only (mirrors memory-causal-store.ts).
+    expect(portSrcKg03, "no zod in a type-only port").not.toMatch(/\bz\.[a-z]/);
+    expect(portSrcKg03, "no @comis/memory import in core port").not.toMatch(
+      /^\s*import\b[^\n]*@comis\/memory/m,
+    );
+  });
+
+  it("exposes asOf with an optional mode discriminator defaulting to valid-time", () => {
+    const stub: TripleStorePort = {
+      upsertTriple: async (): Promise<Result<void, Error>> => ok(undefined),
+      asOf: async (): Promise<Result<TripleInput[], Error>> => ok([]),
+      currentTruth: async (): Promise<Result<TripleInput[], Error>> => ok([]),
+      spreadLane: async (): Promise<Result<MemorySearchResult[], Error>> => ok([]),
+    };
+    // The mode is OPTIONAL (default valid) — so a 2-arg call still type-checks
+    // (the Plan-01 valid-time callers are unbroken) AND a 3-arg txn call does.
+    expectTypeOf(stub.asOf).parameters.toEqualTypeOf<
+      [number, Omit<TripleScope, "now">, ("valid" | "txn")?]
+    >();
+    expectTypeOf(stub.asOf).returns.toEqualTypeOf<Promise<Result<TripleInput[], Error>>>();
+  });
+
+  it("exposes currentTruth typed as (Omit<TripleScope,'now'>, cap?) => Promise<Result<TripleInput[], Error>>", () => {
+    const stub: TripleStorePort = {
+      upsertTriple: async (): Promise<Result<void, Error>> => ok(undefined),
+      asOf: async (): Promise<Result<TripleInput[], Error>> => ok([]),
+      currentTruth: async (): Promise<Result<TripleInput[], Error>> => ok([]),
+      spreadLane: async (): Promise<Result<MemorySearchResult[], Error>> => ok([]),
+    };
+    expectTypeOf(stub.currentTruth).parameters.toEqualTypeOf<
+      [Omit<TripleScope, "now">, (number | undefined)?]
+    >();
+    expectTypeOf(stub.currentTruth).returns.toEqualTypeOf<Promise<Result<TripleInput[], Error>>>();
   });
 });

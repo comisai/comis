@@ -580,6 +580,220 @@ describe("createSqliteTripleStore", () => {
   });
 
   // =====================================================================
+  // AS-OF TIME-TRAVEL (KG-03) — valid-time vs txn-time variants +
+  // currentTruth default-filter (the Graphiti opt-in-leak fix). Plan 100-03.
+  //
+  // - asOf(t, scope, "valid")  → "what was BELIEVED true at t":
+  //     t_valid_start <= t AND (t_valid_end IS NULL OR t_valid_end > t)
+  // - asOf(t, scope, "txn")    → "what the system had RECORDED as of t":
+  //     t_ingested   <= t AND (expired_at  IS NULL OR expired_at  > t)
+  // - currentTruth(scope)      → "what is believed NOW" (default recall read):
+  //     t_valid_end IS NULL  — superseded + recorded-but-not-believed rows are
+  //     EXCLUDED (the stale-fact leak fix).
+  // All three are (tenant, agent) scoped.
+  // =====================================================================
+
+  describe("as-of time-travel: valid-time vs txn-time variants (KG-03)", () => {
+    it("asOf defaults to valid-time (a 2-arg call is byte-identical to mode 'valid')", async () => {
+      await store.upsertTriple(makeTriple({ subject: "ada", object: "london", tValidStart: T0 }), SCOPE_A);
+
+      const implicit = await store.asOf(T0 + 1, READ_A); // no mode → valid-time
+      const explicit = await store.asOf(T0 + 1, READ_A, "valid");
+      expect(implicit.ok && explicit.ok).toBe(true);
+      if (implicit.ok && explicit.ok) {
+        expect(implicit.value.map((r) => r.object).sort()).toEqual(
+          explicit.value.map((r) => r.object).sort(),
+        );
+        expect(implicit.value.some((r) => r.object === "london")).toBe(true);
+      }
+    });
+
+    it("valid-time vs txn-time DIVERGE on a soft-closed row: a fact whose valid-time started BEFORE it was ingested is visible by valid-time but NOT by txn-time at an instant between the two", async () => {
+      // "acme" became true in the world at T_past but was only RECORDED at T0
+      // (t_valid_start < t_ingested — the bi-temporal divergence). It is later
+      // superseded at T_super, soft-closing it (t_valid_end = expired_at = T_super).
+      const T_past = T0 - 10_000;
+      const T_ingest = T0;
+      const T_super = T0 + 5000;
+      const T_pick = T0 - 5000; // T_past <= T_pick < T_ingest
+
+      const incumbent = await store.upsertTriple(
+        makeTriple({
+          subject: "france",
+          predicate: "capital_is",
+          object: "acme",
+          trust: "external",
+          tValidStart: T_past, // valid-time start in the PAST
+        }),
+        { ...SCOPE_A, now: T_ingest }, // ingested (t_ingested) LATER than valid-start
+      );
+      expect(incumbent.ok).toBe(true);
+
+      // A higher-trust supersession soft-closes "acme" at T_super.
+      const winner = await store.upsertTriple(
+        makeTriple({
+          subject: "france",
+          predicate: "capital_is",
+          object: "paris",
+          trust: "learned",
+          tValidStart: T_super,
+        }),
+        { ...SCOPE_A, now: T_super },
+      );
+      expect(winner.ok).toBe(true);
+
+      // The soft-closed row's stamps diverge: valid-window [T_past, T_super),
+      // txn-window [T_ingest, T_super). At T_pick (inside valid, before txn-start):
+      const validAt = await store.asOf(T_pick, READ_A, "valid");
+      const txnAt = await store.asOf(T_pick, READ_A, "txn");
+      expect(validAt.ok && txnAt.ok).toBe(true);
+      if (!validAt.ok || !txnAt.ok) return;
+
+      // valid-time: "acme" WAS believed true at T_pick → present.
+      const validObjs = validAt.value.filter((r) => r.subject === "france").map((r) => r.object);
+      expect(validObjs).toContain("acme");
+
+      // txn-time: at T_pick the system had NOT yet recorded "acme" (t_ingested = T0
+      // > T_pick) → absent. THE DIVERGENCE: same t, different row set → the two
+      // clauses query different columns (t_valid_start vs t_ingested).
+      const txnObjs = txnAt.value.filter((r) => r.subject === "france").map((r) => r.object);
+      expect(txnObjs).not.toContain("acme");
+      expect(validObjs).not.toEqual(txnObjs);
+    });
+
+    it("txn-time asOf sees a recorded row from its ingest instant onward, even before its valid-time start would (record-time window)", async () => {
+      // A row recorded at T0 whose valid-time only starts in the FUTURE (T0+5000):
+      // valid-time hides it until T0+5000; txn-time shows it from T0 (when recorded).
+      const tValidFuture = T0 + 5000;
+      await store.upsertTriple(
+        makeTriple({ subject: "neo", predicate: "is", object: "the_one", tValidStart: tValidFuture }),
+        { ...SCOPE_A, now: T0 }, // recorded at T0
+      );
+
+      const tBetween = T0 + 1000; // T0 (ingest) <= t < tValidFuture (valid-start)
+      const validAt = await store.asOf(tBetween, READ_A, "valid");
+      const txnAt = await store.asOf(tBetween, READ_A, "txn");
+      expect(validAt.ok && txnAt.ok).toBe(true);
+      if (!validAt.ok || !txnAt.ok) return;
+
+      // valid-time: not yet valid (t_valid_start in the future) → absent.
+      expect(validAt.value.some((r) => r.subject === "neo")).toBe(false);
+      // txn-time: already recorded (t_ingested <= t, expired_at NULL) → present.
+      expect(txnAt.value.some((r) => r.subject === "neo")).toBe(true);
+    });
+
+    it("both asOf modes are (tenant, agent) scoped: a (tenant_a, agent_a) row is invisible to either mode under (tenant_a, agent_b) or (tenant_b, agent_a)", async () => {
+      await store.upsertTriple(makeTriple({ subject: "scoped", tValidStart: T0 }), { ...SCOPE_A, now: T0 });
+
+      for (const mode of ["valid", "txn"] as const) {
+        const crossAgent = await store.asOf(T0 + 1, { tenantId: "tenant_a", agentId: "agent_b" }, mode);
+        expect(crossAgent.ok).toBe(true);
+        if (crossAgent.ok) expect(crossAgent.value.some((r) => r.subject === "scoped")).toBe(false);
+
+        const crossTenant = await store.asOf(T0 + 1, { tenantId: "tenant_b", agentId: "agent_a" }, mode);
+        expect(crossTenant.ok).toBe(true);
+        if (crossTenant.ok) expect(crossTenant.value.some((r) => r.subject === "scoped")).toBe(false);
+      }
+    });
+
+    it("asOf returns err (not throw) when the underlying db query fails, in either mode", async () => {
+      await store.upsertTriple(makeTriple(), SCOPE_A);
+      db.close();
+      const v = await store.asOf(T0 + 1, READ_A, "valid");
+      const t = await store.asOf(T0 + 1, READ_A, "txn");
+      expect(v.ok).toBe(false);
+      expect(t.ok).toBe(false);
+    });
+  });
+
+  describe("currentTruth default-filter — excludes expired/invalidated edges (the Graphiti leak fix, KG-03)", () => {
+    it("after a supersession, currentTruth returns ONLY the new current-truth object — the soft-closed loser is NOT returned", async () => {
+      // external "acme" then a higher-trust "globex" → "acme" soft-closed.
+      await store.upsertTriple(
+        makeTriple({ subject: "ada", predicate: "works_at", object: "acme", trust: "external", tValidStart: T0 }),
+        SCOPE_A,
+      );
+      await store.upsertTriple(
+        makeTriple({ subject: "ada", predicate: "works_at", object: "globex", trust: "learned", tValidStart: T0 + 2000 }),
+        { ...SCOPE_A, now: T0 + 2000 },
+      );
+
+      const truth = await store.currentTruth(READ_A);
+      expect(truth.ok).toBe(true);
+      if (!truth.ok) return;
+      const adaWorks = truth.value.filter((r) => r.subject === "ada" && r.predicate === "works_at");
+      expect(adaWorks).toHaveLength(1);
+      expect(adaWorks[0]?.object).toBe("globex"); // current-truth only
+      // The soft-closed loser MUST NOT leak into the default read.
+      expect(truth.value.some((r) => r.object === "acme")).toBe(false);
+    });
+
+    it("a recorded-but-not-believed (new < incumbent) row is NEVER in currentTruth", async () => {
+      // SUITE-04 shape: older system "Paris" stays current; newer external
+      // "Berlin" is recorded ALREADY-CLOSED (not believed) → must not appear.
+      await store.upsertTriple(
+        makeTriple({ subject: "france", predicate: "capital_is", object: "Paris", trust: "system", tValidStart: T0, tOccurred: T0 }),
+        SCOPE_A,
+      );
+      await store.upsertTriple(
+        makeTriple({ subject: "france", predicate: "capital_is", object: "Berlin", trust: "external", tValidStart: T0 + 10_000, tOccurred: T0 + 10_000 }),
+        { ...SCOPE_A, now: T0 + 10_000 },
+      );
+
+      const truth = await store.currentTruth(READ_A);
+      expect(truth.ok).toBe(true);
+      if (!truth.ok) return;
+      const cap = truth.value.filter((r) => r.subject === "france");
+      expect(cap).toHaveLength(1);
+      expect(cap[0]?.object).toBe("Paris"); // believed
+      expect(truth.value.some((r) => r.object === "Berlin")).toBe(false); // recorded-not-believed excluded
+    });
+
+    it("currentTruth returns every LIVE current-truth row but no closed row, and respects the cap bound", async () => {
+      // Two independent current-truth facts + one soft-closed loser.
+      await store.upsertTriple(makeTriple({ subject: "a", predicate: "p", object: "x", tValidStart: T0 }), SCOPE_A);
+      await store.upsertTriple(makeTriple({ subject: "b", predicate: "p", object: "y", tValidStart: T0 }), SCOPE_A);
+      // Supersede "a" → its old object is closed, a new one is current.
+      await store.upsertTriple(
+        makeTriple({ subject: "a", predicate: "p", object: "z", trust: "system", tValidStart: T0 + 1000 }),
+        { ...SCOPE_A, now: T0 + 1000 },
+      );
+
+      const all = await store.currentTruth(READ_A);
+      expect(all.ok).toBe(true);
+      if (!all.ok) return;
+      const objs = all.value.map((r) => r.object).sort();
+      expect(objs).toEqual(["y", "z"]); // "x" was soft-closed → excluded
+      expect(all.value.some((r) => r.object === "x")).toBe(false);
+
+      // The cap bounds the returned row count.
+      const capped = await store.currentTruth(READ_A, 1);
+      expect(capped.ok).toBe(true);
+      if (capped.ok) expect(capped.value).toHaveLength(1);
+    });
+
+    it("currentTruth is (tenant, agent) scoped: a (tenant_a, agent_a) row is never returned for (tenant_a, agent_b) or (tenant_b, agent_a)", async () => {
+      await store.upsertTriple(makeTriple({ subject: "scoped", object: "secret", tValidStart: T0 }), SCOPE_A);
+
+      const crossAgent = await store.currentTruth({ tenantId: "tenant_a", agentId: "agent_b" });
+      expect(crossAgent.ok).toBe(true);
+      if (crossAgent.ok) expect(crossAgent.value.some((r) => r.subject === "scoped")).toBe(false);
+
+      const crossTenant = await store.currentTruth({ tenantId: "tenant_b", agentId: "agent_a" });
+      expect(crossTenant.ok).toBe(true);
+      if (crossTenant.ok) expect(crossTenant.value.some((r) => r.subject === "scoped")).toBe(false);
+    });
+
+    it("currentTruth returns err (not throw) when the underlying db query fails", async () => {
+      await store.upsertTriple(makeTriple(), SCOPE_A);
+      db.close();
+      const r = await store.currentTruth(READ_A);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+    });
+  });
+
+  // =====================================================================
   // spreadLane stub (Plan 100-04 implements it)
   // =====================================================================
 
