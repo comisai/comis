@@ -9,6 +9,16 @@ const description = "Technical deep dives, architecture decisions, and lessons l
 // Add new posts here - newest first
 const posts = [
   {
+    slug: "the-honest-memory-benchmark",
+    title: "The honest agent-memory benchmark: we built the proving machine first",
+    description:
+      "Agent-memory leaderboards are easy to game, and the judge model alone can swing a score from ~49% to ~94%. So before publishing a number, we built the machine that proves one: an open, reproducible, cross-judged harness. Here is what we measured at $0, what we deliberately did not publish, and the one command to reproduce the full head-to-head yourself.",
+    date: "June 1, 2026",
+    author: "Moshe Anconina",
+    readTime: "9 min",
+    tag: "Engineering",
+  },
+  {
     slug: "anatomy-of-a-dag-pipeline",
     title: "How One Sentence Spawned Six Sub-Agents and a Trade Idea",
     description: "I typed one sentence into Comis. It built a 6-node DAG, dispatched six isolated sub-agents, fired 101 tool calls, ran 64 web searches, and came back with a trade plan that included three entry tranches, a stop, and a 4:1 reward-to-risk. Here's how the pipeline orchestration actually works.",
