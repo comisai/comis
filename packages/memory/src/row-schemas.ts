@@ -173,16 +173,13 @@ export const CausalLaneRowSchema = z.strictObject({
  * Schema for the `memory_triples` table (Phase 100, KG-01). The segregated
  * bi-temporal knowledge-graph row: an S/P/O assertion with the FOUR bi-temporal
  * timestamps (`t_valid_start`/`t_valid_end` valid-time, `t_ingested`/`expired_at`
- * txn-time) + the world occurred range (`t_occurred`/`t_occurred_end`) + the
- * Comis `trust` ladder + optional `source_memory_id` provenance + `confidence`.
- *
- * `tenant_id`/`agent_id` ARE projected here (unlike the minimal lane projections)
- * — the adapter maps a full row back to the camelCase `TripleInput` (@comis/core)
- * for `asOf`. The end-stamps + occurred range + provenance + confidence are
- * `.nullable()` (SQLite NULL: a current-truth row has `t_valid_end`/`expired_at`
- * NULL; `t_occurred*`/`source_memory_id`/`confidence` are absent when unknown).
- * `trust` is `z.enum(...)` matching the DDL CHECK. Parsed via `createRowMapper`
- * in the adapter — never `as Row[]`.
+ * txn-time) + the occurred range (`t_occurred`/`t_occurred_end`) + the Comis
+ * `trust` ladder + optional `source_memory_id` provenance + `confidence`.
+ * `tenant_id`/`agent_id` ARE projected (the adapter maps a full row back to the
+ * camelCase `TripleInput` for `asOf`). The end-stamps + occurred range +
+ * provenance + confidence are `.nullable()` (a current-truth row has
+ * `t_valid_end`/`expired_at` NULL); `trust` is `z.enum(...)` matching the DDL
+ * CHECK. Parsed via `createRowMapper` in the adapter — never `as Row[]`.
  */
 export const MemoryTripleRowSchema = z.strictObject({
   id: z.string(),
