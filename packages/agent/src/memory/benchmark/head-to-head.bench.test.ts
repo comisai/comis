@@ -340,6 +340,13 @@ describe.skipIf(!COMIS_BENCH)("head-to-head proving machine (PROVE, keyless gate
       expect(controlResult.system).toBe("letta-fs-baseline");
       // The manifestRef embeds the explicit control label -> never Comis's headline.
       expect(controlResult.manifestRef).toContain(LETTA_FS_BASELINE_CONTROL_LABEL);
+      // WR-02: the control OBSERVED its formatted full-dump context — contextChars
+      // is the rendered length of the two-doc haystack, proving the format call is
+      // load-bearing (a faithful $0 execution, not a discarded call).
+      expect(
+        controlResult.contextChars,
+        "the control observed a non-empty formatted full-dump context",
+      ).toBeGreaterThan(0);
     }
   });
 
@@ -348,9 +355,9 @@ describe.skipIf(!COMIS_BENCH)("head-to-head proving machine (PROVE, keyless gate
     // returns ranked results. We assert it ran (not a number) -- the lanes are wired,
     // not dormant. The seed doc (FTS-matched) must be present.
     expect(comisRanked.length, "the real recall pipeline returned ranked results").toBeGreaterThan(0);
-    const ids = comisRanked.map((m) => m.entry.content);
+    const contents = comisRanked.map((m) => m.entry.content);
     expect(
-      ids.some((c) => c.includes("Quarterly revenue planning")),
+      contents.some((c) => c.includes("Quarterly revenue planning")),
       "the FTS-matched seed doc is present (the pipeline really ran)",
     ).toBe(true);
   });
@@ -473,6 +480,9 @@ describe.skipIf(!COMIS_BENCH)("head-to-head proving machine (PROVE, keyless gate
         system: controlResult.ran === true ? controlResult.system : "ERROR",
         ran: controlResult.ran === true,
         isControl: controlResult.ran === true ? controlResult.isControl : false,
+        // WR-02: the observed length of the control's formatted full-dump context —
+        // the load-bearing proof that the keyless control did real work (not 0).
+        contextChars: controlResult.ran === true ? (controlResult.contextChars ?? 0) : 0,
       },
     };
 

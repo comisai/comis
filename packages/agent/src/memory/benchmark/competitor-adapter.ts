@@ -77,6 +77,15 @@ export type AdapterResult =
       readonly isControl: boolean;
       /** The cell -> committed-manifest link (the number lives in the manifest). */
       readonly manifestRef: string;
+      /**
+       * The observed character length of the context the cell actually rendered
+       * (WR-02). This makes the cell's keyless work LOAD-BEARING: the letta-fs
+       * control records the length of its full-dump formatted context here, so the
+       * format call cannot be deleted as dead code without a behavioural change.
+       * NOT a score — a digest of the work done. Absent on cells that render no
+       * in-harness context (the real number lives in the committed manifest).
+       */
+      readonly contextChars?: number;
     }
   | {
       /** The cell was NOT run (system/keys absent) — this arm has NO score. */

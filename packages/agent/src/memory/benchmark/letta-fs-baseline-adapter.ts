@@ -107,8 +107,10 @@ export interface LettaFsBaselineAdapter extends CompetitorAdapter {
  * Build the keyless letta-fs-baseline control adapter. Its `run` reads the
  * per-cell haystack from `config.docs`, formats the full-dump control context via
  * the pure `formatFilesystemContext`, and returns a `ran:true` result with
- * `isControl:true` + a control-labelled `manifestRef`. It runs keyless at $0 — no
- * env, no key, no provider call.
+ * `isControl:true`, a control-labelled `manifestRef`, and `contextChars` — the
+ * OBSERVED char length of the rendered context (WR-02), which makes the format
+ * call load-bearing rather than discarded. It runs keyless at $0 — no env, no
+ * key, no provider call.
  */
 export function createLettaFsBaselineAdapter(): LettaFsBaselineAdapter {
   return {
@@ -120,23 +122,28 @@ export function createLettaFsBaselineAdapter(): LettaFsBaselineAdapter {
     },
     async run(tier: string, config: AdapterConfig): Promise<AdapterResult> {
       const docs = coerceDocs(config);
-      // Format the full-dump control context (the work this adapter does). Keyless
-      // and pure — no env, no key, no provider. The formatted string is the
+      // Format the full-dump control context (the real work this adapter does).
+      // Keyless and pure — no env, no key, no provider. The formatted string is the
       // context the harness feeds to the SAME answer+judge models; the resulting
       // accuracy is recorded under the control label in the committed manifest
       // (read back from disk before it is ever quoted — the honesty protocol).
-      // We format here (not lazily) so the run is a faithful $0 control execution.
-      this.formatControlContext(docs);
+      // WR-02: we OBSERVE the formatted context (record its char length on the
+      // result) so this call is LOAD-BEARING — a faithful $0 control execution
+      // whose work cannot be deleted as dead code without a behavioural change.
+      const context = this.formatControlContext(docs);
+      const contextChars = context.length;
       // The cell -> manifest link, tagged with the explicit control label and the
       // tier so it is structurally a control row, never Comis's headline. The
-      // result carries the manifest link, NOT a score (the number lives in the
-      // committed manifest the harness writes + reads back before quoting).
+      // result carries the manifest link + the observed context length, NOT a score
+      // (the number lives in the committed manifest the harness writes + reads back
+      // before quoting).
       const manifestRef = `control://${LETTA_FS_BASELINE_CONTROL_LABEL}/${tier}`;
       return {
         ran: true,
         system: "letta-fs-baseline",
         isControl: true,
         manifestRef,
+        contextChars,
       };
     },
   };
