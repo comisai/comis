@@ -19,6 +19,7 @@ import type {
   MemoryEntityStore,
   MemoryTemporalStore,
   MemoryCausalStore,
+  MemoryEmbeddingStore,
   MemoryUsefulnessStore,
   RerankerPort,
   TrustLevel,
@@ -73,6 +74,16 @@ export interface MemoryRecallDeps {
    * ENT-04 no-op). TYPE-only (the agent↛memory cut); the daemon injects the SqliteTripleStore (Plan 05).
    */
   tripleStore?: TripleStorePort;
+  /**
+   * Optional embedding read store (IQ-01). When present AND cfg.mmr.enabled AND ≥2 ranked
+   * candidates, recall does a bulk SCOPED read of the post-rerank candidate ids' embeddings
+   * (the adapter LEFT JOINs vec_memories per (tenant, agent)) and runs MMR diversity re-rank.
+   * Absent / disabled / <2 embedded candidates → no read, no MMR (byte-identical). A FAILED
+   * read is NON-FATAL (WARN + rank without MMR). TYPE-only from @comis/core — the agent never
+   * imports @comis/memory (the agent↛memory cut); the daemon injects the concrete adapter
+   * (the composition root, 102-05).
+   */
+  embeddingStore?: MemoryEmbeddingStore;
   /**
    * Optional usefulness store (FEED-03). When present AND cfg.feedback.enabled, recall does a
    * bulk read of the per-memory signal for the ranked ids and folds the used-rate into the
@@ -160,6 +171,15 @@ export interface MemoryRecallConfig {
    * primary default-off guard is skipping the read entirely, so the alpha is irrelevant off.
    */
   feedback?: { enabled: boolean };
+  /** MMR diversity re-rank knobs (IQ-01; sourced from RagConfig.mmr). Default-OFF
+   *  (`enabled:false`) → no read, no MMR (byte-identical). λ in [0,1]; 1.0 = pure relevance =
+   *  identity. Optional so a caller predating the field (or the daemon before 102-05 wiring)
+   *  leaves it absent → off. */
+  mmr?: { enabled: boolean; lambda: number };
+  /** Query-understanding knobs (IQ-02/03; sourced from RagConfig.queryUnderstanding). All
+   *  default-OFF → no reweight, no expansion, no range filter (byte-identical). Optional so a
+   *  caller predating the field leaves it absent → off. */
+  queryUnderstanding?: { intentReweight: boolean; synonyms: boolean; temporalParse: boolean };
 }
 
 /** The recall orchestrator surface — a single `recall` method. */
