@@ -153,7 +153,8 @@ function cleanupStaleTmps(dataDir: string): void {
   try {
     const entries = fs.readdirSync(dataDir);
     for (const name of entries) {
-      if (name.endsWith(".tmp")) {
+      // Scope to secrets-specific temps only — do not clobber other components' .tmp files.
+      if (name.startsWith("secrets.json.") && name.endsWith(".tmp")) {
         try {
           fs.unlinkSync(path.resolve(dataDir, name));
         } catch {

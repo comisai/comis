@@ -352,4 +352,25 @@ describe("createFileSecretStore", () => {
       }
     }
   });
+
+  it("cleanupStaleTmps preserves non-secrets .tmp files from other components in dataDir", () => {
+    // Pre-create the data dir
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+
+    // A stale secrets temp (should be removed)
+    const secretsTmp = path.join(dataDir, "secrets.json.abcdef01.tmp");
+    fs.writeFileSync(secretsTmp, "stale-secrets", { mode: 0o600 });
+
+    // A non-secrets .tmp file from another component (must NOT be removed)
+    const otherTmp = path.join(dataDir, "cache.db.tmp");
+    fs.writeFileSync(otherTmp, "other-component-data", { mode: 0o600 });
+
+    // Constructing the store triggers cleanupStaleTmps
+    createFileSecretStore({ dataDir });
+
+    // The secrets stale temp should be gone
+    expect(fs.existsSync(secretsTmp)).toBe(false);
+    // The other component's temp must survive
+    expect(fs.existsSync(otherTmp)).toBe(true);
+  });
 });
