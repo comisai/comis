@@ -14,12 +14,12 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry } from "@comis/agent";
 import type { createSessionStore } from "@comis/memory";
-import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, runMemoryConsolidation, classifyError } from "@comis/agent";
+import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, classifyError } from "@comis/agent";
 import { applyToolPolicy } from "@comis/skills";
 import { filterResponse } from "@comis/channels";
 import type { ExecutionLogEntry } from "@comis/scheduler";
@@ -61,6 +61,14 @@ export interface CronEventListenerDeps {
    *  the sentinel cannot run, but the cron is off-by-default so a default-config agent never
    *  reaches it. */
   consolidationStore?: MemoryConsolidationStore;
+  /** Triple store (Phase 101, REASON-02) — the deductive current-truth write path.
+   *  Threaded into runMemoryReasoning by the opt-in `__MEMORY_REASONING__` sentinel
+   *  below. Built in setup-memory on the SAME db handle the memory adapter owns;
+   *  injected as the port TYPE (agent↛memory cut). Threaded the full daemon → registry
+   *  → credentials chain (T-101-06-01) — a missing thread would make the deductive
+   *  write a silent no-op. Absent => the reasoning sentinel cannot run, but the cron is
+   *  off-by-default so a default-config agent never reaches it. */
+  tripleStore?: TripleStorePort;
   tenantId?: string;
   piSessionAdapters?: Map<string, {
     getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
@@ -237,6 +245,89 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
         logger.error({ agentId, err: consolidationResult.error, hint: "Memory consolidation failed -- will retry next cycle", errorKind: "internal" as const }, "Memory consolidation error");
       }
       payload.onComplete?.({ status: consolidationResult.ok ? "ok" : "error", error: consolidationResult.ok ? undefined : consolidationResult.error?.message });
+      return;
+    }
+
+    // -- Memory reasoning sentinel intercept (Phase 101, REASON-02/03 — 101-06) --
+    // Mirrors the consolidation branch above 1:1. The cron is registered ONLY for an
+    // operator-enabled agent (setup-schedulers), but the sentinel ALSO re-checks
+    // cfg.enabled and short-circuits ok when off (T-101-06-02, defence-in-depth: a
+    // stale persisted job must not run reasoning for a now-disabled agent). Injects
+    // BOTH stores — deps.consolidationStore (the inductive applyConsolidation write)
+    // AND deps.tripleStore (the deductive trust-first upsertTriple write, the
+    // field-plumbing chain completed daemon → registry → credentials) — plus the
+    // OFFLINE reason() seam built from the cheap cron model (createReasoningSeam keeps
+    // the specialist prompts agent-internal).
+    if (resultText === "__MEMORY_REASONING__") {
+      const { agentId } = payload;
+      if (!agentId) {
+        logger.warn({ hint: "Memory reasoning job fired without agentId", errorKind: "config" as const }, "Skipping memory reasoning -- no agentId");
+        payload.onComplete?.({ status: "error", error: "No agentId for memory reasoning" });
+        return;
+      }
+
+      const agentConfig = agents[agentId];
+      const reasoningConfig = agentConfig?.memoryReasoning;
+      if (!reasoningConfig?.enabled) {
+        // The opt-in cost gate (T-101-06-02): a disabled (or default-config) agent
+        // does NO LLM work — short-circuit ok so the scheduler records a clean run.
+        logger.debug({ agentId }, "Memory reasoning disabled for agent, skipping");
+        payload.onComplete?.({ status: "ok" });
+        return;
+      }
+
+      // Resolve the cheap model for reasoning via the "cron" operation type
+      // (IDENTICAL to the consolidation block) — never the agent's primary model.
+      const resolved = resolveOperationModel({
+        operationType: "cron",
+        agentProvider: agentConfig.provider ?? "anthropic",
+        agentModel: agentConfig.model ?? "anthropic:claude-sonnet-4-20250514",
+        operationModels: agentConfig.operationModels ?? {},
+        providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
+      });
+
+      // Resolve the API key for the provider. The no-key branch logs only the
+      // env-var NAME + a hint — never the value (T-101-06-03; Pino also auto-redacts).
+      const providerEntry = container.config.providers?.entries?.[resolved.provider];
+      const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
+      const apiKey = container.secretManager.get(apiKeyName) ?? "";
+      if (!apiKey) {
+        logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for memory reasoning`, errorKind: "config" as const }, "Skipping memory reasoning -- no API key");
+        payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
+        return;
+      }
+
+      const reasoningLogger = logger.child({ agentId, submodule: "memory-reasoning" });
+      const reasoningResult = await runMemoryReasoning({
+        agentId,
+        tenantId: deps.tenantId ?? container.config.tenantId ?? "default",
+        config: reasoningConfig,
+        // BOTH stores injected from setup-memory (the composition-root join). The
+        // agent receives the port TYPES only — no agent→memory edge (T-101-06-01).
+        consolidationStore: deps.consolidationStore!,   // inductive applyConsolidation
+        tripleStore: deps.tripleStore!,                 // deductive trust-first upsertTriple
+        eventBus: container.eventBus,
+        clock: deps.clock,
+        logger: reasoningLogger,
+        // The OFFLINE reasoning seam — a cheap-model completeSimple over the
+        // DEDUCTIVE/INDUCTIVE prompts + the lenient parsers, built in @comis/agent so
+        // the prompt strings never cross the package boundary. Bounded by
+        // maxReasoningTokens; non-fatal (a thrown/malformed call → empty arrays).
+        reason: createReasoningSeam({
+          provider: resolved.provider,
+          modelId: resolved.modelId,
+          apiKey,
+          maxReasoningTokens: reasoningConfig.maxReasoningTokens ?? 1024,
+          clock: deps.clock,
+          logger: reasoningLogger,
+          agentId,
+        }),
+      });
+
+      if (!reasoningResult.ok) {
+        logger.error({ agentId, err: reasoningResult.error, hint: "Memory reasoning failed -- will retry next cycle", errorKind: "internal" as const }, "Memory reasoning error");
+      }
+      payload.onComplete?.({ status: reasoningResult.ok ? "ok" : "error", error: reasoningResult.ok ? undefined : reasoningResult.error?.message });
       return;
     }
 

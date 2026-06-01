@@ -651,7 +651,7 @@ function buildChannelManagerDeps(deps: {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
-    workspaceDirs, defaultWorkspaceDir, memoryAdapter, entityStore, causalStore, consolidationStore, embeddingQueue,
+    workspaceDirs, defaultWorkspaceDir, memoryAdapter, entityStore, causalStore, consolidationStore, tripleStore, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
@@ -723,6 +723,12 @@ function buildChannelManagerDeps(deps: {
     // Forwarded into registerCronEventListeners -> runMemoryConsolidation (the opt-in
     // __MEMORY_CONSOLIDATION__ cron path). The executor recall path does NOT receive it.
     consolidationStore,
+    // Phase 101 (REASON-02): the triple store (built in setup-memory on the shared db).
+    // Forwarded into registerCronEventListeners -> runMemoryReasoning (the opt-in
+    // __MEMORY_REASONING__ cron path) for the DEDUCTIVE trust-first upsertTriple write.
+    // Completes the field-plumbing chain daemon -> registry -> credentials (the SAME
+    // store also rides the setupAgents read path as the 6th graph-spread recall lane).
+    tripleStore,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,
