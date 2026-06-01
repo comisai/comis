@@ -45,6 +45,10 @@ export function isVecAvailable(): boolean {
  *   into an observation; the state predicate for candidate selection.
  * - `confidence REAL` (P84/CONS-08): observation confidence 0..1.
  * - `history TEXT` (P84/CONS-05): JSON audit array of prior contents.
+ * - `observation_kind TEXT` (P101/REASON-01): reasoning-observation kind
+ *   ({merge,deductive,inductive}); NULL = "merge" (the default for pre-101 rows).
+ * - `pattern_type TEXT` (P101/REASON-01): inductive pattern class; NULL unless
+ *   observationKind="inductive". No CHECK — the enum is the Zod domain type's job.
  *
  * @param db - An open better-sqlite3 Database instance whose `memories`
  *   table already exists (created by `initSchema`'s `CREATE TABLE IF NOT EXISTS`).
@@ -67,6 +71,13 @@ export function ensureMemoryColumns(db: Database.Database): void {
   if (!cols.has("consolidated_at")) db.exec(`ALTER TABLE memories ADD COLUMN consolidated_at INTEGER`);
   if (!cols.has("confidence")) db.exec(`ALTER TABLE memories ADD COLUMN confidence REAL`);
   if (!cols.has("history")) db.exec(`ALTER TABLE memories ADD COLUMN history TEXT`);
+  // Typed-observation columns (P101/REASON-01). Both nullable → O(1) ADD, no
+  // rewrite, no backfill (existing rows get NULL: observation_kind NULL = "merge"
+  // on read, the forward-only default). Forward-only. NO CHECK — the enum is
+  // enforced in the MemoryEntry Zod domain type + the lenient LLM parser (101-04),
+  // following the occurred_at/proof_count no-CHECK ALTER precedent.
+  if (!cols.has("observation_kind")) db.exec(`ALTER TABLE memories ADD COLUMN observation_kind TEXT`);
+  if (!cols.has("pattern_type")) db.exec(`ALTER TABLE memories ADD COLUMN pattern_type TEXT`);
 }
 
 /**

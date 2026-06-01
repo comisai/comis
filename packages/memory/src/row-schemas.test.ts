@@ -193,6 +193,8 @@ describe("row-schemas — MemoryRowSchema occurred_at column (TEMP-01)", () => {
       consolidated_at: null,
       confidence: null,
       history: null,
+      observation_kind: null,
+      pattern_type: null,
       updated_at: null,
       expires_at: null,
       has_embedding: 0,

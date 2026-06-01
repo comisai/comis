@@ -43,6 +43,8 @@ function makeRow(overrides?: Partial<MemoryRow>): MemoryRow {
     consolidated_at: null,
     confidence: null,
     history: null,
+    observation_kind: null,
+    pattern_type: null,
     updated_at: 1700001000000,
     expires_at: 1700090000000,
     has_embedding: 0,

@@ -87,6 +87,10 @@ export const MemoryRowSchema = z.strictObject({
   confidence: z.number().nullable(),
   /** JSON-encoded audit array — consumer parses; null on raw (P84/CONS-05). */
   history: z.string().nullable(),
+  /** Reasoning-observation kind TEXT; null = "merge" (P101/REASON-01). */
+  observation_kind: z.string().nullable(),
+  /** Inductive pattern class TEXT; null unless observationKind="inductive" (P101/REASON-01). */
+  pattern_type: z.string().nullable(),
   /** Unix timestamp in milliseconds, null if never updated. */
   updated_at: z.number().nullable(),
   /** Unix timestamp in milliseconds, null if no expiry. */
