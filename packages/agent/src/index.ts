@@ -176,6 +176,18 @@ export type {
   TripleCandidate,
 } from "./memory/memory-triple-extraction-job.js";
 
+// Offline reasoning (Phase 101, REASON-02/03/04 — typed deductive + inductive
+// observations: deductive → trust-first upsertTriple, inductive → applyConsolidation
+// (≤ learned); default-OFF, surprisal-gated, NEVER on the recall path)
+export { runMemoryReasoning } from "./memory/memory-reasoning-job.js";
+export type {
+  MemoryReasoningDeps,
+  MemoryReasoningConfig,
+  MemoryReasoningStats,
+  MemoryReasoningResult,
+  ReasoningOutput,
+} from "./memory/memory-reasoning-job.js";
+
 // RAG (Retrieval-Augmented Generation)
 export { formatMemorySection } from "./rag/rag-retriever.js";
 
