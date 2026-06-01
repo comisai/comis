@@ -363,12 +363,9 @@ export function createGatewayTool(
               return {
                 error: "secrets_store_unavailable",
                 hint:
-                  "The encrypted secrets store is not configured on this daemon. " +
-                  "On first boot, the store is auto-generated — if this error persists, check that " +
-                  "security.storage is set to 'encrypted' (or omitted, as it defaults to encrypted) " +
-                  "in config.yaml, and that ~/.comis/.env contains SECRETS_MASTER_KEY. " +
-                  "Restart the daemon after adding the key. " +
-                  "To use envfile mode instead, set security.storage: env in config.yaml.",
+                  "The daemon is not configured with a writable secrets store. " +
+                  "To store secrets, set `security.storage: encrypted` or `security.storage: file` " +
+                  "in config.yaml and restart the daemon.",
               };
             }
 
