@@ -188,16 +188,8 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       EnvSetContract.request.parse(userParams);
 
       try {
-        // Write to storage backend. SecretStorePort is mandatory; the
-        // legacy `.env` file-append fallback was removed. Daemons without
-        // a master key (SECRETS_MASTER_KEY unset) reject env.set with an
-        // actionable error mirroring secrets-handlers.ts:196.
-        if (!deps.secretStore) {
-          throw new Error(
-            "Encrypted secrets store not configured (SECRETS_MASTER_KEY missing). " +
-              "Run `comis secrets init --write` then restart the daemon.",
-          );
-        }
+        // Write to storage backend. SecretStorePort is always wired (REQ-04).
+        // Env-mode adapter's set() returns err with an actionable message.
         const setResult = deps.secretStore.set(key, value);
         if (!setResult.ok) {
           throw new Error(`Secret store write failed: ${setResult.error.message}`);
@@ -230,8 +222,9 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
         const result = {
           set: true as const,
           key,
-          // SecretStorePort is the only backend.
-          storage: "encrypted" as const,
+          // Reflect the active storage mode (REQ-14). Env mode never reaches
+          // here — its set() returns err before this line.
+          storage: deps.container.config.security.storage as "encrypted" | "file",
           restarting: true as const,
         };
         if (systemGetEnv("NODE_ENV") !== "production") {

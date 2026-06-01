@@ -32,7 +32,6 @@ interface MakeDepsResult {
 
 function makeMockedDeps(
   secretStoreOverrides?: Partial<SecretStorePort>,
-  options?: { withoutSecretStore?: boolean },
 ): MakeDepsResult {
   const capturedAuditEvents: unknown[] = [];
   const eventBus = createMockEventBus({
@@ -46,9 +45,8 @@ function makeMockedDeps(
     config: { tenantId: "test-tenant" } as Record<string, unknown>,
     eventBus,
   } as unknown as AppContainer;
-  const secretStore = options?.withoutSecretStore
-    ? undefined
-    : createMockSecretStore(secretStoreOverrides);
+  // After Plan 02-04: secretStore is always wired (REQ-04).
+  const secretStore = createMockSecretStore(secretStoreOverrides);
   const handlers = createSecretsHandlers({ secretStore, container, logger });
   return { handlers, capturedAuditEvents, loggerSpy: logger };
 }
@@ -106,11 +104,14 @@ describe("createSecretsHandlers", () => {
       ).rejects.toThrow(/Admin access required/);
     });
 
-    it("rejects when secrets store is not configured", async () => {
-      const { handlers } = makeMockedDeps(undefined, { withoutSecretStore: true });
-      await expect(
-        handlers["secrets.get"]!({ _trustLevel: "admin", name: "FOO" }),
-      ).rejects.toThrow(/Encrypted secrets store not configured/);
+    it("returns exists:false for a name not in the adapter (env-mode empty snapshot)", async () => {
+      // After Plan 02-04: secretStore is always wired; env-mode getDecrypted returns
+      // ok(undefined) for unknown names — adapter never rejects on reads.
+      const { handlers } = makeMockedDeps({ getDecrypted: vi.fn(() => ok(undefined)) });
+      const result = (await handlers["secrets.get"]!({ _trustLevel: "admin", name: "NONEXISTENT_KEY" })) as {
+        exists: boolean;
+      };
+      expect(result.exists).toBe(false);
     });
 
     it("rejects malformed name (does not echo any value)", async () => {
@@ -255,10 +256,10 @@ describe("createSecretsHandlers", () => {
       expect(result.secrets[0]).not.toHaveProperty("plaintext");
     });
 
-    it("returns empty array when secretStore is undefined (no master key)", async () => {
-      const { handlers } = makeMockedDeps(undefined, {
-        withoutSecretStore: true,
-      });
+    it("returns empty array when store has no entries (env-mode with no sensitive vars)", async () => {
+      // After Plan 02-04: secretStore is always wired; env-mode adapter's list()
+      // returns an empty array when no sensitive vars are in the snapshot.
+      const { handlers } = makeMockedDeps({ list: vi.fn(() => ok([])) });
       const result = (await handlers["secrets.list"]!({ _trustLevel: "admin" })) as {
         secrets: unknown[];
       };

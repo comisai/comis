@@ -335,8 +335,8 @@ export interface BootContext {
   // (mirrors the `timers` test-only discipline). Inert on the inbound path until
   // Plan 03 builds the inbound coordinatorFactory over the renderers map.
   activityRendererFactoryOverride?: (channelType: string) => ChannelActivityRenderer | undefined;
-  // Secrets (4 fields)
-  secretStore: SecretStorePort | undefined;
+  // Secrets (4 fields) — secretStore is always wired after Plan 02-04
+  secretStore: SecretStorePort;
   secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
   secretsDb: import("better-sqlite3").Database | undefined;
   permissionCorrections: PermissionCorrection[];

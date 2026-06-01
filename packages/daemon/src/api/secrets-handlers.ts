@@ -192,13 +192,6 @@ export function createSecretsHandlers(
       const params = SecretsGetContract.request.parse(userParams);
       const name = params.name;
 
-      if (!deps.secretStore) {
-        throw new Error(
-          "Encrypted secrets store not configured (SECRETS_MASTER_KEY missing). " +
-            "Run `comis secrets init --write` then restart the daemon.",
-        );
-      }
-
       const decryptResult = deps.secretStore.getDecrypted(name);
       if (!decryptResult.ok) {
         deps.container.eventBus.emit("audit:event", {
@@ -348,13 +341,7 @@ export function createSecretsHandlers(
       const description = params.description;
       const expiresAt = params.expiresAt;
 
-      if (!deps.secretStore) {
-        throw new Error(
-          "Encrypted secrets store not configured (SECRETS_MASTER_KEY missing). " +
-            "Run `comis secrets init --write` then restart the daemon.",
-        );
-      }
-
+      // SecretStorePort is always wired (REQ-04); env-mode set() returns err.
       // The value parameter is the plaintext. It flows directly into the
       // store's set() call below and is NEVER assigned to any other binding,
       // logged, or included in an audit event.
@@ -433,19 +420,8 @@ export function createSecretsHandlers(
       const userParams = stripInternalFields(rawParams);
       SecretsListContract.request.parse(userParams);
 
-      if (!deps.secretStore) {
-        // No master key configured -- return empty list, not an error.
-        deps.logger.debug(
-          { method: "secrets.list", durationMs: systemNowMs() - startMs },
-          "Secrets list returning empty (no encrypted store configured)",
-        );
-        const emptyResult = { secrets: [] };
-        if (systemGetEnv("NODE_ENV") !== "production") {
-          SecretsListContract.response.parse(emptyResult);
-        }
-        return emptyResult;
-      }
-
+      // SecretStorePort is always wired (REQ-04); env-mode list() returns the
+      // name-scoped snapshot (empty in typical env mode with no sensitive vars set).
       const listResult = deps.secretStore.list();
       if (!listResult.ok) {
         deps.logger.error(
@@ -538,12 +514,6 @@ export function createSecretsHandlers(
       const userParams = stripInternalFields(rawParams);
       const params = SecretsDeleteContract.request.parse(userParams);
       const name = params.name;
-
-      if (!deps.secretStore) {
-        throw new Error(
-          "Encrypted secrets store not configured (SECRETS_MASTER_KEY missing).",
-        );
-      }
 
       const delResult = deps.secretStore.delete(name);
       if (!delResult.ok) {

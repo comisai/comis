@@ -46,7 +46,9 @@ function createTempEnvDir(): { dir: string; envPath: string; cleanup: () => void
 
 function makeDeps(overrides: Partial<EnvHandlerDeps> = {}): EnvHandlerDeps {
   return {
-    secretStore: undefined,
+    // After Plan 02-04: secretStore is always wired (REQ-04).
+    // Default to a mock that returns ok for reads and set.
+    secretStore: createMockSecretStore(),
     envFilePath: "/tmp/test-nonexistent/.env",
     container: createMockContainer(),
     logger: createMockLogger(),
@@ -233,23 +235,24 @@ describe("env.set handler", () => {
   });
 
   // -----------------------------------------------------------------------
-  // SecretStore mandatory (legacy .env-file fallback gone)
+  // Env-mode adapter rejection (Plan 02-04: guard removed, adapter err surfaces)
   // -----------------------------------------------------------------------
   //
-  // Previously this section tested the legacy `else { writeToEnvFile(...) }`
-  // fallback (`storage: "envfile"`). The pinning tests for `.env file backend` were
-  // deleted alongside the production code (delete dead branch + pinning
-  // test in the same atomic commit). The new
-  // contract: when `secretStore` is undefined, env.set throws the same
-  // actionable error message as secrets-handlers.ts:196.
+  // After Plan 02-04: secretStore is always wired. Env-mode adapter returns err
+  // from set() with an actionable message. The existing !setResult.ok handler
+  // throws that message. Test with a mock adapter returning err("read-only").
 
-  it("rejects env.set when secretStore is undefined", async () => {
-    const deps = makeDeps({ secretStore: undefined });
+  it("rejects env.set when adapter returns err (env-mode read-only adapter)", async () => {
+    const secretStore = createMockSecretStore();
+    (secretStore.set as ReturnType<typeof vi.fn>).mockReturnValue(
+      err(new Error("Storage mode is 'env' (read-only). Switch to file or encrypted.")),
+    );
+    const deps = makeDeps({ secretStore });
     const handlers = createEnvHandlers(deps);
 
     await expect(
       handlers["env.set"]!({ key: "MY_KEY", value: "my-value", _trustLevel: "admin" }),
-    ).rejects.toThrow("Encrypted secrets store not configured");
+    ).rejects.toThrow("read-only");
   });
 
   // -----------------------------------------------------------------------

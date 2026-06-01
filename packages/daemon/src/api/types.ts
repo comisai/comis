@@ -331,11 +331,10 @@ export interface WorkspaceApiDeps {
   /** mcp-handlers reads deps.secretManager?.has for env-ref validation. */
   secretManager?: import("@comis/core").SecretManager;
   /** mcp-handlers reads deps.secretStore for static-secret header extraction.
-   *  Optional — undefined when security.storage is 'file' or 'env' (no encrypted store);
-   *  extraction will fail-safe (throw [plaintext_secret_in_headers]) rather than
-   *  persist plaintext. Same shape as AuthApiDeps.secretStore / ConfigApiDeps.secretStore
+   *  Always wired after Plan 02-04 (selectSecretStore returns a store for all modes).
+   *  Same shape as AuthApiDeps.secretStore / ConfigApiDeps.secretStore
    *  so the ApiDispatchDeps multi-extends remains well-formed. */
-  secretStore?: SecretStorePort;
+  secretStore: SecretStorePort;
   /** mcp-handlers reads deps.persistDeps for YAML writes via persistMcpServers.
    *  Same shape as ChannelsApiDeps.persistDeps / AgentsApiDeps.persistDeps /
    *  OrchestratorApiDeps.persistDeps so the ApiDispatchDeps multi-extends
@@ -374,10 +373,10 @@ export interface ConfigApiDeps {
    *  AgentsApiDeps.oauthCredentialStore + AuthApiDeps.oauthCredentialStore so the
    *  ApiDispatchDeps multi-extends remains well-formed. */
   oauthCredentialStore?: import("@comis/core").OAuthCredentialStorePort;
-  /** env-handlers reads deps.secretStore for the encrypted-secret
-   *  write path. Same shape as AuthApiDeps.secretStore so the ApiDispatchDeps
-   *  multi-extends remains well-formed. */
-  secretStore?: SecretStorePort;
+  /** env-handlers reads deps.secretStore for the secret write path.
+   *  Always wired after Plan 02-04 (selectSecretStore returns a store for all modes).
+   *  Same shape as AuthApiDeps.secretStore so the ApiDispatchDeps multi-extends remains well-formed. */
+  secretStore: SecretStorePort;
   /**
    * When `false`, config-handlers skip the config-audit JSONL append
    * at the config.patch RPC handler call sites (config-write.ts:124,
@@ -394,8 +393,8 @@ export interface ConfigApiDeps {
  * (auth.oauth.list/connect, secrets.get/set, tokens.list/create/revoke).
  */
 export interface AuthApiDeps {
-  // Secret store (env-handlers, secrets-handlers)
-  secretStore?: SecretStorePort;
+  // Secret store (env-handlers, secrets-handlers) — always wired after Plan 02-04
+  secretStore: SecretStorePort;
   // Token management deps. The structural shape mirrors `TokenRegistry`
   // declared in `./token-handlers.ts` -- inlined here to keep this file at
   // the bottom of the api/ import graph (madge cycle constraint).
