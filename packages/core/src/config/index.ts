@@ -46,6 +46,10 @@ export type { MemoryConsolidationConfig } from "./schema-memory-consolidation.js
 export { MemoryReasoningConfigSchema } from "./schema-memory-reasoning.js";
 export type { MemoryReasoningConfig } from "./schema-memory-reasoning.js";
 
+// Per-user representation schema (Phase 107 — USER-04)
+export { MemoryUserRepresentationConfigSchema } from "./schema-memory-user-representation.js";
+export type { MemoryUserRepresentationConfig } from "./schema-memory-user-representation.js";
+
 // Agent schemas: model selection, session lifecycle, context engine, context guard, agent features
 export {
   AgentConfigSchema,
