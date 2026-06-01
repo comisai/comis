@@ -3262,11 +3262,13 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
         },
         "storage": {
           "type": "string",
-          "const": "encrypted"
+          "enum": [
+            "encrypted",
+            "file"
+          ]
         },
         "restarting": {
-          "type": "boolean",
-          "const": true
+          "type": "boolean"
         }
       },
       "required": [

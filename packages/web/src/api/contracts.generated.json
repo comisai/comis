@@ -3140,11 +3140,13 @@
         },
         "storage": {
           "type": "string",
-          "const": "encrypted"
+          "enum": [
+            "encrypted",
+            "file"
+          ]
         },
         "restarting": {
-          "type": "boolean",
-          "const": true
+          "type": "boolean"
         }
       },
       "required": [

@@ -1019,7 +1019,7 @@ describe("02-04 — selectSecretStore dispatch + scrub + store-wins", () => {
       const logLevelManager = mocks.logLevelManager;
       const sharedLogger = (logLevelManager.getLogger as ReturnType<typeof vi.fn>).mock.results[0]?.value;
       expect(sharedLogger.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ module: "daemon", secretName: "DISCORD_TOKEN" }),
+        expect.objectContaining({ submodule: "secrets-overlay", secretName: "DISCORD_TOKEN" }),
         expect.stringContaining("store value is authoritative"),
       );
     } finally {

@@ -115,7 +115,6 @@ import {
   createNamedGraphStore,
   createContextStore,
   createObservabilityStore,
-  createSqliteSecretStore,
   createOAuthProfileStoreEncrypted,
   selectSecretStore,
 } from "@comis/memory";
@@ -1466,7 +1465,6 @@ async function bootFoundation(
   acquireDataDirLock(dataDir);
   // On boot failure (e.g. selectSecretStore error, bootstrap failure), release
   // the lock. Under normal boot setupShutdown.onShutdown owns the release.
-  let _lockReleased = false;
   try {
 
   // selectSecretStore is called BEFORE scrubProcessEnv so encrypted mode
@@ -1590,7 +1588,7 @@ async function bootFoundation(
   // Log name only — never value (residency invariant).
   for (const name of shadowedNames) {
     daemonLogger.warn(
-      { module: "daemon", secretName: name },
+      { submodule: "secrets-overlay", secretName: name },
       `Secret '${name}' defined in both the active store and process.env — ` +
       "store value is authoritative (REQ-16). The env var is ignored.",
     );
@@ -1835,10 +1833,10 @@ async function bootFoundation(
     backgroundTaskManager, bgNotifyFn,
     brokerHandle,
   });
-  // Boot succeeded — setupShutdown.onShutdown owns the lock release from here.
-  _lockReleased = true;
   } catch (e: unknown) {
-    if (!_lockReleased) { _lockReleased = true; releaseDataDirLock(dataDir); }
+    // Boot failed — release the lock. Under normal boot, setupShutdown.onShutdown
+    // owns the release; catch here handles bootstrap/selectSecretStore failures.
+    releaseDataDirLock(dataDir);
     throw e;
   }
 }

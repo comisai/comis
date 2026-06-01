@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: acquireDataDirLock is a boot-time precondition guard — callers
+// can't use Result<T> here because the daemon boot sequence requires hard failure
+// on lock conflict or unexpected OS errors. releaseDataDirLock is best-effort
+// and never throws (try/catch swallows).
 /**
  * Data-directory singleton lock (D14).
  *
@@ -13,7 +17,7 @@
  * other throws a conflict error. This is correct behavior.
  */
 import * as fs from "node:fs";
-import * as path from "node:path";
+import { safePath } from "@comis/core";
 
 const LOCK_FILE = ".daemon.lock";
 
@@ -48,8 +52,8 @@ function isPidAlive(pid: number): boolean {
  * @throws Error if another daemon instance is already running on this dataDir.
  */
 export function acquireDataDirLock(dataDir: string): void {
-  fs.mkdirSync(dataDir, { recursive: true });
-  const lockPath = path.join(dataDir, LOCK_FILE);
+  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const lockPath = safePath(dataDir, LOCK_FILE);
 
   let fd: number | undefined;
   try {
@@ -91,6 +95,7 @@ export function acquireDataDirLock(dataDir: string): void {
         `[FATAL] Another daemon instance is already running on dataDir '${dataDir}' ` +
         `(lock held by PID ${otherPidStr}). ` +
         "Stop the existing daemon before starting a new one.",
+        { cause: e },
       );
     }
     throw e;
@@ -105,7 +110,7 @@ export function acquireDataDirLock(dataDir: string): void {
  */
 export function releaseDataDirLock(dataDir: string): void {
   try {
-    fs.unlinkSync(path.join(dataDir, LOCK_FILE));
+    fs.unlinkSync(safePath(dataDir, LOCK_FILE));
   } catch {
     // best-effort — already gone or never created
   }

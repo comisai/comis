@@ -128,9 +128,6 @@ export type { BatchIndexer, BatchIndexerOptions, BatchIndexerResult } from "./em
 export { openSqliteDatabase, chmodDbFiles } from "./sqlite-adapter-base.js";
 export type { SqliteAdapterOptions } from "./sqlite-adapter-base.js";
 
-// SQLite secret store (SecretStorePort implementation)
-export { createSqliteSecretStore } from "./sqlite-secret-store.js";
-
 // File secret store (SecretStorePort file-backed implementation)
 export { createFileSecretStore } from "./file-secret-store.js";
 

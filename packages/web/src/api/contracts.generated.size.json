@@ -1,5 +1,5 @@
 {
-  "totalMinified": 112397,
+  "totalMinified": 112396,
   "totalGzipped": 10427,
   "budget": {
     "minified": 120000,
@@ -71,7 +71,7 @@
     "delivery.queue.status": 476,
     "discord.action": 268,
     "env.list": 751,
-    "env.set": 544,
+    "env.set": 539,
     "gateway.restart": 375,
     "gateway.status": 611,
     "graph.cancel": 387,
