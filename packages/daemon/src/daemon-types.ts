@@ -54,6 +54,7 @@ import type {
   createApprovalGate,
   createModelCatalog,
   preReadStorageMode,
+  writeMasterKeyIfAbsent,
 } from "@comis/core";
 import type { createActiveRunRegistry } from "@comis/agent";
 import type { setupSecrets, ObservabilityStore } from "@comis/memory";
@@ -200,6 +201,8 @@ export interface DaemonOverrides {
   setupSecrets?: typeof setupSecrets;
   /** Override preReadStorageMode for test isolation (avoids reading real ~/.comis/config.yaml). */
   preReadStorageMode?: typeof preReadStorageMode;
+  /** Override writeMasterKeyIfAbsent for test isolation (spy on key-material creation gate). */
+  writeMasterKeyIfAbsent?: typeof writeMasterKeyIfAbsent;
   /** Override createTracingLogger. */
   createTracingLogger?: typeof createTracingLogger;
   /** Override createLogLevelManager. */

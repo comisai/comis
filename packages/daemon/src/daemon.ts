@@ -1447,6 +1447,7 @@ async function bootFoundation(
   const _bootstrap = overrides.bootstrap ?? bootstrap;
   const _setupSecrets = overrides.setupSecrets ?? _setupSecretsImpl;
   const _preReadStorageMode = overrides.preReadStorageMode ?? preReadStorageMode;
+  const _writeMasterKeyIfAbsent = overrides.writeMasterKeyIfAbsent ?? writeMasterKeyIfAbsent;
   const _createTracingLogger = overrides.createTracingLogger ?? createTracingLogger;
   const _createLogLevelManager = overrides.createLogLevelManager ?? createLogLevelManager;
   const _createTokenTracker = overrides.createTokenTracker ?? createTokenTracker;
@@ -1500,7 +1501,7 @@ async function bootFoundation(
   // NEVER log autoInitKeyHex — it is raw 32-byte key material.
   let autoInitKeyHex: string | undefined;
   if (storageMode === "encrypted") {
-    const writeResult = writeMasterKeyIfAbsent(dataDir);
+    const writeResult = _writeMasterKeyIfAbsent(dataDir);
     autoInitKeyHex = writeResult.keyHex; // defined iff written===true (first boot only)
   }
 
