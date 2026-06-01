@@ -193,6 +193,13 @@ export type {
 export { createReasoningSeam } from "./memory/memory-reasoning-seam.js";
 export type { ReasoningSeamDeps } from "./memory/memory-reasoning-seam.js";
 
+// Offline per-user representation build seam (Phase 107, USER-04). The factory the daemon
+// __USER_REPRESENTATION__ sentinel calls to BUILD the build() seam from a cheap resolved
+// model, keeping USER_REPRESENTATION_PROMPT + its parser agent-internal. Consumed by the
+// daemon __USER_REPRESENTATION__ sentinel (no orphan entry — its consumer lands in this plan).
+export { createUserRepresentationSeam } from "./memory/memory-user-representation-seam.js";
+export type { UserRepresentationSeamDeps } from "./memory/memory-user-representation-seam.js";
+
 // Offline per-user representation builder (Phase 107, USER-02 — the WRITE path of
 // the per-user profile: default-OFF gate → read high-trust sources → EXCLUDE
 // external-trust (anti-poisoning) → bound → INJECTED build() seam → validateMemoryWrite
