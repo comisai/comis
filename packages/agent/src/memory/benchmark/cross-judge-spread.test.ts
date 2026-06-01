@@ -84,30 +84,34 @@ describe("computeCrossJudgeSpread -- per-category inter-judge |A-B| survival fol
     expect(strict[0].survives).toBe(false); // 3 > 2.0 -> does NOT survive at the tighter tolerance
   });
 
-  it("Test 5 (SECRET-OMISSION GATE): an extra secret-shaped field on an input value never reaches JSON.stringify", () => {
-    // Hang a secret-shaped field on an input map's value. A structural
-    // field-by-field rebuild (never spreading the input value) must drop it, so
-    // the serialized output contains none of the secret substrings.
-    const perCategoryA = {
-      temporal: 45,
-      // an off-contract secret-shaped value injected via an as-cast (must be dropped)
-    } as unknown as Record<string, number>;
+  it("Test 5 (SECRET-OMISSION GATE): a secret-shaped key/value hung on an input map never reaches JSON.stringify", () => {
+    // Hang secret-shaped fields (non-numeric string values) on the input map.
+    // The fold copies only NUMERICALLY-COERCED scalars and DROPS any entry whose
+    // value is not a finite number, so neither the secret STRING values nor the
+    // secret-shaped KEYS (apiKey/base_url) can reach the serialized output.
+    const perCategoryA = { temporal: 45 } as Record<string, number>;
     (perCategoryA as unknown as Record<string, unknown>).apiKey = "sk-SHOULD-NOT-APPEAR";
     (perCategoryA as unknown as Record<string, unknown>).base_url =
       "https://evil.example/v1?token=Bearer-SHOULD-NOT-APPEAR";
     const out = computeCrossJudgeSpread(perCategoryA, { temporal: 42 });
     const json = JSON.stringify(out);
-    // The numeric `apiKey`/`base_url` keys would (if iterated) become categories
-    // with non-numeric values; the rebuild copies only the numeric a/b fields, and
-    // the survival fold over a NaN spread is well-defined (NaN <= tol -> false).
-    // Critically, the secret STRING values must never appear in the output.
     expect(json).not.toMatch(/apiKey|sk-|Bearer|base_url/);
+    // The legitimate numeric category survived; the polluted ones were dropped.
+    expect(out).toHaveLength(1);
+    expect(out[0].category).toBe("temporal");
   });
 
   it("Test 6 (prototype-pollution): a '__proto__' category key is an inert own data property, never a prototype mutation", () => {
-    const out = computeCrossJudgeSpread({ __proto__: 50, constructor: 40 } as Record<string, number>, {
-      __proto__: 48,
-    } as Record<string, number>);
+    // Build the maps with DYNAMIC key assignment (NOT object-literal `__proto__:`
+    // syntax, which is the special prototype-setter, not an own data property).
+    // This models the real threat: an untrusted dataset category string equal to
+    // "__proto__"/"constructor" with a legitimate numeric accuracy value.
+    const a: Record<string, number> = Object.create(null) as Record<string, number>;
+    a["__proto__"] = 50;
+    a["constructor"] = 40;
+    const b: Record<string, number> = Object.create(null) as Record<string, number>;
+    b["__proto__"] = 48;
+    const out = computeCrossJudgeSpread(a, b);
     // Object.prototype was not mutated.
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.prototype).not.toHaveProperty("category");
@@ -115,6 +119,12 @@ describe("computeCrossJudgeSpread -- per-category inter-judge |A-B| survival fol
     const protoEntry = out.find((s) => s.category === "__proto__");
     expect(protoEntry).toBeDefined();
     expect(protoEntry?.judgeA).toBe(50);
+    expect(protoEntry?.judgeB).toBe(48);
+    expect(protoEntry?.spread).toBe(2);
+    // constructor present in A, absent in B -> spread 0 fallback.
+    const ctorEntry = out.find((s) => s.category === "constructor");
+    expect(ctorEntry?.judgeA).toBe(40);
+    expect(ctorEntry?.spread).toBe(0);
   });
 
   it("exposes the SURVIVAL_TOLERANCE_PTS constant as the documented 5.0pt default", () => {
