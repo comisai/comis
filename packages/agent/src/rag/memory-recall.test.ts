@@ -29,6 +29,7 @@ import type {
   MemoryEntityStore,
   MemoryTemporalStore,
   MemoryCausalStore,
+  MemoryEmbeddingStore,
   MemoryUsefulnessStore,
   UsefulnessSignal,
   RerankerPort,
@@ -2467,5 +2468,261 @@ describe("createMemoryRecall — query understanding (IQ-02/03)", () => {
     );
     await recall.recall("vps", SESSION_KEY_OBJ, "agent_y");
     expect(seenQuery).toBe("vps"); // unexpanded — the mapped term is NOT expanded when off
+  });
+});
+
+// ── IQ-01: MMR diversity re-rank slot (gated, scoped, non-fatal) ──────────────
+//
+// A gated scoped embedding read + mmrRerank, placed AFTER the trust-filter and BEFORE dedup
+// (FORK 1 — diversify EXACTLY the set that will be injected). DEFAULT-OFF byte-identity is the
+// load-bearing discipline: with mmr.enabled=false / no embeddingStore / <2 candidates, the block
+// is SKIPPED — readEmbeddings is NEVER called (the spy proves it) and `ranked` is unchanged.
+describe("createMemoryRecall — MMR diversity re-rank (IQ-01)", () => {
+  const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
+  const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
+
+  /** A segregated embedding store stub: canned id→vector Map, records every readEmbeddings call. */
+  function fakeEmbeddingStore(embeddingsById: Map<string, number[]>): {
+    store: MemoryEmbeddingStore;
+    calls: { ids: string[]; scope: { tenantId: string; agentId: string } }[];
+  } {
+    const calls: { ids: string[]; scope: { tenantId: string; agentId: string } }[] = [];
+    const store = {
+      async readEmbeddings(ids: string[], scope: { tenantId: string; agentId: string }) {
+        calls.push({ ids, scope });
+        return ok(embeddingsById as ReadonlyMap<string, number[]>);
+      },
+    } as unknown as MemoryEmbeddingStore;
+    return { store, calls };
+  }
+
+  /** An embedding store whose read fails (the non-fatal degrade fixture). */
+  function failingEmbeddingStore(): { store: MemoryEmbeddingStore; calls: number } {
+    let calls = 0;
+    const store = {
+      async readEmbeddings() {
+        calls += 1;
+        return err(new Error("vec read exploded"));
+      },
+    } as unknown as MemoryEmbeddingStore;
+    return {
+      store,
+      get calls() {
+        return calls;
+      },
+    };
+  }
+
+  /** The pre-MMR fused output (fts + vector, no MMR) — the off-path/λ=1 byte-identity reference. */
+  function baseLaneReference(fts: MemorySearchResult[], vector: MemorySearchResult[]): string[] {
+    const lanes = [] as Parameters<typeof fuse>[0];
+    if (fts.length > 0) lanes.push({ results: fts, weight: 1.0 });
+    if (vector.length > 0) lanes.push({ results: vector, weight: 1.5 });
+    const scored = score(fuse(lanes), NEUTRAL, NOW);
+    const allowed = new Set<TrustLevel>(["system", "learned"]);
+    return deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel))).map((r) => r.entry.id);
+  }
+
+  it("DEFAULT-OFF BYTE-IDENTITY: mmr.enabled=false → readEmbeddings NEVER called → output === baseLaneReference", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const vector = [makeResult("b", { base: 0.5 }), makeResult("c", { base: 0.3 })];
+    const { store, calls } = fakeEmbeddingStore(
+      new Map([
+        ["a", [1, 0]],
+        ["b", [1, 0]],
+        ["c", [0, 1]],
+      ]),
+    );
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: false, lambda: 0.7 } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0); // THE load-bearing proof: off path never reads
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
+  });
+
+  it("NO mmr CONFIG: an absent cfg.mmr → readEmbeddings NEVER called (byte-identical to before this plan)", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const { store, calls } = fakeEmbeddingStore(new Map([["a", [1, 0]], ["b", [0, 1]]]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0);
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("λ=1 NEUTRAL: mmr.enabled=true, lambda=1 → readEmbeddings IS called but the order is UNCHANGED (mmrRerank λ=1 identity)", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 }), makeResult("c", { base: 0.2 })];
+    const { store, calls } = fakeEmbeddingStore(
+      new Map([
+        ["a", [1, 0]],
+        ["b", [1, 0]],
+        ["c", [0, 1]],
+      ]),
+    );
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 1 } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(1); // ON ⇒ the read happens …
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, [])); // … but λ=1 is identity
+  });
+
+  it("<2 CANDIDATES GUARD: a single-candidate recall with mmr.enabled=true → ranked.length<2 → readEmbeddings NEVER called", async () => {
+    const fts = [makeResult("only", { base: 0.9 })];
+    const { store, calls } = fakeEmbeddingStore(new Map([["only", [1, 0]]]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 0.5 } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(calls.length).toBe(0); // the <2 guard short-circuits before the read
+    expect(got.value.map((r) => r.entry.id)).toEqual(["only"]);
+  });
+
+  it("MMR-ON DIVERSITY LIFT: an orthogonal candidate is promoted ahead of a near-duplicate vs the OFF order (RED on pre-wiring)", async () => {
+    // Single FTS lane (pass-through preserves the base scores as rel). A and B are near-duplicate-
+    // embedded (cos≈1), C is orthogonal (cos 0). With λ=0.5: round 1 picks A (highest rel); round 2
+    // B = 0.5·relB − 0.5·1 (penalized to A), C = 0.5·relC − 0.5·0 (no penalty) → C overtakes B.
+    const fts = [
+      makeResult("A", { base: 0.9, trustLevel: "learned" }),
+      makeResult("B", { base: 0.85, trustLevel: "learned" }),
+      makeResult("C", { base: 0.8, trustLevel: "learned" }),
+    ];
+    const embeddings = new Map<string, number[]>([
+      ["A", [1, 0]],
+      ["B", [1, 0]], // identical to A → cos 1 (near-duplicate)
+      ["C", [0, 1]], // orthogonal to A → cos 0 (diverse)
+    ]);
+    const offRecall = createMemoryRecall(
+      { memoryPort: fakeLaneMemoryPort({ fts, vector: [] }), clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, minScore: 0, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const off = await offRecall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    const { store } = fakeEmbeddingStore(embeddings);
+    const onRecall = createMemoryRecall(
+      { memoryPort: fakeLaneMemoryPort({ fts, vector: [] }), embeddingStore: store, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, minScore: 0, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 0.5 } } as Partial<MemoryRecallConfig>),
+    );
+    const on = await onRecall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(off.ok && on.ok).toBe(true);
+    if (!off.ok || !on.ok) return;
+    const offOrder = off.value.map((r) => r.entry.id);
+    const onOrder = on.value.map((r) => r.entry.id);
+    expect(offOrder).toEqual(["A", "B", "C"]); // relevance order (no diversity)
+    expect(onOrder).toEqual(["A", "C", "B"]); // MMR promotes the orthogonal C ahead of the near-dup B
+    expect(onOrder).not.toEqual(offOrder); // the reorder is real (RED on pre-wiring)
+  });
+
+  it("SCOPE: the recorded readEmbeddings call's scope === {tenantId: SESSION_KEY_OBJ.tenantId, agentId: <recall agentId>}", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const { store, calls } = fakeEmbeddingStore(new Map([["a", [1, 0]], ["b", [0, 1]]]));
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 0.5 } } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(calls.length).toBe(1);
+    // The load-bearing scope derivation: tenant from the session key, agent from the recall arg.
+    expect(calls[0]?.scope).toEqual({ tenantId: "tenant_x", agentId: "agent_y" });
+    // The read is of the POST-trust-filter candidate ids (both survive the learned/system filter).
+    expect(calls[0]?.ids.sort()).toEqual(["a", "b"]);
+  });
+
+  it("NON-FATAL: a readEmbeddings that returns err → recall returns ok with the pre-MMR order + a WARN was logged", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 }), makeResult("c", { base: 0.2 })];
+    const warns: Record<string, unknown>[] = [];
+    const capturingLogger = {
+      ...noopLogger,
+      warn: (obj: Record<string, unknown>) => {
+        warns.push(obj);
+      },
+    } as unknown as ComisLogger;
+    const { store, calls } = failingEmbeddingStore();
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: capturingLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 0.5 } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true); // recall NEVER fails because the embedding read failed
+    if (!got.ok) return;
+    expect(calls).toBe(1); // the read was attempted …
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, [])); // … and we ranked WITHOUT MMR
+    const warn = warns.find((w) => typeof w.hint === "string" && /mmr|diversity/i.test(String(w.hint)));
+    expect(warn).toBeDefined();
+    expect(warn?.errorKind).toBe("internal");
+  });
+
+  it("PLACEMENT: MMR re-orders ONLY the post-trust-filter survivors (an excluded candidate is never re-surfaced)", async () => {
+    // An "external" candidate is dropped by the trust filter BEFORE MMR. Even though it would be
+    // maximally diverse (orthogonal embedding), MMR can never re-surface it — FORK 1 placement.
+    const fts = [
+      makeResult("A", { base: 0.9, trustLevel: "learned" }),
+      makeResult("B", { base: 0.85, trustLevel: "learned" }),
+      makeResult("EXT", { base: 0.99, trustLevel: "external" }), // dropped by the trust filter
+    ];
+    const embeddings = new Map<string, number[]>([
+      ["A", [1, 0]],
+      ["B", [1, 0]],
+      ["EXT", [0, 1]],
+    ]);
+    const { store, calls } = fakeEmbeddingStore(embeddings);
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
+        embeddingStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, minScore: 0, lanes: PARITY_LANES, mmr: { enabled: true, lambda: 0.5 } } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).not.toContain("EXT"); // never re-surfaced
+    // The read saw ONLY the post-trust-filter ids (EXT was already excluded — security boundary).
+    expect(calls[0]?.ids).not.toContain("EXT");
   });
 });
