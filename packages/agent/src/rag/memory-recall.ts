@@ -36,6 +36,13 @@ import { ok, withTimeout, TimeoutError } from "@comis/shared";
 import { fuse, type FusionLane } from "./fuse.js";
 import { scoreWithBreakdown, type ScoreBreakdown } from "./score.js";
 import { deduplicateResults } from "./rag-retriever.js";
+import {
+  classifyIntent,
+  intentMultiplier,
+  expandSynonyms,
+  parseTemporalRange,
+  type ReweightLane,
+} from "./query-understanding.js";
 import { appendCausalLane } from "./recall-causal-lane.js";
 import { appendGraphSpreadLane } from "./recall-graph-spread-lane.js";
 import { captureRecallObservability } from "./recall-observability.js";
@@ -73,6 +80,25 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const recallStart = deps.clock.now();
       const degradations: RecallDegradation[] = [];
 
+      // IQ-02/03 query understanding (DEFAULT-OFF byte-identity per knob). All three are pure
+      // fns over the query string + the injected clock — NO LLM, NO globals (Date.now()).
+      const qu = cfg.queryUnderstanding;
+      // IQ-02: classify ONCE (a pure fn over `query`); the per-lane multiplier is applied at the
+      // lane-push sites below via laneWeight(). When off, `intent` stays undefined → laneWeight
+      // returns the base weight unchanged → byte-identity. A factual/unmatched intent also yields
+      // multiplier 1.0 on every lane (intentMultiplier), so an ON-but-factual query is byte-identical.
+      const intent = qu?.intentReweight === true ? classifyIntent(query) : undefined;
+      // IQ-03a: expand the query string (whole-query, FORK 2) when synonyms on; else the ORIGINAL.
+      // expandSynonyms returns the input verbatim when no token maps, so this is the identity off.
+      const searchQuery = qu?.synonyms === true ? expandSynonyms(query) : query;
+      // IQ-03b: parse an occurred_at range from the (ORIGINAL) query when temporalParse on; nowMs is
+      // the injected clock's recallStart (never Date.now()). Unparseable → undefined → no filter.
+      const occurredAtRange = qu?.temporalParse === true ? parseTemporalRange(query, recallStart) : undefined;
+      // The lane-reweight closure: OFF (intent === undefined) → returns `base` unchanged (byte-
+      // identity); ON → base × intentMultiplier(intent, lane) (1.0 for any unboosted pair).
+      const laneWeight = (base: number, lane: ReweightLane): number =>
+        intent !== undefined ? base * intentMultiplier(intent, lane) : base;
+
       // 1. SEARCH — overfetch only when rerank is enabled (default pool size unchanged).
       const limit = cfg.rerank.enabled
         ? Math.max(cfg.maxResults, cfg.rerank.maxCandidates)
@@ -106,10 +132,18 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // and v2.6 never minScore-filtered the entity/temporal lane contributions post-fuse.
       if (typeof deps.memoryPort.searchLanes === "function") {
         // Two-lane path. NB: no minScore passed — the lanes are pre-filter candidate pools.
-        const laneRes = await deps.memoryPort.searchLanes(sessionKey, query, { limit, agentId });
+        // IQ-03: searchQuery is the synonym-expanded query (or the original when off); the spread
+        // adds occurredAtRange ONLY when temporalParse parsed one (so OFF ⇒ the options object is
+        // byte-identical to today — byte-identity by construction, never `occurredAtRange: undefined`).
+        const laneRes = await deps.memoryPort.searchLanes(sessionKey, searchQuery, {
+          limit,
+          agentId,
+          ...(occurredAtRange !== undefined ? { occurredAtRange } : {}),
+        });
         if (!laneRes.ok) return laneRes;
-        const ftsWeight = cfg.lanes?.fts.weight ?? 1.0;
-        const vectorWeight = cfg.lanes?.vector.weight ?? 1.5;
+        // IQ-02: each lane's RRF weight is multiplied by intentMultiplier(intent, lane) (1.0 off).
+        const ftsWeight = laneWeight(cfg.lanes?.fts.weight ?? 1.0, "fts");
+        const vectorWeight = laneWeight(cfg.lanes?.vector.weight ?? 1.5, "vector");
         ftsCandidates = laneRes.value.fts.length;
         vectorCandidates = laneRes.value.vector.length;
         // DROP EMPTY LANES before fuse() (Pitfall 1 subtlety 3): a lone non-empty FTS lane
@@ -136,7 +170,13 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
         // Single-lane fallback (search-only adapter). search()->hybridSearch applies BOTH the
         // slice(0, limit=maxResults) cap and the minScore filter internally, so searched.value
         // is ALREADY the capped+filtered base — wrap it verbatim (no second cap/filter here).
-        const searched = await deps.memoryPort.search(sessionKey, query, { limit, minScore: cfg.minScore, agentId });
+        // IQ-03: same searchQuery + spread-guarded occurredAtRange as the searchLanes path above.
+        const searched = await deps.memoryPort.search(sessionKey, searchQuery, {
+          limit,
+          minScore: cfg.minScore,
+          agentId,
+          ...(occurredAtRange !== undefined ? { occurredAtRange } : {}),
+        });
         if (!searched.ok) return searched;
         ftsCandidates = searched.value.length;
         // WR-04: the split is NOT observable on this path (search() returns ONE merged list),
@@ -200,7 +240,8 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           if (laneRes.ok) {
             // ENT-04: an empty lane pushes nothing -> fuse() stays single-lane, unchanged.
             if (laneRes.value.length > 0) {
-              lanes.push({ results: laneRes.value, weight: el.weight });
+              // IQ-02: reweight the entity lane (1.0 off; ×1.5 for a "preference" intent).
+              lanes.push({ results: laneRes.value, weight: laneWeight(el.weight, "entity") });
               entityCandidates = laneRes.value.length; // stage-1 lane-count snapshot
             }
           } else {
@@ -253,7 +294,8 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           if (laneRes.ok) {
             // The ENT-04 no-op: an empty lane pushes nothing -> fuse() ranking unchanged.
             if (laneRes.value.length > 0) {
-              lanes.push({ results: laneRes.value, weight: tl.weight });
+              // IQ-02: reweight the temporal lane (1.0 off; ×1.5 for a "temporal" intent).
+              lanes.push({ results: laneRes.value, weight: laneWeight(tl.weight, "temporal") });
               temporalCandidates = laneRes.value.length; // stage-1 lane-count snapshot
             }
           } else {
@@ -276,7 +318,8 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const cl = cfg.lanes?.causal;
       if (cl?.enabled === true && deps.causalStore !== undefined && seedPool.length > 0) {
         const seedIds = seedPool.slice(0, cfg.entityLane?.seedCount ?? 5).map((r) => r.entry.id);
-        causalCandidates = await appendCausalLane(lanes, deps.causalStore, cl.weight, cfg.maxResults, seedIds, sessionKey, agentId, deps.logger);
+        // IQ-02: reweight the causal lane (1.0 off; no boosted intent today → 1.0 by construction).
+        causalCandidates = await appendCausalLane(lanes, deps.causalStore, laneWeight(cl.weight, "causal"), cfg.maxResults, seedIds, sessionKey, agentId, deps.logger);
       }
 
       // 2d. GRAPH-SPREAD lane (KG-04) — the 6th fused lane (…, causal, graphSpread), in
@@ -290,7 +333,8 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           .slice(0, cfg.entityLane?.seedCount ?? 5)
           .map((r) => r.entry.content)
           .filter((s): s is string => typeof s === "string");
-        graphSpreadCandidates = await appendGraphSpreadLane(lanes, deps.tripleStore, gs.weight, cfg.maxResults, gs.maxDepth, gs.fanOut, seedSubjects, sessionKey, agentId, deps.logger);
+        // IQ-02: reweight the graph-spread lane (1.0 off; no boosted intent today → 1.0).
+        graphSpreadCandidates = await appendGraphSpreadLane(lanes, deps.tripleStore, laneWeight(gs.weight, "graphSpread"), cfg.maxResults, gs.maxDepth, gs.fanOut, seedSubjects, sessionKey, agentId, deps.logger);
       }
       // FUSE the base lane (already capped + minScore-filtered) with any entity/temporal
       // lanes. minScore is NOT re-applied here: v2.6 filtered minScore exactly once on the
