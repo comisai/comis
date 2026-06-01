@@ -90,6 +90,20 @@ export type { MemoryTripleStoreDeps } from "./sqlite-triple-store.js";
 export { createSqliteUserRepresentationStore } from "./sqlite-user-representation-store.js";
 export type { MemoryUserRepresentationStoreDeps } from "./sqlite-user-representation-store.js";
 
+// Directional relationship store (sole RelationshipStore impl; Phase 108, Track E2
+// — SOCIAL-02). Owns ALL the directional relationship SQL over the additive
+// `relationship` table: the (tenant, agent, channel)-scoped upsert (with the
+// write-time high-trust-floor reject + validateMemoryWrite redaction firewall) +
+// the LLM-free scoped read. channel_id is the NEW privacy axis; the
+// (subject_user_id, about_user_id) pair is directional ROW DATA (A→B ≠ B→A). The
+// daemon (composition root, Plan 108-05) constructs it on the memory adapter's db
+// handle; the RelationshipStore port TYPE lives in @comis/core (the agent↛memory
+// cut — the offline relationship-builder write path + the optional prompt-assembly
+// read path consume the type only). AHEAD of its daemon consumer until 108-05 (the
+// factory-orphan dance).
+export { createSqliteRelationshipStore } from "./sqlite-relationship-store.js";
+export type { MemoryRelationshipStoreDeps } from "./sqlite-relationship-store.js";
+
 // Scoped embedding-read store (sole MemoryEmbeddingStore impl; Phase 102, IQ-01).
 // Owns the (tenant, agent)-scoped LEFT JOIN vec_memories bulk read that hydrates
 // the MMR diversity re-rank (returns id->vector for the caller's scope ONLY — the

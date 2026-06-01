@@ -2018,6 +2018,25 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // MemoryTripleStoreDeps / MemoryTripleRowSchema).
       "MemoryUserRepresentationStoreDeps",
       "UserRepresentationRowSchema",
+      // Directional relationship store (Phase 108-02, Track E2 — SOCIAL-02).
+      // createSqliteRelationshipStore is the SOLE RelationshipStore adapter (the
+      // (tenant, agent, channel)-scoped directional edge store). Its daemon
+      // composition-root consumer has NOT landed yet — it lands in Plan 108-05
+      // (setup-memory.ts will construct it on the shared db handle, mirror
+      // createSqliteUserRepresentationStore @ 107-05). Until then the export-graph
+      // walker flags the FACTORY as an orphan, so it is tracked here as a TEMPORARY
+      // ahead-of-consumer entry. ⚠️ REMOVE "createSqliteRelationshipStore" from this
+      // list when the Plan-108-05 setup-memory consumer lands (the shrink-only
+      // allowlist-shrink.test.ts enforces this shrink — mirror the
+      // createSqliteUserRepresentationStore / createSqliteTripleStore @ 100-05 shrink).
+      // MemoryRelationshipStoreDeps is the constructor-deps SHAPE type (referenced
+      // via inline objects only); RelationshipRowSchema is the row schema consumed
+      // by createRowMapper inside the adapter (an intra-file value reference, not a
+      // cross-file import) — both PERMANENT baseline orphans (mirror
+      // MemoryUserRepresentationStoreDeps / UserRepresentationRowSchema above).
+      "createSqliteRelationshipStore",
+      "MemoryRelationshipStoreDeps",
+      "RelationshipRowSchema",
       // Scoped embedding-read store (Phase 102-03/05, IQ-01). createSqliteMemoryEmbeddingStore
       // is the sole MemoryEmbeddingStore adapter — the (tenant, agent)-scoped LEFT JOIN
       // vec_memories bulk read that hydrates the MMR diversity re-rank. Its daemon
