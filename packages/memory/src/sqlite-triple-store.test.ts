@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import type { MemoryConfig, TripleInput } from "@comis/core";
+import type { MemoryConfig, MemoryEntry, TripleInput } from "@comis/core";
 import { SqliteMemoryAdapter } from "./sqlite-memory-adapter.js";
 import { createSqliteTripleStore } from "./sqlite-triple-store.js";
 import type Database from "better-sqlite3";
@@ -797,16 +797,151 @@ describe("createSqliteTripleStore", () => {
   // spreadLane stub (Plan 100-04 implements it)
   // =====================================================================
 
-  describe("spreadLane stub", () => {
-    it("returns ok([]) for any input (the Plan-04 stub)", async () => {
-      await store.upsertTriple(makeTriple(), SCOPE_A);
+  // =====================================================================
+  // spreadLane: the bounded recursive-CTE neighbourhood walk (KG-04).
+  //
+  // Walks the triple store's OWN current-truth subject→object edges from the
+  // seed subjects, depth- + fan-out-capped, scope + current-truth filtered ON
+  // THE RECURSIVE STEP, hydrated back to MemorySearchResult[] via each reached
+  // node's source memory (scoped), depth-scored 1/(1+depth) with IDF seed-damp.
+  //
+  // The graph is seeded as memory rows (so the hydrate's source_memory_id FK
+  // resolves) + current-truth triples linking them: A-knows->B, B-knows->C,
+  // C-knows->D (chain), plus an EXPIRED A-knows->X (soft-closed) + a cross-scope
+  // A-knows->Z. depth=2 reaches B + C, not D/X/Z.
+  // =====================================================================
+
+  describe("spreadLane — bounded recursive-CTE current-truth walk (KG-04)", () => {
+    /** Seed a memory row under SCOPE_A so a triple's source_memory_id FK resolves + the lane can hydrate it. */
+    async function seedMemory(id: string, scope = SCOPE_A, content = `content for ${id}`): Promise<string> {
+      const entry: MemoryEntry = {
+        id,
+        tenantId: scope.tenantId,
+        agentId: scope.agentId,
+        userId: "user_a",
+        content,
+        trustLevel: "learned",
+        source: { who: "agent", channel: "test" },
+        tags: [],
+        createdAt: T0,
+      };
+      const r = await adapter.store(entry);
+      expect(r.ok).toBe(true);
+      return id;
+    }
+
+    /** Write a current-truth edge subject-knows->object, sourced from object's memory (so the hydrate resolves). */
+    async function edge(
+      subject: string,
+      object: string,
+      opts: { scope?: typeof SCOPE_A; trust?: TripleInput["trust"]; sourceMemoryId?: string } = {},
+    ): Promise<void> {
+      const scope = opts.scope ?? SCOPE_A;
+      const wrote = await store.upsertTriple(
+        makeTriple({
+          subject,
+          predicate: "knows",
+          object,
+          trust: opts.trust ?? "learned",
+          ...(opts.sourceMemoryId !== undefined ? { sourceMemoryId: opts.sourceMemoryId } : {}),
+        }),
+        scope,
+      );
+      expect(wrote.ok).toBe(true);
+    }
+
+    it("reaches B (depth1) + C (depth2) from A, but NOT D (beyond depth2), NOT X (expired), NOT Z (cross-scope)", async () => {
+      // Memory rows for the reachable nodes (the hydrate resolves these via source_memory_id).
+      await seedMemory("memB");
+      await seedMemory("memC");
+      await seedMemory("memD");
+      await seedMemory("memX");
+      const memZ = await seedMemory("memZ", { tenantId: "tenant_b", agentId: "agent_a", now: T0 });
+
+      // Current-truth chain A→B→C→D (each edge sourced from the OBJECT's memory).
+      await edge("A", "B", { sourceMemoryId: "memB" });
+      await edge("B", "C", { sourceMemoryId: "memC" });
+      await edge("C", "D", { sourceMemoryId: "memD" });
+      // A→X then soft-close it (a higher-trust A→X' supersedes → X edge expired). Simpler:
+      // write A→X already-superseded by writing a contradicting higher-trust A→X2 — but the
+      // walk follows object, so instead expire the A→X edge by writing it then a system A→X2.
+      await edge("A", "X", { sourceMemoryId: "memX" });
+      await edge("A", "X2", { trust: "system" }); // supersedes A→X (same s+p, higher trust) → A→X soft-closed
+      // Cross-scope edge A→Z under (tenant_b, agent_a) — must never be traversed under SCOPE_A.
+      await edge("A", "Z", { scope: { tenantId: "tenant_b", agentId: "agent_a", now: T0 }, sourceMemoryId: memZ });
+
+      const res = await store.spreadLane(["A"], READ_A, 2, 8, 50);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      const ids = res.value.map((r) => r.entry.id);
+      expect(ids).toContain("memB"); // depth 1
+      expect(ids).toContain("memC"); // depth 2
+      expect(ids).not.toContain("memD"); // depth 3 — beyond maxDepth
+      expect(ids).not.toContain("memX"); // expired edge (current-truth filter)
+      expect(ids).not.toContain("memZ"); // cross-scope (recursive-step isolation)
+    });
+
+    it("depth scoring: a depth-1 node outranks a depth-2 node (1/(1+1) > 1/(1+2))", async () => {
+      await seedMemory("memB");
+      await seedMemory("memC");
+      await edge("A", "B", { sourceMemoryId: "memB" });
+      await edge("B", "C", { sourceMemoryId: "memC" });
+
+      const res = await store.spreadLane(["A"], READ_A, 2, 8, 50);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      const ids = res.value.map((r) => r.entry.id);
+      // memB (depth 1) sorts before memC (depth 2).
+      expect(ids.indexOf("memB")).toBeLessThan(ids.indexOf("memC"));
+      const bScore = res.value.find((r) => r.entry.id === "memB")?.score ?? 0;
+      const cScore = res.value.find((r) => r.entry.id === "memC")?.score ?? 0;
+      expect(bScore).toBeGreaterThan(cScore);
+    });
+
+    it("fan-out cap: a hub seed with 20 current-truth out-edges + fanOut=8 yields at most 8 first-hop nodes", async () => {
+      // 20 DISTINCT-predicate out-edges from the hub (distinct predicate so each is its own
+      // current-truth row, not a contradiction that would soft-close the prior).
+      for (let i = 0; i < 20; i++) {
+        await seedMemory(`hub_${i}`);
+        const wrote = await store.upsertTriple(
+          makeTriple({ subject: "HUB", predicate: `rel_${i}`, object: `obj_${i}`, sourceMemoryId: `hub_${i}` }),
+          SCOPE_A,
+        );
+        expect(wrote.ok).toBe(true);
+      }
+      const res = await store.spreadLane(["HUB"], READ_A, 1, 8, 50);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      // The fan-out cap bounds the first hop to top-8 edges — at most 8 reached nodes.
+      expect(res.value.length).toBeLessThanOrEqual(8);
+    });
+
+    it("scope isolation on the RECURSIVE step: a (t2,a1) edge from a node reached under (t1,a1) is never traversed", async () => {
+      // Under SCOPE_A: A→B. Under a DIFFERENT scope: B→C2. The walk reaches B under SCOPE_A
+      // but must NOT follow B→C2 (that edge belongs to another scope) — the recursive JOIN's
+      // (tenant, agent) filter is what blocks it, not just the base case.
+      await seedMemory("memB");
+      const memC2 = await seedMemory("memC2", { tenantId: "tenant_b", agentId: "agent_a", now: T0 });
+      await edge("A", "B", { sourceMemoryId: "memB" });
+      await edge("B", "C2", { scope: { tenantId: "tenant_b", agentId: "agent_a", now: T0 }, sourceMemoryId: memC2 });
+
+      const res = await store.spreadLane(["A"], READ_A, 2, 8, 50);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      const ids = res.value.map((r) => r.entry.id);
+      expect(ids).toContain("memB");
+      expect(ids).not.toContain("memC2"); // the cross-scope second hop is never walked
+    });
+
+    it("empty: spreadLane([], ...) → ok([]); seeds that resolve no edges → ok([])", async () => {
       const empty = await store.spreadLane([], READ_A, 2, 8, 50);
       expect(empty.ok).toBe(true);
       if (empty.ok) expect(empty.value).toEqual([]);
 
-      const withSeeds = await store.spreadLane(["alice"], READ_A, 2, 8, 50);
-      expect(withSeeds.ok).toBe(true);
-      if (withSeeds.ok) expect(withSeeds.value).toEqual([]);
+      // A seed with no out-edges resolves nothing.
+      const noEdges = await store.spreadLane(["nonexistent_subject"], READ_A, 2, 8, 50);
+      expect(noEdges.ok).toBe(true);
+      if (noEdges.ok) expect(noEdges.value).toEqual([]);
     });
   });
 
@@ -828,6 +963,15 @@ describe("createSqliteTripleStore", () => {
       expect(wrote.ok).toBe(true);
       db.close(); // the asOf read now throws
       const r = await store.asOf(T0 + 1, READ_A);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).toBeInstanceOf(Error);
+    });
+
+    it("spreadLane returns err (not throw) when the underlying db query fails", async () => {
+      const wrote = await store.upsertTriple(makeTriple({ subject: "A", object: "B" }), SCOPE_A);
+      expect(wrote.ok).toBe(true);
+      db.close(); // the spread CTE now throws
+      const r = await store.spreadLane(["A"], READ_A, 2, 8, 50);
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.error).toBeInstanceOf(Error);
     });

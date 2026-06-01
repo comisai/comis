@@ -89,6 +89,7 @@ import {
   EntityListRowSchema,
   CausalLaneRowSchema,
   MemoryTripleRowSchema,
+  SpreadNodeRowSchema,
 } from "./row-schemas.js";
 
 // =====================================================================
@@ -700,5 +701,25 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
   it("MemoryTripleRowSchema rejects a row missing a required column (subject)", () => {
     const { subject: _omit, ...withoutSubject } = fullTripleRow;
     expect(MemoryTripleRowSchema.safeParse(withoutSubject).success).toBe(false);
+  });
+
+  // --- SpreadNodeRowSchema (Phase 100, KG-04) — the recursive-CTE node projection ---
+  // The graph-spread walk's `SELECT DISTINCT node, depth FROM walk WHERE depth > 0`
+  // returns ONLY (node, depth) per reached subject — a minimal projection (the full
+  // hydrate happens via a second scoped SELECT on the source memory). Parsed via
+  // createRowMapper in spreadLane — never `as Row[]`.
+
+  it("SpreadNodeRowSchema parses the recursive-CTE node projection (node + depth)", () => {
+    expect(SpreadNodeRowSchema.safeParse({ node: "berlin", depth: 1 }).success).toBe(true);
+  });
+
+  it("SpreadNodeRowSchema rejects a non-numeric depth", () => {
+    expect(SpreadNodeRowSchema.safeParse({ node: "berlin", depth: "one" }).success).toBe(false);
+  });
+
+  it("SpreadNodeRowSchema rejects an unexpected extra column (z.strictObject keeps the projection minimal)", () => {
+    expect(
+      SpreadNodeRowSchema.safeParse({ node: "berlin", depth: 1, rogue: "x" }).success,
+    ).toBe(false);
   });
 });
