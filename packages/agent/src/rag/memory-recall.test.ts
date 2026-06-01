@@ -2675,11 +2675,11 @@ describe("createMemoryRecall — MMR diversity re-rank (IQ-01)", () => {
         warns.push(obj);
       },
     } as unknown as ComisLogger;
-    const { store, calls } = failingEmbeddingStore();
+    const failing = failingEmbeddingStore();
     const recall = createMemoryRecall(
       {
         memoryPort: fakeLaneMemoryPort({ fts, vector: [] }),
-        embeddingStore: store,
+        embeddingStore: failing.store,
         clock: fixedClock,
         logger: capturingLogger,
       } as unknown as Parameters<typeof createMemoryRecall>[0],
@@ -2688,7 +2688,7 @@ describe("createMemoryRecall — MMR diversity re-rank (IQ-01)", () => {
     const got = await recall.recall("q", SESSION_KEY_OBJ, "agent_y");
     expect(got.ok).toBe(true); // recall NEVER fails because the embedding read failed
     if (!got.ok) return;
-    expect(calls).toBe(1); // the read was attempted …
+    expect(failing.calls).toBe(1); // the read was attempted (live getter, read post-recall) …
     expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, [])); // … and we ranked WITHOUT MMR
     const warn = warns.find((w) => typeof w.hint === "string" && /mmr|diversity/i.test(String(w.hint)));
     expect(warn).toBeDefined();

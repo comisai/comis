@@ -43,6 +43,7 @@ import {
   parseTemporalRange,
   type ReweightLane,
 } from "./query-understanding.js";
+import { mmrRerank } from "./mmr.js";
 import { appendCausalLane } from "./recall-causal-lane.js";
 import { appendGraphSpreadLane } from "./recall-graph-spread-lane.js";
 import { captureRecallObservability } from "./recall-observability.js";
@@ -520,6 +521,37 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       const allowed = new Set<TrustLevel>(cfg.includeTrustLevels);
       const trustFilteredIds = ranked.filter((r) => !allowed.has(r.entry.trustLevel)).map((r) => r.entry.id);
       ranked = ranked.filter((r) => allowed.has(r.entry.trustLevel));
+
+      // 5b. MMR (IQ-01) — diversity re-rank over the post-trust-filter candidates' embeddings.
+      //     DEFAULT-OFF BYTE-IDENTITY: with mmr.enabled=false, no embeddingStore, or <2 candidates,
+      //     this block is SKIPPED — readEmbeddings is NEVER called (the spy proves it) and `ranked`
+      //     is unchanged. The read is SCOPED (tenant, agent) — the adapter returns this scope's
+      //     vectors only (the load-bearing isolation, mirror the usefulness read L322-325). A FAILED
+      //     read is NON-FATAL: WARN + rank WITHOUT MMR (recall never fails because the read failed).
+      //     λ=1 / <2 embedded → mmrRerank returns the input order (byte-identity). Placed AFTER the
+      //     trust-filter (FORK 1) so MMR diversifies EXACTLY the set that will be injected and can
+      //     never re-surface a candidate the trust filter excluded; BEFORE dedup's exact-prefix
+      //     collapse, which stays the final pass. TYPE-only embeddingStore port (the agent↛memory cut).
+      if (cfg.mmr?.enabled === true && deps.embeddingStore !== undefined && ranked.length >= 2) {
+        const ids = ranked.map((r) => r.entry.id);
+        const scope = {
+          tenantId: sessionKey.tenantId,
+          agentId: agentId ?? sessionKey.agentId ?? "default",
+        };
+        const e = await deps.embeddingStore.readEmbeddings(ids, scope);
+        if (e.ok) {
+          ranked = mmrRerank(ranked, e.value, cfg.mmr.lambda);
+        } else {
+          deps.logger.warn(
+            {
+              agentId,
+              errorKind: "internal" as const,
+              hint: "embedding read failed; ranking without MMR diversity",
+            },
+            "mmr embedding read fallback",
+          );
+        }
+      }
 
       // 6. DEDUP (reuse; kept last to match the injector's expectation). Diff pre/post to
       //    recover the deduped ids (reason "deduped") for the trace.
