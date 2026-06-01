@@ -374,7 +374,7 @@ export function createSecretsHandlers(
           },
           "Secret store failed",
         );
-        throw new Error(`Failed to store secret "${name}"`);
+        throw new Error(`Failed to store secret "${name}": ${setResult.error.message}`);
       }
 
       deps.container.eventBus.emit("audit:event", {
@@ -538,7 +538,7 @@ export function createSecretsHandlers(
           },
           "Secret delete failed",
         );
-        throw new Error(`Failed to delete secret "${name}"`);
+        throw new Error(`Failed to delete secret "${name}": ${delResult.error.message}`);
       }
 
       deps.container.eventBus.emit("audit:event", {

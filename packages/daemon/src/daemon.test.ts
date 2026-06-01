@@ -1062,3 +1062,264 @@ describe("02-04 — selectSecretStore dispatch + scrub + store-wins", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// 02-05: Per-mode daemon harness — REQ-04/REQ-10/REQ-14/REQ-15/REQ-16
+// ---------------------------------------------------------------------------
+// Integration/regression assertions over already-assembled behavior (Plans 01-04).
+// These tests verify that the assembled system satisfies the ROADMAP success
+// criteria end-to-end. RED-first does not apply to cross-cutting integration
+// verification of already-tested units (see 02-05-PLAN.md objective note).
+
+describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)", () => {
+  const originalEnv = process.env;
+  const instances: DaemonInstance[] = [];
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(async () => {
+    while (instances.length > 0) {
+      const inst = instances.shift()!;
+      try { await inst.shutdownHandle.trigger("test-cleanup"); } catch { /* ignore */ }
+      try { inst.shutdownHandle.dispose(); } catch { /* idempotent */ }
+    }
+    process.env = originalEnv;
+  });
+
+  // -------------------------------------------------------------------------
+  // REQ-04: file mode — env.set persists to secrets.json + read back
+  // -------------------------------------------------------------------------
+
+  it("file mode: env.set persists to secrets.json and reads back via secrets.get (REQ-04)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-file-envset-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // env.set must persist to the file store and return storage:"file"
+      const setResult = await instance.rpcCall(
+        "env.set",
+        { key: "MY_API_KEY", value: "test-api-value-12345", _trustLevel: "admin" },
+      ) as { set: boolean; key: string; storage: string; restarting: boolean };
+      expect(setResult.set).toBe(true);
+      expect(setResult.key).toBe("MY_API_KEY");
+      expect(setResult.storage).toBe("file");
+      expect(setResult.restarting).toBe(true);
+
+      // secrets.get must return the same value that was set
+      const getResult = await instance.rpcCall(
+        "secrets.get",
+        { name: "MY_API_KEY", _trustLevel: "admin" },
+      ) as { name: string; value: string | undefined; exists: boolean };
+      expect(getResult.exists).toBe(true);
+      expect(getResult.value).toBe("test-api-value-12345");
+
+      // secrets.json must be created with 0600 permissions (residency + security)
+      const secretsPath = nodePath.resolve(freshDataDir, "secrets.json");
+      expect(fs.existsSync(secretsPath)).toBe(true);
+      const stat = fs.statSync(secretsPath);
+      expect(stat.mode & 0o777).toBe(0o600);
+
+      // dataDir must have 0700 permissions
+      const dirStat = fs.statSync(freshDataDir);
+      expect(dirStat.mode & 0o777).toBe(0o700);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("file mode: secrets.set persists and secrets.get reads back (REQ-04)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-file-secsset-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // secrets.set must persist to the file store
+      const setResult = await instance.rpcCall(
+        "secrets.set",
+        { name: "STRIPE_SECRET", value: "sk-stripe-test-99", _trustLevel: "admin" },
+      ) as { name: string; stored: boolean };
+      expect(setResult.stored).toBe(true);
+      expect(setResult.name).toBe("STRIPE_SECRET");
+
+      // secrets.get must return the persisted value
+      const getResult = await instance.rpcCall(
+        "secrets.get",
+        { name: "STRIPE_SECRET", _trustLevel: "admin" },
+      ) as { name: string; value: string | undefined; exists: boolean };
+      expect(getResult.exists).toBe(true);
+      expect(getResult.value).toBe("sk-stripe-test-99");
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // REQ-04 / REQ-14: env mode — both env.set and secrets.set rejected
+  // -------------------------------------------------------------------------
+
+  it("env mode: env.set returns error containing 'read-only' (REQ-04)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-env-envset-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("env");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // env.set must throw with a message containing "read-only" in env mode
+      await expect(
+        instance.rpcCall(
+          "env.set",
+          { key: "SOME_SECRET", value: "some-value", _trustLevel: "admin" },
+        ),
+      ).rejects.toThrow(/read-only/);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("env mode: secrets.set returns error containing 'read-only' (REQ-04)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-env-secset-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("env");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // secrets.set must throw with a message containing "read-only" in env mode
+      await expect(
+        instance.rpcCall(
+          "secrets.set",
+          { name: "SOME_SECRET", value: "some-value", _trustLevel: "admin" },
+        ),
+      ).rejects.toThrow(/read-only/);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("env mode: env_set error message mentions security.storage and not SECRETS_MASTER_KEY (REQ-14)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-env-hint-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("env");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // The error must mention "security.storage" so the operator knows
+      // how to switch to a writable store (REQ-14 actionable hint).
+      // It must NOT mention SECRETS_MASTER_KEY (stale guidance removed in Plan 02-02).
+      let thrownMessage = "";
+      try {
+        await instance.rpcCall(
+          "env.set",
+          { key: "SOME_KEY", value: "some-val", _trustLevel: "admin" },
+        );
+      } catch (e: unknown) {
+        thrownMessage = e instanceof Error ? e.message : String(e);
+      }
+      expect(thrownMessage).toMatch(/read-only/);
+      expect(thrownMessage).toMatch(/security\.storage/);
+      expect(thrownMessage).not.toMatch(/SECRETS_MASTER_KEY/);
+      expect(thrownMessage).not.toMatch(/~\/\.comis\/\.env/);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // REQ-10: file mode residency canary — secrets.list returns no value field
+  // -------------------------------------------------------------------------
+
+  it("file mode: secrets.list returns names+metadata only, no value field (REQ-10)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-file-list-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // Store a secret via secrets.set
+      await instance.rpcCall(
+        "secrets.set",
+        { name: "MY_KEY", value: "MY_VALUE", _trustLevel: "admin" },
+      );
+
+      // secrets.list must return entries with name but NO value field (REQ-10)
+      const listResult = await instance.rpcCall(
+        "secrets.list",
+        { _trustLevel: "admin" },
+      ) as { secrets: Array<Record<string, unknown>> };
+      expect(listResult.secrets.length).toBeGreaterThan(0);
+      const entry = listResult.secrets.find((s) => s.name === "MY_KEY");
+      expect(entry).toBeDefined();
+      expect(entry).not.toHaveProperty("value");
+      expect(entry).not.toHaveProperty("plaintext");
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // REQ-15: stage-2 scrub — config-referenced custom secret absent post-boot
+  // -------------------------------------------------------------------------
+
+  it("stage-2 scrub: platformSecretNames secret absent from process.env after boot (REQ-15)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-stage2-scrub-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+      // Set a custom secret that is NOT in the SENSITIVE_PREFIXES list
+      // (so it survives stage-1 scrub but must be removed by stage-2 scrub).
+      process.env["MY_CUSTOM_TOKEN"] = "super-secret-custom-value";
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+      // Override bootstrap to return a container where platformSecretNames
+      // includes MY_CUSTOM_TOKEN — simulating it being referenced in config.yaml.
+      overrides.bootstrap = vi.fn().mockImplementation(() => {
+        const container = createMockContainer();
+        container.platformSecretNames = new Set<string>(["MY_CUSTOM_TOKEN"]);
+        return { ok: true, value: container };
+      });
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // MY_CUSTOM_TOKEN must have been removed by stage-2 scrub (REQ-15)
+      expect(process.env["MY_CUSTOM_TOKEN"]).toBeUndefined();
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+});

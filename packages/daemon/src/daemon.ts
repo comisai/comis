@@ -149,6 +149,7 @@ import {
   type SetupOutputRetentionHandle,
   setupBroker,
   acquireDataDirLock,
+  releaseDataDirLock,
 } from "./wiring/index.js";
 import {
   createActiveRunRegistry,
@@ -1463,6 +1464,10 @@ async function bootFoundation(
   const permissionCorrections = hardenDataDirPermissions(dataDir);
   // D14 singleton lock — must run before any store bootstrap (REQ-03).
   acquireDataDirLock(dataDir);
+  // On boot failure (e.g. selectSecretStore error, bootstrap failure), release
+  // the lock. Under normal boot setupShutdown.onShutdown owns the release.
+  let _lockReleased = false;
+  try {
 
   // selectSecretStore is called BEFORE scrubProcessEnv so encrypted mode
   // can still read SECRETS_MASTER_KEY from process.env (Pitfall 5 in RESEARCH).
@@ -1830,6 +1835,12 @@ async function bootFoundation(
     backgroundTaskManager, bgNotifyFn,
     brokerHandle,
   });
+  // Boot succeeded — setupShutdown.onShutdown owns the lock release from here.
+  _lockReleased = true;
+  } catch (e: unknown) {
+    if (!_lockReleased) { _lockReleased = true; releaseDataDirLock(dataDir); }
+    throw e;
+  }
 }
 
 // ---------------------------------------------------------------------------
