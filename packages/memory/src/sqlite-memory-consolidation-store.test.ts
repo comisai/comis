@@ -1652,4 +1652,119 @@ describe("createSqliteMemoryConsolidationStore", () => {
       }
     });
   });
+
+  // =====================================================================
+  // markReasoned — the deductive-only drain (WR-01, REASON-02). Marks
+  // sources consolidated_at WITHOUT creating an observation, so a scope that
+  // yielded only a deductive triple (no inductive observation to create) still
+  // leaves the candidate pool. Reuses the SAME scoped, fail-closed,
+  // non-destructive markConsolidated UPDATE as the apply/fold paths.
+  // =====================================================================
+
+  describe("markReasoned — deductive-only drain (WR-01)", () => {
+    it("marks in-scope sources consolidated_at == now and returns the changed count", async () => {
+      const a = await seedMemory({ content: "deductive src one", createdAt: 100 });
+      const b = await seedMemory({ content: "deductive src two", createdAt: 200 });
+      expect(consolidatedAtOf(a)).toBeNull();
+      expect(consolidatedAtOf(b)).toBeNull();
+
+      const res = await store.markReasoned([a, b], TENANT_A, 4242);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value).toBe(2); // both rows changed
+      expect(consolidatedAtOf(a)).toBe(4242);
+      expect(consolidatedAtOf(b)).toBe(4242);
+    });
+
+    it("drains the candidate pool: a marked source is no longer a consolidation candidate", async () => {
+      const a = await seedMemory({ content: "drain me", createdAt: 100 });
+      const before = await store.listConsolidationCandidates(AGENT_A, TENANT_A, 10);
+      expect(before.ok && before.value.some((c) => c.entry.id === a)).toBe(true);
+
+      const res = await store.markReasoned([a], TENANT_A, 5000);
+      expect(res.ok).toBe(true);
+
+      // consolidated_at IS NULL predicate now excludes it.
+      const after = await store.listConsolidationCandidates(AGENT_A, TENANT_A, 10);
+      expect(after.ok && after.value.some((c) => c.entry.id === a)).toBe(false);
+    });
+
+    it("scope isolation: a cross-TENANT id is a fail-closed no-op (count 0, source untouched)", async () => {
+      const other = await seedMemory({ content: "other tenant src", createdAt: 100, tenantId: "tenant_b" });
+      // Caller's tenant is TENANT_A — the cross-tenant id must NOT be marked.
+      const res = await store.markReasoned([other], TENANT_A, 6000);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value).toBe(0); // tenant_id predicate → no row changed
+      expect(consolidatedAtOf(other)).toBeNull(); // untouched under its own tenant
+    });
+
+    it("NON-DESTRUCTIVE (CONS-05): the source row + content survive — only consolidated_at changes", async () => {
+      const a = await seedMemory({ content: "keep my content", createdAt: 100 });
+      const before = memoriesCount();
+
+      const res = await store.markReasoned([a], TENANT_A, 7000);
+      expect(res.ok).toBe(true);
+
+      expect(rowExists(a)).toBe(true); // never deleted
+      expect(contentOf(a)).toBe("keep my content"); // content untouched
+      expect(memoriesCount()).toBe(before); // no row added/removed
+      expect(consolidatedAtOf(a)).toBe(7000); // only the mark changed
+    });
+
+    it("idempotent: re-marking an already-marked source re-writes the same column (no error)", async () => {
+      const a = await seedMemory({ content: "remark me", createdAt: 100 });
+      const first = await store.markReasoned([a], TENANT_A, 8000);
+      expect(first.ok).toBe(true);
+      if (first.ok) expect(first.value).toBe(1);
+
+      // A second mark with a later `now` is a harmless re-write (the candidate
+      // predicate already excludes the row from re-selection).
+      const second = await store.markReasoned([a], TENANT_A, 9000);
+      expect(second.ok).toBe(true);
+      if (second.ok) expect(second.value).toBe(1); // the UPDATE still matches the row
+      expect(consolidatedAtOf(a)).toBe(9000);
+    });
+
+    it("empty source list is a no-op that returns 0", async () => {
+      const res = await store.markReasoned([], TENANT_A, 1000);
+      expect(res.ok).toBe(true);
+      if (res.ok) expect(res.value).toBe(0);
+    });
+
+    it("returns err (never throws) when the source-mark UPDATE fails", async () => {
+      const a = await seedMemory({ content: "boom", createdAt: 100 });
+      const warns: Array<{ obj: Record<string, unknown> }> = [];
+      const logger = {
+        info: () => {},
+        debug: () => {},
+        warn: (obj: Record<string, unknown>) => warns.push({ obj }),
+      };
+      const realPrepare = db.prepare.bind(db);
+      const spy = (sql: string) => {
+        const stmt = realPrepare(sql);
+        if (/UPDATE memories SET consolidated_at/.test(sql)) {
+          return {
+            ...stmt,
+            run: () => {
+              throw new Error("injected mark failure");
+            },
+          } as unknown as ReturnType<typeof realPrepare>;
+        }
+        return stmt;
+      };
+      // @ts-expect-error -- test-only monkeypatch of the prepared-statement factory
+      db.prepare = spy;
+      try {
+        const s = createSqliteMemoryConsolidationStore({ db, logger });
+        const r = await s.markReasoned([a], TENANT_A, 100);
+        expect(r.ok).toBe(false); // returns err, never throws
+        expect(warns.some((w) => w.obj.step === "reason-mark")).toBe(true);
+        // ROLLBACK: the failed transaction left the source unmarked.
+        expect(consolidatedAtOf(a)).toBeNull();
+      } finally {
+        db.prepare = realPrepare;
+      }
+    });
+  });
 });
