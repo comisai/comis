@@ -900,3 +900,155 @@ describe("opt-out and same-boot init", () => {
     rmSync(freshDataDir, { recursive: true, force: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// 02-04: selectSecretStore dispatch + store-wins + two-stage scrub (TDD RED)
+// ---------------------------------------------------------------------------
+// RED: these tests verify behaviors introduced by Plan 02-04.
+// Before GREEN (before selectSecretStore is wired into bootFoundation),
+// the file/env paths leave process.env unscrubbed and never call
+// buildMergedEnv, so the scrub + shadow-WARN assertions fail.
+
+describe("02-04 — selectSecretStore dispatch + scrub + store-wins", () => {
+  const originalEnv = process.env;
+  const instances: DaemonInstance[] = [];
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(async () => {
+    while (instances.length > 0) {
+      const inst = instances.shift()!;
+      try { await inst.shutdownHandle.trigger("test-cleanup"); } catch { /* ignore */ }
+      try { inst.shutdownHandle.dispose(); } catch { /* idempotent */ }
+    }
+    process.env = originalEnv;
+  });
+
+  // -------------------------------------------------------------------------
+  // REQ-15 / stage-1: file mode must call scrubProcessEnv
+  // -------------------------------------------------------------------------
+
+  it("file mode: ANTHROPIC_API_KEY is removed from process.env after boot (stage-1 scrub)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-04-file-scrub-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      // Use a non-existent config path (avoids reading real ~/.comis/config.yaml)
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+      process.env["ANTHROPIC_API_KEY"] = "sk-test-file-scrub-key";
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+      overrides.setupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // scrubProcessEnv must have run — ANTHROPIC_API_KEY must be gone
+      expect(process.env["ANTHROPIC_API_KEY"]).toBeUndefined();
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("env mode: ANTHROPIC_API_KEY is removed from process.env after boot (stage-1 scrub)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-04-env-scrub-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+      process.env["ANTHROPIC_API_KEY"] = "sk-test-env-scrub-key";
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("env");
+      overrides.setupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // scrubProcessEnv must have run in env mode too — ANTHROPIC_API_KEY must be gone
+      expect(process.env["ANTHROPIC_API_KEY"]).toBeUndefined();
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // REQ-16 / store-wins: WARN emitted when store value shadows process.env
+  // -------------------------------------------------------------------------
+
+  it("file mode: WARN logged with secretName when store value shadows process.env (REQ-16 store-wins)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-04-shadow-warn-"));
+    try {
+      // Pre-create secrets.json so the file store finds DISCORD_TOKEN on boot.
+      const secretsJson = JSON.stringify({
+        schemaVersion: 1,
+        secrets: {
+          DISCORD_TOKEN: {
+            value: "store-discord-value",
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          },
+        },
+      });
+      fs.writeFileSync(nodePath.resolve(freshDataDir, "secrets.json"), secretsJson, { mode: 0o600 });
+
+      // Also set the same key in process.env so store-wins logic fires
+      process.env["DISCORD_TOKEN"] = "env-discord-value";
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides, mocks } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+      overrides.setupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // buildMergedEnv must have emitted a WARN with secretName: "DISCORD_TOKEN"
+      const logLevelManager = mocks.logLevelManager;
+      const sharedLogger = (logLevelManager.getLogger as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+      expect(sharedLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ module: "daemon", secretName: "DISCORD_TOKEN" }),
+        expect.stringContaining("store value is authoritative"),
+      );
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Encrypted-mode regression: selectSecretStore dispatch must not break
+  // the existing encrypted store set/get round-trip
+  // -------------------------------------------------------------------------
+
+  it("encrypted mode regression: daemon boots and env.set persists via selectSecretStore dispatch", async () => {
+    const { randomBytes } = await import("node:crypto");
+    const keyHex = randomBytes(32).toString("hex");
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-04-enc-regression-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+      process.env["SECRETS_MASTER_KEY"] = keyHex;
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("encrypted");
+      // Do NOT override setupSecrets — let the real implementation run
+      // so the encrypted path via selectSecretStore is exercised end-to-end.
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // Encrypted mode must wire a real secretStore (not undefined).
+      // Verify by calling env.set which requires secretStore to be present.
+      const setResult = await instance.rpcCall(
+        "env.set",
+        { key: "STRIPE_SECRET_KEY", value: "sk-stripe-test", _trustLevel: "admin" },
+      );
+      expect(setResult).toMatchObject({ set: true, key: "STRIPE_SECRET_KEY", restarting: true });
+    } finally {
+      delete process.env["SECRETS_MASTER_KEY"];
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+});
