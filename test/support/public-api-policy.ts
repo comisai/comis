@@ -1456,6 +1456,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // on the public barrel for symmetry with the other domain arrays.
       "MEMORY_CONTRACTS",
       "MEMORY_DIAGNOSTIC_CONTRACTS",
+      // memory.ask — the dialectic grounded-Q&A contract (Phase 109-01,
+      // DIAL-01/02). INTERFACE-FIRST ahead-of-consumer planned-orphan: the
+      // contract SHAPE ships now, its daemon handler lands in Plan 109-03. It
+      // is tagged `@contract-deferred-handler: 109-03` and is deliberately kept
+      // OUT of MEMORY_CONTRACTS until then (registering it before the handler
+      // exists would RED-gate contract-handler-parity + bidirectional 1:1), so
+      // — unlike every other per-method contract above — it has NO in-repo
+      // handler consumer yet. Tracked here to keep public-export-consumers
+      // green; REMOVE @ 109-03 when the handler lands and it joins
+      // MEMORY_CONTRACTS. Mirrors the OBS-06 cross-wave seam (Phase 86 Plan 05)
+      // + the 107/108 ahead-of-consumer dance.
+      "MemoryAskContract",
       // Media + image-domain contracts (16 methods spanning 2
       // handler-factory files that share the MediaApiDeps cluster slice):
       //   - media-handlers.ts  (15 methods)
