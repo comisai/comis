@@ -71,6 +71,21 @@ describe("generateBeamHaystack (deterministic seeded BEAM haystack)", () => {
     expect(h.approxTokens).toBeGreaterThanOrEqual(approxTokens * 0.5);
   });
 
+  it("defaults to 4 abilities when the abilities option is omitted", () => {
+    // Exercises the `opts.abilities ?? 4` default branch.
+    const h = generateBeamHaystack({ approxTokens: 10_000, seed: 3 });
+    const abilities = new Set(h.needles.map((n) => n.ability));
+    expect(abilities.size).toBe(4);
+  });
+
+  it("clamps the ability count into [1, 4] (a 0 or out-of-range request is bounded)", () => {
+    // Exercises the Math.max(1, …) lower clamp and the Math.min(…, 4) upper clamp.
+    const low = generateBeamHaystack({ approxTokens: 10_000, seed: 3, abilities: 0 });
+    expect(new Set(low.needles.map((n) => n.ability)).size).toBe(1);
+    const high = generateBeamHaystack({ approxTokens: 10_000, seed: 3, abilities: 99 });
+    expect(new Set(high.needles.map((n) => n.ability)).size).toBe(4);
+  });
+
   it("is prototype-pollution-safe: a hostile injected ability count cannot mutate Object.prototype", () => {
     // The generator must never use generated strings as object keys for writes.
     generateBeamHaystack({ approxTokens: 10_000, seed: 1, abilities: 4 });

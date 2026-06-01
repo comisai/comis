@@ -141,10 +141,13 @@ const NEEDLE_TEMPLATES: Record<BeamAbility, { content: string; query: string }> 
 function fillerSentence(rng: () => number, targetChars: number): string {
   const words: string[] = [];
   let len = 0;
+  // `idx` is always a valid in-range index: `Math.floor(rng()*N) % N` ∈ [0, N) for
+  // rng() ∈ [0, 1). LEXICON is read by NUMERIC index only — never an object-key write.
+  // The project does not set noUncheckedIndexedAccess, so `LEXICON[idx]` is a defined
+  // string (no dead `?? fallback` branch to leave untested).
   while (len < targetChars) {
     const idx = Math.floor(rng() * LEXICON.length) % LEXICON.length;
-    // LEXICON values are read by NUMERIC index only — never used as an object key.
-    const w = LEXICON[idx] ?? "the";
+    const w = LEXICON[idx];
     words.push(w);
     len += w.length + 1;
   }
