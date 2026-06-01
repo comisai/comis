@@ -14,9 +14,9 @@
  *   defense-in-depth with the DB `CHECK(trust IN ('system','learned'))` (layer 1)
  *   and the port-type floor (layer 2, 107-01). `content` is untrusted profile
  *   text — it runs through `validateMemoryWrite` (redaction firewall) and is bound
- *   as a `?` parameter, never concatenated. The row id is a `crypto.randomUUID()`
- *   (mirror the triple store); `created_at` is the injected clock `scope.now`,
- *   NEVER `Date.now()`.
+ *   as a `?` parameter, never concatenated. The row id is a `randomUUID()`
+ *   (imported from `node:crypto`, mirror the triple store); `created_at` is the
+ *   injected clock `scope.now`, NEVER `Date.now()`.
  * - `read(scope, cap)` is the LLM-free profile read: the entries for the caller's
  *   (tenant, agent, user) scope ONLY, capped. This is the deterministic read the
  *   prompt-assembly injection block (Plan 107-04) consumes with NO model call.
@@ -53,6 +53,7 @@ import type {
   UserRepresentationInput,
   UserRepresentationEntry,
 } from "@comis/core";
+import { randomUUID } from "node:crypto";
 import { systemNowMs, validateMemoryWrite } from "@comis/core";
 import { ok, err, type Result } from "@comis/shared";
 import { createRowMapper } from "./row-mapper.js";
@@ -183,7 +184,7 @@ export function createSqliteUserRepresentationStore(
         }
 
         insertEntry.run(
-          crypto.randomUUID(),
+          randomUUID(),
           tenantId,
           agentId,
           userId,
