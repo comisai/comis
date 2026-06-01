@@ -53,6 +53,16 @@
 export interface AdapterConfig {
   /** The benchmark tier this cell runs (e.g. "j1", "suite-04"). */
   readonly tier: string;
+  /**
+   * Optional per-cell haystack the letta-fs control dumps as its full-context
+   * baseline (IN-02). Declared so a caller passing the one structured key the
+   * shipped control consumes gets compiler-checked, while the open extension point
+   * below still admits future tier-scoped knobs. The adapter STILL re-validates
+   * this at runtime via a total `coerceDocs` (the config can arrive from a
+   * non-typed JS caller), so a wrong shape degrades to an empty haystack, never a
+   * crash.
+   */
+  readonly docs?: ReadonlyArray<{ content: string; createdAt: number }>;
   /** Open extension point — extra per-cell, tier-scoped knobs (never a secret). */
   readonly [key: string]: unknown;
 }
