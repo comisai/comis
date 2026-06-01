@@ -222,6 +222,31 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "UserRepresentationCandidate",
       "UserRepresentationBuildOutput",
       "UserRepresentationSeamDeps",
+      // Offline directional relationship builder (Phase 108, Track E2 — SOCIAL-01).
+      // ⚠️ TEMPORARY ahead-of-consumer orphans: runRelationshipBuild + createRelationshipSeam
+      // are CONSUMED by the daemon __SOCIAL_MODELING__ cron dispatch that lands in Plan 108-05;
+      // REMOVE "runRelationshipBuild" and "createRelationshipSeam" from this list when that cron
+      // dispatch lands (the shrink — mirror the runUserRepresentationBuild / createUserRepresentationSeam
+      // shrink @ 107-05; allowlist-shrink enforces shrink-only). buildRelationshipPrompt +
+      // parseRelationshipOutput are imported by createRelationshipSeam via the RELATIVE same-package
+      // path (the prompt stays agent-internal), so their @comis/agent index re-exports have no
+      // cross-package importer — baseline orphans (mirror buildUserRepresentationPrompt above). The
+      // Deps/Config/Stats/Result SHAPE types + the Candidate/BuildOutput seam-output types + the
+      // SourceMemory read-shape are referenced via inline objects only — baseline orphans (mirror
+      // MemoryUserRepresentationDeps). RelationshipSeamDeps (the createRelationshipSeam input shape)
+      // is called with an inline object, so the TYPE itself has no cross-package importer.
+      "runRelationshipBuild",
+      "createRelationshipSeam",
+      "buildRelationshipPrompt",
+      "parseRelationshipOutput",
+      "MemoryRelationshipDeps",
+      "MemoryRelationshipConfig",
+      "MemoryRelationshipStats",
+      "MemoryRelationshipResult",
+      "RelationshipSourceMemory",
+      "RelationshipCandidate",
+      "RelationshipBuildOutput",
+      "RelationshipSeamDeps",
       "formatMemorySection",
       "CommandQueueDeps",
       "QueueStats",

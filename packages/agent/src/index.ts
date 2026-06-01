@@ -222,6 +222,37 @@ export {
 } from "./memory/memory-user-representation-prompt.js";
 export type { UserRepresentationCandidate, UserRepresentationBuildOutput } from "./memory/memory-user-representation-prompt.js";
 
+// Offline directional relationship build seam (Phase 108, SOCIAL-01). The factory the
+// daemon __SOCIAL_MODELING__ sentinel calls to BUILD the build() seam from a cheap resolved
+// model, keeping RELATIONSHIP_PROMPT + its parser agent-internal. Consumed by the daemon
+// __SOCIAL_MODELING__ cron dispatch (Plan 108-05) — a temporary orphan until that lands.
+export { createRelationshipSeam } from "./memory/memory-relationship-seam.js";
+export type { RelationshipSeamDeps } from "./memory/memory-relationship-seam.js";
+
+// Offline directional relationship builder (Phase 108, SOCIAL-01 — the WRITE path of
+// the per-channel relationship model: default-OFF gate → read high-trust multi-party
+// sources → EXCLUDE external-trust (anti-poisoning) → bound → INJECTED build() seam →
+// validateMemoryWrite (skip non-clean) → upsert via the @comis/core port → counts-only
+// event → idempotent. Directional: subjectUserId from the speaker, aboutUserId from the
+// LLM; A→B is distinct from B→A. The ONLY LLM use in the phase and it is OFFLINE; the
+// read path stays LLM-free.)
+export { runRelationshipBuild } from "./memory/memory-relationship-job.js";
+export type {
+  MemoryRelationshipDeps,
+  MemoryRelationshipConfig,
+  MemoryRelationshipStats,
+  MemoryRelationshipResult,
+  RelationshipSourceMemory,
+} from "./memory/memory-relationship-job.js";
+// The directional builder prompt + parser (the build() seam's payload shape) —
+// agent-internal; the daemon __SOCIAL_MODELING__ seam (108-05) imports these to keep the
+// prompt string out of the daemon (mirrors createUserRepresentationSeam).
+export {
+  parseRelationshipOutput,
+  buildRelationshipPrompt,
+} from "./memory/memory-relationship-prompt.js";
+export type { RelationshipCandidate, RelationshipBuildOutput } from "./memory/memory-relationship-prompt.js";
+
 // RAG (Retrieval-Augmented Generation)
 export { formatMemorySection } from "./rag/rag-retriever.js";
 
