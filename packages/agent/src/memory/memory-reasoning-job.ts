@@ -31,9 +31,13 @@
  *   (T-101-05-01) — one reasoning call NEVER mixes trust levels or tag scopes.
  * - DEFAULT-OFF cost gate (T-101-05-06): with `config.enabled === false` the
  *   reasoning seam is NEVER called and nothing is written (no LLM spend, no write).
- * - The run is BOUNDED (the surprisal gate + `maxObservationsPerRun`) and emits a
- *   MINIMAL, counts-only `memory:reasoned` event + counts-only logs — NEVER the
- *   S/P/O bodies or the observation content (AGENTS.md §2.7 / T-101-05-05).
+ * - The run is BOUNDED by the SURPRISAL GATE (which caps the scope/seam-call
+ *   count — at most one `reason()` call per surprisal-selected scope) and by
+ *   `maxObservationsPerRun` (which caps WRITES and short-circuits the remaining
+ *   scopes once the write cap is hit, but does NOT bound the seam-call count: a
+ *   0-write scope still issues its call). It emits a MINIMAL, counts-only
+ *   `memory:reasoned` event + counts-only logs — NEVER the S/P/O bodies or the
+ *   observation content (AGENTS.md §2.7 / T-101-05-05).
  * - Every read + write is `(tenantId, agentId)`-scoped (T-101-05-04); inductive
  *   sources are marked `consolidated_at` via `applyConsolidation` so a re-run does
  *   not double-create (T-101-05-07).
@@ -334,10 +338,15 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
       // 101-04 missing-distance policy: eligible but ranks last). Never throws out.
       if (knn.ok && knn.value.ok) knnByCandidate.set(c.entry.id, knn.value.value);
     }
-    // The 101-04 gate EXCLUDES un-embedded candidates before scoring; here every
-    // candidate is embedded (embeddedCount === candidates.length when sqlite-vec is
-    // available, since the adapter hydrates all-or-nothing), so the top-fraction cut
-    // is over the full embedded set.
+    // The 101-04 gate EXCLUDES un-embedded candidates BEFORE scoring (surprisalSelect's
+    // pre-score filter, clustering.ts). Hydration is NOT all-or-nothing: even with
+    // sqlite-vec available, decodeEmbedding returns undefined for any row lacking a
+    // vec_memories entry (has_embedding=0, the embedding queue not yet drained, or a
+    // corrupt blob), so embeddedCount can be 0 < embeddedCount < candidates.length.
+    // In that mixed case the un-embedded candidates that survived the reasonExternal
+    // filter are silently excluded from reasoning here — the documented
+    // missing-embedding policy (safe: they simply do not reach the seam). The
+    // top-fraction cut is over the EMBEDDED subset.
     selected = surprisalSelect(candidates, knnByCandidate, dim, config.surprisalTopFraction);
   }
   surprisalSelected = selected.length;
@@ -359,6 +368,13 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
     embeddedCount === 0
       ? [selected.map((c) => c.entry)]
       : clusterByEntityThenEmbedding(selected, { similarityThreshold: 0.5, maxClusterSize: 50 });
+  // Unlike runMemoryConsolidation (which drops singletons via
+  // `.filter((c) => c.length >= 2)` — there is nothing to MERGE in a lone memory),
+  // this job INTENTIONALLY keeps singleton scopes: a single memory can still yield
+  // a deductive fact ("alice located_in Berlin") or an inductive tendency, so it is
+  // a valid reasoning unit. The cost of reasoning singletons is bounded by the same
+  // surprisal gate + maxObservationsPerRun, and deductive-only singletons drain via
+  // markReasoned (WR-01) so they are not re-reasoned. Do NOT add the >= 2 filter.
   const scopes: MemoryEntry[][] = [];
   for (const cluster of clusters) {
     for (const scope of groupByTrustAndTagScope(cluster)) scopes.push(scope);
