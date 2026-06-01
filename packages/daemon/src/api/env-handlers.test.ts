@@ -12,10 +12,13 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 
 // ---------------------------------------------------------------------------
-function createMockContainer(eventBus = createMockEventBus()): AppContainer {
+function createMockContainer(
+  eventBus = createMockEventBus(),
+  storageMode: "encrypted" | "file" | "env" = "encrypted",
+): AppContainer {
   return {
     eventBus,
-    config: { tenantId: "test-tenant" },
+    config: { tenantId: "test-tenant", security: { storage: storageMode } },
     secretManager: { get: vi.fn() },
   } as unknown as AppContainer;
 }
@@ -344,6 +347,36 @@ describe("env.set handler", () => {
     vi.advanceTimersByTime(200);
 
     expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
+  });
+
+  // -----------------------------------------------------------------------
+  // 02-04 RED: storage field reflects config.security.storage (not hardcoded "encrypted")
+  // -----------------------------------------------------------------------
+
+  it("02-04: env.set returns storage:'file' when config.security.storage is 'file'", async () => {
+    const secretStore = createMockSecretStore();
+    const container = createMockContainer(createMockEventBus(), "file");
+    const deps = makeDeps({ secretStore, container });
+    const handlers = createEnvHandlers(deps);
+
+    const result = await handlers["env.set"]!({ key: "OPENAI_API_KEY", value: "sk-test", _trustLevel: "admin" });
+
+    // After Plan 02-04 GREEN: storage reflects config.security.storage, not hardcoded "encrypted"
+    expect(result).toMatchObject({ set: true, storage: "file", restarting: true });
+  });
+
+  it("02-04: env.set with env-mode adapter returning err surfaces the adapter error message", async () => {
+    const secretStore = createMockSecretStore();
+    (secretStore.set as ReturnType<typeof vi.fn>).mockReturnValue(
+      err(new Error("Storage mode is 'env' (read-only). To persist secrets, set security.storage: file or encrypted.")),
+    );
+    const deps = makeDeps({ secretStore });
+    const handlers = createEnvHandlers(deps);
+
+    // After Plan 02-04 GREEN: guard removed, adapter err surfaces via existing throw block
+    await expect(
+      handlers["env.set"]!({ key: "MY_KEY", value: "val", _trustLevel: "admin" }),
+    ).rejects.toThrow("read-only");
   });
 
   // -----------------------------------------------------------------------
