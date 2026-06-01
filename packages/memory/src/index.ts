@@ -78,6 +78,16 @@ export type { MemoryCausalStoreDeps } from "./sqlite-memory-causal-store.js";
 export { createSqliteTripleStore } from "./sqlite-triple-store.js";
 export type { MemoryTripleStoreDeps } from "./sqlite-triple-store.js";
 
+// Scoped embedding-read store (sole MemoryEmbeddingStore impl; Phase 102, IQ-01).
+// Owns the (tenant, agent)-scoped LEFT JOIN vec_memories bulk read that hydrates
+// the MMR diversity re-rank (returns id->vector for the caller's scope ONLY — the
+// load-bearing T-102-03-01 isolation, UNLIKE the corpus-wide distances-only
+// knnDistances). The daemon (composition root, Plan 102-05) constructs it on the
+// memory adapter's db handle; the MemoryEmbeddingStore port TYPE lives in
+// @comis/core (the agent↛memory cut — the recall MMR read path consumes the type only).
+export { createSqliteMemoryEmbeddingStore } from "./sqlite-memory-embedding-store.js";
+export type { MemoryEmbeddingStoreDeps } from "./sqlite-memory-embedding-store.js";
+
 // Memory consolidation store (sole MemoryConsolidationStore impl; Phase 84).
 // Owns the scoped, state-predicate (consolidated_at IS NULL) candidate selection
 // + the atomic applyConsolidation transaction. The daemon (Plan 05) constructs

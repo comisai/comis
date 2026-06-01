@@ -1937,6 +1937,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // *RowSchema entries).
       "MemoryTripleStoreDeps",
       "MemoryTripleRowSchema",
+      // Scoped embedding-read store (Phase 102-03, IQ-01). createSqliteMemoryEmbeddingStore
+      // is the sole MemoryEmbeddingStore adapter — the (tenant, agent)-scoped LEFT JOIN
+      // vec_memories bulk read that hydrates the MMR diversity re-rank. Its daemon
+      // composition-root consumer lands in Plan 102-05 (setup-memory, the same db handle as
+      // the temporal/causal/triple stores), so the FACTORY is surfaced here AHEAD of that
+      // consumer — the factory-orphan dance (mirror createSqliteMemoryTripleStore @ 100-01
+      // before 100-05 wired it). This entry SHRINKS to just the Deps type when Plan 102-05
+      // lands the daemon consumer. MemoryEmbeddingStoreDeps is the constructor-deps SHAPE
+      // (referenced via inline objects only) — PERMANENT baseline orphan (mirror
+      // MemoryTripleStoreDeps / MemoryConsolidationStoreDeps).
+      "createSqliteMemoryEmbeddingStore",
+      "MemoryEmbeddingStoreDeps",
       "EmbeddingCacheOptions",
       "EmbeddingCacheStats",
       "SqliteEmbeddingCacheOptions",
