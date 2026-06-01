@@ -131,6 +131,13 @@ export type { SqliteAdapterOptions } from "./sqlite-adapter-base.js";
 // SQLite secret store (SecretStorePort implementation)
 export { createSqliteSecretStore } from "./sqlite-secret-store.js";
 
+// File secret store (SecretStorePort file-backed implementation)
+export { createFileSecretStore } from "./file-secret-store.js";
+
+// Secret store selector (mode-dispatched factory)
+export { selectSecretStore } from "./select-secret-store.js";
+export type { SelectedSecretStore } from "./select-secret-store.js";
+
 // OAuth profile schema + encrypted SQLite OAuthCredentialStorePort adapter
 export { initOAuthProfileSchema } from "./oauth-profile-schema.js";
 export { createOAuthProfileStoreEncrypted } from "./oauth-profile-store-encrypted.js";
