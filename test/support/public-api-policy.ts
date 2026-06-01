@@ -199,6 +199,28 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "MemoryReasoningResult",
       "ReasoningOutput",
       "ReasoningSeamDeps",
+      // Offline per-user representation builder (Phase 107-03, Track E1 — USER-02).
+      // runUserRepresentationBuild is the offline profile WRITE path; its daemon
+      // __USER_REPRESENTATION__ cron-sentinel consumer lands in Plan 107-05. Surfaced
+      // here AHEAD of that consumer — the factory-orphan dance (mirror
+      // runMemoryTripleExtraction @ 100-05 before its sentinel landed): REMOVE this
+      // entry when 107-05 (setup-channels-memory-crons.ts) dispatches the job.
+      // buildUserRepresentationPrompt + parseUserRepresentationOutput are the builder
+      // prompt+parser the 107-05 createUserRepresentationSeam imports (agent-internal);
+      // they are surfaced ahead of that seam too — REMOVE when the seam lands.
+      // The Deps/Config/Stats/Result SHAPE types + the Candidate/BuildOutput seam-output
+      // types + the SourceMemory read-shape are referenced via inline objects only —
+      // baseline orphans (mirror MemoryReasoningDeps / ReasoningOutput).
+      "runUserRepresentationBuild",
+      "buildUserRepresentationPrompt",
+      "parseUserRepresentationOutput",
+      "MemoryUserRepresentationDeps",
+      "MemoryUserRepresentationConfig",
+      "MemoryUserRepresentationStats",
+      "MemoryUserRepresentationResult",
+      "UserRepresentationSourceMemory",
+      "UserRepresentationCandidate",
+      "UserRepresentationBuildOutput",
       "formatMemorySection",
       "CommandQueueDeps",
       "QueueStats",

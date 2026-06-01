@@ -193,6 +193,28 @@ export type {
 export { createReasoningSeam } from "./memory/memory-reasoning-seam.js";
 export type { ReasoningSeamDeps } from "./memory/memory-reasoning-seam.js";
 
+// Offline per-user representation builder (Phase 107, USER-02 — the WRITE path of
+// the per-user profile: default-OFF gate → read high-trust sources → EXCLUDE
+// external-trust (anti-poisoning) → bound → INJECTED build() seam → validateMemoryWrite
+// (skip non-clean) → upsert via the @comis/core port → counts-only event → idempotent.
+// The ONLY LLM use in the phase and it is OFFLINE; the read path stays LLM-free.)
+export { runUserRepresentationBuild } from "./memory/memory-user-representation-job.js";
+export type {
+  MemoryUserRepresentationDeps,
+  MemoryUserRepresentationConfig,
+  MemoryUserRepresentationStats,
+  MemoryUserRepresentationResult,
+  UserRepresentationSourceMemory,
+} from "./memory/memory-user-representation-job.js";
+// The builder prompt + parser (the build() seam's payload shape) — agent-internal;
+// the daemon __USER_REPRESENTATION__ seam (107-05) imports these to keep the prompt
+// string out of the daemon (mirrors createReasoningSeam).
+export {
+  parseUserRepresentationOutput,
+  buildUserRepresentationPrompt,
+} from "./memory/memory-user-representation-prompt.js";
+export type { UserRepresentationCandidate, UserRepresentationBuildOutput } from "./memory/memory-user-representation-prompt.js";
+
 // RAG (Retrieval-Augmented Generation)
 export { formatMemorySection } from "./rag/rag-retriever.js";
 

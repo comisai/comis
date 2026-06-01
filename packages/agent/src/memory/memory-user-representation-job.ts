@@ -252,11 +252,45 @@ export async function runUserRepresentationBuild(
 
   const now = clock.now();
 
+  // 5. IDEMPOTENCY (USER-02, analog #10b): a re-run over unchanged sources must
+  //    write 0 new. Read the current profile once and dedup candidates against the
+  //    EXISTING `(entryType, content)` set — re-distilling the same sources yields
+  //    the same candidates, which are already present, so they are skipped. The
+  //    dedup keys on the CONTENT set (not a global "ran once" flag), so a NEW source
+  //    that yields a NEW candidate still writes. The adapter's own
+  //    upsert-replace-per-(scope, entryType, content) is the second belt; this read
+  //    keeps `written` honest (0 new on a no-op re-run). The read is non-fatal: a
+  //    failed read degrades to "dedup nothing" (the adapter upsert still de-dups).
+  const existingKeys = new Set<string>();
+  const existing = await fromPromise(
+    userRepresentationStore.read({ tenantId, agentId, userId }),
+  );
+  if (existing.ok && existing.value.ok) {
+    for (const e of existing.value.value) existingKeys.add(`${e.entryType}::${e.content}`);
+  } else {
+    logger.warn(
+      {
+        agentId,
+        errorKind: "dependency" as const,
+        step: "user-repr" as const,
+        hint: "profile pre-read for idempotency failed — falling back to the adapter's upsert de-dup",
+      },
+      "User representation idempotency pre-read failed (non-fatal)",
+    );
+  }
+
   for (const candidate of candidates) {
     // The bounded run (T-107-03-04): count the overflow for observability, then stop
     // writing once the cap is reached (the DoS cost bound, mirrors reasoning-job.ts:391).
     if (written >= config.maxEntriesPerRun) {
       skippedOverCap++;
+      continue;
+    }
+
+    // Idempotency skip: a candidate already in the profile (same entryType +
+    // content) is a no-op re-distillation — do NOT re-write it (keeps `written`
+    // at 0 on an unchanged re-run). NOT counted as blocked (it is not a rejection).
+    if (existingKeys.has(`${candidate.entryType}::${candidate.content}`)) {
       continue;
     }
 
@@ -312,6 +346,8 @@ export async function runUserRepresentationBuild(
       continue;
     }
     written++;
+    // Same-run dedup: a later identical candidate is now "existing" → not re-written.
+    existingKeys.add(`${candidate.entryType}::${candidate.content}`);
   }
 
   logger.info(
