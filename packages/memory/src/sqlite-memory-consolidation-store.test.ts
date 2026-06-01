@@ -466,6 +466,150 @@ describe("createSqliteMemoryConsolidationStore", () => {
   });
 
   // =====================================================================
+  // Phase 101 (REASON-01/03) — the INDUCTIVE WRITE PATH through applyConsolidation.
+  // The reasoning job (101-05) writes an inductive observation by setting
+  // observationKind="inductive" + patternType on plan.observation and calling the
+  // SHIPPED applyConsolidation (NOT a parallel write path). applyConsolidation
+  // delegates to insertMemoryRow (101-01 threaded the 2 columns there), so it
+  // persists the typed fields with NO adapter logic change. These tests lock that
+  // contract end-to-end through the REAL atomic create+mark path — the read-back
+  // proves observationKind/patternType survive (Pitfall 5: an insertMemoryRow
+  // arg-shift would write the kind into the wrong column).
+  // =====================================================================
+
+  describe("applyConsolidation — inductive observation persistence (REASON-01/03)", () => {
+    /**
+     * Build an observation MemoryEntry carrying the typed-observation fields.
+     * makeEntry does not spread observationKind/patternType, so they are set here
+     * directly on the returned entry.
+     */
+    function makeTypedObservation(
+      sourceIds: string[],
+      overrides: Partial<MemoryEntry> = {},
+    ): MemoryEntry {
+      const base = makeEntry({
+        content: overrides.content ?? "user_a prefers concise replies",
+        createdAt: overrides.createdAt ?? 2_000,
+        proofCount: overrides.proofCount ?? sourceIds.length,
+        sourceIds,
+        confidence: overrides.confidence ?? 0.9,
+        trustLevel: overrides.trustLevel ?? "learned",
+        ...overrides,
+      });
+      return {
+        ...base,
+        ...(overrides.observationKind !== undefined
+          ? { observationKind: overrides.observationKind }
+          : {}),
+        ...(overrides.patternType !== undefined ? { patternType: overrides.patternType } : {}),
+      };
+    }
+
+    /** Read the typed-observation columns straight from the row (raw SQL). */
+    function typedColsOf(
+      id: string,
+    ): { observation_kind: string | null; pattern_type: string | null } | undefined {
+      return db
+        .prepare("SELECT observation_kind, pattern_type FROM memories WHERE id = ?")
+        .get(id) as
+        | { observation_kind: string | null; pattern_type: string | null }
+        | undefined;
+    }
+
+    it("RED 1 (inductive round-trip): an observation with observationKind='inductive' + patternType='preference' persists BOTH columns and reads back intact", async () => {
+      const s1 = await seedMemory({ content: "i like short answers", createdAt: 100 });
+      const s2 = await seedMemory({ content: "keep it brief please", createdAt: 200 });
+      const obs = makeTypedObservation([s1, s2], {
+        observationKind: "inductive",
+        patternType: "preference",
+        proofCount: 2,
+        trustLevel: "learned",
+      });
+
+      const res = await store.applyConsolidation({
+        observation: obs,
+        markConsolidated: [s1, s2],
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+
+      // Raw column check — the 2 new columns physically persisted (no arg-shift).
+      const cols = typedColsOf(obs.id);
+      expect(cols).toBeDefined();
+      expect(cols?.observation_kind).toBe("inductive");
+      expect(cols?.pattern_type).toBe("preference");
+
+      // Domain round-trip via listObservations -> rowToEntry (the read path the
+      // recall side uses): both typed fields survive.
+      const listed = await store.listObservations(AGENT_A, TENANT_A, 10);
+      expect(listed.ok).toBe(true);
+      if (!listed.ok) return;
+      const readBack = listed.value.find((e) => e.id === obs.id);
+      expect(readBack).toBeDefined();
+      expect(readBack?.observationKind).toBe("inductive");
+      expect(readBack?.patternType).toBe("preference");
+      // The trust ceiling the job set (≤ learned, REASON-03) is written verbatim.
+      expect(readBack?.trustLevel).toBe("learned");
+    });
+
+    it("RED 2 (merge default not regressed): a legacy merge observation (no observationKind set) reads back observationKind='merge'", async () => {
+      const s1 = await seedMemory({ content: "source one", createdAt: 100 });
+      const s2 = await seedMemory({ content: "source two", createdAt: 200 });
+      // A consolidation observation with NO observationKind/patternType — the
+      // Phase-84 merge path. observation_kind persists NULL; rowToEntry maps NULL
+      // back to "merge" (the forward-only default), pattern_type stays absent.
+      const obs = makeTypedObservation([s1, s2], { proofCount: 2 });
+      expect(obs.observationKind).toBeUndefined(); // precondition — a merge default
+
+      const res = await store.applyConsolidation({
+        observation: obs,
+        markConsolidated: [s1, s2],
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(res.ok).toBe(true);
+
+      // The column persisted NULL (no value written for a merge observation).
+      const cols = typedColsOf(obs.id);
+      expect(cols?.observation_kind).toBeNull();
+      expect(cols?.pattern_type).toBeNull();
+
+      // rowToEntry maps the NULL kind to "merge"; patternType is absent.
+      const listed = await store.listObservations(AGENT_A, TENANT_A, 10);
+      expect(listed.ok).toBe(true);
+      if (!listed.ok) return;
+      const readBack = listed.value.find((e) => e.id === obs.id);
+      expect(readBack?.observationKind).toBe("merge");
+      expect(readBack?.patternType).toBeUndefined();
+    });
+
+    it("RED 3 (deductive kind persists too): observationKind='deductive' round-trips (the third enum member is not dropped)", async () => {
+      const s1 = await seedMemory({ content: "fact source", createdAt: 100 });
+      const obs = makeTypedObservation([s1], {
+        observationKind: "deductive",
+        proofCount: 1,
+      });
+
+      const res = await store.applyConsolidation({
+        observation: obs,
+        markConsolidated: [s1],
+        tenantId: TENANT_A,
+        now: 5_000,
+      });
+      expect(res.ok).toBe(true);
+
+      const listed = await store.listObservations(AGENT_A, TENANT_A, 10);
+      expect(listed.ok).toBe(true);
+      if (!listed.ok) return;
+      const readBack = listed.value.find((e) => e.id === obs.id);
+      expect(readBack?.observationKind).toBe("deductive");
+      expect(readBack?.patternType).toBeUndefined(); // deductive carries no patternType
+    });
+  });
+
+  // =====================================================================
   // Task 2 (Phase 94) — foldIntoExisting (the proof-accrual dual of
   // applyConsolidation): grow an EXISTING observation atomically + idempotently
   // instead of creating a second one (FOLD-01/02). The load-bearing invariants:
