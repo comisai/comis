@@ -146,4 +146,18 @@ export interface MemoryConsolidationStore {
    * Returns the grown observation.
    */
   foldIntoExisting(plan: ConsolidationFoldPlan): Promise<Result<MemoryEntry, Error>>;
+
+  /**
+   * READ (REASON-04 — the surprisal-gate engine). The k nearest-neighbour cosine
+   * DISTANCES for one embedding, scoped to (tenantId, agentId). Backed by the
+   * shipped sqlite-vec searchByVector (hybrid-search.ts). Returns the distances
+   * sorted ASCENDING (closer first); `ok([])` when sqlite-vec is unavailable
+   * (graceful degrade — the caller's missing-embedding policy then applies).
+   */
+  knnDistances(
+    embedding: number[],
+    k: number,
+    agentId: string,
+    tenantId: string,
+  ): Promise<Result<number[], Error>>;
 }
