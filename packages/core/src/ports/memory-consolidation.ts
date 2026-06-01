@@ -160,4 +160,24 @@ export interface MemoryConsolidationStore {
     agentId: string,
     tenantId: string,
   ): Promise<Result<number[], Error>>;
+
+  /**
+   * Mark source memories `consolidated_at` WITHOUT creating an observation
+   * (REASON-02 — the deductive-only drain). `applyConsolidation` marks sources
+   * only as a side effect of creating an inductive observation row; a scope that
+   * yields ONLY a deductive triple (no inductive pattern) has no observation to
+   * create, yet its sources must still leave the candidate pool — otherwise the
+   * `consolidated_at IS NULL AND proof_count IS NULL` candidate predicate
+   * re-selects them and re-feeds the paid reasoning seam over unchanged evidence
+   * on every run. This is the no-observation counterpart of `applyConsolidation`'s
+   * source-mark step: NON-DESTRUCTIVE (sets `consolidated_at` only, never deletes),
+   * scoped to `tenantId` (a cross-tenant id is a fail-closed no-op), parameterized,
+   * and idempotent (re-marking an already-marked source is a harmless re-write).
+   * Returns the number of source rows actually marked.
+   */
+  markReasoned(
+    sourceIds: string[],
+    tenantId: string,
+    now: number,
+  ): Promise<Result<number, Error>>;
 }

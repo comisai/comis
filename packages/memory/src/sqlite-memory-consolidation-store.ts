@@ -521,5 +521,55 @@ export function createSqliteMemoryConsolidationStore(
         return err(error);
       }
     },
+
+    /**
+     * Mark source memories `consolidated_at` WITHOUT creating an observation
+     * (REASON-02 — the deductive-only drain). Reuses the SAME scoped, fail-closed
+     * `markConsolidated` UPDATE as the apply/fold paths (sets `consolidated_at`
+     * only; never deletes — CONS-05), in ONE `db.transaction` so a partial mark
+     * cannot commit. Scoped on `tenant_id` (a cross-tenant id is a no-op), the
+     * value bound as a `?` parameter. Idempotent: re-marking an already-marked
+     * source re-writes the same column (the candidate predicate
+     * `consolidated_at IS NULL` already excludes it from re-selection). Returns
+     * the number of rows actually changed.
+     */
+    async markReasoned(
+      sourceIds: string[],
+      tenantId: string,
+      now: number,
+    ): Promise<Result<number, Error>> {
+      const startMs = systemNowMs();
+      try {
+        const tx = db.transaction(() => {
+          let changed = 0;
+          for (const id of sourceIds) {
+            // Scoped on (tenant_id) — a cross-tenant id is a fail-closed no-op
+            // (changes === 0). NON-DESTRUCTIVE: sets consolidated_at only.
+            changed += markConsolidated.run(now, id, tenantId).changes;
+          }
+          return changed;
+        });
+        const changed = tx();
+
+        logger?.debug(
+          { step: "reason-mark", durationMs: systemNowMs() - startMs, markedCount: changed },
+          "markReasoned complete (deductive-only sources marked consolidated)",
+        );
+        return ok(changed);
+      } catch (e: unknown) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "reason-mark",
+            durationMs: systemNowMs() - startMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "markReasoned transaction failed — rolled back, sources stay unconsolidated for retry next run",
+          },
+          "markReasoned failed",
+        );
+        return err(error);
+      }
+    },
   };
 }

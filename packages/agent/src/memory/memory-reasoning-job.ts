@@ -378,6 +378,15 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
       continue;
     }
 
+    // Per-scope write tallies (WR-01): the inductive write marks its sources
+    // consolidated_at via applyConsolidation, but a DEDUCTIVE-ONLY scope (a
+    // deductive write, no inductive pattern) has no observation to create — its
+    // sources must still be drained below, or the candidate predicate
+    // (consolidated_at IS NULL AND proof_count IS NULL) re-selects them and
+    // re-feeds the paid seam over unchanged evidence every run.
+    let scopeDeductiveWrites = 0;
+    let scopeInductiveWrites = 0;
+
     const clusterText = scope.map((e) => `- ${e.content}`).join("\n");
     const reasoned = await fromPromise(deps.reason(clusterText));
     if (!reasoned.ok) {
@@ -448,6 +457,7 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
         continue;
       }
       deductiveWritten++;
+      scopeDeductiveWrites++;
     }
 
     // --- 4b. INDUCTIVE branch — applyConsolidation with the HARD ≤ learned cap
@@ -530,7 +540,39 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
         continue;
       }
       inductiveWritten++;
+      scopeInductiveWrites++;
       writtenInductiveKeys.add(dedupKey);
+    }
+
+    // WR-01: drain a DEDUCTIVE-ONLY scope. When the scope produced ≥1 successful
+    // deductive write but NO inductive write, applyConsolidation never ran, so its
+    // sources are still consolidated_at IS NULL and would be re-selected +
+    // re-reasoned (paid seam) every run. Mark them via the no-observation
+    // markReasoned port method (non-destructive, scoped, idempotent) so the
+    // candidate pool drains. The inductive path already marks via
+    // applyConsolidation, so skip the redundant re-mark when it wrote.
+    // Non-fatal: a rejecting store WARNs + leaves the sources for next run's retry
+    // (the deductive upsert is itself idempotent — the re-run is correct, only the
+    // recurring cost is undesirable, which this drains).
+    if (scopeDeductiveWrites > 0 && scopeInductiveWrites === 0) {
+      const marked = await fromPromise(
+        consolidationStore.markReasoned(
+          scope.map((e) => e.id),
+          tenantId,
+          now0,
+        ),
+      );
+      if (!marked.ok || !marked.value.ok) {
+        logger.warn(
+          {
+            agentId,
+            errorKind: "dependency" as const,
+            step: "reason" as const,
+            hint: "markReasoned failed/rejected — deductive-only sources left unconsolidated; they will be re-reasoned next run",
+          },
+          "Failed to mark deductive-only sources consolidated (non-fatal)",
+        );
+      }
     }
   }
 
