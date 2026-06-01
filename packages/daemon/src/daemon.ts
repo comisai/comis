@@ -146,6 +146,7 @@ import {
   setupOutputRetention,
   type SetupOutputRetentionHandle,
   setupBroker,
+  acquireDataDirLock,
 } from "./wiring/index.js";
 import {
   createActiveRunRegistry,
@@ -1508,10 +1509,8 @@ async function bootFoundation(
 
   // 0.5. Decrypt secrets, merge with env, scrub process.env.
   const permissionCorrections = hardenDataDirPermissions(dataDir);
-  // Gate the entire store bootstrap on storageMode: only "encrypted" mode uses
-  // bootstrapSecretsAndEnv. file/env modes skip it entirely (mergedEnv = process.env).
-  // Phase 2 will wire the actual file/env store implementations; for P0 the daemon
-  // simply does not call bootstrapSecretsAndEnv in non-encrypted modes.
+  // D14 singleton lock — must run before any store bootstrap (REQ-03).
+  acquireDataDirLock(dataDir);
   let mergedEnv: Record<string, string | undefined>;
   let secretStore: import("@comis/core").SecretStorePort | undefined;
   let secretsCrypto: import("@comis/core").SecretsCrypto | undefined;

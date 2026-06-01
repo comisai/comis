@@ -55,3 +55,4 @@ export type {
 } from "./setup-output-retention.js";
 export { setupBroker } from "./setup-broker.js";
 export type { BrokerHandle, SetupBrokerDeps } from "./setup-broker.js";
+export { acquireDataDirLock, releaseDataDirLock } from "./data-dir-lock.js";
