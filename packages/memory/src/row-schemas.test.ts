@@ -88,6 +88,7 @@ import {
   EntityLaneRowSchema,
   EntityListRowSchema,
   CausalLaneRowSchema,
+  MemoryTripleRowSchema,
 } from "./row-schemas.js";
 
 // =====================================================================
@@ -629,5 +630,75 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
     expect(
       CausalLaneRowSchema.safeParse({ linked: "m2", confidence: 0.9, tenant_id: "t" }).success,
     ).toBe(false);
+  });
+
+  // --- MemoryTripleRowSchema (Phase 100, KG-01) ---
+
+  const fullTripleRow = {
+    id: "tr1",
+    tenant_id: "t1",
+    agent_id: "a1",
+    subject: "alice",
+    predicate: "lives_in",
+    object: "berlin",
+    trust: "learned" as const,
+    t_valid_start: 1700000000000,
+    t_valid_end: 1700000009000,
+    t_ingested: 1700000000500,
+    expired_at: 1700000009000,
+    t_occurred: 1699999990000,
+    t_occurred_end: 1699999999000,
+    source_memory_id: "mem-1",
+    confidence: 0.8,
+  };
+
+  it("MemoryTripleRowSchema parses a fully-populated memory_triples row", () => {
+    expect(MemoryTripleRowSchema.safeParse(fullTripleRow).success).toBe(true);
+  });
+
+  it("MemoryTripleRowSchema parses a current-truth row with NULL end-stamps/occurred/provenance/confidence", () => {
+    const currentTruthRow = {
+      id: "tr2",
+      tenant_id: "t1",
+      agent_id: "a1",
+      subject: "alice",
+      predicate: "lives_in",
+      object: "berlin",
+      trust: "system" as const,
+      t_valid_start: 1700000000000,
+      t_valid_end: null,
+      t_ingested: 1700000000500,
+      expired_at: null,
+      t_occurred: null,
+      t_occurred_end: null,
+      source_memory_id: null,
+      confidence: null,
+    };
+    const parsed = MemoryTripleRowSchema.safeParse(currentTruthRow);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.t_valid_end).toBeNull();
+      expect(parsed.data.expired_at).toBeNull();
+      expect(parsed.data.source_memory_id).toBeNull();
+      expect(parsed.data.confidence).toBeNull();
+    }
+  });
+
+  it("MemoryTripleRowSchema accepts each trust on the ladder and rejects an out-of-ladder trust", () => {
+    for (const trust of ["system", "learned", "external"] as const) {
+      expect(MemoryTripleRowSchema.safeParse({ ...fullTripleRow, trust }).success).toBe(true);
+    }
+    expect(MemoryTripleRowSchema.safeParse({ ...fullTripleRow, trust: "nope" }).success).toBe(false);
+  });
+
+  it("MemoryTripleRowSchema rejects an unexpected extra column (z.strictObject)", () => {
+    expect(
+      MemoryTripleRowSchema.safeParse({ ...fullTripleRow, rogue_column: "x" }).success,
+    ).toBe(false);
+  });
+
+  it("MemoryTripleRowSchema rejects a row missing a required column (subject)", () => {
+    const { subject: _omit, ...withoutSubject } = fullTripleRow;
+    expect(MemoryTripleRowSchema.safeParse(withoutSubject).success).toBe(false);
   });
 });

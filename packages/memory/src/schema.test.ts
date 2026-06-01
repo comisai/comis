@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import Database from "better-sqlite3";
 import { describe, it, expect, beforeEach } from "vitest";
-import { initSchema, isVecAvailable, ensureMemoryColumns, ensureEntityTables } from "./schema.js";
+import {
+  initSchema,
+  isVecAvailable,
+  ensureMemoryColumns,
+  ensureEntityTables,
+  ensureTripleTable,
+} from "./schema.js";
 
 describe("initSchema", () => {
   let db: Database.Database;
@@ -721,5 +727,160 @@ describe("ensureEntityTables", () => {
       (db.prepare("SELECT COUNT(*) AS c FROM memory_entities").get() as { c: number }).c,
     ).toBe(1);
     expect(tableNames()).toContain("memory_entity_links");
+  });
+});
+
+// =====================================================================
+// ensureTripleTable (Phase 100, KG-01/KG-02/KG-03) — the segregated
+// bi-temporal `memory_triples` table: S/P/O + the four bi-temporal
+// timestamps + occurred range + trust CHECK, tenant+agent on every row,
+// created idempotently AFTER ensureCausalTables.
+// =====================================================================
+
+describe("ensureTripleTable (Phase 100, KG-01)", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+  });
+
+  const tableNames = (): string[] =>
+    (
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+        .all() as Array<{ name: string }>
+    ).map((r) => r.name);
+
+  const tripleCols = (): string[] =>
+    (db.prepare("PRAGMA table_info(memory_triples)").all() as Array<{ name: string }>).map(
+      (c) => c.name,
+    );
+
+  it("creates memory_triples after initSchema", () => {
+    initSchema(db, 1536);
+    expect(tableNames()).toContain("memory_triples");
+  });
+
+  it("gives memory_triples all 14 columns incl. S/P/O + the four bi-temporal timestamps + occurred range", () => {
+    initSchema(db, 1536);
+    const cols = tripleCols();
+    // identity + scope
+    expect(cols).toContain("id");
+    expect(cols).toContain("tenant_id");
+    expect(cols).toContain("agent_id");
+    // S/P/O
+    expect(cols).toContain("subject");
+    expect(cols).toContain("predicate");
+    expect(cols).toContain("object");
+    // trust
+    expect(cols).toContain("trust");
+    // the FOUR bi-temporal timestamps (KG-01)
+    expect(cols).toContain("t_valid_start");
+    expect(cols).toContain("t_valid_end");
+    expect(cols).toContain("t_ingested");
+    expect(cols).toContain("expired_at");
+    // occurred range
+    expect(cols).toContain("t_occurred");
+    expect(cols).toContain("t_occurred_end");
+    // provenance + confidence
+    expect(cols).toContain("source_memory_id");
+    expect(cols).toContain("confidence");
+    expect(cols).toHaveLength(14);
+  });
+
+  it("marks tenant_id/agent_id/subject/predicate/object/trust/t_valid_start/t_ingested NOT NULL; the end-stamps nullable", () => {
+    initSchema(db, 1536);
+    const info = db.prepare("PRAGMA table_info(memory_triples)").all() as Array<{
+      name: string;
+      notnull: number;
+    }>;
+    const notNull = (name: string): boolean =>
+      info.find((c) => c.name === name)?.notnull === 1;
+    for (const required of [
+      "id",
+      "tenant_id",
+      "agent_id",
+      "subject",
+      "predicate",
+      "object",
+      "trust",
+      "t_valid_start",
+      "t_ingested",
+    ]) {
+      expect(notNull(required), `${required} must be NOT NULL`).toBe(true);
+    }
+    // The "current truth"/history end-stamps + occurred range + provenance are nullable.
+    for (const nullable of [
+      "t_valid_end",
+      "expired_at",
+      "t_occurred",
+      "t_occurred_end",
+      "source_memory_id",
+      "confidence",
+    ]) {
+      expect(notNull(nullable), `${nullable} must be nullable`).toBe(false);
+    }
+  });
+
+  it("rejects an out-of-ladder trust via the CHECK constraint (T-100-01-04)", () => {
+    initSchema(db, 1536);
+    // A valid trust inserts fine.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO memory_triples
+             (id, tenant_id, agent_id, subject, predicate, object, trust, t_valid_start, t_ingested)
+           VALUES ('tr1', 't1', 'a1', 's', 'p', 'o', 'learned', 1, 1)`,
+        )
+        .run(),
+    ).not.toThrow();
+    // An out-of-ladder trust is rejected at write.
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO memory_triples
+             (id, tenant_id, agent_id, subject, predicate, object, trust, t_valid_start, t_ingested)
+           VALUES ('tr2', 't1', 'a1', 's', 'p', 'o', 'wildly-untrusted', 1, 1)`,
+        )
+        .run(),
+    ).toThrow();
+  });
+
+  it("declares ON DELETE CASCADE on source_memory_id -> memories(id)", () => {
+    initSchema(db, 1536);
+    const fks = db.prepare("PRAGMA foreign_key_list(memory_triples)").all() as Array<{
+      table: string;
+      from: string;
+      to: string;
+      on_delete: string;
+    }>;
+    const memoryFk = fks.find((fk) => fk.table === "memories" && fk.from === "source_memory_id");
+    expect(memoryFk).toBeDefined();
+    expect(memoryFk!.on_delete).toBe("CASCADE");
+  });
+
+  it("creates the three triple indexes (current / validtime / subject)", () => {
+    initSchema(db, 1536);
+    const indexes = (
+      db.prepare("PRAGMA index_list(memory_triples)").all() as Array<{ name: string }>
+    ).map((r) => r.name);
+    expect(indexes).toContain("idx_triples_current");
+    expect(indexes).toContain("idx_triples_validtime");
+    expect(indexes).toContain("idx_triples_subject");
+  });
+
+  it("is idempotent -- initSchema twice (and a direct re-run) does not throw and preserves rows", () => {
+    initSchema(db, 1536);
+    db.prepare(
+      `INSERT INTO memory_triples
+         (id, tenant_id, agent_id, subject, predicate, object, trust, t_valid_start, t_ingested)
+       VALUES ('tr1', 't1', 'a1', 's', 'p', 'o', 'system', 1, 1)`,
+    ).run();
+    expect(() => initSchema(db, 1536)).not.toThrow();
+    expect(() => ensureTripleTable(db)).not.toThrow();
+    expect(
+      (db.prepare("SELECT COUNT(*) AS c FROM memory_triples").get() as { c: number }).c,
+    ).toBe(1);
   });
 });
