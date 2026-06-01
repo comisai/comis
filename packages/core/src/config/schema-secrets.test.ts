@@ -17,9 +17,10 @@ import { SecretsConfigSchema } from "./schema-secrets.js";
 import { checkLegacyConfigKeys } from "./migration-guard.js";
 
 describe("SecretsConfigSchema defaults agree with daemon secure-by-default behavior", () => {
-  it("parses an empty object to dbPath='secrets.db' (default relative path under dataDir)", () => {
-    const parsed = SecretsConfigSchema.parse({});
-    expect(parsed.dbPath).toBe("secrets.db");
+  it("parses an empty object successfully (no fields remain after dbPath removal)", () => {
+    // dbPath was removed in v1.5 Plan 02-02 as a dead knob.
+    // SecretsConfigSchema is now z.strictObject({}) — parsing {} succeeds.
+    expect(() => SecretsConfigSchema.parse({})).not.toThrow();
   });
 });
 
