@@ -1364,4 +1364,32 @@ describe("createSqliteMemoryConsolidationStore", () => {
       expect(cand?.embedding).toBeUndefined();
     });
   });
+
+  // Phase 101 (REASON-04): the corpus-wide k-NN cosine DISTANCES read — the
+  // surprisal-gate engine the agent cannot run as SQL. This wave (101-02) lands
+  // the type-only port method + a contract-satisfying graceful-degrade adapter
+  // body (ok([]) — valid when sqlite-vec is unavailable); the sqlite-vec
+  // searchByVector-backed surprisal query (the GLOBAL vec table, per-candidate
+  // scoring) is wired in 101-03 with its own RED test. This test pins only the
+  // FORWARD-COMPATIBLE contract surface live today — true for both the 101-02
+  // degrade body and the 101-03 real impl: knnDistances exists, returns a
+  // sorted, non-negative number[] of distances, and NEVER throws.
+  describe("knnDistances — surprisal k-NN read (REASON-04)", () => {
+    it("returns ok with a sorted non-negative number[] of distances and never throws (the surprisal-gate contract)", async () => {
+      await seedMemory({ content: "a neighbour candidate", createdAt: 100 });
+      const res = await store.knnDistances([0.1, 0.2, 0.3, 0.4], 5, AGENT_A, TENANT_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(Array.isArray(res.value)).toBe(true);
+      // An empty list is valid (sqlite-vec unavailable / no neighbours); a
+      // non-empty list MUST be sorted ascending (closer first) and non-negative —
+      // the invariant both the 101-02 degrade body and the 101-03 impl uphold.
+      for (let i = 1; i < res.value.length; i++) {
+        expect(res.value[i]).toBeGreaterThanOrEqual(res.value[i - 1]!);
+      }
+      for (const d of res.value) {
+        expect(d).toBeGreaterThanOrEqual(0);
+      }
+    });
+  });
 });
