@@ -1366,14 +1366,14 @@ describe("createSqliteMemoryConsolidationStore", () => {
   });
 
   // Phase 101 (REASON-04): the corpus-wide k-NN cosine DISTANCES read — the
-  // surprisal-gate engine the agent cannot run as SQL. This wave (101-02) lands
+  // surprisal-gate engine the agent cannot run as SQL. The 101-02 wave landed
   // the type-only port method + a contract-satisfying graceful-degrade adapter
-  // body (ok([]) — valid when sqlite-vec is unavailable); the sqlite-vec
-  // searchByVector-backed surprisal query (the GLOBAL vec table, per-candidate
-  // scoring) is wired in 101-03 with its own RED test. This test pins only the
-  // FORWARD-COMPATIBLE contract surface live today — true for both the 101-02
-  // degrade body and the 101-03 real impl: knnDistances exists, returns a
-  // sorted, non-negative number[] of distances, and NEVER throws.
+  // body (ok([])); THIS wave (101-03) wires the real sqlite-vec searchByVector
+  // surprisal query (the GLOBAL vec table, ascending distances). The first test
+  // pins the FORWARD-COMPATIBLE contract surface that holds for BOTH the degrade
+  // body and the real impl; the RED tests below additionally PROVE the real
+  // read returns actual neighbour distances (the 101-02 stub returned ok([]),
+  // so they FAIL on the pre-patch adapter — a clean RED).
   describe("knnDistances — surprisal k-NN read (REASON-04)", () => {
     it("returns ok with a sorted non-negative number[] of distances and never throws (the surprisal-gate contract)", async () => {
       await seedMemory({ content: "a neighbour candidate", createdAt: 100 });
@@ -1389,6 +1389,122 @@ describe("createSqliteMemoryConsolidationStore", () => {
       }
       for (const d of res.value) {
         expect(d).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it("RED (real read): with embedded neighbours seeded, returns ≤k cosine distances sorted ASCENDING, each ≥ 0", async () => {
+      // sqlite-vec must be available for searchByVector to return rows.
+      expect(isVecAvailable()).toBe(true);
+
+      // Seed 4 memories WITH embeddings (adapter.store writes them into the
+      // GLOBAL vec_memories table — the same table searchByVector reads). The
+      // dims (4) match memoryConfig.embeddingDimensions.
+      await seedMemory({ content: "near A", createdAt: 100, embedding: [0.10, 0.20, 0.30, 0.40] });
+      await seedMemory({ content: "near B", createdAt: 200, embedding: [0.11, 0.21, 0.31, 0.41] });
+      await seedMemory({ content: "far C", createdAt: 300, embedding: [0.90, 0.10, 0.05, 0.02] });
+      await seedMemory({ content: "far D", createdAt: 400, embedding: [-0.5, -0.4, -0.3, -0.2] });
+
+      const k = 3;
+      const res = await store.knnDistances([0.10, 0.20, 0.30, 0.40], k, AGENT_A, TENANT_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+
+      // The 101-02 stub returned ok([]) — THIS is the RED-distinguishing
+      // assertion: the real searchByVector read surfaces actual neighbours.
+      expect(res.value.length).toBeGreaterThan(0);
+      expect(res.value.length).toBeLessThanOrEqual(k); // ≤ k neighbours (the cap)
+      // Sorted ASCENDING (closer first — searchByVector's contract, passed through).
+      for (let i = 1; i < res.value.length; i++) {
+        expect(res.value[i]).toBeGreaterThanOrEqual(res.value[i - 1]!);
+      }
+      // Every value is a real cosine distance ≥ 0.
+      for (const d of res.value) {
+        expect(typeof d).toBe("number");
+        expect(Number.isFinite(d)).toBe(true);
+        expect(d).toBeGreaterThanOrEqual(0);
+      }
+    });
+
+    it("RED (determinism): two calls with the same embedding + k return identical distance arrays (the surprisal gate depends on reproducibility, Pitfall 3)", async () => {
+      expect(isVecAvailable()).toBe(true);
+      await seedMemory({ content: "n1", createdAt: 100, embedding: [0.10, 0.20, 0.30, 0.40] });
+      await seedMemory({ content: "n2", createdAt: 200, embedding: [0.40, 0.30, 0.20, 0.10] });
+      await seedMemory({ content: "n3", createdAt: 300, embedding: [0.05, 0.05, 0.05, 0.05] });
+
+      const q = [0.10, 0.20, 0.30, 0.40];
+      const first = await store.knnDistances(q, 3, AGENT_A, TENANT_A);
+      const second = await store.knnDistances(q, 3, AGENT_A, TENANT_A);
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      if (!first.ok || !second.ok) return;
+      // Non-empty (the real read ran) AND byte-identical across the two calls.
+      expect(first.value.length).toBeGreaterThan(0);
+      expect(second.value).toEqual(first.value);
+    });
+
+    it("graceful degrade: with NO embedded rows in the vec table, returns ok([]) (never err, never throws)", async () => {
+      // Seed only raw memories WITHOUT embeddings — searchByVector finds no
+      // neighbours, so the distance list is empty. ok([]) is the valid degrade.
+      await seedMemory({ content: "no embedding here", createdAt: 100 });
+      const res = await store.knnDistances([0.1, 0.2, 0.3, 0.4], 5, AGENT_A, TENANT_A);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.value).toEqual([]);
+    });
+
+    it("logs a counts-only step:'reason-knn' DEBUG on a successful read (never the embedding values)", async () => {
+      await seedMemory({ content: "neighbour", createdAt: 100, embedding: [0.1, 0.2, 0.3, 0.4] });
+      const debugs: { obj: Record<string, unknown>; msg: string }[] = [];
+      const logger = {
+        info: () => {},
+        warn: () => {},
+        debug: (obj: Record<string, unknown>, msg: string) => debugs.push({ obj, msg }),
+      };
+      const s = createSqliteMemoryConsolidationStore({ db, logger });
+      const r = await s.knnDistances([0.1, 0.2, 0.3, 0.4], 3, AGENT_A, TENANT_A);
+      expect(r.ok).toBe(true);
+      const line = debugs.find((d) => d.obj.step === "reason-knn");
+      expect(line).toBeDefined();
+      // Counts/duration metadata only — the embedding values are NEVER logged.
+      expect(typeof line?.obj.count).toBe("number");
+      const serialized = JSON.stringify(line?.obj ?? {});
+      expect(serialized).not.toContain("0.1");
+      expect(serialized).not.toContain("0.2");
+    });
+
+    it("returns err (never throws) when the underlying vec query throws", async () => {
+      // Monkeypatch db.prepare so the vec MATCH query throws on execution; the
+      // adapter must catch it and return err — the surprisal gate degrades for
+      // that candidate, the run never crashes (T-101-03-03).
+      await seedMemory({ content: "neighbour", createdAt: 100, embedding: [0.1, 0.2, 0.3, 0.4] });
+      const warns: { obj: Record<string, unknown>; msg: string }[] = [];
+      const logger = {
+        info: () => {},
+        warn: (obj: Record<string, unknown>, msg: string) => warns.push({ obj, msg }),
+        debug: () => {},
+      };
+      const realPrepare = db.prepare.bind(db);
+      const spy = (sql: string) => {
+        const stmt = realPrepare(sql);
+        if (/vec_memories/.test(sql) && /embedding MATCH/.test(sql)) {
+          return {
+            ...stmt,
+            all: () => {
+              throw new Error("injected vec query failure");
+            },
+          } as unknown as ReturnType<typeof realPrepare>;
+        }
+        return stmt;
+      };
+      // @ts-expect-error -- test-only monkeypatch of the prepared-statement factory
+      db.prepare = spy;
+      try {
+        const s = createSqliteMemoryConsolidationStore({ db, logger });
+        const r = await s.knnDistances([0.1, 0.2, 0.3, 0.4], 3, AGENT_A, TENANT_A);
+        expect(r.ok).toBe(false); // returns err, never throws
+        expect(warns.some((w) => w.obj.step === "reason-knn")).toBe(true);
+      } finally {
+        db.prepare = realPrepare;
       }
     });
   });
