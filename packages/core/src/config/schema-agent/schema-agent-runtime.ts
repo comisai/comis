@@ -23,6 +23,7 @@ import { VerbosityConfigSchema } from "../schema-verbosity.js";
 import { BackgroundTasksConfigSchema } from "../schema-background-tasks.js";
 import { MemoryReviewConfigSchema } from "../schema-memory-review.js";
 import { MemoryConsolidationConfigSchema } from "../schema-memory-consolidation.js";
+import { MemoryReasoningConfigSchema } from "../schema-memory-reasoning.js";
 import { validateProfileId } from "../../security/profile-id.js";
 
 // Sibling-leaf imports (one-directional dependency graph).
@@ -361,6 +362,8 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   memoryReview: MemoryReviewConfigSchema.optional(),
   /** Periodic memory consolidation configuration (observation clustering, Phase 84; off by default) */
   memoryConsolidation: MemoryConsolidationConfigSchema.optional(),
+  /** Periodic memory reasoning configuration (deductive/inductive observations, Phase 101; off by default) */
+  memoryReasoning: MemoryReasoningConfigSchema.optional(),
   /**
    * Per-provider OAuth profile preferences (provider -> profileId map).
    * When set, the OAuthTokenManager resolves the named profile for that
