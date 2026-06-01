@@ -16,23 +16,18 @@ import { describe, it, expect } from "vitest";
 import { SecretsConfigSchema } from "./schema-secrets.js";
 
 describe("SecretsConfigSchema defaults agree with daemon secure-by-default behavior", () => {
-  it("parses an empty object to enabled=true (matches daemon writeMasterKeyIfAbsent default path)", () => {
-    const parsed = SecretsConfigSchema.parse({});
-    expect(parsed.enabled).toBe(true);
-  });
-
   it("parses an empty object to dbPath='secrets.db' (default relative path under dataDir)", () => {
     const parsed = SecretsConfigSchema.parse({});
     expect(parsed.dbPath).toBe("secrets.db");
   });
+});
 
-  it("preserves an explicit enabled=false as an opt-out toggle", () => {
-    const parsed = SecretsConfigSchema.parse({ enabled: false });
-    expect(parsed.enabled).toBe(false);
-  });
+// ---------------------------------------------------------------------------
+// SecretsConfigSchema.enabled removal — RED test (added before production patch)
+// ---------------------------------------------------------------------------
 
-  it("preserves an explicit enabled=true (idempotent with the new default)", () => {
-    const parsed = SecretsConfigSchema.parse({ enabled: true });
-    expect(parsed.enabled).toBe(true);
+describe("SecretsConfigSchema no longer has an enabled field", () => {
+  it("SecretsConfigSchema no longer has an enabled field after legacy removal", () => {
+    expect("enabled" in SecretsConfigSchema.shape).toBe(false);
   });
 });
