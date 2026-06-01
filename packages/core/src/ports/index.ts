@@ -38,6 +38,13 @@ export type {
   UserRepresentationInput,
 } from "./user-representation-store.js";
 export type {
+  RelationshipStore,
+  RelationshipScope,
+  RelationshipTrust,
+  RelationshipEntry,
+  RelationshipInput,
+} from "./relationship-store.js";
+export type {
   MemoryUsefulnessStore,
   UsefulnessScope,
   UsefulnessSignal,
