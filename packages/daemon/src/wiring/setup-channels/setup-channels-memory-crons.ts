@@ -22,9 +22,10 @@
  */
 
 import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore } from "@comis/core";
+import { parseFormattedSessionKey } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
-import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, type UserRepresentationSourceMemory } from "@comis/agent";
+import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, runRelationshipBuild, createRelationshipSeam, type UserRepresentationSourceMemory, type RelationshipSourceMemory } from "@comis/agent";
 
 /** The minimal `scheduler:job_result` payload shape the sentinel handlers read. */
 interface MemoryCronPayload {
@@ -71,7 +72,7 @@ export async function handleMemoryCronSentinel(
   payload: MemoryCronPayload,
   ctx: MemoryCronContext,
 ): Promise<boolean> {
-  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore, userRepresentationStore, memoryApi } = ctx;
+  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, memoryApi } = ctx;
 
   // -- Memory consolidation sentinel intercept (Phase 84, CONS-07) --
   if (resultText === "__MEMORY_CONSOLIDATION__") {
@@ -344,6 +345,154 @@ export async function handleMemoryCronSentinel(
     }
 
     payload.onComplete?.({ status: anyError ? "error" : "ok", error: anyError ? "One or more per-user representation builds failed" : undefined });
+    return true;
+  }
+
+  // -- Social modeling sentinel intercept (Phase 108, SOCIAL-01/02/03) --
+  // The offline DIRECTIONAL relationship builder. It fires per (tenant, agent); it groups the
+  // agent's high-trust sources by RESOLVED channelId (the SOCIAL-02 per-channel privacy boundary)
+  // and invokes runRelationshipBuild ONCE per channel, scoped to (tenant, agent, channel), with a
+  // readSources seam yielding that channel's multi-user sources (sender attribution preserved). The
+  // anti-poisoning external-exclude + the redaction firewall live in the job. The gate is STRICTER
+  // than the representation cron: it requires BOTH enabled AND a recorded privacy-review sign-off.
+  if (resultText === "__SOCIAL_MODELING__") {
+    const { agentId } = payload;
+    if (!agentId) {
+      logger.warn({ hint: "Social modeling job fired without agentId", errorKind: "config" as const }, "Skipping social modeling build -- no agentId");
+      payload.onComplete?.({ status: "error", error: "No agentId for social modeling build" });
+      return true;
+    }
+
+    const agentConfig = agents[agentId];
+    const cfg = agentConfig?.socialModeling;
+    // The SOCIAL-03 dual gate (defense-in-depth with the scheduler registration): refuse to run
+    // unless the feature is enabled AND a privacy-review sign-off is recorded. A knob-on-but-not-
+    // signed-off agent does NO LLM work + NO write — short-circuit ok (clean no-op, byte-identical).
+    if (!cfg?.enabled || !cfg?.privacyReviewSignedOffBy) {
+      logger.debug({ agentId }, "Social modeling disabled or not privacy-signed-off for agent, skipping");
+      payload.onComplete?.({ status: "ok" });
+      return true;
+    }
+
+    // The read surface + the write store MUST be present (injected from setup-memory). Absent =>
+    // cannot scope the per-channel source read / write — surface a clean error rather than no-op.
+    if (!memoryApi || !relationshipStore) {
+      logger.warn({ agentId, hint: "memoryApi/relationshipStore not injected -- cannot build per-channel relationships", errorKind: "config" as const }, "Skipping social modeling build -- store/read surface missing");
+      payload.onComplete?.({ status: "error", error: "Social modeling read/write surface not wired" });
+      return true;
+    }
+
+    // Resolve the cheap model via the "cron" operation type (IDENTICAL to the representation block).
+    const resolved = resolveOperationModel({
+      operationType: "cron",
+      agentProvider: agentConfig.provider ?? "anthropic",
+      agentModel: agentConfig.model ?? "anthropic:claude-sonnet-4-20250514",
+      operationModels: agentConfig.operationModels ?? {},
+      providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
+    });
+
+    const providerEntry = container.config.providers?.entries?.[resolved.provider];
+    const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
+    const apiKey = container.secretManager.get(apiKeyName) ?? "";
+    if (!apiKey) {
+      logger.warn({ agentId, provider: resolved.provider, hint: `Set ${apiKeyName} in secrets for social modeling build`, errorKind: "config" as const }, "Skipping social modeling build -- no API key");
+      payload.onComplete?.({ status: "error", error: `No API key for ${resolved.provider}` });
+      return true;
+    }
+
+    const relTenantId = tenantId ?? container.config.tenantId ?? "default";
+    const relLogger = logger.child({ agentId, submodule: "social-modeling" });
+
+    // Read the agent's HIGH-TRUST source memories (system + learned) once, then group by the
+    // RESOLVED channelId (the SOCIAL-02 write-side boundary). InspectFilters has no channel axis,
+    // so the read is per-(tenant, agent) and the grouping is done here (mirror the per-user grouping
+    // in the representation cron). channelId is recovered from each source's session key via
+    // parseFormattedSessionKey; a source whose channelId CANNOT be resolved (NULL session key —
+    // system/non-conversation memories) is SKIPPED + counted (Pitfall 1: NEVER bucket undefined —
+    // that would collapse cross-channel sources into one leak bucket). entry.userId is the SPEAKER
+    // (the subject candidate; sender attribution is preserved into the build seam, RQ3).
+    const SOURCE_READ_LIMIT = 1000;
+    const sourcesByChannel = new Map<string, RelationshipSourceMemory[]>();
+    let skippedNoChannel = 0;
+    for (const trustLevel of ["system", "learned"] as const) {
+      const rows = memoryApi.inspect({ tenantId: relTenantId, agentId, trustLevel, limit: SOURCE_READ_LIMIT });
+      if (rows.length >= SOURCE_READ_LIMIT) {
+        relLogger.warn(
+          {
+            agentId,
+            trustLevel,
+            limit: SOURCE_READ_LIMIT,
+            returned: rows.length,
+            errorKind: "validation" as const,
+            hint: "high-trust source read hit the per-trust-level cap — only the NEWEST sources are distilled into per-channel relationships this run; older facts are dropped and per-channel edges may be incomplete/non-deterministic. Reduce retention or split the agent if this persists",
+          },
+          "Social modeling source read truncated at the per-trust-level cap (MR-01)",
+        );
+      }
+      for (const row of rows) {
+        const channelId = row.source?.sessionKey
+          ? parseFormattedSessionKey(row.source.sessionKey)?.channelId
+          : undefined;
+        if (!channelId) {
+          // Counts-only skip — never bucket an unresolved channelId (Pitfall 1).
+          skippedNoChannel++;
+          continue;
+        }
+        const list = sourcesByChannel.get(channelId) ?? [];
+        list.push({ id: row.id, userId: row.userId, content: row.content, trustLevel: row.trustLevel as "system" | "learned" | "external" });
+        sourcesByChannel.set(channelId, list);
+      }
+    }
+    if (skippedNoChannel > 0) {
+      // Observable (counts-only) — an operator can diagnose a thin per-channel set vs message volume.
+      relLogger.warn(
+        { agentId, skippedNoChannel, errorKind: "validation" as const, hint: "sources with an unresolvable channel id (NULL/system session key) were skipped — they are NOT bucketed into any channel (the SOCIAL-02 per-channel boundary)" },
+        "Social modeling skipped sources with no resolvable channel id",
+      );
+    }
+
+    // Build the cheap-model seam ONCE (reused across channels — the prompt is per-source-text).
+    const build = createRelationshipSeam({
+      provider: resolved.provider,
+      modelId: resolved.modelId,
+      apiKey,
+      maxOutputTokens: 1024,
+      clock,
+      logger: relLogger,
+      agentId,
+    });
+
+    let anyError = false;
+    for (const [channelId, sources] of sourcesByChannel) {
+      const result = await runRelationshipBuild({
+        agentId,
+        tenantId: relTenantId,
+        channelId,
+        config: {
+          enabled: cfg.enabled,
+          maxEntriesPerRun: cfg.maxEntriesPerRun,
+          // MR-02 per-build INPUT bounds (forwarded so an operator's knobs reach the job; the job
+          // also defaults them when absent).
+          maxSourceMemories: cfg.maxSourceMemories,
+          maxSourceChars: cfg.maxSourceChars,
+        },
+        // Injected from setup-memory (the composition-root join) — the port TYPE only.
+        relationshipStore,
+        // The scoped read seam: this channel's already-fetched high-trust sources (the job runs its
+        // own external-exclude + redaction firewall over them).
+        readSources: () => Promise.resolve({ ok: true as const, value: sources }),
+        clock,
+        logger: relLogger,
+        eventBus: container.eventBus,
+        build,
+      });
+      if (!result.ok) {
+        anyError = true;
+        relLogger.error({ agentId, channelId, err: result.error, hint: "Social modeling build failed for channel -- will retry next cycle", errorKind: "internal" as const }, "Social modeling build error");
+      }
+    }
+
+    payload.onComplete?.({ status: anyError ? "error" : "ok", error: anyError ? "One or more per-channel relationship builds failed" : undefined });
     return true;
   }
 

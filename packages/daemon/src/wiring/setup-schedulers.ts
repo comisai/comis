@@ -386,6 +386,40 @@ export async function setupSchedulers(deps: {
         schedulerLogger.info({ agentId, schedule: memoryUserRepresentationConfig.schedule ?? "0 5 * * *" }, "Registered memory user representation cron job");
       }
     }
+
+    // -- Social modeling cron job (Phase 108, SOCIAL-01/02/03 — Track E2) --
+    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron). The SOCIAL-03 gate is STRICTER than
+    // the other memory crons: register ONLY when the operator BOTH sets socialModeling.enabled AND
+    // records a privacy-review sign-off (privacyReviewSignedOffBy). A knob-on-but-not-signed-off agent
+    // registers NO job → byte-identical with the config absent (the sign-off is the operator gate; the
+    // sentinel handler re-checks the SAME dual gate, defense-in-depth). Default schedule 0 6 * * * runs
+    // AFTER the representation cron's 0 5 so relationships are built over freshly-profiled memories.
+    // The __SOCIAL_MODELING__ sentinel is intercepted in setup-channels-memory-crons → runRelationshipBuild
+    // (the per-channel offline directional-edge upsert, source-grouped via memoryApi.inspect +
+    // parseFormattedSessionKey + the createRelationshipSeam cheap-model seam).
+    const socialModelingConfig = agentConfig.socialModeling;
+    if (socialModelingConfig?.enabled && socialModelingConfig?.privacyReviewSignedOffBy) {
+      const memSocialJobId = `memory-social-modeling-${agentId}`;
+      const existingJobs = scheduler.getJobs();
+      const alreadyRegistered = existingJobs.some((j) => j.id === memSocialJobId);
+      if (!alreadyRegistered) {
+        await scheduler.addJob({
+          id: memSocialJobId,
+          name: "Memory social modeling",
+          agentId,
+          schedule: { kind: "cron", expr: socialModelingConfig.schedule ?? "0 6 * * *" },
+          payload: { kind: "system_event", text: "__SOCIAL_MODELING__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: socialModelingConfig.schedule ?? "0 6 * * *" }, "Registered memory social modeling cron job");
+      }
+    }
   }
 
   /** Resolve the CronScheduler for a given agent ID. Throws descriptive error if not found. */
