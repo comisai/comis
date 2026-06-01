@@ -93,6 +93,7 @@ describe("MemoryConsolidationStore.foldIntoExisting — proof accrual (FOLD-01/0
       foldIntoExisting: async (
         _plan: ConsolidationFoldPlan,
       ): Promise<Result<MemoryEntry, Error>> => ok(grown),
+      knnDistances: async (): Promise<Result<number[], Error>> => ok([]),
     };
 
     const plan: ConsolidationFoldPlan = {
@@ -120,6 +121,7 @@ describe("MemoryConsolidationStore.foldIntoExisting — proof accrual (FOLD-01/0
       listObservations: async (): Promise<Result<MemoryEntry[], Error>> => ok([]),
       applyConsolidation: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
       foldIntoExisting: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
+      knnDistances: async (): Promise<Result<number[], Error>> => ok([]),
     };
     expectTypeOf(stub.foldIntoExisting).parameters.toEqualTypeOf<[ConsolidationFoldPlan]>();
     expectTypeOf(stub.foldIntoExisting).returns.toEqualTypeOf<Promise<Result<MemoryEntry, Error>>>();
@@ -145,5 +147,87 @@ describe("MemoryConsolidationStore.foldIntoExisting — proof accrual (FOLD-01/0
     // `content` is optional (omit to keep existing content — no FTS churn).
     expectTypeOf(plan.content).toEqualTypeOf<string | undefined>();
     expect(plan.newSourceIds).toHaveLength(1);
+  });
+});
+
+/**
+ * Phase 101 (REASON-04) — the surprisal-gate engine: a corpus-wide k-NN cosine
+ * DISTANCES read on `MemoryConsolidationStore`. The agent cannot run SQL, so the
+ * read crosses the agent↛memory cut as a port TYPE method (the adapter
+ * implements it in 101-03). The method is (tenantId, agentId)-scoped and returns
+ * the distances sorted ascending, or `ok([])` when sqlite-vec is unavailable
+ * (graceful degrade).
+ *
+ * Type-only assertions: an implementer MUST expose `knnDistances(embedding,
+ * k, agentId, tenantId)` returning `Promise<Result<number[], Error>>`. The port
+ * stays type-only — no zod, no @comis/memory runtime import (the CUT INVARIANT).
+ */
+describe("MemoryConsolidationStore.knnDistances — surprisal k-NN read (REASON-04)", () => {
+  it("declares knnDistances on the port and stays type-only (no zod, no @comis/memory)", () => {
+    // Runtime RED proof: fails on pre-patch source where the method is absent.
+    expect(portSrc, "knnDistances method must be on the port").toMatch(
+      /\bknnDistances\s*\(/,
+    );
+    // The port must stay type-only — neither a zod dependency nor a runtime
+    // import of @comis/memory (that would break the agent↛memory build cut).
+    expect(portSrc, "no zod in a type-only port").not.toMatch(/\bz\.[a-z]/);
+    expect(portSrc, "no @comis/memory import in core port").not.toMatch(
+      /^\s*import\b[^\n]*@comis\/memory/m,
+    );
+  });
+
+  it("accepts a structurally-valid implementation exposing knnDistances returning sorted distances", async () => {
+    const grown = makeObservation();
+    const stub: MemoryConsolidationStore = {
+      listConsolidationCandidates: async (): Promise<Result<ConsolidationCandidate[], Error>> =>
+        ok([]),
+      listObservations: async (): Promise<Result<MemoryEntry[], Error>> => ok([]),
+      applyConsolidation: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
+      foldIntoExisting: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
+      knnDistances: async (
+        _embedding: number[],
+        _k: number,
+        _agentId: string,
+        _tenantId: string,
+      ): Promise<Result<number[], Error>> => ok([0.1, 0.3, 0.42]),
+    };
+    const res = await stub.knnDistances([0.1, 0.2, 0.3], 3, "agent_a", "tenant_a");
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value).toEqual([0.1, 0.3, 0.42]);
+    }
+  });
+
+  it("returns ok([]) when sqlite-vec is unavailable (graceful degrade)", async () => {
+    const grown = makeObservation();
+    const stub: MemoryConsolidationStore = {
+      listConsolidationCandidates: async (): Promise<Result<ConsolidationCandidate[], Error>> =>
+        ok([]),
+      listObservations: async (): Promise<Result<MemoryEntry[], Error>> => ok([]),
+      applyConsolidation: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
+      foldIntoExisting: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
+      knnDistances: async (): Promise<Result<number[], Error>> => ok([]),
+    };
+    const res = await stub.knnDistances([0.1, 0.2], 5, "agent_a", "tenant_a");
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.value).toEqual([]);
+    }
+  });
+
+  it("checks knnDistances is typed as (number[], number, string, string) => Promise<Result<number[], Error>>", () => {
+    const grown = makeObservation();
+    const stub: MemoryConsolidationStore = {
+      listConsolidationCandidates: async (): Promise<Result<ConsolidationCandidate[], Error>> =>
+        ok([]),
+      listObservations: async (): Promise<Result<MemoryEntry[], Error>> => ok([]),
+      applyConsolidation: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
+      foldIntoExisting: async (): Promise<Result<MemoryEntry, Error>> => ok(grown),
+      knnDistances: async (): Promise<Result<number[], Error>> => ok([]),
+    };
+    expectTypeOf(stub.knnDistances).parameters.toEqualTypeOf<
+      [number[], number, string, string]
+    >();
+    expectTypeOf(stub.knnDistances).returns.toEqualTypeOf<Promise<Result<number[], Error>>>();
   });
 });
