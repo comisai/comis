@@ -30,11 +30,14 @@
  * as-is, so a secret-shaped STRING value hung off an input map (`apiKey`,
  * `base_url`, an `authorization: Bearer ...`) has no path to the output (it
  * coerces to a number, never a leaked string); (2) a category whose value is NOT
- * a finite number is DROPPED entirely (`Number.isFinite` guard) -- so a
- * secret-shaped KEY whose value is a non-numeric secret string (e.g.
- * `apiKey: "sk-..."` hung at the category level) never emits a `category` entry
- * carrying that key. A legitimate per-category accuracy is always a finite
- * number, so this drops only off-contract pollution, never a real category.
+ * a finite number -- from EITHER judge (the A-guard and the SYMMETRIC B-guard,
+ * IN-03) -- is DROPPED entirely (`Number.isFinite`) -- so a secret-shaped KEY
+ * whose value is a non-numeric secret string (e.g. `apiKey: "sk-..."` hung at the
+ * category level on either map) never emits a `category` entry carrying that key,
+ * and no degenerate `{ judgeB: NaN }` row (which `JSON.stringify`s to a misleading
+ * `null`) ever reaches the committed artifact. A legitimate per-category accuracy
+ * is always a finite number, so this drops only off-contract pollution, never a
+ * real category.
  *
  * SECURITY -- prototype-pollution discipline (T-104-01-02, copied from
  * qa-accuracy.ts:135): the category keys originate from the UNTRUSTED dataset
@@ -92,19 +95,23 @@ export interface CategorySpread {
  *
  * Iterates `Object.keys(perCategoryA)`; for each category, judge B's value falls
  * back to judge A's when the category is ABSENT in B -- yielding an explicit
- * spread of 0 (survives), never a crash on a missing category.
+ * spread of 0 (survives), never a crash on a missing category. A category is
+ * DROPPED when EITHER judge's value is non-finite (IN-03: the symmetric guards),
+ * so the output carries only real, comparable categories.
  *
  * SECURITY: each output {@link CategorySpread} is rebuilt from numerically
  * coerced scalars (`Number(...)`) -- the input map value is never spread or
  * copied as-is, so a secret-shaped STRING value on an input map cannot reach the
- * output (it coerces to a number / NaN). The output is a plain array (no map
- * keyed by the untrusted category string), so there is no prototype-mutation
+ * output (it coerces to NaN and the category is then dropped by the finite-guard,
+ * never leaked as a string nor as a `null` row). The output is a plain array (no
+ * map keyed by the untrusted category string), so there is no prototype-mutation
  * surface.
  *
  * @param perCategoryA judge A's per-category accuracy (percentage points)
  * @param perCategoryB judge B's per-category accuracy (percentage points)
  * @param tolerancePts the survival tolerance (default {@link SURVIVAL_TOLERANCE_PTS})
- * @returns one {@link CategorySpread} per category present in `perCategoryA`
+ * @returns one {@link CategorySpread} per category present in `perCategoryA` with
+ *   a finite value in BOTH judges (categories with a non-finite A or B are dropped)
  */
 export function computeCrossJudgeSpread(
   perCategoryA: Record<string, number>,
@@ -124,6 +131,15 @@ export function computeCrossJudgeSpread(
     // missing-in-B -> use A as the explicit fallback (spread 0), never crash.
     const rawB = category in perCategoryB ? perCategoryB[category] : perCategoryA[category];
     const b = Number(rawB);
+    // SECURITY (T-104-01-01, IN-03): SYMMETRIC with the A-guard above. A garbage
+    // judge-B value (a secret-shaped string hung on the B map coerces to NaN) is
+    // "no comparable judge-B value for this category" -- DROP the category rather
+    // than emit a kept { judgeB: NaN, spread: NaN, survives: false } row. That
+    // serializes a misleading `null` into the published cross-judge-spread artifact
+    // (JSON.stringify(NaN) === null), reading as a real non-surviving category
+    // instead of dropped pollution. A real per-category accuracy is always finite,
+    // so this drops only off-contract pollution, never a real category.
+    if (!Number.isFinite(b)) continue;
     const spread = Math.abs(a - b);
     out.push({
       // `category` is a primitive string copied as-is (a key, not a value); it
@@ -132,9 +148,8 @@ export function computeCrossJudgeSpread(
       judgeA: a,
       judgeB: b,
       spread,
-      // NaN <= tol is false, so a degenerate spread (e.g. a polluted judge-B
-      // value while A is finite) never reads as "survives" -- a fail-safe, never
-      // a fabricated-looking stable number.
+      // Both judges are finite here (the guards above dropped any non-finite
+      // value), so `spread` is a finite number and `survives` is a real boolean.
       survives: spread <= tolerancePts,
     });
   }
