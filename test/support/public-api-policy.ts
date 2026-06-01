@@ -1708,6 +1708,27 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // inferred UserRepresentationType. Shrinks when those consumers land.
       "UserRepresentationTypeSchema",
       "UserRepresentationType",
+      // Directional relationship port (Phase 108-01, Track E2 — SOCIAL-01). This is
+      // the FIRST plan of the phase (Wave 1): the type-only RelationshipStore port
+      // carrying the directional (subjectUserId, aboutUserId) pair + the
+      // (tenant, agent, channel) scope is the contract every later piece consumes —
+      // the SOLE @comis/memory adapter (Plan 02), the offline directional builder,
+      // the (optional) LLM-free injection, and the daemon wiring all import these
+      // from @comis/core BY TYPE (never @comis/memory — the agent↛memory build cut).
+      // No in-repo consumer exists yet (the adapter lands in Plan 02), so the
+      // export-graph walker counts them as orphans. They are the documented
+      // Phase-108 port API surface — tracked here as planned-orphans, mirror the
+      // UserRepresentationStore / TripleStorePort ahead-of-consumer dance. Shrinks as
+      // Plan 02 (adapter, by TYPE) → the builder/injection → the daemon wiring
+      // reference each name directly.
+      "RelationshipStore",
+      "RelationshipScope",
+      // RelationshipTrust is referenced only INSIDE RelationshipInput.trust (a field
+      // type, not a standalone import) — the same orphan shape as TripleTrust /
+      // UserRepresentationTrust.
+      "RelationshipTrust",
+      "RelationshipEntry",
+      "RelationshipInput",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
