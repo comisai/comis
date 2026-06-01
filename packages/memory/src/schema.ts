@@ -353,6 +353,59 @@ export function ensureUserRepresentationTable(db: Database.Database): void {
 }
 
 /**
+ * Create the `relationship` table — the sole storage for directional, multi-party
+ * relationship modeling (Phase 108, Track E2 — SOCIAL-02). Additive, forward-only;
+ * idempotent (`IF NOT EXISTS`). Owns the durable, DIRECTIONAL, HIGH-TRUST edge
+ * `subjectUser`'s representation OF `aboutUser`, scoped to one (tenant, agent,
+ * channel). The sole SQL adapter is `createSqliteRelationshipStore`
+ * (sqlite-relationship-store.ts).
+ *
+ * ## The high-trust floor at the DB layer (T-108-05, layer 1 of the 3-layer
+ *    anti-poisoning defense)
+ *
+ * `trust TEXT NOT NULL CHECK(trust IN ('system','learned'))` — `'external'` is
+ * STRUCTURALLY ABSENT from the CHECK, so external-trust content can NEVER enter a
+ * relationship at the DB layer. Defense-in-depth with the adapter's write-boundary
+ * reject (layer 3) and the port-type floor (`RelationshipTrust`, layer 2 — 108-01).
+ *
+ * ## Isolation (SOCIAL-02, the §5.2 invariant, EXTENDED with `channel_id` — the
+ *    NEW privacy axis)
+ *
+ * Every row carries `tenant_id` + `agent_id` + `channel_id`, and
+ * `idx_relationship_scope` leads with all three — the adapter filters every
+ * statement on `(tenant_id, agent_id, channel_id)`. The directional
+ * `(subject_user_id, about_user_id)` pair is ROW DATA inside that scope, NOT part
+ * of the security filter; A→B is a DISTINCT row from B→A (never symmetrized). The
+ * `source_memory_id -> memories(id)` `ON DELETE CASCADE` fires via the
+ * `PRAGMA foreign_keys = ON` already set by `openSqliteDatabase` (no pragma is set
+ * here) — deleting a source memory drops its derived relationship edges.
+ *
+ * @param db - An open better-sqlite3 Database whose `memories` table already
+ *   exists (the FK target). Call AFTER `ensureUserRepresentationTable` in
+ *   `initSchema` so the `memories` FK target exists.
+ */
+export function ensureRelationshipTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS relationship (
+      id               TEXT NOT NULL,
+      tenant_id        TEXT NOT NULL,
+      agent_id         TEXT NOT NULL,
+      channel_id       TEXT NOT NULL,
+      subject_user_id  TEXT NOT NULL,
+      about_user_id    TEXT NOT NULL,
+      content          TEXT NOT NULL,
+      trust            TEXT NOT NULL CHECK(trust IN ('system','learned')),
+      source_memory_id TEXT REFERENCES memories(id) ON DELETE CASCADE,
+      created_at       INTEGER NOT NULL,
+      updated_at       INTEGER,
+      PRIMARY KEY (id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_relationship_scope
+      ON relationship(tenant_id, agent_id, channel_id);
+  `);
+}
+
+/**
  * Initialize the full memory schema on the given SQLite database.
  *
  * Creates:
@@ -530,6 +583,15 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   // foreign_keys=ON set by openSqliteDatabase. Brand-new additive table — no
   // ALTER on memories. The high-trust CHECK (no 'external') is the DB-layer floor.
   ensureUserRepresentationTable(db);
+
+  // --- Directional relationship table (Phase 108, Track E2 — SOCIAL-02) ---
+  // Created AFTER ensureUserRepresentationTable so the `memories` FK target already
+  // exists; the source_memory_id FK's ON DELETE CASCADE fires via the PRAGMA
+  // foreign_keys=ON set by openSqliteDatabase. Brand-new additive table — no ALTER
+  // on memories. Scope is (tenant_id, agent_id, channel_id) — channel_id is the NEW
+  // privacy axis (SOCIAL-02); the high-trust CHECK (no 'external') is the DB-layer
+  // floor; the (subject_user_id, about_user_id) directional pair is ROW DATA.
+  ensureRelationshipTable(db);
 
   // --- Observation partial indexes (Phase 84; design §4.1) ---
   // Created AFTER ensureMemoryColumns (the indexed columns must exist first).

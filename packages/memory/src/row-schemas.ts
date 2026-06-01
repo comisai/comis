@@ -200,12 +200,26 @@ export const MemoryTripleRowSchema = z.strictObject({
 
 // Schema for a `user_representation` row projection (Phase 107, USER-01). The
 // scoped read projects the 7 columns below (NOT tenant_id/agent_id/user_id — the
-// WHERE pins them); trust/entry_type are z.enum matching the DDL CHECKs
-// ('external' structurally absent); source_memory_id/updated_at nullable. Parsed
-// via createRowMapper — never `as Row[]`.
+// WHERE pins them); trust/entry_type z.enum match the DDL CHECKs ('external'
+// absent); source_memory_id/updated_at nullable. Parsed via createRowMapper.
 export const UserRepresentationRowSchema = z.strictObject({
   id: z.string(),
   entry_type: z.enum(["identity", "preference", "relationship", "instruction"]),
+  content: z.string(),
+  trust: z.enum(["system", "learned"]),
+  source_memory_id: z.string().nullable().optional(),
+  created_at: z.number(),
+  updated_at: z.number().nullable().optional(),
+});
+
+// Schema for a `relationship` row projection (Phase 108, SOCIAL-02). The scoped
+// read projects the 8 columns below (NOT tenant_id/agent_id/channel_id — the WHERE
+// pins them); the directional (subject_user_id, about_user_id) pair is ROW DATA;
+// trust z.enum matches the DDL CHECK ('external' absent). Parsed via createRowMapper.
+export const RelationshipRowSchema = z.strictObject({
+  id: z.string(),
+  subject_user_id: z.string(),
+  about_user_id: z.string(),
   content: z.string(),
   trust: z.enum(["system", "learned"]),
   source_memory_id: z.string().nullable().optional(),
@@ -217,9 +231,8 @@ export const UserRepresentationRowSchema = z.strictObject({
  * Schema for the graph-spread recursive-CTE node projection (Phase 100, KG-04).
  * The bounded `WITH RECURSIVE walk(node, depth)` over current-truth subject→object
  * edges returns, per reached node, the node string + its hop `depth`
- * (`SELECT DISTINCT node, depth FROM walk WHERE depth > 0`); tenant_id/agent_id
- * NOT projected (the recursive WHERE pins them). Parsed via `createRowMapper` —
- * never `as Row[]`.
+ * (`SELECT DISTINCT node, depth FROM walk WHERE depth > 0`); tenant_id/agent_id NOT
+ * projected (the recursive WHERE pins them). Parsed via `createRowMapper`.
  */
 export const SpreadNodeRowSchema = z.strictObject({
   node: z.string(), // a reached node (a triple `object`) — drives hydrate + dedup
@@ -230,22 +243,17 @@ export const SpreadNodeRowSchema = z.strictObject({
  * Schema for the `listEntities` diagnostic projection (Phase 86, OBS-06). The
  * scoped `SELECT id, canonical_name, mention_count, first_seen, last_seen FROM
  * memory_entities WHERE tenant_id=? AND agent_id=? ORDER BY mention_count DESC`
- * read. This is a STRICT SUBSET of the `memory_entities` columns: it
- * deliberately omits `canonical_key` (DB-internal dedup key — OQ-2, never
- * operator-facing) and the `tenant_id`/`agent_id` scope columns (the WHERE
- * already pins them). The adapter maps this snake_case row to the camelCase
- * `EntityRow` domain shape (`@comis/core`) — parsed via `createRowMapper`,
- * never `as Row[]`.
+ * read — a STRICT SUBSET of the columns: it omits `canonical_key` (DB-internal
+ * dedup key — OQ-2, never operator-facing) and the `tenant_id`/`agent_id` scope
+ * columns (the WHERE pins them). The adapter maps this snake_case row to the
+ * camelCase `EntityRow` domain shape (`@comis/core`) — parsed via `createRowMapper`.
  */
 export const EntityListRowSchema = z.strictObject({
   id: z.string(),
-  /** Display form (first-seen casing) → `EntityRow.name`. */
-  canonical_name: z.string(),
+  canonical_name: z.string(), // display form (first-seen casing) → EntityRow.name
   mention_count: z.number(),
-  /** Unix timestamp in milliseconds. */
-  first_seen: z.number(),
-  /** Unix timestamp in milliseconds. */
-  last_seen: z.number(),
+  first_seen: z.number(), // Unix ms
+  last_seen: z.number(), // Unix ms
 });
 
 /**
@@ -257,29 +265,19 @@ export const SessionRowSchema = z.strictObject({
   tenant_id: z.string(),
   user_id: z.string(),
   channel_id: z.string(),
-  /** JSON-encoded unknown[]. */
-  messages: z.string(),
-  /** Unix timestamp in milliseconds. */
-  created_at: z.number(),
-  /** Unix timestamp in milliseconds. */
-  updated_at: z.number(),
-  /** JSON-encoded Record<string, unknown>. */
-  metadata: z.string(),
+  messages: z.string(), // JSON-encoded unknown[]
+  created_at: z.number(), // Unix ms
+  updated_at: z.number(), // Unix ms
+  metadata: z.string(), // JSON-encoded Record<string, unknown>
 });
 
-/**
- * Schema for sqlite-vec KNN query results.
- * Paired with `VecSearchRow` exported from `./types.js`.
- */
+// Schema for sqlite-vec KNN query results. Paired with `VecSearchRow` (./types.js).
 export const VecSearchRowSchema = z.strictObject({
   memory_id: z.string(),
   distance: z.number(),
 });
 
-/**
- * Schema for FTS5 search joined with memories.
- * Paired with `FtsSearchRow` exported from `./types.js`.
- */
+// Schema for FTS5 search joined with memories. Paired with `FtsSearchRow` (./types.js).
 export const FtsSearchRowSchema = z.strictObject({
   id: z.string(),
   content: z.string(),
