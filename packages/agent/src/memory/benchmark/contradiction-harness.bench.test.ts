@@ -1,299 +1,498 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * GATED trust-first contradiction-correctness harness (SUITE-04, Plan 99-04, Task 2).
+ * Env-gated end-to-end TRUST-FIRST CONTRADICTION-CORRECTNESS harness (SUITE-04) --
+ * the benchmark the Phase-100 KG gate (KG-05 KU/TR/CR) consumes. It measures
+ * whether a NEWER low-trust claim wrongly supersedes an OLDER high-trust fact at
+ * recall time, exercising the SHIPPED trust-first behavior -- NOT new code:
+ *   1. the recall TRUST-FILTER (`createMemoryRecall` step 5 hard-filters by
+ *      `includeTrustLevels`; the shipped default `["system","learned"]` EXCLUDES
+ *      the newer `external` contradiction -- the strongest trust-first outcome),
+ *   2. `score.ts` `compareBoosted`: on an EQUAL-relevance tie the higher
+ *      `trustWeight` wins (system 1.0 / learned 0.5 / external 0.0), so an OLDER
+ *      high-trust memory out-ranks a NEWER low-trust one, and
+ *   3. `score.ts` `trustAlpha` (nonzero, the shipped 0.1): the trust boost is LIVE
+ *      so the tie-break is exercised when both pass the filter.
  *
- * THE MEASUREMENT: for each constructed contradiction pair (an OLDER high-trust
- * fact + a NEWER low-trust contradicting claim), ingest BOTH into a REAL
- * `SqliteMemoryAdapter`, recall through the SHIPPED `createMemoryRecall` pipeline
- * with the shipped trust filter (`includeTrustLevels: ["system","learned"]`, so
- * the newer external claim is EXCLUDED — the strongest trust-first outcome) and a
- * nonzero `trustAlpha` (the `score.ts` `compareBoosted` tie-break), answer with
- * the answer model, and judge whether the answer reflects the OLDER high-trust
- * fact (trust-first won) or the newer low-trust claim (the failure the Phase-100
- * KG work must fix). The pure {@link scoreContradiction} folds the verdicts into
- * the trust-first-correct rate — the SUITE-04 metric the KG gate consumes.
+ * THE INVARIANT: Comis is trust-FIRST, recency-SECOND -- a newer low-trust claim
+ * NEVER wins. The CORRECT answer is the OLDER high-trust fact. The pure
+ * {@link scoreContradiction} (Task 1) folds the per-pair verdicts into the
+ * trust-first-correct RATE (the SUITE-04 metric); a HIGH rate is good, a rate near
+ * 0 is the failure the Phase-100 KG work must fix. The harness asserts only
+ * STRUCTURAL invariants (`0 <= rate <= 100`, `validTotal === total - invalid`, the
+ * secret-omission gate); the rate itself is a model-dependent MEASUREMENT.
  *
- * Comis's invariant is trust-FIRST, recency-SECOND: a newer low-trust claim must
- * NEVER supersede an older high-trust fact. This harness proves the SHIPPED
- * behavior does the right thing on the constructed pairs.
+ * READ-TIME GUIDANCE BLOCK (CONTRA-01): the plan anticipated prepending
+ * `buildTemporalGuidanceBlock(...)` (the "higher-TRUST wins even if older"
+ * instruction the production injector adds). That symbol is NOT on the
+ * `@comis/agent` barrel (`grep -n buildTemporalGuidanceBlock packages/agent/src/index.ts`
+ * -> absent; it lives in `rag/temporal-guidance.ts`, used internally by
+ * `executor/prompt-assembly.ts`). Per the plan's documented fallback, this harness
+ * therefore measures the trust-first property via the recall RANKING + trust
+ * FILTER ONLY; the guidance-block property is unit-tested separately in
+ * `rag/temporal-guidance.test.ts`. See 99-04-SUMMARY.md.
  *
- * GUIDANCE BLOCK (CONTRA-01): the plan anticipated prepending
- * `buildTemporalGuidanceBlock(...)` (the read-time "higher-TRUST wins even if
- * older" instruction the production injector adds). That symbol is NOT on the
- * `@comis/agent` barrel and does not exist as a source symbol in this checkout, so
- * — per the plan's documented fallback — this harness measures the trust-first
- * property via the recall RANKING + trust FILTER ONLY; the guidance-block property
- * is left to its own unit test. See 99-04-SUMMARY.md.
+ * ARCHITECTURE CUT (the single escape hatch): this *.bench.test.ts MAY import
+ * @comis/memory (a devDependency) -- the agent->memory cut excludes the `.test.ts`
+ * suffix (source-rules.test.ts `excludeFileSuffixes: [".test.ts"]`). The pure
+ * modules it consumes (contradiction-scorer.ts, suite-scenario.ts, suite-report.ts,
+ * qa-*) import ONLY @comis/core types. Mirrors the blessed precedent
+ * qa-judge-harness.bench.test.ts / poisoning-harness.bench.test.ts.
  *
- * GATING: the whole describe is `describe.skipIf(!COMIS_BENCH)` — keyless CI skips
- * it entirely (the pure {@link scoreContradiction} test is the keyless signal).
- * The structural witness (no provider needed) lives inside the gated describe
- * because it imports `@comis/memory` (the agent↛memory cut escape); keyless value
- * is the scorer unit test.
+ * DUPLICATED INGEST WIRING (intentional, RESEARCH Anti-Pattern): makeBenchConfig /
+ * BENCH_SESSION_KEY / extractResponseText / resolveReportDir are DUPLICATED from
+ * the QA/poisoning harnesses rather than factored into a shared non-`.test.ts`
+ * helper -- a shared helper importing @comis/memory WOULD trip the cut.
+ *
+ * TWO-TIER GATE (mirrors poisoning-harness.bench.test.ts):
+ * - UNGATED (default CI, `pnpm test`/`pnpm validate`): the pure scorer's
+ *   correctness is unit-tested in contradiction-scorer.test.ts (the keyless-CI
+ *   value). The gated describe (this file) is SKIPPED without COMIS_BENCH.
+ * - GATED (this file): `COMIS_BENCH=1` enables the describe; the provider-backed
+ *   `it` additionally nests behind `COMIS_BENCH_ANSWER_*` + `COMIS_BENCH_JUDGE_*`.
+ *   Judge/answer model ids MUST be pi-ai-registry ids (gpt-4o / gpt-4.1;
+ *   `claude-opus-4-8` is ABSENT from the 0.75.3 catalog, BUG-004) -- an unresolved
+ *   id makes every probe `invalid` (excluded), never a silent wrong number. The
+ *   no-LLM structural witness lives inside the gated describe (it imports
+ *   @comis/memory); it proves the SHIPPED trust filter without a provider.
+ *
+ * SECURITY:
+ * - Bench store is a fresh `mkdtempSync` tmp DB (NEVER ~/.comis), `tenantId:
+ *   "default"` / `agentId:"bench"` -- isolated from any live agent (T-99-04-01).
+ *   Closed per pair.
+ * - The contradiction fixture content is ingested as memory CONTENT only, never
+ *   `eval`'d; the judge rubric is placed FIRST (buildJudgePrompt) so injected
+ *   fixture content cannot masquerade as a judge instruction (T-99-04-04, accept --
+ *   the judge is advisory measurement only).
+ * - The report is built via buildSuiteReport (structural secret omission) and
+ *   written via the confined `writeRegularFile` (O_NOFOLLOW + EXCL + confinement,
+ *   outside Pino's redaction net); the gated body asserts the serialized report
+ *   carries none of `/apiKey|sk-|Bearer/` (T-99-04-02). The harness `console.log`s
+ *   ONLY the rate, never a key or a model answer.
  *
  * @module
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { describe, it, expect, beforeAll } from "vitest";
+// GATED test-only imports (the agent->memory cut excludes *.test.ts).
+import {
+  SqliteMemoryAdapter,
+  createEmbeddingProvider,
+  createLocalRerankerProvider,
+} from "@comis/memory";
+// BARE production orchestrator (the live recall pipeline this harness drives).
+import { createMemoryRecall, type MemoryRecallDeps } from "@comis/agent";
+// VALUE completion entry point (fine in a .test.ts) -- the answer + judge LLM calls.
+import { completeSimple, getModel } from "@earendil-works/pi-ai";
+// VALUE obs import (fine in a .test.ts) -- the confined report writer.
+import { writeRegularFile } from "@comis/observability";
+// RELATIVE Wave-1 (99-01) constructed contradiction pairs -- no external corpus.
+import { buildContradictionPairs } from "./suite-scenario.js";
+// RELATIVE Wave-1 (99-01) secret-free per-tier report builder.
+import { buildSuiteReport } from "./suite-report.js";
+// RELATIVE Task-1 (this plan) pure trust-first-correctness scorer.
+import { scoreContradiction } from "./contradiction-scorer.js";
+// RELATIVE existing pure logic (the answer/judge split + verdict parse + accuracy).
+import { ANSWER_SYSTEM_PROMPT, formatAnswerContext, buildAnswerPrompt } from "./qa-answer-prompt.js";
+import { buildJudgePrompt } from "./qa-judge-prompt.js";
+import { parseJudgeVerdict } from "./qa-judge-parse.js";
+import { aggregateAccuracy, type CategorizedVerdict } from "./qa-accuracy.js";
+// Determinism helpers (test/support -- 5 segments up from packages/agent/src/memory/benchmark/).
+import { createFakeClock } from "../../../../../test/support/fake-clock.js";
+import { createFakeTimers } from "../../../../../test/support/fake-timers.js";
+import { createMockLogger } from "../../../../../test/support/mock-logger.js";
+// Core types (type-only).
+import type { MemoryConfig, MemorySearchResult, SessionKey, TrustLevel } from "@comis/core";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  createEmbeddingProvider,
-  createLocalRerankerProvider,
-  SqliteMemoryAdapter,
-} from "@comis/memory";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
-// NOTE: @comis/memory is imported ONLY in this .bench.test.ts (the agent↛memory cut escape).
-import {
-  createMemoryRecall,
-  type MemoryRecall,
-  type MemoryRecallDeps,
-} from "../../../rag/memory-recall.js";
-import { buildAnswerPrompt, formatAnswerContext } from "./qa-answer-prompt.js";
-import { aggregateAccuracy, type CategorizedVerdict } from "./qa-accuracy.js";
-import { buildJudgePrompt } from "./qa-judge-prompt.js";
-import { parseJudgeVerdict } from "./qa-judge-parse.js";
-import { scoreContradiction } from "./contradiction-scorer.js";
-import { buildContradictionPairs, type ContradictionPair } from "./suite-scenario.js";
-import { buildSuiteReport } from "./suite-report.js";
-
-const COMIS_BENCH = process.env.COMIS_BENCH === "1";
+// ENV GATES -- read process.env ONLY at the test boundary (allowed in a .test.ts;
+// the globals rule scopes to src/**). Names pinned by the QA harness's env plan.
+const COMIS_BENCH = process.env.COMIS_BENCH; // enables the full ingest+recall+answer+judge run
+const LLAMA_MODEL_PATH = process.env.LLAMA_MODEL_PATH; // optional vector lane (embeddings)
+const LLAMA_RERANKER_MODEL_PATH = process.env.LLAMA_RERANKER_MODEL_PATH; // optional rerank lift
+const COMIS_BENCH_DATA = process.env.COMIS_BENCH_DATA; // optional report-output base
+// Answer/judge model lanes (the provider-backed run nests on these; absent -> it.skip).
+const ANSWER_PROVIDER = process.env.COMIS_BENCH_ANSWER_PROVIDER;
 const ANSWER_MODEL = process.env.COMIS_BENCH_ANSWER_MODEL;
+const ANSWER_API_KEY = process.env.COMIS_BENCH_ANSWER_API_KEY;
+const JUDGE_PROVIDER = process.env.COMIS_BENCH_JUDGE_PROVIDER;
 const JUDGE_MODEL = process.env.COMIS_BENCH_JUDGE_MODEL;
+const JUDGE_API_KEY = process.env.COMIS_BENCH_JUDGE_API_KEY;
 
-const BENCH_SESSION_KEY = "bench-session";
+/** Fixed epoch (matches the Phase-88/89/99 siblings' neutral clock). */
+const BENCH_NOW = 1_700_000_000_000;
+/** Per-LLM-call wall-clock deadline (a standard timer is allowed in a .test.ts). */
+const LLM_TIMEOUT_MS = 120_000;
+/** The trust-contradiction tier's harness version stamp (recorded in the report). */
+const HARNESS_VERSION = "phase-99-v1";
 
-/** A FIXED epoch-ms clock so the harness is deterministic (no wall-clock read). */
-const FIXED_NOW_MS = Date.UTC(2024, 0, 15, 12, 0, 0);
-
-interface ContradictionStore {
-  readonly adapter: SqliteMemoryAdapter;
-  readonly recall: MemoryRecall;
-  readonly dbDir: string;
+/**
+ * The bench store config (mirrors the Phase-88/89/99 siblings). `as MemoryConfig`:
+ * the adapter reads the fields it needs; `dims` = the probed embedding dimensions
+ * (or 4 for the FTS-only honest fallback).
+ */
+function makeBenchConfig(dbPath: string, dims: number): MemoryConfig {
+  return {
+    dbPath,
+    walMode: false,
+    embeddingModel: "local",
+    embeddingDimensions: dims,
+    compaction: { enabled: false, threshold: 1000, targetSize: 500 },
+    retention: { maxAgeDays: 0 },
+  } as MemoryConfig;
 }
 
-function makeBenchConfig(
-  overrides: Partial<MemoryRecallDeps["config"]> = {},
-): MemoryRecallDeps["config"] {
-  return {
-    maxResults: 10,
-    minScore: 0,
-    recencyHalfLifeMs: 0,
-    // Recency OFF as a sort lever; trust is the deciding factor (trust-FIRST).
-    recencyAlpha: 0,
-    // Nonzero trust weight — the shipped value; exercises the compareBoosted
-    // tie-break so the older high-trust memory out-ranks a newer low-trust one
-    // at equal base relevance.
-    trustAlpha: 0.1,
-    usefulnessAlpha: 0,
-    usefulnessHalfLifeMs: 0,
-    // Shipped default: external excluded — the strongest trust-first outcome.
-    includeTrustLevels: ["system", "learned"],
-    enableQueryExpansion: false,
-    expansionConcurrency: 1,
-    rerankCandidatePoolSize: 50,
-    minKeywordScore: 0,
-    ...overrides,
-  };
+/** The bench recall scope -- neutral placeholders, isolated from any live session. */
+const BENCH_SESSION_KEY: SessionKey = {
+  tenantId: "default",
+  userId: "user_a",
+  channelId: "default",
+};
+
+/**
+ * The pi-ai content-block walk. DUPLICATED VERBATIM from
+ * qa-judge-harness.bench.test.ts (there is no shared export; copying it is
+ * consistent with that intentional duplication). Sums the `{type:"text"}` blocks.
+ */
+function extractResponseText(response: { content?: unknown[] }): string {
+  let text = "";
+  if (response.content && Array.isArray(response.content)) {
+    for (const part of response.content) {
+      if (
+        typeof part === "object" &&
+        part !== null &&
+        "type" in part &&
+        (part as Record<string, unknown>).type === "text" &&
+        "text" in part
+      ) {
+        text += (part as Record<string, unknown>).text;
+      }
+    }
+  }
+  return text;
 }
 
 /**
- * Ingest a contradiction pair into a fresh tmp store (T-99-04-01: never ~/.comis;
- * closed per pair). The OLDER high-trust fact is stored at its `trustLevel`
- * (system/learned) with its earlier `createdAt`; the NEWER low-trust claim is
- * stored as `external` with its later `createdAt` — so the contradiction is REAL
- * and the trust-first behavior must keep the older high-trust fact on top.
+ * Resolve the report output directory (DUPLICATED from the QA harness). The write
+ * itself uses `writeRegularFile({ confinedBaseDir })`, so the O_NOFOLLOW + EXCL +
+ * confinement guard applies regardless (T-99-04-02).
  */
-async function ingestPair(
-  pair: ContradictionPair,
-  includeTrustLevels: MemoryRecallDeps["config"]["includeTrustLevels"],
-): Promise<ContradictionStore> {
-  const dbDir = mkdtempSync(join(tmpdir(), "comis-bench-contra-"));
-  const dbPath = join(dbDir, "memory.db");
-  const adapter = new SqliteMemoryAdapter({ dbPath });
-  await adapter.init();
+function resolveReportDir(fallbackTmpDir: string): string {
+  if (COMIS_BENCH_DATA !== undefined && COMIS_BENCH_DATA.length > 0) {
+    return fallbackTmpDir; // operator base handled by the confined writer; keep tmp
+  }
+  return fallbackTmpDir;
+}
 
-  const embedding = createEmbeddingProvider({ provider: "local" });
-  const reranker = createLocalRerankerProvider();
-
-  const olderRes = await adapter.store({
-    content: pair.olderHighTrustDoc.content,
-    source: "agent",
-    trustLevel: pair.olderHighTrustDoc.trustLevel,
-    createdAt: pair.olderHighTrustDoc.createdAt,
-  });
-  if (!olderRes.ok) throw new Error(`older high-trust ingest failed: ${String(olderRes.error)}`);
-
-  const newerRes = await adapter.store({
-    content: pair.newerLowTrustDoc.content,
-    source: "agent",
-    trustLevel: pair.newerLowTrustDoc.trustLevel,
-    createdAt: pair.newerLowTrustDoc.createdAt,
-  });
-  if (!newerRes.ok) throw new Error(`newer low-trust ingest failed: ${String(newerRes.error)}`);
-
-  const deps: MemoryRecallDeps = {
-    adapter,
-    embeddingProvider: embedding,
-    rerankerProvider: reranker,
-    config: makeBenchConfig({ includeTrustLevels }),
-    clock: { nowMs: () => FIXED_NOW_MS },
-  };
-  const recall = createMemoryRecall(deps);
-  return { adapter, recall, dbDir };
+/**
+ * The fully-prepared, recalled contradiction pair captured ONCE in beforeAll: the
+ * answerable context (recall with the shipped trust filter ON) + the CORRECT answer
+ * (the OLDER high-trust fact) the judge grades against + the ranked trust levels
+ * (the evidence: did the external get filtered, did the high-trust fact survive).
+ */
+interface PreparedPair {
+  query: string;
+  correctAnswerSubstring: string;
+  context: string;
+  rankedTrust: TrustLevel[];
+  /** Whether the OLDER high-trust doc survived recall (the structural witness). */
+  olderPresent: boolean;
 }
 
 describe.skipIf(!COMIS_BENCH)("trust-first contradiction correctness (gated)", () => {
-  const pairs = buildContradictionPairs();
+  // Built ONCE in beforeAll (ingest + the LLM-free recall); the gated it body only
+  // drives the answer + judge LLMs.
+  const prepared: PreparedPair[] = [];
+  // Resolved in beforeAll; the gated it body writes the report under it.
+  let reportDir = "";
+  let reportJson = "";
 
-  afterAll(() => {
-    // per-pair stores are cleaned inline; nothing global to tear down.
-  });
+  // Provider-backed run nests on the answer/judge model env (the QA harness's plan).
+  const haveAnswer = !!ANSWER_PROVIDER && !!ANSWER_MODEL && !!ANSWER_API_KEY;
+  const haveJudge = !!JUDGE_PROVIDER && !!JUDGE_MODEL && !!JUDGE_API_KEY;
 
   beforeAll(async () => {
-    // Warm the local embedding/reranker model once so a slow first-load does not
-    // count against a per-pair lane (the 2h budget mirrors the sibling harnesses).
-    if (pairs.length === 0) throw new Error("no contradiction pairs");
-    const store = await ingestPair(pairs[0]!, ["system", "learned"]);
-    try {
-      const warm = await store.recall.recall(pairs[0]!.query, BENCH_SESSION_KEY);
-      if (!warm.ok) throw new Error(`warmup recall failed: ${String(warm.error)}`);
-    } finally {
-      rmSync(store.dbDir, { recursive: true, force: true });
+    // 1. PAIRS -- constructed (Wave 1); no external corpus, no download. Each pair
+    //    has an OLDER high-trust fact + a NEWER low-trust contradicting claim; the
+    //    CORRECT answer is the OLDER high-trust fact.
+    const pairs = buildContradictionPairs();
+    expect(pairs.length, "constructed contradiction pairs").toBeGreaterThanOrEqual(1);
+
+    // 2. EMBEDDING PROVIDER -- built ONCE; only when LLAMA_MODEL_PATH is set, else
+    //    honest FTS-only (dims=4, the vector lane does not contribute).
+    let embed: Awaited<ReturnType<typeof createEmbeddingProvider>> | undefined;
+    let dims = 4;
+    if (LLAMA_MODEL_PATH !== undefined && LLAMA_MODEL_PATH.length > 0) {
+      embed = await createEmbeddingProvider({
+        provider: "local",
+        local: { modelUri: LLAMA_MODEL_PATH, modelsDir: "/tmp/comis-test-models" },
+      });
+      if (embed.ok) dims = embed.value.dimensions;
     }
+
+    // 3. SHARED reranker (built ONCE, reused across every per-pair store).
+    const dir = mkdtempSync(join(tmpdir(), "comis-contra-bench-"));
+    const reportDirResolved = resolveReportDir(dir);
+    const reranker =
+      LLAMA_RERANKER_MODEL_PATH !== undefined && LLAMA_RERANKER_MODEL_PATH.length > 0
+        ? await createLocalRerankerProvider({
+            modelUri: LLAMA_RERANKER_MODEL_PATH,
+            modelsDir: "/tmp/comis-test-models",
+            threads: 8,
+          })
+        : undefined;
+    const rerankerPort = reranker?.ok ? reranker.value : undefined;
+
+    // A fresh recall pipeline bound to ONE pair's store. `includeTrustLevels` is the
+    // SHIPPED default (`["system","learned"]` -> the newer external contradiction is
+    // EXCLUDED, the strongest trust-first outcome). `trustAlpha` is nonzero (the
+    // shipped 0.1) so the `compareBoosted` tie-break is exercised for the
+    // learned-vs-external pair if both ever pass the filter. All other alphas 0 to
+    // isolate the trust signal (trust-FIRST).
+    const makeRecall = (port: SqliteMemoryAdapter, includeTrustLevels: TrustLevel[]) =>
+      createMemoryRecall(
+        {
+          memoryPort: port,
+          clock: createFakeClock(BENCH_NOW),
+          timers: createFakeTimers(BENCH_NOW),
+          logger: createMockLogger(),
+          ...(rerankerPort ? { reranker: rerankerPort } : {}),
+        } as MemoryRecallDeps,
+        {
+          maxResults: 10,
+          minScore: 0,
+          includeTrustLevels,
+          rerank: { enabled: !!rerankerPort, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
+          scoring: { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0.1 },
+        },
+      );
+
+    // 4. INGEST + RECALL per pair, each in its OWN store. The OLDER high-trust fact
+    //    at its trustLevel (system/learned) with its EARLIER createdAt; the NEWER
+    //    low-trust claim at "external" with the LATER createdAt. (Ingest BOTH so the
+    //    contradiction is REAL -- the trust-first behavior must keep the older
+    //    high-trust fact on top despite the newer claim.) The correct answer rides
+    //    the prepared channel only -- never a recall input.
+    for (const [index, pair] of pairs.entries()) {
+      const adapter = new SqliteMemoryAdapter(
+        makeBenchConfig(join(dir, `contra-${index}.db`), dims),
+        embed?.ok ? embed.value : undefined,
+      );
+
+      const storedOlder = await adapter.store({
+        id: randomUUID(),
+        tenantId: "default",
+        agentId: "bench",
+        userId: "user_a",
+        content: pair.olderHighTrustDoc.content,
+        trustLevel: pair.olderHighTrustDoc.trustLevel,
+        source: { who: "bench" },
+        tags: ["bench"],
+        createdAt: pair.olderHighTrustDoc.createdAt,
+      });
+      expect(storedOlder.ok, "older high-trust doc stored").toBe(true);
+
+      const storedNewer = await adapter.store({
+        id: randomUUID(),
+        tenantId: "default",
+        agentId: "bench",
+        userId: "user_a",
+        content: pair.newerLowTrustDoc.content,
+        trustLevel: pair.newerLowTrustDoc.trustLevel, // "external"
+        source: { who: "bench" },
+        tags: ["bench", "contradiction"],
+        createdAt: pair.newerLowTrustDoc.createdAt,
+      });
+      expect(storedNewer.ok, "newer low-trust doc stored").toBe(true);
+
+      // RECALL with the SHIPPED trust filter ON (external excluded). The guidance
+      // block is NOT on the @comis/agent barrel, so the context is the ranked recall
+      // ONLY (the trust-first property is measured via ranking + filter; the guidance
+      // block is unit-tested in rag/temporal-guidance.test.ts).
+      const recall = makeRecall(adapter, ["system", "learned"]);
+      const r = await recall.recall(pair.query, BENCH_SESSION_KEY);
+      const ranked: MemorySearchResult[] = r.ok ? r.value : [];
+
+      prepared.push({
+        query: pair.query,
+        correctAnswerSubstring: pair.correctAnswerSubstring,
+        context: formatAnswerContext(ranked),
+        rankedTrust: ranked.map((m) => m.entry.trustLevel),
+        olderPresent: ranked.some((m) => m.entry.content === pair.olderHighTrustDoc.content),
+      });
+
+      adapter.close();
+    }
+
+    // Stash the resolved report dir on the closure for the gated it body.
+    reportDir = reportDirResolved;
+
+    await rerankerPort?.dispose?.();
+    // 2h hook timeout: ingest + the LLM-free recall for every pair runs HERE (the it
+    // body only grades). The 2-min default trips on a non-trivial set before any
+    // grading begins (BUG-001) -- must match the raised it-body budget.
   }, 7_200_000);
 
-  it(
+  it.skipIf(!haveAnswer || !haveJudge)(
     "measures trust-first contradiction correctness (older high-trust fact wins)",
     async () => {
-      const haveAnswer = ANSWER_MODEL !== undefined && ANSWER_MODEL !== "";
-      const haveJudge = JUDGE_MODEL !== undefined && JUDGE_MODEL !== "";
-      if (!haveAnswer || !haveJudge) {
-        // eslint-disable-next-line no-console -- bench skip notice
-        console.log(
-          "BENCH trust-first contradiction skipped: set COMIS_BENCH_ANSWER_MODEL + COMIS_BENCH_JUDGE_MODEL",
-        );
-        return;
+      // Resolve BOTH model lanes up front (the getModel guard). The judge/answer ids
+      // MUST be pi-ai-registry ids (gpt-4o / gpt-4.1; claude-opus-4-8 is ABSENT,
+      // BUG-004) -- an unresolved id makes every probe invalid (excluded), never a
+      // silent wrong number.
+      let answerModel: ReturnType<typeof getModel> | undefined;
+      let judgeModel: ReturnType<typeof getModel> | undefined;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic provider/modelId strings
+        answerModel = getModel(ANSWER_PROVIDER as any, ANSWER_MODEL as any);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic provider/modelId strings
+        judgeModel = getModel(JUDGE_PROVIDER as any, JUDGE_MODEL as any);
+      } catch {
+        // Unresolved at the lane level -> every probe invalid (non-fatal).
       }
 
-      const { completeSimple, getModel } = await import("@earendil-works/pi-ai");
       const verdicts: CategorizedVerdict[] = [];
-      const evidence: Array<Record<string, unknown>> = [];
 
-      for (const pair of pairs) {
-        const store = await ingestPair(pair, ["system", "learned"]);
-        try {
-          const recalled = await store.recall.recall(pair.query, BENCH_SESSION_KEY);
-          if (!recalled.ok) throw new Error(`recall failed: ${String(recalled.error)}`);
-          const ranked = recalled.value;
-          const context = formatAnswerContext(
-            ranked.map((r) => ({ content: r.entry.content, score: r.score })),
-          );
-
-          const answerPrompt = buildAnswerPrompt(pair.query, context);
-          const answer = await completeSimple({
-            model: getModel(ANSWER_MODEL),
-            messages: [{ role: "user", content: answerPrompt }],
-          });
-          const answerText = typeof answer === "string" ? answer : String(answer);
-
-          // Grade against the OLDER high-trust fact (the knowledge-update rubric is
-          // the closest fit: the LATEST fact is correct UNLESS a higher-trust
-          // source says otherwise — here the higher-trust source is OLDER).
-          const judgePrompt = buildJudgePrompt(
-            "knowledge-update",
-            pair.query,
-            pair.correctAnswerSubstring,
-            answerText,
-          );
-          const judgeRaw = await completeSimple({
-            model: getModel(JUDGE_MODEL),
-            messages: [{ role: "user", content: judgePrompt }],
-          });
-          const judgeText = typeof judgeRaw === "string" ? judgeRaw : String(judgeRaw);
-          const verdict = parseJudgeVerdict(judgeText);
-          verdicts.push({
-            category: "trust-first-contradiction",
-            correct: verdict.correct,
-            invalid: verdict.invalid,
-          });
-          evidence.push({
-            query: pair.query,
-            // Evidence: did the external contradiction get filtered, and did the
-            // high-trust fact survive at the top of the ranked list?
-            rankedTrust: ranked.map((r) => r.entry.trustLevel),
-          });
-        } finally {
-          rmSync(store.dbDir, { recursive: true, force: true });
+      for (const p of prepared) {
+        // An unresolved lane => INVALID (excluded), never wrong. Continue (non-fatal).
+        if (!answerModel || !judgeModel) {
+          verdicts.push({ category: "trust-first-contradiction", correct: false, invalid: true });
+          continue;
         }
+
+        // ANSWER LLM -- ANSWER_SYSTEM_PROMPT is the systemPrompt; buildAnswerPrompt is
+        // the USER content only. The operator key is forwarded ONLY to pi-ai's apiKey
+        // option (never stored/logged/reported; the secret-omission assertion proves it).
+        const answerController = new AbortController();
+        const answerTimer = setTimeout(() => answerController.abort(), LLM_TIMEOUT_MS);
+        let modelAnswer = "";
+        try {
+          const answerResp = await completeSimple(
+            answerModel,
+            {
+              systemPrompt: ANSWER_SYSTEM_PROMPT,
+              messages: [
+                { role: "user" as const, content: buildAnswerPrompt(p.query, p.context), timestamp: Date.now() },
+              ],
+            },
+            { apiKey: ANSWER_API_KEY, temperature: 0.0, maxTokens: 4096, signal: answerController.signal },
+          );
+          modelAnswer = extractResponseText(answerResp);
+        } finally {
+          clearTimeout(answerTimer);
+        }
+
+        // JUDGE LLM -- a SEPARATE lane, temperature 0. Grade against the OLDER
+        // high-trust fact (the knowledge-update rubric is the closest fit: the
+        // response is correct iff it carries the required answer -- here the OLDER
+        // high-trust fact, NOT the newer low-trust claim). Rubric-first.
+        const judgeController = new AbortController();
+        const judgeTimer = setTimeout(() => judgeController.abort(), LLM_TIMEOUT_MS);
+        let judgeText = "";
+        try {
+          const judgeResp = await completeSimple(
+            judgeModel,
+            {
+              messages: [
+                {
+                  role: "user" as const,
+                  content: buildJudgePrompt(
+                    "knowledge-update",
+                    p.query,
+                    p.correctAnswerSubstring,
+                    modelAnswer,
+                  ),
+                  timestamp: Date.now(),
+                },
+              ],
+            },
+            { apiKey: JUDGE_API_KEY, temperature: 0, maxTokens: 1024, signal: judgeController.signal },
+          );
+          judgeText = extractResponseText(judgeResp);
+        } finally {
+          clearTimeout(judgeTimer);
+        }
+
+        const verdict = parseJudgeVerdict(judgeText);
+        verdicts.push(
+          verdict === undefined
+            ? { category: "trust-first-contradiction", correct: false, invalid: true }
+            : { category: "trust-first-contradiction", correct: verdict.correct, invalid: false },
+        );
       }
 
+      // SCORE -- the trust-first-correct rate (the SUITE-04 metric Phase 100 reads);
+      // the per-ability accuracy fold feeds the report row.
       const score = scoreContradiction(verdicts);
       const acc = aggregateAccuracy(verdicts);
-      // eslint-disable-next-line no-console -- bench observability
-      console.log("BENCH trust-first contradiction", JSON.stringify(score));
 
+      // REPORT -- the builder structurally omits any secret even if one were hung off
+      // the input.
       const report = buildSuiteReport(
         {
           tier: "trust-contradiction",
-          harnessVersion: "phase-99-v1",
+          harnessVersion: HARNESS_VERSION,
           abilities: [{ ability: "older-high-trust-wins", result: acc }],
         },
         Date.now(),
       );
-      const reportJson = JSON.stringify(report);
-      expect(reportJson).not.toMatch(/apiKey|sk-|Bearer/);
+      reportJson = JSON.stringify(report, null, 2);
 
-      // Write the report to a confined temp dir (never ~/.comis) — T-99-04-02.
-      const { writeRegularFile } = await import("@comis/observability");
-      const reportDir = mkdtempSync(join(tmpdir(), "comis-bench-contra-report-"));
-      const writeRes = await writeRegularFile({
-        baseDir: reportDir,
-        relativePath: "trust-contradiction-report.json",
-        contents: reportJson,
+      // WRITE via the CONFINED writer (T-99-04-02) -- O_NOFOLLOW + EXCL + confinement.
+      const writeResult = writeRegularFile({
+        path: join(reportDir, "trust-contradiction-report.json"),
+        content: reportJson,
+        confinedBaseDir: reportDir,
       });
-      if (!writeRes.ok) throw new Error(`report write failed: ${String(writeRes.error)}`);
+      expect(writeResult.ok, "trust-contradiction report written to the confined dir").toBe(true);
 
-      // Structural assertions only (the rate itself is a measurement, not a gate).
+      // Operator-visible number -- ONLY the rate, never a key or a model answer. A
+      // HIGH trust-first-correct rate is good (the older high-trust fact won); a rate
+      // near 0 is the failure the Phase-100 KG work must fix.
+      // eslint-disable-next-line no-console -- gated bench harness reports its number (this is a .test.ts, not packages/cli)
+      console.log("BENCH trust-first contradiction", JSON.stringify(score));
+      // Trust-evidence (counts only -- no secret, no content): the ranked trust bands
+      // per pair (did the external get filtered, did the high-trust fact survive).
+      // eslint-disable-next-line no-console -- gated bench harness reports its trust evidence (this is a .test.ts, not packages/cli)
+      console.log(
+        "BENCH trust-first contradiction ranked-trust",
+        JSON.stringify(prepared.map((p) => ({ rankedTrust: p.rankedTrust, olderPresent: p.olderPresent }))),
+      );
+
+      // STRUCTURAL invariants ONLY (Anti-Pattern: never a hard rate floor -- the
+      // number is machine/model-dependent).
       expect(score.trustFirstCorrectRate).toBeGreaterThanOrEqual(0);
       expect(score.trustFirstCorrectRate).toBeLessThanOrEqual(100);
       expect(score.validTotal).toBe(score.total - score.invalid);
-      rmSync(reportDir, { recursive: true, force: true });
+
+      // The report must carry NO secret substring (T-99-04-02) -- the ONLY allowed
+      // occurrence of these tokens in this file is inside this negation.
+      expect(reportJson).not.toMatch(/apiKey|sk-|Bearer/);
     },
+    // 2h `it` budget (BUG-001) -- the serial answer+judge loop can exceed the prior
+    // ceiling; the per-call LLM_TIMEOUT_MS AbortController bounds any single hung call.
     7_200_000,
   );
 
-  it(
-    "recall keeps the older high-trust fact and excludes the newer low-trust claim",
-    async () => {
-      // No-LLM structural witness of the SHIPPED trust-first behavior: with the
-      // shipped trust filter ["system","learned"], the NEWER external
-      // contradiction is excluded entirely (the strongest trust-first outcome),
-      // while the OLDER high-trust fact survives in the ranked recall. This proves
-      // the trust filter + ladder do the right thing without any provider.
-      let witnessed = 0;
-      for (const pair of pairs) {
-        const store = await ingestPair(pair, ["system", "learned"]);
-        try {
-          const recalled = await store.recall.recall(pair.query, BENCH_SESSION_KEY);
-          if (!recalled.ok) throw new Error(`recall failed: ${String(recalled.error)}`);
-          const ranked = recalled.value;
-          const trustLevels = ranked.map((r) => r.entry.trustLevel);
-          // The newer external (low-trust) contradiction must NOT appear.
-          expect(trustLevels).not.toContain("external");
-          // The older high-trust fact must survive recall.
-          const olderPresent = ranked.some(
-            (r) => r.entry.content === pair.olderHighTrustDoc.content,
-          );
-          expect(olderPresent).toBe(true);
-          witnessed += 1;
-        } finally {
-          rmSync(store.dbDir, { recursive: true, force: true });
-        }
-      }
-      expect(witnessed).toBeGreaterThan(0);
-    },
-  );
+  // NO-LLM structural witness of the SHIPPED trust-first behavior (inside the gated
+  // describe because it reads `prepared`, which was built from the @comis/memory
+  // store in beforeAll): with the shipped trust filter ["system","learned"], the
+  // NEWER external (low-trust) contradiction is EXCLUDED entirely (the strongest
+  // trust-first outcome), while the OLDER high-trust fact SURVIVES the recall. This
+  // proves the trust filter + ladder do the right thing WITHOUT any provider. (The
+  // keyless-CI value is the scorer unit test, which is ungated.)
+  it("recall keeps the older high-trust fact and excludes the newer low-trust claim", () => {
+    expect(prepared.length).toBeGreaterThanOrEqual(1);
+    let witnessed = 0;
+    for (const p of prepared) {
+      // The newer external (low-trust) contradiction must NOT appear in the recall.
+      expect(p.rankedTrust).not.toContain("external");
+      // The older high-trust fact must survive recall.
+      expect(p.olderPresent).toBe(true);
+      witnessed += 1;
+    }
+    expect(witnessed).toBeGreaterThan(0);
+  });
 });
