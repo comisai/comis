@@ -307,6 +307,36 @@ describe("assembleExecutionPrompt", () => {
     expect(result.dynamicPreamble).toContain("rag-section-1");
   });
 
+  it("threads deps.tripleStore into createMemoryRecall so the graph-spread lane has its store (KG-01/04)", async () => {
+    // Production-wiring regression guard for the LAST link of the chain:
+    // PromptAssemblyParams.deps.tripleStore → createMemoryRecall's deps.tripleStore.
+    // RED on pre-patch code: the createMemoryRecall call object listed
+    // entityStore/temporalStore/causalStore/usefulnessStore but NOT tripleStore,
+    // so the 6th graphSpread lane gate (`deps.tripleStore !== undefined`) was
+    // always false and spreadLane never ran — the lane dead even with the store
+    // injected and rag.lanes.graphSpread.enabled flipped on.
+    const memoryPort = {
+      search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+      store: vi.fn(),
+    } as any;
+    const tripleStore = {
+      upsertTriple: vi.fn(),
+      asOf: vi.fn(),
+      currentTruth: vi.fn(),
+      spreadLane: vi.fn(),
+    } as unknown as import("@comis/core").TripleStorePort;
+    mockRecall.mockResolvedValue({ ok: true, value: [] });
+    const params = makeParams({
+      config: makeConfig({ rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 } }),
+      deps: { workspaceDir: "/workspace", memoryPort, tripleStore },
+    });
+    await assembleExecutionPrompt(params);
+
+    expect(mockCreateMemoryRecall).toHaveBeenCalledOnce();
+    const recallDeps = mockCreateMemoryRecall.mock.calls[0][0] as { tripleStore?: unknown };
+    expect(recallDeps.tripleStore).toBe(tripleStore);
+  });
+
   // -----------------------------------------------------------------
   // 4b. memory:injected event emit
   // -----------------------------------------------------------------

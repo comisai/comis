@@ -561,6 +561,69 @@ describe("assembleTools — recall-trace config passthrough to prompt assembly (
   });
 });
 
+// ---------------------------------------------------------------------------
+// Recall-store passthrough to prompt assembly (the segregated KG / lane stores)
+//
+// assembleTools forwards a SUBSET of deps into assembleExecutionPrompt.deps —
+// the SAME subset prompt-assembly's createMemoryRecall reads. The recall lane
+// stores (graph-spread tripleStore KG-01/04, causal EXTRACT-03, temporal
+// LANES-02) MUST ride that subset or the lane stays DORMANT even when enabled:
+// the daemon injects the store, createPiExecutor carries it, but the
+// prompt-assembly site sees deps.<store> === undefined → the lane gate
+// (`deps.tripleStore !== undefined`) short-circuits and the recursive-CTE walk
+// never runs. This is the field-plumbing hazard: a missing forward = a silent
+// no-op. Strategy: assembleExecutionPrompt is mocked at the file top; assert the
+// `deps` argument it was called with carries each forwarded store.
+// ---------------------------------------------------------------------------
+
+describe("assembleTools — recall-store passthrough to prompt assembly (KG-01/04, EXTRACT-03, LANES-02)", () => {
+  it("forwards deps.tripleStore into assembleExecutionPrompt.deps so the graph-spread lane reaches createMemoryRecall (KG-01/04)", async () => {
+    // RED on pre-patch code: ToolAssemblyDeps had no tripleStore field and
+    // assembleTools never forwarded it, so the prompt-assembly site always saw
+    // deps.tripleStore === undefined → the 6th graphSpread lane gate
+    // short-circuited and spreadLane never ran (the lane dead even when the
+    // daemon injected the store and an operator flipped rag.lanes.graphSpread.enabled).
+    const tripleStore = {
+      upsertTriple: vi.fn(),
+      asOf: vi.fn(),
+      currentTruth: vi.fn(),
+      spreadLane: vi.fn(),
+    } as unknown as import("@comis/core").TripleStorePort;
+    await assembleTools(makeParams({
+      deps: makeDeps({ tripleStore }),
+    }));
+    expect(mocks.assembleExecutionPromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deps: expect.objectContaining({ tripleStore }),
+      }),
+    );
+  });
+
+  it("forwards deps.causalStore + deps.temporalStore into assembleExecutionPrompt.deps so the causal + temporal lanes reach createMemoryRecall (EXTRACT-03, LANES-02)", async () => {
+    // RED on pre-patch code: the assembleExecutionPrompt deps enumeration in
+    // assembleTools forwarded entityStore + usefulnessStore but DROPPED
+    // causalStore + temporalStore — even though ToolAssemblyDeps carried them
+    // and prompt-assembly's createMemoryRecall reads them. So both lanes were
+    // silently dead through the real pi-executor path (a latent field-plumbing
+    // bug, fixed alongside the tripleStore wiring it sits beside).
+    const causalStore = {
+      linkCausal: vi.fn(),
+      causalLane: vi.fn(),
+    } as unknown as import("@comis/core").MemoryCausalStore;
+    const temporalStore = {
+      spreadLane: vi.fn(),
+    } as unknown as import("@comis/core").MemoryTemporalStore;
+    await assembleTools(makeParams({
+      deps: makeDeps({ causalStore, temporalStore }),
+    }));
+    expect(mocks.assembleExecutionPromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deps: expect.objectContaining({ causalStore, temporalStore }),
+      }),
+    );
+  });
+});
+
 describe("assembleTools — capability-index render result + deferred-context passthrough", () => {
   it("forwards the toolCapabilityPort into buildCapabilityIndexContext and returns its result on the result object", async () => {
     const portStub = createCapabilityPortStub({ isCapabilityIndexEnabled: () => true });
