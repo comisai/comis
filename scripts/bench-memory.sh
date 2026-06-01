@@ -29,6 +29,17 @@
 #              `suite all` runs every tier in sequence. After each tier the runner greps
 #              its committed report dir for credential SHAPES and FAILS on any match
 #              (belt-and-suspenders over the harnesses' in-test omission gate).
+#   head-to-head  PROVE (Phase 104) KEYLESS ($0): drive the head-to-head proving machine
+#              (real runner + cross-judge spread + significance + append-only ledger +
+#              ablation sweep + skip-with-disclosure adapters + letta-fs control + a real
+#              Comis recall cell) and write the committable PARTIAL manifest under
+#              benchmarks/results/2026-06-01-phase104-prove/ (override via COMIS_PROVE_REPORT_DIR).
+#              No keys, no provider call, no cost. Then the credential-shape sweep over the dir.
+#   gate       PROVE-03 per-release CONTINUOUS REGRESSION GATE: run the keyless machine and
+#              append ONE dated row to benchmarks/results/history/ (append-only, never-
+#              overwrite). Wiring a CI `schedule:` cron is an OPERATOR step (the COSTED run
+#              with real competitor installs + judge spend) — the `gate` MODE itself is the
+#              in-scope $0-testable unit.
 #
 # Config: copy scripts/bench-memory.env.example → scripts/bench-memory.env and fill it
 # (the runner sources it automatically), or export the COMIS_BENCH_* / LLAMA_* vars yourself.
@@ -59,6 +70,9 @@ BEAM_HARNESS="$BENCH_DIR/beam-harness.bench.test.ts"
 LONGMEMEVAL_V2_TEST="$BENCH_DIR/longmemeval-v2-loader.test.ts"
 MEMORYAGENTBENCH_TEST="$BENCH_DIR/memoryagentbench-loader.test.ts"
 PERSONALIZATION_TEST="$BENCH_DIR/personalization-loaders.test.ts"
+# PROVE (Phase 104, Track J) — the keyless head-to-head proving-machine harness + the
+# per-release continuous gate (routed by the `head-to-head` / `gate` modes below).
+HEAD_TO_HEAD="$BENCH_DIR/head-to-head.bench.test.ts"
 
 # The full tier allowlist (drives `suite all` + the usage line). The order is the
 # keyless tiers first, then the answer+judge tiers, then the external loaders.
@@ -181,6 +195,33 @@ case "$MODE" in
     : "${COMIS_BENCH_JUDGE_PROVIDER:?qa/all mode needs COMIS_BENCH_JUDGE_* — see scripts/bench-memory.env.example}"
     run "$RET" "$QA"
     ;;
+  head-to-head)
+    # PROVE (Phase 104, Track J) — the KEYLESS ($0) proving-machine run. Drives the
+    # real runner + cross-judge spread + significance + append-only ledger + ablation
+    # sweep + the skip-with-disclosure adapters + the letta-fs control + a real Comis
+    # recall cell, all at $0 (no key, no provider call). Writes the committable PARTIAL
+    # manifest to benchmarks/results/2026-06-01-phase104-prove (default when unset), then
+    # greps that dir for credential SHAPES and FAILS on any match (T-99-08-01).
+    export COMIS_PROVE_REPORT_DIR="${COMIS_PROVE_REPORT_DIR:-$ROOT/benchmarks/results/2026-06-01-phase104-prove}"
+    run "$HEAD_TO_HEAD"
+    sweep_tier_report "2026-06-01-phase104-prove"
+    echo "  → manifest: benchmarks/results/2026-06-01-phase104-prove/"
+    ;;
+  gate)
+    # PROVE-03 — the per-release CONTINUOUS REGRESSION GATE entry point. Runs the same
+    # keyless proving machine and appends ONE dated row to benchmarks/results/history/
+    # (the append-only, never-overwrite ledger — a prior dated row is never clobbered),
+    # then sweeps the history dir for credential shapes.
+    #
+    # OPERATOR/FOLLOW-UP: wiring a CI `schedule:` cron to run this `gate` mode is an
+    # OPERATOR step, NOT shipped here — the COSTED head-to-head (real competitor installs
+    # + keys + LLM judge spend) is what fills the real cross-judged numbers, and a keyless
+    # scheduled run would never produce a useful headline. The `gate` MODE is the in-scope,
+    # $0-testable unit; the scheduled spend is deferred to the operator (RESEARCH Open Q #2).
+    run "$HEAD_TO_HEAD"
+    sweep_tier_report "history"
+    echo "  → appended dated row (when written): benchmarks/results/history/"
+    ;;
   suite)
     TIER="${2:-}"
     if [ -z "$TIER" ]; then
@@ -199,7 +240,7 @@ case "$MODE" in
     fi
     ;;
   *)
-    echo "usage: $0 [dry|retrieval|qa|all|suite <tier>]" >&2
+    echo "usage: $0 [dry|retrieval|qa|all|suite <tier>|head-to-head|gate]" >&2
     exit 2
     ;;
 esac
