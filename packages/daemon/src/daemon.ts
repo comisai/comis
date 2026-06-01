@@ -1473,6 +1473,7 @@ async function bootFoundation(
   // sensitiveNames: built here at the composition root (a sanctioned process.env
   // access point per AGENTS.md §2.8). In file/encrypted modes the names are
   // passed to the env adapter via selectSecretStore but ignored there.
+  // NOTE: sensitiveNames and env snapshot must be built AFTER loadEnvFile so ~/.comis/.env vars are included.
   const sensitiveNames = new Set<string>([
     ...SENSITIVE_EXACT_KEYS,
     ...Object.keys(process.env).filter(k =>
@@ -1590,7 +1591,7 @@ async function bootFoundation(
     daemonLogger.warn(
       { submodule: "secrets-overlay", secretName: name },
       `Secret '${name}' defined in both the active store and process.env — ` +
-      "store value is authoritative (REQ-16). The env var is ignored.",
+      "store value is authoritative (REQ-16). The env var has been removed from process.env.",
     );
   }
 
