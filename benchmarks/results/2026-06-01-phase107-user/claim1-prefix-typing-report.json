@@ -1,0 +1,7 @@
+{
+  "harnessVersion": "phase-107-05-v1",
+  "claim": "prefix-typing-round-trips",
+  "typesWritten": 4,
+  "typesReadBack": 4,
+  "pass": true
+}

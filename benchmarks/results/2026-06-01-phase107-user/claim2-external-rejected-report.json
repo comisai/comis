@@ -1,0 +1,8 @@
+{
+  "harnessVersion": "phase-107-05-v1",
+  "claim": "external-rejected-anti-poisoning",
+  "directExternalUpsertRejected": true,
+  "externalOnlySourcesWritten": 0,
+  "profileRowsAfter": 0,
+  "pass": true
+}

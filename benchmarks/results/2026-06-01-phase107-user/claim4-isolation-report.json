@@ -1,0 +1,9 @@
+{
+  "harnessVersion": "phase-107-05-v1",
+  "claim": "tenant-agent-user-isolation",
+  "inScopeRows": 1,
+  "crossTenantRows": 0,
+  "crossAgentRows": 0,
+  "crossUserRows": 0,
+  "pass": true
+}

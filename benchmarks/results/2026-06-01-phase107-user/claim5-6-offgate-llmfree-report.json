@@ -1,0 +1,9 @@
+{
+  "harnessVersion": "phase-107-05-v1",
+  "claim": "default-off-byte-identity-and-llm-free-injection",
+  "emptyBlockIsNull": true,
+  "rowsBlockIsNonNull": true,
+  "readCalls": 2,
+  "buildCalls": 0,
+  "pass": true
+}
