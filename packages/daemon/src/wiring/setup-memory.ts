@@ -32,6 +32,7 @@ import {
   createSqliteMemoryTemporalStore,
   createSqliteMemoryCausalStore,
   createSqliteTripleStore,
+  createSqliteMemoryEmbeddingStore,
   type MemoryApi,
 } from "@comis/memory";
 import {
@@ -118,6 +119,18 @@ export interface MemoryResult {
    *  (composition root) is the one place this @comis/memory adapter and the @comis/agent
    *  consumers are joined (the agent↛memory cut). */
   tripleStore: import("@comis/core").TripleStorePort;
+  /** Embedding read store (Phase 102, IQ-01). The SOLE adapter for the segregated
+   *  `MemoryEmbeddingStore` port (the bulk `(tenant, agent)`-scoped LEFT JOIN vec_memories read
+   *  that hydrates the MMR diversity re-rank) — built UNCONDITIONALLY on the SAME shared `db`
+   *  handle as the memory adapter (so the embedding read sees the SAME `memories` rows + the
+   *  SAME `vec_memories` index recall hydrates, and the (tenant, agent) isolation scope is
+   *  consistent — an embedding read on a DIFFERENT handle would silently return an empty Map and
+   *  MMR would no-op). No model/IO cost, so it is always present; the MMR re-rank stays dormant
+   *  until an operator enables `agents.<id>.rag.mmr.enabled` (default OFF). Threaded into the
+   *  recall read path (setup-agents-*) as the port TYPE only — the daemon (composition root) is
+   *  the one place this @comis/memory adapter and the @comis/agent recall consumer are joined
+   *  (the agent↛memory cut). */
+  embeddingStore: import("@comis/core").MemoryEmbeddingStore;
   /** Consolidation store (Phase 84, CONS-01..07). The SOLE adapter for the segregated
    *  `MemoryConsolidationStore` port — built UNCONDITIONALLY on the SAME shared `db` handle
    *  as the memory adapter + entity store (so the observation columns, the `(tenant, agent)`
@@ -424,6 +437,16 @@ export async function setupMemory(deps: {
   // only (the agent↛memory cut). Threaded into the recall read path (setup-agents-*).
   const tripleStore = createSqliteTripleStore({ db, logger: memoryLogger });
 
+  // 6.5.2b''''. Embedding read store (Phase 102, IQ-01). Built on the SAME shared `db` handle
+  // the memory adapter owns — so the bulk `(tenant, agent)`-scoped LEFT JOIN vec_memories read
+  // sees the SAME `memories` rows + `vec_memories` index recall hydrates (an embedding read on a
+  // DIFFERENT handle would silently return an empty Map and MMR would no-op — the 102-03
+  // "watch for 102-05" note). Always constructed (no model/IO cost); the MMR diversity re-rank
+  // stays dormant until an operator enables `agents.<id>.rag.mmr.enabled` (default OFF), so the
+  // scoped read never runs by default. Composition-root join — the agent receives the port TYPE
+  // only (the agent↛memory cut). Threaded into the recall read path (setup-agents-*).
+  const embeddingStore = createSqliteMemoryEmbeddingStore({ db, logger: memoryLogger });
+
   // 6.5.2c. Consolidation store (Phase 84). Built on the SAME `db` handle the memory
   // adapter owns — NOT a second Database — so the observation columns (proof_count /
   // source_ids / consolidated_at / confidence / history) and the memories table share
@@ -609,6 +632,7 @@ export async function setupMemory(deps: {
     temporalStore,
     causalStore,
     tripleStore,
+    embeddingStore,
     consolidationStore,
     usefulnessStore,
     recallCounters,

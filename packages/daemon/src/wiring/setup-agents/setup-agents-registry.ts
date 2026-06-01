@@ -201,6 +201,9 @@ export async function setupAgents(deps: {
   /** Triple store (Phase 100, KG-01). Threaded into each per-agent createPiExecutor like
    *  entityStore (the recall 6th graph-spread lane read path). Built in setup-memory on the shared db. */
   tripleStore?: import("@comis/core").TripleStorePort;
+  /** Embedding read store (Phase 102, IQ-01). Threaded into each per-agent createPiExecutor like
+   *  entityStore (the recall MMR diversity re-rank's scoped embedding read). Built in setup-memory on the shared db. */
+  embeddingStore?: import("@comis/core").MemoryEmbeddingStore;
   /** Usefulness store (Phase 93, FEED-03). Threaded into each per-agent createPiExecutor
    *  like entityStore (the recall usefulness read path). Built in setup-memory on the shared db. */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
@@ -427,6 +430,7 @@ export async function setupAgents(deps: {
     temporalStore: deps.temporalStore,
     causalStore: deps.causalStore,
     tripleStore: deps.tripleStore,
+    embeddingStore: deps.embeddingStore,
     usefulnessStore: deps.usefulnessStore,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
