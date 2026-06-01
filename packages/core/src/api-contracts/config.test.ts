@@ -597,6 +597,67 @@ describe("config + env + gateway-infrastructure contracts", () => {
     ).toThrow();
   });
 
+  // ---------------------------------------------------------------------------
+  // EnvSetContract widening — REQ-14 / Plan 02-02
+  // RED: these tests fail until storage is z.enum(["encrypted","file"]) and
+  // restarting is z.boolean().
+  // ---------------------------------------------------------------------------
+
+  it("env.set: response accepts file storage variant (02-02 widening)", () => {
+    expect(() =>
+      EnvSetContract.response.parse({
+        set: true,
+        key: "OPENAI_API_KEY",
+        storage: "file",
+        restarting: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it("env.set: response accepts file storage + restarting:false (02-02 widening)", () => {
+    expect(() =>
+      EnvSetContract.response.parse({
+        set: true,
+        key: "OPENAI_API_KEY",
+        storage: "file",
+        restarting: false,
+      }),
+    ).not.toThrow();
+  });
+
+  it("env.set: response accepts encrypted storage + restarting:false (02-02 widening)", () => {
+    expect(() =>
+      EnvSetContract.response.parse({
+        set: true,
+        key: "OPENAI_API_KEY",
+        storage: "encrypted",
+        restarting: false,
+      }),
+    ).not.toThrow();
+  });
+
+  it("env.set: response rejects env storage (env is read-only, not a writable backend)", () => {
+    expect(() =>
+      EnvSetContract.response.parse({
+        set: true,
+        key: "OPENAI_API_KEY",
+        storage: "env",
+        restarting: true,
+      }),
+    ).toThrow();
+  });
+
+  it("env.set: response rejects restarting as a string (must be boolean not string)", () => {
+    expect(() =>
+      EnvSetContract.response.parse({
+        set: true,
+        key: "OPENAI_API_KEY",
+        storage: "file",
+        restarting: "yes",
+      }),
+    ).toThrow();
+  });
+
   it("env.set: response REJECTS accidental value/plaintext/secret fields (residency canary)", () => {
     // Strict by default — no .passthrough(). A future leak that
     // adds `value` to the return shape fails the dev-mode parse.
