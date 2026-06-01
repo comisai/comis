@@ -169,6 +169,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // but it is called with an inline object, so the named Deps SHAPE type has no
       // production consumer — baseline orphan (mirror MemoryReviewDeps).
       "MemoryConsolidationDeps",
+      // Offline triple-extraction job (Phase 100-05, Track F — KG-01, decision 6).
+      // runMemoryTripleExtraction is the offline writer; its daemon cron wiring is
+      // OPTIONAL in Plan 100-05 (the job is default-OFF and the benchmark in Plan
+      // 100-06 calls runMemoryTripleExtraction directly / seeds via tripleStore.upsertTriple).
+      // Surfaced here AHEAD of that consumer — the factory-orphan dance (mirror
+      // runMemoryConsolidation @ 84-03 before its sentinel landed): this entry
+      // SHRINKS when Plan 100-06 (or a later cron-wiring plan) lands the consumer.
+      // The Deps/Config/Stats SHAPE types + the TripleCandidate extractor-output type
+      // are referenced via inline objects only — baseline orphans (mirror MemoryConsolidationDeps).
+      "runMemoryTripleExtraction",
+      "MemoryTripleExtractionDeps",
+      "MemoryTripleExtractionConfig",
+      "MemoryTripleExtractionStats",
+      "TripleCandidate",
       "formatMemorySection",
       "CommandQueueDeps",
       "QueueStats",
@@ -1886,18 +1900,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // inline objects — baseline orphan (mirror MemoryEntityStoreDeps / MemoryConsolidationStoreDeps).
       "MemoryUsefulnessStoreDeps",
       // Trust-first bi-temporal KG triple store (Phase 100-01, Track F — KG-01).
-      // createSqliteTripleStore is the sole TripleStorePort adapter; the daemon
-      // composition root constructs it on the memory adapter's db handle in Plan
-      // 100-03 (setup-memory). Surfaced here AHEAD of that wiring — the
-      // factory-orphan dance (mirror createSqliteMemoryCausalStore @ 96-01): this
-      // entry SHRINKS when 100-03 lands the daemon consumer. MemoryTripleStoreDeps
-      // is the constructor-deps SHAPE (referenced via inline objects only) —
-      // PERMANENT baseline orphan (mirror MemoryCausalStoreDeps). MemoryTripleRowSchema
-      // is the row schema consumed by createRowMapper inside the adapter (an
-      // intra-file value reference, not a cross-file import), so the export-graph
-      // walker counts it as an orphan until a cross-file consumer (the Plan-02/04
-      // projection reads) lands — tracked here (mirror the other *RowSchema entries).
-      "createSqliteTripleStore",
+      // createSqliteTripleStore NOW has a production consumer — the daemon
+      // composition root constructs it on the memory adapter's db handle in
+      // setup-memory (Plan 100-05) — so its orphan entry was REMOVED here (the
+      // factory-orphan dance SHRANK on schedule, mirror createSqliteMemoryCausalStore
+      // @ 96-03). MemoryTripleStoreDeps is the constructor-deps SHAPE (referenced via
+      // inline objects only) — PERMANENT baseline orphan (mirror MemoryCausalStoreDeps).
+      // MemoryTripleRowSchema is the row schema consumed by createRowMapper inside the
+      // adapter (an intra-file value reference, not a cross-file import), so the
+      // export-graph walker counts it as an orphan — tracked here (mirror the other
+      // *RowSchema entries).
       "MemoryTripleStoreDeps",
       "MemoryTripleRowSchema",
       "EmbeddingCacheOptions",
