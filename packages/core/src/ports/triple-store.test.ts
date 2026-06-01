@@ -101,7 +101,7 @@ describe("TripleStorePort — type-only segregated KG port (KG-01/KG-03)", () =>
     if (laneRes.ok) expect(laneRes.value).toEqual([]);
   });
 
-  it("types upsertTriple as (TripleInput, TripleScope) => Promise<Result<void, Error>>", () => {
+  it("exposes upsertTriple typed as (TripleInput, TripleScope) => Promise<Result<void, Error>>", () => {
     const stub: TripleStorePort = {
       upsertTriple: async (): Promise<Result<void, Error>> => ok(undefined),
       asOf: async (): Promise<Result<TripleInput[], Error>> => ok([]),
@@ -111,7 +111,7 @@ describe("TripleStorePort — type-only segregated KG port (KG-01/KG-03)", () =>
     expectTypeOf(stub.upsertTriple).returns.toEqualTypeOf<Promise<Result<void, Error>>>();
   });
 
-  it("types asOf as (number, Omit<TripleScope,'now'>) => Promise<Result<TripleInput[], Error>>", () => {
+  it("exposes asOf typed as (number, Omit<TripleScope,'now'>) => Promise<Result<TripleInput[], Error>>", () => {
     const stub: TripleStorePort = {
       upsertTriple: async (): Promise<Result<void, Error>> => ok(undefined),
       asOf: async (): Promise<Result<TripleInput[], Error>> => ok([]),
