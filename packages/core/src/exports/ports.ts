@@ -28,6 +28,7 @@ export type {
   EntityScope,
   EntityRow,
   MemoryTemporalStore,
+  MemoryEmbeddingStore,
   MemoryCausalStore,
   CausalScope,
   TripleStorePort,
