@@ -90,6 +90,34 @@ describe("acquireDataDirLock", () => {
   });
 });
 
+describe("acquireDataDirLock parent-dir fsync (WR-03)", () => {
+  let dataDir: string;
+
+  beforeEach(() => {
+    dataDir = makeTmpDir();
+  });
+
+  afterEach(() => {
+    try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    vi.restoreAllMocks();
+  });
+
+  it("lock acquisition completes without error when parent dir is opened for fsync", () => {
+    // Verifies that acquireDataDirLock opens the parent directory (O_RDONLY) and
+    // calls fsyncSync on it without throwing — i.e. the parent-dir fsync path
+    // is exercised and the directory fd is valid and closeable.
+    // Direct spy on node:fs is not possible in ESM (namespace non-configurable),
+    // so we verify by confirming the acquire succeeds and the lock is readable.
+    // A regression (e.g. wrong path to openSync) would throw ENOENT/ENOTDIR here.
+    expect(() => acquireDataDirLock(dataDir)).not.toThrow();
+
+    // Lock file must exist with current PID — fsync path didn't corrupt anything
+    const lockPath = path.join(dataDir, ".daemon.lock");
+    expect(fs.existsSync(lockPath)).toBe(true);
+    expect(fs.readFileSync(lockPath, "utf-8").trim()).toBe(String(process.pid));
+  });
+});
+
 describe("releaseDataDirLock", () => {
   let dataDir: string;
 

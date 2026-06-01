@@ -65,6 +65,16 @@ export function acquireDataDirLock(dataDir: string): void {
     fs.writeSync(fd, String(process.pid));
     fs.fsyncSync(fd);
     fs.closeSync(fd);
+    fd = undefined;
+
+    // Fsync the parent directory to make the directory entry durable
+    // (matches persistSecretsFile's discipline — power-failure safety).
+    const dirFd = fs.openSync(dataDir, fs.constants.O_RDONLY);
+    try {
+      fs.fsyncSync(dirFd);
+    } finally {
+      fs.closeSync(dirFd);
+    }
   } catch (e) {
     // Close the fd if it was opened before the error
     if (fd !== undefined) {
