@@ -78,6 +78,18 @@ export type { MemoryCausalStoreDeps } from "./sqlite-memory-causal-store.js";
 export { createSqliteTripleStore } from "./sqlite-triple-store.js";
 export type { MemoryTripleStoreDeps } from "./sqlite-triple-store.js";
 
+// Per-user representation store (sole UserRepresentationStore impl; Phase 107,
+// Track E1 — USER-01). Owns ALL the per-user-representation SQL over the additive
+// `user_representation` table: the (tenant, agent, user)-scoped upsert (with the
+// write-time high-trust-floor reject + validateMemoryWrite redaction firewall) +
+// the LLM-free scoped read. The daemon (composition root, Plan 107-05) constructs
+// it on the memory adapter's db handle; the UserRepresentationStore port TYPE
+// lives in @comis/core (the agent↛memory cut — the offline profile-builder write
+// path + the prompt-assembly read path consume the type only). AHEAD of its
+// daemon consumer until 107-05 (the factory-orphan dance).
+export { createSqliteUserRepresentationStore } from "./sqlite-user-representation-store.js";
+export type { MemoryUserRepresentationStoreDeps } from "./sqlite-user-representation-store.js";
+
 // Scoped embedding-read store (sole MemoryEmbeddingStore impl; Phase 102, IQ-01).
 // Owns the (tenant, agent)-scoped LEFT JOIN vec_memories bulk read that hydrates
 // the MMR diversity re-rank (returns id->vector for the caller's scope ONLY — the
