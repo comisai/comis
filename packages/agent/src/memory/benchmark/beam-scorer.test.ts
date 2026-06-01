@@ -84,6 +84,30 @@ describe("scoreBeam (per-ability recall@k over planted needles)", () => {
     expect(score.overall.recallAt1).toBe(0);
   });
 
+  it("treats a needle whose query is absent from the ranked map as recall 0 (the ?? [] fallback)", () => {
+    // The ranked map has NO entry for this needle's query → rankFn falls back to [].
+    const needles: BeamNeedle[] = [needle("single-fact", "q-missing", "gold-x")];
+    const score = scoreBeam(needles, new Map());
+    expect(score.perAbility["single-fact"]?.recallAt1).toBe(0);
+    expect(score.overall.recallAt1).toBe(0);
+  });
+
+  it("folds two needles of the SAME ability into one per-ability metric (macro-average)", () => {
+    // Exercises the group-by re-entry (??= []): one gold-at-#1 + one gold-absent → 0.5.
+    const needles: BeamNeedle[] = [
+      needle("temporal", "q-hit", "gold-hit"),
+      needle("temporal", "q-miss", "gold-miss"),
+    ];
+    const ranked = new Map<string, MemorySearchResult[]>([
+      ["q-hit", [result("gold-hit")]],
+      ["q-miss", [result("other")]],
+    ]);
+    const score = scoreBeam(needles, ranked);
+    expect(score.perAbility["temporal"]?.recallAt1).toBe(0.5);
+    // Only one ability present → overall equals the temporal fold.
+    expect(score.overall.recallAt1).toBe(0.5);
+  });
+
   it("returns an empty perAbility map and a zeroed (never-NaN) overall for empty needles", () => {
     const score = scoreBeam([], new Map());
     expect(Object.keys(score.perAbility)).toEqual([]);
