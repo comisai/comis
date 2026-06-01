@@ -190,14 +190,32 @@ describe("loadMemoryAgentBench (prototype-pollution-safe; content stringified on
     expect(Object.prototype.hasOwnProperty.call(Object.prototype, "polluted")).toBe(false);
   });
 
-  it("emits content as JSON.stringify of the source document (never eval'd)", () => {
+  it("keeps a string document VERBATIM as content (already plain text, never eval'd)", () => {
     const parsed = loadMemoryAgentBench(RAW);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
+    // The fixture's documents are plain strings — kept verbatim (NOT re-quoted).
+    expect(parsed.value.docs[0].content).toBe(
+      "Neutral placeholder document one: user_a stated their placeholder color preference is blue.",
+    );
     for (const doc of parsed.value.docs) {
-      // Round-trips through JSON.parse (it is a JSON string, not interpreted code).
-      expect(() => JSON.parse(doc.content)).not.toThrow();
+      expect(typeof doc.content).toBe("string");
     }
+  });
+
+  it("JSON.stringify's a non-string (object) document into a parseable content string", () => {
+    const objDoc = {
+      ability: "long-range",
+      documents: [{ title: "doc a", body: "placeholder body a" }],
+      questions: [{ question_id: "q1", question: "q?", answer: "a" }],
+    };
+    const parsed = loadMemoryAgentBench(objDoc);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    // An object document is JSON.stringify'd — so it round-trips through JSON.parse
+    // (it is JSON text, never interpreted code).
+    const roundTripped = JSON.parse(parsed.value.docs[0].content) as Record<string, unknown>;
+    expect(roundTripped).toEqual({ title: "doc a", body: "placeholder body a" });
   });
 });
 
