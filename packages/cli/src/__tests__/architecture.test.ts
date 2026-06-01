@@ -217,7 +217,7 @@ describe("daemon-required help-text patterns", () => {
 
 describe("auth help-text patterns", () => {
   const AUTH_FILE = resolve(SRC_ROOT, "commands/auth.ts");
-  const AUTH_ENCRYPTED_PATTERN = /Requires the comis daemon to be running when oauth\.storage is 'encrypted'\./;
+  const AUTH_ENCRYPTED_PATTERN = /Requires the comis daemon to be running when security\.storage is 'encrypted'\./;
   const AUTH_LOGIN_PATTERN = /Runs locally for file-backed storage\. Daemon-assisted login for encrypted storage is not yet supported\./;
 
   it("auth list description contains the conditional daemon-required precondition string", () => {

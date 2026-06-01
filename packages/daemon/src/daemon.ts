@@ -1474,13 +1474,11 @@ async function bootFoundation(
     throw new Error("[MIGRATION_ERROR] COMIS_DISABLE_ENCRYPTED_SECRETS is no longer supported. Set security.storage: env in your config.yaml and remove the env var. See the migration guide in the changelog."); // MIGRATION-GATE
   }
 
-  // Step 2: Pre-read security.storage from YAML (layered, last-wins).
-  // Returns "encrypted" | "file" | "env" | "legacy".
-  // NEVER writes key material before this check — the storageMode gates the write.
+  // Step 2: Pre-read security.storage from YAML (layered, last-wins). Returns
+  // "encrypted"|"file"|"env"|"legacy". NEVER writes key material before this check.
   const storageMode = _preReadStorageMode(requestedConfigPaths);
 
-  // Step 3: If legacy keys detected in YAML, fail with migration error before
-  // any key material is written (REQ-17 criterion: no key material in file/env mode).
+  // Step 3: If legacy keys detected in YAML, fail before any key material is written.
   if (storageMode === "legacy") {
     throw new Error(
       "[MIGRATION_ERROR] Legacy config keys detected in your config.yaml. " +

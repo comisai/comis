@@ -1660,6 +1660,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // construct a TripleInput by naming the trust literal) — tracked here.
       // Shrinks when the Plan-02 offline writer / Plan-04 lane reference it directly.
       "TripleTrust",
+      // v1.5 credential-storage config foundation (Phase 1, Plans 03/04).
+      // checkLegacyConfigKeys detects removed legacy config keys (oauth.storage /
+      // security.secrets.enabled) before Zod parse; consumed internally by
+      // loader.ts but exported for embedders that call validateConfig and want to
+      // surface migration errors via the same guard. StorageModePreRead is the
+      // return type of preReadStorageMode (daemon-boot pre-read); the daemon
+      // imports preReadStorageMode (which has an in-repo consumer) but does not
+      // import the return type name directly. Both symbols are part of the
+      // documented migration-guard API surface and shrink when a real cross-package
+      // consumer materializes.
+      "checkLegacyConfigKeys",
+      "StorageModePreRead",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,

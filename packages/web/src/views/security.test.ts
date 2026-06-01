@@ -404,22 +404,25 @@ describe("IcSecurityView", () => {
 
   // --- Secrets tab tests ---
 
-  it("secrets tab renders enabled toggle and db path", async () => {
+  it("secrets tab renders read-only storage mode and db path (no toggle — D17 runtime-immutable)", async () => {
     const rpc = createSecurityMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
     await switchTab(el, "secrets");
 
+    // security.storage is runtime-immutable (D17) — no write control offered.
     const toggle = el.shadowRoot?.querySelector("ic-toggle");
-    expect(toggle).toBeTruthy();
-    expect((toggle as any).label).toContain("Enabled");
+    expect(toggle).toBeNull();
 
-    const dbPath = el.shadowRoot?.querySelector(".tls-value");
+    // DB path row is still displayed (second .tls-value; first is storage mode).
+    const tlsValues = el.shadowRoot?.querySelectorAll(".tls-value");
+    expect(tlsValues?.length).toBeGreaterThanOrEqual(2);
+    const dbPath = tlsValues?.[1];
     expect(dbPath).toBeTruthy();
     expect(dbPath!.textContent).toContain("secrets.db");
   });
 
-  it("secrets tab shows section header", async () => {
+  it("secrets tab shows credential storage section header", async () => {
     const rpc = createSecurityMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
@@ -427,7 +430,7 @@ describe("IcSecurityView", () => {
 
     const header = el.shadowRoot?.querySelector(".section-header");
     expect(header).toBeTruthy();
-    expect(header!.textContent).toContain("Encrypted Secrets Store");
+    expect(header!.textContent).toContain("Credential Storage");
   });
 
   // --- Rules tab tests (formerly Policies) ---
