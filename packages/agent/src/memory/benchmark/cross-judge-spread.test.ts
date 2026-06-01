@@ -127,6 +127,26 @@ describe("computeCrossJudgeSpread -- per-category inter-judge |A-B| survival fol
     expect(ctorEntry?.spread).toBe(0);
   });
 
+  it("Test 7 (RED, IN-03): a non-finite judge-B value DROPS the category (symmetric with the A-guard), never a kept NaN row", () => {
+    // A finite judge-A category whose judge-B value is a secret-shaped string
+    // coerces B to NaN. The guard must be SYMMETRIC: a garbage B is "no comparable
+    // judge-B value for this category" and the category is DROPPED — never kept as a
+    // { judgeB: NaN, spread: NaN, survives: false } row that reads as a real
+    // non-surviving category and serializes a null into the published artifact.
+    const perCategoryA = { temporal: 45, "knowledge-update": 75 } as Record<string, number>;
+    const perCategoryB = { temporal: 42 } as Record<string, number>;
+    (perCategoryB as unknown as Record<string, unknown>)["knowledge-update"] =
+      "sk-SHOULD-NOT-APPEAR-AS-NULL-ROW";
+    const out = computeCrossJudgeSpread(perCategoryA, perCategoryB);
+    // The garbage-B category is dropped; only the comparable category survives the fold.
+    expect(out).toHaveLength(1);
+    expect(out[0].category).toBe("temporal");
+    // No NaN/null row leaks into the published artifact for the dropped category.
+    expect(out.find((s) => s.category === "knowledge-update")).toBeUndefined();
+    const json = JSON.stringify(out);
+    expect(json).not.toMatch(/null|NaN|sk-/);
+  });
+
   it("exposes the SURVIVAL_TOLERANCE_PTS constant as the documented 5.0pt default", () => {
     expect(SURVIVAL_TOLERANCE_PTS).toBe(5.0);
   });

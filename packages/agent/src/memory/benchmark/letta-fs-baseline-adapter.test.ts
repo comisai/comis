@@ -123,4 +123,42 @@ describe("letta-fs-baseline-adapter — the keyless Letta-style filesystem contr
     const out = await adapter.run("j1", cfgWithDocs([]));
     expect(out.ran).toBe(true);
   });
+
+  it("Test 7 (RED, WR-02): run() OBSERVES the formatted control context — contextChars equals the rendered length (the format call is load-bearing, not dead)", async () => {
+    // The honesty contract: the control's only real keyless work is formatting the
+    // full-dump context. The run MUST observe that work (record its length), so a
+    // linter/refactor cannot delete the format call with zero behavioural change.
+    const adapter = createLettaFsBaselineAdapter();
+    const docs = [
+      { content: "alpha-fact", createdAt: 1 },
+      { content: "beta-fact", createdAt: 2 },
+    ];
+    const expectedChars = adapter.formatControlContext(docs).length;
+    const out = await adapter.run("j1", cfgWithDocs(docs));
+    expect(out.ran).toBe(true);
+    if (!out.ran) {
+      throw new Error("expected ran:true");
+    }
+    // The observed length is the rendered context's length — load-bearing proof the
+    // run actually formatted the haystack (a discarded call could not produce this).
+    expect(out.contextChars).toBe(expectedChars);
+    expect(out.contextChars).toBeGreaterThan(0);
+  });
+
+  it("Test 8 (RED, WR-02): contextChars tracks the haystack — a larger haystack yields a larger observed context", async () => {
+    const adapter = createLettaFsBaselineAdapter();
+    const small = await adapter.run("j1", cfgWithDocs([{ content: "x", createdAt: 1 }]));
+    const large = await adapter.run(
+      "j1",
+      cfgWithDocs([
+        { content: "a-much-longer-document-body-here", createdAt: 1 },
+        { content: "and-a-second-longer-document-body", createdAt: 2 },
+      ]),
+    );
+    expect(small.ran && large.ran).toBe(true);
+    if (!small.ran || !large.ran) {
+      throw new Error("expected both ran:true");
+    }
+    expect(large.contextChars).toBeGreaterThan(small.contextChars);
+  });
 });
