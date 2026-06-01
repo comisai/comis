@@ -67,6 +67,17 @@ export type { MemoryTemporalStoreDeps } from "./sqlite-memory-temporal-store.js"
 export { createSqliteMemoryCausalStore } from "./sqlite-memory-causal-store.js";
 export type { MemoryCausalStoreDeps } from "./sqlite-memory-causal-store.js";
 
+// Trust-first bi-temporal knowledge-graph triple store (sole TripleStorePort
+// impl; Phase 100, Track F — KG-01/KG-02/KG-03/KG-04). Owns ALL the S/P/O triple
+// SQL over the additive `memory_triples` table: the trust-first single-current-
+// truth upsert (Plan 100-01 skeleton = INSERT-only; invalidation = Plan 100-02),
+// the valid-time `asOf(t)` read, and the bounded recursive-CTE `spreadLane`
+// (Plan 100-04). The daemon (composition root, Plan 100-03) constructs it on the
+// memory adapter's db handle; the TripleStorePort TYPE lives in @comis/core (the
+// agent↛memory cut — the offline writer + the recall lane consume the type only).
+export { createSqliteTripleStore } from "./sqlite-triple-store.js";
+export type { MemoryTripleStoreDeps } from "./sqlite-triple-store.js";
+
 // Memory consolidation store (sole MemoryConsolidationStore impl; Phase 84).
 // Owns the scoped, state-predicate (consolidated_at IS NULL) candidate selection
 // + the atomic applyConsolidation transaction. The daemon (Plan 05) constructs
