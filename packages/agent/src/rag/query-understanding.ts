@@ -137,8 +137,9 @@ export function intentMultiplier(intent: Intent, lane: ReweightLane): number {
     case "factual":
       return 1.0; // default lookup → byte-identity on every lane
     default: {
-      const _exhaustive: never = intent;
-      return _exhaustive;
+      const _exhaustive: never = intent; // compile-time exhaustiveness: a NEW intent fails here
+      void _exhaustive;
+      return 1.0; // runtime-safe neutral (defense-in-depth; unreachable in pure TS)
     }
   }
 }
