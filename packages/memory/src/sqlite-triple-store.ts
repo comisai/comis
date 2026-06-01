@@ -17,8 +17,17 @@
  *   `expired_at` set), NEVER deleted. Same object is idempotent corroboration (no
  *   new history row). Non-overlapping occurred intervals coexist (Graphiti's
  *   interval-overlap guard).
- * - `asOf(t)` is the working valid-time query (`t_valid_start <= t AND
- *   (t_valid_end IS NULL OR t_valid_end > t)`), scoped.
+ * - `asOf(t, scope, mode)` is the bi-temporal as-of read (Plan 100-03 / KG-03):
+ *   `"valid"` (default) queries the VALID-time window (`t_valid_start <= t AND
+ *   (t_valid_end IS NULL OR t_valid_end > t)` — "what was BELIEVED true at t");
+ *   `"txn"` queries the TXN/record-time window (`t_ingested <= t AND (expired_at
+ *   IS NULL OR expired_at > t)` — "what the system had RECORDED as of t"). The
+ *   two modes index DIFFERENT column pairs, so a back-dated or future-valid fact
+ *   appears in one but not the other at a chosen `t`. Both scoped.
+ * - `currentTruth(scope, cap)` is the DEFAULT-RECALL read (Plan 100-03 / KG-03):
+ *   only `t_valid_end IS NULL` rows — superseded losers and recorded-but-not-
+ *   believed rows are DEFAULT-FILTERED out (the Graphiti opt-in-leak fix). As-of
+ *   history is reachable only via an explicit `asOf(t)`. Scoped, capped.
  * - `spreadLane` returns `[]` — the bounded recursive-CTE neighbourhood spread is
  *   Plan 100-04.
  *
@@ -101,6 +110,13 @@ const TRUST_RANK: Record<"system" | "learned" | "external", number> = {
   learned: 1,
   external: 0,
 };
+
+/**
+ * Default cap for {@link createSqliteTripleStore}'s `currentTruth` read — a sane
+ * bound so a default-recall current-truth scan can never return an unbounded row
+ * set. Callers pass an explicit `cap` to override.
+ */
+const DEFAULT_CURRENT_TRUTH_CAP = 256;
 
 /**
  * Two occurred windows OVERLAP iff each starts on/before the other ends
@@ -198,10 +214,32 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
   );
   // Valid-time as-of read (KG-03), scoped. The `tenant_id = ? AND agent_id = ?`
   // is the load-bearing ISOLATION boundary (T-100-01-01). Bound params only.
+  // "What was BELIEVED true at t" — indexes the VALID-time window.
   const asOfSelect = db.prepare(
     "SELECT * FROM memory_triples " +
       "WHERE tenant_id = ? AND agent_id = ? " +
       "AND t_valid_start <= ? AND (t_valid_end IS NULL OR t_valid_end > ?)",
+  );
+  // Txn/record-time as-of read (KG-03), scoped. SAME shape over the OTHER
+  // bi-temporal axis — "what the system had RECORDED as of t": the record window
+  // `t_ingested <= t AND (expired_at IS NULL OR expired_at > t)`. Querying a
+  // DIFFERENT column pair than asOfSelect is the whole point of the txn variant
+  // (a back-dated / future-valid fact diverges between the two at a chosen t).
+  // (tenant, agent) scoped; bound params only.
+  const asOfTxnSelect = db.prepare(
+    "SELECT * FROM memory_triples " +
+      "WHERE tenant_id = ? AND agent_id = ? " +
+      "AND t_ingested <= ? AND (expired_at IS NULL OR expired_at > ?)",
+  );
+  // Default-recall current-truth read (KG-03 — the Graphiti opt-in-leak fix).
+  // ONLY `t_valid_end IS NULL` rows are believed NOW: superseded losers (soft-
+  // closed) and recorded-but-not-believed rows (inserted already-closed by the
+  // KG-02 write path) are DEFAULT-FILTERED out. Newest-valid first, capped.
+  // (tenant, agent) scoped; bound params only (the cap is a bound `?`).
+  const currentTruthSelect = db.prepare(
+    "SELECT * FROM memory_triples " +
+      "WHERE tenant_id = ? AND agent_id = ? AND t_valid_end IS NULL " +
+      "ORDER BY t_valid_start DESC LIMIT ?",
   );
 
   return {
@@ -366,12 +404,17 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
     async asOf(
       t: number,
       scope: Omit<TripleScope, "now">,
+      mode: "valid" | "txn" = "valid",
     ): Promise<Result<TripleInput[], Error>> {
       const startMs = systemNowMs();
       const { tenantId, agentId } = scope;
       try {
-        // Scoped valid-time window. The (tenant, agent) filter is load-bearing.
-        const rows = asOfSelect.all(tenantId, agentId, t, t);
+        // Branch the temporal axis on `mode` — the two prepared statements query
+        // DIFFERENT column pairs (valid-time t_valid_start/t_valid_end vs
+        // record-time t_ingested/expired_at). Both (tenant, agent) scoped (the
+        // load-bearing isolation filter); `t` is a bound `?` param.
+        const stmt = mode === "txn" ? asOfTxnSelect : asOfSelect;
+        const rows = stmt.all(tenantId, agentId, t, t);
         const parsed = tripleRowMapper.parseRows(rows);
         if (!parsed.ok) return err(new Error(parsed.error.message));
 
@@ -379,7 +422,7 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
 
         const durationMs = systemNowMs() - startMs;
         logger?.debug(
-          { step: "triple-asof", count: results.length, durationMs },
+          { step: "triple-asof", mode, count: results.length, durationMs },
           "Triple asOf complete",
         );
         return ok(results);
@@ -389,12 +432,53 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
         logger?.warn(
           {
             step: "triple-asof",
+            mode,
             durationMs,
             err: error,
             errorKind: "internal" as const,
             hint: "triple asOf query failed",
           },
           "Triple asOf failed",
+        );
+        return err(error);
+      }
+    },
+
+    async currentTruth(
+      scope: Omit<TripleScope, "now">,
+      cap: number = DEFAULT_CURRENT_TRUTH_CAP,
+    ): Promise<Result<TripleInput[], Error>> {
+      const startMs = systemNowMs();
+      const { tenantId, agentId } = scope;
+      try {
+        // The DEFAULT-RECALL read: only `t_valid_end IS NULL` rows (believed
+        // NOW) — superseded losers + recorded-but-not-believed rows are
+        // default-filtered out (the Graphiti opt-in-leak fix). Scoped + capped;
+        // both the (tenant, agent) filter and the cap are bound `?` params.
+        const rows = currentTruthSelect.all(tenantId, agentId, cap);
+        const parsed = tripleRowMapper.parseRows(rows);
+        if (!parsed.ok) return err(new Error(parsed.error.message));
+
+        const results = parsed.value.map(rowToTripleInput);
+
+        const durationMs = systemNowMs() - startMs;
+        logger?.debug(
+          { step: "triple-current-truth", count: results.length, cap, durationMs },
+          "Triple currentTruth complete",
+        );
+        return ok(results);
+      } catch (e: unknown) {
+        const durationMs = systemNowMs() - startMs;
+        const error = e instanceof Error ? e : new Error(String(e));
+        logger?.warn(
+          {
+            step: "triple-current-truth",
+            durationMs,
+            err: error,
+            errorKind: "internal" as const,
+            hint: "triple currentTruth query failed — normal recall current-truth read unavailable",
+          },
+          "Triple currentTruth failed",
         );
         return err(error);
       }

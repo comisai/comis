@@ -104,13 +104,45 @@ export interface TripleStorePort {
   upsertTriple(triple: TripleInput, scope: TripleScope): Promise<Result<void, Error>>;
 
   /**
-   * READ PATH (KG-03). Valid-time as-of time-travel: the set of triples valid at
-   * instant `t` — `t_valid_start <= t AND (t_valid_end IS NULL OR t_valid_end >
-   * t)` — scoped to (tenant, agent). Returns the rows hydrated back as
-   * `TripleInput`. (The default current-truth recall filter — `t_valid_end IS
-   * NULL` — is the `asOf` of "now"; an explicit `t` time-travels.)
+   * READ PATH (KG-03). As-of time-travel in TWO temporal axes (the
+   * bi-temporal pair). `mode` selects which clock the instant `t` indexes; both
+   * are scoped to (tenant, agent) and hydrate the rows back as `TripleInput`:
+   *
+   * - `"valid"` (DEFAULT) — VALID-TIME: "what was BELIEVED true at instant `t`":
+   *   `t_valid_start <= t AND (t_valid_end IS NULL OR t_valid_end > t)`. (A 2-arg
+   *   call is byte-identical to Plan-01 valid-time behaviour — the valid-time
+   *   callers are unbroken.)
+   * - `"txn"` — TXN/RECORD-TIME: "what the system had RECORDED as of `t`":
+   *   `t_ingested <= t AND (expired_at IS NULL OR expired_at > t)`. Answers a
+   *   different question than valid-time whenever a fact's valid-time start
+   *   diverges from when it was ingested (e.g. a back-dated fact, or one whose
+   *   validity begins in the future) — the two clauses query DIFFERENT column
+   *   pairs (`t_valid_start`/`t_valid_end` vs `t_ingested`/`expired_at`).
+   *
+   * The default CURRENT-TRUTH recall read is {@link currentTruth} (`t_valid_end
+   * IS NULL`), NOT an `asOf` of "now"; an explicit `asOf(t)` time-travels.
    */
-  asOf(t: number, scope: Omit<TripleScope, "now">): Promise<Result<TripleInput[], Error>>;
+  asOf(
+    t: number,
+    scope: Omit<TripleScope, "now">,
+    mode?: "valid" | "txn",
+  ): Promise<Result<TripleInput[], Error>>;
+
+  /**
+   * READ PATH (KG-03). The DEFAULT-RECALL current-truth read: only the rows
+   * believed NOW — `t_valid_end IS NULL` — scoped to (tenant, agent), capped by
+   * `cap` (a sane default bound). This DEFAULT-FILTERS expired/invalidated edges
+   * (superseded losers AND recorded-but-not-believed rows, which the KG-02 write
+   * path soft-closes / records already-closed) OUT of normal recall — the fix for
+   * Graphiti's opt-in-filter stale-fact leak, where the default search path
+   * leaks expired edges unless a filter is explicitly requested. As-of history is
+   * reachable ONLY via an explicit {@link asOf} call. Returns the rows hydrated
+   * as `TripleInput`.
+   */
+  currentTruth(
+    scope: Omit<TripleScope, "now">,
+    cap?: number,
+  ): Promise<Result<TripleInput[], Error>>;
 
   /**
    * READ PATH (KG-04). Bounded recursive-CTE neighbourhood spread from the seed
