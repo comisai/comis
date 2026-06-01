@@ -1,0 +1,30 @@
+{
+  "harnessVersion": "phase-100-06-v1",
+  "benchmark": "trust-first-kg-invalidation",
+  "scenario": "SUITE-04 Paris/vegetarian via the real upsertTriple write path",
+  "pairs": 2,
+  "trustFirstCorrect": 2,
+  "trustFirstCorrectRate": 100,
+  "perPair": [
+    {
+      "query": "What is the user's home city?",
+      "incumbentTrust": "system",
+      "correctObject": "Paris",
+      "currentTruthObjects": [
+        "Paris"
+      ],
+      "incumbentStaysCurrent": true,
+      "externalIsCurrent": false
+    },
+    {
+      "query": "What diet does the user follow?",
+      "incumbentTrust": "learned",
+      "correctObject": "vegetarian",
+      "currentTruthObjects": [
+        "vegetarian"
+      ],
+      "incumbentStaysCurrent": true,
+      "externalIsCurrent": false
+    }
+  ]
+}

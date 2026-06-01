@@ -1,0 +1,18 @@
+{
+  "harnessVersion": "phase-100-06-v1",
+  "benchmark": "graph-spread-lane-contribution",
+  "scenario": "structurally-linked non-lexical recall",
+  "laneOff": {
+    "recalledIds": 1,
+    "linkedDocPresent": false,
+    "linkedDocRecall": 0
+  },
+  "laneOn": {
+    "recalledIds": 2,
+    "linkedDocPresent": true,
+    "linkedDocRecall": 1
+  },
+  "linkedDocRecallDelta": 1,
+  "addedByLane": 1,
+  "vectorLane": false
+}
