@@ -22,6 +22,12 @@ const mockRunMemoryConsolidation = vi.hoisted(() => vi.fn(async () => ({ ok: tru
 const mockReasonSeam = vi.hoisted(() => vi.fn(async () => ({ deductive: [], inductive: [] })));
 const mockCreateReasoningSeam = vi.hoisted(() => vi.fn(() => mockReasonSeam));
 const mockRunMemoryReasoning = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
+const mockRunUserRepresentationBuild = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { built: 0, written: 0, blocked: 0 } })));
+const mockUserReprSeam = vi.hoisted(() => vi.fn(async () => []));
+const mockCreateUserRepresentationSeam = vi.hoisted(() => vi.fn(() => mockUserReprSeam));
+const mockRunRelationshipBuild = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: { built: 0, written: 0, blocked: 0 } })));
+const mockRelationshipSeam = vi.hoisted(() => vi.fn(async () => []));
+const mockCreateRelationshipSeam = vi.hoisted(() => vi.fn(() => mockRelationshipSeam));
 const mockResolveOperationModel = vi.hoisted(() => vi.fn(() => ({
   provider: "anthropic",
   modelId: "anthropic:claude-haiku",
@@ -36,6 +42,10 @@ vi.mock("@comis/agent", () => ({
   runMemoryConsolidation: mockRunMemoryConsolidation,
   runMemoryReasoning: mockRunMemoryReasoning,
   createReasoningSeam: mockCreateReasoningSeam,
+  runUserRepresentationBuild: mockRunUserRepresentationBuild,
+  createUserRepresentationSeam: mockCreateUserRepresentationSeam,
+  runRelationshipBuild: mockRunRelationshipBuild,
+  createRelationshipSeam: mockCreateRelationshipSeam,
 }));
 
 import { handleMemoryCronSentinel, type MemoryCronContext } from "./setup-channels-memory-crons.js";
@@ -43,6 +53,8 @@ import { handleMemoryCronSentinel, type MemoryCronContext } from "./setup-channe
 function makeCtx(overrides: {
   agents?: Record<string, any>;
   apiKey?: string | undefined;
+  /** Rows the injected memoryApi.inspect returns (the __SOCIAL_MODELING__ source set). */
+  inspectRows?: Array<{ id: string; userId: string; content: string; trustLevel: string; source?: { sessionKey?: string | null } }>;
 } = {}): MemoryCronContext {
   const logger = {
     info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(),
@@ -53,6 +65,16 @@ function makeCtx(overrides: {
     eventBus: { emit: vi.fn(), on: vi.fn() },
     secretManager: { get: vi.fn(() => (overrides.apiKey === undefined ? undefined : overrides.apiKey)) },
   };
+  // inspect is called once per trust level (system, learned); return the fixture rows for the
+  // FIRST trust level only so a row is not double-counted across levels (mirror how the real
+  // memories carry one trustLevel per row).
+  let inspectCall = 0;
+  const memoryApi = {
+    inspect: vi.fn(() => {
+      inspectCall++;
+      return inspectCall === 1 ? (overrides.inspectRows ?? []) : [];
+    }),
+  };
   return {
     container: container as any,
     logger: logger as any,
@@ -61,6 +83,8 @@ function makeCtx(overrides: {
     tenantId: "tenant-a",
     consolidationStore: { listConsolidationCandidates: vi.fn() } as any,
     tripleStore: { upsertTriple: vi.fn(), currentTruth: vi.fn() } as any,
+    relationshipStore: { upsert: vi.fn(), read: vi.fn() } as any,
+    memoryApi: memoryApi as any,
   };
 }
 
@@ -69,6 +93,10 @@ beforeEach(() => {
   mockRunMemoryConsolidation.mockResolvedValue({ ok: true as const, value: undefined });
   mockRunMemoryReasoning.mockResolvedValue({ ok: true as const, value: undefined });
   mockCreateReasoningSeam.mockReturnValue(mockReasonSeam);
+  mockRunUserRepresentationBuild.mockResolvedValue({ ok: true as const, value: { built: 0, written: 0, blocked: 0 } });
+  mockCreateUserRepresentationSeam.mockReturnValue(mockUserReprSeam);
+  mockRunRelationshipBuild.mockResolvedValue({ ok: true as const, value: { built: 0, written: 0, blocked: 0 } });
+  mockCreateRelationshipSeam.mockReturnValue(mockRelationshipSeam);
 });
 
 describe("handleMemoryCronSentinel", () => {
@@ -139,5 +167,101 @@ describe("handleMemoryCronSentinel", () => {
     await handleMemoryCronSentinel("__MEMORY_REASONING__", { agentId: undefined, onComplete }, ctx);
     expect(mockRunMemoryReasoning).not.toHaveBeenCalled();
     expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for memory reasoning" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// __SOCIAL_MODELING__ sentinel (Phase 108, SOCIAL-01/02/03 — the offline
+// directional relationship builder). The gate is STRICTER than the 107
+// representation cron: it requires BOTH enabled AND a recorded privacy-review
+// sign-off (SOCIAL-03). The write-side resolves channelId per source from the
+// session key and SKIPS NULL-session-key sources (SOCIAL-02 / Pitfall 1).
+// ---------------------------------------------------------------------------
+
+describe("handleMemoryCronSentinel __SOCIAL_MODELING__ (Phase 108)", () => {
+  // A formatted session key {tenant}:{user}:{channelId} — parseFormattedSessionKey
+  // recovers channelId from this on the write side.
+  const sk = (channelId: string, userId = "user_a") => `tenant-a:${userId}:${channelId}`;
+
+  it("short-circuits ok and runs NOTHING when socialModeling is disabled (the opt-in gate)", async () => {
+    const ctx = makeCtx({ agents: { "agent-1": { name: "Agent 1" } } });
+    const onComplete = vi.fn();
+    const handled = await handleMemoryCronSentinel("__SOCIAL_MODELING__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled).toBe(true);
+    expect(mockRunRelationshipBuild).not.toHaveBeenCalled();
+    expect(mockCreateRelationshipSeam).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
+  });
+
+  it("short-circuits ok and runs NOTHING when enabled but NO privacy-review sign-off (the SOCIAL-03 gate)", async () => {
+    // The knob alone does NOT activate — a recorded sign-off is required (SOCIAL-03).
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", socialModeling: { enabled: true } } },
+      apiKey: "test-key",
+      inspectRows: [{ id: "s1", userId: "user_a", content: "A trusts B", trustLevel: "learned", source: { sessionKey: sk("chan-1") } }],
+    });
+    const onComplete = vi.fn();
+    const handled = await handleMemoryCronSentinel("__SOCIAL_MODELING__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled).toBe(true);
+    expect(mockRunRelationshipBuild).not.toHaveBeenCalled();
+    expect(mockCreateRelationshipSeam).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
+  });
+
+  it("groups sources by resolved channelId and invokes runRelationshipBuild PER channel when enabled + signed-off + keyed", async () => {
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", socialModeling: { enabled: true, privacyReviewSignedOffBy: "ops@example.com" } } },
+      apiKey: "test-key",
+      inspectRows: [
+        { id: "s1", userId: "user_a", content: "A about B", trustLevel: "learned", source: { sessionKey: sk("chan-1", "user_a") } },
+        { id: "s2", userId: "user_b", content: "B about A", trustLevel: "learned", source: { sessionKey: sk("chan-1", "user_b") } },
+        { id: "s3", userId: "user_c", content: "C about D", trustLevel: "learned", source: { sessionKey: sk("chan-2", "user_c") } },
+      ],
+    });
+    const onComplete = vi.fn();
+    const handled = await handleMemoryCronSentinel("__SOCIAL_MODELING__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled).toBe(true);
+    // Two distinct channels (chan-1, chan-2) => two per-channel build invocations.
+    expect(mockRunRelationshipBuild).toHaveBeenCalledTimes(2);
+    const channelIds = mockRunRelationshipBuild.mock.calls.map((c) => (c[0] as any).channelId).sort();
+    expect(channelIds).toEqual(["chan-1", "chan-2"]);
+    // The build is scoped to the agent + tenant + channel and receives the relationshipStore port.
+    const firstArg = mockRunRelationshipBuild.mock.calls[0][0] as any;
+    expect(firstArg.agentId).toBe("agent-1");
+    expect(firstArg.tenantId).toBe("tenant-a");
+    expect(firstArg.relationshipStore).toBe(ctx.relationshipStore);
+    expect(mockCreateRelationshipSeam).toHaveBeenCalledOnce();
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
+  });
+
+  it("SKIPS a NULL-session-key source (0 build invocations for a NULL-only set — never bucketed under undefined)", async () => {
+    // SOCIAL-02 / Pitfall 1: a source whose channelId cannot be resolved is SKIPPED + counted,
+    // NEVER bucketed under an empty/undefined channel.
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", socialModeling: { enabled: true, privacyReviewSignedOffBy: "ops@example.com" } } },
+      apiKey: "test-key",
+      inspectRows: [
+        { id: "s1", userId: "user_a", content: "system fact, no session key", trustLevel: "learned", source: { sessionKey: null } },
+      ],
+    });
+    const onComplete = vi.fn();
+    const handled = await handleMemoryCronSentinel("__SOCIAL_MODELING__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled).toBe(true);
+    // A NULL-session-key-only source set yields 0 build invocations (no undefined-channel bucket).
+    expect(mockRunRelationshipBuild).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
+  });
+
+  it("skips with an error when enabled + signed-off but NO API key (no key value used)", async () => {
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", socialModeling: { enabled: true, privacyReviewSignedOffBy: "ops@example.com" } } },
+      apiKey: undefined,
+      inspectRows: [{ id: "s1", userId: "user_a", content: "A about B", trustLevel: "learned", source: { sessionKey: sk("chan-1") } }],
+    });
+    const onComplete = vi.fn();
+    await handleMemoryCronSentinel("__SOCIAL_MODELING__", { agentId: "agent-1", onComplete }, ctx);
+    expect(mockCreateRelationshipSeam).not.toHaveBeenCalled();
+    expect(mockRunRelationshipBuild).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No API key for anthropic" });
   });
 });

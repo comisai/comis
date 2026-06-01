@@ -666,6 +666,85 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // __SOCIAL_MODELING__ cron registration (Phase 108, SOCIAL-01/03). The gate
+  // is STRICTER than the other memory crons: register ONLY when enabled AND a
+  // recorded privacy-review sign-off (privacyReviewSignedOffBy) is present
+  // (SOCIAL-03). A knob-on-but-no-sign-off agent registers NO job (byte-identical).
+  // -------------------------------------------------------------------------
+
+  it("registers NO __SOCIAL_MODELING__ cron for a default (social-off) agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // socialModeling undefined => default OFF (the cost gate — byte-identical).
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const socialAdds = addJob.mock.calls.filter(
+      (c) => (c[0] as any)?.payload?.text === "__SOCIAL_MODELING__",
+    );
+    expect(socialAdds.length).toBe(0);
+  });
+
+  it("registers NO __SOCIAL_MODELING__ cron when enabled but NO privacy-review sign-off (the SOCIAL-03 gate)", async () => {
+    // The knob alone does NOT register a job — a recorded sign-off is required (SOCIAL-03).
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        socialModeling: { enabled: true },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const socialAdds = addJob.mock.calls.filter(
+      (c) => (c[0] as any)?.payload?.text === "__SOCIAL_MODELING__",
+    );
+    expect(socialAdds.length).toBe(0);
+  });
+
+  it("registers the __SOCIAL_MODELING__ cron (default 0 6 * * *) only when enabled AND signed-off", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        socialModeling: { enabled: true, privacyReviewSignedOffBy: "ops@example.com" },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const socialAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__SOCIAL_MODELING__");
+    expect(socialAdd).toBeDefined();
+    expect(socialAdd.id).toBe("memory-social-modeling-agent-1");
+    expect(socialAdd.name).toBe("Memory social modeling");
+    // Default schedule runs AFTER the representation cron's 0 5 so relationships are
+    // built over freshly-reasoned/profiled memories the same night.
+    expect(socialAdd.schedule).toEqual({ kind: "cron", expr: "0 6 * * *" });
+    expect(socialAdd.sessionTarget).toBe("isolated");
+    expect(socialAdd.sessionStrategy).toBe("fresh");
+    expect(socialAdd.payload).toEqual({ kind: "system_event", text: "__SOCIAL_MODELING__" });
+  });
+
+  // -------------------------------------------------------------------------
   // 13.5. sessionStrategy and maxHistoryTurns propagated in event emission
   // -------------------------------------------------------------------------
 
