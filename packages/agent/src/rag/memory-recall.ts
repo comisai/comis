@@ -42,6 +42,7 @@ import type {
   SessionKey,
   ComisLogger,
   TypedEventBus,
+  TripleStorePort,
 } from "@comis/core";
 import { tryGetContext } from "@comis/core";
 // TYPE-only import of the recall-trace recorder from @comis/observability — an EXISTING
@@ -53,6 +54,7 @@ import { fuse, type FusionLane } from "./fuse.js";
 import { scoreWithBreakdown, type ScoringAlphas, type ScoreBreakdown } from "./score.js";
 import { deduplicateResults } from "./rag-retriever.js";
 import { appendCausalLane } from "./recall-causal-lane.js";
+import { appendGraphSpreadLane } from "./recall-graph-spread-lane.js";
 import {
   buildRecallRecord,
   recallQueryDigest,
@@ -93,6 +95,17 @@ export interface MemoryRecallDeps {
    * TYPE-only (the agent↛memory cut); the daemon injects the SAME store the write path uses for linkCausal.
    */
   causalStore?: MemoryCausalStore;
+  /**
+   * Optional trust-first triple store (KG-04). When present AND cfg.lanes.graphSpread.enabled,
+   * the read path queries `spreadLane` (in appendGraphSpreadLane) for memories STRUCTURALLY
+   * connected to the top base hits — a bounded recursive-CTE walk over the triple store's OWN
+   * current-truth `subject → object` edges (depth- + fan-out-capped, LLM-free) — and fuses them
+   * as a 6th lane; absent / disabled / no seeds -> no graph-spread lane (RRF unchanged, the
+   * ENT-04 no-op). TYPE-only from @comis/core (the agent↛memory build cut) — the daemon injects
+   * the concrete SqliteTripleStore (the same store the offline triple-extraction writer uses) at
+   * the composition root (Plan 05).
+   */
+  tripleStore?: TripleStorePort;
   /**
    * Optional usefulness store (FEED-03). When present AND cfg.feedback.enabled, recall does a
    * bulk read of the per-memory signal for the ranked ids and folds the used-rate into the
@@ -160,6 +173,10 @@ export interface MemoryRecallConfig {
     /** Causal one-hop lane knobs (EXTRACT-03; from RagConfig.lanes.causal). Default-OFF
      *  (`enabled:false`) -> the lane is never pushed -> RRF unchanged (the ENT-04 no-op). */
     causal?: { enabled: boolean; weight: number };
+    /** Graph-spread lane knobs (KG-04; from RagConfig.lanes.graphSpread). Default-OFF
+     *  (`enabled:false`) -> the lane is never pushed -> RRF unchanged (the ENT-04 no-op).
+     *  `maxDepth` caps the recursive-CTE hop count, `fanOut` caps per-node expansion. */
+    graphSpread?: { enabled: boolean; weight: number; maxDepth: number; fanOut: number };
   };
   /**
    * Entity-associative lane knobs (sourced from RagConfig.entityLane). Optional so
@@ -289,6 +306,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       let entityCandidates = 0;
       let temporalCandidates = 0;
       let causalCandidates = 0;
+      let graphSpreadCandidates = 0;
 
       // OBS-03 vec→FTS-only gap: the operator-facing degradation signal. We derive it from
       // the recall-layer-observable precondition: a query with no embeddable text
@@ -417,6 +435,21 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       if (cl?.enabled === true && deps.causalStore !== undefined && seedPool.length > 0) {
         const seedIds = seedPool.slice(0, cfg.entityLane?.seedCount ?? 5).map((r) => r.entry.id);
         causalCandidates = await appendCausalLane(lanes, deps.causalStore, cl.weight, cfg.maxResults, seedIds, sessionKey, agentId, deps.logger);
+      }
+
+      // 2d. GRAPH-SPREAD lane (KG-04) — the 6th fused lane (fts, vector, entity, temporal,
+      // causal, graphSpread), in appendGraphSpreadLane (full contract + DEFAULT-OFF byte-identity
+      // T-100-04-06 there). The precondition gate is HERE so the off path stays synchronous (no
+      // extra microtask). Seeds are the top base hits' CONTENT (the subject strings the triple
+      // store's current-truth `subject → object` edges walk from); the store's bounded
+      // recursive-CTE walk returns STRUCTURALLY-connected memories, LLM-free on the hot path.
+      const gs = cfg.lanes?.graphSpread;
+      if (gs?.enabled === true && deps.tripleStore !== undefined && seedPool.length > 0) {
+        const seedSubjects = seedPool
+          .slice(0, cfg.entityLane?.seedCount ?? 5)
+          .map((r) => r.entry.content)
+          .filter((s): s is string => typeof s === "string");
+        graphSpreadCandidates = await appendGraphSpreadLane(lanes, deps.tripleStore, gs.weight, cfg.maxResults, gs.maxDepth, gs.fanOut, seedSubjects, sessionKey, agentId, deps.logger);
       }
       // FUSE the base lane (already capped + minScore-filtered) with any entity/temporal
       // lanes. minScore is NOT re-applied here: v2.6 filtered minScore exactly once on the
@@ -623,6 +656,7 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
           entityCandidates,
           temporalCandidates,
           causalCandidates,
+          graphSpreadCandidates,
           vectorLaneActive,
           fusedOrder,
           rerankOutcome,
@@ -655,6 +689,7 @@ interface RecallCaptureCtx {
   entityCandidates: number;
   temporalCandidates: number;
   causalCandidates: number;
+  graphSpreadCandidates: number;
   vectorLaneActive: boolean;
   fusedOrder: string[];
   rerankOutcome: RecallRerankOutcome;
@@ -746,7 +781,12 @@ function captureRecallObservability(
     (ctx.temporalCandidates > 0 ? 1 : 0) +
     // EXTRACT-03: likewise include the causal lane so the event's lane count counts the 5th
     // lane when it contributes (the rich trace record already counts lanes.causal).
-    (ctx.causalCandidates > 0 ? 1 : 0);
+    (ctx.causalCandidates > 0 ? 1 : 0) +
+    // KG-04: include the graph-spread lane so the counts-only event reflects the 6th lane when
+    // it contributes. (The trace record's RecallLaneCounts stays the 5-lane shape — extending
+    // it to graphSpread is a deferred observability change; the event lane-count is the
+    // operator-facing aggregate and is kept honest here.)
+    (ctx.graphSpreadCandidates > 0 ? 1 : 0);
   try {
     deps.eventBus.emit("memory:recalled", {
       agentId: ctx.agentId ?? "default",

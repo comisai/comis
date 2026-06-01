@@ -40,13 +40,21 @@ import type { MemorySearchResult } from "@comis/core";
  * demotion as an answer-time PREFERENCE — both memories are RETAINED ("keep BOTH in mind …
  * not a deletion"), never "superseded"/dropped — keeping the prose the LLM reads aligned
  * with the NON-DESTRUCTIVE contract (TEMP-03; resolution is answering guidance, not a store delete).
+ *
+ * The FINAL bullet is the KG-04 read-side current-truth/as-of hint (Phase 100): it tells the
+ * LLM how to read the trust-first bi-temporal knowledge graph — the current believed value of
+ * a contested fact is the higher-trust one, while older superseded values still EXIST as history
+ * (the value believed true as of a past time, reachable by an explicit as-of) and are NOT the
+ * current answer. Like every other bullet it is FIXED prose over memory METADATA semantics — it
+ * interpolates NO memory body / no untrusted content (prompt-injection safe, T-81-08).
  */
 const TEMPORAL_GUIDANCE = `## Using these memories over time
 - Each memory shows when it was recorded, when the event occurred (if known), and its trust tier ([system] > [learned] > [external]).
 - If two conflict about the same thing, the higher-TRUST memory wins even if older — a [system] memory outranks a [learned] or [external] one even if older; answer from the higher-trust memory and treat the lower-trust statement as outdated for this answer, but keep BOTH in mind — this is a preference for answering, not a deletion; do NOT average or sum.
 - Only break ties between equal-trust memories by recency: among equal-trust memories, the most recently RECORDED one wins.
 - For a timeline, order by when events OCCURRED, not when they were recorded.
-- If still disagreeing at equal trust and equal recency, say so rather than guess.`;
+- If still disagreeing at equal trust and equal recency, say so rather than guess.
+- The current believed value of a contested fact is the higher-trust one; an older superseded value is not deleted — it still exists as history (the value that was believed true as of a past time) but it is not the current answer.`;
 
 /**
  * Phase-81 baseline (Option A, RESEARCH.md Open Q5 RESOLVED): the co-retrieved recall set
