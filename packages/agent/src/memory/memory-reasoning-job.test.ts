@@ -215,11 +215,12 @@ describe("runMemoryReasoning — Task 1: default-OFF + deductive (upsertTriple)"
 
   it("deductive: the upsert trust is the cluster's source trust — the writer never RAISES it", async () => {
     // A cluster of 'external'-trust sources → the deductive triple is capped at external.
+    // (reasonExternal:true so the external source is reasoned at all — see the trust-hardening gate.)
     await seedMemory({ content: "rumor: alice in berlin", createdAt: 100, trustLevel: "external" });
     const spy = makeReasonSpy(() => ({
       deductive: [{ subject: "alice", predicate: "located_in", object: "Berlin" }],
     }));
-    const deps = makeDeps({ reason: spy.reason });
+    const deps = makeDeps({ config: { ...baseConfig, reasonExternal: true }, reason: spy.reason });
 
     await runMemoryReasoning(deps);
 
@@ -245,11 +246,13 @@ describe("runMemoryReasoning — Task 1: default-OFF + deductive (upsertTriple)"
     const rowsAfterSeed = tripleRowCount();
 
     // A deductive candidate proposes alice located_in Berlin from an EXTERNAL-trust cluster.
+    // (reasonExternal:true so the external claim is actually attempted and the trust-first
+    // recorded-not-believed path is exercised — not silently filtered before the write.)
     await seedMemory({ content: "rumor: alice in berlin", createdAt: 100, trustLevel: "external" });
     const spy = makeReasonSpy(() => ({
       deductive: [{ subject: "alice", predicate: "located_in", object: "Berlin" }],
     }));
-    const deps = makeDeps({ reason: spy.reason });
+    const deps = makeDeps({ config: { ...baseConfig, reasonExternal: true }, reason: spy.reason });
 
     const result = await runMemoryReasoning(deps);
     expect(result.ok).toBe(true);
@@ -649,7 +652,7 @@ describe("runMemoryReasoning — Task 2: inductive (≤ learned) + surprisal + s
   it("the job source uses minTrustLevel(minTrust( for the inductive cap + applyConsolidation + the scope/surprisal pipeline", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(join(here, "memory-reasoning-job.ts"), "utf8");
-    expect(/minTrustLevel\(\s*(?:cluster)?[mM]inTrust/.test(src) || src.includes("minTrustLevel(clusterMinTrust(")).toBe(true);
+    expect(src.includes('minTrustLevel(minTrust(scope), "learned")')).toBe(true);
     expect(src.includes("applyConsolidation")).toBe(true);
     expect(src.includes('observationKind: "inductive"')).toBe(true);
     expect(src.includes("groupByTrustAndTagScope")).toBe(true);

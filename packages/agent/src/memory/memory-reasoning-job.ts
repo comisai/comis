@@ -66,7 +66,10 @@ import type {
 } from "@comis/core";
 import { randomUUID } from "node:crypto";
 import {
-  minTrust as clusterMinTrust,
+  // The INDUCTIVE cap helpers (the INVERSE clustering ladder — NEVER the TripleTrust
+  // ladder): `minTrust(entries)` = the cluster's least-trusted member; `minTrustLevel`
+  // = the 2-arg ≤-learned floor. The deductive ladder is `minTripleTrust` (below).
+  minTrust,
   minTrustLevel,
   groupByTrustAndTagScope,
   clusterByEntityThenEmbedding,
@@ -87,8 +90,8 @@ import type { DeductiveResult, InductiveResult } from "./memory-reasoning-prompt
  *
  * NOTE the two ladders DIFFER and both are correct in their context: the DEDUCTIVE
  * path uses THIS ladder (records facts, may stay at source trust); the INDUCTIVE
- * path uses the consolidation-clustering inverse ladder via `minTrustLevel`/
- * `clusterMinTrust` (HARD ≤ learned). They are NEVER mixed.
+ * path uses the consolidation-clustering INVERSE ladder via `minTrustLevel(minTrust(
+ * cluster), "learned")` (HARD ≤ learned). They are NEVER mixed.
  */
 const TRIPLE_TRUST_RANK: Record<TripleTrust, number> = { system: 2, learned: 1, external: 0 } as const;
 
@@ -274,121 +277,262 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
   }
 
   // 1. Candidates — a READ failure is fatal (we cannot safely proceed; mirrors
-  //    consolidation-job.ts:193). (Surprisal + clustering land in Task 2; this Task-1
-  //    cut reasons over every read candidate as a single pool.)
+  //    consolidation-job.ts:193).
   const candidatesResult = await fromPromise(
     consolidationStore.listConsolidationCandidates(agentId, tenantId, config.maxCandidatesPerRun),
   );
   if (!candidatesResult.ok) return err(candidatesResult.error);
   if (!candidatesResult.value.ok) return err(candidatesResult.value.error);
-  const candidates: ConsolidationCandidate[] = candidatesResult.value.value;
-  surprisalSelected = candidates.length;
+  let candidates: ConsolidationCandidate[] = candidatesResult.value.value;
+
+  // 1b. Trust hardening — exclude external-trust sources by default (REASON-03,
+  //     mirrors consolidation's consolidateExternal gate). Done BEFORE surprisal so
+  //     external candidates never even count toward the novelty denominator.
+  if (!config.reasonExternal) {
+    candidates = candidates.filter((c) => c.entry.trustLevel !== "external");
+  }
 
   if (candidates.length === 0) {
     emit();
     return ok(stats());
   }
 
-  // 2. (Task 2 will insert the surprisal gate + clustering + scope partition here.)
-  //    For Task 1 the deductive path reasons over the whole candidate pool as one
-  //    homogeneous-enough cluster; the per-scope partition arrives in Task 2.
-  const cluster: MemoryEntry[] = candidates.map((c) => c.entry);
-  const clusterText = cluster.map((e) => `- ${e.content}`).join("\n");
-
-  // 3. Call the INJECTED reasoning seam (non-fatal: a thrown/aborted seam → WARN +
-  //    skip this cluster; mirrors the consolidation/extraction posture).
-  const reasoned = await fromPromise(deps.reason(clusterText));
-  if (!reasoned.ok) {
+  // 2. SURPRISAL GATE (REASON-04) — bound which raw candidates the costly reasoning
+  //    seam sees. Build knnByCandidate by calling the knnDistances port per embedded
+  //    candidate (the agent cannot run the SQL), then keep the top fraction by
+  //    novelty. The selection math (exclude-before-score, the (surprisal desc, id
+  //    asc) total order, the ceil cut) is tested in 101-04 — here it is a thin
+  //    pass-through. `dim` = the embedding length of the first embedded candidate.
+  const embeddedCount = candidates.filter((c) => c.embedding !== undefined).length;
+  let selected: ConsolidationCandidate[];
+  if (embeddedCount === 0) {
+    // DEGRADE (mirrors consolidation-job.ts:222-234): when NO candidate carries an
+    // embedding (sqlite-vec unavailable / not yet indexed), the surprisal gate
+    // cannot rank anything — reason over the full pool rather than silently
+    // selecting nothing. Counts-only WARN, non-fatal; the run proceeds.
     logger.warn(
       {
         agentId,
-        err: reasoned.error,
-        errorKind: "dependency" as const,
         step: "reason" as const,
-        hint: "offline reasoning seam failed/aborted — no observations written for this cluster",
+        errorKind: "precondition" as const,
+        missingEmbedding: candidates.length,
+        hint: "no reasoning candidate carries an embedding — surprisal gate bypassed, reasoning over the full pool",
       },
-      "Memory reasoning LLM call failed (non-fatal)",
+      "Reasoning candidates missing embeddings (surprisal gate degraded)",
     );
+    selected = candidates;
+  } else {
+    const knnByCandidate = new Map<string, number[]>();
+    let dim = 0;
+    for (const c of candidates) {
+      if (c.embedding === undefined) continue;
+      if (dim === 0) dim = c.embedding.length;
+      const knn = await fromPromise(
+        consolidationStore.knnDistances(c.embedding, config.knnK, agentId, tenantId),
+      );
+      // Non-fatal: a failed/empty k-NN read → the candidate scores as not-novel (the
+      // 101-04 missing-distance policy: eligible but ranks last). Never throws out.
+      if (knn.ok && knn.value.ok) knnByCandidate.set(c.entry.id, knn.value.value);
+    }
+    // The 101-04 gate EXCLUDES un-embedded candidates before scoring; here every
+    // candidate is embedded (embeddedCount === candidates.length when sqlite-vec is
+    // available, since the adapter hydrates all-or-nothing), so the top-fraction cut
+    // is over the full embedded set.
+    selected = surprisalSelect(candidates, knnByCandidate, dim, config.surprisalTopFraction);
+  }
+  surprisalSelected = selected.length;
+
+  if (selected.length === 0) {
     emit();
     return ok(stats());
   }
-  const output = reasoned.value;
 
-  // The DEDUCTIVE source-trust cap is the sub-cluster's (homogeneous) trust. For the
-  // Task-1 whole-pool cut, take the cluster floor on the TripleTrust ladder so a
-  // mixed pool can never mint above its least-trusted member (Task 2 partitions
-  // first, so each call is already homogeneous).
-  const clusterSourceTrust: TripleTrust = clusterDeductiveTrust(cluster);
-
-  // 4a. DEDUCTIVE branch — the SHIPPED trust-first upsertTriple (REASON-02).
-  for (const candidate of output.deductive) {
-    if (deductiveWritten + inductiveWritten >= config.maxObservationsPerRun) {
-      skippedOverCap++;
-      continue;
-    }
-    // T-101-05-02: cap trust in CODE at the source trust (never raised); downgrade
-    // toward external on a warn verdict; skip on critical.
-    let trust: TripleTrust = clusterSourceTrust;
-    const verdict = validateMemoryWrite(candidate.object);
-    if (verdict.severity === "critical") {
-      blocked++;
-      logger.warn(
-        {
-          agentId,
-          errorKind: "validation" as const,
-          step: "reason" as const,
-          patterns: verdict.patterns,
-          criticalPatterns: verdict.criticalPatterns,
-          hint: "deductive object matched a dangerous/secret pattern — blocked from the KG",
-        },
-        "Skipping deductive triple that failed the memory-write security scan",
-      );
-      continue;
-    }
-    if (verdict.severity === "warn") {
-      trust = minTripleTrust(trust, "external");
-      downgraded++;
-    }
-
-    const now = clock.now();
-    const triple: TripleInput = {
-      subject: candidate.subject,
-      predicate: candidate.predicate,
-      object: candidate.object,
-      trust, // CODE-computed ceiling (or downgrade) — NOT chosen by the LLM
-      tValidStart: now,
-      ...(candidate.confidence !== undefined ? { confidence: candidate.confidence } : {}),
-    };
-    // T-101-05-04: the adapter filters every statement on this scope. Non-fatal: a
-    // rejecting/erroring store → WARN + continue to the next candidate.
-    const upserted = await fromPromise(tripleStore.upsertTriple(triple, { tenantId, agentId, now }));
-    if (!upserted.ok || !upserted.value.ok) {
-      logger.warn(
-        {
-          agentId,
-          errorKind: "dependency" as const,
-          step: "reason" as const,
-          hint: "upsertTriple failed/rejected — candidate skipped, run continues",
-        },
-        "Failed to upsert deductive triple (non-fatal)",
-      );
-      continue;
-    }
-    deductiveWritten++;
+  // 3. Cluster the selected subset (CONS-01 greedy single-link by cosine), then
+  //    partition each cluster into homogeneous (trust, tag) sub-clusters (REASON-03)
+  //    — one seam call NEVER mixes trust levels or tag scopes. When embeddings are
+  //    present, cosine clustering groups the co-located evidence; when ABSENT
+  //    (the degrade path), cosine cannot group, so each in-scope evidence set is
+  //    treated as ONE cluster (group-by-scope directly — mirrors consolidation's
+  //    entity/FTS degrade so a same-scope evidence set still reasons jointly rather
+  //    than fragmenting into singletons).
+  const clusters: MemoryEntry[][] =
+    embeddedCount === 0
+      ? [selected.map((c) => c.entry)]
+      : clusterByEntityThenEmbedding(selected, { similarityThreshold: 0.5, maxClusterSize: 50 });
+  const scopes: MemoryEntry[][] = [];
+  for (const cluster of clusters) {
+    for (const scope of groupByTrustAndTagScope(cluster)) scopes.push(scope);
   }
 
-  // 4b. INDUCTIVE branch lands in Task 2 (applyConsolidation, ≤ learned cap).
-  void output.inductive;
-  void minTrustLevel;
-  void clusterMinTrust;
-  void groupByTrustAndTagScope;
-  void clusterByEntityThenEmbedding;
-  void deterministicDedupKey;
-  void surprisalSelect;
-  void uniqueTagsOf;
-  void maxOccurredAt;
-  const _unusedTypes: [MemorySource | undefined, TrustLevel | undefined] = [undefined, undefined];
-  void _unusedTypes;
+  // 4. Per homogeneous scope sub-cluster: ONE injected reasoning call (non-fatal),
+  //    then the deductive + inductive write branches. A same-run dedup guard
+  //    (deterministicDedupKey over the source-id set) prevents a re-selected scope
+  //    from writing the same inductive observation twice within ONE run.
+  const writtenInductiveKeys = new Set<string>();
+  const now0 = clock.now();
+
+  for (const scope of scopes) {
+    if (deductiveWritten + inductiveWritten >= config.maxObservationsPerRun) {
+      // Everything left in this + later scopes is over the cap.
+      skippedOverCap += scope.length;
+      continue;
+    }
+
+    const clusterText = scope.map((e) => `- ${e.content}`).join("\n");
+    const reasoned = await fromPromise(deps.reason(clusterText));
+    if (!reasoned.ok) {
+      logger.warn(
+        {
+          agentId,
+          err: reasoned.error,
+          errorKind: "dependency" as const,
+          step: "reason" as const,
+          hint: "offline reasoning seam failed/aborted — no observations written for this scope",
+        },
+        "Memory reasoning LLM call failed (non-fatal)",
+      );
+      continue;
+    }
+    const output = reasoned.value;
+
+    // --- 4a. DEDUCTIVE branch — the SHIPPED trust-first upsertTriple (REASON-02).
+    //     The scope is homogeneous, so its single trust level IS the source-trust cap.
+    const deductiveTrust: TripleTrust = (scope[0]?.trustLevel ?? "external") as TripleTrust;
+    for (const candidate of output.deductive) {
+      if (deductiveWritten + inductiveWritten >= config.maxObservationsPerRun) {
+        skippedOverCap++;
+        continue;
+      }
+      let trust: TripleTrust = deductiveTrust;
+      const verdict = validateMemoryWrite(candidate.object);
+      if (verdict.severity === "critical") {
+        blocked++;
+        logger.warn(
+          {
+            agentId,
+            errorKind: "validation" as const,
+            step: "reason" as const,
+            patterns: verdict.patterns,
+            criticalPatterns: verdict.criticalPatterns,
+            hint: "deductive object matched a dangerous/secret pattern — blocked from the KG",
+          },
+          "Skipping deductive triple that failed the memory-write security scan",
+        );
+        continue;
+      }
+      if (verdict.severity === "warn") {
+        trust = minTripleTrust(trust, "external");
+        downgraded++;
+      }
+
+      const now = clock.now();
+      const triple: TripleInput = {
+        subject: candidate.subject,
+        predicate: candidate.predicate,
+        object: candidate.object,
+        trust, // CODE-computed ceiling (or downgrade) — NOT chosen by the LLM
+        tValidStart: now,
+        ...(candidate.confidence !== undefined ? { confidence: candidate.confidence } : {}),
+      };
+      const upserted = await fromPromise(tripleStore.upsertTriple(triple, { tenantId, agentId, now }));
+      if (!upserted.ok || !upserted.value.ok) {
+        logger.warn(
+          {
+            agentId,
+            errorKind: "dependency" as const,
+            step: "reason" as const,
+            hint: "upsertTriple failed/rejected — candidate skipped, run continues",
+          },
+          "Failed to upsert deductive triple (non-fatal)",
+        );
+        continue;
+      }
+      deductiveWritten++;
+    }
+
+    // --- 4b. INDUCTIVE branch — applyConsolidation with the HARD ≤ learned cap
+    //     (REASON-03, T-101-05-01). The cap is computed in CODE via the IMPORTED
+    //     consolidation-clustering helpers (the INVERSE ladder) — a cluster of
+    //     all-system sources STILL yields "learned".
+    const sourceIds = scope.map((e) => e.id);
+    const dedupKey = deterministicDedupKey(sourceIds);
+    const inductiveTrust: TrustLevel = minTrustLevel(minTrust(scope), "learned");
+
+    for (const pattern of output.inductive) {
+      if (deductiveWritten + inductiveWritten >= config.maxObservationsPerRun) {
+        skippedOverCap++;
+        continue;
+      }
+      // Same-run dedup guard: a re-selected identical scope never double-creates.
+      if (writtenInductiveKeys.has(dedupKey)) {
+        continue;
+      }
+
+      let trust: TrustLevel = inductiveTrust;
+      const verdict = validateMemoryWrite(pattern.content);
+      if (verdict.severity === "critical") {
+        blocked++;
+        logger.warn(
+          {
+            agentId,
+            errorKind: "validation" as const,
+            step: "reason" as const,
+            patterns: verdict.patterns,
+            criticalPatterns: verdict.criticalPatterns,
+            hint: "inductive content matched a dangerous/secret pattern — blocked from the store",
+          },
+          "Skipping inductive observation that failed the memory-write security scan",
+        );
+        continue;
+      }
+      if (verdict.severity === "warn") {
+        // The downgrade is itself a min against the ≤ learned ceiling — external is the floor.
+        trust = minTrustLevel(trust, "external");
+        downgraded++;
+      }
+
+      const source: MemorySource = { who: "system", channel: "memory-reasoning" };
+      const observation: MemoryEntry = {
+        id: randomUUID(),
+        tenantId,
+        agentId,
+        userId: "system",
+        content: pattern.content,
+        trustLevel: trust, // HARD ≤ learned (or downgrade) — CODE-computed, NOT the LLM
+        source,
+        tags: [...uniqueTagsOf(scope), ...config.autoTags],
+        proofCount: scope.length, // evidence count
+        sourceIds,
+        confidence: pattern.confidence ?? 1,
+        occurredAt: maxOccurredAt(scope),
+        createdAt: now0,
+        observationKind: "inductive",
+        ...(pattern.patternType !== undefined ? { patternType: pattern.patternType } : {}),
+        sourceType: "conversation",
+      };
+
+      // T-101-05-04/07: atomic create + mark sources consolidated_at (they leave the
+      // candidate pool → idempotent re-run). Non-fatal: a rejecting store → WARN +
+      // continue (sources stay unconsolidated for retry next run).
+      const applied = await fromPromise(
+        consolidationStore.applyConsolidation({ observation, markConsolidated: sourceIds, tenantId, now: now0 }),
+      );
+      if (!applied.ok || !applied.value.ok) {
+        logger.warn(
+          {
+            agentId,
+            errorKind: "dependency" as const,
+            step: "reason" as const,
+            hint: "applyConsolidation failed/rejected — sources left unconsolidated for retry next run",
+          },
+          "Failed to apply inductive observation (non-fatal)",
+        );
+        continue;
+      }
+      inductiveWritten++;
+      writtenInductiveKeys.add(dedupKey);
+    }
+  }
 
   logger.info(
     { agentId, step: "reason" as const, ...stats(), durationMs: clock.now() - startMs },
@@ -396,19 +540,4 @@ export async function runMemoryReasoning(deps: MemoryReasoningDeps): Promise<Mem
   );
   emit();
   return ok(stats());
-}
-
-/**
- * The DEDUCTIVE source-trust for a cluster, on the TripleTrust ladder: the
- * LEAST-trusted member maps to the cap. A cluster carries `TrustLevel` members
- * (the same union as TripleTrust), so a mixed pool's deductive write is capped at
- * its least-trusted member (Task 2 partitions first, so each call is homogeneous —
- * then this is a no-op identity over a single trust). Computed in CODE.
- */
-function clusterDeductiveTrust(cluster: MemoryEntry[]): TripleTrust {
-  let trust: TripleTrust = "system";
-  for (const e of cluster) {
-    trust = minTripleTrust(trust, e.trustLevel as TripleTrust);
-  }
-  return trust;
 }
