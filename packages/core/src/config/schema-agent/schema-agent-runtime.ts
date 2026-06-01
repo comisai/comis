@@ -26,6 +26,7 @@ import { MemoryConsolidationConfigSchema } from "../schema-memory-consolidation.
 import { MemoryReasoningConfigSchema } from "../schema-memory-reasoning.js";
 import { MemoryUserRepresentationConfigSchema } from "../schema-memory-user-representation.js";
 import { SocialModelingConfigSchema } from "../schema-social-modeling.js";
+import { DialecticConfigSchema } from "../schema-dialectic.js";
 import { validateProfileId } from "../../security/profile-id.js";
 
 // Sibling-leaf imports (one-directional dependency graph).
@@ -370,6 +371,8 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   memoryUserRepresentation: MemoryUserRepresentationConfigSchema.optional(),
   /** Directional relationship-modeling configuration (Phase 108; off by default, gated on a recorded privacy-review sign-off) */
   socialModeling: SocialModelingConfigSchema.optional(),
+  /** memory_ask grounded-Q&A tool config; Phase 109; off by default — the ONE allowed query-time LLM surface */
+  dialectic: DialecticConfigSchema.optional(),
   /**
    * Per-provider OAuth profile preferences (provider -> profileId map).
    * When set, the OAuthTokenManager resolves the named profile for that
