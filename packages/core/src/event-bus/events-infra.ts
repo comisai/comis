@@ -572,6 +572,16 @@ export interface InfraEvents {
     timestamp: number;
   };
 
+  /** Secret written to or removed from the live SecretManager (metadata only — never the value) */
+  "secret:changed": {
+    /** Key name (identifier — not a credential value) */
+    name: string;
+    /** What happened: "upserted" for set/add/update; "removed" for delete */
+    action: "upserted" | "removed";
+    /** ms-epoch timestamp */
+    timestamp: number;
+  };
+
   // -------------------------------------------------------------------------
   // Security warning events
   // -------------------------------------------------------------------------

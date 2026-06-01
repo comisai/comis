@@ -41,16 +41,47 @@ export interface SecretManager {
 }
 
 /**
- * Create a SecretManager from a record of environment variables.
+ * Write-only handle for the daemon composition root to update the live SecretManager.
  *
- * Takes a defensive copy — subsequent mutations to `env` will not
- * affect the returned manager.
+ * Only the daemon composition root holds this handle — it is never placed on
+ * AppContainer or any agent-accessible surface. Agents always receive the read-only
+ * SecretManager interface.
+ *
+ * Both this handle and the SecretManager returned by createSecretManagerWithMutableHandle
+ * share ONE backing Map — a write via this handle is immediately visible through
+ * secretManager.get() in the same tick.
+ */
+export interface MutableSecretManager {
+  /**
+   * Insert or update a secret in the live Map.
+   * The new value is visible through the paired SecretManager on the next get() call.
+   */
+  upsert(key: string, value: string): void;
+
+  /**
+   * Remove a secret from the live Map.
+   * @returns true if the key existed (and was removed), false if it was absent (no-op).
+   */
+  remove(key: string): boolean;
+}
+
+/**
+ * Create a SecretManager and a MutableSecretManager that share ONE backing Map.
+ *
+ * The daemon composition root uses this function so the mutable write handle
+ * and AppContainer.secretManager read the same Map — an upsert is immediately
+ * observable via secretManager.get() without a restart.
+ *
+ * Each call creates an independent Map; callers that need sharing must use the
+ * SAME call's return value.
  *
  * @param env - Record of key-value pairs (undefined values are excluded)
- * @returns A frozen SecretManager instance
+ * @returns { secretManager, mutableHandle } — both over the same backing Map
  */
-export function createSecretManager(env: Record<string, string | undefined>): SecretManager {
-  // Defensive copy: snapshot defined values into an internal Map
+export function createSecretManagerWithMutableHandle(
+  env: Record<string, string | undefined>,
+): { secretManager: SecretManager; mutableHandle: MutableSecretManager } {
+  // ONE shared backing Map — both handles close over this reference
   const secrets = new Map<string, string>();
   for (const [key, value] of Object.entries(env)) {
     if (value !== undefined) {
@@ -58,7 +89,7 @@ export function createSecretManager(env: Record<string, string | undefined>): Se
     }
   }
 
-  return {
+  const secretManager: SecretManager = {
     get(key: string): string | undefined {
       return secrets.get(key);
     },
@@ -82,6 +113,37 @@ export function createSecretManager(env: Record<string, string | undefined>): Se
       return [...secrets.keys()];
     },
   };
+
+  const mutableHandle: MutableSecretManager = {
+    upsert(key: string, value: string): void {
+      secrets.set(key, value);
+    },
+
+    remove(key: string): boolean {
+      const existed = secrets.has(key);
+      secrets.delete(key);
+      return existed;
+    },
+  };
+
+  return { secretManager, mutableHandle };
+}
+
+/**
+ * Create a SecretManager from a record of environment variables.
+ *
+ * Takes a defensive copy — subsequent mutations to `env` will not
+ * affect the returned manager.
+ *
+ * A read-only SecretManager. The backing Map is closure-private; use
+ * `createSecretManagerWithMutableHandle` when the daemon composition root
+ * needs a mutable write handle.
+ *
+ * @param env - Record of key-value pairs (undefined values are excluded)
+ * @returns A read-only SecretManager instance
+ */
+export function createSecretManager(env: Record<string, string | undefined>): SecretManager {
+  return createSecretManagerWithMutableHandle(env).secretManager;
 }
 
 /**
