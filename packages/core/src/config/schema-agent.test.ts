@@ -1066,6 +1066,163 @@ describe("RagConfigSchema.feedback", () => {
 });
 
 // ---------------------------------------------------------------------------
+// RagConfigSchema.mmr (Phase-102/IQ-01: MMR diversity re-rank, opt-in /
+// default-OFF; λ bounded [0,1] — 1.0 = pure relevance = byte-identical order)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.mmr", () => {
+  it("defaults the MMR re-rank OFF with lambda 0.7 (byte-identical to before this plan when absent)", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Default-OFF: no agent gets the MMR diversity re-rank without an explicit opt-in
+      // (a wrong default ships dormant — no surprise ranking change on upgrade; the neutral
+      // guarantee, RESEARCH §IQ-01). OFF ⇒ no embedding read, no MMR, byte-identical recall.
+      expect(result.data.mmr.enabled).toBe(false);
+      expect(result.data.mmr.lambda).toBe(0.7);
+    }
+  });
+
+  it("accepts an explicit MMR opt-in (enabled:true + tuned lambda)", () => {
+    const result = RagConfigSchema.safeParse({ mmr: { enabled: true, lambda: 0.4 } });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.mmr.enabled).toBe(true);
+      expect(result.data.mmr.lambda).toBe(0.4);
+    }
+  });
+
+  it("rejects a lambda above 1 (z.number().min(0).max(1) — an out-of-range λ inverts the rel/diversity balance; T-102-01-02)", () => {
+    const result = RagConfigSchema.safeParse({ mmr: { lambda: 1.1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a negative lambda (z.number().min(0).max(1))", () => {
+    const result = RagConfigSchema.safeParse({ mmr: { lambda: -0.1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts lambda at the 0 and 1 boundaries (min/max inclusive — 1.0 = pure relevance = identity)", () => {
+    expect(RagConfigSchema.safeParse({ mmr: { lambda: 0 } }).success).toBe(true);
+    expect(RagConfigSchema.safeParse({ mmr: { lambda: 1 } }).success).toBe(true);
+  });
+
+  it("rejects an unknown key inside mmr (strictObject; T-102-01-03)", () => {
+    const result = RagConfigSchema.safeParse({ mmr: { enabled: false, lambda: 0.7, foo: 1 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a partial mmr override and fills the rest from defaults", () => {
+    const result = RagConfigSchema.safeParse({ mmr: { enabled: true } });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.mmr.enabled).toBe(true);
+      expect(result.data.mmr.lambda).toBe(0.7);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RagConfigSchema.queryUnderstanding (Phase-102/IQ-02+IQ-03: LLM-free query
+// understanding toggles, all opt-in / default-OFF — byte-identical when off)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.queryUnderstanding", () => {
+  it("defaults all query-understanding toggles OFF (byte-identical to before this plan when absent)", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // All default-OFF: no reweight, no expansion, no range filter — the ENT-04 no-op
+      // discipline. Each toggle is an additive deterministic capability over the existing
+      // recall path; an existing config gets none of them without an explicit opt-in.
+      expect(result.data.queryUnderstanding.intentReweight).toBe(false);
+      expect(result.data.queryUnderstanding.synonyms).toBe(false);
+      expect(result.data.queryUnderstanding.temporalParse).toBe(false);
+    }
+  });
+
+  it("accepts an explicit query-understanding opt-in (each toggle independently)", () => {
+    const result = RagConfigSchema.safeParse({
+      queryUnderstanding: { intentReweight: true, synonyms: true, temporalParse: true },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.queryUnderstanding.intentReweight).toBe(true);
+      expect(result.data.queryUnderstanding.synonyms).toBe(true);
+      expect(result.data.queryUnderstanding.temporalParse).toBe(true);
+    }
+  });
+
+  it("accepts a partial queryUnderstanding override and fills the rest from defaults", () => {
+    const result = RagConfigSchema.safeParse({ queryUnderstanding: { temporalParse: true } });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.queryUnderstanding.intentReweight).toBe(false);
+      expect(result.data.queryUnderstanding.synonyms).toBe(false);
+      expect(result.data.queryUnderstanding.temporalParse).toBe(true);
+    }
+  });
+
+  it("rejects an unknown key inside queryUnderstanding (strictObject; T-102-01-03)", () => {
+    const result = RagConfigSchema.safeParse({ queryUnderstanding: { bogusToggle: true } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a non-boolean toggle (z.boolean())", () => {
+    const result = RagConfigSchema.safeParse({ queryUnderstanding: { synonyms: "yes" } });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RagConfigSchema additive guard (Phase-102/IQ-01..03): an existing config that
+// OMITS the new mmr + queryUnderstanding knobs still parses, and every
+// pre-existing default is unchanged (the schema-cascade regression guard).
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema additive (mmr + queryUnderstanding)", () => {
+  it("parses an existing config that omits mmr + queryUnderstanding and fills them OFF", () => {
+    // The top-level `.default()` on each sub-object fills them when absent, so an existing
+    // config.yaml that predates Phase 102 parses byte-identically (both knobs default-OFF).
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.mmr.enabled).toBe(false);
+      expect(result.data.mmr.lambda).toBe(0.7);
+      expect(result.data.queryUnderstanding.intentReweight).toBe(false);
+      expect(result.data.queryUnderstanding.synonyms).toBe(false);
+      expect(result.data.queryUnderstanding.temporalParse).toBe(false);
+    }
+  });
+
+  it("is additive — every pre-existing RagConfig default is unchanged when mmr + queryUnderstanding are added", () => {
+    // Snapshot the existing defaults so a regression on any of them trips here, not silently
+    // downstream (the schema-cascade class — the 101-02 memoryReasoning precedent).
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Top-level defaults.
+      expect(result.data.enabled).toBe(true);
+      expect(result.data.maxResults).toBe(5);
+      expect(result.data.maxContextChars).toBe(4000);
+      expect(result.data.minScore).toBe(0.1);
+      expect(result.data.includeTrustLevels).toEqual(["system", "learned"]);
+      // rerank + scoring + entityLane + feedback sub-objects (unchanged by this plan).
+      expect(result.data.rerank.enabled).toBe(false);
+      expect(result.data.scoring.usefulnessAlpha).toBe(0.1);
+      expect(result.data.entityLane.enabled).toBe(false);
+      expect(result.data.feedback.enabled).toBe(false);
+      // lanes sub-object (LANES-01 parity + temporal/causal/graphSpread default-OFF).
+      expect(result.data.lanes.fts.weight).toBe(1.0);
+      expect(result.data.lanes.vector.weight).toBe(1.5);
+      expect(result.data.lanes.temporal.enabled).toBe(false);
+      expect(result.data.lanes.causal.enabled).toBe(false);
+      expect(result.data.lanes.graphSpread.enabled).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // BootstrapConfigSchema
 // ---------------------------------------------------------------------------
 
