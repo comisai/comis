@@ -10332,29 +10332,29 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() — 
     "type": "string"
   },
   {
-    "immutable": false,
+    "immutable": true,
     "path": "executor",
     "type": "object"
   },
   {
-    "immutable": false,
+    "immutable": true,
     "path": "executor.broker",
     "type": "object"
   },
   {
     "default": {},
-    "immutable": false,
+    "immutable": true,
     "path": "executor.broker.bindings",
     "type": "object"
   },
   {
     "default": 0,
-    "immutable": false,
+    "immutable": true,
     "path": "executor.broker.port",
     "type": "integer"
   },
   {
-    "immutable": false,
+    "immutable": true,
     "path": "executor.broker.socketPath",
     "type": "string"
   },
