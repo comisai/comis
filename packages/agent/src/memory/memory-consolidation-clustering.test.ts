@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Pure-helper suite for the consolidation clustering math (Phase 84 — CONS-01/02/04/06).
+// Pure-helper suite for the consolidation clustering math (Phase 84 — CONS-01/02/04/06)
+// + the surprisal novelty gate (Phase 101 — REASON-04).
 //
 // These helpers are deterministic, IO-free, and contain the SECURITY-critical
 // trust ceiling (`minTrust` — the privilege-escalation guard, CONS-02) plus the
 // anti-trust-laundering partition (`groupByTrustAndTagScope`, CONS-06), the
-// greedy single-link clusterer (CONS-01), and the order-independent dedup key
-// (`deterministicDedupKey`, CONS-04). No LLM, no clock, no SQL — pure RED→GREEN.
+// greedy single-link clusterer (CONS-01), the order-independent dedup key
+// (`deterministicDedupKey`, CONS-04), and the surprisal score + top-fraction
+// selector (`surprisal`/`surprisalSelect`, REASON-04). No LLM, no clock, no SQL —
+// pure RED→GREEN.
 import { describe, it, expect } from "vitest";
 import type { MemoryEntry, TrustLevel } from "@comis/core";
 import type { ConsolidationCandidate } from "@comis/core";
@@ -18,6 +21,8 @@ import {
   groupByTrustAndTagScope,
   deterministicDedupKey,
   contentSimilarity,
+  surprisal,
+  surprisalSelect,
 } from "./memory-consolidation-clustering.js";
 
 const NOW = 1_700_000_000_000;
@@ -267,5 +272,147 @@ describe("cosine — pure vector proximity", () => {
     expect(cosine([1, 0], [2, 0])).toBeCloseTo(1, 10);
     expect(cosine([1, 0], [0, 1])).toBeCloseTo(0, 10);
     expect(cosine([0, 0], [1, 1])).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Surprisal novelty gate (Phase 101 — REASON-04)
+//
+// `surprisal(distances, dim)` = dim · log(mean kNN cosine distance), guarding the
+// empty + mean<=0 cases to 0 (NEVER -Infinity/NaN — a poisoned sort key). The
+// score is RELATIVE: a higher value = more novel-vs-corpus; the absolute value
+// (often negative for small mean distances) is immaterial.
+//
+// `surprisalSelect(candidates, knnByCandidate, dim, topFraction)` scores each
+// candidate, DROPS those with no embedding (the documented missing-embedding
+// policy, Pitfall 3 — they cannot be reasoned over until indexed), sorts by the
+// TOTAL order (surprisal desc, id asc), and keeps ceil(eligible · topFraction) —
+// a reproducible, bounded gate (the benchmark + the reasoning output flake if it
+// is not deterministic).
+// ---------------------------------------------------------------------------
+
+describe("surprisal — the per-candidate novelty score (REASON-04)", () => {
+  it("returns 0 for an empty distance set (no neighbour → not surprising-vs-corpus)", () => {
+    expect(surprisal([], 768)).toBe(0);
+  });
+
+  it("computes dim · log(mean distance) for a non-trivial neighbourhood", () => {
+    // mean([0.5, 0.5]) = 0.5 → 768 · ln(0.5). A negative result is fine: higher = more novel.
+    expect(surprisal([0.5, 0.5], 768)).toBe(768 * Math.log(0.5));
+  });
+
+  it("guards a mean<=0 to 0 so a zero-distance neighbour never yields -Infinity/NaN", () => {
+    expect(surprisal([0], 768)).toBe(0);
+    expect(Number.isFinite(surprisal([0, 0], 768))).toBe(true);
+    expect(surprisal([0, 0], 768)).toBe(0);
+  });
+
+  it("guards a negative mean (corrupt distances) to 0 — never NaN from log of a negative", () => {
+    const s = surprisal([-1, -1], 768);
+    expect(Number.isNaN(s)).toBe(false);
+    expect(s).toBe(0);
+  });
+
+  it("scores a larger mean distance ABOVE a smaller one (more novel = more surprising)", () => {
+    // ln is monotincreasing → for dim>0, a larger mean distance scores strictly higher.
+    expect(surprisal([0.9, 0.9], 768)).toBeGreaterThan(surprisal([0.1, 0.1], 768));
+  });
+});
+
+describe("surprisalSelect — the deterministic top-fraction novelty gate (REASON-04)", () => {
+  /** A candidate id → its (constant) per-element kNN distances, for a known surprisal order. */
+  function candAt(id: string, embedding?: number[]): ConsolidationCandidate {
+    return makeCand({ id }, embedding);
+  }
+
+  it("keeps the top fraction sorted (surprisal desc, id asc) and drops the low-surprisal tail", () => {
+    const ids = [
+      "00000000-0000-4000-8000-00000000000a", // distance 0.2 → lowest surprisal
+      "00000000-0000-4000-8000-00000000000b", // distance 0.9 → highest surprisal
+      "00000000-0000-4000-8000-00000000000c", // distance 0.5 → middle
+      "00000000-0000-4000-8000-00000000000d", // distance 0.1 → lowest
+    ];
+    const candidates = ids.map((id) => candAt(id, [1, 0, 0]));
+    const knnByCandidate = new Map<string, number[]>([
+      [ids[0], [0.2]],
+      [ids[1], [0.9]],
+      [ids[2], [0.5]],
+      [ids[3], [0.1]],
+    ]);
+    // 4 eligible, topFraction 0.5 → ceil(4·0.5) = 2 kept: the two highest-surprisal (0.9, 0.5).
+    const selected = surprisalSelect(candidates, knnByCandidate, 768, 0.5);
+    expect(selected.map((c) => c.entry.id)).toEqual([ids[1], ids[2]]);
+  });
+
+  it("breaks a surprisal tie by id ascending (a TOTAL, reproducible order)", () => {
+    // Two candidates with the SAME distance (→ same surprisal) must order by id asc.
+    const idHi = "00000000-0000-4000-8000-0000000000ff";
+    const idLo = "00000000-0000-4000-8000-00000000000f";
+    const candidates = [candAt(idHi, [1, 0, 0]), candAt(idLo, [1, 0, 0])];
+    const knnByCandidate = new Map<string, number[]>([
+      [idHi, [0.7]],
+      [idLo, [0.7]],
+    ]);
+    // topFraction 1 → keep both; the tie breaks by id asc so idLo precedes idHi.
+    const selected = surprisalSelect(candidates, knnByCandidate, 768, 1);
+    expect(selected.map((c) => c.entry.id)).toEqual([idLo, idHi]);
+  });
+
+  it("is reproducible — two calls on the same input return the identical selected set and order", () => {
+    const ids = [
+      "00000000-0000-4000-8000-000000000011",
+      "00000000-0000-4000-8000-000000000022",
+      "00000000-0000-4000-8000-000000000033",
+    ];
+    const candidates = ids.map((id) => candAt(id, [1, 0, 0]));
+    const knnByCandidate = new Map<string, number[]>([
+      [ids[0], [0.3]],
+      [ids[1], [0.8]],
+      [ids[2], [0.6]],
+    ]);
+    const first = surprisalSelect(candidates, knnByCandidate, 768, 0.67).map((c) => c.entry.id);
+    const second = surprisalSelect(candidates, knnByCandidate, 768, 0.67).map((c) => c.entry.id);
+    expect(first).toEqual(second);
+  });
+
+  it("drops every candidate that has no embedding — an all-missing input yields an empty selection", () => {
+    // The documented missing-embedding policy (Pitfall 3): a candidate that has not
+    // been indexed cannot be reasoned over, so it is excluded BEFORE scoring.
+    const candidates = [
+      candAt("00000000-0000-4000-8000-000000000001"), // no embedding
+      candAt("00000000-0000-4000-8000-000000000002"), // no embedding
+    ];
+    const knnByCandidate = new Map<string, number[]>(); // no distances either
+    const selected = surprisalSelect(candidates, knnByCandidate, 768, 1);
+    expect(selected).toEqual([]);
+  });
+
+  it("selects only the embedded candidates, ignoring un-embedded ones in the fraction math", () => {
+    const embedded = "00000000-0000-4000-8000-0000000000e1";
+    const bare = "00000000-0000-4000-8000-0000000000b1";
+    const candidates = [candAt(embedded, [1, 0, 0]), candAt(bare)];
+    const knnByCandidate = new Map<string, number[]>([[embedded, [0.5]]]);
+    // Only 1 eligible (the embedded one) → ceil(1·1)=1 kept; the bare candidate is never selected.
+    const selected = surprisalSelect(candidates, knnByCandidate, 768, 1);
+    expect(selected.map((c) => c.entry.id)).toEqual([embedded]);
+  });
+
+  it("keeps at least one candidate when topFraction is tiny but eligible candidates exist (ceil, not floor)", () => {
+    const ids = [
+      "00000000-0000-4000-8000-000000000101",
+      "00000000-0000-4000-8000-000000000102",
+    ];
+    const candidates = ids.map((id) => candAt(id, [1, 0, 0]));
+    const knnByCandidate = new Map<string, number[]>([
+      [ids[0], [0.9]],
+      [ids[1], [0.1]],
+    ]);
+    // ceil(2 · 0.01) = 1 → the single most-surprising candidate (distance 0.9) is kept.
+    const selected = surprisalSelect(candidates, knnByCandidate, 768, 0.01);
+    expect(selected.map((c) => c.entry.id)).toEqual([ids[0]]);
+  });
+
+  it("returns an empty selection when there are no candidates at all", () => {
+    expect(surprisalSelect([], new Map(), 768, 0.5)).toEqual([]);
   });
 });
