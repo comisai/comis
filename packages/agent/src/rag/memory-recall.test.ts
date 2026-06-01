@@ -47,6 +47,7 @@ import { score, type ScoringAlphas } from "./score.js";
 import { deduplicateResults } from "./rag-retriever.js";
 import { createMemoryRecall, type MemoryRecallConfig } from "./memory-recall.js";
 import { appendCausalLane } from "./recall-causal-lane.js";
+import { expandSynonyms, parseTemporalRange } from "./query-understanding.js";
 import type { FusionLane } from "./fuse.js";
 
 const NOW = 1_700_000_000_000;
@@ -2203,5 +2204,268 @@ describe("createMemoryRecall — graph-spread lane (KG-04)", () => {
     const warn = warns.find((w) => typeof w.hint === "string" && /graph[- ]?spread/i.test(String(w.hint)));
     expect(warn).toBeDefined();
     expect(warn?.errorKind).toBe("internal");
+  });
+});
+
+// ── IQ-02/03: query-understanding wiring (intent reweight + synonyms + NL range) ──
+//
+// Three thin gated call-sites in createMemoryRecall, all DEFAULT-OFF byte-identical:
+//   IQ-02 intent reweight  — classifyIntent(query) once; intentMultiplier(intent, lane)
+//                            multiplies each lane's FusionLane weight (1.0 when off/factual).
+//   IQ-03a synonym         — expandSynonyms(query) replaces the search query string (whole-query).
+//   IQ-03b NL temporal     — parseTemporalRange(query, deps.clock.now()) → occurredAtRange on
+//                            the search options (no Phase-100 temporal-lane double-apply).
+//
+// The spy on fakeLaneMemoryPort records the (query, options) the search received, so the off-path
+// proof is: ORIGINAL query + NO occurredAtRange + the fused ids === baseLaneReference (mirror :2109).
+describe("createMemoryRecall — query understanding (IQ-02/03)", () => {
+  const NEUTRAL = { recencyAlpha: 0, temporalAlpha: 0, proofAlpha: 0, trustAlpha: 0, usefulnessAlpha: 0 };
+  const PARITY_LANES = { fts: { weight: 1.0 }, vector: { weight: 1.5 } };
+  const QU_OFF = { intentReweight: false, synonyms: false, temporalParse: false };
+
+  /** The pre-IQ fused output (fts + vector, no reweight/expansion/range) — byte-identity reference. */
+  function baseLaneReference(fts: MemorySearchResult[], vector: MemorySearchResult[]): string[] {
+    const lanes = [] as Parameters<typeof fuse>[0];
+    if (fts.length > 0) lanes.push({ results: fts, weight: 1.0 });
+    if (vector.length > 0) lanes.push({ results: vector, weight: 1.5 });
+    const scored = score(fuse(lanes), NEUTRAL, NOW);
+    const allowed = new Set<TrustLevel>(["system", "learned"]);
+    return deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel))).map((r) => r.entry.id);
+  }
+
+  /** A temporal-spread store stub recording its calls (mirror fakeTripleStore). */
+  function fakeTemporalStore(
+    laneResult: Result<MemorySearchResult[], Error>,
+  ): { store: MemoryTemporalStore; calls: number } {
+    let calls = 0;
+    const store = {
+      async spreadLane() {
+        calls += 1;
+        return laneResult;
+      },
+    } as unknown as MemoryTemporalStore;
+    return {
+      store,
+      get calls() {
+        return calls;
+      },
+    };
+  }
+
+  it("DEFAULT-OFF BYTE-IDENTITY: queryUnderstanding all-false → search gets the ORIGINAL query + NO occurredAtRange + output === baseLaneReference", async () => {
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const vector = [makeResult("b", { base: 0.5 }), makeResult("c", { base: 0.3 })];
+    const capture: { laneOpts?: MemorySearchOptions; searchOpts?: MemorySearchOptions } = {};
+    const port = fakeLaneMemoryPort({ fts, vector }, capture);
+    // Record the EXACT query string the searchLanes call received.
+    let seenQuery: string | undefined;
+    const recordingPort = {
+      ...port,
+      async searchLanes(key: SessionKey, q: string, opts?: MemorySearchOptions) {
+        seenQuery = q;
+        capture.laneOpts = opts;
+        return ok({ fts, vector });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, queryUnderstanding: QU_OFF } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("vps config db status", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // OFF ⇒ the search receives the ORIGINAL query (no synonym expansion) …
+    expect(seenQuery).toBe("vps config db status");
+    // … the options carry NO occurredAtRange (no temporal parse) …
+    expect(capture.laneOpts?.occurredAtRange).toBeUndefined();
+    // … and the fused output is byte-identical to the pre-IQ path (unmultiplied weights).
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
+  });
+
+  it("NO queryUnderstanding CONFIG: an absent queryUnderstanding → original query + no range (byte-identical)", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    const capture: { laneOpts?: MemorySearchOptions } = {};
+    let seenQuery: string | undefined;
+    const recordingPort = {
+      async search() {
+        return ok(fts);
+      },
+      async searchLanes(_key: SessionKey, q: string, opts?: MemorySearchOptions) {
+        seenQuery = q;
+        capture.laneOpts = opts;
+        return ok({ fts, vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("auth flow", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(seenQuery).toBe("auth flow");
+    expect(capture.laneOpts?.occurredAtRange).toBeUndefined();
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, []));
+  });
+
+  it("INTENT-ON LIFT: a temporal-intent query with intentReweight=true up-weights the temporal lane so a temporal-lane candidate outranks where it didn't with reweight off (RED on pre-wiring)", async () => {
+    // A temporal-intent query ("when …") → classifyIntent → "temporal" → intentMultiplier
+    // ×1.5 on the temporal lane. The base lane has ONE strong fts hit; the temporal lane
+    // contributes a candidate at rank 1. With NO reweight the base hit leads; with the ×1.5
+    // temporal-lane weight the temporal candidate's RRF contribution overtakes it.
+    const fts = [makeResult("base_top", { base: 1 }), makeResult("base_mid", { base: 1 })];
+    // The seed needs an occurredAt so the temporal lane fires (Pitfall 6 — seed on event time).
+    const ftsSeeded = [
+      makeResult("base_top", { base: 1, occurredAt: NOW }),
+      makeResult("base_mid", { base: 1, occurredAt: NOW }),
+    ];
+    void fts;
+    const temporalLaneHit = [makeResult("temporal_cand", { base: 1 })];
+    const TL = { enabled: true, weight: 1.0, windowDays: 7 };
+    const makeRecall = (qu: { intentReweight: boolean; synonyms: boolean; temporalParse: boolean }) => {
+      const { store } = fakeTemporalStore(ok(temporalLaneHit));
+      return createMemoryRecall(
+        {
+          memoryPort: fakeLaneMemoryPort({ fts: ftsSeeded, vector: [] }),
+          temporalStore: store,
+          clock: fixedClock,
+          logger: noopLogger,
+        } as unknown as Parameters<typeof createMemoryRecall>[0],
+        baseConfig({
+          scoring: NEUTRAL,
+          lanes: { ...PARITY_LANES, temporal: TL },
+          queryUnderstanding: qu,
+        } as Partial<MemoryRecallConfig>),
+      );
+    };
+    const off = await makeRecall(QU_OFF).recall("when did the base happen", SESSION_KEY_OBJ, "agent_y");
+    const on = await makeRecall({ intentReweight: true, synonyms: false, temporalParse: false }).recall(
+      "when did the base happen",
+      SESSION_KEY_OBJ,
+      "agent_y",
+    );
+    expect(off.ok && on.ok).toBe(true);
+    if (!off.ok || !on.ok) return;
+    const offOrder = off.value.map((r) => r.entry.id);
+    const onOrder = on.value.map((r) => r.entry.id);
+    // The reweight CHANGES the fused order — the temporal candidate climbs vs the off baseline.
+    expect(onOrder).not.toEqual(offOrder);
+    const offRank = offOrder.indexOf("temporal_cand");
+    const onRank = onOrder.indexOf("temporal_cand");
+    expect(onRank).toBeLessThan(offRank); // strictly promoted by the ×1.5 temporal-lane weight
+  });
+
+  it("INTENT-OFF FACTUAL: a factual query (no markers) → multiplier 1.0 everywhere even with intentReweight=true → byte-identical to off", async () => {
+    // "what is the database name" classifies factual → every lane multiplier is 1.0, so even
+    // with intentReweight ON the fused order equals baseLaneReference (the neutral-intent proof).
+    const fts = [makeResult("a", { base: 0.9 }), makeResult("b", { base: 0.4 })];
+    const vector = [makeResult("b", { base: 0.5 }), makeResult("c", { base: 0.3 })];
+    const recall = createMemoryRecall(
+      { memoryPort: fakeLaneMemoryPort({ fts, vector }), clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        queryUnderstanding: { intentReweight: true, synonyms: false, temporalParse: false },
+      } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("the project name", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.value.map((r) => r.entry.id)).toEqual(baseLaneReference(fts, vector));
+  });
+
+  it("SYNONYM-ON: synonyms=true → the search receives expandSynonyms(query) (≠ the original for a mapped term)", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    let seenQuery: string | undefined;
+    const recordingPort = {
+      async search() {
+        return ok(fts);
+      },
+      async searchLanes(_key: SessionKey, q: string) {
+        seenQuery = q;
+        return ok({ fts, vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        queryUnderstanding: { intentReweight: false, synonyms: true, temporalParse: false },
+      } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("vps", SESSION_KEY_OBJ, "agent_y");
+    expect(seenQuery).toBe(expandSynonyms("vps"));
+    expect(seenQuery).not.toBe("vps"); // the expansion genuinely changed the query
+    expect(seenQuery).toContain("virtual"); // the mapped expansion is present
+  });
+
+  it("RANGE-ON: temporalParse=true + 'last week' → the search options carry the parsed occurredAtRange (from the fixedClock)", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    const capture: { laneOpts?: MemorySearchOptions } = {};
+    const recordingPort = {
+      async search() {
+        return ok(fts);
+      },
+      async searchLanes(_key: SessionKey, _q: string, opts?: MemorySearchOptions) {
+        capture.laneOpts = opts;
+        return ok({ fts, vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        queryUnderstanding: { intentReweight: false, synonyms: false, temporalParse: true },
+      } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("what happened last week", SESSION_KEY_OBJ, "agent_y");
+    // The range is computed from deps.clock.now() (= NOW), NEVER Date.now().
+    expect(capture.laneOpts?.occurredAtRange).toEqual(parseTemporalRange("what happened last week", NOW));
+  });
+
+  it("RANGE-ON UNPARSEABLE: temporalParse=true but no time expression → NO occurredAtRange (byte-identity)", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    const capture: { laneOpts?: MemorySearchOptions } = {};
+    const recordingPort = {
+      async search() {
+        return ok(fts);
+      },
+      async searchLanes(_key: SessionKey, _q: string, opts?: MemorySearchOptions) {
+        capture.laneOpts = opts;
+        return ok({ fts, vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: NEUTRAL,
+        lanes: PARITY_LANES,
+        queryUnderstanding: { intentReweight: false, synonyms: false, temporalParse: true },
+      } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("what is the database name", SESSION_KEY_OBJ, "agent_y");
+    expect(capture.laneOpts?.occurredAtRange).toBeUndefined();
+  });
+
+  it("SYNONYM-OFF byte-identity: synonyms=false → the search receives the ORIGINAL (even for a mapped term)", async () => {
+    const fts = [makeResult("a", { base: 0.9 })];
+    let seenQuery: string | undefined;
+    const recordingPort = {
+      async search() {
+        return ok(fts);
+      },
+      async searchLanes(_key: SessionKey, q: string) {
+        seenQuery = q;
+        return ok({ fts, vector: [] });
+      },
+    } as unknown as MemoryPort;
+    const recall = createMemoryRecall(
+      { memoryPort: recordingPort, clock: fixedClock, logger: noopLogger } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({ scoring: NEUTRAL, lanes: PARITY_LANES, queryUnderstanding: QU_OFF } as Partial<MemoryRecallConfig>),
+    );
+    await recall.recall("vps", SESSION_KEY_OBJ, "agent_y");
+    expect(seenQuery).toBe("vps"); // unexpanded — the mapped term is NOT expanded when off
   });
 });
