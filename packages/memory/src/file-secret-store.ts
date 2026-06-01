@@ -15,6 +15,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { randomBytes } from "node:crypto";
 import { ok, err } from "@comis/shared";
 import type { Result } from "@comis/shared";
 import type { SecretStorePort, SecretMetadata } from "@comis/core";
@@ -88,8 +89,9 @@ function persistSecretsFile(
     return err(e instanceof Error ? e : new Error(String(e)));
   }
 
-  // Step 2: random suffix avoids collision with any leftover temp
-  const tmpSuffix = Math.random().toString(16).slice(2);
+  // Step 2: cryptographically random suffix avoids collision and prevents
+  // predictable-suffix DoS (O_EXCL EEXIST if attacker pre-creates the path).
+  const tmpSuffix = randomBytes(8).toString("hex");
   const tmpPath = path.resolve(dataDir, `secrets.json.${tmpSuffix}.tmp`);
 
   let tmpFd: number | undefined;
