@@ -292,6 +292,67 @@ export function ensureTripleTable(db: Database.Database): void {
 }
 
 /**
+ * Create the segregated per-user-representation table (Phase 107, Track E1 —
+ * USER-01). Forward-only additive, idempotent (`CREATE TABLE/INDEX IF NOT
+ * EXISTS`), safe on every boot — the same path serves a fresh DB and a live DB
+ * that predates the table (existing `~/.comis` DBs gain the empty table with no
+ * backfill; mirrors `ensureCausalTables` / `ensureTripleTable`). NEVER wipes the
+ * live DB.
+ *
+ * ## Schema shape (the contract the other Phase-107 plans build on)
+ *
+ * One row = one durable, PREFIX-TYPED, HIGH-TRUST fact about a single user,
+ * scoped to one (tenant, agent, user) — Honcho's "representation" read, built by
+ * the offline LLM job (Plan 107-03) and injected LLM-free into the prompt (Plan
+ * 107-04). The PRIMARY KEY is the per-row `id`. `created_at` is the injected
+ * clock; `updated_at` stamps a later upsert.
+ *
+ * ## The high-trust floor at the DB layer (T-107-02-02)
+ *
+ * The `trust` column CHECK admits only the high-trust floor (`system`/`learned`)
+ * — `'external'` is DELIBERATELY OMITTED (mirror the `memory_triples` trust CHECK
+ * at ensureTripleTable, but DROP the external tier). An
+ * `external`-trust claim can NEVER ENTER the profile at the DB
+ * layer — it is rejected, never stored at a reduced weight. This is layer 1 of
+ * the 3-layer anti-poisoning defense (the adapter's write-time reject is layer 3;
+ * the port-type floor is 107-01). `entry_type` is constrained by its own CHECK to
+ * the four prefix-types (`identity`/`preference`/`relationship`/`instruction`) —
+ * the DISTINCT vocabulary from `memory_type` (T-107-02-03).
+ *
+ * ## Isolation (T-107-02-01, the §5.2 invariant, extended with `user_id`)
+ *
+ * Every row carries `tenant_id` + `agent_id` + `user_id`, and `idx_user_repr_scope`
+ * leads with all three — the adapter (sqlite-user-representation-store.ts) filters
+ * every statement on `(tenant_id, agent_id, user_id)`. The
+ * `source_memory_id -> memories(id)` `ON DELETE CASCADE` fires via the
+ * `PRAGMA foreign_keys = ON` already set by `openSqliteDatabase` (no pragma is set
+ * here) — deleting a source memory drops its derived representation entries.
+ *
+ * @param db - An open better-sqlite3 Database whose `memories` table already
+ *   exists (the FK target). Call AFTER `ensureTripleTable` in `initSchema` so the
+ *   `memories` FK target exists.
+ */
+export function ensureUserRepresentationTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_representation (
+      id               TEXT NOT NULL,
+      tenant_id        TEXT NOT NULL,
+      agent_id         TEXT NOT NULL,
+      user_id          TEXT NOT NULL,
+      entry_type       TEXT NOT NULL CHECK(entry_type IN ('identity','preference','relationship','instruction')),
+      content          TEXT NOT NULL,
+      trust            TEXT NOT NULL CHECK(trust IN ('system','learned')),
+      source_memory_id TEXT REFERENCES memories(id) ON DELETE CASCADE,
+      created_at       INTEGER NOT NULL,
+      updated_at       INTEGER,
+      PRIMARY KEY (id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_repr_scope
+      ON user_representation(tenant_id, agent_id, user_id);
+  `);
+}
+
+/**
  * Initialize the full memory schema on the given SQLite database.
  *
  * Creates:
@@ -462,6 +523,13 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   // foreign_keys=ON set by openSqliteDatabase. Brand-new additive table — no
   // ALTER on memories.
   ensureTripleTable(db);
+
+  // --- Per-user representation table (Phase 107, Track E1 — USER-01) ---
+  // Created AFTER ensureTripleTable so the `memories` FK target already exists;
+  // the source_memory_id FK's ON DELETE CASCADE fires via the PRAGMA
+  // foreign_keys=ON set by openSqliteDatabase. Brand-new additive table — no
+  // ALTER on memories. The high-trust CHECK (no 'external') is the DB-layer floor.
+  ensureUserRepresentationTable(db);
 
   // --- Observation partial indexes (Phase 84; design §4.1) ---
   // Created AFTER ensureMemoryColumns (the indexed columns must exist first).
