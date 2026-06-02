@@ -27,7 +27,7 @@
  *
  * Comis runs many agents in one DB. EVERY statement (both upserts and the bulk
  * read) filters on `(tenant_id, agent_id)` — parameterized — and the PRIMARY
- * KEY keys on `(tenant_id, agent_id, memory_id)`, so a write under one
+ * KEY keys on `(tenant_id, agent_id, memory_id, intent)`, so a write under one
  * (tenant, agent) is NEVER visible to a read under another even when the
  * `memory_id` is byte-identical.
  *
@@ -81,10 +81,11 @@ export function createSqliteMemoryUsefulnessStore(
   // Idempotent per-intent upsert keyed on the (tenant_id, agent_id, memory_id,
   // intent) bucket (Phase 110, LEARN-01): first touch INSERTs (used_count=1),
   // later touches bump used_count and refresh last_useful_at to the latest "used"
-  // now. The 4-col ON CONFLICT target resolves on the fresh-DB PK AND the
-  // idempotent idx_usefulness_intent unique index on a pre-110 DB (schema.ts), so
-  // a per-intent write touches ONLY its bucket — the global ('') row and other
-  // intents' rows are never clobbered (the no-clobber proof, Pitfall 3).
+  // now. The 4-col ON CONFLICT target resolves on the genuine 4-col PRIMARY KEY,
+  // which `ensureUsefulnessTable` guarantees on BOTH a fresh DB (CREATE TABLE) and
+  // a pre-110 DB (a transactional table REBUILD widens the surviving 3-col PK —
+  // `ADD COLUMN` cannot; schema.ts). So a per-intent write touches ONLY its bucket
+  // — the global ('') row and other intents' rows are never clobbered (Pitfall 3).
   const upsertUsed = db.prepare(
     "INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count, last_useful_at) " +
       "VALUES (?, ?, ?, ?, 1, 0, ?) " +

@@ -133,44 +133,40 @@ export function ensureEntityTables(db: Database.Database): void {
  * Idempotently create the recall-utility usefulness table (Phase 93, FEED-02;
  * per-intent in Phase 110, LEARN-01): `memory_usefulness` — one row per
  * (tenant, agent, memory, intent) carrying the durable used/ignored counts +
- * last-useful-at the recall-utility feedback loop learns from (the leapfrog
- * Hindsight cannot follow — `access_count` is dead schema; HINDSIGHT_VS_COMIS.md
- * #7). Forward-only, additive, idempotent (`CREATE TABLE IF NOT EXISTS` +
- * guarded ALTER + `CREATE … INDEX IF NOT EXISTS`) — safe on every boot incl. a
- * live `~/.comis` DB predating the feature (no backfill).
+ * last-useful-at the recall-utility feedback loop learns from (HINDSIGHT_VS_COMIS.md
+ * #7). Forward-only, idempotent, re-run-safe — safe on every boot incl. a live
+ * `~/.comis` DB predating the feature (no row loss, no corruption).
  *
  * ## PRIMARY KEY = isolation boundary + the per-intent upsert key (T-93-01)
  *
- * A FRESH DB's `PRIMARY KEY (tenant_id, agent_id, memory_id, intent)` is both the
- * adapter's `ON CONFLICT` target and the load-bearing isolation scope — two
- * agents/tenants NEVER share a row even for the same `memory_id`, and the adapter
- * additionally filters every read/write on `(tenant_id, agent_id)`
- * (belt-and-braces). `intent` is an ADDITIONAL key, never a relaxation of that
- * filter. `ON DELETE CASCADE` on `memory_id → memories(id)` is the ENTIRE
- * row-maintenance story (no orphan-sweep): it fires via the
- * `PRAGMA foreign_keys = ON` already set by `openSqliteDatabase` — no pragma set
- * here.
+ * `PRIMARY KEY (tenant_id, agent_id, memory_id, intent)` is both the adapter's
+ * `ON CONFLICT` target and the load-bearing isolation scope — two agents/tenants
+ * NEVER share a row even for the same `memory_id` (the adapter also filters every
+ * read/write on `(tenant_id, agent_id)`). `intent` is an ADDITIONAL key, never a
+ * relaxation. `ON DELETE CASCADE` on `memory_id → memories(id)` is the ENTIRE
+ * row-maintenance story (no orphan-sweep): it fires via the `PRAGMA foreign_keys =
+ * ON` already set by `openSqliteDatabase`.
  *
- * ## The intent bucket (Phase 110, LEARN-01): forward-only, no backfill
+ * ## Widening the PK on a pre-110 DB (Phase 110, LEARN-01): a transactional REBUILD
  *
- * `intent TEXT NOT NULL DEFAULT ''` partitions the signal per query-intent (the
- * global bucket = `''`, the byte-identical v2.8 path). FRESH DBs get the column +
- * the 4-col PK in the `CREATE TABLE`; an EXISTING (pre-110) DB gets a guarded
- * `PRAGMA table_info` check + `ALTER … ADD COLUMN intent TEXT NOT NULL DEFAULT ''`
- * (the `ensureMemoryColumns` precedent — a NOT NULL ADD WITH a constant default
- * lands existing rows in `''` by construction: NO backfill, NO rewrite, NO
- * corruption — the PK-widening-on-existing-DB safety, RESEARCH Pitfall 3). The
- * pre-110 PK STAYS 3-col (SQLite has no `ALTER ADD PRIMARY KEY`), so the adapter's
- * 4-col `ON CONFLICT` has no PK to resolve against there — the idempotent
- * `idx_usefulness_intent` UNIQUE index (created on BOTH paths) supplies it
- * (satisfied because pre-110 rows are all `intent=''`, already unique on the old
- * PK), letting the per-intent upsert resolve identically on fresh + existing DBs.
+ * `intent TEXT NOT NULL DEFAULT ''` partitions the signal per query-intent (global
+ * bucket = `''`, the byte-identical v2.8 path). A FRESH DB gets the 4-col PK from
+ * `CREATE TABLE`. An EXISTING (pre-110) DB has a 3-col PK, and SQLite has NO
+ * `ALTER ADD PRIMARY KEY` — a bare `ADD COLUMN intent` leaves it 3-col, so the
+ * adapter's 4-col `ON CONFLICT(...,intent)` aborts the SECOND intent bucket's
+ * upsert with `UNIQUE constraint failed` (CR-01). So the pre-110 path runs the
+ * standard SQLite transactional table REBUILD (taken when the 4-col PK is absent
+ * via `PRAGMA table_info`): create a `_new` table with the genuine 4-col PK, copy
+ * EVERY row into the `''` bucket (`COALESCE(intent,'')` — no loss/corruption),
+ * drop, rename. Re-run-safe (4-col PK present → skip) and brackets the rename with
+ * `foreign_keys` OFF so the `memories(id)` FK is not transiently dropped.
  *
  * @param db - An open better-sqlite3 Database whose `memories` table already
  *   exists (the FK target). Call AFTER `ensureEntityTables` in `initSchema`.
  */
 export function ensureUsefulnessTable(db: Database.Database): void {
-  // FRESH DB: the 4-col PK + the intent column (the global bucket = '').
+  // FRESH DB: the 4-col PK + intent column. EXISTING DB: no-op here (the PK-shape
+  // rebuild below widens it).
   db.exec(`
     CREATE TABLE IF NOT EXISTS memory_usefulness (
       tenant_id      TEXT NOT NULL,
@@ -183,22 +179,43 @@ export function ensureUsefulnessTable(db: Database.Database): void {
       PRIMARY KEY (tenant_id, agent_id, memory_id, intent)
     );
   `);
-  // EXISTING (pre-110) DB: guarded additive column-add (the ensureMemoryColumns
-  // precedent at :56-81 — the object-literal cast is the sanctioned PRAGMA idiom,
-  // NOT a `as Foo[]` named-type cast). NOT NULL ADD WITH a constant default lands
-  // existing rows in the global ('') bucket, no backfill.
-  const cols = new Set(
-    (db.prepare(`PRAGMA table_info(memory_usefulness)`).all() as { name: string }[]).map(
-      (r) => r.name,
-    ),
-  );
-  if (!cols.has("intent")) {
-    db.exec(`ALTER TABLE memory_usefulness ADD COLUMN intent TEXT NOT NULL DEFAULT ''`);
+  // Detect a pre-110 (or partially-migrated) table by its PK shape (`pk>0` marks a
+  // PK member). The object-literal cast is the sanctioned PRAGMA idiom, NOT `as Foo[]`.
+  const tableInfo = db.prepare(`PRAGMA table_info(memory_usefulness)`).all() as { name: string; pk: number }[];
+  const pkHasIntent = tableInfo.some((c) => c.pk > 0 && c.name === "intent");
+  if (!pkHasIntent) {
+    // EXISTING (pre-110) DB: REBUILD to genuinely widen the PK to 4-col (ADD COLUMN
+    // cannot — CR-01). A PRISTINE pre-110 table has NO `intent` column (copy the ''
+    // literal); a PARTIALLY-migrated one (column present, PK still 3-col) COALESCEs
+    // it. Toggle foreign_keys OFF around the rename (the pragma is a no-op INSIDE a
+    // txn, so it MUST bracket db.transaction) so the memories(id) FK is not dropped.
+    const intentSelectExpr = tableInfo.some((c) => c.name === "intent") ? "COALESCE(intent, '')" : "''";
+    const fkWasOn = db.pragma("foreign_keys", { simple: true }) === 1;
+    if (fkWasOn) db.pragma("foreign_keys = OFF");
+    const rebuild = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE memory_usefulness_new (
+          tenant_id      TEXT NOT NULL,
+          agent_id       TEXT NOT NULL,
+          memory_id      TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+          intent         TEXT NOT NULL DEFAULT '',
+          used_count     INTEGER NOT NULL DEFAULT 0,
+          ignored_count  INTEGER NOT NULL DEFAULT 0,
+          last_useful_at INTEGER,
+          PRIMARY KEY (tenant_id, agent_id, memory_id, intent)
+        );
+        INSERT INTO memory_usefulness_new (tenant_id, agent_id, memory_id, intent, used_count, ignored_count, last_useful_at)
+          SELECT tenant_id, agent_id, memory_id, ${intentSelectExpr}, used_count, ignored_count, last_useful_at FROM memory_usefulness;
+        DROP TABLE memory_usefulness;
+        ALTER TABLE memory_usefulness_new RENAME TO memory_usefulness;
+      `);
+    });
+    rebuild();
+    // Restore the pragma. No foreign_key_check needed: the INSERT…SELECT copies rows
+    // VERBATIM and the FK target (memories.id) is unchanged — no new dangling ref.
+    if (fkWasOn) db.pragma("foreign_keys = ON");
   }
-  // The 4-col conflict target for the adapter's per-intent upsert. Idempotent +
-  // additive; on a pre-110 DB (3-col PK) it is the ONLY backing constraint the
-  // 4-col ON CONFLICT resolves against (satisfied — pre-110 rows are all
-  // intent=''). On a fresh DB it is redundant with the PK but harmless.
+  // The explicit named 4-col index for the adapter's per-intent upsert ON CONFLICT target (idempotent; redundant with the now-4-col PK but harmless).
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_usefulness_intent ON memory_usefulness(tenant_id, agent_id, memory_id, intent)`,
   );
