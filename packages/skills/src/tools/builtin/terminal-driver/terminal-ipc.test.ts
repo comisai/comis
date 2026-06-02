@@ -117,8 +117,10 @@ describe("correlate (OPS-08 framing half)", () => {
     }
 
     // The r1 request is resolved by the r1 reply even though it arrived SECOND.
-    expect(resolvedBy.r1).toBe(reply1);
-    expect(resolvedBy.r2).toBe(reply2);
+    // (Frames cross the wire as JSON, so the resolver receives a structurally-equal
+    // decoded copy — the load-bearing assertion is that r1's VALUE reached r1's waiter.)
+    expect(resolvedBy.r1).toEqual(reply1);
+    expect(resolvedBy.r2).toEqual(reply2);
     expect(resolvedBy.r1.result).toEqual({ grid: "one" });
   });
 
