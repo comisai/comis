@@ -40,6 +40,20 @@ export interface UsefulnessScope {
    * deterministic/testable.
    */
   now: number;
+  /**
+   * Optional query-INTENT bucket (LEARN-01/H1). When present, the read fetches /
+   * the write records the per-intent usefulness signal (a memory's usefulness FOR
+   * THAT intent); when OMITTED the adapter resolves the GLOBAL bucket (intent="")
+   * — byte-identical to v2.8. The closed-union value comes from the agent's
+   * deterministic `classifyIntent` (LLM-free); typed here as a plain string so
+   * @comis/core takes no @comis/agent dependency (Pitfall 2). NOT a security
+   * boundary — (tenantId, agentId) remain the isolation scope; intent is an
+   * ADDITIONAL key, never a relaxation.
+   *
+   * Because `readUsefulness` takes `Omit<UsefulnessScope, "now">`, this optional
+   * field flows to BOTH `recordUsage` (the write) AND the read automatically.
+   */
+  intent?: string;
 }
 
 /**
