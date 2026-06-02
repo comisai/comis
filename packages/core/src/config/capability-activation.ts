@@ -1,32 +1,42 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * v2.9 capability default-activation framework (Phase 115 — ACT-01).
+ * v2.9 capability default-activation framework (Phase 115 — ACT-01; reconciled
+ * for the v1 OPT-OUT posture, v2.9 increment 2).
  *
  * The minimal, reversible, config-overridable mechanism that resolves each v2.9
- * capability's effective default-OFF→ON state. Every capability ships
- * DEFAULT-OFF (the byte-identity-when-absent discipline). A capability's default
- * flips to ON ONLY when BOTH gates pass:
+ * capability's effective default-OFF→ON state. A capability's default resolves
+ * ON when EITHER activation path holds, AND the frozen-trust invariant is
+ * respected:
  *
- *   (a) MEASURED-LIFT gate — a RECORDED decision in {@link ACTIVATED_CAPABILITIES}
+ *   (a) V1 OPT-OUT posture — the capability is in {@link V1_OPT_OUT_CAPABILITIES}.
+ *       This is the v2.9 increment-2 product decision: ship the memory stack
+ *       opt-OUT, so the eight non-privacy capabilities default ON. This path
+ *       SUPERSEDES the original measured-lift-to-activate premise for those
+ *       capabilities (the schema defaults themselves flipped ON — see
+ *       `schema-agent-prompt.ts` for the $0 recall toggles and
+ *       `schema-agent-runtime.ts` for the cost-bearing subtrees). The
+ *       cost-bearing ones (USER / REASON / DIALECTIC, plus LEARN-RANK's offline
+ *       bandit) are additionally gated by the master cost-feature kill switch
+ *       (`memory.costFeatures.enabled`) at their daemon registration sites — the
+ *       kill switch beats this default-ON.
+ *   (b) MEASURED-LIFT gate — a RECORDED decision in {@link ACTIVATED_CAPABILITIES}
  *       that references a committed PROVE2 manifest AND a measured positive delta
- *       (the "nothing flips on faith" rule); AND
- *   (b) FROZEN safety invariants — the capability must not target a
- *       {@link FROZEN_TRUST_PATHS} path; no activation may move `trustAlpha` or
- *       the trust filter (`includeTrustLevels`), ever.
+ *       (the "nothing flips on faith" rule). This path remains for any capability
+ *       NOT in the opt-out set (today: SOCIAL).
  *
- * Phase 114 (PROVE2) measured **+0.0pt** for every recall-config-togglable v2.9
- * capability (intent-reweight + forget were byte-identical to the baseline) and
- * deferred the enrichment-state capabilities (KG / USER / SOCIAL / REASON /
- * LEARN-RANK — they need derived state the verbatim-ingest bench does not build).
- * **So the activation set is EMPTY** and every capability resolves OFF — the
- * honest measure-first outcome (gate report:
- * `benchmarks/results/2026-06-02-phase114-prove2/GATE-REPORT.md`).
+ * In BOTH paths the FROZEN safety invariant holds: a capability whose
+ * `configPath` is a {@link FROZEN_TRUST_PATHS} path can NEVER resolve ON — no
+ * activation may move `trustAlpha` or the trust filter (`includeTrustLevels`),
+ * ever. Trust stays frozen throughout.
+ *
+ * SOCIAL stays OFF: it is NOT in the opt-out set (it carries a privacy/consent
+ * gate, `privacyReviewSignedOffBy`) and has no recorded measured-lift decision,
+ * so it resolves OFF — the operator opts in explicitly via config + sign-off.
  *
  * REVERSIBILITY + OVERRIDE: this framework only resolves the *effective default*.
  * The per-agent config knobs (each `*.enabled` / `rag.*` toggle) remain the
  * operator override — an operator can always turn a capability ON or OFF in
- * config regardless of the resolved default. Adding a measured winner here flips
- * its default; removing the entry reverts it. No back-compat shim, no migration.
+ * config regardless of the resolved default. No back-compat shim, no migration.
  *
  * NOT a public export of `@comis/core/config` beyond the named symbols below —
  * it carries no port, no runtime side effect, and reads no config at module load
@@ -137,47 +147,80 @@ export interface ActivationDecision {
 
 /**
  * The measured-winner activation set. **EMPTY** — Phase 114 (PROVE2) measured no
- * capability meeting the measured-lift-with-no-regression bar (intent-reweight +
- * forget were byte-identical → +0.0pt; KG/USER/SOCIAL/REASON/LEARN-RANK deferred,
- * needing derived state the verbatim-ingest bench does not build). Every
- * capability therefore keeps its as-shipped default-OFF (ACT-02 = byte-identity
- * preserved). When a future costed run produces a measured winner, add its
- * recorded {@link ActivationDecision} here (and only here).
+ * capability meeting the measured-lift-with-no-regression bar. This path now only
+ * governs capabilities NOT in {@link V1_OPT_OUT_CAPABILITIES} (today: SOCIAL); the
+ * eight opt-out capabilities flip ON via the v1 opt-out posture instead. When a
+ * future costed run produces a measured winner for SOCIAL (post privacy sign-off),
+ * add its recorded {@link ActivationDecision} here (and only here).
  */
 export const ACTIVATED_CAPABILITIES: readonly ActivationDecision[] = Object.freeze([]);
+
+/**
+ * The v1 OPT-OUT capability set (v2.9 increment 2). These eight capabilities ship
+ * default-ON because the product decision is an opt-OUT memory posture — their
+ * schema defaults flipped false→true in `schema-agent-prompt.ts` (the $0 recall
+ * toggles: KG / LEARN-IQ / FORGET / FEED / LEARN-RANK apply-gate) and
+ * `schema-agent-runtime.ts` (the cost-bearing subtrees: USER / REASON / DIALECTIC,
+ * plus LEARN-RANK's offline bandit). This set supersedes the original
+ * measured-lift-to-activate premise FOR THESE CAPABILITIES — the resolver returns
+ * ON for any member (subject only to the frozen-trust invariant).
+ *
+ * SOCIAL is DELIBERATELY ABSENT: it carries a privacy/consent gate
+ * (`privacyReviewSignedOffBy`) and stays OFF, opt-IN only. Adding a member here
+ * flips its default ON; removing one reverts it. No back-compat shim, no migration.
+ */
+export const V1_OPT_OUT_CAPABILITIES: ReadonlySet<CapabilityId> = Object.freeze(
+  new Set<CapabilityId>(["user", "dialectic", "reason", "feed", "learnRank", "learnIq", "kg", "forget"]),
+);
+
+/** How a capability's effective default resolved ON (audit-traceable). */
+export type ActivationVia = "v1-opt-out" | "measured-lift";
 
 /** The resolved effective default for one capability. */
 export interface ResolvedCapabilityDefault {
   /** The capability id. */
   readonly id: CapabilityId;
-  /** Effective default after both gates: ON iff a valid decision exists. */
+  /** Effective default after the activation paths + frozen-trust invariant. */
   readonly effectiveDefaultOn: boolean;
-  /** The recorded decision that flipped it ON, when present. */
+  /** Which path flipped it ON, when ON. Absent when OFF. */
+  readonly via?: ActivationVia;
+  /** The recorded measured-lift decision that flipped it ON, when via "measured-lift". */
   readonly decision?: ActivationDecision;
 }
 
 /**
  * Resolve a single capability's effective default-OFF→ON state.
  *
- * Returns ON iff a recorded {@link ActivationDecision} exists for the capability
- * AND that decision is valid under the frozen-trust invariant AND the measured
- * delta is positive. Otherwise OFF (the as-shipped default). Throws for an
- * unknown id (a typo must fail loud, never silently resolve OFF).
+ * Returns ON when EITHER the v1 opt-out posture applies (the capability is in
+ * {@link V1_OPT_OUT_CAPABILITIES}) OR a recorded {@link ActivationDecision} with a
+ * positive measured delta exists — AND, in both cases, the capability does not
+ * target a {@link FROZEN_TRUST_PATHS} path (the frozen-trust invariant always
+ * wins, so a hypothetical trust-targeting member could never resolve ON).
+ * Otherwise OFF (the as-shipped default — today: SOCIAL). Throws for an unknown id
+ * (a typo must fail loud, never silently resolve OFF).
  */
 export function resolveCapabilityDefault(id: CapabilityId): ResolvedCapabilityDefault {
   const cap = V2_9_CAPABILITIES.find((c) => c.id === id);
   if (cap === undefined) {
     throw new Error(`Unknown capability id: ${String(id)}`);
   }
-  const decision = ACTIVATED_CAPABILITIES.find((d) => d.capability === id);
-  // Both gates: a recorded decision (with a positive measured delta) AND the
-  // frozen-trust invariant (the capability must not target a frozen path).
+  // The frozen-trust invariant gates BOTH paths: a capability targeting a frozen
+  // trust path can never resolve ON, regardless of opt-out membership or decision.
   const targetsFrozenTrust = FROZEN_TRUST_PATHS.includes(cap.configPath);
-  const effectiveDefaultOn =
-    decision !== undefined && decision.measuredDeltaPts > 0 && !targetsFrozenTrust;
-  return effectiveDefaultOn
-    ? { id, effectiveDefaultOn: true, decision }
-    : { id, effectiveDefaultOn: false };
+  if (targetsFrozenTrust) {
+    return { id, effectiveDefaultOn: false };
+  }
+  // Path (a): the v1 opt-out posture (v2.9 increment 2) — supersedes measured-lift
+  // for its members. The schema defaults themselves flipped ON for these.
+  if (V1_OPT_OUT_CAPABILITIES.has(id)) {
+    return { id, effectiveDefaultOn: true, via: "v1-opt-out" };
+  }
+  // Path (b): a recorded measured-lift decision (with a positive measured delta).
+  const decision = ACTIVATED_CAPABILITIES.find((d) => d.capability === id);
+  if (decision !== undefined && decision.measuredDeltaPts > 0) {
+    return { id, effectiveDefaultOn: true, via: "measured-lift", decision };
+  }
+  return { id, effectiveDefaultOn: false };
 }
 
 /** Resolve every registered capability's effective default (one entry each). */

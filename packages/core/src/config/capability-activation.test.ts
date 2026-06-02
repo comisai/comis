@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import {
   V2_9_CAPABILITIES,
   ACTIVATED_CAPABILITIES,
+  V1_OPT_OUT_CAPABILITIES,
   FROZEN_TRUST_PATHS,
   resolveCapabilityDefault,
   resolveAllCapabilityDefaults,
@@ -12,32 +13,41 @@ import {
 import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 // ---------------------------------------------------------------------------
-// Phase 115 (ACTIVATE) — ACT-01 the default-activation FRAMEWORK.
+// Phase 115 (ACTIVATE) — ACT-01 the default-activation FRAMEWORK, reconciled for
+// the v1 OPT-OUT posture (v2.9 increment 2).
 //
-// A minimal, reversible, config-overridable mechanism that resolves each v2.9
-// capability's effective default-OFF→ON state. ANY flip is gated on BOTH:
-//   (a) a RECORDED measured-lift decision referencing a PROVE2 manifest, AND
-//   (b) the FROZEN safety invariants (trust filter / trustAlpha never move).
-//
-// Phase 114 (PROVE2) measured NO winner → the activation set is EMPTY → every
-// capability's effective default stays its as-shipped OFF. These cases fail on
-// the pre-patch tree (the module does not exist) — RED proof.
+// A capability resolves ON via EITHER the v1 opt-out posture (membership in
+// V1_OPT_OUT_CAPABILITIES — the eight non-privacy capabilities whose schema
+// defaults flipped false→true) OR a recorded measured-lift decision — AND, in
+// both paths, the FROZEN-TRUST invariant (trust filter / trustAlpha never move)
+// holds. SOCIAL stays OFF: it is NOT in the opt-out set (privacy/consent gate)
+// and has no recorded measured-lift decision.
 // ---------------------------------------------------------------------------
 
 describe("ACT-01 v2.9 capability registry", () => {
-  it("enumerates each default-OFF v2.9 capability with a config path that resolves on a parsed agent config", () => {
+  it("enumerates each v2.9 capability with a config path whose as-shipped value matches its posture (8 ON via opt-out, SOCIAL OFF)", () => {
     const cfg = PerAgentConfigSchema.parse({});
-    // Each registered capability must name a real config path whose as-shipped
-    // value is the default-OFF / neutral state. We read the path off a parsed
-    // PerAgentConfig to prove the path is live (not a typo'd dead string).
+    // Each registered capability must name a real config path; we read it off a
+    // parsed PerAgentConfig to prove the path is live (not a typo'd dead string).
+    // The as-shipped value must match the v1 opt-out posture: opt-out members ON
+    // (true), SOCIAL OFF (absent ⇒ undefined).
     expect(V2_9_CAPABILITIES.length).toBeGreaterThanOrEqual(9);
     for (const cap of V2_9_CAPABILITIES) {
       const value = readPath(cfg as unknown as Record<string, unknown>, cap.configPath);
-      // Cron/tool capabilities are `.optional()` (absent ⇒ undefined ⇒ OFF);
-      // rag.* capabilities default to an explicit `false`. Both are "OFF".
-      const isOff = value === undefined || value === false;
-      expect(isOff, `${cap.id} (${cap.configPath}) must be default-OFF as shipped`).toBe(true);
+      const shippedOn = value === true;
+      const expectedOn = V1_OPT_OUT_CAPABILITIES.has(cap.id);
+      expect(
+        shippedOn,
+        `${cap.id} (${cap.configPath}) as-shipped default must match its posture`,
+      ).toBe(expectedOn);
     }
+  });
+
+  it("the opt-out set is exactly the eight non-privacy capabilities (SOCIAL deliberately absent)", () => {
+    expect([...V1_OPT_OUT_CAPABILITIES].sort()).toEqual(
+      ["dialectic", "feed", "forget", "kg", "learnIq", "learnRank", "reason", "user"].sort(),
+    );
+    expect(V1_OPT_OUT_CAPABILITIES.has("social")).toBe(false);
   });
 
   it("gives every capability a unique id and a unique config path", () => {
@@ -57,9 +67,11 @@ describe("ACT-01 v2.9 capability registry", () => {
 });
 
 describe("ACT-01 measured-winner activation set (gated on PROVE2)", () => {
-  it("is EMPTY because Phase 114 measured no winner (nothing flips on faith)", () => {
-    // The keystone invariant: the activation set is committed-decision-driven.
-    // PROVE2 found +0.0pt for every togglable capability → no decision → empty.
+  it("is EMPTY (the measured-lift path drove nothing; the v1 opt-out posture is the active path)", () => {
+    // The measured-lift path stays committed-decision-driven and is empty (PROVE2 found
+    // +0.0pt). After the v1 opt-out reconciliation this empty set no longer means
+    // "everything OFF" — the eight opt-out capabilities flip ON via V1_OPT_OUT_CAPABILITIES,
+    // and SOCIAL (the lone non-opt-out cap) stays OFF for lack of a recorded decision.
     expect(ACTIVATED_CAPABILITIES).toEqual([]);
   });
 
@@ -107,20 +119,35 @@ describe("ACT-01 frozen trust invariant", () => {
   });
 });
 
-describe("ACT-01 resolver (effective default-OFF→ON)", () => {
-  it("resolves every capability to OFF while the activation set is empty", () => {
+describe("ACT-01 resolver (effective default-OFF→ON, v1 opt-out posture)", () => {
+  it("resolves the eight opt-out capabilities ON via the v1 opt-out path (no recorded decision needed)", () => {
     for (const cap of V2_9_CAPABILITIES) {
       const resolved = resolveCapabilityDefault(cap.id);
       expect(resolved.id).toBe(cap.id);
-      expect(resolved.effectiveDefaultOn, `${cap.id} must resolve OFF (no winner)`).toBe(false);
-      expect(resolved.decision).toBeUndefined();
+      if (V1_OPT_OUT_CAPABILITIES.has(cap.id)) {
+        expect(resolved.effectiveDefaultOn, `${cap.id} must resolve ON (v1 opt-out)`).toBe(true);
+        expect(resolved.via).toBe("v1-opt-out");
+        // The opt-out path carries no measured-lift decision.
+        expect(resolved.decision).toBeUndefined();
+      }
     }
   });
 
-  it("resolveAllCapabilityDefaults returns one entry per capability, all OFF", () => {
+  it("resolves SOCIAL OFF (not in the opt-out set, no recorded measured-lift decision)", () => {
+    const resolved = resolveCapabilityDefault("social");
+    expect(resolved.effectiveDefaultOn).toBe(false);
+    expect(resolved.via).toBeUndefined();
+    expect(resolved.decision).toBeUndefined();
+  });
+
+  it("resolveAllCapabilityDefaults returns one entry per capability; exactly the opt-out members are ON", () => {
     const all = resolveAllCapabilityDefaults();
     expect(all.length).toBe(V2_9_CAPABILITIES.length);
-    expect(all.every((r) => r.effectiveDefaultOn === false)).toBe(true);
+    for (const r of all) {
+      expect(r.effectiveDefaultOn).toBe(V1_OPT_OUT_CAPABILITIES.has(r.id));
+    }
+    // SOCIAL is the only OFF capability.
+    expect(all.filter((r) => !r.effectiveDefaultOn).map((r) => r.id)).toEqual(["social"]);
   });
 
   it("errors for an unknown capability id (no silent success)", () => {
@@ -129,47 +156,50 @@ describe("ACT-01 resolver (effective default-OFF→ON)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ACT-02 — flip the measured winners. There are none, so flip NOTHING and
-// assert BYTE-IDENTITY preserved: the activation framework's resolved default
-// for every capability matches the as-shipped schema default (all OFF). This
-// proves the framework changed no shipped behavior.
+// ACT-02 — framework/schema PARITY under the v1 opt-out posture. The framework's
+// resolved default for every capability must MATCH its as-shipped schema default:
+// the eight opt-out members resolve ON and ship ON; SOCIAL resolves OFF and ships
+// OFF. This proves the framework table and the Zod schema stay in lock-step (a
+// flip in one without the other trips this test).
 // ---------------------------------------------------------------------------
 
-describe("ACT-02 byte-identity preserved (flip nothing)", () => {
-  it("the framework's resolved default equals the as-shipped schema default for every capability (all OFF)", () => {
+describe("ACT-02 framework/schema parity (v1 opt-out posture)", () => {
+  it("the framework's resolved default equals the as-shipped schema default for every capability", () => {
     const cfg = PerAgentConfigSchema.parse({}) as unknown as Record<string, unknown>;
     for (const cap of V2_9_CAPABILITIES) {
       const resolved = resolveCapabilityDefault(cap.id);
       const shipped = readPath(cfg, cap.configPath);
       const shippedOn = shipped === true; // OFF = undefined | false; ON = true
-      // The framework must not have flipped anything: resolved == shipped == OFF.
-      expect(resolved.effectiveDefaultOn, `${cap.id} resolved default`).toBe(false);
-      expect(shippedOn, `${cap.id} as-shipped default`).toBe(false);
-      expect(resolved.effectiveDefaultOn).toBe(shippedOn);
+      // Lock-step: resolved default == as-shipped schema default for every capability.
+      expect(resolved.effectiveDefaultOn, `${cap.id} resolved == shipped`).toBe(shippedOn);
+      // And both equal the opt-out posture.
+      expect(shippedOn, `${cap.id} as-shipped default`).toBe(V1_OPT_OUT_CAPABILITIES.has(cap.id));
     }
   });
 
-  it("a bare PerAgentConfig leaves every v2.9 capability OFF (no winner flipped a default on)", () => {
+  it("a bare PerAgentConfig has the eight opt-out capabilities ON and SOCIAL OFF", () => {
     const cfg = PerAgentConfigSchema.parse({});
-    // Cron/tool capabilities are optional → absent (undefined) on a bare config.
-    expect(cfg.memoryUserRepresentation).toBeUndefined();
+    // Cost-bearing subtrees are now defaulted ON (no longer `.optional()`).
+    expect(cfg.memoryUserRepresentation?.enabled).toBe(true);
+    expect(cfg.dialectic?.enabled).toBe(true);
+    expect(cfg.memoryReasoning?.enabled).toBe(true);
+    // SOCIAL stays OFF — its subtree is still `.optional()` (privacy/consent gate).
     expect(cfg.socialModeling).toBeUndefined();
-    expect(cfg.dialectic).toBeUndefined();
-    expect(cfg.memoryReasoning).toBeUndefined();
-    // rag.* capabilities default to explicit false / neutral.
-    expect(cfg.rag.feedback.enabled).toBe(false);
-    expect(cfg.rag.onlineTuning.enabled).toBe(false);
-    expect(cfg.rag.queryUnderstanding.intentReweight).toBe(false);
-    expect(cfg.rag.lanes.graphSpread.enabled).toBe(false);
-    expect(cfg.rag.forget.enabled).toBe(false);
+    // rag.* $0 capabilities default ON.
+    expect(cfg.rag.feedback.enabled).toBe(true);
+    expect(cfg.rag.onlineTuning.enabled).toBe(true);
+    expect(cfg.rag.queryUnderstanding.intentReweight).toBe(true);
+    expect(cfg.rag.lanes.graphSpread.enabled).toBe(true);
+    expect(cfg.rag.forget.enabled).toBe(true);
   });
 
-  it("an operator can still override a capability ON in config (reversible + config-overridable)", () => {
-    // The framework resolves the DEFAULT; config remains the operator override.
-    const cfg = PerAgentConfigSchema.parse({ rag: { forget: { enabled: true } } });
-    expect(cfg.rag.forget.enabled).toBe(true);
-    // The framework default is still OFF — overriding config does not change it.
-    expect(resolveCapabilityDefault("forget").effectiveDefaultOn).toBe(false);
+  it("an operator can still override a capability OFF in config (reversible + config-overridable)", () => {
+    // The framework resolves the DEFAULT; config remains the operator override. An operator
+    // who wants forget OFF sets it explicitly — the framework default stays ON regardless.
+    const cfg = PerAgentConfigSchema.parse({ rag: { forget: { enabled: false } } });
+    expect(cfg.rag.forget.enabled).toBe(false);
+    // The framework default is still ON — overriding config does not change the resolved default.
+    expect(resolveCapabilityDefault("forget").effectiveDefaultOn).toBe(true);
   });
 });
 
