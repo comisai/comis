@@ -211,6 +211,15 @@ export { createDialecticSeam } from "./memory/memory-dialectic-seam.js";
 export type { DialecticSeamDeps } from "./memory/memory-dialectic-seam.js";
 export type { DialecticParsed } from "./memory/memory-dialectic-prompt.js";
 
+// The PURE dialectic synthesis helpers (Phase 109, DIAL-01/03 — 109-02). Consumed by the
+// daemon memory.ask handler (Plan 03): orderByTrust (HARD trust-first ordering of the recall
+// grounding), assembleSynthesis (abstain-in-code + citations⊆recalled-ids → the response), and
+// citationChains (the DIAL-03 citation→recalled-id→sourceId reasoning-tree for the recall-trace).
+// No model — the seam above is the only LLM. Only the VALUE helpers are exported; their return
+// shapes (AssembledSynthesis/CitationChain/ParsedSynthesis) are inferred at the consumer and
+// kept module-internal (no unconsumed type surface on the public barrel).
+export { orderByTrust, assembleSynthesis, citationChains } from "./memory/memory-dialectic-synthesis.js";
+
 // Offline per-user representation builder (Phase 107, USER-02 — the WRITE path of
 // the per-user profile: default-OFF gate → read high-trust sources → EXCLUDE
 // external-trust (anti-poisoning) → bound → INJECTED build() seam → validateMemoryWrite

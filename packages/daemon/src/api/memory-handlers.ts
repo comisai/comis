@@ -32,6 +32,7 @@
 
 import {
   MemorySearchFilesContract,
+  MemoryAskContract,
   MemoryGetFileContract,
   MemoryStoreContract,
   MemoryStatsContract,
@@ -47,7 +48,10 @@ import {
   stripInternalFields,
   systemGetEnv,
   systemNowMs,
+  wrapExternalContent,
 } from "@comis/core";
+import type { SessionKey } from "@comis/core";
+import { assembleSynthesis, citationChains, orderByTrust } from "@comis/agent";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
@@ -59,6 +63,14 @@ import type { RpcHandler } from "./types.js";
 /** Max chars of an observation body surfaced as a provenance PREVIEW
  *  (T-86-21 — never the full body unbounded; mirrors memory.search_files). */
 const OBSERVATION_PREVIEW_MAX = 500;
+
+/** Default cap on the dialectic grounding-set size when the request omits `limit`
+ *  and no per-agent `dialectic.maxRecall` is threaded (mirrors the schema default). */
+const DIALECTIC_DEFAULT_MAX_RECALL = 10;
+
+/** The DIAL-01 mandatory-abstention sentinel — the explicit { abstained: true } signal
+ *  (never inferred from an empty answer); matches MemoryAskContract + assembleSynthesis. */
+const ABSTAIN_SENTINEL = { answer: "", citations: [] as string[], abstained: true } as const;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -100,6 +112,124 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       };
       if (systemGetEnv("NODE_ENV") !== "production") {
         MemorySearchFilesContract.response.parse(result);
+      }
+      return result;
+    },
+
+    // -----------------------------------------------------------------------
+    // memory.ask — the dialectic (Phase 109 — DIAL-01/02/03). The KEYSTONE: a
+    // grounded, cited NL answer over the agent's LLM-free recall pipeline.
+    //
+    // It runs the FULL createMemoryRecall (the injected `buildDialecticRecall`
+    // factory) for the question — NEVER `deps.memoryApi.search`, which bypasses
+    // the trust filter + redaction (the documented trap). On empty/insufficient
+    // recall it abstains in CODE WITHOUT calling the seam (Pitfall 5 — saves the
+    // LLM call). Otherwise it orders the grounding trust-first (orderByTrust),
+    // wraps non-system content in the redaction firewall, calls the ONE injected
+    // query-time seam, and assembles the response (assembleSynthesis: abstain-in-
+    // code + citations VALIDATED ⊆ recalled ids). DIAL-03: the citation→sourceId
+    // chain is computed (counts/ids-only) for the recall-trace. Logging is
+    // counts/ids-ONLY — NEVER the question, the recalled content, or the answer.
+    // -----------------------------------------------------------------------
+    [MemoryAskContract.method]: async (rawParams) => {
+      const askStart = systemNowMs();
+      // Scope is read PRE-strip (mirrors search_files + context.recall): the
+      // dispatcher injects `_agentId` + `_callerSessionKey`; the handler scopes
+      // recall to the caller and NEVER widens it.
+      const agentId = rawParams._agentId as string | undefined;
+      const callerSessionKey = rawParams._callerSessionKey as string | undefined;
+      const userParams = stripInternalFields(rawParams);
+      const params = MemoryAskContract.request.parse(userParams);
+      const question = params.question;
+
+      // Graceful abstain when the dialectic is not wired (no key / Plan 04 not
+      // applied) or the caller carries no agent scope — never throws.
+      if (
+        deps.dialecticSeam === undefined ||
+        deps.buildDialecticRecall === undefined ||
+        agentId === undefined
+      ) {
+        if (systemGetEnv("NODE_ENV") !== "production") {
+          MemoryAskContract.response.parse(ABSTAIN_SENTINEL);
+        }
+        return ABSTAIN_SENTINEL;
+      }
+
+      // Run the FULL createMemoryRecall (trust-filtered + redaction-aware) — NOT
+      // memoryApi.search. The factory builds a per-agent orchestrator with the
+      // daemon's store set + the agent's RagConfig (Plan 04 supplies it).
+      const recall = deps.buildDialecticRecall(agentId);
+      const recalled = await recall.recall(
+        question,
+        (callerSessionKey ?? "") as unknown as SessionKey,
+        agentId,
+      );
+
+      // Empty / failed recall ⇒ abstain in CODE, WITHOUT calling the seam
+      // (Pitfall 5 — no grounding ⇒ no LLM call, no fabricated answer).
+      if (!recalled.ok || recalled.value.length === 0) {
+        deps.logger?.info(
+          { agentId, step: "dialectic" as const, durationMs: systemNowMs() - askStart, abstained: true, citationCount: 0 },
+          "memory.ask abstained (empty recall)",
+        );
+        if (systemGetEnv("NODE_ENV") !== "production") {
+          MemoryAskContract.response.parse(ABSTAIN_SENTINEL);
+        }
+        return ABSTAIN_SENTINEL;
+      }
+
+      // Trust-first ordering BEFORE building the grounding (the HARD boundary —
+      // the higher-trust claim is presented first; a lower-trust contradiction
+      // never blends in). Cap to the requested limit or the per-ask default.
+      const ordered = orderByTrust(recalled.value);
+      const cap = params.limit ?? DIALECTIC_DEFAULT_MAX_RECALL;
+      const grounding = ordered.slice(0, cap);
+
+      // Build the grounding text from the ordered survivors: each line is the
+      // recalled id + its content, with NON-system content passed through the
+      // redaction firewall (wrapExternalContent) — the dialectic answers ONLY
+      // from trust-filtered + redacted output (DIAL-02). System content is
+      // already trusted (mirrors rag-retriever's skip-system rule).
+      const groundingText = grounding
+        .map((r) => {
+          const safe =
+            r.entry.trustLevel === "system"
+              ? r.entry.content
+              : wrapExternalContent(r.entry.content, { source: "api", includeWarning: false });
+          return `[${r.entry.id}] ${safe}`;
+        })
+        .join("\n");
+
+      // The ONE allowed query-time LLM (the injected Plan-02 seam). It returns
+      // the raw parse (or abstains non-fatally); the code-level abstention +
+      // citation validation run AROUND it in assembleSynthesis.
+      const parsed = await deps.dialecticSeam(question, groundingText);
+
+      // Assemble: abstain-in-code (parser-abstain / no validated citation) OR a
+      // grounded answer with citations VALIDATED ⊆ the recalled ids (bogus
+      // dropped). Validation runs over the SAME ordered grounding set the seam saw.
+      const result = assembleSynthesis(grounding, parsed);
+
+      // DIAL-03: the citation→recalled-id→sourceId reasoning-tree chain (counts/
+      // ids-ONLY) for the recall-trace observability surface. Empty on abstain.
+      const chains = citationChains(grounding, result.abstained ? [] : result.citations);
+
+      deps.logger?.info(
+        {
+          agentId,
+          step: "dialectic" as const,
+          durationMs: systemNowMs() - askStart,
+          abstained: result.abstained,
+          citationCount: result.citations.length,
+          // ids-only provenance counts (NEVER bodies): how many cited claims
+          // carried a sourceId chain.
+          chainCount: chains.length,
+        },
+        "memory.ask completed",
+      );
+
+      if (systemGetEnv("NODE_ENV") !== "production") {
+        MemoryAskContract.response.parse(result);
       }
       return result;
     },

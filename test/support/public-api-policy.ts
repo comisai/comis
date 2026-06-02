@@ -244,15 +244,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RelationshipCandidate",
       "RelationshipBuildOutput",
       "RelationshipSeamDeps",
-      // Query-time dialectic synthesis seam (Phase 109, DIAL-01 — 109-02). createDialecticSeam
-      // (the daemon-injected synthesize() seam factory — the ONE query-time LLM) is consumed by
-      // the daemon `memory.ask` handler, which lands in a LATER wave (Plan 109-03). Surfaced
-      // here AHEAD of that consumer — the cross-wave factory-orphan dance (mirror
-      // createUserRepresentationSeam @ 107-04 / MemoryAskContract @ 109-01). DialecticSeamDeps
-      // (the seam-factory input shape) is called with an inline object and DialecticParsed (the
-      // parser output) is referenced structurally, so the TYPES have no cross-package importer
-      // either (mirror ReasoningSeamDeps). REMOVE all three @ 109-03 (the handler-landing diff
-      // that wires the real consumer + spreads MemoryAskContract into MEMORY_CONTRACTS).
+      // Query-time dialectic synthesis SEAM FACTORY + its types (Phase 109, DIAL-01).
+      // Plan 03's daemon memory.ask handler consumes the PURE synthesis VALUE helpers
+      // (orderByTrust/assembleSynthesis/citationChains — now real consumers, not
+      // orphaned) and the INJECTED seam at runtime, but NOT the factory itself: the
+      // factory is built + injected by Plan 04's daemon wiring. The public-export
+      // consumer scan EXCLUDES *.test.ts (the handler test that builds a real seam
+      // does not count) AND counts only NAMED imports (the handler's deps type uses
+      // the inline `import("@comis/agent").DialecticParsed` form, which the scan does
+      // not register). So the three seam exports stay ahead-of-consumer until Plan 04
+      // names them in non-test daemon wiring. REMOVE @ 109-04 (mirror
+      // createUserRepresentationSeam @ 107-04 → consumed @ 107-05).
       "createDialecticSeam",
       "DialecticSeamDeps",
       "DialecticParsed",
@@ -1468,18 +1470,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // on the public barrel for symmetry with the other domain arrays.
       "MEMORY_CONTRACTS",
       "MEMORY_DIAGNOSTIC_CONTRACTS",
-      // memory.ask — the dialectic grounded-Q&A contract (Phase 109-01,
-      // DIAL-01/02). INTERFACE-FIRST ahead-of-consumer planned-orphan: the
-      // contract SHAPE ships now, its daemon handler lands in Plan 109-03. It
-      // is tagged `@contract-deferred-handler: 109-03` and is deliberately kept
-      // OUT of MEMORY_CONTRACTS until then (registering it before the handler
-      // exists would RED-gate contract-handler-parity + bidirectional 1:1), so
-      // — unlike every other per-method contract above — it has NO in-repo
-      // handler consumer yet. Tracked here to keep public-export-consumers
-      // green; REMOVE @ 109-03 when the handler lands and it joins
-      // MEMORY_CONTRACTS. Mirrors the OBS-06 cross-wave seam (Phase 86 Plan 05)
-      // + the 107/108 ahead-of-consumer dance.
-      "MemoryAskContract",
+      // (Phase 109 Plan 03 CLOSED the memory.ask cross-wave seam: MemoryAskContract
+      // is now spread into MEMORY_CONTRACTS in the same diff that landed its daemon
+      // handler in memory-handlers.ts — its in-repo consumer now exists — so it was
+      // REMOVED from this ahead-of-consumer allowlist.)
       // Media + image-domain contracts (16 methods spanning 2
       // handler-factory files that share the MediaApiDeps cluster slice):
       //   - media-handlers.ts  (15 methods)

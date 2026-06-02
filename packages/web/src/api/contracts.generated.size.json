@@ -1,6 +1,6 @@
 {
-  "totalMinified": 112397,
-  "totalGzipped": 10427,
+  "totalMinified": 112870,
+  "totalGzipped": 10471,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -111,6 +111,7 @@
     "media.test.video": 512,
     "media.test.vision": 512,
     "media.transcribe": 448,
+    "memory.ask": 474,
     "memory.browse": 766,
     "memory.delete": 468,
     "memory.embeddingCache": 704,

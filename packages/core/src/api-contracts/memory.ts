@@ -159,15 +159,14 @@ export const MemorySearchFilesContract = defineContract({
  * Registered via agent tool dispatch (the `memory_ask` tool); contract scope
  * `["rpc"]` documents the intended trust model.
  *
- * INTERFACE-FIRST: this contract's SHAPE ships in Plan 01; its daemon handler
- * lands in Plan 03. Until then it is tagged `@contract-deferred-handler: 109-03`
- * and is kept OUT of `MEMORY_CONTRACTS` (the registry that feeds
- * `API_CONTRACTS`) — registering it before its handler exists would RED-gate
- * the repo (contract-handler-parity + bidirectional 1:1). Plan 03 spreads it
- * into `MEMORY_CONTRACTS` in the SAME diff that adds the handler and removes
- * this tag. (Mirrors the OBS-06 cross-wave seam closed in Phase 86 Plan 05.)
- *
- * @contract-deferred-handler: 109-03
+ * CROSS-WAVE SEAM CLOSED (Plan 03): the contract SHAPE shipped in Plan 01 with a
+ * deferred-handler annotation and was kept OUT of `MEMORY_CONTRACTS` until its
+ * daemon handler existed (registering it before the handler would RED-gate
+ * contract-handler-parity + bidirectional 1:1). Plan 03 landed the
+ * `[MemoryAskContract.method]:` handler in `memory-handlers.ts` and, in the SAME
+ * diff, spread this contract into `MEMORY_CONTRACTS` (8 + 4 + 7 + 1 = 20) and
+ * removed that annotation — so the registry ↔ handler set is 1:1 by construction.
+ * (Mirrors the OBS-06 cross-wave seam closed in Phase 86 Plan 05.)
  */
 export const MemoryAskContract = defineContract({
   method: "memory.ask",
@@ -741,10 +740,16 @@ export { MEMORY_DIAGNOSTIC_CONTRACTS };
  * `API_CONTRACTS` registry ↔ handler set stays 1:1 (the cross-wave seam from
  * Plan 02 is closed; the `@contract-deferred-handler: 86-05` annotations were
  * removed in the same diff).
+ *
+ * Phase 109 (Plan 03): `MemoryAskContract` (the dialectic memory.ask surface) is
+ * now spread in — in the SAME diff that landed its `[MemoryAskContract.method]:`
+ * handler in `memory-handlers.ts` — so the registry ↔ handler set stays 1:1 and
+ * the `@contract-deferred-handler: 109-03` tag was removed in the same diff.
  */
 export const MEMORY_CONTRACTS = [
   // --- memory-handlers.ts ---
   MemorySearchFilesContract,
+  MemoryAskContract,
   MemoryGetFileContract,
   MemoryStoreContract,
   MemoryStatsContract,
