@@ -42,8 +42,9 @@ describe("TerminalEvents source contract (Open Q2)", () => {
 
   it("events.ts folds TerminalEvents into the EventMap extends list", () => {
     const src = readFileSync(resolve(here, "./events.ts"), "utf8");
+    // Tolerant of single-line or multi-line `extends` formatting.
     expect(src, "EventMap must extend TerminalEvents").toMatch(
-      /interface EventMap extends[\s\S]*TerminalEvents/,
+      /interface EventMap\s+extends[\s\S]*?TerminalEvents/,
     );
   });
 });
