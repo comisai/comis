@@ -97,6 +97,19 @@ def main():
     n_q = 0
     n_fail_items = 0
     t0 = time.time()
+
+    def write_out():
+        """Write the contexts file (called incrementally so a kill keeps partials)."""
+        out = {"mem0": contexts}
+        blob = json.dumps(out)
+        import re
+
+        if re.search(r"sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+", blob):
+            log("FATAL: a credential shape reached the mem0 contexts — refusing to write.")
+            sys.exit(3)
+        with open(args.out, "w") as f:
+            f.write(blob)
+
     for idx, item in enumerate(items):
         docs = item.get("docs", [])
         questions = item.get("questions", [])
@@ -124,18 +137,10 @@ def main():
             n_fail_items += 1
             log(f"item {idx}: mem0 failed ({e}); skipping its questions.")
             log(traceback.format_exc())
+        write_out()  # incremental — partial results survive a kill
         log(f"  item {idx + 1}/{len(items)}: {len(questions)} q, cumulative graded {n_q}, {time.time() - t0:.0f}s")
 
-    out = {"mem0": contexts}
-    # Secret-shape guard: never let an api key shape reach the committed contexts file.
-    blob = json.dumps(out)
-    import re
-
-    if re.search(r"sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+", blob):
-        log("FATAL: a credential shape reached the mem0 contexts — refusing to write.")
-        sys.exit(3)
-    with open(args.out, "w") as f:
-        f.write(blob)
+    write_out()
     log(
         f"DONE: {n_q} questions, {len(items) - n_fail_items}/{len(items)} items ok, "
         f"{time.time() - t0:.0f}s -> {args.out}"
