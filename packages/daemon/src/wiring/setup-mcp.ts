@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: partial-encrypted-config guard (WR-02 precondition — wiring defect, fail-fast at composition root)
 /**
  * MCP server connection setup: reads integrations.mcp.servers from config,
  * creates an McpClientManager, and connects to each enabled server.
