@@ -499,6 +499,9 @@ export interface BootContext {
   // Media
   ttsAdapter?: Awaited<ReturnType<typeof setupMedia>>["ttsAdapter"];
   visionRegistry?: Awaited<ReturnType<typeof setupMedia>>["visionRegistry"];
+  /** REQ-13 (WR-05): stable holder for the vision registry — updated on first
+   *  materialisation (undefined → Map) so late-bound consumers observe rotation. */
+  visionRegistryHolder?: Awaited<ReturnType<typeof setupMedia>>["visionRegistryHolder"];
   linkRunner?: Awaited<ReturnType<typeof setupMedia>>["linkRunner"];
   mediaTempManager?: Awaited<ReturnType<typeof setupMedia>>["mediaTempManager"];
   mediaSemaphore?: Awaited<ReturnType<typeof setupMedia>>["mediaSemaphore"];

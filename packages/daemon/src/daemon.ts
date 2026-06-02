@@ -2137,7 +2137,7 @@ async function bootAgents(
 
   // 6.6.7. Media (moved up from 6.6.8 -- media infrastructure must be ready before channels)
   const {
-    ttsAdapter, visionRegistry, linkRunner,
+    ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner,
     mediaTempManager, mediaSemaphore, audioConverter,
     transcriber, ssrfFetcher, fileExtractor,
   } = await _setupMedia({ container, skillsLogger, onSuspiciousContent });
@@ -2196,7 +2196,7 @@ async function bootAgents(
     systemEventQueue, cronSchedulers, executionTrackers, browserServices, resetSchedulers,
     getAgentCronScheduler, getAgentBrowserService,
     sessionTrackerRegistry, auditAggregator, onSuspiciousContent,
-    ttsAdapter, visionRegistry, linkRunner, mediaTempManager, mediaSemaphore, audioConverter,
+    ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner, mediaTempManager, mediaSemaphore, audioConverter,
     transcriber, ssrfFetcher, fileExtractor,
     rpcCall, wireDispatch, approvalGate, interactiveCallbackWiring,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
