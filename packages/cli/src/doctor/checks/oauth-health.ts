@@ -117,6 +117,23 @@ async function checkProfiles(
     ];
   }
 
+  // WR-02: env mode has no OAuth credential store — credentials are supplied
+  // via environment variables at runtime. No profiles to read; skip cleanly.
+  if (storage === "env") {
+    return [
+      {
+        category: CATEGORY,
+        check: "Profile store",
+        status: "skip",
+        message:
+          "OAuth storage mode is 'env' — no OAuth credential store is active",
+        suggestion:
+          "Set security.storage to 'file' or 'encrypted' in config.yaml to enable OAuth login.",
+        repairable: false,
+      },
+    ];
+  }
+
   // Open the store using the same selector daemon + auth CLI use.
   let store: OAuthCredentialStorePort;
   try {
