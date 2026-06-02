@@ -970,6 +970,44 @@ describe("setupMcp", () => {
       expect(deps.secretsDb).toBeDefined();
       expect(deps.secretsCrypto).toBeDefined();
     });
+
+    // ---------------------------------------------------------------------------
+    // WR-02: partial-config guard — one of secretsDb/secretsCrypto without the other
+    // must throw, not silently disable OAuth (wiring defect detection)
+    // ---------------------------------------------------------------------------
+
+    it("throws when only secretsDb provided without secretsCrypto (partial encrypted config)", async () => {
+      await expect(callSetupMcp({
+        servers: [],
+        logger,
+        secretsDb: makeDbMock(),
+        // secretsCrypto intentionally absent
+      })).rejects.toThrow(/secretsDb and secretsCrypto must both be present or both absent/);
+    });
+
+    it("throws when only secretsCrypto provided without secretsDb (partial encrypted config)", async () => {
+      await expect(callSetupMcp({
+        servers: [],
+        logger,
+        secretsCrypto: makeCryptoMock(),
+        // secretsDb intentionally absent
+      })).rejects.toThrow(/secretsDb and secretsCrypto must both be present or both absent/);
+    });
+
+    it("does NOT throw when both secretsDb and secretsCrypto are absent (file/env mode)", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+      await expect(callSetupMcp({ servers: [], logger })).resolves.toBeDefined();
+    });
+
+    it("does NOT throw when both secretsDb and secretsCrypto are provided (encrypted mode)", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+      await expect(callSetupMcp({
+        servers: [],
+        logger,
+        secretsDb: makeDbMock(),
+        secretsCrypto: makeCryptoMock(),
+      })).resolves.toBeDefined();
+    });
   });
 
   it("logs tool names from connected servers", async () => {
