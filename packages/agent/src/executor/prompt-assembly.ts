@@ -69,6 +69,7 @@ import {
 } from "../bootstrap/index.js";
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createMemoryRecall } from "../rag/memory-recall.js";
+import { buildScoringAlphas } from "../rag/scoring-overlay.js";
 import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
 import { buildUserRepresentationBlock } from "./user-representation-block.js";
 import { buildRelationshipBlock } from "./relationship-block.js";
@@ -789,6 +790,27 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       // `scoring` below) — there is NO alpha on `feedback`.
       const ragFeedback = (config.rag as typeof config.rag & { feedback?: { enabled: boolean } })
         .feedback;
+      // LEARN-03: the deterministic apply overlay. Read the learned alpha vector
+      // GATED on config.rag.onlineTuning.enabled AND a present store dep, then overlay
+      // the four non-trust alphas via buildScoringAlphas (trust STILL from config.rag.scoring
+      // — belt #2). The `onlineTuning` field lands on the schema in 111-04, so it is read
+      // through a structural widening that compiles against today's strict RagConfig (the
+      // same posture as `feedback` above). Default-OFF byte-identity (Pitfall 3): with the
+      // knob off OR no store dep OR no learned row, `tunedVector` stays undefined → the
+      // store is NEVER read and buildScoringAlphas returns config.rag.scoring unchanged. The
+      // read is PURE + non-fatal: a read failure → undefined → byte-identical fallback. NO
+      // model call crosses onto the recall hot path (the milestone's #1 constraint).
+      let tunedVector: import("@comis/core").TunedAlphaVector | undefined;
+      const onlineTuningEnabled =
+        (config.rag as typeof config.rag & { onlineTuning?: { enabled: boolean } }).onlineTuning
+          ?.enabled === true;
+      if (onlineTuningEnabled && deps.tunedAlphaStore) {
+        const tr = await deps.tunedAlphaStore.read({
+          tenantId: deps.tenantId ?? sessionKey.tenantId,
+          agentId: agentId ?? config.name,
+        });
+        if (tr.ok) tunedVector = tr.value;
+      }
       const recall = createMemoryRecall(
         {
           memoryPort: deps.memoryPort,
@@ -810,7 +832,11 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           minScore: config.rag.minScore,
           includeTrustLevels: config.rag.includeTrustLevels,
           rerank: config.rag.rerank,
-          scoring: config.rag.scoring,
+          // LEARN-03: the deterministic apply overlay (PURE — no clock, no LLM, no
+          // randomness). tunedVector present (tuning ON + a learned row) → the four
+          // non-trust alphas come from it, trustAlpha STILL from config (belt #2).
+          // tunedVector undefined (default-OFF) → config.rag.scoring unchanged.
+          scoring: buildScoringAlphas(config.rag.scoring, tunedVector),
           lanes: config.rag.lanes,
           entityLane: config.rag.entityLane,
           // IQ-01 MMR diversity re-rank + IQ-02/03 query understanding. Both are
