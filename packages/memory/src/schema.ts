@@ -447,6 +447,60 @@ export function ensureRelationshipTable(db: Database.Database): void {
 }
 
 /**
+ * Create the `tuned_alpha` table — the sole storage for the per-(tenant, agent)
+ * LEARNED ranking weights (Phase 111, Track H2 — LEARN-03). Additive, forward-only;
+ * idempotent (`IF NOT EXISTS`); safe on a live `~/.comis` DB (NO backfill — an
+ * absent `(tenant, agent)` row reads back as `undefined`, which the recall apply
+ * site (111-03) treats as the default-OFF byte-identity no-op, falling back to the
+ * static `rag.scoring` config alphas). The sole SQL adapter is
+ * `createSqliteTunedAlphaStore` (sqlite-tuned-alpha-store.ts) — the daemon owns the
+ * `db` handle and runs all SQL; the agent consumes the `TunedAlphaStore` port TYPE
+ * only (the agent↛memory build cut).
+ *
+ * ## The trust freeze at the schema layer (the OD2 ship-gate, structural belt #3)
+ *
+ * The table has columns for ONLY the 4 tunable boost alphas
+ * (recency/temporal/proof/usefulness) + `updated_at`. There is NO fifth
+ * (trust-weight) column — the persisted state STRUCTURALLY CANNOT carry a tunable
+ * trust weight, so the bandit can never move it (REQUIREMENTS "Out of Scope: a
+ * bandit that can move the trust weight"). Trust stays config-sourced at the apply
+ * site (111-03). This is the third trust-freeze belt — re-stated at the schema
+ * layer alongside the port type (belt #1, 111-01) and the math step (belt #2,
+ * computeTunedAlphas). The literal field name is deliberately never written here
+ * (the grep-0 belt, asserted in sqlite-tuned-alpha-store.test.ts).
+ *
+ * ## Isolation (LEARN-03, the §5.2 invariant) — the PK IS the boundary
+ *
+ * The `PRIMARY KEY (tenant_id, agent_id)` IS the isolation boundary: exactly one
+ * tuned vector per scope, and the adapter filters every statement on
+ * `(tenant_id, agent_id)` — a vector written under one (tenant, agent) can NEVER be
+ * read under another scope. Multi-tenant + per-agent isolation is a load-bearing
+ * SECURITY scope, not a nicety (RED-proven in the adapter test).
+ *
+ * Unlike the user_representation / relationship tables, there is NO FK to
+ * `memories` — a tuned vector is per-(tenant, agent) CONFIG state, not per-memory
+ * provenance, so no `ON DELETE CASCADE` applies.
+ *
+ * @param db - An open better-sqlite3 Database. Has no FK target, so it can be
+ *   created at any point; call AFTER `ensureRelationshipTable` in `initSchema`
+ *   (the table-creation order).
+ */
+export function ensureTunedAlphaTable(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tuned_alpha (
+      tenant_id        TEXT NOT NULL,
+      agent_id         TEXT NOT NULL,
+      recency_alpha    REAL NOT NULL,
+      temporal_alpha   REAL NOT NULL,
+      proof_alpha      REAL NOT NULL,
+      usefulness_alpha REAL NOT NULL,
+      updated_at       INTEGER NOT NULL,
+      PRIMARY KEY (tenant_id, agent_id)
+    );
+  `);
+}
+
+/**
  * Initialize the full memory schema on the given SQLite database.
  *
  * Creates:
@@ -599,6 +653,7 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   ensureTripleTable(db); // bi-temporal KG triples (Phase 100, KG-01)
   ensureUserRepresentationTable(db); // per-user representation (Phase 107, USER-01)
   ensureRelationshipTable(db); // directional relationships (Phase 108, SOCIAL-02)
+  ensureTunedAlphaTable(db); // tuned ranking alphas (Phase 111, LEARN-03)
 
   // --- Observation partial indexes (Phase 84; design §4.1) ---
   // Created AFTER ensureMemoryColumns (the indexed columns must exist first).

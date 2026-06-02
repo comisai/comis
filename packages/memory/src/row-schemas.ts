@@ -226,6 +226,21 @@ export const RelationshipRowSchema = z.strictObject({
   updated_at: z.number().nullable().optional(),
 });
 
+// Schema for a `tuned_alpha` row projection (Phase 111, LEARN-03). The scoped read
+// projects the 5 columns below (NOT tenant_id/agent_id — the WHERE pins them): the
+// 4 REAL tunable boost alphas (recency/temporal/proof/usefulness) + updated_at.
+// There is deliberately NO fifth (trust-weight) column — the persisted state cannot
+// carry a tunable trust weight (the structural trust-freeze belt #3). Parsed via
+// createRowMapper. The adapter maps the snake_case row to the camelCase
+// `TunedAlphaVector` (recency_alpha -> recencyAlpha, …).
+export const TunedAlphaRowSchema = z.strictObject({
+  recency_alpha: z.number(),
+  temporal_alpha: z.number(),
+  proof_alpha: z.number(),
+  usefulness_alpha: z.number(),
+  updated_at: z.number(),
+});
+
 /**
  * Schema for the graph-spread recursive-CTE node projection (Phase 100, KG-04).
  * The bounded `WITH RECURSIVE walk(node, depth)` over current-truth subject→object
