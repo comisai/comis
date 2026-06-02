@@ -69,6 +69,7 @@ export {
   canonicalize,
   type AllowEntryLike,
   type AllowMatch,
+  type AllowMatchResult,
 } from "./allowlist-matcher.js";
 
 // The supervised worker entry (the daemon wires its production spawn posture).

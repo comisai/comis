@@ -46,6 +46,7 @@ import {
   encodeFrame,
   createFrameDecoder,
   correlate,
+  FrameTooLargeError,
   type TerminalReplyFrame,
   type TerminalRequestFrame,
 } from "./terminal-ipc.js";
@@ -352,10 +353,13 @@ export function createTerminalSessionRegistry(
       try {
         frames = decoder.push(chunk) as TerminalReplyFrame[];
       } catch (err) {
-        logger.warn(
-          { err, hint: "corrupt worker frame on stdout; dropping worker", errorKind: "protocol" as const },
-          "terminal worker frame decode failed",
-        );
+        // A FrameTooLargeError (HR-01: corrupt/hostile length prefix) is a distinct,
+        // more-actionable signal than a JSON parse failure — surface it precisely.
+        const hint =
+          err instanceof FrameTooLargeError
+            ? "oversized worker frame length (corrupt/hostile prefix); dropping worker"
+            : "corrupt worker frame on stdout; dropping worker";
+        logger.warn({ err, hint, errorKind: "protocol" as const }, "terminal worker frame decode failed");
         markRunningSessionsLost();
         clearWorker();
         return;

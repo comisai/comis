@@ -191,9 +191,11 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       const rows = readInt(params, "rows", DEFAULT_ROWS);
 
       // (1) ALLOWLIST GATE (SEC-01). matchAllowEntry (119-02) resolves the
-      // realpath + the optional hash pin; a non-match rejects BEFORE any spawn.
-      const entry = matchAllowEntry(command, deps.allowEntries);
-      if (entry === undefined) {
+      // realpath ONCE + the optional hash pin; a non-match rejects BEFORE any
+      // spawn. The result carries the verified `requestedReal` (MR-02) so the
+      // hash-checked inode is the exact one threaded to spawn — no second resolve.
+      const matched = matchAllowEntry(command, deps.allowEntries);
+      if (matched === undefined) {
         throwToolError("permission_denied", `command not allowlisted: ${command}`, {
           hint: "the requested binary does not match any operator allowlist entry's canonical path",
         });
@@ -210,11 +212,12 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         );
       }
 
-      // (3) CANONICALIZE (M-1, SEC-14 end-to-end). buildDirectSpawn is the SOLE
-      // canonicalization site: it returns the realpath bin + the operator's
-      // argsPrefix ahead of the agent args. We forward {bin,argv} — NOT the raw
-      // command — so the worker spawns the canonical target verbatim.
-      const { bin, argv } = buildDirectSpawn(entry, command, args);
+      // (3) CANONICALIZE (M-1, SEC-14 end-to-end). buildDirectSpawn consumes the
+      // matcher's already-resolved realpath (MR-02 — no second resolution) and
+      // prepends the operator's argsPrefix ahead of the agent args. We forward
+      // {bin,argv} — NOT the raw command — so the worker spawns the verified
+      // canonical inode verbatim.
+      const { bin, argv } = buildDirectSpawn(matched.entry, matched.requestedReal, args);
 
       // (4) REGISTER + OBSERVE (OPS-07). A spawn failure logs hint+errorKind and
       // emits terminal:spawn_failed before rethrowing.

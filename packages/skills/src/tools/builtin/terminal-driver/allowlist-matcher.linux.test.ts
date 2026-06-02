@@ -56,6 +56,7 @@ describe.skipIf(!isLinux)("allowlist matcher live PATH-shadow (Linux only)", () 
     symlinkSync(canonicalBash, link);
 
     const entry: AllowEntryLike = { id: "bash", match: { path: canonicalBash } };
-    expect(matchAllowEntry(link, [entry])?.id).toBe("bash");
+    // MR-02: matchAllowEntry now returns { entry, requestedReal }.
+    expect(matchAllowEntry(link, [entry])?.entry.id).toBe("bash");
   });
 });

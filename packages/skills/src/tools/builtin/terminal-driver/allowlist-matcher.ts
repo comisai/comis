@@ -47,6 +47,22 @@ export interface AllowEntryLike {
 }
 
 /**
+ * The result of a successful {@link matchAllowEntry} — the matched entry plus the
+ * SINGLE canonical realpath the matcher resolved + hash-verified (MR-02).
+ *
+ * `requestedReal` is the SOLE canonicalization of the agent-supplied path; the
+ * caller threads it straight into {@link buildDirectSpawn} so the hash-verified
+ * inode and the spawned inode are provably identical. There is no second,
+ * independent `realpath` of the agent path — collapsing the TOCTOU window where a
+ * symlink/dir swap between the hash check and the spawn could redirect the exec.
+ */
+export interface AllowMatchResult {
+  entry: AllowEntryLike;
+  /** The canonical realpath of the requested command — verified + spawned (one resolution). */
+  requestedReal: string;
+}
+
+/**
  * Resolve a path to its canonical realpath — the SEC-14 anchor.
  *
  * A symlink / PATH-shadow is collapsed to its real target here, so the caller
@@ -66,10 +82,15 @@ function sha256File(path: string): string {
 /**
  * Find the allow entry whose canonical binary matches the requested command.
  *
- * The requested command is resolved to its `realpath` and compared to each
+ * The requested command is resolved to its `realpath` ONCE and compared to each
  * entry's `realpath(match.path)`. When `match.hash` is set, the file's sha256
- * must additionally equal the pin. Returns the first matching entry, or
- * `undefined` (no match → the caller rejects the spawn).
+ * must additionally equal the pin. Returns `{ entry, requestedReal }` for the
+ * first matching entry, or `undefined` (no match → the caller rejects the spawn).
+ *
+ * MR-02: the SINGLE `requestedReal` resolution is returned so the caller threads
+ * the SAME verified path into {@link buildDirectSpawn} — the hash check and the
+ * spawn target are provably the same inode (no second, independent `realpath` of
+ * the agent-supplied path that a post-check symlink/dir swap could redirect).
  *
  * Any FS error (unresolvable request path, unreadable file, unresolvable pinned
  * path) is treated as a no-match for that entry — fail-closed, never throw.
@@ -77,7 +98,7 @@ function sha256File(path: string): string {
 export function matchAllowEntry(
   requestedCommand: string,
   entries: AllowEntryLike[],
-): AllowEntryLike | undefined {
+): AllowMatchResult | undefined {
   let requestedReal: string;
   try {
     requestedReal = canonicalize(requestedCommand);
@@ -103,27 +124,29 @@ export function matchAllowEntry(
       }
       if (actualHash !== entry.match.hash) continue; // content swap → reject
     }
-    return entry;
+    return { entry, requestedReal };
   }
   return undefined;
 }
 
 /**
- * Build the direct-argv spawn descriptor for a matched entry — the SOLE
- * canonicalization site for a spawn (M-1).
+ * Build the direct-argv spawn descriptor for a matched entry.
  *
- * `bin` is the resolved canonical (`realpath`), NOT the agent-supplied path, so
- * the symlink/PATH-shadow can never be the executed binary. `argv` merges the
- * entry's `argsPrefix` then the caller's args. The driven binary is spawned as
+ * `bin` is the matcher's already-resolved canonical realpath (`requestedReal`
+ * from {@link matchAllowEntry}), NOT a fresh resolution of the agent-supplied
+ * path — so the hash-verified inode and the executed inode are provably the same
+ * (MR-02: a single canonicalization, threaded through, closing the double-resolve
+ * TOCTOU). `canonicalize` (in `matchAllowEntry`) remains the SOLE realpath site
+ * for a spawn (M-1); this function does NOT re-resolve. `argv` merges the entry's
+ * `argsPrefix` then the caller's args. The driven binary is spawned as
  * `spawn(bin, argv)` — there is no shell-interpreter wrapper path anywhere, so
  * agent-controlled args cannot inject shell syntax (SEC-14).
  */
 export function buildDirectSpawn(
   entry: AllowEntryLike,
-  requestedCommand: string,
+  requestedReal: string,
   args: string[],
 ): { bin: string; argv: string[] } {
-  const bin = canonicalize(requestedCommand);
   const argv = [...(entry.match.argsPrefix ?? []), ...args];
-  return { bin, argv };
+  return { bin: requestedReal, argv };
 }
