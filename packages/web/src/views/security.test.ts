@@ -433,6 +433,35 @@ describe("IcSecurityView", () => {
     expect(header!.textContent).toContain("Credential Storage");
   });
 
+  // --- Secrets tab storage mode rendering (all 3 values, REQ-11) ---
+
+  describe("secrets tab storage mode rendering (all 3 values, REQ-11)", () => {
+    for (const mode of ["encrypted", "file", "env"] as const) {
+      it(`renders storage mode '${mode}' in Secrets tab`, async () => {
+        const rpc = createSecurityMockRpcClient(async (method: string) => {
+          if (method === "config.read")
+            return {
+              config: {
+                security: { ...MOCK_SECURITY_CONFIG, storage: mode },
+              },
+              sections: ["security"],
+            };
+          if (method === "tokens.list") return { tokens: [] };
+          if (method === "admin.approval.pending") return { requests: [], total: 0 };
+          return {};
+        });
+        const el = await createElement({ rpcClient: rpc });
+        await flush(el);
+        await switchTab(el, "secrets");
+
+        // First .tls-value in Secrets tab is the storage mode
+        const tlsValues = el.shadowRoot?.querySelectorAll(".tls-value");
+        const storageModeValue = tlsValues?.[0];
+        expect(storageModeValue?.textContent?.trim()).toBe(mode);
+      });
+    }
+  });
+
   // --- Rules tab tests (formerly Policies) ---
 
   it("rules tab renders 4 section headers", async () => {

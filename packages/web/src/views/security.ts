@@ -598,7 +598,7 @@ export class IcSecurityView extends LitElement {
     const secrets = this._securityConfig.secrets ?? {};
     // security.storage is runtime-immutable (D17) — mode change requires
     // a config.yaml edit + daemon restart. Display as read-only; no write
-    // control offered here. Full web parity (REQ-11) is Phase 7 scope.
+    // control offered here.
     const storageMode = this._securityConfig.storage ?? "encrypted";
     return html`
       <div class="policy-section">

@@ -65,10 +65,25 @@ describe("IcSecretInput", () => {
     expect((handler.mock.calls[0][0] as CustomEvent).detail).toBe("env:MY_SECRET");
   });
 
-  it("shows SecretRef format hint text", async () => {
-    const el = await createElement({});
+  it("shows SecretRef format hint text (default mode — encrypted/file)", async () => {
+    const el = await createElement({});  // default storageMode="encrypted"
     const hint = el.shadowRoot?.querySelector(".hint");
     expect(hint).toBeTruthy();
+    expect(hint!.textContent).toContain("env:VAR_NAME");
+    expect(hint!.textContent).toContain("file:/path");
+  });
+
+  it("env storageMode shows env:-only hint (no file: framing)", async () => {
+    const el = await createElement({ storageMode: "env" });
+    const hint = el.shadowRoot?.querySelector(".hint");
+    expect(hint!.textContent).toContain("env:VAR_NAME");
+    expect(hint!.textContent).not.toContain("file:/path/to/secret");
+    expect(hint!.textContent).toContain("env mode");  // the explanatory suffix
+  });
+
+  it("file storageMode shows both env: and file: hint framing", async () => {
+    const el = await createElement({ storageMode: "file" });
+    const hint = el.shadowRoot?.querySelector(".hint");
     expect(hint!.textContent).toContain("env:VAR_NAME");
     expect(hint!.textContent).toContain("file:/path");
   });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, afterEach } from "vitest";
 import type { IcMcpManagement } from "./mcp-management.js";
+import { createMockRpcClient } from "../test-support/mock-rpc-client.js";
 
 // Side-effect import to register custom element
 import "./mcp-management.js";
@@ -79,5 +80,24 @@ describe("IcMcpManagement", () => {
 
     const errorSpan = el.shadowRoot?.querySelector(".server-error");
     expect(errorSpan).toBeNull();
+  });
+
+  it("storage-mode badge reflects actual storage mode from config.read", async () => {
+    // Mock the RPC client to return security.storage = "file"
+    const rpc = createMockRpcClient(async (method: string) => {
+      if (method === "mcp.list") return { servers: [{ name: "test-srv", status: "connected", toolCount: 2 }], total: 1 };
+      if (method === "config.read") return { config: { security: { storage: "file" }, integrations: { mcp: { servers: [] } } } };
+      return {};
+    });
+    el = document.createElement("ic-mcp-management") as IcMcpManagement;
+    document.body.appendChild(el);
+    Object.assign(el, { rpcClient: rpc });
+    await el.updateComplete;
+    // Flush pending async _loadData
+    await new Promise((r) => setTimeout(r, 0));
+    await el.updateComplete;
+
+    const badge = el.shadowRoot?.querySelector(".mcp-storage-mode-badge");
+    expect(badge?.textContent?.trim()).toBe("file"); // NOT "encrypted" (the default)
   });
 });
