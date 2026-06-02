@@ -420,6 +420,38 @@ export async function setupSchedulers(deps: {
         schedulerLogger.info({ agentId, schedule: socialModelingConfig.schedule ?? "0 6 * * *" }, "Registered memory social modeling cron job");
       }
     }
+
+    // -- Usefulness-judge cron job (Phase 110, LEARN-02 OPTIONAL — Track H3) --
+    // OPT-IN, OFF by default (a cost gate — an OFFLINE cheap-model judge). Registered ONLY when the
+    // operator sets memoryUsefulnessJudge.enabled; a default agent registers NO job → byte-identical
+    // with the config absent. Default schedule 0 7 * * * runs AFTER social's 0 6 so the judge scores
+    // recalled-memory usefulness over a fully-settled night. Job options mirror the reasoning/userrep
+    // job 1:1 (isolated / next-heartbeat / no forward-to-main / fresh session). The __USEFULNESS_JUDGE__
+    // sentinel's full dispatch (the seam → recordUsage write) is Phase 111's costed enablement; this
+    // registration is the default-OFF scaffold (the citation-marker core, Plan 110-04, is keyless).
+    const memoryUsefulnessJudgeConfig = agentConfig.memoryUsefulnessJudge;
+    if (memoryUsefulnessJudgeConfig?.enabled) {
+      const memUsefulnessJudgeJobId = `memory-usefulness-judge-${agentId}`;
+      const existingJobs = scheduler.getJobs();
+      const alreadyRegistered = existingJobs.some((j) => j.id === memUsefulnessJudgeJobId);
+      if (!alreadyRegistered) {
+        await scheduler.addJob({
+          id: memUsefulnessJudgeJobId,
+          name: "Memory usefulness judge",
+          agentId,
+          schedule: { kind: "cron", expr: memoryUsefulnessJudgeConfig.schedule ?? "0 7 * * *" },
+          payload: { kind: "system_event", text: "__USEFULNESS_JUDGE__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: memoryUsefulnessJudgeConfig.schedule ?? "0 7 * * *" }, "Registered memory usefulness judge cron job");
+      }
+    }
   }
 
   /** Resolve the CronScheduler for a given agent ID. Throws descriptive error if not found. */
