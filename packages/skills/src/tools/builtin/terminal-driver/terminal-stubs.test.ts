@@ -12,7 +12,6 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { Kind } from "typebox";
 
 import {
   createTerminalSessionSendTextTool,
@@ -41,7 +40,9 @@ describe("terminal-tools-stubs — reject not_implemented", () => {
     const tool = make();
     expect(tool.name).toBe(name);
     // A TypeBox object schema (the real spec §5 signature) — schema surface is final.
-    expect((tool.parameters as Record<symbol, unknown>)[Kind]).toBe("Object");
+    const schema = tool.parameters as { type?: string; properties?: Record<string, unknown> };
+    expect(schema.type).toBe("object");
+    expect(Object.keys(schema.properties ?? {}).length).toBeGreaterThan(0);
     expect(typeof tool.description).toBe("string");
     expect(tool.description.length).toBeGreaterThan(0);
   });
