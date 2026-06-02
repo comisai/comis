@@ -1,11 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * SqliteMemoryUsefulnessStore: the SOLE adapter for the segregated
- * `MemoryUsefulnessStore` port (@comis/core, Phase 93, FEED-02). It owns ALL the
- * recall-utility SQL — the write-path upsert (increment used/ignored counts +
- * set last_useful_at, idempotent on the (tenant, agent, memory_id) PRIMARY KEY)
- * and the read-path bulk fetch (scoped `IN (...)` lookup returning an
+ * `MemoryUsefulnessStore` port (@comis/core, Phase 93, FEED-02; per-intent in
+ * Phase 110, LEARN-01). It owns ALL the recall-utility SQL — the write-path
+ * upsert (increment used/ignored counts + set last_useful_at, idempotent on the
+ * (tenant, agent, memory_id, intent) bucket) and the read-path bulk fetch (scoped
+ * `IN (...)` lookup with a per-intent/global-`''`-fallback, returning an
  * absent-id-omitted Map).
+ *
+ * ## The intent bucket (Phase 110, LEARN-01)
+ *
+ * `UsefulnessScope.intent` partitions the signal per query-intent; the GLOBAL
+ * bucket is `''` (an omitted intent → `''` → byte-identical v2.8). A write
+ * targets ONLY its `(…, intent)` bucket (no-clobber across buckets — Pitfall 3);
+ * a read PREFERS the requested per-intent row and falls back to the global `''`
+ * row per id. intent is an ADDITIONAL key — the `(tenant, agent)` filter below is
+ * STILL the load-bearing isolation boundary, never relaxed by intent.
  *
  * It shares the `better-sqlite3` handle of the `SqliteMemoryAdapter` (passed in
  * via `getDb()`), so it runs against the same schema (`memory_usefulness`,
@@ -68,22 +78,27 @@ export function createSqliteMemoryUsefulnessStore(
   const { db, logger } = deps;
 
   // --- Prepared statements (parameterized; reused across calls) ---
-  // Idempotent upsert keyed on the (tenant_id, agent_id, memory_id) PRIMARY KEY:
-  // first touch INSERTs (used_count=1), later touches bump used_count and refresh
-  // last_useful_at to the latest "used" now.
+  // Idempotent per-intent upsert keyed on the (tenant_id, agent_id, memory_id,
+  // intent) bucket (Phase 110, LEARN-01): first touch INSERTs (used_count=1),
+  // later touches bump used_count and refresh last_useful_at to the latest "used"
+  // now. The 4-col ON CONFLICT target resolves on the fresh-DB PK AND the
+  // idempotent idx_usefulness_intent unique index on a pre-110 DB (schema.ts), so
+  // a per-intent write touches ONLY its bucket — the global ('') row and other
+  // intents' rows are never clobbered (the no-clobber proof, Pitfall 3).
   const upsertUsed = db.prepare(
-    "INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, used_count, ignored_count, last_useful_at) " +
-      "VALUES (?, ?, ?, 1, 0, ?) " +
-      "ON CONFLICT(tenant_id, agent_id, memory_id) DO UPDATE SET " +
+    "INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count, last_useful_at) " +
+      "VALUES (?, ?, ?, ?, 1, 0, ?) " +
+      "ON CONFLICT(tenant_id, agent_id, memory_id, intent) DO UPDATE SET " +
       "used_count = used_count + 1, last_useful_at = excluded.last_useful_at",
   );
-  // Ignored upsert: first touch INSERTs (ignored_count=1, last_useful_at NULL —
-  // an ignored recall is NOT a "use"), later touches bump ignored_count and
-  // intentionally leave last_useful_at untouched.
+  // Ignored per-intent upsert: first touch INSERTs (ignored_count=1,
+  // last_useful_at NULL — an ignored recall is NOT a "use"), later touches bump
+  // ignored_count within the SAME (…, intent) bucket and intentionally leave
+  // last_useful_at untouched.
   const upsertIgnored = db.prepare(
-    "INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, used_count, ignored_count, last_useful_at) " +
-      "VALUES (?, ?, ?, 0, 1, NULL) " +
-      "ON CONFLICT(tenant_id, agent_id, memory_id) DO UPDATE SET ignored_count = ignored_count + 1",
+    "INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count, last_useful_at) " +
+      "VALUES (?, ?, ?, ?, 0, 1, NULL) " +
+      "ON CONFLICT(tenant_id, agent_id, memory_id, intent) DO UPDATE SET ignored_count = ignored_count + 1",
   );
 
   return {
@@ -94,6 +109,10 @@ export function createSqliteMemoryUsefulnessStore(
     ): Promise<Result<void, Error>> {
       const startMs = systemNowMs();
       const { tenantId, agentId, now } = scope;
+      // Phase 110 (LEARN-01): default to the GLOBAL bucket when no intent is
+      // supplied (omitted intent === '' === byte-identical v2.8). intent is an
+      // ADDITIONAL key, never a relaxation of the (tenant, agent) isolation scope.
+      const intent = scope.intent ?? "";
       try {
         // FEED-02: nothing to record -> no-op, no transaction. (Counts only — no
         // content ever logged, AGENTS.md §2.7.)
@@ -111,9 +130,10 @@ export function createSqliteMemoryUsefulnessStore(
         // NOTE: the caller (FEED-01 attribution, Plan 93-02) produces DISJOINT
         // used/ignored sets; a stray id in BOTH would double-touch the row —
         // used runs FIRST so such a duplicate biases toward "used" (acceptable).
+        // Every write targets the (…, intent) bucket — no-clobber across buckets.
         const run = db.transaction(() => {
-          for (const id of usedIds) upsertUsed.run(tenantId, agentId, id, now);
-          for (const id of ignoredIds) upsertIgnored.run(tenantId, agentId, id);
+          for (const id of usedIds) upsertUsed.run(tenantId, agentId, id, intent, now);
+          for (const id of ignoredIds) upsertIgnored.run(tenantId, agentId, id, intent);
         });
         run();
 
@@ -151,6 +171,10 @@ export function createSqliteMemoryUsefulnessStore(
     ): Promise<Result<Map<string, UsefulnessSignal>, Error>> {
       const startMs = systemNowMs();
       const { tenantId, agentId } = scope;
+      // Phase 110 (LEARN-01): the requested per-intent bucket; '' = global. When
+      // omitted, `IN (?, '')` collapses to `IN ('', '')` → the global bucket only
+      // (byte-identical v2.8). intent EXTENDS the isolation key, never relaxes it.
+      const intent = scope.intent ?? "";
       try {
         // FEED-03: no ids -> empty map (no query). (Mirror the entity-store
         // seedIds.length===0 short-circuit.)
@@ -164,23 +188,34 @@ export function createSqliteMemoryUsefulnessStore(
 
         // Scoped bulk read. The `tenant_id = ? AND agent_id = ?` filter is the
         // load-bearing isolation boundary (T-93-01); the dynamic placeholder list
-        // keeps every id a bound `?` param (never string-built SQL).
+        // keeps every id a bound `?` param (never string-built SQL). `intent IN
+        // (?, '')` fetches BOTH the requested per-intent bucket AND the global
+        // fallback row per id; the per-id preference is resolved below.
         const ph = memoryIds.map(() => "?").join(", ");
         const rows = db
           .prepare(
-            "SELECT memory_id, used_count, ignored_count, last_useful_at FROM memory_usefulness " +
-              `WHERE tenant_id = ? AND agent_id = ? AND memory_id IN (${ph})`,
+            "SELECT memory_id, intent, used_count, ignored_count, last_useful_at FROM memory_usefulness " +
+              `WHERE tenant_id = ? AND agent_id = ? AND intent IN (?, '') AND memory_id IN (${ph})`,
           )
-          .all(tenantId, agentId, ...memoryIds);
+          .all(tenantId, agentId, intent, ...memoryIds);
 
         const parsed = usefulnessRowMapper.parseRows(rows);
         if (!parsed.ok) return err(new Error(parsed.error.message));
 
-        // Build the Map — ids with no row are simply absent (a neutral factor in
-        // score.ts); spread last_useful_at only when non-NULL so an unused memory
-        // surfaces with no `lastUsefulAt` key rather than a 0/NULL timestamp.
+        // Build the Map — PREFER the requested per-intent row over the global
+        // ('') row per id (degrade-to-global per id). ids with NEITHER bucket are
+        // simply absent (a neutral factor in score.ts); spread last_useful_at only
+        // when non-NULL so an unused memory surfaces with no `lastUsefulAt` key
+        // rather than a 0/NULL timestamp.
         const map = new Map<string, UsefulnessSignal>();
+        // Track which ids are already filled by the requested per-intent bucket so
+        // a later global ('') row never overwrites the preferred per-intent row
+        // (row order from SQLite is not guaranteed).
+        const filledByIntent = new Set<string>();
         for (const row of parsed.value) {
+          const isRequestedBucket = row.intent === intent;
+          if (!isRequestedBucket && filledByIntent.has(row.memory_id)) continue; // keep per-intent
+          if (isRequestedBucket) filledByIntent.add(row.memory_id);
           map.set(row.memory_id, {
             usedCount: row.used_count,
             ignoredCount: row.ignored_count,
