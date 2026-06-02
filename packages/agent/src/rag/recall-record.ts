@@ -70,6 +70,17 @@ export interface RecallLaneCounts {
   causal: number;
 }
 
+/**
+ * One DIAL-03 reasoning-tree provenance link: a cited claim's recalled id and the
+ * `sourceIds` it traverses to. IDS ONLY — `citationId` is the recalled `entry.id`,
+ * `sourceIds` are that entry's `sourceIds`; NO memory `content` is ever carried here.
+ * (sanitizeForPersistence already strips bodies; this field structurally carries none.)
+ */
+export interface RecallCitationChain {
+  citationId: string;
+  sourceIds: string[];
+}
+
 /** The collected pipeline observations the orchestrator hands to the assembler. */
 export interface RecallObservations {
   query: string;
@@ -83,6 +94,10 @@ export interface RecallObservations {
   ranked: RecallRankedEntry[];
   degradations: RecallDegradation[];
   durationMs: number;
+  /** DIAL-03 (Phase 109) reasoning-tree provenance: each cited claim → its recalled id →
+   *  its sourceIds. IDS ONLY (redaction-safe). Absent/empty on every non-dialectic recall,
+   *  so the on-disk line stays byte-identical to before this plan (omitted by buildRecallRecord). */
+  citations?: RecallCitationChain[];
 }
 
 /**
@@ -122,6 +137,10 @@ export function buildRecallRecord(obs: RecallObservations): Record<string, unkno
     durationMs: obs.durationMs,
   };
   if (obs.degradations.length > 0) record.degradations = obs.degradations;
+  // DIAL-03 reasoning-tree provenance — each cited claim → its recalled id → its sourceIds.
+  // Added ONLY when present + non-empty so the default (non-dialectic) recall line is
+  // byte-identical to before this plan. The chain is IDS ONLY (no memory body).
+  if (obs.citations && obs.citations.length > 0) record.citations = obs.citations;
   return record;
 }
 
