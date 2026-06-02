@@ -1,9 +1,9 @@
 # ConfigApiDeps Audit
 
 **Status:** FINAL
-**Interface source:** `packages/daemon/src/api/types.ts:300–332`
-**Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 10 (6 required + 4 optional + 0 stale-fallback)
+**Interface source:** `packages/daemon/src/api/types.ts`
+**Construction site:** `packages/daemon/src/daemon.ts` (`buildRpcDispatchDeps`)
+**Field count:** 11 (7 required + 4 optional + 0 stale-fallback)
 **Co-location:** This audit doc lives alongside @comis/daemon package source. The `files: ["dist", "bundled-skills"]` entry in `packages/daemon/package.json` excludes it from the npm tarball.
 
 ## Field Classification
@@ -20,8 +20,9 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | envFilePath | required | — | packages/daemon/src/api/types.ts:309 |
 | logger | required | — | packages/daemon/src/api/types.ts:312 |
 | oauthCredentialStore | optional | config.patch skips the agent-`oauthProfiles[provider]`-existence credential guard; OAuth profile typos are not caught at patch time and surface later at agent runtime | packages/daemon/src/api/types.ts:317 |
-| secretStore | required | — | packages/daemon/src/api/types.ts:321 |
-| auditEnabled | optional | config.patch RPC handler treats undefined as default-true (`!== false` semantics); the config-audit JSONL append at config-write.ts:124+395 runs. Only an explicit `false` skips both halves of the two-phase audit hook. Wired from `container.config.diagnostics?.configAudit?.enabled !== false` at rpc-dispatch.ts:109+ | packages/daemon/src/api/types.ts:322 |
+| secretStore | required | — | packages/daemon/src/api/types.ts:380 |
+| mutableSecretManager | required | — | packages/daemon/src/api/types.ts:384 |
+| auditEnabled | optional | config.patch RPC handler treats undefined as default-true (`!== false` semantics); the config-audit JSONL append at config-write.ts:124+395 runs. Only an explicit `false` skips both halves of the two-phase audit hook. Wired from `container.config.diagnostics?.configAudit?.enabled !== false` at rpc-dispatch.ts:109+ | packages/daemon/src/api/types.ts:388 |
 
 ## Removed Fields (stale-fallback — deleted)
 
@@ -30,7 +31,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 ## Summary
 
 - **Pre-audit count:** 10
-- **Final count:** 10 (6 required + 4 optional)
+- **Final count:** 11 (7 required + 4 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

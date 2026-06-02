@@ -2,9 +2,9 @@
 
 **Generated:** 2026-05-12
 **Status:** FINAL
-**Interface source:** `packages/daemon/src/api/types.ts:326–362`
-**Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 8 (6 required + 2 optional + 0 stale-fallback)
+**Interface source:** `packages/daemon/src/api/types.ts`
+**Construction site:** `packages/daemon/src/daemon.ts` (`buildRpcDispatchDeps`)
+**Field count:** 9 (7 required + 2 optional + 0 stale-fallback)
 **Storage:** co-located with `@comis/daemon` package. `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes from the npm tarball.
 
 ## Field Classification
@@ -13,14 +13,15 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 | **Field** | **Classification** | **When-absent** | **Evidence-link** |
 |-----------|--------------------|-----------------|-------------------|
-| secretStore | required | — | packages/daemon/src/api/types.ts:330 |
-| tokenRegistry | required | — | packages/daemon/src/api/types.ts:336 |
-| addToTokenStore | required | — | packages/daemon/src/api/types.ts:342 |
-| removeFromTokenStore | required | — | packages/daemon/src/api/types.ts:343 |
-| oauthCredentialStore | optional | auth.oauth.list returns an empty profile list; auth.oauth.delete fails with "credential store unavailable" — OAuth profile management is disabled | packages/daemon/src/api/types.ts:348 |
-| container | required | — | packages/daemon/src/api/types.ts:353 |
-| logger | required | — | packages/daemon/src/api/types.ts:357 |
-| persistDeps | optional | tokens.create / tokens.revoke runtime token mutations are NOT persisted to config.yaml; tokens revert on next daemon restart (in-memory only) | packages/daemon/src/api/types.ts:362 |
+| secretStore | required | — | packages/daemon/src/api/types.ts:402 |
+| mutableSecretManager | required | — | packages/daemon/src/api/types.ts:405 |
+| tokenRegistry | required | — | packages/daemon/src/api/types.ts:411 |
+| addToTokenStore | required | — | packages/daemon/src/api/types.ts:416 |
+| removeFromTokenStore | required | — | packages/daemon/src/api/types.ts:417 |
+| oauthCredentialStore | optional | auth.oauth.list returns an empty profile list; auth.oauth.delete fails with "credential store unavailable" — OAuth profile management is disabled | packages/daemon/src/api/types.ts:421 |
+| container | required | — | packages/daemon/src/api/types.ts:426 |
+| logger | required | — | packages/daemon/src/api/types.ts:429 |
+| persistDeps | optional | tokens.create / tokens.revoke runtime token mutations are NOT persisted to config.yaml; tokens revert on next daemon restart (in-memory only) | packages/daemon/src/api/types.ts:434 |
 
 ## Removed Fields (stale-fallback — deleted)
 
@@ -29,7 +30,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 ## Summary
 
 - **Pre-audit count:** 8
-- **Final count:** 8 (6 required + 2 optional)
+- **Final count:** 9 (7 required + 2 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

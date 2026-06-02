@@ -55,6 +55,7 @@ import type {
   createModelCatalog,
   preReadStorageMode,
   writeMasterKeyIfAbsent,
+  MutableSecretManager,
 } from "@comis/core";
 import type { createActiveRunRegistry } from "@comis/agent";
 import type { setupSecrets, ObservabilityStore } from "@comis/memory";
@@ -335,8 +336,12 @@ export interface BootContext {
   // (mirrors the `timers` test-only discipline). Inert on the inbound path until
   // Plan 03 builds the inbound coordinatorFactory over the renderers map.
   activityRendererFactoryOverride?: (channelType: string) => ChannelActivityRenderer | undefined;
-  // Secrets (4 fields) — secretStore is always wired after Plan 02-04
+  // Secrets (5 fields) — secretStore is always wired after Plan 02-04
   secretStore: SecretStorePort;
+  /** Daemon-owned write handle over the shared SecretManager backing Map (P4a).
+   *  Threaded from bootFoundation to buildRpcDispatchDeps via PostChannelsBootContext.
+   *  MUST NOT appear on AppContainer or any agent-accessible path. */
+  mutableHandle: MutableSecretManager;
   secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
   secretsDb: import("better-sqlite3").Database | undefined;
   permissionCorrections: PermissionCorrection[];

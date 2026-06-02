@@ -20,7 +20,9 @@ function createMockContainer(
   return {
     eventBus,
     config: { tenantId: "test-tenant", security: { storage: storageMode } },
-    secretManager: { get: vi.fn() },
+    // has() returns false by default (new key) so pre-existing tests stay green;
+    // 03-03 tests override via createSecretManagerWithMutableHandle for full behavior.
+    secretManager: { get: vi.fn(), has: vi.fn(() => false) },
   } as unknown as AppContainer;
 }
 
@@ -53,6 +55,8 @@ function makeDeps(overrides: Partial<EnvHandlerDeps> = {}): EnvHandlerDeps {
     envFilePath: "/tmp/test-nonexistent/.env",
     container: createMockContainer(),
     logger: createMockLogger(),
+    // Default mutableSecretManager (no-op stubs); 03-03 tests use real handles.
+    mutableSecretManager: { upsert: vi.fn(), remove: vi.fn(() => false) },
     ...overrides,
   };
 }
@@ -219,8 +223,9 @@ describe("env.set handler", () => {
     const result = await handlers["env.set"]!({ key: "OPENAI_API_KEY", value: "sk-abc123", _trustLevel: "admin" });
 
     expect(secretStore.set).toHaveBeenCalledWith("OPENAI_API_KEY", "sk-abc123");
+    // restarting depends on has(): mock returns false (new key) → restarting:false
     expect(result).toEqual(
-      expect.objectContaining({ set: true, key: "OPENAI_API_KEY", storage: "encrypted", restarting: true }),
+      expect.objectContaining({ set: true, key: "OPENAI_API_KEY", storage: "encrypted", restarting: false }),
     );
   });
 
@@ -340,9 +345,12 @@ describe("env.set handler", () => {
   // Restart scheduling
   // -----------------------------------------------------------------------
 
-  it("schedules SIGUSR2 restart after successful set", async () => {
+  it("schedules SIGUSR2 restart after successful set on EXISTING key", async () => {
     const secretStore = createMockSecretStore();
-    const deps = makeDeps({ secretStore });
+    // Use a container where has() returns true (existing key) so SIGUSR2 fires.
+    const container = createMockContainer(createMockEventBus(), "encrypted");
+    (container.secretManager.has as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    const deps = makeDeps({ secretStore, container });
     const handlers = createEnvHandlers(deps);
 
     await handlers["env.set"]!({ key: "MY_KEY", value: "val", _trustLevel: "admin" });
@@ -366,7 +374,8 @@ describe("env.set handler", () => {
     const result = await handlers["env.set"]!({ key: "OPENAI_API_KEY", value: "sk-test", _trustLevel: "admin" });
 
     // After Plan 02-04 GREEN: storage reflects config.security.storage, not hardcoded "encrypted"
-    expect(result).toMatchObject({ set: true, storage: "file", restarting: true });
+    // After Plan 03-03: restarting:false for new key (has() returns false by default)
+    expect(result).toMatchObject({ set: true, storage: "file", restarting: false });
   });
 
   it("02-04: env.set with env-mode adapter returning err surfaces the adapter error message", async () => {

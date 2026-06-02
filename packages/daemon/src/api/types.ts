@@ -30,6 +30,7 @@ import type {
   SecretStorePort,
   ExecGitFn,
   ContextStorePort,
+  MutableSecretManager,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi, SqliteMemoryAdapter, createEmbeddingQueue } from "@comis/memory";
@@ -377,6 +378,10 @@ export interface ConfigApiDeps {
    *  Always wired after Plan 02-04 (selectSecretStore returns a store for all modes).
    *  Same shape as AuthApiDeps.secretStore so the ApiDispatchDeps multi-extends remains well-formed. */
   secretStore: SecretStorePort;
+  /** Daemon-owned write handle over the shared SecretManager backing Map.
+   *  Used by env-handlers to upsert new-name writes live (additive no-restart — P4a).
+   *  MUST NOT appear on AppContainer. Required — always wired at the composition root. */
+  mutableSecretManager: MutableSecretManager;
   /**
    * When `false`, config-handlers skip the config-audit JSONL append
    * at the config.patch RPC handler call sites (config-write.ts:124,
@@ -395,6 +400,9 @@ export interface ConfigApiDeps {
 export interface AuthApiDeps {
   // Secret store (env-handlers, secrets-handlers) — always wired after Plan 02-04
   secretStore: SecretStorePort;
+  /** Daemon-owned write handle over the shared SecretManager backing Map.
+   *  Used by secrets-handlers to upsert/remove live (additive no-restart — P4a). Required. */
+  mutableSecretManager: MutableSecretManager;
   // Token management deps. The structural shape mirrors `TokenRegistry`
   // declared in `./token-handlers.ts` -- inlined here to keep this file at
   // the bottom of the api/ import graph (madge cycle constraint).

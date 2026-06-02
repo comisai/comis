@@ -46,10 +46,14 @@ function makeMockedDeps(
   const container = {
     config: { tenantId: "test-tenant" } as Record<string, unknown>,
     eventBus,
+    // has() returns false by default (new key) so existing tests stay green.
+    secretManager: { has: vi.fn(() => false) },
   } as unknown as AppContainer;
   // After Plan 02-04: secretStore is always wired (REQ-04).
   const secretStore = createMockSecretStore(secretStoreOverrides);
-  const handlers = createSecretsHandlers({ secretStore, container, logger });
+  // Default mutableSecretManager (no-op stubs); 03-03 tests use real handles.
+  const mutableSecretManager = { upsert: vi.fn(), remove: vi.fn(() => false) };
+  const handlers = createSecretsHandlers({ secretStore, container, logger, mutableSecretManager } as unknown as SecretsHandlerDeps);
   return { handlers, capturedAuditEvents, loggerSpy: logger };
 }
 
@@ -160,7 +164,8 @@ describe("createSecretsHandlers", () => {
         value: CANARY,
         provider: "anthropic",
       });
-      expect(result).toEqual({ name: "ANTHROPIC_API_KEY", stored: true });
+      // After 03-03: result also includes restarting:boolean; use toMatchObject to be forward-compat.
+      expect(result).toMatchObject({ name: "ANTHROPIC_API_KEY", stored: true });
       expect(JSON.stringify(capturedAuditEvents)).not.toContain(CANARY);
       expect(loggerCallsAsString(loggerSpy)).not.toContain(CANARY);
     });
@@ -298,7 +303,8 @@ describe("createSecretsHandlers", () => {
         _trustLevel: "admin",
         name: "TO_DELETE",
       });
-      expect(result).toEqual({ name: "TO_DELETE", deleted: true });
+      // After 03-03: result also includes restarting:boolean; use toMatchObject to be forward-compat.
+      expect(result).toMatchObject({ name: "TO_DELETE", deleted: true });
       const audit = capturedAuditEvents[0] as Record<string, unknown>;
       expect(audit.classification).toBe("destructive");
       expect(audit.outcome).toBe("success");

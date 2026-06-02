@@ -26,7 +26,7 @@
  */
 
 import { classifyHeaderCredential } from "@comis/core";
-import type { SecretStorePort, ComisLogger } from "@comis/core";
+import type { SecretStorePort, ComisLogger, MutableSecretManager } from "@comis/core";
 
 /**
  * Derive a `${VAR}` variable name from a server id + header name.
@@ -76,6 +76,14 @@ export interface ProcessHeaderCredentialsOpts {
   logger: ComisLogger;
   /** RPC method name for log fields ("mcp.connect" | "mcp.test"). */
   method: string;
+  /**
+   * Optional daemon-owned write handle over the shared SecretManager backing Map.
+   * When provided, extracted MCP header secrets are live-applied via upsert after
+   * secretStore.set succeeds — so broker/exec observe the value on their next request
+   * without a daemon restart (additive no-restart — P4a). Optional chaining guards legacy
+   * callers and test setups that don't wire the mutable handle.
+   */
+  mutableSecretManager?: MutableSecretManager;
 }
 
 /**
@@ -184,6 +192,10 @@ export function processHeaderCredentials(opts: ProcessHeaderCredentialsOpts): Pr
         `Hint: fix the secret store, then retry.`,
       );
     }
+    // Live-apply: upsert into the shared SecretManager Map so broker/exec observe the new
+    // value on their next request without a restart (additive no-restart — P4a).
+    // Optional chaining guards callers (tests, legacy paths) that don't wire the handle.
+    opts.mutableSecretManager?.upsert(varName, headerValue);
     // Rewrite the header value in place to the ${VAR} reference (for persistence).
     // resolvedHeaders already holds the raw value from the initial copy above.
     // static-secret means NO Bearer scheme in the raw value (classifyHeaderCredential

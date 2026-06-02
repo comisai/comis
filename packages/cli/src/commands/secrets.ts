@@ -220,7 +220,7 @@ export function registerSecretsCommand(program: Command): void {
           const value = await resolveSecretValue(options);
           const provider = options.provider ?? detectProvider(name);
 
-          await withClient(async (client) => {
+          const result = await withClient(async (client) => {
             return await callTyped(client, SecretsSetContract, {
               name,
               value,
@@ -228,7 +228,11 @@ export function registerSecretsCommand(program: Command): void {
             });
           });
 
-          success(`Secret '${name}' stored successfully`);
+          if (result.restarting) {
+            success(`Secret '${name}' stored — daemon restart scheduled (existing key rotated)`);
+          } else {
+            success(`Secret '${name}' stored and live-applied (no restart required)`);
+          }
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           if (msg === "Cancelled") {
@@ -348,6 +352,8 @@ export function registerSecretsCommand(program: Command): void {
 
         if (!result.deleted) {
           warn(`Secret '${name}' not found`);
+        } else if (result.restarting) {
+          success(`Secret '${name}' deleted — daemon restart scheduled`);
         } else {
           success(`Secret '${name}' deleted`);
         }

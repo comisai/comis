@@ -208,6 +208,7 @@ import {
   buildMcpStatusLine,
 } from "./wiring/restart-continuation.js";
 import { setupSingleAgent } from "./wiring/setup-agents/index.js";
+import { setupSecretManager } from "./wiring/setup-secret-manager.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -1109,7 +1110,7 @@ function buildRpcDispatchDeps(deps: {
     logger: c.logger, container: c.container, configPaths: c.configPaths, defaultConfigPaths,
     configGitManager: c.configGitManager,
     configWebhook: c.container.config.daemon.configWebhook as { url?: string; timeoutMs?: number; secret?: string },
-    secretStore: c.secretStore, envFilePath: c.envPath, logLevelManager: c.logLevelManager,
+    secretStore: c.secretStore, mutableSecretManager: c.mutableHandle, envFilePath: c.envPath, logLevelManager: c.logLevelManager,
     getAgentBrowserService: c.getAgentBrowserService,
     resolveAttachment: c.resolveAttachment, transcriber: c.transcriber, fileExtractor: c.fileExtractor,
     approvalGate: c.approvalGate, suspendedAgents: c.suspendedAgents,
@@ -1514,11 +1515,11 @@ async function bootFoundation(
   // auto-quiesces that pair across turns. Threaded down via BootContext →
   // buildChannelManagerDeps → ChannelsDeps → buildAndStartChannelManager.
   const activityBreaker = createActivityCircuitBreaker(clock);
-
-  // 1. Bootstrap core container. (Config paths were resolved + VITEST-guarded
-  // in step 0 so security.storage could be pre-read before the
-  // encrypted-store bootstrap.)
-  const { configPaths, bootResult } = await runConfigBootstrapAndEmitObserve({ requestedConfigPaths, mergedEnv, bootstrap: _bootstrap });
+  // Shared-map SecretManager (P4a): construct BEFORE bootstrap; same Map → AppContainer + mutableHandle.
+  const { secretManager: sharedSecretManager, mutableHandle } = setupSecretManager(mergedEnv);
+  const wrappedBootstrap = (opts: Parameters<typeof _bootstrap>[0]) => _bootstrap({ ...opts, secretManager: sharedSecretManager });
+  // 1. Bootstrap core container. (security.storage pre-read in step 0 before encrypted-store bootstrap.)
+  const { configPaths, bootResult } = await runConfigBootstrapAndEmitObserve({ requestedConfigPaths, mergedEnv, bootstrap: wrappedBootstrap });
   if (!bootResult.ok) {
     throw new Error(`Bootstrap failed: ${bootResult.error.message}`);
   }
@@ -1533,9 +1534,7 @@ async function bootFoundation(
   }
   const container = { ...initialContainer, config: refResult.value as unknown as typeof initialContainer.config };
 
-  // Stage-2 scrub: remove all config-referenced SecretRef names from process.env (REQ-15).
-  // Runs after config parse so platformSecretNames is populated. Catches custom secret
-  // names (e.g. MY_TOKEN referenced as ${MY_TOKEN} in config.yaml) that the prefix list misses.
+  // Stage-2 scrub: remove config-referenced SecretRef names from process.env (REQ-15); runs after config parse.
   for (const name of container.platformSecretNames) {
     // eslint-disable-next-line no-restricted-syntax -- stage-2 scrub per REQ-15
     delete process.env[name];
@@ -1815,7 +1814,7 @@ async function bootFoundation(
   Object.assign(boot, {
     container, dataDir, configPaths, envPath,
     clock, env, timers, activityBreaker, activityRendererFactoryOverride: activityRendererFactory,
-    secretStore, secretsCrypto, secretsDb, permissionCorrections,
+    secretStore, mutableHandle, secretsCrypto, secretsDb, permissionCorrections,
     execGit, configGitManager,
     logger, logLevelManager, daemonLogger, gatewayLogger, channelsLogger, agentLogger,
     schedulerLogger, skillsLogger, memoryLogger, daemonVersion,

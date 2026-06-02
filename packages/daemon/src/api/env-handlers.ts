@@ -188,6 +188,10 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       EnvSetContract.request.parse(userParams);
 
       try {
+        // Additive restart rule (P4a): check BEFORE store write so the pre-write
+        // Map state accurately reflects whether this name is truly new.
+        const isNew = !deps.container.secretManager.has(key);
+
         // Write to storage backend. SecretStorePort is always wired (REQ-04).
         // Env-mode adapter's set() returns err with an actionable message.
         const setResult = deps.secretStore.set(key, value);
@@ -214,10 +218,21 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
           "Env secret set",
         );
 
-        // Schedule daemon restart (same 200ms + SIGUSR2 pattern as config-handlers)
-        systemSetTimeout(() => {
-          process.kill(process.pid, "SIGUSR2");
-        }, 200);
+        // Additive restart rule: new names live-apply (no restart); existing names restart.
+        if (!isNew) {
+          // Existing name (rotation): restart so boot-cached consumers refresh (P4b removes this).
+          systemSetTimeout(() => { process.kill(process.pid, "SIGUSR2"); }, 200);
+        } else {
+          // New name: upsert into live Map so broker/exec observe it on next request.
+          deps.mutableSecretManager.upsert(key, value);
+        }
+
+        // Emit secret:changed event — metadata only, never the value (residency — T-03-09).
+        deps.container.eventBus.emit("secret:changed", {
+          name: key,
+          action: "upserted" as const,
+          timestamp: systemNowMs(),
+        });
 
         const result = {
           set: true as const,
@@ -225,7 +240,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
           // Reflect the active storage mode (REQ-14). Env mode never reaches
           // here — its set() returns err before this line.
           storage: deps.container.config.security.storage as "encrypted" | "file",
-          restarting: true as const,
+          restarting: !isNew,
         };
         if (systemGetEnv("NODE_ENV") !== "production") {
           EnvSetContract.response.parse(result);
