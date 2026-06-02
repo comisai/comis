@@ -200,6 +200,17 @@ export type { ReasoningSeamDeps } from "./memory/memory-reasoning-seam.js";
 export { createUserRepresentationSeam } from "./memory/memory-user-representation-seam.js";
 export type { UserRepresentationSeamDeps } from "./memory/memory-user-representation-seam.js";
 
+// Query-time dialectic synthesis seam (Phase 109, DIAL-01 — the ONE allowed query-time LLM
+// surface). The factory the daemon `memory.ask` handler (Plan 03) calls to BUILD the
+// synthesize() seam from a cheap resolved model (Plan 04 injects it), keeping DIALECTIC_PROMPT
+// + its lenient/total parser agent-internal (mirrors createUserRepresentationSeam). The seam
+// is the only LLM; the pure trust-first/abstain/citation helpers + the prompt/parser have no
+// model call. Consumed by the daemon memory.ask handler (Plan 03) — a temporary orphan until
+// that lands (tracked in public-api-policy.ts; REMOVE @ 109-03).
+export { createDialecticSeam } from "./memory/memory-dialectic-seam.js";
+export type { DialecticSeamDeps } from "./memory/memory-dialectic-seam.js";
+export type { DialecticParsed } from "./memory/memory-dialectic-prompt.js";
+
 // Offline per-user representation builder (Phase 107, USER-02 — the WRITE path of
 // the per-user profile: default-OFF gate → read high-trust sources → EXCLUDE
 // external-trust (anti-poisoning) → bound → INJECTED build() seam → validateMemoryWrite

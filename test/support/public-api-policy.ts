@@ -244,6 +244,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RelationshipCandidate",
       "RelationshipBuildOutput",
       "RelationshipSeamDeps",
+      // Query-time dialectic synthesis seam (Phase 109, DIAL-01 — 109-02). createDialecticSeam
+      // (the daemon-injected synthesize() seam factory — the ONE query-time LLM) is consumed by
+      // the daemon `memory.ask` handler, which lands in a LATER wave (Plan 109-03). Surfaced
+      // here AHEAD of that consumer — the cross-wave factory-orphan dance (mirror
+      // createUserRepresentationSeam @ 107-04 / MemoryAskContract @ 109-01). DialecticSeamDeps
+      // (the seam-factory input shape) is called with an inline object and DialecticParsed (the
+      // parser output) is referenced structurally, so the TYPES have no cross-package importer
+      // either (mirror ReasoningSeamDeps). REMOVE all three @ 109-03 (the handler-landing diff
+      // that wires the real consumer + spreads MemoryAskContract into MEMORY_CONTRACTS).
+      "createDialecticSeam",
+      "DialecticSeamDeps",
+      "DialecticParsed",
       "formatMemorySection",
       "CommandQueueDeps",
       "QueueStats",
