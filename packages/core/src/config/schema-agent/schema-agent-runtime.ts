@@ -27,6 +27,7 @@ import { MemoryReasoningConfigSchema } from "../schema-memory-reasoning.js";
 import { MemoryUserRepresentationConfigSchema } from "../schema-memory-user-representation.js";
 import { SocialModelingConfigSchema } from "../schema-social-modeling.js";
 import { DialecticConfigSchema } from "../schema-dialectic.js";
+import { MemoryUsefulnessJudgeConfigSchema } from "../schema-memory-usefulness-judge.js";
 import { validateProfileId } from "../../security/profile-id.js";
 
 // Sibling-leaf imports (one-directional dependency graph).
@@ -373,6 +374,8 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   socialModeling: SocialModelingConfigSchema.optional(),
   /** memory_ask grounded-Q&A tool config; Phase 109; off by default — the ONE allowed query-time LLM surface */
   dialectic: DialecticConfigSchema.optional(),
+  /** Offline usefulness-judge configuration (Phase 110, LEARN-02 optional; off by default — an OFFLINE cron, never the recall path) */
+  memoryUsefulnessJudge: MemoryUsefulnessJudgeConfigSchema.optional(),
   /**
    * Per-provider OAuth profile preferences (provider -> profileId map).
    * When set, the OAuthTokenManager resolves the named profile for that

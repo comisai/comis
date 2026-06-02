@@ -54,6 +54,10 @@ export type { MemoryUserRepresentationConfig } from "./schema-memory-user-repres
 export { SocialModelingConfigSchema } from "./schema-social-modeling.js";
 export type { SocialModelingConfig } from "./schema-social-modeling.js";
 
+// Offline usefulness-judge schema (Phase 110 — LEARN-02 OPTIONAL, default-OFF)
+export { MemoryUsefulnessJudgeConfigSchema } from "./schema-memory-usefulness-judge.js";
+export type { MemoryUsefulnessJudgeConfig } from "./schema-memory-usefulness-judge.js";
+
 // Dialectic schema (Phase 109 — DIAL-02): the memory_ask opt-in cost gate
 export { DialecticConfigSchema } from "./schema-dialectic.js";
 export type { DialecticConfig } from "./schema-dialectic.js";
