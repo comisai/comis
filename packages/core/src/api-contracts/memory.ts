@@ -172,7 +172,11 @@ export const MemoryAskContract = defineContract({
   method: "memory.ask",
   request: z.object({
     question: z.string(),
-    limit: z.number().optional(),
+    // CR-02: a positive integer — the grounding-set size the caller may request. The handler
+    // additionally clamps it DOWN to the per-agent `dialectic.maxRecall` DoS ceiling; this
+    // contract bound rejects the negative / non-integer / huge cases at the parse boundary so
+    // the DoS / negative-slice path cannot reach the handler in the first place.
+    limit: z.number().int().positive().optional(),
   }),
   response: z.object({
     answer: z.string(),

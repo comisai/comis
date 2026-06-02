@@ -185,9 +185,22 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
 
       // Trust-first ordering BEFORE building the grounding (the HARD boundary —
       // the higher-trust claim is presented first; a lower-trust contradiction
-      // never blends in). Cap to the requested limit or the per-ask default.
+      // never blends in).
       const ordered = orderByTrust(recalled.value);
-      const cap = params.limit ?? DIALECTIC_DEFAULT_MAX_RECALL;
+
+      // CR-02: ENFORCE the per-agent `dialectic.maxRecall` as the HARD ceiling (the DoS bound
+      // on the synthesis LLM input) and VALIDATE the caller-controlled `limit`. The contract
+      // now types `limit` as a positive int, but defense-in-depth here so a non-int / huge /
+      // negative value (or a caller that bypasses the contract parse) can never:
+      //   - flood the prompt: `limit: 100000` is clamped DOWN to the configured ceiling, and
+      //   - negative-slice: `limit: -5` would make `slice(0, -5)` silently drop the LAST 5
+      //     (lowest-trust) items — so a non-positive/non-int `limit` falls back to the ceiling.
+      const ceiling = deps.dialecticMaxRecall ?? DIALECTIC_DEFAULT_MAX_RECALL;
+      const requested = params.limit;
+      const cap =
+        typeof requested === "number" && Number.isInteger(requested) && requested > 0
+          ? Math.min(requested, ceiling)
+          : ceiling;
       const grounding = ordered.slice(0, cap);
 
       // Build the grounding text from the ordered survivors. createMemoryRecall returns

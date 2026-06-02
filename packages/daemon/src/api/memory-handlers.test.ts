@@ -1412,9 +1412,12 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     expect(idFences.length).toBe(3);
   });
 
-  it("Test 10 (CR-02): a negative limit does NOT negative-slice (clamped to the configured ceiling)", async () => {
+  it("Test 10 (CR-02): a negative limit is REJECTED at the contract boundary (no negative-slice path)", async () => {
     // limit:-5 on Array.slice(0, -5) silently drops the LAST 5 items — an unintended
-    // truncation. It must be rejected/clamped so the grounding is the configured bound.
+    // truncation / data-leak shape. The tightened contract (z.number().int().positive())
+    // REJECTS it at parse, so it can never reach the slice. The handler module is
+    // @allow-throw (the dispatcher converts the throw to a JSON-RPC error) — so the seam is
+    // never called and no grounding is built.
     const five = Array.from({ length: 5 }, (_, i) => memResult(`id-${i}`, `fact ${i}`, "learned"));
     const recall = makeRecall(five);
     const seam = makeSeam({ abstain: true });
@@ -1426,16 +1429,65 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     });
     const handlers = createMemoryHandlers(deps);
 
+    await expect(
+      handlers["memory.ask"]!({
+        question: "q",
+        limit: -5,
+        _agentId: "agent-1",
+        _callerSessionKey: "sess-1",
+      }),
+    ).rejects.toThrow();
+    // The negative value never reached the grounding builder (no negative-slice).
+    expect(seam.spy).not.toHaveBeenCalled();
+  });
+
+  it("Test 10b (CR-02): the handler clamp is non-negative defense-in-depth (a non-int limit falls back to the ceiling, never a negative slice)", async () => {
+    // Defense-in-depth: even a `limit` that slips past the contract (e.g. a float) must fall
+    // back to the configured ceiling in the handler clamp — never produce a 0/negative slice.
+    const five = Array.from({ length: 5 }, (_, i) => memResult(`id-${i}`, `fact ${i}`, "learned"));
+    const recall = makeRecall(five);
+    const seam = makeSeam({ abstain: true });
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+      dialecticMaxRecall: 10,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    // 2.7 is rejected by the tightened contract too; assert it is rejected (the int() gate).
+    await expect(
+      handlers["memory.ask"]!({
+        question: "q",
+        limit: 2.7,
+        _agentId: "agent-1",
+        _callerSessionKey: "sess-1",
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("Test 10c (CR-02): with no limit, the grounding is capped to the configured maxRecall", async () => {
+    // The configured `dialectic.maxRecall` is the DEFAULT cap when the caller omits `limit`
+    // (not the hardcoded fallback) — an operator lowering maxRecall to bound spend takes effect.
+    const eight = Array.from({ length: 8 }, (_, i) => memResult(`id-${i}`, `fact ${i}`, "learned"));
+    const recall = makeRecall(eight);
+    const seam = makeSeam({ abstain: true });
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+      dialecticMaxRecall: 4,
+    });
+    const handlers = createMemoryHandlers(deps);
+
     await handlers["memory.ask"]!({
       question: "q",
-      limit: -5,
       _agentId: "agent-1",
       _callerSessionKey: "sess-1",
     });
 
     const grounding = seam.grounding() ?? "";
     const idFences = grounding.match(/\[id-\d+\]/g) ?? [];
-    // No negative slice: all 5 (≤ ceiling 10) survive — never 0 (which -5 would have left).
-    expect(idFences.length).toBe(5);
+    expect(idFences.length).toBe(4); // capped to maxRecall (4), not the hardcoded 10
   });
 });
