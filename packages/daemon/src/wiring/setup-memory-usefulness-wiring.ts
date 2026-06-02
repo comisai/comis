@@ -71,7 +71,17 @@ export function wireMemoryUsefulness(deps: MemoryUsefulnessWiringDeps): void {
     // to one global scope — T-93-09); tenantId comes from the sessionKey envelope
     // (best-effort), defaulting only when absent.
     const tenantId = deriveTenantFromSessionKey(p.sessionKey) ?? "default";
-    const scope = { tenantId, agentId: p.agentId, now: deps.clock.now() };
+    const scope = {
+      tenantId,
+      agentId: p.agentId,
+      now: deps.clock.now(),
+      // LEARN-01 write side: forward the recall's query-INTENT so the adapter
+      // records the PER-INTENT usefulness bucket. When the event carries no
+      // intent the key is OMITTED entirely (not `intent: undefined`) → the
+      // adapter resolves the GLOBAL bucket, byte-identical to v2.8. intent is a
+      // closed-union string (counts/ids/intent ONLY cross the bus, never bodies).
+      ...(p.intent !== undefined ? { intent: p.intent } : {}),
+    };
 
     // Fire-and-forget: NEVER throw out of the bus handler (T-93-10). A failing
     // recordUsage warns + continues; the turn already completed. The handler only

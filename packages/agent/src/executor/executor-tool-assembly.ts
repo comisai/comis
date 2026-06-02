@@ -96,6 +96,26 @@ export interface ToolAssemblyDeps {
   /** Optional usefulness store (FEED-03), threaded into prompt-assembly's createMemoryRecall.
    *  TYPE-only from @comis/core (the agent↛memory build cut). */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
+  /** Optional learned-alpha store (LEARN-03), threaded into prompt-assembly's deterministic
+   *  apply overlay (the gated buildScoringAlphas read on the recall scoring arg). Absent /
+   *  off / no-row -> no read, the static config.rag.scoring alphas pass unchanged (byte-identical
+   *  recall). The daemon construction + the createPiExecutor forward land in 111-04; a missing
+   *  forward there leaves the overlay a silent no-op (the field-plumbing hazard). TYPE-only from
+   *  @comis/core (the agent↛memory build cut). */
+  tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
+  /** Optional per-user representation store (USER-03), threaded into prompt-assembly's LLM-free
+   *  `<user_profile>` standing-block injection (a deterministic scoped read + pure formatter, NO
+   *  model call). Absent -> no read, no push, byte-identical prompt. TYPE-only from @comis/core
+   *  (the agent↛memory build cut). A missing forward here leaves the profile injection a silent
+   *  no-op even when the store is wired in the daemon (the documented latent field-plumbing drop —
+   *  Pitfall 1). */
+  userRepresentationStore?: import("@comis/core").UserRepresentationStore;
+  /** Optional directional relationship store (SOCIAL-02/03 — Track E2). Forwarded into
+   *  prompt-assembly's LLM-free `<channel_relationships>` standing-block injection (a deterministic
+   *  channel-scoped read + pure formatter, NO model call). Absent -> no read, no push, byte-identical
+   *  prompt. TYPE-only from @comis/core (the agent↛memory build cut). A missing forward here leaves the
+   *  relationship injection a silent no-op even when the store is wired in the daemon (Pitfall 6). */
+  relationshipStore?: import("@comis/core").RelationshipStore;
   /** Timer port for the rerank wall-clock deadline (createMemoryRecall). */
   timers?: import("@comis/core").TimerPort;
   hookRunner?: HookRunner;
@@ -404,6 +424,27 @@ export async function assembleTools(params: ToolAssemblyParams): Promise<ToolAss
       tripleStore: deps.tripleStore,
       embeddingStore: deps.embeddingStore,
       usefulnessStore: deps.usefulnessStore,
+      // USER-03: forward the per-user representation store the SAME way as usefulnessStore — a
+      // missing forward here is a silent no-op (the profile <user_profile> block never renders even
+      // with the store wired in the daemon). prompt-assembly's deps.userRepresentationStore.read is
+      // the LLM-free standing-block read (107-04); the daemon construct + thread is 107-05.
+      userRepresentationStore: deps.userRepresentationStore,
+      // SOCIAL-02/03: forward the directional relationship store the SAME way as
+      // userRepresentationStore — a missing forward here is a silent no-op (the
+      // <channel_relationships> block never renders even with the store wired in the daemon).
+      // prompt-assembly's deps.relationshipStore.read is the LLM-free standing-block read (108-04);
+      // the daemon construct + thread is 108-05.
+      relationshipStore: deps.relationshipStore,
+      // LEARN-03 (CR-01): forward the learned-alpha store the SAME way as usefulnessStore — a
+      // missing forward here is a silent no-op (buildScoringAlphas never reads the tuned vector
+      // even with the store wired through the daemon → BootContext → createPiExecutor chain AND
+      // rag.onlineTuning.enabled). prompt-assembly's gated read `if (onlineTuningEnabled &&
+      // deps.tunedAlphaStore)` (the deterministic apply overlay) consumes it; the upstream
+      // daemon construct + thread landed in 111-04/111-05. This is the final hop in the
+      // ToolAssemblyDeps → PromptAssemblyParams.deps enumeration. Default-OFF byte-identity is
+      // preserved: when the store is absent/undefined (off) the static config.rag.scoring alphas
+      // pass unchanged, and the trust-freeze belts hold (trustAlpha is sourced only from config).
+      tunedAlphaStore: deps.tunedAlphaStore,
       timers: deps.timers,
       hookRunner: deps.hookRunner,
       secretManager: deps.secretManager,

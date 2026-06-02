@@ -33,6 +33,10 @@ import {
   createSqliteMemoryCausalStore,
   createSqliteTripleStore,
   createSqliteMemoryEmbeddingStore,
+  createSqliteUserRepresentationStore,
+  createSqliteRelationshipStore,
+  createSqliteTunedAlphaStore,
+  createSqliteMemoryLifecycleStore,
   type MemoryApi,
 } from "@comis/memory";
 import {
@@ -131,6 +135,33 @@ export interface MemoryResult {
    *  the one place this @comis/memory adapter and the @comis/agent recall consumer are joined
    *  (the agent↛memory cut). */
   embeddingStore: import("@comis/core").MemoryEmbeddingStore;
+  /** Per-user representation store (Phase 107, USER-01/03 — Track E1). The SOLE adapter for the
+   *  segregated `UserRepresentationStore` port (the `(tenant, agent, user)`-scoped upsert/read over
+   *  the additive `user_representation` table) — built UNCONDITIONALLY on the SAME shared `db`
+   *  handle as the memory adapter (so the `source_memory_id` ON DELETE CASCADE — which fires ONLY
+   *  for single-source rows; the offline builder omits `sourceMemoryId`, see the adapter's LR-02
+   *  provenance caveat — and the 3-way isolation scope stay consistent with the memory rows the
+   *  profile is distilled from — a read on a DIFFERENT handle would silently return empty,
+   *  T-107-05-02). No model/IO cost, so it is always
+   *  present; the LLM-free `<user_profile>` injection stays dormant until the offline builder writes
+   *  rows (its own default-OFF cost gate). Threaded into the recall read path (setup-agents-*) as the
+   *  port TYPE only AND into the offline-builder cron — the daemon (composition root) is the one
+   *  place this @comis/memory adapter and the @comis/agent consumers are joined (the agent↛memory cut). */
+  userRepresentationStore: import("@comis/core").UserRepresentationStore;
+  /** Directional relationship store (Phase 108, SOCIAL-01/02 — Track E2). The SOLE adapter for the
+   *  segregated `RelationshipStore` port (the `(tenant, agent, channel)`-scoped upsert/read over the
+   *  additive `relationship` table of directional `(subjectUserId, aboutUserId)` edges) — built
+   *  UNCONDITIONALLY on the SAME shared `db` handle the memory adapter owns (so the
+   *  `source_memory_id` ON DELETE CASCADE + the channel-scoped isolation stay consistent with the
+   *  memory rows the edges are distilled from — a read on a DIFFERENT handle would silently return
+   *  empty, T-108-16). No model/IO cost, so it is always present; the LLM-free
+   *  `<channel_relationships>` injection stays dormant until the offline builder writes rows AND an
+   *  operator both enables `agents.<id>.socialModeling.enabled` AND records a privacy-review sign-off
+   *  (`privacyReviewSignedOffBy`) — the SOCIAL-03 dual gate. Threaded into the recall read path
+   *  (setup-agents-*) as the port TYPE only AND into the offline-builder `__SOCIAL_MODELING__` cron —
+   *  the daemon (composition root) is the one place this memory-package adapter and the agent-package
+   *  consumers are joined (the agent↛memory cut). */
+  relationshipStore: import("@comis/core").RelationshipStore;
   /** Consolidation store (Phase 84, CONS-01..07). The SOLE adapter for the segregated
    *  `MemoryConsolidationStore` port — built UNCONDITIONALLY on the SAME shared `db` handle
    *  as the memory adapter + entity store (so the observation columns, the `(tenant, agent)`
@@ -150,6 +181,26 @@ export interface MemoryResult {
    *  `agents.<id>.rag.feedback.enabled` (default OFF). The write-back subscriber is Plan 93-02 —
    *  this plan only builds + exposes the store + its read capability. */
   usefulnessStore: import("@comis/core").MemoryUsefulnessStore;
+  /** Tuned-alpha store (Phase 111, LEARN-03 — Track H2). The SOLE adapter for the segregated
+   *  `TunedAlphaStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
+   *  memory adapter + usefulness store (the (tenant, agent) isolation scope is consistent). No
+   *  model/IO cost to building it, so it is always present; it stays dormant until BOTH the
+   *  recall-side gate (`rag.onlineTuning.enabled` — the gated read) AND the OFFLINE KEYLESS
+   *  bandit cron (`memoryOnlineTuning.enabled` — the __ONLINE_TUNING__ write) are on. Threaded
+   *  into the recall read path (setup-agents-* -> createPiExecutor -> prompt-assembly) AND the
+   *  __ONLINE_TUNING__ cron (setup-channels) — the agent receives the port TYPE only. */
+  tunedAlphaStore: import("@comis/core").TunedAlphaStore;
+  /** Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C). The SOLE adapter for the
+   *  segregated `MemoryLifecyclePort` port — built UNCONDITIONALLY on the SAME shared `db`
+   *  handle as the memory adapter (so the sweep scans the SAME `memories` rows + the additive
+   *  NON-DESTRUCTIVE marker columns under one (tenant, agent)-scoped, FK-enabled connection;
+   *  a sweep on a DIFFERENT handle would scan an empty/foreign table). No model/IO cost to
+   *  building it, so it is always present; it stays DORMANT (evicts/demotes 0 rows even when
+   *  enabled — 112-03) and the cron registers ONLY when `memoryLifecycle.enabled` (default OFF,
+   *  KEYLESS). Threaded into the KEYLESS __MEMORY_LIFECYCLE__ cron (setup-channels) — NOT the
+   *  recall executor (RQ8: the lifecycle port is daemon-cron-side, no 3-hop forwarding). The
+   *  agent receives the port TYPE only (the agent↛memory cut). */
+  memoryLifecycleStore: import("@comis/core").MemoryLifecyclePort;
   /** Live in-process recall-counter wiring (Phase 86, OBS-07). The single
    *  `wireRecallCounters(container.eventBus)` subscriber is stood up HERE — the
    *  memory composition site that already holds the event bus — so there is ONE
@@ -447,6 +498,29 @@ export async function setupMemory(deps: {
   // only (the agent↛memory cut). Threaded into the recall read path (setup-agents-*).
   const embeddingStore = createSqliteMemoryEmbeddingStore({ db, logger: memoryLogger });
 
+  // 6.5.2b'''''. Per-user representation store (Phase 107, USER-01/03 — Track E1). Built on the
+  // SAME shared `db` handle the memory adapter owns — NEVER a second Database (T-107-05-02): the
+  // `source_memory_id` ON DELETE CASCADE + the `(tenant, agent, user)` 3-way isolation scope must
+  // stay consistent with the memory rows the profile is distilled from; a read on a DIFFERENT
+  // handle would silently return empty (the same hazard as the embedding store above). Always
+  // constructed (no model/IO cost); the LLM-free `<user_profile>` injection stays dormant until the
+  // offline builder writes rows (its own default-OFF cost gate, `memoryUserRepresentation.enabled`).
+  // Composition-root join — the agent receives the port TYPE only (the agent↛memory cut). Threaded
+  // into the recall read path (setup-agents-*) AND the offline-builder cron (setup-channels).
+  const userRepresentationStore = createSqliteUserRepresentationStore({ db, logger: memoryLogger });
+
+  // 6.5.2b''''''. Directional relationship store (Phase 108, SOCIAL-01/02 — Track E2). Built on the
+  // SAME shared `db` handle the memory adapter owns — NEVER a second Database (T-108-16): the
+  // `source_memory_id` ON DELETE CASCADE + the `(tenant, agent, channel)` channel-scoped isolation
+  // must stay consistent with the memory rows the directional edges are distilled from; a read on a
+  // DIFFERENT handle would silently return empty (the same hazard as the embedding / user-representation
+  // stores above). Always constructed (no model/IO cost); the LLM-free `<channel_relationships>`
+  // injection stays dormant until the offline builder writes rows AND the operator enables the
+  // SOCIAL-03 dual gate (`socialModeling.enabled` + a recorded `privacyReviewSignedOffBy`). Composition-
+  // root join — the agent receives the port TYPE only (the agent↛memory cut). Threaded into the recall
+  // read path (setup-agents-*) AND the `__SOCIAL_MODELING__` offline-builder cron (setup-channels).
+  const relationshipStore = createSqliteRelationshipStore({ db, logger: memoryLogger });
+
   // 6.5.2c. Consolidation store (Phase 84). Built on the SAME `db` handle the memory
   // adapter owns — NOT a second Database — so the observation columns (proof_count /
   // source_ids / consolidated_at / confidence / history) and the memories table share
@@ -469,6 +543,34 @@ export async function setupMemory(deps: {
   // ONLY; the FEED-01→02 attribution write-back subscriber is deferred to Plan 93-02
   // (it depends on a recall-attribution bus event this plan does not yet declare).
   const usefulnessStore = createSqliteMemoryUsefulnessStore({ db, logger: memoryLogger });
+
+  // 6.5.2d-bis. Tuned-alpha store (Phase 111, LEARN-03 — Track H2). Built on the SAME
+  // shared `db` handle the memory adapter owns — NOT a second Database — so the
+  // tuned_alpha table and the memories table share one connection and the (tenant, agent)
+  // isolation scope is consistent. Always constructed (no model/IO cost, like the
+  // usefulness store); it stays dormant until BOTH the recall-side gate
+  // (`agents.<id>.rag.onlineTuning.enabled` — the gated read in 111-03) AND the offline
+  // KEYLESS bandit cron (`agents.<id>.memoryOnlineTuning.enabled` — the __ONLINE_TUNING__
+  // write) are on. This is the composition-root join: the daemon builds the @comis/memory
+  // adapter here and threads the port TYPE into BOTH the recall read path (setup-agents-*
+  // -> createPiExecutor -> prompt-assembly's buildScoringAlphas) AND the __ONLINE_TUNING__
+  // cron (setup-channels) — the agent receives the port TYPE only (the agent↛memory cut).
+  const tunedAlphaStore = createSqliteTunedAlphaStore({ db, logger: memoryLogger });
+
+  // 6.5.2d-ter. Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C). Built on the
+  // SAME shared `db` handle the memory adapter owns — NOT a second Database — so the sweep
+  // scans the SAME `memories` rows + the additive NON-DESTRUCTIVE marker columns
+  // (lifecycle_demoted_at / evicted_at / strength) under one (tenant, agent)-scoped, FK-enabled
+  // connection (a sweep on a DIFFERENT handle would scan an empty/foreign table). Always
+  // constructed (no model/IO cost, like the tuned-alpha store); it stays DORMANT — even when
+  // the KEYLESS __MEMORY_LIFECYCLE__ cron (`agents.<id>.memoryLifecycle.enabled`, default OFF)
+  // is on, the sweep evicts/demotes/promotes 0 rows (the live policy is the deferred
+  // operator/v2.10 step — OD4). This is the composition-root join: the daemon builds the
+  // @comis/memory adapter here and threads the port TYPE into the __MEMORY_LIFECYCLE__ cron
+  // sentinel (setup-channels) — NOT createPiExecutor (RQ8: the lifecycle port is daemon-cron-
+  // side, no 3-hop store-forwarding through the recall executor). The agent receives the port
+  // TYPE only (the agent↛memory cut).
+  const memoryLifecycleStore = createSqliteMemoryLifecycleStore({ db, logger: memoryLogger });
 
   // 6.5.2e. Recall-counter composition (Phase 86, OBS-07). Stand up the SINGLE
   // in-process recall-counter registry and subscribe it to the `memory:*` bus
@@ -633,8 +735,12 @@ export async function setupMemory(deps: {
     causalStore,
     tripleStore,
     embeddingStore,
+    userRepresentationStore,
+    relationshipStore,
     consolidationStore,
     usefulnessStore,
+    tunedAlphaStore,
+    memoryLifecycleStore,
     recallCounters,
     maintenanceTick,
   };

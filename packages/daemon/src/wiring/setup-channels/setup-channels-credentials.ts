@@ -14,11 +14,11 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry } from "@comis/agent";
-import type { createSessionStore } from "@comis/memory";
+import type { createSessionStore, MemoryApi } from "@comis/memory";
 import { sanitizeAssistantResponse, resolveOperationModel, resolveProviderFamily, runMemoryReview, classifyError } from "@comis/agent";
 import { applyToolPolicy } from "@comis/skills";
 import { filterResponse } from "@comis/channels";
@@ -28,6 +28,14 @@ import { handleMemoryCronSentinel } from "./setup-channels-memory-crons.js";
 /**
  * Closure-captured dependencies for the cron delivery listeners.
  */
+// @optional-field-count: 14 optional fields — CronEventListenerDeps is a composition-root cron-deps
+// bag that accretes the OFFLINE memory-cron sentinels' injected ports (consolidationStore for
+// __MEMORY_CONSOLIDATION__; tripleStore for __MEMORY_REASONING__; userRepresentationStore + memoryApi
+// for __USER_REPRESENTATION__) alongside the channel/media optionals. Each is an optional injected
+// port (absent on a default-config agent => that sentinel short-circuits). Tightening them to
+// required would force every non-cron caller to fabricate stub stores; splitting would create N
+// parallel cron-deps bags. The optional-field cap flags undermodeled types, NOT a well-bounded
+// composition-root deps accumulator like this (mirror BootContext / MemoryApiDeps).
 export interface CronEventListenerDeps {
   container: AppContainer;
   executors: Map<string, AgentExecutor>;
@@ -70,6 +78,44 @@ export interface CronEventListenerDeps {
    *  write a silent no-op. Absent => the reasoning sentinel cannot run, but the cron is
    *  off-by-default so a default-config agent never reaches it. */
   tripleStore?: TripleStorePort;
+  /** Per-user representation store (Phase 107, USER-03 — Track E1) — the offline-builder
+   *  upsert write path. Threaded into runUserRepresentationBuild by the opt-in
+   *  `__USER_REPRESENTATION__` sentinel below. Built in setup-memory on the SAME db handle the
+   *  memory adapter owns; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
+   *  registry → credentials chain — a missing thread would make the offline-builder write a silent
+   *  no-op (Pitfall 1). Absent => the representation sentinel cannot run, but the cron is
+   *  off-by-default so a default-config agent never reaches it. */
+  userRepresentationStore?: UserRepresentationStore;
+  /** Directional relationship store (Phase 108, SOCIAL-01/02) — the __SOCIAL_MODELING__ sentinel's
+   *  per-(tenant, agent, channel) directional-edge upsert write path. Built in setup-memory on the
+   *  shared db handle; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
+   *  registry → credentials chain — a missing thread would make the offline-builder write a silent
+   *  no-op (Pitfall 6). Absent => the relationship sentinel cannot run, but the cron is off-by-default
+   *  AND sign-off-gated so a default-config agent never reaches it. */
+  relationshipStore?: RelationshipStore;
+  /** Tuned-alpha store (Phase 111, LEARN-03) — the __ONLINE_TUNING__ bandit sentinel's
+   *  per-(tenant, agent) tuned-4-alpha-vector upsert write path. Built in setup-memory on the
+   *  shared db handle; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
+   *  registry → credentials chain — a missing thread would make the bandit a silent no-op
+   *  (the field-plumbing lesson). Absent => the bandit sentinel cannot run, but the cron is
+   *  off-by-default so a default-config agent never reaches it. */
+  tunedAlphaStore?: TunedAlphaStore;
+  /** Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C) — the KEYLESS
+   *  __MEMORY_LIFECYCLE__ sentinel's per-(tenant, agent) DORMANT runLifecycleSweep. Built in
+   *  setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). Threaded
+   *  the full daemon → registry → credentials chain — a missing thread would make the sweep a
+   *  silent no-op (the field-plumbing lesson). Absent => the lifecycle sentinel cannot run, but the
+   *  cron is off-by-default so a default-config agent never reaches it. */
+  memoryLifecycleStore?: MemoryLifecyclePort;
+  /** Recall-utility usefulness READ surface (Phase 93, FEED-02 / Phase 111 LEARN-03) — the
+   *  __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over it (`readUsefulness`).
+   *  Built in setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). */
+  usefulnessStore?: MemoryUsefulnessStore;
+  /** Per-user representation read surface (Phase 107, USER-04) — the __USER_REPRESENTATION__
+   *  sentinel scopes the per-(tenant, agent, user) high-trust source read over `inspect`.
+   *  Built in setup-memory; daemon-side (the agent imports no memory package). The SAME `inspect`
+   *  surface backs the __SOCIAL_MODELING__ sentinel (grouped by resolved channelId). */
+  memoryApi?: MemoryApi;
   tenantId?: string;
   piSessionAdapters?: Map<string, {
     getSessionStats(key: SessionKey): { messageCount: number; createdAt?: number; tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; userMessages?: number; assistantMessages?: number; toolCalls?: number; toolResults?: number; cost?: number } | undefined;
@@ -196,6 +242,12 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       tenantId: deps.tenantId,
       consolidationStore: deps.consolidationStore,
       tripleStore: deps.tripleStore,
+      userRepresentationStore: deps.userRepresentationStore,
+      relationshipStore: deps.relationshipStore,
+      tunedAlphaStore: deps.tunedAlphaStore,
+      memoryLifecycleStore: deps.memoryLifecycleStore,
+      usefulnessStore: deps.usefulnessStore,
+      memoryApi: deps.memoryApi,
     });
     if (handledMemoryCron) return;
 

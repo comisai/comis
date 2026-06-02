@@ -78,6 +78,32 @@ export type { MemoryCausalStoreDeps } from "./sqlite-memory-causal-store.js";
 export { createSqliteTripleStore } from "./sqlite-triple-store.js";
 export type { MemoryTripleStoreDeps } from "./sqlite-triple-store.js";
 
+// Per-user representation store (sole UserRepresentationStore impl; Phase 107,
+// Track E1 — USER-01). Owns ALL the per-user-representation SQL over the additive
+// `user_representation` table: the (tenant, agent, user)-scoped upsert (with the
+// write-time high-trust-floor reject + validateMemoryWrite redaction firewall) +
+// the LLM-free scoped read. The daemon (composition root, Plan 107-05) constructs
+// it on the memory adapter's db handle; the UserRepresentationStore port TYPE
+// lives in @comis/core (the agent↛memory cut — the offline profile-builder write
+// path + the prompt-assembly read path consume the type only). AHEAD of its
+// daemon consumer until 107-05 (the factory-orphan dance).
+export { createSqliteUserRepresentationStore } from "./sqlite-user-representation-store.js";
+export type { MemoryUserRepresentationStoreDeps } from "./sqlite-user-representation-store.js";
+
+// Directional relationship store (sole RelationshipStore impl; Phase 108, Track E2
+// — SOCIAL-02). Owns ALL the directional relationship SQL over the additive
+// `relationship` table: the (tenant, agent, channel)-scoped upsert (with the
+// write-time high-trust-floor reject + validateMemoryWrite redaction firewall) +
+// the LLM-free scoped read. channel_id is the NEW privacy axis; the
+// (subject_user_id, about_user_id) pair is directional ROW DATA (A→B ≠ B→A). The
+// daemon (composition root, Plan 108-05) constructs it on the memory adapter's db
+// handle; the RelationshipStore port TYPE lives in @comis/core (the agent↛memory
+// cut — the offline relationship-builder write path + the optional prompt-assembly
+// read path consume the type only). AHEAD of its daemon consumer until 108-05 (the
+// factory-orphan dance).
+export { createSqliteRelationshipStore } from "./sqlite-relationship-store.js";
+export type { MemoryRelationshipStoreDeps } from "./sqlite-relationship-store.js";
+
 // Scoped embedding-read store (sole MemoryEmbeddingStore impl; Phase 102, IQ-01).
 // Owns the (tenant, agent)-scoped LEFT JOIN vec_memories bulk read that hydrates
 // the MMR diversity re-rank (returns id->vector for the caller's scope ONLY — the
@@ -104,6 +130,28 @@ export type { MemoryConsolidationStoreDeps } from "./sqlite-memory-consolidation
 // the recall scoring path consumes the type only).
 export { createSqliteMemoryUsefulnessStore } from "./sqlite-memory-usefulness-store.js";
 export type { MemoryUsefulnessStoreDeps } from "./sqlite-memory-usefulness-store.js";
+
+// Tuned-alpha store (sole TunedAlphaStore impl; Phase 111, Track H2 — LEARN-03).
+// Owns the idempotent per-(tenant, agent) tuned-alpha-vector upsert + the scoped
+// read (undefined when absent → the apply-site default-OFF no-op). The daemon
+// (composition root) constructs it on the memory adapter's db handle; the
+// TunedAlphaStore port TYPE lives in @comis/core (the agent↛memory cut — the
+// offline bandit job + the recall apply overlay consume the type only). The table
+// has NO trust-weight column (the structural trust-freeze belt #3).
+export { createSqliteTunedAlphaStore } from "./sqlite-tuned-alpha-store.js";
+export type { MemoryTunedAlphaStoreDeps } from "./sqlite-tuned-alpha-store.js";
+
+// Memory-lifecycle sweep store (sole MemoryLifecyclePort impl; Phase 112, Track C
+// — FORGET-02). Owns the (tenant, agent)-scoped candidate scan over the `memories`
+// table + its additive NON-DESTRUCTIVE marker columns (lifecycle_demoted_at /
+// evicted_at / strength). SCAFFOLD-DORMANT per OD4: it computes strengths/tiers but
+// evicts/demotes/promotes NOTHING (report all-0, no DELETE, no marker UPDATE) — the
+// live eviction policy is the deferred operator/v2.10 step. The daemon (composition
+// root, Plan 112-04) constructs it on the memory adapter's db handle + registers the
+// default-OFF __MEMORY_LIFECYCLE__ cron; the MemoryLifecyclePort TYPE lives in
+// @comis/core (the agent↛memory cut — the agent never imports this adapter).
+export { createSqliteMemoryLifecycleStore } from "./sqlite-memory-lifecycle-store.js";
+export type { MemoryLifecycleStoreDeps, MemoryLifecyclePolicy } from "./sqlite-memory-lifecycle-store.js";
 
 // Embedding cache (LRU content-hash cache decorator)
 export { createCachedEmbeddingPort } from "./embedding-cache-lru.js";

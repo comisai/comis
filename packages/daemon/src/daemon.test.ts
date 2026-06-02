@@ -43,6 +43,9 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
         embeddingDimensions: 1536,
         compaction: { enabled: false, threshold: 1000, targetSize: 500 },
         retention: { maxAgeDays: 0 },
+        // Master cost-feature kill switch (schema default true). Present here because the real
+        // bootstrap always defaults it; the daemon's first-run notice + dialectic wiring read it.
+        costFeatures: { enabled: true },
       },
       embedding: {
         enabled: false,
@@ -69,6 +72,12 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
             maxContextChars: 4000,
             minScore: 0.1,
             includeTrustLevels: ["system", "learned"],
+            // v2.9 increment 2: rag.rerank.enabled now defaults ON, but setupSingleAgent
+            // resolves the EFFECTIVE rerank from the raw signal + model-presence — with no
+            // reranker model present in this mock it resolves to false. Set it explicitly
+            // false here so the mock config matches the post-setupAgents effective config
+            // (this test asserts the DaemonInstance shape, not the rerank default).
+            rerank: { enabled: false },
           },
         }),
       },

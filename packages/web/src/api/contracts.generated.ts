@@ -5589,6 +5589,53 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "rpc"
     ]
   },
+  "memory.ask": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "answer": {
+          "type": "string"
+        },
+        "citations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "abstained": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "answer",
+        "citations",
+        "abstained"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "rpc"
+    ]
+  },
   "memory.browse": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

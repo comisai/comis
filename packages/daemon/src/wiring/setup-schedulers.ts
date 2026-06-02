@@ -30,6 +30,7 @@ import {
 import type { ComputeDailyResetNextRun } from "@comis/core";
 import { createBrowserService, type BrowserService } from "@comis/skills";
 import * as fs from "node:fs/promises";
+import { emitMemoryCostFeatureNotice } from "./setup-memory-cost-notice.js";
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -89,6 +90,17 @@ export async function setupSchedulers(deps: {
   const { container, workspaceDirs, sessionStore, sessionManager, schedulerLogger, agentLogger, skillsLogger, subprocessEnv, systemEventQueue, onCronWake, clock, timers } = deps;
   const agents = container.config.agents; // Always populated after schema transform
   const schedulerConfig = container.config.scheduler;
+
+  // Master cost-feature kill switch (v1 opt-out posture). When the operator sets
+  // memory.costFeatures.enabled:false, EVERY LLM cost-bearing memory cron is force-disabled at
+  // its registration site below — regardless of the agent's own per-feature opt-in. The gated
+  // set is the SIX cost crons: memoryReview, memoryConsolidation, memoryReasoning,
+  // memoryUserRepresentation, memoryUsefulnessJudge, memoryOnlineTuning. NOT gated: the $0
+  // keyless memoryLifecycle sweep, and the socialModeling cron (which has its OWN privacy
+  // sign-off gate and stays independent). Default true (schema default) ⇒ byte-identical
+  // registration. Read defensively (`!== false`) so an unexpectedly-absent block fails OPEN to
+  // the prior behavior rather than silently disabling features.
+  const costFeaturesEnabled = container.config.memory?.costFeatures?.enabled !== false;
 
   /** Resolve the formatted session key for an agent's main heartbeat session. */
   function resolveMainSessionKey(agentId: string): string {
@@ -266,8 +278,10 @@ export async function setupSchedulers(deps: {
     schedulerLogger.debug({ agentId }, "Per-agent CronScheduler started");
 
     // -- Memory review cron job --
+    // Gated by the master cost-feature kill switch (memory.costFeatures.enabled) AND the
+    // per-agent opt-in. Switch off ⇒ NOT registered even if the agent enabled it.
     const memoryReviewConfig = agentConfig.memoryReview;
-    if (memoryReviewConfig?.enabled) {
+    if (costFeaturesEnabled && memoryReviewConfig?.enabled) {
       const memReviewJobId = `memory-review-${agentId}`;
       const existingJobs = scheduler.getJobs();
       const alreadyRegistered = existingJobs.some((j) => j.id === memReviewJobId);
@@ -298,8 +312,9 @@ export async function setupSchedulers(deps: {
     // same night. Job options mirror the review job 1:1 (isolated / next-heartbeat /
     // no forward-to-main / fresh session); the __MEMORY_CONSOLIDATION__ sentinel is
     // intercepted in setup-channels-credentials → runMemoryConsolidation.
+    // Gated by the master cost-feature kill switch AND the per-agent opt-in.
     const memoryConsolidationConfig = agentConfig.memoryConsolidation;
-    if (memoryConsolidationConfig?.enabled) {
+    if (costFeaturesEnabled && memoryConsolidationConfig?.enabled) {
       const memConsolidationJobId = `memory-consolidation-${agentId}`;
       const existingJobs = scheduler.getJobs();
       const alreadyRegistered = existingJobs.some((j) => j.id === memConsolidationJobId);
@@ -331,8 +346,9 @@ export async function setupSchedulers(deps: {
     // consolidation job 1:1 (isolated / next-heartbeat / no forward-to-main / fresh
     // session); the __MEMORY_REASONING__ sentinel is intercepted in
     // setup-channels-credentials → runMemoryReasoning (both stores + the reason seam).
+    // Gated by the master cost-feature kill switch AND the per-agent opt-in.
     const memoryReasoningConfig = agentConfig.memoryReasoning;
-    if (memoryReasoningConfig?.enabled) {
+    if (costFeaturesEnabled && memoryReasoningConfig?.enabled) {
       const memReasoningJobId = `memory-reasoning-${agentId}`;
       const existingJobs = scheduler.getJobs();
       const alreadyRegistered = existingJobs.some((j) => j.id === memReasoningJobId);
@@ -354,7 +370,185 @@ export async function setupSchedulers(deps: {
         schedulerLogger.info({ agentId, schedule: memoryReasoningConfig.schedule ?? "0 4 * * *" }, "Registered memory reasoning cron job");
       }
     }
+
+    // -- Per-user representation cron job (Phase 107, USER-03/04 — Track E1) --
+    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron — NOT back-compat). Registered ONLY
+    // when the operator sets memoryUserRepresentation.enabled; a default agent registers NO job →
+    // byte-identical behavior with the config absent. Default schedule 0 5 * * * runs AFTER reasoning's
+    // 0 4 so the profile is built over freshly-reasoned memories. Job options mirror the reasoning job
+    // 1:1 (isolated / next-heartbeat / no forward-to-main / fresh session); the __USER_REPRESENTATION__
+    // sentinel is intercepted in setup-channels-credentials → runUserRepresentationBuild (the per-user
+    // offline upsert write, source-scoped via memoryApi.inspect + the createUserRepresentationSeam).
+    // Gated by the master cost-feature kill switch AND the per-agent opt-in.
+    const memoryUserRepresentationConfig = agentConfig.memoryUserRepresentation;
+    if (costFeaturesEnabled && memoryUserRepresentationConfig?.enabled) {
+      const memUserReprJobId = `memory-user-representation-${agentId}`;
+      const existingJobs = scheduler.getJobs();
+      const alreadyRegistered = existingJobs.some((j) => j.id === memUserReprJobId);
+      if (!alreadyRegistered) {
+        await scheduler.addJob({
+          id: memUserReprJobId,
+          name: "Memory user representation",
+          agentId,
+          schedule: { kind: "cron", expr: memoryUserRepresentationConfig.schedule ?? "0 5 * * *" },
+          payload: { kind: "system_event", text: "__USER_REPRESENTATION__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: memoryUserRepresentationConfig.schedule ?? "0 5 * * *" }, "Registered memory user representation cron job");
+      }
+    }
+
+    // -- Social modeling cron job (Phase 108, SOCIAL-01/02/03 — Track E2) --
+    // OPT-IN, OFF by default (a cost gate — an LLM-backed cron). The SOCIAL-03 gate is STRICTER than
+    // the other memory crons: register ONLY when the operator BOTH sets socialModeling.enabled AND
+    // records a privacy-review sign-off (privacyReviewSignedOffBy). A knob-on-but-not-signed-off agent
+    // registers NO job → byte-identical with the config absent (the sign-off is the operator gate; the
+    // sentinel handler re-checks the SAME dual gate, defense-in-depth). Default schedule 0 6 * * * runs
+    // AFTER the representation cron's 0 5 so relationships are built over freshly-profiled memories.
+    // The __SOCIAL_MODELING__ sentinel is intercepted in setup-channels-memory-crons → runRelationshipBuild
+    // (the per-channel offline directional-edge upsert, source-grouped via memoryApi.inspect +
+    // parseFormattedSessionKey + the createRelationshipSeam cheap-model seam).
+    const socialModelingConfig = agentConfig.socialModeling;
+    if (socialModelingConfig?.enabled && socialModelingConfig?.privacyReviewSignedOffBy) {
+      const memSocialJobId = `memory-social-modeling-${agentId}`;
+      const existingJobs = scheduler.getJobs();
+      const alreadyRegistered = existingJobs.some((j) => j.id === memSocialJobId);
+      if (!alreadyRegistered) {
+        await scheduler.addJob({
+          id: memSocialJobId,
+          name: "Memory social modeling",
+          agentId,
+          schedule: { kind: "cron", expr: socialModelingConfig.schedule ?? "0 6 * * *" },
+          payload: { kind: "system_event", text: "__SOCIAL_MODELING__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: socialModelingConfig.schedule ?? "0 6 * * *" }, "Registered memory social modeling cron job");
+      }
+    }
+
+    // -- Usefulness-judge cron job (Phase 110, LEARN-02 OPTIONAL — Track H3) --
+    // OPT-IN, OFF by default (a cost gate — an OFFLINE cheap-model judge). Registered ONLY when the
+    // operator sets memoryUsefulnessJudge.enabled; a default agent registers NO job → byte-identical
+    // with the config absent. Default schedule 0 7 * * * runs AFTER social's 0 6 so the judge scores
+    // recalled-memory usefulness over a fully-settled night. Job options mirror the reasoning/userrep
+    // job 1:1 (isolated / next-heartbeat / no forward-to-main / fresh session). The __USEFULNESS_JUDGE__
+    // sentinel's full dispatch (the seam → recordUsage write) is Phase 111's costed enablement; this
+    // registration is the default-OFF scaffold (the citation-marker core, Plan 110-04, is keyless).
+    // Gated by the master cost-feature kill switch AND the per-agent opt-in.
+    const memoryUsefulnessJudgeConfig = agentConfig.memoryUsefulnessJudge;
+    if (costFeaturesEnabled && memoryUsefulnessJudgeConfig?.enabled) {
+      const memUsefulnessJudgeJobId = `memory-usefulness-judge-${agentId}`;
+      const existingJobs = scheduler.getJobs();
+      const alreadyRegistered = existingJobs.some((j) => j.id === memUsefulnessJudgeJobId);
+      if (!alreadyRegistered) {
+        await scheduler.addJob({
+          id: memUsefulnessJudgeJobId,
+          name: "Memory usefulness judge",
+          agentId,
+          schedule: { kind: "cron", expr: memoryUsefulnessJudgeConfig.schedule ?? "0 7 * * *" },
+          payload: { kind: "system_event", text: "__USEFULNESS_JUDGE__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: memoryUsefulnessJudgeConfig.schedule ?? "0 7 * * *" }, "Registered memory usefulness judge cron job");
+      }
+    }
+
+    // -- Online-tuning bandit cron job (Phase 111, LEARN-03 — Track H2) --
+    // OPT-IN, OFF by default. Unlike the usefulness judge this bandit is DETERMINISTIC +
+    // KEYLESS (no LLM call, no API key — the sentinel dispatch makes NO model resolution),
+    // so enabling it is a behavior opt-in, not a cost opt-in. Registered ONLY when the
+    // operator sets memoryOnlineTuning.enabled; a default agent registers NO job →
+    // byte-identical with the config absent. Default schedule 0 8 * * * runs AFTER the
+    // judge's 0 7 so the FEED signal it reads is fully settled. Job options mirror the
+    // judge/reasoning/userrep job 1:1 (isolated / next-heartbeat / no forward-to-main / fresh).
+    // Gated by the master cost-feature kill switch AND the per-agent opt-in. (Although this
+    // bandit is keyless/deterministic, it is in the operator-facing cost-feature set, so the
+    // kill switch disables it alongside the LLM crons for a single, predictable off-switch.)
+    const memoryOnlineTuningConfig = agentConfig.memoryOnlineTuning;
+    if (costFeaturesEnabled && memoryOnlineTuningConfig?.enabled) {
+      const memOnlineTuningJobId = `memory-online-tuning-${agentId}`;
+      const existingJobs = scheduler.getJobs();
+      const alreadyRegistered = existingJobs.some((j) => j.id === memOnlineTuningJobId);
+      if (!alreadyRegistered) {
+        await scheduler.addJob({
+          id: memOnlineTuningJobId,
+          name: "Memory online tuning",
+          agentId,
+          schedule: { kind: "cron", expr: memoryOnlineTuningConfig.schedule ?? "0 8 * * *" },
+          payload: { kind: "system_event", text: "__ONLINE_TUNING__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: memoryOnlineTuningConfig.schedule ?? "0 8 * * *" }, "Registered memory online tuning cron job");
+      }
+    }
+
+    // -- Memory lifecycle cron job (Phase 112, FORGET-02 — Track C) --
+    // OPT-IN, OFF by default. Like the online-tuning bandit (NOT the LLM crons) this
+    // sweep is DETERMINISTIC + KEYLESS (no LLM call, no API key — the sentinel dispatch
+    // makes NO model resolution), so enabling it is a behavior opt-in, not a cost opt-in.
+    // Registered ONLY when the operator sets memoryLifecycle.enabled; a default agent
+    // registers NO job → byte-identical with the config absent. Default schedule 0 9 * * *
+    // runs AFTER online-tuning's 0 8 so the FEED + tuned alphas it reads have settled. Job
+    // options mirror the online-tuning job 1:1 (isolated / next-heartbeat / no forward-to-main
+    // / fresh). The __MEMORY_LIFECYCLE__ sentinel (setup-channels-memory-crons → the DORMANT
+    // runLifecycleSweep) re-checks the knob; even when on, the SCAFFOLD evicts/demotes NOTHING
+    // (the live policy is the deferred operator/v2.10 step — OD4).
+    const memoryLifecycleConfig = agentConfig.memoryLifecycle;
+    if (memoryLifecycleConfig?.enabled) {
+      const memLifecycleJobId = `memory-lifecycle-${agentId}`;
+      const existingJobs = scheduler.getJobs();
+      const alreadyRegistered = existingJobs.some((j) => j.id === memLifecycleJobId);
+      if (!alreadyRegistered) {
+        await scheduler.addJob({
+          id: memLifecycleJobId,
+          name: "Memory lifecycle",
+          agentId,
+          schedule: { kind: "cron", expr: memoryLifecycleConfig.schedule ?? "0 9 * * *" },
+          payload: { kind: "system_event", text: "__MEMORY_LIFECYCLE__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: memoryLifecycleConfig.schedule ?? "0 9 * * *" }, "Registered memory lifecycle cron job");
+      }
+    }
   }
+
+  // First-run cost-disclosure notice (v1 opt-out posture). Once per startup, right after the
+  // cron-registration sweep: when the kill switch is ON (the default) AND at least one LLM
+  // cost-bearing memory feature is active for some agent, emit ONE prominent WARN naming the
+  // active features + the one-line off-switch. Today's default bare config emits nothing. Lives
+  // here (not daemon.ts, which is at its 3000-line cap) — the natural cron-wiring seam, with the
+  // agents map + config + logger already in scope.
+  emitMemoryCostFeatureNotice({ agents, costFeaturesEnabled, logger: schedulerLogger });
 
   /** Resolve the CronScheduler for a given agent ID. Throws descriptive error if not found. */
   function getAgentCronScheduler(agentId: string): CronScheduler {

@@ -20,7 +20,15 @@
 
 import type { MemorySearchResult, TrustLevel, UsefulnessSignal } from "@comis/core";
 import { describe, it, expect } from "vitest";
-import { score, scoreWithBreakdown, type ScoringAlphas, type ScoreBreakdown } from "./score.js";
+import {
+  score,
+  scoreWithBreakdown,
+  fadeMemFactor,
+  consolidationBoost,
+  betaForType,
+  type ScoringAlphas,
+  type ScoreBreakdown,
+} from "./score.js";
 
 const DAY_MS = 86_400_000;
 const NOW = 1_700_000_000_000;
@@ -31,7 +39,11 @@ const ZERO_ALPHAS: ScoringAlphas = {
   proofAlpha: 0,
   trustAlpha: 0,
   usefulnessAlpha: 0,
+  forgetAlpha: 0,
 };
+
+/** The cognitive memory class enum (memory-entry.ts:95) — drives the FadeMem per-type β. */
+type MemoryType = "working" | "episodic" | "semantic" | "procedural";
 
 /** Build a neutral-placeholder result; allow injecting the typed ranking fields. */
 function makeResult(
@@ -43,6 +55,7 @@ function makeResult(
     occurredAt?: number;
     proofCount?: number;
     confidence?: number;
+    memoryType?: MemoryType;
   } = {},
 ): MemorySearchResult {
   const entry: Record<string, unknown> = {
@@ -56,12 +69,14 @@ function makeResult(
     tags: [],
     createdAt: opts.createdAt ?? NOW,
   };
-  // occurredAt/proofCount/confidence are typed optional MemoryEntry fields (Plan 01).
-  // Absent → the ranking factor is neutral 1.0 (the no-reorder-when-absent contract);
-  // present → they drive the temporal proximity / proof boost / half-life decay.
+  // occurredAt/proofCount/confidence/memoryType are typed optional MemoryEntry fields
+  // (Plan 01 / P95). Absent → the ranking factor is neutral 1.0 (the no-reorder-when-absent
+  // contract); present → they drive temporal proximity / proof boost / half-life decay /
+  // the FORGET-01 per-type FadeMem β.
   if (opts.occurredAt !== undefined) entry.occurredAt = opts.occurredAt;
   if (opts.proofCount !== undefined) entry.proofCount = opts.proofCount;
   if (opts.confidence !== undefined) entry.confidence = opts.confidence;
+  if (opts.memoryType !== undefined) entry.memoryType = opts.memoryType;
   return {
     entry: entry as unknown as MemorySearchResult["entry"],
     score: opts.base ?? 0.5,
@@ -566,3 +581,291 @@ describe("scoreWithBreakdown — usefulnessFactor (FEED-03, the 5th bounded fact
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// fadeMemFactor — the FORGET-01 per-type FadeMem decay factor (the 6th 0.5-centered
+// multiplicand). The SAFETY GATE: byte-identity at neutral importance, two ways
+// (default-OFF → forgetFactor exactly 1.0; on-at-neutral → fadeMemFactor exactly 1.0
+// at event-age 0). The DETERMINISTIC effect: an old low-importance ephemeral memory
+// decays its factor below a fresh durable one; importance modulates λ; the injected
+// clock + future-age clamp; the consolidation-on-access boost; trust-first preserved.
+// LLM-free, deterministic, pure over the injected nowMs (never Date.now).
+// ---------------------------------------------------------------------------
+describe("scoreWithBreakdown — fadeMemFactor (FORGET-01, the 6th decay multiplicand)", () => {
+  // Default decay alpha at the same small magnitude as trust/proof (Pitfall 2 — the bounded
+  // factor cannot overturn trust-first). The byte-identity gate is INDEPENDENT of this value.
+  const FORGET_ALPHAS: ScoringAlphas = { ...ZERO_ALPHAS, forgetAlpha: 0.1 };
+
+  it("Test A — default-OFF byte-identity: forget.enabled=false ⇒ score + ordering byte-identical to pre-patch (forgetFactor exactly 1.0)", () => {
+    // An aged, enriched, typed memory: every other signal live. With forget OFF the boosted
+    // score + the breakdown.forget field must be byte-identical to a run with NO forget config
+    // (the pre-patch shape) — forgetFactor is forced to EXACTLY 1.0 regardless of age/type/imp.
+    const alphas: ScoringAlphas = {
+      recencyAlpha: 0.2,
+      temporalAlpha: 0.2,
+      proofAlpha: 0.1,
+      trustAlpha: 0.1,
+      usefulnessAlpha: 0.1,
+      forgetAlpha: 0.1,
+    };
+    const input = [
+      makeResult("aged", {
+        base: 0.6,
+        trustLevel: "system",
+        createdAt: NOW - 60 * DAY_MS,
+        occurredAt: NOW - 60 * DAY_MS,
+        proofCount: 40,
+        confidence: 0.9,
+        memoryType: "episodic",
+      }),
+    ];
+    // Pre-patch shape: no forget config arg at all.
+    const prePatch = scoreWithBreakdown(input, alphas, NOW);
+    // Forget explicitly OFF.
+    const forgetOff = scoreWithBreakdown(input, alphas, NOW, undefined, { enabled: false });
+    expect(forgetOff[0]?.breakdown.forget).toBe(1); // EXACTLY 1.0 (not toBeCloseTo)
+    expect(forgetOff[0]?.score).toBe(prePatch[0]?.score); // byte-identical boosted score
+    expect(forgetOff.map((r) => r.entry.id)).toEqual(prePatch.map((r) => r.entry.id));
+  });
+
+  it("Test B — on-at-neutral byte-identity: a LEGACY/neutral row (no type → parity β; no enrichment; event-age 0) with forget ON scores byte-identical to pre-patch (fadeMemFactor exactly 1.0)", () => {
+    // The on-at-neutral proof: at event-age 0 the FadeMem factor `0.5 + 0.5·exp(0) = 1.0`
+    // EXACTLY (independent of λ/β/imp — the neutral point in time), so a legacy row's boosted
+    // score with forget ON equals the pre-patch score. No memoryType → parity β; no
+    // proofCount/confidence/usefulness → neutral imp; createdAt === NOW (occurredAt absent → Δt 0).
+    const alphas: ScoringAlphas = {
+      recencyAlpha: 0.2,
+      temporalAlpha: 0.2,
+      proofAlpha: 0.1,
+      trustAlpha: 0.1,
+      usefulnessAlpha: 0.1,
+      forgetAlpha: 0.1,
+    };
+    const legacy = [makeResult("legacy", { base: 0.5, trustLevel: "learned", createdAt: NOW })];
+    const prePatch = scoreWithBreakdown(legacy, alphas, NOW);
+    const forgetOn = scoreWithBreakdown(legacy, alphas, NOW, undefined, { enabled: true });
+    expect(forgetOn[0]?.breakdown.forget).toBe(1); // fadeMemFactor at Δt=0 → 1.0 → forgetFactor 1.0
+    expect(forgetOn[0]?.score).toBe(prePatch[0]?.score); // byte-identical boosted score
+  });
+
+  it("Test B' — fadeMemFactor evaluates to EXACTLY 1.0 at event-age 0 (the neutral-in-time point), any type/imp", () => {
+    // Direct proof of the neutral point the on-at-neutral byte-identity rests on. A fresh
+    // row (createdAt === NOW, no occurredAt) → Δt 0 → exp(0)=1 → 0.5+0.5 = 1.0 EXACTLY,
+    // for BOTH a durable and an ephemeral type, and for an enriched (high-imp) row.
+    expect(fadeMemFactor(makeResult("e", { createdAt: NOW, memoryType: "episodic" }).entry, NOW, 0.5, undefined)).toBe(1);
+    expect(fadeMemFactor(makeResult("s", { createdAt: NOW, memoryType: "semantic" }).entry, NOW, 0.5, undefined)).toBe(1);
+    expect(
+      fadeMemFactor(
+        makeResult("hi", { createdAt: NOW, proofCount: 100, trustLevel: "system" }).entry,
+        NOW,
+        0.9,
+        { usedCount: 9, ignoredCount: 0 },
+      ),
+    ).toBe(1);
+  });
+
+  it("Test C — per-type β + decay direction: an OLD low-importance EPHEMERAL (β=1.2) has a fadeMemFactor STRICTLY LESS THAN a FRESH durable (β=0.8) under a fixed nowMs", () => {
+    // The deterministic FadeMem effect (FAILS pre-patch — no decay exists). Old episodic
+    // (60-day event-age, β=1.2, low imp) decays sharply; fresh semantic (1-day, β=0.8) barely.
+    const oldEphemeral = makeResult("oldEph", {
+      createdAt: NOW - 60 * DAY_MS,
+      occurredAt: NOW - 60 * DAY_MS,
+      memoryType: "episodic",
+    });
+    const freshDurable = makeResult("freshDur", {
+      createdAt: NOW - 1 * DAY_MS,
+      occurredAt: NOW - 1 * DAY_MS,
+      memoryType: "semantic",
+    });
+    const fOld = fadeMemFactor(oldEphemeral.entry, NOW, 0.5, undefined);
+    const fFresh = fadeMemFactor(freshDurable.entry, NOW, 0.5, undefined);
+    expect(fOld).toBeLessThan(fFresh);
+    expect(fOld).toBeGreaterThanOrEqual(0.5); // bounded ∈ [0.5,1]
+    expect(fFresh).toBeLessThanOrEqual(1);
+
+    // And the EFFECT surfaces in the boosted ranking with forget ON: the old ephemeral's
+    // forgetFactor demotes it below the fresh durable at equal base (only type+age differ).
+    const out = scoreWithBreakdown(
+      [oldEphemeral, freshDurable],
+      FORGET_ALPHAS,
+      NOW,
+      undefined,
+      { enabled: true },
+    );
+    expect(out[0]?.entry.id).toBe("freshDur");
+    expect(out[1]?.entry.id).toBe("oldEph");
+    expect((out.find((r) => r.entry.id === "oldEph")?.breakdown.forget ?? 1)).toBeLessThan(
+      out.find((r) => r.entry.id === "freshDur")?.breakdown.forget ?? 0,
+    );
+  });
+
+  it("Test D — importance modulates λ: a HIGH-importance memory decays SLOWER (larger fadeMemFactor) than a neutral one at the same event-age + type", () => {
+    // λ = λ_base·exp(−μ·imp): higher imp → smaller λ → slower decay → larger factor. Same
+    // 60-day event-age + same type; only the imp signals differ (high proof + system trust +
+    // high used-rate vs none). FAILS pre-patch (no decay, no imp). Pass base+usefulness so
+    // importance() sees the same call-site signals score.ts threads in.
+    const age = NOW - 60 * DAY_MS;
+    const high = makeResult("hi", {
+      createdAt: age,
+      occurredAt: age,
+      memoryType: "semantic",
+      proofCount: 100,
+      trustLevel: "system",
+    });
+    const neutral = makeResult("lo", {
+      createdAt: age,
+      occurredAt: age,
+      memoryType: "semantic",
+      trustLevel: "learned",
+    });
+    const fHigh = fadeMemFactor(high.entry, NOW, 0.9, { usedCount: 9, ignoredCount: 0 });
+    const fNeutral = fadeMemFactor(neutral.entry, NOW, 0.1, undefined);
+    expect(fHigh).toBeGreaterThan(fNeutral);
+  });
+
+  it("Test E — injected clock + future-clamp: a future-dated event (negative age) clamps Δt to 0 → factor at maximum 1.0; uses the passed nowMs (no Date.now)", () => {
+    // A future occurredAt → max(0, …) clamps Δt to 0 → exp(0)=1 → factor 1.0, no negative-age
+    // blow-up / NaN. And the factor is computed from the PASSED nowMs: shifting nowMs forward
+    // (older relative age) strictly lowers the factor for the same entry — proving it reads the
+    // injected clock, never a wall clock.
+    const future = makeResult("future", {
+      createdAt: NOW - 1 * DAY_MS,
+      occurredAt: NOW + 10 * DAY_MS,
+      memoryType: "episodic",
+    });
+    const fFuture = fadeMemFactor(future.entry, NOW, 0.5, undefined);
+    expect(Number.isNaN(fFuture)).toBe(false);
+    expect(fFuture).toBe(1); // clamped to age 0 → exactly 1.0
+
+    const aged = makeResult("aged", {
+      createdAt: NOW - 30 * DAY_MS,
+      occurredAt: NOW - 30 * DAY_MS,
+      memoryType: "episodic",
+    });
+    const atNow = fadeMemFactor(aged.entry, NOW, 0.5, undefined);
+    const atLater = fadeMemFactor(aged.entry, NOW + 90 * DAY_MS, 0.5, undefined);
+    expect(atLater).toBeLessThan(atNow); // older relative to a later nowMs → more decay
+  });
+
+  it("Test F — consolidationBoost is bounded ∈ [0,1] ≥ v, saturating (each access boosts less), capped at v→1", () => {
+    // v⁺ = v + Δv·(1−v)·exp(−n/N): bounded in [0,1], never below v, each successive access
+    // (larger n) adds LESS, and at v→1 the (1−v) cap drives the boost → ~0.
+    const v = 0.4;
+    const b0 = consolidationBoost(v, 0);
+    const b1 = consolidationBoost(v, 1);
+    const b5 = consolidationBoost(v, 5);
+    expect(b0).toBeGreaterThanOrEqual(v);
+    expect(b0).toBeLessThanOrEqual(1);
+    // Diminishing returns: a later access (larger n) yields a smaller boosted value than n=0.
+    expect(b1).toBeLessThan(b0);
+    expect(b5).toBeLessThan(b1);
+    expect(b5).toBeGreaterThanOrEqual(v); // never drops below the input strength
+    // Near-saturation: at v→1 the boost collapses (the (1−v) cap).
+    const nearOne = consolidationBoost(0.999, 0);
+    expect(nearOne).toBeGreaterThanOrEqual(0.999);
+    expect(nearOne).toBeLessThanOrEqual(1);
+    expect(nearOne - 0.999).toBeLessThan(0.01); // tiny boost left near the cap
+  });
+
+  it("Test G — trust-first preserved (Pitfall 2): at forgetAlpha == trustAlpha a fresh-but-external memory does NOT outrank a stale-but-system one; decay RANKS, never GATES (no result dropped)", () => {
+    // The bounded factor ∈ [0.5,1] at a small alpha cannot overturn the trust factor. A stale
+    // system memory (decayed) must still outrank a fresh external one. And BOTH results survive
+    // (decay never drops a result — only the trust filter gates, upstream).
+    const SMALL = 0.1;
+    const alphas: ScoringAlphas = {
+      ...ZERO_ALPHAS,
+      trustAlpha: SMALL,
+      forgetAlpha: SMALL,
+    };
+    const staleSystem = makeResult("staleSys", {
+      base: 0.5,
+      trustLevel: "system",
+      createdAt: NOW - 120 * DAY_MS,
+      occurredAt: NOW - 120 * DAY_MS,
+      memoryType: "episodic",
+    });
+    const freshExternal = makeResult("freshExt", {
+      base: 0.5,
+      trustLevel: "external",
+      createdAt: NOW,
+      occurredAt: NOW,
+      memoryType: "semantic",
+    });
+    const out = scoreWithBreakdown(
+      [freshExternal, staleSystem],
+      alphas,
+      NOW,
+      undefined,
+      { enabled: true },
+    );
+    expect(out).toHaveLength(2); // RANKS, never GATES — both survive
+    expect(out[0]?.entry.id).toBe("staleSys"); // trust-first still wins
+    expect(out[1]?.entry.id).toBe("freshExt");
+  });
+
+  it("betaForType maps the closed union: semantic/procedural → 0.8 (durable), episodic/working → 1.2 (ephemeral), absent → 1.0 (parity)", () => {
+    expect(betaForType("semantic")).toBe(0.8);
+    expect(betaForType("procedural")).toBe(0.8);
+    expect(betaForType("episodic")).toBe(1.2);
+    expect(betaForType("working")).toBe(1.2);
+    expect(betaForType(undefined)).toBe(1.0); // legacy row → parity β → byte-identity
+  });
+
+  it("folds forget into the 6-factor product: final === base * recency * temporal * proof * trust * usefulness * forget (forget ON)", () => {
+    const alphas: ScoringAlphas = {
+      recencyAlpha: 0.3,
+      temporalAlpha: 0.2,
+      proofAlpha: 0.4,
+      trustAlpha: 0.1,
+      usefulnessAlpha: 0.1,
+      forgetAlpha: 0.1,
+    };
+    const input = [
+      makeResult("m", {
+        base: 0.7,
+        trustLevel: "system",
+        createdAt: NOW - 40 * DAY_MS,
+        occurredAt: NOW - 40 * DAY_MS,
+        proofCount: 40,
+        confidence: 0.8,
+        memoryType: "episodic",
+      }),
+    ];
+    const out = scoreWithBreakdown(input, alphas, NOW, uMapForForget("m", { usedCount: 4, ignoredCount: 1 }), {
+      enabled: true,
+    });
+    const b = out[0]?.breakdown as ScoreBreakdown;
+    expect(b.forget).toBeLessThan(1); // an aged ephemeral with forget ON is demoted (factor < 1)
+    expect(b.final).toBeCloseTo(
+      b.base * b.recency * b.temporal * b.proof * b.trust * b.usefulness * b.forget,
+      10,
+    );
+    expect(out[0]?.score).toBeCloseTo(b.final, 10);
+  });
+
+  it("score() forwards the forget config and produces the SAME ordering as scoreWithBreakdown (additive)", () => {
+    const oldEphemeral = makeResult("oldEph", {
+      createdAt: NOW - 60 * DAY_MS,
+      occurredAt: NOW - 60 * DAY_MS,
+      memoryType: "episodic",
+    });
+    const freshDurable = makeResult("freshDur", {
+      createdAt: NOW - 1 * DAY_MS,
+      occurredAt: NOW - 1 * DAY_MS,
+      memoryType: "semantic",
+    });
+    const plain = score([oldEphemeral, freshDurable], FORGET_ALPHAS, NOW, undefined, { enabled: true });
+    const withB = scoreWithBreakdown([oldEphemeral, freshDurable], FORGET_ALPHAS, NOW, undefined, {
+      enabled: true,
+    });
+    expect(plain.map((r) => r.entry.id)).toEqual(withB.map((r) => r.entry.id));
+    for (let i = 0; i < plain.length; i++) {
+      expect(plain[i]?.score).toBeCloseTo(withB[i]?.score ?? NaN, 10);
+    }
+  });
+});
+
+/** Build a usefulnessById map carrying a single signal for `id` (FORGET-01 fold tests). */
+function uMapForForget(id: string, sig: UsefulnessSignal): ReadonlyMap<string, UsefulnessSignal> {
+  return new Map([[id, sig]]);
+}

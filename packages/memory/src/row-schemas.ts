@@ -1,60 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Zod schemas for memory-package SQLite row types.
+ * Zod schemas for memory-package SQLite row types — one schema per row interface,
+ * used by `createRowMapper(schema)` in `row-mapper.ts` to replace untyped-row casts
+ * at every SQLite call site. Schemas live HERE (consumer-side `memory/`), NOT in
+ * `@comis/core/ports/*`, to preserve core's zero-runtime-Zod-dependency boundary
+ * (its port files stay type-only — a `import { z }` there widens the public surface).
  *
- * One schema per row interface. Used by `createRowMapper(schema)` in
- * `row-mapper.ts` to replace `db.prepare(...).all() as Foo[]` casts at
- * every SQLite call site.
+ * Sectional layout: (1) memory-package-local public rows paired 1:1 with the
+ * `./types.js` interfaces (each pair gets an `expectTypeOf` drift guard in
+ * `row-schemas.test.ts`); (2) context-store rows (`Ctx*Row` from @comis/core); (3)
+ * session-store DTOs; (4) file-internal snake_case row shapes (the SSOT consumers
+ * retarget to via `z.infer<typeof XxxRowSchema>`).
  *
- * Schemas live HERE (consumer-side `memory/`) and NOT in
- * `@comis/core/ports/*` to preserve core's zero-runtime-Zod-dependency
- * boundary. Core's port files remain type-only — adding
- * `import { z } from "zod"` there would widen the public dependency
- * surface.
- *
- * ## Sectional layout
- *
- * 1. **Memory-package-local public rows** — paired 1:1 with the
- *    interfaces exported from `./types.js`. Each pair gets a
- *    `expectTypeOf<z.infer<typeof XSchema>>().toEqualTypeOf<X>()`
- *    assertion in `row-schemas.test.ts` to prevent silent schema drift.
- *
- * 2. **Context-store rows** — schemas paired with `Ctx*Row` interfaces
- *    re-exported from `@comis/core/ports/context-store-types`.
- *
- * 3. **Session-store DTOs** — schemas paired with the SessionData /
- *    SessionListEntry / SessionDetailedEntry shapes from
- *    `@comis/core/ports/session-store-types`.
- *
- * 4. **Internal DB-row schemas** — schemas matching file-internal
- *    snake_case DB row shapes used by observability-store,
- *    oauth-profile-store-encrypted, delivery-mirror-adapter,
- *    delivery-queue-adapter, embedding-cache-sqlite. The source
- *    interfaces are file-internal (no `export`); these schemas become
- *    the single-source-of-truth that consumers retarget to
- *    (via `z.infer<typeof XxxRowSchema>`).
- *
- * ## Conventions
- *
- * - Every schema is `z.strictObject(...)` — rejects unknown extra columns
- *   (defense-in-depth against schema drift).
- * - JSON-encoded TEXT columns are typed as `z.string()` here (the
- *   row-level shape). Parsing happens downstream in the consumer.
- * - SQLite stores booleans as `INTEGER` (0/1). Schemas use
- *   `z.number().int()` for those columns; the consumer coerces to boolean.
- * - Buffer columns (BLOB) use `z.instanceof(Buffer)` — better-sqlite3
- *   returns Node.js Buffer for BLOB columns.
- * - Nullable columns use `z.X.nullable()` (yields `X | null` — matches
- *   SQLite's NULL distinction from undefined).
+ * Conventions: every schema is `z.strictObject(...)` (rejects extra columns);
+ * JSON-encoded TEXT → `z.string()` (parsed downstream); SQLite bool INTEGER 0/1 →
+ * `z.number().int()`; BLOB → `z.instanceof(Buffer)`; nullable → `z.X.nullable()`
+ * (`X | null` — SQLite NULL ≠ undefined).
  *
  * @module
  */
 
 import { z } from "zod";
 
-// =====================================================================
-// 1. Memory-package-local public rows (paired with packages/memory/src/types.ts)
-// =====================================================================
+// ─── 1. Memory-package-local public rows (paired with packages/memory/src/types.ts) ───
 
 /**
  * Schema for the `memories` table.
@@ -91,6 +59,12 @@ export const MemoryRowSchema = z.strictObject({
   observation_kind: z.string().nullable(),
   /** Inductive pattern class TEXT; null unless observationKind="inductive" (P101/REASON-01). */
   pattern_type: z.string().nullable(),
+  /** Unix ms; non-destructive demote marker (P112/FORGET-02); null = not demoted (DORMANT). */
+  lifecycle_demoted_at: z.number().nullable(),
+  /** Unix ms; non-destructive evict marker (P112/FORGET-02); null = not evicted (DORMANT). */
+  evicted_at: z.number().nullable(),
+  /** Computed lifecycle strength 0..1 (P112/FORGET-02); null = not yet computed. */
+  strength: z.number().nullable(),
   /** Unix timestamp in milliseconds, null if never updated. */
   updated_at: z.number().nullable(),
   /** Unix timestamp in milliseconds, null if no expiry. */
@@ -100,13 +74,11 @@ export const MemoryRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the `memory_entities` table (Phase 83, ENT-05).
- *
- * `canonical_key` is DB-row-ONLY (OQ-2): it is the normalized dedup/index key
- * (TS lower+NFKD+strip-marks — see entity-resolver.ts) and is intentionally
- * NOT a field on the strict `MemoryEntity` domain type in @comis/core, which
- * carries only the display `canonicalName`. The key is an implementation
- * detail of the resolver + UNIQUE index, not part of the domain contract.
+ * Schema for the `memory_entities` table (Phase 83, ENT-05). `canonical_key` is
+ * DB-row-ONLY (OQ-2): the normalized dedup/index key (TS lower+NFKD+strip-marks, see
+ * entity-resolver.ts), intentionally NOT a field on the strict `MemoryEntity` domain
+ * type in @comis/core (which carries only the display `canonicalName`) — an
+ * implementation detail of the resolver + UNIQUE index, not the domain contract.
  */
 export const MemoryEntityRowSchema = z.strictObject({
   id: z.string(),
@@ -124,20 +96,51 @@ export const MemoryEntityRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the `readUsefulness` projection (Phase 93, FEED-02). The scoped
- * `SELECT memory_id, used_count, ignored_count, last_useful_at FROM
- * memory_usefulness WHERE tenant_id=? AND agent_id=? AND memory_id IN (...)`
- * read. `tenant_id`/`agent_id` are NOT projected — the WHERE already pins them
- * (mirrors `EntityListRowSchema`'s drop of `canonical_key`). `last_useful_at` is
- * nullable (NULL until the memory's first "used" attribution). Parsed via
- * `createRowMapper` in the adapter — never `as Row[]`.
+ * Schema for the `readUsefulness` projection (Phase 93, FEED-02; per-intent in
+ * Phase 110, LEARN-01). The scoped `SELECT memory_id, intent, used_count,
+ * ignored_count, last_useful_at FROM memory_usefulness WHERE tenant_id=? AND
+ * agent_id=? AND intent IN (?, '') AND memory_id IN (...)` read; tenant_id/agent_id
+ * NOT projected (the WHERE pins them). `intent` IS projected (the per-intent vs
+ * global-`''` bucket), NON-nullable (NOT NULL DEFAULT '' — global is `''`, never
+ * NULL); `last_useful_at` nullable (NULL until first "used"). Via `createRowMapper`.
  */
 export const MemoryUsefulnessRowSchema = z.strictObject({
   memory_id: z.string(),
+  /** Per-intent bucket; '' = the global bucket (NOT NULL DEFAULT ''). */
+  intent: z.string(),
   used_count: z.number(),
   ignored_count: z.number(),
   /** Epoch ms of the last "used" attribution; NULL until first use. */
   last_useful_at: z.number().nullable(),
+});
+
+/**
+ * Schema for the lifecycle-sweep candidate-scan projection (Phase 112, FORGET-02).
+ * The scoped `SELECT id, memory_type, occurred_at, created_at, proof_count,
+ * lifecycle_demoted_at, evicted_at, strength FROM memories WHERE tenant_id=? AND
+ * agent_id=?` read the DORMANT sweep uses to compute each candidate's decayed
+ * strength + hysteresis-banded tier; tenant_id/agent_id NOT projected (the WHERE
+ * pins them). The three markers + occurred_at + proof_count are `.nullable()` (NULL
+ * = not demoted / not evicted / no strength yet / event-time unknown / raw);
+ * `memory_type` is NOT NULL (DEFAULT 'semantic'), drives the per-type β. Via
+ * `createRowMapper`. SCAFFOLD-DORMANT: the sweep READS these markers but writes NONE.
+ */
+export const MemoryLifecycleRowSchema = z.strictObject({
+  id: z.string(),
+  /** NOT NULL DEFAULT 'semantic' — drives the per-type decay shape β. */
+  memory_type: z.string(),
+  /** Event time (epoch ms); NULL when unknown — falls back to created_at. */
+  occurred_at: z.number().nullable(),
+  /** Record time (epoch ms). */
+  created_at: z.number(),
+  /** Evidence count; NULL = raw, >=1 = observation — an importance signal. */
+  proof_count: z.number().nullable(),
+  /** Non-destructive demote marker (epoch ms); NULL = not demoted (DORMANT). */
+  lifecycle_demoted_at: z.number().nullable(),
+  /** Non-destructive evict marker (epoch ms); NULL = not evicted (DORMANT). */
+  evicted_at: z.number().nullable(),
+  /** Computed strength side-column (REAL 0..1); NULL = not yet computed. */
+  strength: z.number().nullable(),
 });
 
 /**
@@ -156,31 +159,26 @@ export const EntityLaneRowSchema = z.strictObject({
 /**
  * Schema for the causal one-hop edge-lookup projection (Phase 96, EXTRACT-03;
  * RESEARCH Pattern 3). The scoped UNION over `memory_causal_edges` returns, per
- * counterpart memory, the linked memory id (the cause/effect counterpart of a
- * seed, EITHER direction) and the edge `confidence`. `tenant_id`/`agent_id` are
- * NOT projected — the WHERE already pins them (mirrors `EntityLaneRowSchema`'s
- * minimal projection). Parsed via `createRowMapper` in the adapter — never
- * `as Row[]`.
+ * counterpart memory, the linked memory id (the cause/effect counterpart of a seed,
+ * EITHER direction) + the edge `confidence`; tenant_id/agent_id NOT projected (the
+ * WHERE pins them). Parsed via `createRowMapper` — never `as Row[]`.
  */
 export const CausalLaneRowSchema = z.strictObject({
-  /** The cause/effect counterpart memory id of a seed (drives the hydrate). */
-  linked: z.string(),
-  /** The edge confidence (REAL) — drives confidence-desc intra-lane ordering. */
-  confidence: z.number(),
+  linked: z.string(), // cause/effect counterpart memory id of a seed (hydrate)
+  confidence: z.number(), // edge confidence (REAL) — confidence-desc ordering
 });
 
 /**
  * Schema for the `memory_triples` table (Phase 100, KG-01). The segregated
- * bi-temporal knowledge-graph row: an S/P/O assertion with the FOUR bi-temporal
- * timestamps (`t_valid_start`/`t_valid_end` valid-time, `t_ingested`/`expired_at`
- * txn-time) + the occurred range (`t_occurred`/`t_occurred_end`) + the Comis
- * `trust` ladder + optional `source_memory_id` provenance + `confidence`.
- * `tenant_id`/`agent_id` ARE projected (the adapter maps a full row back to the
- * camelCase `TripleInput` for `asOf`). The end-stamps + occurred range +
- * provenance + confidence are `.nullable()` (a current-truth row has
- * `t_valid_end`/`expired_at` NULL); `trust` is `z.enum(...)` matching the DDL
- * CHECK. Parsed via `createRowMapper` in the adapter — never `as Row[]`.
+ * bi-temporal KG row: an S/P/O assertion with the FOUR bi-temporal timestamps
+ * (`t_valid_start`/`t_valid_end` valid-time, `t_ingested`/`expired_at` txn-time) +
+ * the occurred range + the `trust` ladder + optional `source_memory_id` + `confidence`.
+ * tenant_id/agent_id ARE projected (the adapter maps a full row back to `TripleInput`
+ * for `asOf`). End-stamps + occurred range + provenance + confidence are `.nullable()`
+ * (a current-truth row has `t_valid_end`/`expired_at` NULL); `trust` is `z.enum(...)`
+ * matching the DDL CHECK. Parsed via `createRowMapper` — never `as Row[]`.
  */
+// Per-field semantics (trust ladder, 4 bi-temporal stamps, occurred range, provenance, confidence; nullable = NULL on disk) are in the JSDoc above.
 export const MemoryTripleRowSchema = z.strictObject({
   id: z.string(),
   tenant_id: z.string(),
@@ -188,64 +186,84 @@ export const MemoryTripleRowSchema = z.strictObject({
   subject: z.string(),
   predicate: z.string(),
   object: z.string(),
-  /** The Comis trust ladder — matches the DDL CHECK constraint. */
   trust: z.enum(["system", "learned", "external"]),
-  /** Valid-time start: epoch ms when the fact became true. */
   t_valid_start: z.number(),
-  /** Valid-time end: epoch ms; NULL = currently believed (KG-03 default filter). */
   t_valid_end: z.number().nullable(),
-  /** Txn-time start: epoch ms when we learned it. */
   t_ingested: z.number(),
-  /** Txn-time end: epoch ms when we stopped believing it; NULL = live record. */
   expired_at: z.number().nullable(),
-  /** Occurred range start: epoch ms; NULL when unknown. */
   t_occurred: z.number().nullable(),
-  /** Occurred range end: epoch ms; NULL = point/unknown. */
   t_occurred_end: z.number().nullable(),
-  /** Provenance memory id (ON DELETE CASCADE); NULL when not from a memory. */
   source_memory_id: z.string().nullable(),
-  /** Optional corroboration confidence 0..1; NULL when unset. */
   confidence: z.number().nullable(),
 });
 
+// Schema for a `user_representation` row projection (Phase 107, USER-01). The scoped
+// read projects the 7 columns below (NOT tenant_id/agent_id/user_id — the WHERE pins
+// them); trust/entry_type z.enum match the DDL CHECKs ('external' absent);
+// source_memory_id/updated_at nullable. Parsed via createRowMapper.
+export const UserRepresentationRowSchema = z.strictObject({
+  id: z.string(),
+  entry_type: z.enum(["identity", "preference", "relationship", "instruction"]),
+  content: z.string(),
+  trust: z.enum(["system", "learned"]),
+  source_memory_id: z.string().nullable().optional(),
+  created_at: z.number(),
+  updated_at: z.number().nullable().optional(),
+});
+
+// Schema for a `relationship` row projection (Phase 108, SOCIAL-02). The scoped read
+// projects 8 columns (NOT tenant_id/agent_id/channel_id — the WHERE pins them); the
+// directional (subject_user_id, about_user_id) pair is ROW DATA; trust z.enum matches
+// the DDL CHECK ('external' absent). Parsed via createRowMapper.
+export const RelationshipRowSchema = z.strictObject({
+  id: z.string(),
+  subject_user_id: z.string(),
+  about_user_id: z.string(),
+  content: z.string(),
+  trust: z.enum(["system", "learned"]),
+  source_memory_id: z.string().nullable().optional(),
+  created_at: z.number(),
+  updated_at: z.number().nullable().optional(),
+});
+
+// Schema for a `tuned_alpha` row projection (Phase 111, LEARN-03). The scoped read
+// projects 5 columns (NOT tenant_id/agent_id — the WHERE pins them): the 4 REAL
+// tunable boost alphas + updated_at. NO fifth (trust-weight) column (the structural
+// trust-freeze belt #3). Maps snake_case -> camelCase `TunedAlphaVector`. Via createRowMapper.
+export const TunedAlphaRowSchema = z.strictObject({
+  recency_alpha: z.number(),
+  temporal_alpha: z.number(),
+  proof_alpha: z.number(),
+  usefulness_alpha: z.number(),
+  updated_at: z.number(),
+});
+
 /**
- * Schema for the graph-spread recursive-CTE node projection (Phase 100, KG-04;
- * RESEARCH §Graph-spread lane). The bounded `WITH RECURSIVE walk(node, depth)`
- * walk over current-truth `subject → object` edges returns, per reached node, the
- * node string (a triple `object`) and its hop `depth` (`SELECT DISTINCT node,
- * depth FROM walk WHERE depth > 0`). `tenant_id`/`agent_id` are NOT projected —
- * the recursive arm's WHERE already pins them (mirrors `CausalLaneRowSchema`'s
- * minimal projection). The full memory hydrate happens via a second scoped SELECT
- * on the reached node's `source_memory_id`. Parsed via `createRowMapper` in
- * `spreadLane` — never `as Row[]`.
+ * Schema for the graph-spread recursive-CTE node projection (Phase 100, KG-04). The
+ * bounded `WITH RECURSIVE walk(node, depth)` over current-truth subject→object edges
+ * returns, per reached node, the node string + its hop `depth` (`SELECT DISTINCT
+ * node, depth FROM walk WHERE depth > 0`); tenant_id/agent_id NOT projected (the
+ * recursive WHERE pins them). Parsed via `createRowMapper`.
  */
 export const SpreadNodeRowSchema = z.strictObject({
-  /** A reached node (a triple `object` string) — drives the hydrate + dedup. */
-  node: z.string(),
-  /** Hop depth from the seed (>=1 after the WHERE depth>0) — drives 1/(1+depth) scoring. */
-  depth: z.number(),
+  node: z.string(), // a reached node (a triple `object`) — drives hydrate + dedup
+  depth: z.number(), // hop depth >=1 (WHERE depth>0) — drives 1/(1+depth) scoring
 });
 
 /**
  * Schema for the `listEntities` diagnostic projection (Phase 86, OBS-06). The
  * scoped `SELECT id, canonical_name, mention_count, first_seen, last_seen FROM
- * memory_entities WHERE tenant_id=? AND agent_id=? ORDER BY mention_count DESC`
- * read. This is a STRICT SUBSET of the `memory_entities` columns: it
- * deliberately omits `canonical_key` (DB-internal dedup key — OQ-2, never
- * operator-facing) and the `tenant_id`/`agent_id` scope columns (the WHERE
- * already pins them). The adapter maps this snake_case row to the camelCase
- * `EntityRow` domain shape (`@comis/core`) — parsed via `createRowMapper`,
- * never `as Row[]`.
+ * memory_entities WHERE tenant_id=? AND agent_id=? ORDER BY mention_count DESC` read
+ * — a STRICT SUBSET: omits `canonical_key` (DB-internal dedup key, OQ-2) + the
+ * tenant_id/agent_id scope columns (the WHERE pins them). The adapter maps it to the
+ * camelCase `EntityRow` domain shape (@comis/core) — via `createRowMapper`.
  */
 export const EntityListRowSchema = z.strictObject({
   id: z.string(),
-  /** Display form (first-seen casing) → `EntityRow.name`. */
-  canonical_name: z.string(),
+  canonical_name: z.string(), // display form (first-seen casing) → EntityRow.name
   mention_count: z.number(),
-  /** Unix timestamp in milliseconds. */
-  first_seen: z.number(),
-  /** Unix timestamp in milliseconds. */
-  last_seen: z.number(),
+  first_seen: z.number(), // Unix ms
+  last_seen: z.number(), // Unix ms
 });
 
 /**
@@ -257,29 +275,19 @@ export const SessionRowSchema = z.strictObject({
   tenant_id: z.string(),
   user_id: z.string(),
   channel_id: z.string(),
-  /** JSON-encoded unknown[]. */
-  messages: z.string(),
-  /** Unix timestamp in milliseconds. */
-  created_at: z.number(),
-  /** Unix timestamp in milliseconds. */
-  updated_at: z.number(),
-  /** JSON-encoded Record<string, unknown>. */
-  metadata: z.string(),
+  messages: z.string(), // JSON-encoded unknown[]
+  created_at: z.number(), // Unix ms
+  updated_at: z.number(), // Unix ms
+  metadata: z.string(), // JSON-encoded Record<string, unknown>
 });
 
-/**
- * Schema for sqlite-vec KNN query results.
- * Paired with `VecSearchRow` exported from `./types.js`.
- */
+// Schema for sqlite-vec KNN query results. Paired with `VecSearchRow` (./types.js).
 export const VecSearchRowSchema = z.strictObject({
   memory_id: z.string(),
   distance: z.number(),
 });
 
-/**
- * Schema for FTS5 search joined with memories.
- * Paired with `FtsSearchRow` exported from `./types.js`.
- */
+// Schema for FTS5 search joined with memories. Paired with `FtsSearchRow` (./types.js).
 export const FtsSearchRowSchema = z.strictObject({
   id: z.string(),
   content: z.string(),
@@ -303,9 +311,7 @@ export const NamedGraphRowSchema = z.strictObject({
   deleted_at: z.number().nullable(),
 });
 
-// =====================================================================
-// 2. Context-store rows (paired with @comis/core/ports/context-store-types)
-// =====================================================================
+// ─── 2. Context-store rows (paired with @comis/core/ports/context-store-types) ───
 
 /**
  * Schema for the `ctx_conversations` table.
@@ -439,9 +445,7 @@ export const CtxExpansionGrantRowSchema = z.strictObject({
   created_at: z.string(),
 });
 
-// =====================================================================
-// 3. Session-store DTOs (paired with @comis/core/ports/session-store-types)
-// =====================================================================
+// ─── 3. Session-store DTOs (paired with @comis/core/ports/session-store-types) ───
 
 /**
  * Schema for SessionStorePort.load() return shape.
@@ -482,10 +486,7 @@ export const SessionDetailedEntrySchema = z.strictObject({
   messageCount: z.number(),
 });
 
-// =====================================================================
-// 4. Internal DB-row schemas (single-source-of-truth for consumer
-// retargeting; source interfaces are file-internal in their adapters)
-// =====================================================================
+// ─── 4. Internal DB-row schemas (SSOT for consumer retargeting; source interfaces are file-internal in their adapters) ───
 
 // --- Observability store (packages/memory/src/observability-store.ts:211-317) ---
 
@@ -633,12 +634,11 @@ export const DeliveryStatsDbRowSchema = z.strictObject({
 });
 
 /**
- * Schema for `system_prompt_reports` rows.
- * SSOT for the file-internal `SystemPromptReportDbRow` interface in
- * observability-store-types.ts. The full report JSON is stored in
- * `report_json` (post-sanitizeForPersistence); this on-disk schema
- * validates only the column shape, not the JSON contents (those flow
- * through JSON.parse(row.report_json) at read time).
+ * Schema for `system_prompt_reports` rows. SSOT for the file-internal
+ * `SystemPromptReportDbRow` interface in observability-store-types.ts. The full
+ * report JSON lives in `report_json` (post-sanitizeForPersistence); this on-disk
+ * schema validates only the column shape, not the JSON contents (those flow through
+ * JSON.parse(row.report_json) at read time).
  */
 export const SystemPromptReportDbRowSchema = z.strictObject({
   agent_id: z.string(),
@@ -778,22 +778,14 @@ export const BatchCacheRowSchema = z.strictObject({
   embedding: z.instanceof(Buffer),
 });
 
-// =====================================================================
-// 5. Common projection shapes (frequently encountered)
-// =====================================================================
+// ─── 5. Common projection shapes (frequently encountered) ───
 
-/**
- * Schema for single-column id projections (`SELECT id FROM ...`).
- * Replaces `Array<{ id: string }>` casts at call sites.
- */
+/** Schema for single-column id projections (`SELECT id FROM ...`); replaces `Array<{ id: string }>` casts. */
 export const IdProjectionRowSchema = z.strictObject({
   id: z.string(),
 });
 
-/**
- * Schema for `SELECT COUNT(*) as count FROM ...` results.
- * Replaces `{ count: number }` casts at countRows sites.
- */
+/** Schema for `SELECT COUNT(*) as count FROM ...` results; replaces `{ count: number }` casts. */
 export const CountProjectionRowSchema = z.strictObject({
   count: z.number(),
 });

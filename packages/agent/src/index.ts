@@ -193,6 +193,100 @@ export type {
 export { createReasoningSeam } from "./memory/memory-reasoning-seam.js";
 export type { ReasoningSeamDeps } from "./memory/memory-reasoning-seam.js";
 
+// Offline per-user representation build seam (Phase 107, USER-04). The factory the daemon
+// __USER_REPRESENTATION__ sentinel calls to BUILD the build() seam from a cheap resolved
+// model, keeping USER_REPRESENTATION_PROMPT + its parser agent-internal. Consumed by the
+// daemon __USER_REPRESENTATION__ sentinel (no orphan entry — its consumer lands in this plan).
+export { createUserRepresentationSeam } from "./memory/memory-user-representation-seam.js";
+export type { UserRepresentationSeamDeps } from "./memory/memory-user-representation-seam.js";
+
+// Query-time dialectic synthesis seam (Phase 109, DIAL-01 — the ONE allowed query-time LLM
+// surface). The factory the daemon `memory.ask` handler (Plan 03) calls to BUILD the
+// synthesize() seam from a cheap resolved model (Plan 04 injects it), keeping DIALECTIC_PROMPT
+// + its lenient/total parser agent-internal (mirrors createUserRepresentationSeam). The seam
+// is the only LLM; the pure trust-first/abstain/citation helpers + the prompt/parser have no
+// model call. Consumed by the daemon memory.ask handler (Plan 03) — a temporary orphan until
+// that lands (tracked in public-api-policy.ts; REMOVE @ 109-03).
+export { createDialecticSeam } from "./memory/memory-dialectic-seam.js";
+export type { DialecticSeamDeps } from "./memory/memory-dialectic-seam.js";
+export type { DialecticParsed } from "./memory/memory-dialectic-prompt.js";
+
+// The PURE dialectic synthesis helpers (Phase 109, DIAL-01/03 — 109-02). Consumed by the
+// daemon memory.ask handler (Plan 03): orderByTrust (HARD trust-first ordering of the recall
+// grounding), assembleSynthesis (abstain-in-code + citations⊆recalled-ids → the response), and
+// citationChains (the DIAL-03 citation→recalled-id→sourceId reasoning-tree for the recall-trace).
+// No model — the seam above is the only LLM. Only the VALUE helpers are exported; their return
+// shapes (AssembledSynthesis/CitationChain/ParsedSynthesis) are inferred at the consumer and
+// kept module-internal (no unconsumed type surface on the public barrel).
+export { orderByTrust, assembleSynthesis, citationChains } from "./memory/memory-dialectic-synthesis.js";
+
+// Offline per-user representation builder (Phase 107, USER-02 — the WRITE path of
+// the per-user profile: default-OFF gate → read high-trust sources → EXCLUDE
+// external-trust (anti-poisoning) → bound → INJECTED build() seam → validateMemoryWrite
+// (skip non-clean) → upsert via the @comis/core port → counts-only event → idempotent.
+// The ONLY LLM use in the phase and it is OFFLINE; the read path stays LLM-free.)
+export { runUserRepresentationBuild } from "./memory/memory-user-representation-job.js";
+export type {
+  MemoryUserRepresentationDeps,
+  MemoryUserRepresentationConfig,
+  MemoryUserRepresentationStats,
+  MemoryUserRepresentationResult,
+  UserRepresentationSourceMemory,
+} from "./memory/memory-user-representation-job.js";
+// Offline tuned-alpha bandit job (Phase 111, LEARN-03 — Track H2). The LLM-FREE,
+// DETERMINISTIC, KEYLESS optimizer: default-OFF gate → read the accrued FEED signal
+// → aggregate the bounded used-RATE → computeTunedAlphas (pure clamped step) → upsert
+// via the @comis/core port → counts-only event → non-fatal. The daemon
+// __ONLINE_TUNING__ sentinel (111-04) dispatches it WITHOUT any model/key block.
+export { runOnlineTuning } from "./memory/online-tuning-job.js";
+export type {
+  MemoryOnlineTuningDeps,
+  MemoryOnlineTuningConfig,
+  MemoryOnlineTuningStats,
+  MemoryOnlineTuningResult,
+  OnlineTuningBaselineAlphas,
+  OnlineTuningFeedEntry,
+} from "./memory/online-tuning-job.js";
+// The builder prompt + parser (the build() seam's payload shape) — agent-internal;
+// the daemon __USER_REPRESENTATION__ seam (107-05) imports these to keep the prompt
+// string out of the daemon (mirrors createReasoningSeam).
+export {
+  parseUserRepresentationOutput,
+  buildUserRepresentationPrompt,
+} from "./memory/memory-user-representation-prompt.js";
+export type { UserRepresentationCandidate, UserRepresentationBuildOutput } from "./memory/memory-user-representation-prompt.js";
+
+// Offline directional relationship build seam (Phase 108, SOCIAL-01). The factory the
+// daemon __SOCIAL_MODELING__ sentinel calls to BUILD the build() seam from a cheap resolved
+// model, keeping RELATIONSHIP_PROMPT + its parser agent-internal. Consumed by the daemon
+// __SOCIAL_MODELING__ cron dispatch (Plan 108-05) — a temporary orphan until that lands.
+export { createRelationshipSeam } from "./memory/memory-relationship-seam.js";
+export type { RelationshipSeamDeps } from "./memory/memory-relationship-seam.js";
+
+// Offline directional relationship builder (Phase 108, SOCIAL-01 — the WRITE path of
+// the per-channel relationship model: default-OFF gate → read high-trust multi-party
+// sources → EXCLUDE external-trust (anti-poisoning) → bound → INJECTED build() seam →
+// validateMemoryWrite (skip non-clean) → upsert via the @comis/core port → counts-only
+// event → idempotent. Directional: subjectUserId from the speaker, aboutUserId from the
+// LLM; A→B is distinct from B→A. The ONLY LLM use in the phase and it is OFFLINE; the
+// read path stays LLM-free.)
+export { runRelationshipBuild } from "./memory/memory-relationship-job.js";
+export type {
+  MemoryRelationshipDeps,
+  MemoryRelationshipConfig,
+  MemoryRelationshipStats,
+  MemoryRelationshipResult,
+  RelationshipSourceMemory,
+} from "./memory/memory-relationship-job.js";
+// The directional builder prompt + parser (the build() seam's payload shape) —
+// agent-internal; the daemon __SOCIAL_MODELING__ seam (108-05) imports these to keep the
+// prompt string out of the daemon (mirrors createUserRepresentationSeam).
+export {
+  parseRelationshipOutput,
+  buildRelationshipPrompt,
+} from "./memory/memory-relationship-prompt.js";
+export type { RelationshipCandidate, RelationshipBuildOutput } from "./memory/memory-relationship-prompt.js";
+
 // RAG (Retrieval-Augmented Generation)
 export { formatMemorySection } from "./rag/rag-retriever.js";
 
@@ -376,6 +470,11 @@ export { createHybridMemoryInjector } from "./rag/hybrid-memory-injector.js";
 export type { HybridMemoryInjector, HybridMemoryInjection } from "./rag/hybrid-memory-injector.js";
 export { createMemoryRecall } from "./rag/memory-recall.js";
 export type { MemoryRecall, MemoryRecallDeps, MemoryRecallConfig } from "./rag/memory-recall.js";
+// LEARN-03 deterministic apply overlay — also consumed by the daemon's dialectic recall
+// (setup-dialectic.ts) so `memory.ask` applies the SAME tuned-alpha overlay (with the SAME
+// config-sourced trust-freeze, belt #2) as the main prompt-assembly recall path. The single
+// source of truth for the overlay — never re-implemented at the second consumer.
+export { buildScoringAlphas } from "./rag/scoring-overlay.js";
 
 // Schema normalizer (strip unsupported JSON Schema keywords per provider)
 export { normalizeToolSchema, PROVIDER_UNSUPPORTED_KEYWORDS } from "./safety/tool-schema-safety.js";

@@ -9,6 +9,8 @@ export {
   getMessageTraceId,
   // MemoryEntry
   TrustLevelSchema,
+  // Per-user representation prefix-type enum (Phase 107 — USER-01)
+  UserRepresentationTypeSchema,
   MemorySourceSchema,
   MemoryEntrySchema,
   // Structured extraction (Phase 82 — EXTR-01) + Phase-83 domain target
@@ -91,6 +93,8 @@ export type {
   Attachment,
   NormalizedMessage,
   TrustLevel,
+  // Per-user representation prefix type (Phase 107 — USER-01)
+  UserRepresentationType,
   MemoryEntry,
   // Structured extraction (Phase 82) + Phase-83 domain target
   MemorySource,

@@ -105,13 +105,15 @@ export interface SessionsApiDeps {
  * Dependencies for memory-handlers + context-handlers
  * (memory.read/write/search/embeddingCache, context.recall/expand).
  */
-// @optional-field-count: 15 optional fields — MemoryApiDeps is the shared slice
-// for memory-handlers + context-handlers, so it carries TWO feature-gated dep
+// @optional-field-count: 17 optional fields — MemoryApiDeps is the shared slice
+// for memory-handlers + context-handlers, so it carries THREE feature-gated dep
 // families: the context-DAG quartet (contextStore/store/config/contextEngineConfig/
-// resolveConversationId/rpcCall — a binary dispatcher gate) AND, as of Phase 86
+// resolveConversationId/rpcCall — a binary dispatcher gate); as of Phase 86
 // (Plan 05), the OBS-06 memory-diagnostic deps (consolidationStore/entityStore/
 // recallCounters/dataDir — each absent ⇒ the corresponding admin diagnostic is
-// unavailable / zeroed, never a stub). Every optional is a real runtime
+// unavailable / zeroed, never a stub); and, as of Phase 109 (Plan 03), the
+// dialectic deps (dialecticSeam/buildDialecticRecall — each absent ⇒ memory.ask
+// returns the abstain sentinel, never a stub). Every optional is a real runtime
 // feature-switch documented row-by-row in packages/daemon/AUDIT-memory.md
 // (the CI architecture test enforces bidirectional parity with this interface);
 // tightening them to required would force every dispatcher call site to
@@ -170,6 +172,35 @@ export interface MemoryApiDeps {
    *  `resolveRecallTraceFilePath`. Optional — mirrors ObservabilityApiDeps.dataDir;
    *  defaults to ~/.comis at handler-construction time when omitted. */
   dataDir?: string;
+  // Dialectic deps (Phase 109 / DIAL-01/02 — the memory.ask handler).
+  /** The INJECTED query-time dialectic synthesis seam (Plan 02's `createDialecticSeam`
+   *  output; Plan 04 builds + injects it from a cheap resolved model + key). The
+   *  `memory.ask` handler calls it ONLY on the non-empty-recall path (empty recall ⇒
+   *  abstain in CODE without the seam call). Optional so existing handler tests construct
+   *  deps without it; the handler abstains gracefully when absent (no key / not wired). */
+  dialecticSeam?: (
+    agentId: string,
+    question: string,
+    groundingText: string,
+  ) => Promise<import("@comis/agent").DialecticParsed>;
+  /** A per-agent recall factory returning the FULL `createMemoryRecall` orchestrator built
+   *  with the daemon's store set + the INVOKING agent's RagConfig (CR-04 — re-reads the calling
+   *  agent's `rag`, not the default agent's). The `memory.ask` handler runs THIS over the
+   *  question — NOT `deps.memoryApi.search` (which bypasses the trust filter). Injecting the
+   *  builder keeps the 8-store deps off this slice. Optional so existing handler tests construct
+   *  deps without it; the handler abstains when absent. */
+  buildDialecticRecall?: (agentId: string) => import("@comis/agent").MemoryRecall;
+  /** The per-agent dialectic grounding-set HARD ceiling resolver (`dialectic.maxRecall`, default
+   *  10) — the DoS bound on the synthesis LLM input (CR-02/CR-04). The `memory.ask` handler calls
+   *  it with the INVOKING agentId and clamps the caller-controlled `limit` to `[1, ceiling]`: a
+   *  huge/negative `limit` can never flood the prompt or negative-slice the grounding. A function
+   *  (not a scalar) so each agent's OWN bound is honored. Optional so existing handler tests omit
+   *  it; the handler falls back to the schema default (10) when absent. */
+  dialecticMaxRecall?: (agentId: string) => number;
+  /** Suspicious-pattern telemetry callback for the dialectic grounding (CR-01) — surfaced to
+   *  `wrapExternalContent` so a detected injection in recalled content is reported (the SAME
+   *  hook rag-retriever threads). Optional; absent ⇒ no telemetry (sanitization still runs). */
+  onSuspiciousContent?: import("@comis/core").WrapExternalContentOptions["onSuspiciousContent"];
 }
 
 /**

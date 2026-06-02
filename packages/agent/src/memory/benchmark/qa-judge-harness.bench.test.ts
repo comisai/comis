@@ -117,6 +117,14 @@ const ANSWER_API_KEY = process.env.COMIS_BENCH_ANSWER_API_KEY;
 const JUDGE_PROVIDER = process.env.COMIS_BENCH_JUDGE_PROVIDER;
 const JUDGE_MODEL = process.env.COMIS_BENCH_JUDGE_MODEL;
 const JUDGE_API_KEY = process.env.COMIS_BENCH_JUDGE_API_KEY;
+// PROVE2 (Phase 114) cost-bounding knobs. COMIS_BENCH_LIMIT caps the per-dataset item
+// count for a sampled, cost-bounded COSTED run (absent -> the full set, byte-identical
+// to the prior behaviour). COMIS_BENCH_SKIP_CONTROL skips the expensive full-haystack
+// letta-fs control answer+judge loop (the control roughly DOUBLES the LLM spend and
+// dumps the entire haystack per call — not needed for a Comis-only sampling pass). Both
+// are read ONLY at the .test.ts boundary (the globals rule scopes to src/**).
+const COMIS_BENCH_LIMIT = process.env.COMIS_BENCH_LIMIT;
+const COMIS_BENCH_SKIP_CONTROL = process.env.COMIS_BENCH_SKIP_CONTROL;
 
 /** Fixed epoch (matches the Phase-88 sibling's neutral clock). */
 const BENCH_NOW = 1_700_000_000_000;
@@ -303,8 +311,17 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
     const locomoResult = loadLocomoDataset(locomoRead.parsed);
     expect(locomoResult.ok, "LoCoMo dataset parses").toBe(true);
     if (!lmeResult.ok || !locomoResult.ok) return;
-    const lmeItems = lmeResult.value;
-    const locomoItems = locomoResult.value;
+    // PROVE2 cost-bounding: cap each dataset to the first N items when COMIS_BENCH_LIMIT
+    // is set (deterministic prefix — the public sets ship in a fixed order, so the same
+    // N is reproducible). Absent -> the full set (unchanged).
+    const benchLimit =
+      COMIS_BENCH_LIMIT !== undefined && COMIS_BENCH_LIMIT.length > 0
+        ? Math.max(0, Number.parseInt(COMIS_BENCH_LIMIT, 10) || 0)
+        : undefined;
+    const lmeItems =
+      benchLimit !== undefined ? lmeResult.value.slice(0, benchLimit) : lmeResult.value;
+    const locomoItems =
+      benchLimit !== undefined ? locomoResult.value.slice(0, benchLimit) : locomoResult.value;
 
     // Reproducibility hash over BOTH dataset byte streams (identity only; no secret).
     datasetSha = createHash("sha256").update(lmeRead.raw).update(locomoRead.raw).digest("hex");
@@ -606,7 +623,11 @@ describe.skipIf(!COMIS_BENCH)("end-to-end QA + judge (gated)", () => {
       // unchanged). No tokens/latency capture here — the cost/latency blocks measure
       // Comis's recall path, not the control.
       const controlVerdicts: CategorizedVerdict[] = [];
-      for (const a of controlAnswerables) {
+      // PROVE2 cost-bounding: skip the expensive full-haystack control loop entirely when
+      // COMIS_BENCH_SKIP_CONTROL is set (it ~doubles LLM spend AND dumps the whole haystack
+      // per call). The control row then aggregates over zero verdicts (a clean no-op row).
+      if (!COMIS_BENCH_SKIP_CONTROL)
+        for (const a of controlAnswerables) {
         // A model lane that failed to resolve makes the question INVALID (excluded),
         // never wrong — same discipline as the recall loop above.
         if (!answerModel || !judgeModel) {

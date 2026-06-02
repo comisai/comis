@@ -14,6 +14,8 @@ export {
   StructuredMemorySchema,
   MemoryExtractionResultSchema,
   MemoryEntitySchema,
+  // Per-user representation prefix-type enum (Phase 107 — USER-01)
+  UserRepresentationTypeSchema,
 } from "./memory-entry.js";
 export type {
   TrustLevel,
@@ -24,6 +26,8 @@ export type {
   StructuredMemory,
   MemoryExtractionResult,
   MemoryEntity,
+  // Per-user representation prefix type (Phase 107 — USER-01)
+  UserRepresentationType,
 } from "./memory-entry.js";
 
 export {

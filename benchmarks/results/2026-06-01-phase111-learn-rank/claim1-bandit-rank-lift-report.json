@@ -1,0 +1,20 @@
+{
+  "harnessVersion": "phase-111-05-v1",
+  "claim": "bandit-driven-rank-lift",
+  "episodes": 5,
+  "tunedUsefulnessFirst": 0.125,
+  "tunedUsefulnessLast": 0.225,
+  "usefulnessAlphaClimbed": true,
+  "goldScoreFirst": 1,
+  "goldScoreLast": 1.1,
+  "goldScoreLift": 0.1,
+  "goldScoreLiftSign": "MEASURED-POSITIVE",
+  "goldScorePerEpisode": [1, 1.0625, 1.075, 1.0875, 1.1],
+  "goldScoreNonDecreasing": true,
+  "firstRank": 0,
+  "lastRank": 0,
+  "rankLift": 0,
+  "rankLiftSign": "MEASURED-FLAT",
+  "ranks": [0, 0, 0, 0, 0],
+  "pass": true
+}

@@ -455,6 +455,10 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
         toolCapabilityPort: deps.getCapabilityPortForAgent(agentId),
         contextEngineVersion: agentConfig?.contextEngine?.version ?? "pipeline",
         builtinToolsBrowserEnabled: skillsConfig.builtinTools.browser,
+        // DIAL-02 opt-in gate for the memory_ask (dialectic) tool. `=== true` so an
+        // absent/typo'd `dialectic` block is OFF (default-OFF byte-identity — the tool
+        // is filtered out before build, no query-time-LLM surface registered).
+        dialecticEnabled: agentConfig?.dialectic?.enabled === true,
         onConfigMutationStart: enterConfigMutationFence,
         onConfigMutationEnd: leaveConfigMutationFence,
         // After agents.create seeds the new workspace's template files

@@ -130,10 +130,12 @@ describe("bootstrap", () => {
       expect(raw!.get("unsetAgent")).toBeUndefined();
       expect(raw!.get("onAgent")).toBe(true);
       expect(raw!.get("offAgent")).toBe(false);
-      // The PARSED config, by contrast, erased the unset agent's signal to a concrete false.
-      expect(result.value.config.agents.unsetAgent!.rag.rerank.enabled).toBe(false);
+      // The PARSED config, by contrast, erased the unset agent's signal to a concrete boolean —
+      // the schema default. v2.9 increment 2 flips rag.rerank.enabled's default ON, so the
+      // unset agent parses to `true` (was `false` pre-flip); the raw map still carries `undefined`.
+      expect(result.value.config.agents.unsetAgent!.rag.rerank.enabled).toBe(true);
       // Proving the raw map is NOT just a view of the parsed config: unset -> undefined,
-      // parsed -> false. That divergence is the whole point of CR-01's fix.
+      // parsed -> true. That divergence is the whole point of CR-01's fix.
       expect(raw!.get("unsetAgent")).not.toBe(result.value.config.agents.unsetAgent!.rag.rerank.enabled);
     }
   });

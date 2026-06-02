@@ -1,0 +1,12 @@
+{
+  "harnessVersion": "phase-112-05-v1",
+  "claim": "byte-identity-at-neutral-importance",
+  "scoreForgetOff": 1,
+  "scoreForgetOnNeutral": 1,
+  "scoreForgetAbsent": 1,
+  "rankForgetOff": 1,
+  "rankForgetOnNeutral": 1,
+  "rankForgetAbsent": 1,
+  "byteIdentical": true,
+  "pass": true
+}

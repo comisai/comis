@@ -22,6 +22,31 @@ export const RetentionConfigSchema = z.strictObject({
     maxAgeDays: z.number().int().nonnegative().default(0),
   });
 
+/**
+ * Master cost-feature kill switch (v1 opt-out posture).
+ *
+ * A single top-level gate over EVERY LLM cost-bearing memory feature — the
+ * offline crons (memoryReview, memoryConsolidation, memoryReasoning,
+ * memoryUserRepresentation, memoryUsefulnessJudge, memoryOnlineTuning) and the
+ * query-time dialectic tool (`memory_ask`). When `enabled` is `false`, ALL of
+ * them are force-disabled at their registration sites regardless of their
+ * per-agent config — the operator's single escape hatch from any LLM/API spend
+ * the memory stack would otherwise incur.
+ *
+ * Default `true` because the v1 posture is opt-OUT: the gate is ON, but it
+ * gates nothing until a per-agent cost feature is itself enabled — so a bare
+ * config is byte-identical (no feature is on by default in this increment).
+ *
+ * NOT in scope of this gate: the $0 on-device recall features
+ * (rerank/lanes/query-understanding/forget/mmr), which cost no API budget; and
+ * `socialModeling`, which has its OWN privacy gate (`privacyReviewSignedOffBy`)
+ * and stays independent.
+ */
+export const CostFeaturesConfigSchema = z.strictObject({
+    /** Master switch over all LLM cost-bearing memory features. Default true (opt-out posture); set false to force-disable every cost feature. */
+    enabled: z.boolean().default(true),
+  });
+
 export const MemoryConfigSchema = z.strictObject({
     /** Path to the SQLite database file (resolved relative to dataDir if not absolute) */
     dbPath: z.string().default("memory.db"),
@@ -45,8 +70,11 @@ export const MemoryConfigSchema = z.strictObject({
     rerankerGpu: z.enum(["auto", "metal", "cuda", "vulkan", "false"]).default("auto"),
     /** Thread count for the reranker ranking context. Bounds CPU contention (Phase-79: 4-8). */
     rerankerThreads: z.number().int().positive().default(4),
+    /** Master cost-feature kill switch — force-disables ALL LLM cost-bearing memory features when `enabled: false`. Default ON (opt-out posture). */
+    costFeatures: CostFeaturesConfigSchema.default(() => CostFeaturesConfigSchema.parse({})),
   });
 
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 export type CompactionConfig = z.infer<typeof CompactionConfigSchema>;
 export type RetentionConfig = z.infer<typeof RetentionConfigSchema>;
+export type CostFeaturesConfig = z.infer<typeof CostFeaturesConfigSchema>;

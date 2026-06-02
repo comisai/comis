@@ -387,6 +387,773 @@ describe("assembleExecutionPrompt", () => {
   });
 
   // -----------------------------------------------------------------
+  // 4a-ter. LEARN-03: the deterministic apply overlay (buildScoringAlphas) at
+  // the recall `scoring:` arg, behind a gated tunedAlphaStore read.
+  //   - Default-OFF byte-identity (Pitfall 3): tuning off (or no store dep) ⇒
+  //     read() called 0 times AND the `scoring` arg is byte-identical to
+  //     config.rag.scoring (the static alphas pass unchanged). The spy mirrors
+  //     the FEED default-off / MMR readEmbeddings=0 pattern.
+  //   - Apply: tuning ON + a learned vector ⇒ the `scoring` arg carries the four
+  //     tuned non-trust alphas; read() runs ONCE scoped to (tenant, agent).
+  //   - Belt #2 (the OD2 ship-gate): under tuning ON with ANY learned vector, the
+  //     `scoring` arg's trust weight is byte-identical to config.rag.scoring's —
+  //     the learned vector can never raise trust (the overlay sources it from
+  //     config). The trust FILTER (memory-recall.ts:534-536) stays frozen — that
+  //     file is UNTOUCHED by this plan (asserted via the git-diff verify gate).
+  // -----------------------------------------------------------------
+  describe("LEARN-03 deterministic apply overlay (gated buildScoringAlphas at the recall scoring arg)", () => {
+    /** The static config alphas the overlay merges onto (the SOLE trust-weight source). */
+    const CONFIG_SCORING = {
+      recencyAlpha: 0.2,
+      temporalAlpha: 0.2,
+      proofAlpha: 0.1,
+      trustAlpha: 0.1,
+      usefulnessAlpha: 0.1,
+    };
+
+    /** A spy TunedAlphaStore counting read() calls + capturing the read scope. */
+    function makeTunedSpy(
+      vector: import("@comis/core").TunedAlphaVector | undefined,
+    ): {
+      store: import("@comis/core").TunedAlphaStore;
+      reads: () => number;
+      lastScope: () => { tenantId: string; agentId: string } | undefined;
+    } {
+      let readCalls = 0;
+      let scope: { tenantId: string; agentId: string } | undefined;
+      const store = {
+        upsert: vi.fn(),
+        read: vi.fn(async (s: { tenantId: string; agentId: string }) => {
+          readCalls += 1;
+          scope = s;
+          return { ok: true as const, value: vector };
+        }),
+      } as unknown as import("@comis/core").TunedAlphaStore;
+      return { store, reads: () => readCalls, lastScope: () => scope };
+    }
+
+    /** A memoryPort + a non-empty recall result so the recall path runs end-to-end. */
+    function ragMemoryPort() {
+      mockRecall.mockResolvedValue({ ok: true, value: [] });
+      return {
+        search: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+        store: vi.fn(),
+      } as any;
+    }
+
+    /** Base rag config with the static scoring alphas; `onlineTuning` toggled per test. */
+    function tuningConfig(onlineTuning?: { enabled: boolean }) {
+      return makeConfig({
+        rag: {
+          enabled: true,
+          maxResults: 5,
+          minScore: 0.3,
+          includeTrustLevels: ["learned"],
+          maxContextChars: 5000,
+          scoring: { ...CONFIG_SCORING },
+          ...(onlineTuning !== undefined ? { onlineTuning } : {}),
+        },
+      });
+    }
+
+    /** The `scoring` arg captured off the (mocked) createMemoryRecall config object. */
+    function capturedScoring(): {
+      recencyAlpha: number;
+      temporalAlpha: number;
+      proofAlpha: number;
+      trustAlpha: number;
+      usefulnessAlpha: number;
+    } {
+      expect(mockCreateMemoryRecall).toHaveBeenCalledOnce();
+      return (mockCreateMemoryRecall.mock.calls[0][1] as { scoring: any }).scoring;
+    }
+
+    it("Test 1 (default-OFF byte-identity, Pitfall 3): tuning OFF ⇒ read() 0 times AND scoring is byte-identical to config", async () => {
+      // The store is CONSTRUCTED (spy) and WIRED, but onlineTuning is OFF — the
+      // gate must short-circuit BEFORE the read. FAILS on a pre-patch that reads
+      // the store above the enabled gate (the MMR readEmbeddings=0 analog).
+      const spy = makeTunedSpy({
+        recencyAlpha: 0.9,
+        temporalAlpha: 0.8,
+        proofAlpha: 0.7,
+        usefulnessAlpha: 0.6,
+      });
+      await assembleExecutionPrompt(
+        makeParams({
+          config: tuningConfig({ enabled: false }),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), tunedAlphaStore: spy.store },
+          sessionKey: { tenantId: "t", agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any,
+        }),
+      );
+
+      // THE COST GATE: tuning off ⇒ the store read NEVER fires.
+      expect(spy.reads(), "read() NEVER called when onlineTuning is off").toBe(0);
+      // ...and the static config alphas pass unchanged (byte-identical recall).
+      expect(capturedScoring()).toEqual(CONFIG_SCORING);
+    });
+
+    it("Test 2 (apply): tuning ON + a learned vector ⇒ the four non-trust alphas reach scoring; read() runs ONCE scoped to (tenant, agent)", async () => {
+      const spy = makeTunedSpy({
+        recencyAlpha: 0.91,
+        temporalAlpha: 0.82,
+        proofAlpha: 0.73,
+        usefulnessAlpha: 0.64,
+      });
+      await assembleExecutionPrompt(
+        makeParams({
+          config: tuningConfig({ enabled: true }),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), tunedAlphaStore: spy.store },
+          sessionKey: { tenantId: "t", agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any,
+          agentId: "agent-1",
+        }),
+      );
+
+      const scoring = capturedScoring();
+      // The four tuned non-trust alphas overlay the static config alphas.
+      expect(scoring.recencyAlpha).toBe(0.91);
+      expect(scoring.temporalAlpha).toBe(0.82);
+      expect(scoring.proofAlpha).toBe(0.73);
+      expect(scoring.usefulnessAlpha).toBe(0.64);
+      // The read fired exactly once, scoped to the live (tenant, agent).
+      expect(spy.reads()).toBe(1);
+      expect(spy.lastScope()).toEqual({ tenantId: "t", agentId: "agent-1" });
+    });
+
+    it("Test 3 (belt #2 at the apply site — the OD2 RED): under tuning ON with ANY learned vector, scoring.trustAlpha is byte-identical to config", async () => {
+      // Even a learned vector that (type-widened) smuggles a trust weight cannot move
+      // the apply-site trust weight — the overlay sources it from config. FAILS if
+      // trustAlpha is taken from the tuned vector.
+      const smuggled = {
+        recencyAlpha: 0.95,
+        temporalAlpha: 0.95,
+        proofAlpha: 0.95,
+        usefulnessAlpha: 0.95,
+        trustAlpha: 0.99,
+      } as unknown as import("@comis/core").TunedAlphaVector;
+      const spy = makeTunedSpy(smuggled);
+      await assembleExecutionPrompt(
+        makeParams({
+          config: tuningConfig({ enabled: true }),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort(), tunedAlphaStore: spy.store },
+          sessionKey: { tenantId: "t", agentId: "agent-1", channelType: "telegram", channelId: "chat-1" } as any,
+          agentId: "agent-1",
+        }),
+      );
+
+      const scoring = capturedScoring();
+      // belt #2: the trust weight is byte-identical to config (0.1), NOT the smuggled 0.99.
+      expect(scoring.trustAlpha).toBe(CONFIG_SCORING.trustAlpha);
+      expect(scoring.trustAlpha).toBe(0.1);
+      // The four non-trust alphas DID overlay (proving the vector was applied, not ignored).
+      expect(scoring.recencyAlpha).toBe(0.95);
+    });
+  });
+
+  // -----------------------------------------------------------------
+  // 4a-bis. USER-03: the LLM-free per-user-profile standing block.
+  // The profile is read (deterministically) + pushed onto memorySections
+  // exactly like the temporal-guidance block. Its binding proof is
+  // default-OFF byte-identity (the cost gate): with NO userRepresentationStore
+  // dep the prompt is byte-identical AND read() is called 0 times. The block
+  // appears ONLY when the store returns rows, and the injection is LLM-free
+  // (a store.read + the pure formatter — never a model call).
+  // -----------------------------------------------------------------
+  describe("USER-03 per-user-profile injection (LLM-free standing block)", () => {
+    /**
+     * The standing-block config: the profile's OWN gate
+     * (`memoryUserRepresentation.enabled`) is ON. HR-01 fix — the profile push
+     * site is gated on this knob + the store dep, INDEPENDENT of recall hits and
+     * independent of `rag.enabled`. `rag.enabled` is left ON here only so the
+     * recall path also runs (the prior tests asserted recall is still constructed
+     * exactly once); the standing block no longer NEEDS a recall hit to inject.
+     */
+    function ragConfig() {
+      return makeConfig({
+        memoryUserRepresentation: { enabled: true },
+        rag: {
+          enabled: true,
+          maxResults: 5,
+          minScore: 0.3,
+          includeTrustLevels: ["learned"],
+          maxContextChars: 5000,
+        },
+      });
+    }
+    /**
+     * The standing-block config WITHOUT a recall hit: the profile knob is ON but
+     * `rag.enabled` is OFF (no recall, no recall hits). HR-01 — the durable
+     * profile MUST still inject on a zero-recall turn. The push must NOT be nested
+     * inside the recall-hit branch.
+     */
+    function userReprOnlyConfig() {
+      return makeConfig({
+        memoryUserRepresentation: { enabled: true },
+        rag: { enabled: false },
+      });
+    }
+    /** A memoryPort + a non-empty recall result so `recalled.value.length > 0`. */
+    function ragMemoryPort() {
+      const mockSearchResult = {
+        entry: {
+          id: "m1",
+          tenantId: "t",
+          content: "Test memory",
+          createdAt: 1_000,
+          tags: [],
+          trustLevel: "learned",
+          source: { channel: "test" },
+        },
+        score: 0.85,
+      };
+      mockRecall.mockResolvedValue({ ok: true, value: [mockSearchResult] });
+      return {
+        search: vi.fn().mockResolvedValue({ ok: true, value: [mockSearchResult] }),
+        store: vi.fn(),
+      } as any;
+    }
+    /** A spy UserRepresentationStore counting read() calls, returning a fixed set. */
+    function makeSpyStore(
+      entries: import("@comis/core").UserRepresentationEntry[],
+    ): { store: import("@comis/core").UserRepresentationStore; reads: () => number } {
+      let readCalls = 0;
+      const store = {
+        upsert: vi.fn(),
+        read: vi.fn(async () => {
+          readCalls += 1;
+          return { ok: true as const, value: entries };
+        }),
+      } as unknown as import("@comis/core").UserRepresentationStore;
+      return { store, reads: () => readCalls };
+    }
+
+    it("default-OFF: with NO userRepresentationStore dep the prompt is byte-identical (no <user_profile> block)", async () => {
+      const params = makeParams({
+        config: ragConfig(),
+        deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
+        sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+      });
+      const result = await assembleExecutionPrompt(params);
+
+      // No store dep ⇒ no profile read ⇒ no block ⇒ byte-identity preserved.
+      expect(result.dynamicPreamble).not.toContain("<user_profile>");
+      expect(result.systemPrompt).not.toContain("<user_profile>");
+    });
+
+    it("default-OFF cost gate: with NO store dep, read() is called 0 times AND the prompt equals the no-store baseline", async () => {
+      // The store is CONSTRUCTED (spy) but NOT wired into deps — the off config.
+      // Mirror recall-iq-contribution.bench.test.ts:633-640: the off config never
+      // reads (the cost gate) and is byte-identical to the feature-absent path.
+      const spy = makeSpyStore([
+        {
+          id: "p1",
+          entryType: "identity",
+          content: "name is Sam",
+          trust: "learned",
+          createdAt: 1_000,
+        },
+      ]);
+
+      const baseline = await assembleExecutionPrompt(
+        makeParams({
+          config: ragConfig(),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      // THE COST GATE: the store was never wired, so its read() was never called.
+      expect(spy.reads(), "read() NEVER called in the off (no-store-dep) config").toBe(0);
+      expect(baseline.dynamicPreamble).not.toContain("<user_profile>");
+    });
+
+    it("store present but empty: read() runs, the formatter returns null, nothing is pushed → byte-identical prompt", async () => {
+      const emptySpy = makeSpyStore([]); // the user has no profile rows
+      const withStore = await assembleExecutionPrompt(
+        makeParams({
+          config: ragConfig(),
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort: ragMemoryPort(),
+            userRepresentationStore: emptySpy.store,
+          },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+      const withoutStore = await assembleExecutionPrompt(
+        makeParams({
+          config: ragConfig(),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      // The read ran (store present) but found nothing → no block → identical prompt.
+      expect(emptySpy.reads(), "read() runs once when the store is present").toBe(1);
+      expect(withStore.dynamicPreamble).not.toContain("<user_profile>");
+      expect(withStore.dynamicPreamble).toEqual(withoutStore.dynamicPreamble);
+      expect(withStore.systemPrompt).toEqual(withoutStore.systemPrompt);
+    });
+
+    it("LLM-free injection ON: a store returning rows injects the <user_profile> block via store.read + the pure formatter (no model call)", async () => {
+      const spy = makeSpyStore([
+        {
+          id: "p2",
+          entryType: "preference",
+          content: "likes terse replies",
+          trust: "learned",
+          createdAt: 2_000,
+        },
+        {
+          id: "p1",
+          entryType: "identity",
+          content: "name is Sam",
+          trust: "learned",
+          createdAt: 1_000,
+        },
+      ]);
+      const result = await assembleExecutionPrompt(
+        makeParams({
+          config: ragConfig(),
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort: ragMemoryPort(),
+            userRepresentationStore: spy.store,
+          },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      // The block + every entry's content appear; the read drove it (LLM-free).
+      expect(result.dynamicPreamble).toContain("<user_profile>");
+      expect(result.dynamicPreamble).toContain("name is Sam");
+      expect(result.dynamicPreamble).toContain("likes terse replies");
+      expect(spy.reads(), "the injection is a store.read (deterministic, LLM-free)").toBe(1);
+      // The injection adds NO extra model/recall seam: recall is still constructed
+      // exactly once (the profile path is a store.read + the pure formatter, never a
+      // second createMemoryRecall / reasoning call).
+      expect(mockCreateMemoryRecall).toHaveBeenCalledOnce();
+    });
+
+    it("HR-01 standing block: a populated profile injects on a ZERO-recall turn (recall returns ok([])) — the profile is NOT recall-conditional", async () => {
+      // RED-first (HR-01): the profile <user_profile> block was wrongly NESTED inside
+      // the `recalled.value.length > 0` recall-hit branch, so it silently dropped on
+      // every zero-recall turn (greetings/off-topic/sparse store). The durable per-user
+      // profile is a STANDING block — it must inject whenever its OWN knob is on + the
+      // store has rows, independent of whether THIS turn's recall hit. This test wires a
+      // populated store + a recall that returns ok([]) (the beforeEach default) and asserts
+      // the block IS present. On the pre-fix (nested) code this FAILS (the push site is
+      // unreachable when recalled.value.length === 0).
+      const memoryPort = ragMemoryPort(); // builds the port (and sets a recall hit)
+      // Force ZERO recall hits AFTER ragMemoryPort() (which set a non-empty result):
+      // recall succeeds but returns nothing this turn — the recall-hit branch is NOT
+      // entered, so the pre-fix (nested) profile push is unreachable here.
+      mockRecall.mockResolvedValue({ ok: true, value: [] });
+      const spy = makeSpyStore([
+        {
+          id: "p1",
+          entryType: "identity",
+          content: "name is Sam",
+          trust: "learned",
+          createdAt: 1_000,
+        },
+      ]);
+      const result = await assembleExecutionPrompt(
+        makeParams({
+          config: ragConfig(),
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort,
+            userRepresentationStore: spy.store,
+          },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      // The standing block injects even though recall returned NOTHING this turn.
+      expect(result.dynamicPreamble).toContain("<user_profile>");
+      expect(result.dynamicPreamble).toContain("name is Sam");
+      expect(spy.reads(), "the standing-block read runs on a zero-recall turn").toBe(1);
+    });
+
+    it("HR-01 standing block: injects with rag.enabled=false (no memoryPort recall path) — decoupled from the RAG knob", async () => {
+      // The other half of HR-01: the block was ALSO gated behind `rag.enabled` +
+      // `deps.memoryPort` (the outer recall guard). An operator who enables
+      // `memoryUserRepresentation` but runs `rag.enabled: false` got ZERO profile
+      // injection (the offline builder wrote rows nothing ever read). The standing
+      // block must inject on its OWN knob + store, with NO RAG/memoryPort at all.
+      const spy = makeSpyStore([
+        {
+          id: "p1",
+          entryType: "identity",
+          content: "name is Sam",
+          trust: "learned",
+          createdAt: 1_000,
+        },
+      ]);
+      const result = await assembleExecutionPrompt(
+        makeParams({
+          config: userReprOnlyConfig(), // rag.enabled = false, NO memoryPort wired
+          deps: {
+            workspaceDir: "/workspace",
+            userRepresentationStore: spy.store,
+          },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      expect(result.dynamicPreamble).toContain("<user_profile>");
+      expect(result.dynamicPreamble).toContain("name is Sam");
+      expect(spy.reads(), "the standing-block read runs even with rag.enabled=false").toBe(1);
+    });
+
+    it("HR-01 cost gate: knob OFF + store present + recall HIT ⇒ read() NEVER called and the prompt is byte-identical (the OWN-knob gate, not store-presence)", async () => {
+      // The HR-01 gate moved from store-presence-only to (knob && store). Prove the
+      // knob is load-bearing — and that this is a true regression guard: wire the store
+      // AND drive a recall HIT (so the OLD nested push site WOULD have run), but leave
+      // `memoryUserRepresentation` OFF. The cost gate must hold: read() is NEVER called
+      // and the prompt equals the knob-off baseline (default-OFF byte-identity). On the
+      // pre-fix code (gated on store-presence inside the recall-hit branch) this FAILS —
+      // it would read once and inject. The recall block itself still runs (rag.enabled),
+      // so the baseline includes the recalled section; only the profile is gated off.
+      const memoryPort = ragMemoryPort(); // sets a non-empty recall hit
+      const spy = makeSpyStore([
+        {
+          id: "p1",
+          entryType: "identity",
+          content: "name is Sam",
+          trust: "learned",
+          createdAt: 1_000,
+        },
+      ]);
+      const knobOff = await assembleExecutionPrompt(
+        makeParams({
+          // knobOffRagConfig: rag.enabled ON (recall hits) but the profile knob OFF.
+          config: makeConfig({
+            rag: {
+              enabled: true,
+              maxResults: 5,
+              minScore: 0.3,
+              includeTrustLevels: ["learned"],
+              maxContextChars: 5000,
+            },
+          }),
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort,
+            userRepresentationStore: spy.store,
+          },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+      const baseline = await assembleExecutionPrompt(
+        makeParams({
+          config: makeConfig({
+            rag: {
+              enabled: true,
+              maxResults: 5,
+              minScore: 0.3,
+              includeTrustLevels: ["learned"],
+              maxContextChars: 5000,
+            },
+          }),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      expect(spy.reads(), "knob off ⇒ read() NEVER called even on a recall hit (the cost gate)").toBe(0);
+      expect(knobOff.dynamicPreamble).not.toContain("<user_profile>");
+      expect(knobOff.dynamicPreamble).toEqual(baseline.dynamicPreamble);
+      expect(knobOff.systemPrompt).toEqual(baseline.systemPrompt);
+    });
+
+    it("forward-presence: deps.userRepresentationStore reaches the read site with the prompt's own (tenant, agent, user) scope", async () => {
+      // The threading guard (Pitfall 1 — a dropped thread is a silent no-op). Mirror
+      // the deps.tripleStore forward-presence test (lines 310-337): assert the dep the
+      // caller passed is the one whose read() fires, scoped to THIS prompt's identity.
+      const spy = makeSpyStore([
+        {
+          id: "p1",
+          entryType: "identity",
+          content: "name is Sam",
+          trust: "learned",
+          createdAt: 1_000,
+        },
+      ]);
+      await assembleExecutionPrompt(
+        makeParams({
+          config: ragConfig(),
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort: ragMemoryPort(),
+            tenantId: "tenant-X",
+            userRepresentationStore: spy.store,
+          },
+          agentId: "agent-Z",
+          sessionKey: { tenantId: "tenant-X", userId: "user-Q", channelId: "chat-1" } as any,
+        }),
+      );
+
+      // The exact dep the caller passed is the one that ran (forward-presence).
+      expect(spy.reads()).toBe(1);
+      const readMock = (spy.store as unknown as { read: ReturnType<typeof vi.fn> }).read;
+      const scopeArg = readMock.mock.calls[0][0] as {
+        tenantId: string;
+        agentId: string;
+        userId: string;
+      };
+      expect(scopeArg.tenantId).toBe("tenant-X");
+      expect(scopeArg.agentId).toBe("agent-Z");
+      expect(scopeArg.userId).toBe("user-Q");
+    });
+  });
+
+  // -----------------------------------------------------------------
+  // 4a-ter. SOCIAL-02/03: the LLM-free channel-relationship standing block.
+  // The directional analog of the USER-03 block above (Phase 108, Plan 04).
+  // The channel's relationship edges are read (deterministically) + pushed onto
+  // memorySections, exactly like the temporal-guidance / user-profile blocks.
+  // Two binding proofs:
+  //   - default-OFF byte-identity (the cost gate): with NO relationshipStore dep
+  //     OR socialModeling off, the prompt is byte-identical AND read() is 0 times.
+  //   - SOCIAL-03 sign-off gate (the headline read-side proof): socialModeling.enabled
+  //     === true but NO privacyReviewSignedOffBy ⇒ STILL 0 reads + byte-identical (the
+  //     knob alone does not activate — a recorded sign-off is required).
+  // The active path reads scoped to channelId = sessionKey.channelId (the SOCIAL-02
+  // read-side boundary) and the injection is LLM-free (a store.read + the pure
+  // formatter — never a model call).
+  // -----------------------------------------------------------------
+  describe("SOCIAL-02/03 channel-relationship injection (LLM-free, sign-off gated)", () => {
+    /** socialModeling ON + a recorded sign-off (the ACTIVE gate) + rag for parity. */
+    function signedOffConfig() {
+      return makeConfig({
+        socialModeling: { enabled: true, privacyReviewSignedOffBy: "ops@example.com" },
+        rag: {
+          enabled: true,
+          maxResults: 5,
+          minScore: 0.3,
+          includeTrustLevels: ["learned"],
+          maxContextChars: 5000,
+        },
+      });
+    }
+    /** socialModeling ON but NO sign-off (the SOCIAL-03 RED gate — knob alone). */
+    function enabledNoSignOffConfig() {
+      return makeConfig({
+        socialModeling: { enabled: true },
+        rag: {
+          enabled: true,
+          maxResults: 5,
+          minScore: 0.3,
+          includeTrustLevels: ["learned"],
+          maxContextChars: 5000,
+        },
+      });
+    }
+    /** A memoryPort + a non-empty recall result so `recalled.value.length > 0`. */
+    function ragMemoryPort() {
+      const mockSearchResult = {
+        entry: {
+          id: "m1",
+          tenantId: "t",
+          content: "Test memory",
+          createdAt: 1_000,
+          tags: [],
+          trustLevel: "learned",
+          source: { channel: "test" },
+        },
+        score: 0.85,
+      };
+      mockRecall.mockResolvedValue({ ok: true, value: [mockSearchResult] });
+      return {
+        search: vi.fn().mockResolvedValue({ ok: true, value: [mockSearchResult] }),
+        store: vi.fn(),
+      } as any;
+    }
+    /** A spy RelationshipStore counting read() calls, returning a fixed edge set. */
+    function makeSpyRelationshipStore(
+      entries: import("@comis/core").RelationshipEntry[],
+    ): { store: import("@comis/core").RelationshipStore; reads: () => number } {
+      let readCalls = 0;
+      const store = {
+        upsert: vi.fn(),
+        read: vi.fn(async () => {
+          readCalls += 1;
+          return { ok: true as const, value: entries };
+        }),
+      } as unknown as import("@comis/core").RelationshipStore;
+      return { store, reads: () => readCalls };
+    }
+    /** A single directional edge fixture. */
+    function edge(): import("@comis/core").RelationshipEntry {
+      return {
+        id: "r1",
+        subjectUserId: "alice",
+        aboutUserId: "bob",
+        content: "trusts on logistics",
+        trust: "learned",
+        createdAt: 1_000,
+      };
+    }
+
+    it("default-OFF: with NO relationshipStore dep the prompt is byte-identical (no <channel_relationships> block)", async () => {
+      const result = await assembleExecutionPrompt(
+        makeParams({
+          config: signedOffConfig(),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      // No store dep ⇒ no relationship read ⇒ no block ⇒ byte-identity preserved.
+      expect(result.dynamicPreamble).not.toContain("<channel_relationships>");
+      expect(result.systemPrompt).not.toContain("<channel_relationships>");
+    });
+
+    it("default-OFF cost gate: with NO store dep, read() is called 0 times AND the prompt equals the no-store baseline", async () => {
+      // The store is CONSTRUCTED (spy) but NOT wired into deps — the off config.
+      const spy = makeSpyRelationshipStore([edge()]);
+
+      const baseline = await assembleExecutionPrompt(
+        makeParams({
+          config: signedOffConfig(),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      // THE COST GATE: the store was never wired, so its read() was never called.
+      expect(spy.reads(), "read() NEVER called in the off (no-store-dep) config").toBe(0);
+      expect(baseline.dynamicPreamble).not.toContain("<channel_relationships>");
+    });
+
+    it("socialModeling OFF (undefined): store present + recall HIT ⇒ read() NEVER called and the prompt is byte-identical", async () => {
+      // socialModeling is undefined entirely (makeConfig default). The store IS wired
+      // and recall hits, so the only thing gating the read is the socialModeling knob.
+      const memoryPort = ragMemoryPort();
+      const spy = makeSpyRelationshipStore([edge()]);
+      const off = await assembleExecutionPrompt(
+        makeParams({
+          config: makeConfig({
+            rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 },
+          }),
+          deps: { workspaceDir: "/workspace", memoryPort, relationshipStore: spy.store },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+      const baseline = await assembleExecutionPrompt(
+        makeParams({
+          config: makeConfig({
+            rag: { enabled: true, maxResults: 5, minScore: 0.3, includeTrustLevels: ["learned"], maxContextChars: 5000 },
+          }),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      expect(spy.reads(), "socialModeling undefined ⇒ read() NEVER called (the cost gate)").toBe(0);
+      expect(off.dynamicPreamble).not.toContain("<channel_relationships>");
+      expect(off.dynamicPreamble).toEqual(baseline.dynamicPreamble);
+      expect(off.systemPrompt).toEqual(baseline.systemPrompt);
+    });
+
+    it("SOCIAL-03 gate: enabled=true but NO privacyReviewSignedOffBy ⇒ 0 reads + byte-identical prompt (the headline sign-off RED)", async () => {
+      // THE HEADLINE SOCIAL-03 READ-SIDE PROOF: the knob is ON but there is NO recorded
+      // sign-off. The store IS wired and recall HITS (so a store-presence-only or
+      // enabled-only gate WOULD read and inject). The dual gate must hold: a recorded
+      // privacyReviewSignedOffBy is REQUIRED — without it read() is NEVER called and the
+      // prompt is byte-identical to the no-relationship baseline.
+      const memoryPort = ragMemoryPort();
+      const spy = makeSpyRelationshipStore([edge()]);
+      const noSignOff = await assembleExecutionPrompt(
+        makeParams({
+          config: enabledNoSignOffConfig(),
+          deps: { workspaceDir: "/workspace", memoryPort, relationshipStore: spy.store },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+      const baseline = await assembleExecutionPrompt(
+        makeParams({
+          config: enabledNoSignOffConfig(),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      expect(spy.reads(), "knob on but NO sign-off ⇒ read() NEVER called (SOCIAL-03)").toBe(0);
+      expect(noSignOff.dynamicPreamble).not.toContain("<channel_relationships>");
+      expect(noSignOff.dynamicPreamble).toEqual(baseline.dynamicPreamble);
+      expect(noSignOff.systemPrompt).toEqual(baseline.systemPrompt);
+    });
+
+    it("store present but empty: read() runs, the formatter returns null, nothing is pushed → byte-identical prompt", async () => {
+      const emptySpy = makeSpyRelationshipStore([]); // the channel has no edges
+      const withStore = await assembleExecutionPrompt(
+        makeParams({
+          config: signedOffConfig(),
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort: ragMemoryPort(),
+            relationshipStore: emptySpy.store,
+          },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+      const withoutStore = await assembleExecutionPrompt(
+        makeParams({
+          config: signedOffConfig(),
+          deps: { workspaceDir: "/workspace", memoryPort: ragMemoryPort() },
+          sessionKey: { tenantId: "t", userId: "u", channelId: "chat-1" } as any,
+        }),
+      );
+
+      // The read ran (store present, gate open) but found nothing → no block → identical.
+      expect(emptySpy.reads(), "read() runs once when the store is present and the gate is open").toBe(1);
+      expect(withStore.dynamicPreamble).not.toContain("<channel_relationships>");
+      expect(withStore.dynamicPreamble).toEqual(withoutStore.dynamicPreamble);
+      expect(withStore.systemPrompt).toEqual(withoutStore.systemPrompt);
+    });
+
+    it("active path: enabled + signed off + a store returning edges injects the <channel_relationships> block scoped to channelId = sessionKey.channelId (LLM-free)", async () => {
+      const spy = makeSpyRelationshipStore([edge()]);
+      const result = await assembleExecutionPrompt(
+        makeParams({
+          config: signedOffConfig(),
+          deps: {
+            workspaceDir: "/workspace",
+            memoryPort: ragMemoryPort(),
+            tenantId: "tenant-X",
+            relationshipStore: spy.store,
+          },
+          agentId: "agent-Z",
+          sessionKey: { tenantId: "tenant-X", userId: "user-Q", channelId: "chan-77" } as any,
+        }),
+      );
+
+      // The block + the edge's directional content appear; the read drove it (LLM-free).
+      expect(result.dynamicPreamble).toContain("<channel_relationships>");
+      expect(result.dynamicPreamble).toContain("alice");
+      expect(result.dynamicPreamble).toContain("bob");
+      expect(result.dynamicPreamble).toContain("trusts on logistics");
+      expect(spy.reads(), "the injection is a store.read (deterministic, LLM-free)").toBe(1);
+
+      // The SOCIAL-02 read-side boundary: the scope's channelId is the session's channel.
+      const readMock = (spy.store as unknown as { read: ReturnType<typeof vi.fn> }).read;
+      const scopeArg = readMock.mock.calls[0][0] as {
+        tenantId: string;
+        agentId: string;
+        channelId: string;
+      };
+      expect(scopeArg.tenantId).toBe("tenant-X");
+      expect(scopeArg.agentId).toBe("agent-Z");
+      expect(scopeArg.channelId).toBe("chan-77");
+
+      // The injection adds NO extra model/recall seam: recall is still constructed once.
+      expect(mockCreateMemoryRecall).toHaveBeenCalledOnce();
+    });
+  });
+
+  // -----------------------------------------------------------------
   // 4b. memory:injected event emit
   // -----------------------------------------------------------------
   it("emits_memory_injected_when_inline_memory_set with hitCount/charsInjected/trustTags", async () => {

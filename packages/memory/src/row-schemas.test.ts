@@ -87,6 +87,7 @@ import {
   MemoryEntityRowSchema,
   EntityLaneRowSchema,
   EntityListRowSchema,
+  MemoryUsefulnessRowSchema,
   CausalLaneRowSchema,
   MemoryTripleRowSchema,
   SpreadNodeRowSchema,
@@ -195,6 +196,9 @@ describe("row-schemas — MemoryRowSchema occurred_at column (TEMP-01)", () => {
       history: null,
       observation_kind: null,
       pattern_type: null,
+      lifecycle_demoted_at: null,
+      evicted_at: null,
+      strength: null,
       updated_at: null,
       expires_at: null,
       has_embedding: 0,
@@ -619,6 +623,49 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
       last_seen: 1700000009000,
     };
     expect(EntityListRowSchema.safeParse(sample).success).toBe(false);
+  });
+
+  // --- MemoryUsefulnessRowSchema (Phase 110, LEARN-01) — the read projection
+  // gains `intent`. A strictObject WITHOUT `intent` would REJECT a row carrying
+  // it, so the schema + the SELECT projection (Task 3) move together. ---
+
+  it("MemoryUsefulnessRowSchema parses a per-intent row (intent survives the strict projection)", () => {
+    const parsed = MemoryUsefulnessRowSchema.safeParse({
+      memory_id: "m1",
+      intent: "temporal",
+      used_count: 3,
+      ignored_count: 1,
+      last_useful_at: 1700000000000,
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.intent).toBe("temporal");
+  });
+
+  it("MemoryUsefulnessRowSchema parses the global-bucket row (intent: '')", () => {
+    const parsed = MemoryUsefulnessRowSchema.safeParse({
+      memory_id: "m2",
+      intent: "",
+      used_count: 0,
+      ignored_count: 2,
+      last_useful_at: null,
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.intent).toBe("");
+      expect(parsed.data.last_useful_at).toBeNull();
+    }
+  });
+
+  it("MemoryUsefulnessRowSchema rejects a row MISSING the intent column (strict requires every projected column → the read must SELECT intent)", () => {
+    expect(
+      MemoryUsefulnessRowSchema.safeParse({
+        memory_id: "m3",
+        // intent omitted
+        used_count: 1,
+        ignored_count: 0,
+        last_useful_at: 100,
+      }).success,
+    ).toBe(false);
   });
 
   it("CausalLaneRowSchema parses the one-hop edge-lookup projection (linked + confidence)", () => {

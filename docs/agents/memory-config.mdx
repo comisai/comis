@@ -1,0 +1,208 @@
+---
+title: "Memory configuration"
+description: "Every Comis memory capability and the exact config option that enables it — recall, the recall-time signals, the build/tool features, and the maintenance jobs"
+icon: "sliders"
+---
+
+**What this page is.** The complete reference for Comis's agent-memory capabilities and the
+exact config option for each. **As of v1 the memory features are ON by default (opt-out)** —
+a fresh install runs them and you edit config to turn them off. Two capabilities deliberately
+stay OFF: **`socialModeling`** (gated on a privacy-review sign-off — it models third parties)
+and **`memoryLifecycle`** (a dormant eviction scaffold). The trust boundary
+(`rag.scoring.trustAlpha`, `rag.includeTrustLevels`) is **frozen** — not a tunable capability.
+
+<Warning>
+  The LLM **build/ask** features (review, consolidation, reasoning, user-representation,
+  usefulness-judge, online-tuning, and `memory_ask`) spend **your own** LLM/API budget. They
+  are on by default in v1, and the daemon prints a first-run notice listing what's active.
+  **One line turns all of them off:** `memory.costFeatures.enabled: false`.
+</Warning>
+
+**Where the config lives.** Capabilities are configured **per agent** under
+`agents.<agentId>.` in `~/.comis/config.yaml`. The shared **memory engine** (store +
+embeddings + reranker + the cost kill switch) is the top-level `memory:` block. The config
+below is the **effective default** — set any `enabled: false` to opt a feature out.
+
+<Note>
+  On by default is necessary but not always sufficient — several capabilities also need
+  *built derived state* (a populated graph, learned weights, scored usefulness) before they
+  change recall. See [Dependencies & gotchas](#dependencies--gotchas) below.
+</Note>
+
+## Default config (v1 — opt-out)
+
+This is the **effective default** a fresh install runs. To opt out, set the relevant
+`enabled: false` (or flip the master `memory.costFeatures.enabled: false` to silence all
+LLM-cost features at once).
+
+```yaml
+# ─────────────────────────────────────────────────────────────────────────
+# 1. MEMORY ENGINE (top-level) — the substrate every capability runs on
+# ─────────────────────────────────────────────────────────────────────────
+memory:
+  dbPath: memory.db
+  walMode: true
+  embeddingModel: text-embedding-3-small   # hosted (1536d). Point at a local GGUF for on-device.
+  embeddingDimensions: 1536
+  rerankerModel: "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"  # local by default
+  rerankerModelsDir: models
+  rerankerGpu: auto                 # auto | metal | cuda | vulkan | false
+  rerankerThreads: 4
+  compaction: { enabled: true, threshold: 1000, targetSize: 500 }
+  retention: { maxAgeDays: 0 }      # 0 = keep forever
+  costFeatures:
+    enabled: true                   # MASTER KILL SWITCH — set false to disable ALL LLM cost features at once
+
+agents:
+  my-agent:
+    # ───────────────────────────────────────────────────────────────────
+    # 2. RECALL + RECALL-TIME CAPABILITIES  (agents.<id>.rag)
+    # ───────────────────────────────────────────────────────────────────
+    rag:
+      enabled: true                 # recall is ON by default
+      maxResults: 5
+      minScore: 0.1
+      includeTrustLevels: [system, learned]   # trust filter — FROZEN (see Trust note)
+      rerank:
+        enabled: true               # default false; cross-encoder rerank (local bge)
+        maxCandidates: 40
+        minResults: 1
+        timeoutMs: 800
+      scoring:                      # ranking weights, each 0..1
+        recencyAlpha: 0.2
+        temporalAlpha: 0.2
+        proofAlpha: 0.1
+        trustAlpha: 0.1             # FROZEN — leave at the shipped value
+        usefulnessAlpha: 0.1        # magnitude of the recall-utility (FEED) loop
+        forgetAlpha: 0.1            # magnitude of FadeMem (FORGET) decay
+      lanes:
+        fts: { weight: 1.0 }
+        vector: { weight: 1.5 }
+        temporal: { enabled: true, weight: 1.0, windowDays: 7 }            # default off
+        causal:   { enabled: true, weight: 1.0 }                           # default off
+        graphSpread: { enabled: true, weight: 1.0, maxDepth: 2, fanOut: 8 } # KG lane — default off
+      entityLane: { enabled: true, seedCount: 5, perEntityCap: 200, weight: 1.0 }  # default off
+      mmr: { enabled: true, lambda: 0.7 }       # MMR diversity re-rank — default off
+      feedback: { enabled: true }               # FEED recall-utility loop (uses scoring.usefulnessAlpha)
+      onlineTuning: { enabled: true }           # LEARN-RANK recall-apply gate (pairs with memoryOnlineTuning)
+      forget: { enabled: true }                 # FORGET decay gate (uses scoring.forgetAlpha)
+      queryUnderstanding:                       # LEARN-IQ (LLM-free)
+        intentReweight: true
+        synonyms: true
+        temporalParse: true
+
+    # ───────────────────────────────────────────────────────────────────
+    # 3. BUILD-PATH / TOOL CAPABILITIES (write memory; some run on a cron)
+    # ───────────────────────────────────────────────────────────────────
+    memoryUserRepresentation:        # USER — a per-user profile
+      enabled: true
+      schedule: "0 5 * * *"
+      maxEntriesPerRun: 50
+      maxSourceMemories: 200
+      maxSourceChars: 24000
+
+    socialModeling:                  # SOCIAL — directional relationship model
+      enabled: true
+      privacyReviewSignedOffBy: "your-name-here"   # REQUIRED — stays OFF without a non-empty sign-off
+      schedule: "0 6 * * *"
+      maxEntriesPerRun: 50
+      maxSourceMemories: 200
+
+    dialectic:                       # memory_ask grounded-Q&A tool (the one query-time LLM surface)
+      enabled: true
+      maxOutputTokens: 1024
+      maxRecall: 10
+
+    memoryReasoning:                 # REASON — offline deductive/inductive observations
+      enabled: true
+      schedule: "0 4 * * *"
+      maxCandidatesPerRun: 200
+      surprisalTopFraction: 0.1
+      knnK: 10
+      maxObservationsPerRun: 25
+      maxReasoningTokens: 1024
+      reasonExternal: false
+      autoTags: []
+
+    # ───────────────────────────────────────────────────────────────────
+    # 4. MAINTENANCE / LIFECYCLE JOBS (cron-driven; default off)
+    # ───────────────────────────────────────────────────────────────────
+    memoryReview:                    # session → memory review + dedup
+      enabled: true
+      schedule: "0 2 * * *"
+      minMessages: 5
+      maxSessionsPerRun: 10
+      maxReviewTokens: 4096
+
+    memoryConsolidation:             # cluster + fold / dedup
+      enabled: true
+      schedule: "30 3 * * *"
+      similarityThreshold: 0.82
+
+    memoryUsefulnessJudge:           # scores recall-utility → feeds the FEED loop
+      enabled: true
+      schedule: "0 7 * * *"
+      maxSourceMemories: 200
+      maxSourceChars: 24000
+
+    memoryOnlineTuning:              # the LEARN-RANK bandit (learns scoring alphas)
+      enabled: true
+      schedule: "0 8 * * *"
+      maxSourceMemories: 200
+
+    memoryLifecycle:                 # FORGET sweep / tier promote-demote (dormant scaffold)
+      enabled: true
+      schedule: "0 9 * * *"
+      thetaPromote: 0.7
+      thetaDemote: 0.3
+```
+
+## Capability → config map
+
+| Capability | Enable knob (`agents.<id>.`) | What it does |
+|---|---|---|
+| Recall (base) | `rag.enabled` *(default true)* | Hybrid FTS + vector recall, fused + scored |
+| Rerank | `rag.rerank.enabled` | Local cross-encoder rerank of the top candidates |
+| Temporal lane | `rag.lanes.temporal.enabled` | Recency-window recall lane |
+| Causal lane | `rag.lanes.causal.enabled` | Cause/effect-linked recall lane |
+| **KG** graph-spread | `rag.lanes.graphSpread.enabled` | Walks the knowledge graph from top hits (LLM-free) |
+| Entity lane | `rag.entityLane.enabled` | Entity-seeded recall expansion |
+| MMR diversity | `rag.mmr.enabled` | Maximal-marginal-relevance diversification |
+| **FEED** loop | `rag.feedback.enabled` | Boosts memories that proved useful (`scoring.usefulnessAlpha`) |
+| **LEARN-RANK** | `rag.onlineTuning.enabled` | Applies bandit-learned ranking weights at recall |
+| **LEARN-IQ** | `rag.queryUnderstanding.intentReweight` (+ `synonyms`, `temporalParse`) | LLM-free query understanding / lane reweighting |
+| **FORGET** | `rag.forget.enabled` | FadeMem per-type decay demotes stale memories (`scoring.forgetAlpha`) |
+| **USER** | `memoryUserRepresentation.enabled` | Builds a per-user representation |
+| **SOCIAL** | `socialModeling.enabled` **+** `socialModeling.privacyReviewSignedOffBy` | Directional relationship model (double-gated) |
+| **DIALECTIC** | `dialectic.enabled` | The `memory_ask` grounded-Q&A tool (query-time LLM) |
+| **REASON** | `memoryReasoning.enabled` | Offline deductive/inductive observations |
+| Review | `memoryReview.enabled` | Turns sessions into reviewed memories |
+| Consolidation | `memoryConsolidation.enabled` | Clusters + folds/dedups memories |
+| Usefulness judge | `memoryUsefulnessJudge.enabled` | Scores recall-utility (the FEED signal source) |
+| Online tuning | `memoryOnlineTuning.enabled` | The bandit cron that learns the alphas for LEARN-RANK |
+| Lifecycle | `memoryLifecycle.enabled` | Tier promote/demote + the FORGET sweep |
+
+## Dependencies & gotchas
+
+1. **Some capabilities need built derived state, not just the flag:**
+   - **KG** (`rag.lanes.graphSpread`) is a no-op until the knowledge graph is populated with
+     entities/edges.
+   - **LEARN-RANK** (`rag.onlineTuning`) only changes recall after the `memoryOnlineTuning`
+     bandit has run and learned weights.
+   - **FEED** (`rag.feedback`) is meaningful once `memoryUsefulnessJudge` has scored recalls.
+   - **FORGET** demotion (`rag.forget`) shows up at recall; eviction is the `memoryLifecycle`
+     sweep (a dormant scaffold today).
+2. **SOCIAL is double-gated.** `enabled: true` does nothing on its own; it activates only with
+   a non-empty `socialModeling.privacyReviewSignedOffBy` operator sign-off.
+3. **`dialectic` (`memory_ask`) spends tokens per ask** — it is the only query-time LLM
+   surface in the memory stack. Everything else in recall is LLM-free.
+4. **Trust is frozen, not a tunable capability.** `rag.scoring.trustAlpha` and
+   `rag.includeTrustLevels` are the trust hard-boundary; leave them at the shipped values.
+5. **On by default in v1 — watch your spend.** The LLM build/ask features are opt-out for v1
+   so operators get the full memory stack from day one; they spend your own budget. Your
+   controls are the first-run notice and the master switch `memory.costFeatures.enabled: false`
+   (or per-feature `enabled: false`). Measure the effect in your own domain — Comis's honest,
+   reproducible methodology and the latest costed results are on the
+   [Memory benchmarks](/agents/memory-benchmarks) page.
+
+See also: [Memory](/agents/memory) · [Search](/agents/search) · [Embeddings](/agents/embeddings) · [RAG](/agents/rag).

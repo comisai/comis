@@ -46,6 +46,30 @@ export type { MemoryConsolidationConfig } from "./schema-memory-consolidation.js
 export { MemoryReasoningConfigSchema } from "./schema-memory-reasoning.js";
 export type { MemoryReasoningConfig } from "./schema-memory-reasoning.js";
 
+// Per-user representation schema (Phase 107 — USER-04)
+export { MemoryUserRepresentationConfigSchema } from "./schema-memory-user-representation.js";
+export type { MemoryUserRepresentationConfig } from "./schema-memory-user-representation.js";
+
+// Social-modeling schema (Phase 108 — SOCIAL-03)
+export { SocialModelingConfigSchema } from "./schema-social-modeling.js";
+export type { SocialModelingConfig } from "./schema-social-modeling.js";
+
+// Offline usefulness-judge schema (Phase 110 — LEARN-02 OPTIONAL, default-OFF)
+export { MemoryUsefulnessJudgeConfigSchema } from "./schema-memory-usefulness-judge.js";
+export type { MemoryUsefulnessJudgeConfig } from "./schema-memory-usefulness-judge.js";
+
+// Offline tuned-alpha bandit schema (Phase 111 — LEARN-03, Track H2; default-OFF, KEYLESS cron)
+export { MemoryOnlineTuningConfigSchema } from "./schema-memory-online-tuning.js";
+export type { MemoryOnlineTuningConfig } from "./schema-memory-online-tuning.js";
+
+// SCAFFOLD-DORMANT memory-lifecycle sweep schema (Phase 112 — FORGET-02, Track C; default-OFF, KEYLESS cron; OD4)
+export { MemoryLifecycleConfigSchema } from "./schema-memory-lifecycle.js";
+export type { MemoryLifecycleConfig } from "./schema-memory-lifecycle.js";
+
+// Dialectic schema (Phase 109 — DIAL-02): the memory_ask opt-in cost gate
+export { DialecticConfigSchema } from "./schema-dialectic.js";
+export type { DialecticConfig } from "./schema-dialectic.js";
+
 // Agent schemas: model selection, session lifecycle, context engine, context guard, agent features
 export {
   AgentConfigSchema,
@@ -380,6 +404,21 @@ export {
   formatRedirectHint,
   type ManagedSectionRedirect,
 } from "./managed-sections.js";
+
+// v2.9 capability default-activation framework (Phase 115 — ACT-01).
+// Resolves each capability's effective default-OFF→ON state; the activation set
+// is EMPTY (Phase 114 measured no winner) so every capability resolves OFF.
+export {
+  V2_9_CAPABILITIES,
+  ACTIVATED_CAPABILITIES,
+  FROZEN_TRUST_PATHS,
+  resolveCapabilityDefault,
+  resolveAllCapabilityDefaults,
+  type CapabilityId,
+  type CapabilityDescriptor,
+  type ActivationDecision,
+  type ResolvedCapabilityDefault,
+} from "./capability-activation.js";
 
 // Schema serializer (Zod to JSON Schema conversion)
 export { getConfigSchema, getConfigSections } from "./schema-serializer.js";

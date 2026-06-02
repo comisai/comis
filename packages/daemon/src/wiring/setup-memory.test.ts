@@ -132,6 +132,39 @@ const mockCreateSqliteTripleStore = vi.hoisted(() => vi.fn(() => ({
 const mockCreateSqliteMemoryEmbeddingStore = vi.hoisted(() => vi.fn(() => ({
   readEmbeddings: vi.fn(async () => ({ ok: true, value: new Map() })),
 })));
+// Per-user representation store factory (Phase 107, USER-01/03 — Track E1) — mocked so
+// setup wires it without a real DB. setupMemory builds this on the shared db handle (mirror
+// the triple/embedding stores); without the mock entry the @comis/memory factory is undefined
+// and EVERY setup call throws `createSqliteUserRepresentationStore is not a function` (the
+// MEMORY.md "setup-memory mock" gate — Pitfall 4). The two segregated port halves are stubbed
+// (the upsert write + the (tenant, agent, user)-scoped read the prompt-assembly injection reads).
+const mockCreateSqliteUserRepresentationStore = vi.hoisted(() => vi.fn(() => ({
+  upsert: vi.fn(async () => ({ ok: true, value: undefined })),
+  read: vi.fn(async () => ({ ok: true, value: [] })),
+})));
+// Directional relationship store factory (Phase 108, SOCIAL-01/02 — Track E2) — mocked so setup
+// wires it without a real DB. setupMemory builds this on the shared db handle (mirror the
+// triple/embedding/user-representation stores); without the mock entry the @comis/memory factory is
+// undefined and EVERY setup call throws `createSqliteRelationshipStore is not a function` (the
+// MEMORY.md "setup-memory mock" gate — Pitfall 4). The two segregated port halves are stubbed (the
+// directional upsert write + the (tenant, agent, channel)-scoped read the prompt-assembly injection reads).
+const mockCreateSqliteRelationshipStore = vi.hoisted(() => vi.fn(() => ({
+  upsert: vi.fn(async () => ({ ok: true, value: undefined })),
+  read: vi.fn(async () => ({ ok: true, value: [] })),
+})));
+const mockCreateSqliteTunedAlphaStore = vi.hoisted(() => vi.fn(() => ({
+  upsert: vi.fn(async () => ({ ok: true, value: undefined })),
+  read: vi.fn(async () => ({ ok: true, value: undefined })),
+})));
+// Memory-lifecycle sweep store factory (Phase 112, FORGET-02 — Track C) — mocked so setup wires
+// it without a real DB. setupMemory builds this on the shared db handle (mirror the tuned-alpha
+// store); without the mock entry the @comis/memory factory is undefined and EVERY setup call
+// throws `createSqliteMemoryLifecycleStore is not a function` (the MEMORY.md "setup-memory mock"
+// gate — Pitfall 4). The sole port method is stubbed (the DORMANT runLifecycleSweep — the
+// scaffold evicts/demotes 0 rows, so the all-0 report).
+const mockCreateSqliteMemoryLifecycleStore = vi.hoisted(() => vi.fn(() => ({
+  runLifecycleSweep: vi.fn(async () => ({ ok: true, value: { scanned: 0, promoted: 0, demoted: 0, evicted: 0 } })),
+})));
 
 vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
@@ -152,6 +185,10 @@ vi.mock("@comis/memory", () => ({
   createSqliteMemoryCausalStore: mockCreateSqliteMemoryCausalStore,
   createSqliteTripleStore: mockCreateSqliteTripleStore,
   createSqliteMemoryEmbeddingStore: mockCreateSqliteMemoryEmbeddingStore,
+  createSqliteUserRepresentationStore: mockCreateSqliteUserRepresentationStore,
+  createSqliteRelationshipStore: mockCreateSqliteRelationshipStore,
+  createSqliteTunedAlphaStore: mockCreateSqliteTunedAlphaStore,
+  createSqliteMemoryLifecycleStore: mockCreateSqliteMemoryLifecycleStore,
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));
@@ -1080,6 +1117,48 @@ describe("setupMemory", () => {
     expect(result.usefulnessStore).toBeDefined();
   });
 
+  it("builds the tuned-alpha store on the SAME shared db handle and returns it (Phase 111, LEARN-03)", async () => {
+    const container = createMinimalContainer(); // all-default config (online tuning OFF)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // Built UNCONDITIONALLY (no model/IO cost; it stays dormant until BOTH the recall-side
+    // gate rag.onlineTuning.enabled AND the bandit cron memoryOnlineTuning.enabled are on).
+    expect(mockCreateSqliteTunedAlphaStore).toHaveBeenCalledOnce();
+    // The SOLE adapter must share the memory adapter's db handle — NOT a second Database — so
+    // the (tenant, agent) scope is consistent with the memory rows / FEED signal it tunes over.
+    expect(mockCreateSqliteTunedAlphaStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb }),
+    );
+    expect(result.tunedAlphaStore).toBeDefined();
+  });
+
+  it("builds the memory-lifecycle sweep store on the SAME shared db handle and returns it (Phase 112, FORGET-02)", async () => {
+    const container = createMinimalContainer(); // all-default config (lifecycle cron OFF)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // Built UNCONDITIONALLY (no model/IO cost; it stays DORMANT — even when the KEYLESS
+    // __MEMORY_LIFECYCLE__ cron memoryLifecycle.enabled is on, the sweep evicts/demotes 0 rows).
+    expect(mockCreateSqliteMemoryLifecycleStore).toHaveBeenCalledOnce();
+    // The SOLE adapter must share the memory adapter's db handle — NOT a second Database — so the
+    // sweep scans the SAME (tenant, agent)-scoped memories rows + the additive marker columns.
+    expect(mockCreateSqliteMemoryLifecycleStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb }),
+    );
+    expect(result.memoryLifecycleStore).toBeDefined();
+  });
+
   it("builds the temporal-spread store on the SAME shared db handle and returns it (Phase 95, LANES-02)", async () => {
     const container = createMinimalContainer(); // all-default config (temporal lane OFF)
     const setupMemory = await getSetupMemory();
@@ -1181,6 +1260,37 @@ describe("setupMemory", () => {
     // The bulk-scoped read the MMR diversity re-rank hydrates from (mirror the temporal/triple
     // presence assertions — a defined port method proves the store, not just a truthy field).
     expect(result.embeddingStore.readEmbeddings).toBeTypeOf("function");
+  });
+
+  it("builds the per-user representation store on the SAME shared db handle and returns it (Phase 107, USER-01/03)", async () => {
+    const container = createMinimalContainer(); // all-default config (memoryUserRepresentation OFF)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // Built UNCONDITIONALLY (no opt-in gate at build time — only the LLM-free <user_profile>
+    // injection in prompt-assembly is gated on the dep being present + the offline builder cron
+    // is its own default-OFF cost gate). Without the mock-map entry this call throws
+    // "createSqliteUserRepresentationStore is not a function" (Pitfall 4).
+    expect(mockCreateSqliteUserRepresentationStore).toHaveBeenCalledOnce();
+    // The SOLE adapter must share the memory adapter's db handle (the same mockDb the
+    // entity/temporal/causal/triple/embedding/consolidation/usefulness stores receive) — NOT a
+    // second Database. A separate handle silently returns empty (the source_memory_id ON DELETE
+    // CASCADE + the (tenant, agent, user) isolation scope must stay consistent with the memory
+    // rows the profile is distilled from). T-107-05-02.
+    expect(mockCreateSqliteUserRepresentationStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb }),
+    );
+    expect(result.userRepresentationStore).toBeDefined();
+    // The two segregated port halves prove the store, not just a truthy field (mirror the
+    // embeddingStore.readEmbeddings presence assertion): the upsert write (offline builder) +
+    // the (tenant, agent, user)-scoped read (the prompt-assembly <user_profile> injection).
+    expect(result.userRepresentationStore.upsert).toBeTypeOf("function");
+    expect(result.userRepresentationStore.read).toBeTypeOf("function");
   });
 });
 

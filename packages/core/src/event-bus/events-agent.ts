@@ -581,6 +581,15 @@ export interface AgentEvents {
     usedCount: number;
     /** == ignoredIds.length. */
     ignoredCount: number;
+    /**
+     * Optional query-INTENT bucket (LEARN-01/H1) — the deterministic classifyIntent
+     * result for the recall that produced these ids. When present the daemon
+     * write-back records the per-intent bucket; when OMITTED it records the GLOBAL
+     * bucket (byte-identical to v2.8). A closed-union string (factual|temporal|
+     * preference|enumeration), NOT memory content — ids/counts/intent ONLY ever
+     * cross the bus (AGENTS.md §2.7), never bodies/query/response.
+     */
+    intent?: string;
     timestamp: number;
   };
 

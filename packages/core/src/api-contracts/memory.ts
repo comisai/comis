@@ -130,6 +130,63 @@ export const MemorySearchFilesContract = defineContract({
 });
 
 // ---------------------------------------------------------------------------
+// memory.ask  (Phase 109 — DIAL-01/02, the dialectic grounded-Q&A surface)
+// ---------------------------------------------------------------------------
+
+/**
+ * `memory.ask` — the dialectic: a grounded, cited NL answer over the agent's
+ * LLM-free recall pipeline. The handler runs `createMemoryRecall` for the
+ * question (the SAME trust-filtered + redacted recall the prompt path uses),
+ * then synthesizes the answer via the ONE allowed query-time LLM seam, and
+ * returns it WITH citations.
+ *
+ * Request: `{ question, limit? }` — `question` is the (untrusted) NL query;
+ * `limit` optionally caps the grounding-set size.
+ *
+ * Response: `{ answer, citations, abstained }`.
+ *   - `citations` are recalled memory IDS (the entry id is a `z.guid()` at the
+ *     source, but the contract types it as opaque `string` — citations are ids,
+ *     never free text; DIAL-02). The cited ids traverse `sourceIds` in the
+ *     recall-trace (DIAL-03).
+ *   - `abstained` is the EXPLICIT DIAL-01 mandatory-abstention signal — a
+ *     required boolean, never inferred from an empty `answer`. Insufficient
+ *     grounding ⇒ `{ answer: "", citations: [], abstained: true }`, never a
+ *     fabricated answer.
+ *   - the `answer` text is built ONLY from the trust-filtered + redacted recall
+ *     output (enforced in the Plan 03 handler), with the higher-trust source
+ *     winning on conflict (trust-first, a HARD boundary).
+ *
+ * Registered via agent tool dispatch (the `memory_ask` tool); contract scope
+ * `["rpc"]` documents the intended trust model.
+ *
+ * CROSS-WAVE SEAM CLOSED (Plan 03): the contract SHAPE shipped in Plan 01 with a
+ * deferred-handler annotation and was kept OUT of `MEMORY_CONTRACTS` until its
+ * daemon handler existed (registering it before the handler would RED-gate
+ * contract-handler-parity + bidirectional 1:1). Plan 03 landed the
+ * `[MemoryAskContract.method]:` handler in `memory-handlers.ts` and, in the SAME
+ * diff, spread this contract into `MEMORY_CONTRACTS` (8 + 4 + 7 + 1 = 20) and
+ * removed that annotation — so the registry ↔ handler set is 1:1 by construction.
+ * (Mirrors the OBS-06 cross-wave seam closed in Phase 86 Plan 05.)
+ */
+export const MemoryAskContract = defineContract({
+  method: "memory.ask",
+  request: z.object({
+    question: z.string(),
+    // CR-02: a positive integer — the grounding-set size the caller may request. The handler
+    // additionally clamps it DOWN to the per-agent `dialectic.maxRecall` DoS ceiling; this
+    // contract bound rejects the negative / non-integer / huge cases at the parse boundary so
+    // the DoS / negative-slice path cannot reach the handler in the first place.
+    limit: z.number().int().positive().optional(),
+  }),
+  response: z.object({
+    answer: z.string(),
+    citations: z.array(z.string()),
+    abstained: z.boolean(),
+  }),
+  scopes: ["rpc"] as const,
+});
+
+// ---------------------------------------------------------------------------
 // memory.get_file
 // ---------------------------------------------------------------------------
 
@@ -687,10 +744,16 @@ export { MEMORY_DIAGNOSTIC_CONTRACTS };
  * `API_CONTRACTS` registry ↔ handler set stays 1:1 (the cross-wave seam from
  * Plan 02 is closed; the `@contract-deferred-handler: 86-05` annotations were
  * removed in the same diff).
+ *
+ * Phase 109 (Plan 03): `MemoryAskContract` (the dialectic memory.ask surface) is
+ * now spread in — in the SAME diff that landed its `[MemoryAskContract.method]:`
+ * handler in `memory-handlers.ts` — so the registry ↔ handler set stays 1:1 and
+ * the `@contract-deferred-handler: 109-03` tag was removed in the same diff.
  */
 export const MEMORY_CONTRACTS = [
   // --- memory-handlers.ts ---
   MemorySearchFilesContract,
+  MemoryAskContract,
   MemoryGetFileContract,
   MemoryStoreContract,
   MemoryStatsContract,

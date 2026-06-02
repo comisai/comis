@@ -18,6 +18,9 @@ import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import { buildSessionEndMetadata, shouldStorePairedMemory } from "./executor-post-execution.js";
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
+// Phase 110 (LEARN-01 write side): the turn-end emit threads classifyIntent(msg.text).
+// Imported here for the deterministic-bucket behavior probe (the emit's intent source).
+import { classifyIntent } from "../rag/query-understanding.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -464,6 +467,67 @@ describe("FEED-01 recall-usage attribution + memory:recall_used emit", () => {
     // Counts the emit reports are the array lengths (parity with the family).
     expect(usedIds.length).toBe(1);
     expect(ignoredIds.length).toBe(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 110 Plan 03 (LEARN-01 write side) — the turn-end memory:recall_used
+  // emit carries the recall-time intent so the daemon write-back records the
+  // per-intent usefulness bucket. The intent is the DETERMINISTIC classifyIntent
+  // of the recalled query (msg.text — the SAME string recall classified at
+  // prompt-assembly.ts:818) gated on the SAME queryUnderstanding.intentReweight
+  // flag the recall read uses; intentReweight off → the emit omits intent (the
+  // subscriber records the global bucket → byte-identical write). classifyIntent
+  // is in-package (NOT publicly exported — Pitfall 2) and the emit stays
+  // ids/counts/intent-only + LLM-free. Source-grep is the load-bearing mode here,
+  // matching the FEED-01 family above (scaffolding all 30+ deps is impractical).
+  // -------------------------------------------------------------------------
+  it("threads the recall-time intent onto the emit, gated on queryUnderstanding.intentReweight (LEARN-01 write bucket)", () => {
+    const { stripped } = readPostExec();
+    // The intent is computed from the recalled query via the deterministic classifyIntent …
+    expect(stripped).toMatch(/classifyIntent\s*\(/);
+    // … gated on the SAME intentReweight flag the recall read uses (per-intent on/off) …
+    expect(stripped).toMatch(/intentReweight\s*===\s*true/);
+    // … and threaded onto the emit payload via the conditional spread (omitted when undefined).
+    expect(stripped).toMatch(/intent !== undefined \? \{ intent \}/);
+    // The intent spread lives INSIDE the memory:recall_used emit call.
+    const emitBlock = stripped.match(/emit\(\s*"memory:recall_used"[\s\S]*?\}\s*\);/);
+    expect(emitBlock, "memory:recall_used emit call must exist").not.toBeNull();
+    expect(emitBlock![0]).toMatch(/intent/);
+  });
+
+  it("imports classifyIntent in-package from the rag module (the agent↛memory cut held)", () => {
+    const { stripped } = readPostExec();
+    expect(stripped).toMatch(
+      /import\s*\{[^}]*\bclassifyIntent\b[^}]*\}\s*from\s*"\.\.\/rag\/query-understanding\.js"/,
+    );
+    // No @comis/memory import on the write path.
+    expect(stripped).not.toMatch(/from\s*"@comis\/memory"/);
+  });
+
+  it("classifyIntent is NOT re-exported from the agent public barrel (Pitfall 2 — no daemon caller can drag an LLM in)", () => {
+    const indexSrc = readFileSync(resolve(here, "..", "index.ts"), "utf-8");
+    expect(indexSrc).not.toMatch(/\bclassifyIntent\b/);
+  });
+
+  it("the emit stays ids/counts/intent-only — the intent is the closed-union string, NOT memory content/query/response", () => {
+    const { stripped } = readPostExec();
+    const emitBlock = stripped.match(/emit\(\s*"memory:recall_used"[\s\S]*?\}\s*\);/);
+    expect(emitBlock).not.toBeNull();
+    const block = emitBlock![0];
+    // Still no content/response/preview on the event after adding intent.
+    expect(block, "no content: field").not.toMatch(/\bcontent:/);
+    expect(block, "no .response payload").not.toMatch(/\.response\b/);
+    expect(block, "no preview field").not.toMatch(/\bpreview\b/);
+    // The intent is the classified bucket, never the raw query text on the event.
+    expect(block, "no query: field on the event").not.toMatch(/\bquery:/);
+  });
+
+  it("behavior — classifyIntent(msg.text) is the deterministic bucket the emit threads (the recalled query → its intent)", () => {
+    // The emit's intent is exactly classifyIntent over the recalled query (msg.text — the
+    // string prompt-assembly.ts:818 recalled on). Re-confirm the deterministic mapping at
+    // the contract: a temporal-shaped query classifies "temporal"; a plain lookup "factual".
+    expect(classifyIntent("when did the deploy happen")).toBe("temporal");
+    expect(classifyIntent("what is the database name")).toBe("factual");
   });
 });
 

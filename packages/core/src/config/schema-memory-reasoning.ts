@@ -37,8 +37,9 @@ import { z } from "zod";
  * - autoTags: extra tags applied to created observations
  */
 export const MemoryReasoningConfigSchema = z.strictObject({
-  /** Enable the periodic reasoning job for this agent. Default: false (cost opt-in, REASON-04). */
-  enabled: z.boolean().default(false),
+  /** Enable the periodic reasoning job for this agent. Default: true (v1 opt-out posture, v2.9
+   *  increment 2). A COST feature — force-disabled when `memory.costFeatures.enabled: false`. */
+  enabled: z.boolean().default(true),
   /** Cron schedule for reasoning runs. Default: daily at 04:00 UTC (after consolidation's 03:30). */
   schedule: z.string().default("0 4 * * *"),
   /** Maximum raw candidates fetched per run (cost bound, REASON-04). */

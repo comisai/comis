@@ -1,0 +1,8 @@
+{
+  "harnessVersion": "phase-108-05-v1",
+  "claim": "directional-round-trip",
+  "edgeCount": 2,
+  "aToBPresent": true,
+  "bToAPresent": true,
+  "pass": true
+}

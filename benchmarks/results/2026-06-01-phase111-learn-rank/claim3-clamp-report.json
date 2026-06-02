@@ -1,0 +1,20 @@
+{
+  "harnessVersion": "phase-111-05-v1",
+  "claim": "clamp-holds",
+  "gradients": {
+    "recencyGradient": 1000000000,
+    "temporalGradient": -1000000000,
+    "proofGradient": 1000000000,
+    "usefulnessGradient": -1000000000
+  },
+  "output": {
+    "recencyAlpha": 1,
+    "temporalAlpha": 0,
+    "proofAlpha": 1,
+    "usefulnessAlpha": 0
+  },
+  "min": 0,
+  "max": 1,
+  "allInRange": true,
+  "pass": true
+}

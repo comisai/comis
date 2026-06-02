@@ -666,6 +666,490 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // __SOCIAL_MODELING__ cron registration (Phase 108, SOCIAL-01/03). The gate
+  // is STRICTER than the other memory crons: register ONLY when enabled AND a
+  // recorded privacy-review sign-off (privacyReviewSignedOffBy) is present
+  // (SOCIAL-03). A knob-on-but-no-sign-off agent registers NO job (byte-identical).
+  // -------------------------------------------------------------------------
+
+  it("registers NO __SOCIAL_MODELING__ cron for a default (social-off) agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // socialModeling undefined => default OFF (the cost gate — byte-identical).
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const socialAdds = addJob.mock.calls.filter(
+      (c) => (c[0] as any)?.payload?.text === "__SOCIAL_MODELING__",
+    );
+    expect(socialAdds.length).toBe(0);
+  });
+
+  it("registers NO __SOCIAL_MODELING__ cron when enabled but NO privacy-review sign-off (the SOCIAL-03 gate)", async () => {
+    // The knob alone does NOT register a job — a recorded sign-off is required (SOCIAL-03).
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        socialModeling: { enabled: true },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const socialAdds = addJob.mock.calls.filter(
+      (c) => (c[0] as any)?.payload?.text === "__SOCIAL_MODELING__",
+    );
+    expect(socialAdds.length).toBe(0);
+  });
+
+  it("registers the __SOCIAL_MODELING__ cron (default 0 6 * * *) only when enabled AND signed-off", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        socialModeling: { enabled: true, privacyReviewSignedOffBy: "ops@example.com" },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const socialAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__SOCIAL_MODELING__");
+    expect(socialAdd).toBeDefined();
+    expect(socialAdd.id).toBe("memory-social-modeling-agent-1");
+    expect(socialAdd.name).toBe("Memory social modeling");
+    // Default schedule runs AFTER the representation cron's 0 5 so relationships are
+    // built over freshly-reasoned/profiled memories the same night.
+    expect(socialAdd.schedule).toEqual({ kind: "cron", expr: "0 6 * * *" });
+    expect(socialAdd.sessionTarget).toBe("isolated");
+    expect(socialAdd.sessionStrategy).toBe("fresh");
+    expect(socialAdd.payload).toEqual({ kind: "system_event", text: "__SOCIAL_MODELING__" });
+  });
+
+  // -------------------------------------------------------------------------
+  // __USEFULNESS_JUDGE__ cron registration (Phase 110, LEARN-02 OPTIONAL). OFF
+  // by default (a cost gate — an OFFLINE cheap-model judge). Registered ONLY
+  // when the operator sets memoryUsefulnessJudge.enabled; a default agent
+  // registers NO job → byte-identical with the config absent. Default 0 7 * * *
+  // runs AFTER social's 0 6. Mirrors the reasoning gate 1:1.
+  // -------------------------------------------------------------------------
+
+  it("registers NO __USEFULNESS_JUDGE__ cron for a default (judge-off) agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // memoryUsefulnessJudge undefined => default OFF (the cost gate — byte-identical).
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const judgeAdds = addJob.mock.calls.filter(
+      (c) => (c[0] as any)?.payload?.text === "__USEFULNESS_JUDGE__",
+    );
+    expect(judgeAdds.length).toBe(0);
+  });
+
+  it("registers the __USEFULNESS_JUDGE__ cron (default 0 7 * * *) for an enabled agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryUsefulnessJudge: { enabled: true },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const judgeAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__USEFULNESS_JUDGE__");
+    expect(judgeAdd).toBeDefined();
+    expect(judgeAdd.id).toBe("memory-usefulness-judge-agent-1");
+    expect(judgeAdd.name).toBe("Memory usefulness judge");
+    // Default schedule runs AFTER social's 0 6 so the judge scores over a
+    // fully-settled night.
+    expect(judgeAdd.schedule).toEqual({ kind: "cron", expr: "0 7 * * *" });
+    expect(judgeAdd.sessionTarget).toBe("isolated");
+    expect(judgeAdd.sessionStrategy).toBe("fresh");
+    expect(judgeAdd.payload).toEqual({ kind: "system_event", text: "__USEFULNESS_JUDGE__" });
+  });
+
+  it("honors a custom usefulness-judge schedule when the operator overrides it", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryUsefulnessJudge: { enabled: true, schedule: "30 8 * * 0" },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const judgeAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__USEFULNESS_JUDGE__");
+    expect(judgeAdd?.schedule).toEqual({ kind: "cron", expr: "30 8 * * 0" });
+  });
+
+  // -------------------------------------------------------------------------
+  // __ONLINE_TUNING__ cron registration (Phase 111, LEARN-03 — Track H2). OFF by
+  // default. Registered ONLY when the operator sets memoryOnlineTuning.enabled; a
+  // default agent registers NO job → byte-identical with the config absent. Default
+  // 0 8 * * * runs AFTER the judge's 0 7 so the FEED signal is fully settled. The
+  // sentinel dispatch is KEYLESS (no model/key) — the registration mirrors the judge.
+  // -------------------------------------------------------------------------
+
+  it("registers NO __ONLINE_TUNING__ cron for a default (tuning-off) agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // memoryOnlineTuning undefined => default OFF (the opt-in gate — byte-identical).
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const tuningAdds = addJob.mock.calls.filter(
+      (c) => (c[0] as any)?.payload?.text === "__ONLINE_TUNING__",
+    );
+    expect(tuningAdds.length).toBe(0);
+  });
+
+  it("registers the __ONLINE_TUNING__ cron (default 0 8 * * *) for an enabled agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryOnlineTuning: { enabled: true },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const tuningAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__ONLINE_TUNING__");
+    expect(tuningAdd).toBeDefined();
+    expect(tuningAdd.id).toBe("memory-online-tuning-agent-1");
+    expect(tuningAdd.name).toBe("Memory online tuning");
+    // Default schedule runs AFTER the judge's 0 7 so the FEED signal is fully settled.
+    expect(tuningAdd.schedule).toEqual({ kind: "cron", expr: "0 8 * * *" });
+    expect(tuningAdd.sessionTarget).toBe("isolated");
+    expect(tuningAdd.sessionStrategy).toBe("fresh");
+    expect(tuningAdd.payload).toEqual({ kind: "system_event", text: "__ONLINE_TUNING__" });
+  });
+
+  it("honors a custom online-tuning schedule when the operator overrides it", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryOnlineTuning: { enabled: true, schedule: "30 9 * * 0" },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const tuningAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__ONLINE_TUNING__");
+    expect(tuningAdd?.schedule).toEqual({ kind: "cron", expr: "30 9 * * 0" });
+  });
+
+  // -------------------------------------------------------------------------
+  // __MEMORY_LIFECYCLE__ cron registration (Phase 112, FORGET-02 — Track C). OFF
+  // by default. Registered ONLY when the operator sets memoryLifecycle.enabled; a
+  // default agent registers NO job → byte-identical with the config absent. Default
+  // 0 9 * * * runs AFTER online-tuning's 0 8. Like the bandit (NOT the LLM crons)
+  // the sentinel dispatch is KEYLESS (no model/key) — the registration mirrors the
+  // online-tuning block. Even when enabled the sweep is DORMANT (evicts/demotes 0).
+  // -------------------------------------------------------------------------
+
+  it("registers NO __MEMORY_LIFECYCLE__ cron for a default (lifecycle-off) agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // memoryLifecycle undefined => default OFF (the opt-in gate — byte-identical).
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const lifecycleAdds = addJob.mock.calls.filter(
+      (c) => (c[0] as any)?.payload?.text === "__MEMORY_LIFECYCLE__",
+    );
+    expect(lifecycleAdds.length).toBe(0);
+  });
+
+  it("registers the __MEMORY_LIFECYCLE__ cron (default 0 9 * * *) for an enabled agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryLifecycle: { enabled: true },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const lifecycleAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__MEMORY_LIFECYCLE__");
+    expect(lifecycleAdd).toBeDefined();
+    expect(lifecycleAdd.id).toBe("memory-lifecycle-agent-1");
+    expect(lifecycleAdd.name).toBe("Memory lifecycle");
+    // Default schedule runs AFTER online-tuning's 0 8.
+    expect(lifecycleAdd.schedule).toEqual({ kind: "cron", expr: "0 9 * * *" });
+    expect(lifecycleAdd.sessionTarget).toBe("isolated");
+    expect(lifecycleAdd.sessionStrategy).toBe("fresh");
+    expect(lifecycleAdd.payload).toEqual({ kind: "system_event", text: "__MEMORY_LIFECYCLE__" });
+  });
+
+  it("honors a custom memory-lifecycle schedule when the operator overrides it", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryLifecycle: { enabled: true, schedule: "15 4 * * 1" },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const lifecycleAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__MEMORY_LIFECYCLE__");
+    expect(lifecycleAdd?.schedule).toEqual({ kind: "cron", expr: "15 4 * * 1" });
+  });
+
+  // -------------------------------------------------------------------------
+  // 13.4z. memory.costFeatures master kill switch (v1 opt-out posture — increment 1)
+  //
+  // A single top-level gate. When `memory.costFeatures.enabled === false`, EVERY
+  // LLM cost-bearing memory CRON is force-disabled at the registration site —
+  // even for an agent whose per-agent feature is explicitly enabled. The gated
+  // set is: memoryReview, memoryConsolidation, memoryReasoning,
+  // memoryUserRepresentation, memoryUsefulnessJudge, memoryOnlineTuning. The
+  // $0 keyless memoryLifecycle sweep and the privacy-gated socialModeling cron
+  // are NOT gated by this switch (lifecycle is keyless; social has its OWN
+  // privacy sign-off gate). When the switch is on (the default) registration is
+  // unchanged → byte-identical.
+  // -------------------------------------------------------------------------
+
+  /** A fully-enabled agent: every cost cron + lifecycle on; social on AND signed off. */
+  function allFeaturesOnAgent() {
+    return {
+      name: "Agent 1",
+      skills: { builtinTools: { browser: false } },
+      session: { resetPolicy: { mode: "none" } },
+      scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+      memoryReview: { enabled: true },
+      memoryConsolidation: { enabled: true },
+      memoryReasoning: { enabled: true },
+      memoryUserRepresentation: { enabled: true },
+      memoryUsefulnessJudge: { enabled: true },
+      memoryOnlineTuning: { enabled: true },
+      memoryLifecycle: { enabled: true },
+      socialModeling: { enabled: true, privacyReviewSignedOffBy: "operator@example.com" },
+    };
+  }
+
+  /** A deps object whose container carries an explicit memory.costFeatures.enabled. */
+  function depsWithCostSwitch(agents: Record<string, any>, costFeaturesEnabled: boolean) {
+    const deps = createMinimalDeps({ agents });
+    (deps.container as any).config.memory = { costFeatures: { enabled: costFeaturesEnabled } };
+    return deps;
+  }
+
+  const COST_CRON_SENTINELS = [
+    "__MEMORY_REVIEW__",
+    "__MEMORY_CONSOLIDATION__",
+    "__MEMORY_REASONING__",
+    "__USER_REPRESENTATION__",
+    "__USEFULNESS_JUDGE__",
+    "__ONLINE_TUNING__",
+  ] as const;
+
+  it("force-disables EVERY cost-bearing memory cron when memory.costFeatures.enabled is false (even per-agent-enabled)", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(depsWithCostSwitch({ "agent-1": allFeaturesOnAgent() }, false));
+
+    const addedSentinels = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    for (const sentinel of COST_CRON_SENTINELS) {
+      expect(addedSentinels, `${sentinel} must NOT be registered when the kill switch is off`).not.toContain(sentinel);
+    }
+  });
+
+  /**
+   * v2.9 increment 2 — KILL SWITCH BEATS DEFAULT-ON. The cost-bearing memory
+   * subtrees now default `{ enabled: true }` at the schema level (the v1 opt-out
+   * posture). A real daemon parses the config, so every cost subtree arrives
+   * present + enabled WITHOUT the operator opting in. This agent mirrors that
+   * PARSED-default shape (the cron subtrees populated + enabled, exactly as
+   * PerAgentConfigSchema.parse({}) now yields — @comis/core is mocked here so the
+   * default object is constructed inline). With the kill switch OFF, NOT ONE cost
+   * cron may register — proving the kill switch wins over the new default-ON.
+   */
+  function defaultOnParsedAgent() {
+    return {
+      name: "Agent 1",
+      skills: { builtinTools: { browser: false } },
+      session: { resetPolicy: { mode: "none" } },
+      scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+      // The post-flip PARSED defaults: each cost subtree present + enabled with no opt-in.
+      memoryReview: { enabled: true, schedule: "0 2 * * *" },
+      memoryConsolidation: { enabled: true, schedule: "30 3 * * *" },
+      memoryReasoning: { enabled: true, schedule: "0 4 * * *" },
+      memoryUserRepresentation: { enabled: true, schedule: "0 5 * * *" },
+      memoryUsefulnessJudge: { enabled: true, schedule: "0 7 * * *" },
+      memoryOnlineTuning: { enabled: true, schedule: "0 8 * * *" },
+    };
+  }
+
+  it("KILL SWITCH BEATS DEFAULT-ON: with the now-default-ON cost subtrees, costFeatures:false registers NO cost cron", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    // Default-ON subtrees (no explicit operator opt-in) + kill switch OFF.
+    await setupSchedulers(depsWithCostSwitch({ "agent-1": defaultOnParsedAgent() }, false));
+
+    const addedSentinels = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    for (const sentinel of COST_CRON_SENTINELS) {
+      expect(
+        addedSentinels,
+        `${sentinel} must NOT register when the kill switch is off, even though the per-agent default is ON`,
+      ).not.toContain(sentinel);
+    }
+  });
+
+  it("KILL SWITCH ON (default): the now-default-ON cost subtrees DO register every cost cron (opt-out posture live)", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    // Same default-ON subtrees + kill switch ON → every cost cron registers without any opt-in.
+    await setupSchedulers(depsWithCostSwitch({ "agent-1": defaultOnParsedAgent() }, true));
+
+    const addedSentinels = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    for (const sentinel of COST_CRON_SENTINELS) {
+      expect(
+        addedSentinels,
+        `${sentinel} must register by default (v1 opt-out) when the kill switch is on`,
+      ).toContain(sentinel);
+    }
+  });
+
+  it("leaves the $0 lifecycle sweep and the privacy-gated social cron UNAFFECTED by the cost kill switch", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(depsWithCostSwitch({ "agent-1": allFeaturesOnAgent() }, false));
+
+    const addedSentinels = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    // The keyless lifecycle sweep is NOT a cost feature → still registered.
+    expect(addedSentinels).toContain("__MEMORY_LIFECYCLE__");
+    // socialModeling has its OWN privacy gate (independent of the cost switch) → still registered.
+    expect(addedSentinels).toContain("__SOCIAL_MODELING__");
+  });
+
+  it("registers ALL cost-bearing memory crons when the kill switch is on (the default — byte-identical)", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(depsWithCostSwitch({ "agent-1": allFeaturesOnAgent() }, true));
+
+    const addedSentinels = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    for (const sentinel of COST_CRON_SENTINELS) {
+      expect(addedSentinels, `${sentinel} must be registered when the kill switch is on`).toContain(sentinel);
+    }
+  });
+
+  // The first-run cost-disclosure notice is invoked from inside setupSchedulers (the cron-wiring
+  // seam) — a forward-presence belt that it actually fires. The REAL notice helper runs (it is
+  // not mocked), so a WARN naming the off-switch lands on schedulerLogger.warn.
+
+  it("emits the first-run cost-disclosure WARN when the kill switch is on and a cost feature is active", async () => {
+    withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    const deps = depsWithCostSwitch({ "agent-1": { ...allFeaturesOnAgent() } }, true);
+    await setupSchedulers(deps);
+
+    const disclosureWarn = (deps.schedulerLogger.warn as any).mock.calls.find(
+      (c: any[]) => JSON.stringify(c).includes("memory.costFeatures.enabled: false"),
+    );
+    expect(disclosureWarn, "a cost-disclosure WARN naming the off-switch was emitted").toBeDefined();
+  });
+
+  it("emits NO cost-disclosure WARN for a default (no cost feature active) agent", async () => {
+    withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    const deps = depsWithCostSwitch(
+      { "agent-1": { name: "Agent 1", skills: { builtinTools: { browser: false } }, session: { resetPolicy: { mode: "none" } }, scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } } } },
+      true,
+    );
+    await setupSchedulers(deps);
+
+    const disclosureWarn = (deps.schedulerLogger.warn as any).mock.calls.find(
+      (c: any[]) => JSON.stringify(c).includes("memory.costFeatures.enabled: false"),
+    );
+    expect(disclosureWarn, "no cost-disclosure WARN when nothing is active").toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
   // 13.5. sessionStrategy and maxHistoryTurns propagated in event emission
   // -------------------------------------------------------------------------
 

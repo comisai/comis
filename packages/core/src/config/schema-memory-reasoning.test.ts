@@ -4,10 +4,12 @@ import { MemoryReasoningConfigSchema } from "./schema-memory-reasoning.js";
 import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 describe("MemoryReasoningConfigSchema", () => {
-  it("parses an empty object to the off-by-default bounded configuration", () => {
+  it("parses an empty object to the ON-by-default (v1 opt-out) bounded configuration", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: reasoning defaults ON (a COST feature, still
+    // force-disabled by the master kill switch). All bounded tuning constants stay frozen.
     const result = MemoryReasoningConfigSchema.parse({});
     expect(result).toEqual({
-      enabled: false,
+      enabled: true,
       schedule: "0 4 * * *",
       maxCandidatesPerRun: 200,
       surprisalTopFraction: 0.1,
@@ -19,8 +21,8 @@ describe("MemoryReasoningConfigSchema", () => {
     });
   });
 
-  it("defaults enabled to false (reasoning is opt-in, a cost gate not back-compat)", () => {
-    expect(MemoryReasoningConfigSchema.parse({}).enabled).toBe(false);
+  it("defaults enabled to true (v1 opt-out posture; gated by the master cost-feature kill switch)", () => {
+    expect(MemoryReasoningConfigSchema.parse({}).enabled).toBe(true);
   });
 
   it("defaults reasonExternal to false (external memories excluded — trust hardening)", () => {
@@ -76,8 +78,11 @@ describe("PerAgentConfigSchema memoryReasoning field", () => {
     expect(result.memoryReasoning!.enabled).toBe(true);
   });
 
-  it("treats memoryReasoning as optional (absent on a bare config)", () => {
+  it("defaults memoryReasoning ON for a bare config (v1 opt-out posture; kill-switch-gated)", () => {
+    // v2.9 increment 2 — the subtree is no longer `.optional()`; a bare config gets it populated
+    // + enabled. The master cost-feature kill switch still force-disables it at the cron site.
     const result = PerAgentConfigSchema.parse({});
-    expect(result.memoryReasoning).toBeUndefined();
+    expect(result.memoryReasoning).toBeDefined();
+    expect(result.memoryReasoning!.enabled).toBe(true);
   });
 });

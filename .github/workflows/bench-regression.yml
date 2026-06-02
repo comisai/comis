@@ -1,0 +1,160 @@
+name: Bench Regression Gate
+
+# Phase 116 (GATE-01) — the per-release benchmark REGRESSION gate as SCHEDULED CI.
+#
+# Runs `scripts/bench-memory.sh gate`, which compares a run's per-category accuracy
+# against the COMMITTED J1 baseline
+# (benchmarks/results/2026-05-31-j1-baseline/qa-report.judge-a.json, judge A = gpt-4o)
+# and FAILS on a real category regression (a drop below baseline beyond the tolerance
+# band AND statistically significant — packages/agent/src/memory/benchmark/regression-gate.ts).
+#
+# TWO HONEST MODES (never a success-shaped claim on a keyless run — WR-01):
+#   • KEYLESS (no benchmark secrets configured): the gate proves the
+#     compareToBaseline MECHANISM against the committed baseline (baseline-vs-itself
+#     = no regression; a synthetic significant drop is detected) and the append-only
+#     ledger never-overwrite mechanism. It makes NO regression-pass claim — a keyless
+#     run has no real current manifest, so there is nothing to pass.
+#   • COSTED (benchmark secrets configured as repository secrets): the job writes
+#     them into scripts/bench-memory.env at runtime, runs the costed `all` benchmark
+#     (which writes a fresh current manifest), then runs the gate with
+#     COMIS_GATE_CURRENT_MANIFEST pointing at that manifest — failing the JOB on a
+#     real regression vs the committed baseline.
+#
+# SECRETS DISCIPLINE (the binding invariant):
+#   • Secrets are taken ONLY from GitHub repository secrets and written ONLY into the
+#     git-ignored scripts/bench-memory.env (the single file the runner sources). They
+#     are NEVER inlined into commands, NEVER echoed, NEVER `cat`-ed.
+#   • Every secret is registered with `::add-mask::` before first use, so even an
+#     accidental print is redacted in the logs.
+#   • The env-file write runs with shell command-echo OFF (`set +x`) and redirects to
+#     the file only — the values never reach stdout.
+#   • The 10M / heavy SUITE tiers are NEVER run here (this uses the `gate` mode, not
+#     `suite all`) — keep the scheduled spend bounded.
+
+on:
+  schedule:
+    # Weekly, Mondays 06:00 UTC. Off-peak; bounded `gate`-mode spend only.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  regression-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - uses: pnpm/action-setup@8912a9102ac27614460f54aedde9e1e7f9aec20d # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        # The bench harnesses import @comis/* from dist (the Vitest alias) — build first.
+        run: pnpm build
+
+      - name: Write benchmark secrets into scripts/bench-memory.env (masked; never echoed)
+        # Secrets arrive ONLY via the env: block below (from GitHub repository secrets)
+        # and are written ONLY into the git-ignored scripts/bench-memory.env — never
+        # inlined into a command and never printed. `set +x` keeps command-echo OFF so
+        # the values cannot reach the log; each value is masked with ::add-mask:: first.
+        # When the answer/judge secrets are NOT configured, NO env file is written and
+        # the gate runs its keyless mechanism proof (honest — no regression-pass claim).
+        env:
+          COMIS_BENCH_ANSWER_PROVIDER: ${{ secrets.COMIS_BENCH_ANSWER_PROVIDER }}
+          COMIS_BENCH_ANSWER_MODEL: ${{ secrets.COMIS_BENCH_ANSWER_MODEL }}
+          COMIS_BENCH_ANSWER_API_KEY: ${{ secrets.COMIS_BENCH_ANSWER_API_KEY }}
+          COMIS_BENCH_JUDGE_PROVIDER: ${{ secrets.COMIS_BENCH_JUDGE_PROVIDER }}
+          COMIS_BENCH_JUDGE_MODEL: ${{ secrets.COMIS_BENCH_JUDGE_MODEL }}
+          COMIS_BENCH_JUDGE_API_KEY: ${{ secrets.COMIS_BENCH_JUDGE_API_KEY }}
+          COMIS_BENCH_DATA_DIR: ${{ secrets.COMIS_BENCH_DATA_DIR }}
+        run: |
+          set +x
+          ENV_FILE="scripts/bench-memory.env"
+          # Mask every secret value BEFORE it is used, so an accidental print is redacted.
+          for v in \
+            "$COMIS_BENCH_ANSWER_API_KEY" \
+            "$COMIS_BENCH_JUDGE_API_KEY" \
+            "$COMIS_BENCH_ANSWER_MODEL" \
+            "$COMIS_BENCH_JUDGE_MODEL"; do
+            if [ -n "$v" ]; then echo "::add-mask::$v"; fi
+          done
+          # The costed path needs the answer+judge KEYS *and* a data dir (the corpus
+          # the costed `all` run grades + where it writes the current manifest the gate
+          # then compares). Missing any → keyless mechanism proof (no paid fixture run,
+          # no regression-pass claim).
+          if [ -z "$COMIS_BENCH_ANSWER_API_KEY" ] || [ -z "$COMIS_BENCH_JUDGE_API_KEY" ] || [ -z "$COMIS_BENCH_DATA_DIR" ]; then
+            echo "benchmark answer/judge keys or COMIS_BENCH_DATA_DIR not configured → keyless gate (mechanism proof only; no regression-pass claim)"
+            echo "BENCH_MODE=keyless" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          # Costed path: write the secrets into the git-ignored env file ONLY. The
+          # printf redirects to the file; nothing is echoed to stdout. The runner
+          # sources this file (set -a; . scripts/bench-memory.env; set +a).
+          umask 077
+          {
+            printf 'COMIS_BENCH=1\n'
+            printf 'COMIS_BENCH_ANSWER_PROVIDER=%s\n' "$COMIS_BENCH_ANSWER_PROVIDER"
+            printf 'COMIS_BENCH_ANSWER_MODEL=%s\n' "$COMIS_BENCH_ANSWER_MODEL"
+            printf 'COMIS_BENCH_ANSWER_API_KEY=%s\n' "$COMIS_BENCH_ANSWER_API_KEY"
+            printf 'COMIS_BENCH_JUDGE_PROVIDER=%s\n' "$COMIS_BENCH_JUDGE_PROVIDER"
+            printf 'COMIS_BENCH_JUDGE_MODEL=%s\n' "$COMIS_BENCH_JUDGE_MODEL"
+            printf 'COMIS_BENCH_JUDGE_API_KEY=%s\n' "$COMIS_BENCH_JUDGE_API_KEY"
+          } > "$ENV_FILE"
+          # COMIS_BENCH_DATA is a directory PATH (not a secret) the operator may place
+          # the full corpora under; pass it through only when configured.
+          if [ -n "$COMIS_BENCH_DATA_DIR" ]; then
+            printf 'COMIS_BENCH_DATA=%s\n' "$COMIS_BENCH_DATA_DIR" >> "$ENV_FILE"
+          fi
+          echo "benchmark secrets written to $ENV_FILE (git-ignored; values masked, never echoed) → costed gate"
+          echo "BENCH_MODE=costed" >> "$GITHUB_ENV"
+
+      - name: Keyless regression gate (mechanism proof; no regression-pass claim)
+        if: env.BENCH_MODE == 'keyless'
+        # No secrets configured: the gate proves the compareToBaseline + ledger
+        # MECHANISMS against the committed baseline and claims NO pass (WR-01). The
+        # bench env file is absent, so the runner runs fully keyless at $0.
+        run: pnpm bench:memory gate
+
+      - name: Costed benchmark (writes the current manifest)
+        if: env.BENCH_MODE == 'costed'
+        # The costed `all` run answers + judges the disclosed sample and writes the
+        # current run's qa-report manifest. Secrets are sourced from the env file the
+        # previous step wrote; nothing secret is on this command line. The 10M / heavy
+        # SUITE tiers are deliberately NOT run (bounded scheduled spend).
+        run: pnpm bench:memory all
+
+      - name: Costed regression gate (fails on a category regression vs the baseline)
+        if: env.BENCH_MODE == 'costed'
+        # Point the gate at the manifest the costed run wrote (a results PATH, not a
+        # secret). The gate compares per-category accuracy to the committed J1 baseline
+        # and EXITS NON-ZERO on a real regression — failing this job. SKIP_BUILD=1
+        # reuses the build above; secrets stay in scripts/bench-memory.env only.
+        env:
+          SKIP_BUILD: "1"
+          COMIS_GATE_CURRENT_MANIFEST: ${{ secrets.COMIS_BENCH_DATA_DIR && format('{0}/qa-report.json', secrets.COMIS_BENCH_DATA_DIR) || '' }}
+        run: pnpm bench:memory gate
+
+      - name: Assert no committed-results file leaked a credential shape
+        # Belt-and-suspenders over the harnesses' in-test omission gate + the script's
+        # own sweeps: fail the job if ANY committed benchmarks/results file matches a
+        # credential SHAPE (sk-…/Bearer …/apiKey). Never matches the bare word `token`.
+        if: always()
+        run: |
+          if grep -REn 'sk-[A-Za-z0-9_-]{16,}|Bearer [A-Za-z0-9._-]+|apiKey' benchmarks/results 2>/dev/null; then
+            echo "::error::credential shape found under benchmarks/results — failing the job"
+            exit 1
+          fi
+          echo "no credential shapes under benchmarks/results"

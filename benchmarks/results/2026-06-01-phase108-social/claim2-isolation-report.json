@@ -1,0 +1,9 @@
+{
+  "harnessVersion": "phase-108-05-v1",
+  "claim": "tenant-agent-channel-isolation",
+  "inScopeRows": 1,
+  "crossChannelRows": 0,
+  "crossTenantRows": 0,
+  "crossAgentRows": 0,
+  "pass": true
+}

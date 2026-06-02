@@ -53,6 +53,10 @@ import { stripDiscoverySchemas } from "./schema-stripping.js";
 // FEED-01: in-package pure attribution fn (the agent↛memory cut — core types
 // only; the write-back is the daemon's job, off the recall-used bus event).
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
+// LEARN-01 (write side): the DETERMINISTIC, LLM-free intent classifier (same package, NOT
+// publicly exported — Pitfall 2). The turn-end memory:recall_used emit threads
+// classifyIntent(msg.text) so the daemon write-back records the per-intent usefulness bucket.
+import { classifyIntent } from "../rag/query-understanding.js";
 import { getWorkspaceStatus } from "../workspace/index.js";
 import type { ExecutionResult, ExecutionOverrides } from "./types.js";
 import type { ExecutionPlan } from "../planner/types.js";
@@ -851,6 +855,19 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   ) {
     try {
       const { usedIds, ignoredIds } = attributeRecallUsage(params.recalledMemories, result.response);
+      // LEARN-01 (write side): thread the recall-time intent so the daemon subscriber writes
+      // the PER-INTENT usefulness bucket. The intent is classifyIntent over the SAME recalled
+      // query the recall read classified (msg.text — prompt-assembly.ts:818), gated on the SAME
+      // queryUnderstanding.intentReweight flag the recall read uses. classifyIntent is pure +
+      // deterministic ("NO LLM, NO network") so the emit adds NO model call. intentReweight off
+      // (or msg.text absent) → intent stays undefined → the spread OMITS it → the subscriber
+      // records the global ('') bucket (byte-identical write to v2.8). The intent is a
+      // closed-union metadata string (factual|temporal|preference|enumeration), never the raw
+      // query — the event stays ids/counts/intent-only (§2.7).
+      const intent =
+        config.rag.queryUnderstanding?.intentReweight === true && msg.text
+          ? classifyIntent(msg.text)
+          : undefined;
       deps.eventBus.emit("memory:recall_used", {
         agentId: effectiveAgentId,
         sessionKey: formattedKey,
@@ -860,6 +877,7 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
         usedCount: usedIds.length,
         ignoredCount: ignoredIds.length,
         timestamp: deps.clock.now(),
+        ...(intent !== undefined ? { intent } : {}),
       });
     } catch {
       // Attribution + emit is non-fatal — it must never fail the turn.

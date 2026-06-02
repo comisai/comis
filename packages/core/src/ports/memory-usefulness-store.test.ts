@@ -113,3 +113,80 @@ describe("MemoryUsefulnessStore — durable recall-utility port (FEED-02)", () =
     expect(scope.now).toBe(123);
   });
 });
+
+/**
+ * Phase 110 (LEARN-01 / H1) — the optional per-INTENT bucket on UsefulnessScope.
+ *
+ * Additive + forward-only: a `UsefulnessScope` carries an OPTIONAL `intent?:
+ * string`. When present the read fetches / the write records the per-intent
+ * usefulness signal (a memory's usefulness FOR THAT INTENT); when OMITTED the
+ * adapter resolves the GLOBAL bucket (intent="") — byte-identical to v2.8, so
+ * today's callers compile unchanged. Because `readUsefulness` takes
+ * `Omit<UsefulnessScope, "now">`, the optional `intent` flows to BOTH the write
+ * (`recordUsage`) AND the read automatically.
+ *
+ * Runtime RED proof: the source-grep below FAILS on the pre-patch port (no
+ * `intent?: string` on UsefulnessScope) — the type-only port erases its
+ * type-level assertions at runtime (vitest does not type-check), so the grep is
+ * the reproducible-from-this-commit RED, mirroring the first test's portSrc guard.
+ */
+describe("UsefulnessScope optional per-intent bucket (LEARN-01 / H1)", () => {
+  it("declares an OPTIONAL intent?: string on UsefulnessScope (runtime RED guard)", () => {
+    // Fails on the pre-patch source where UsefulnessScope has no intent field.
+    expect(portSrc, "UsefulnessScope must carry an optional intent?: string").toMatch(
+      /\bintent\?:\s*string\b/,
+    );
+    // The field must stay TYPE-ONLY: no Intent import from @comis/agent (Pitfall
+    // 2 — the bucket is a plain string, the closed-union value comes from the
+    // agent's deterministic classifyIntent), and the port stays zod-free / with
+    // no @comis/memory import (the load-bearing agent↛memory cut, re-proven here).
+    expect(portSrc, "no Intent import from @comis/agent (Pitfall 2)").not.toMatch(
+      /from\s+["']@comis\/agent["']/,
+    );
+    expect(portSrc, "no @comis/memory import in core port").not.toMatch(
+      /^\s*import\b[^\n]*@comis\/memory/m,
+    );
+    expect(portSrc, "no zod in a type-only port").not.toMatch(/\bz\.[a-z]/);
+  });
+
+  it("a UsefulnessScope WITH intent:'temporal' type-checks (per-intent bucket)", () => {
+    const scope: UsefulnessScope = { tenantId: "t", agentId: "a", now: 123, intent: "temporal" };
+    expect(scope.intent).toBe("temporal");
+    expectTypeOf(scope.intent).toEqualTypeOf<string | undefined>();
+  });
+
+  it("a UsefulnessScope WITHOUT intent is still valid (optionality / byte-identity)", () => {
+    // The pre-110 shape must still satisfy UsefulnessScope unchanged — omitting
+    // intent is byte-identical to v2.8 at the type level (degrade-to-global).
+    const scope: UsefulnessScope = { tenantId: "t", agentId: "a", now: 123 };
+    expect(scope.intent).toBeUndefined();
+  });
+
+  it("the readUsefulness scope arg (Omit<…,'now'>) ALSO accepts the optional intent (per-intent read)", () => {
+    // The read is per-intent: an Omit<UsefulnessScope,"now"> with intent present
+    // AND with it absent must both satisfy the read-arg shape.
+    const withIntent: Omit<UsefulnessScope, "now"> = { tenantId: "t", agentId: "a", intent: "factual" };
+    const withoutIntent: Omit<UsefulnessScope, "now"> = { tenantId: "t", agentId: "a" };
+    expect(withIntent.intent).toBe("factual");
+    expect(withoutIntent.intent).toBeUndefined();
+
+    // Pass both through a readUsefulness-shaped signature to prove the read arg
+    // carries the bucket (compiles with intent present and with it absent).
+    const stub: MemoryUsefulnessStore = {
+      recordUsage: async (): Promise<Result<void, Error>> => ok(undefined),
+      readUsefulness: async (
+        _ids: string[],
+        scope: Omit<UsefulnessScope, "now">,
+      ): Promise<Result<Map<string, UsefulnessSignal>, Error>> => {
+        expectTypeOf(scope.intent).toEqualTypeOf<string | undefined>();
+        return ok(new Map());
+      },
+    };
+    expectTypeOf<Parameters<MemoryUsefulnessStore["readUsefulness"]>[1]>().toEqualTypeOf<
+      Omit<UsefulnessScope, "now">
+    >();
+    void stub.readUsefulness(["m1"], withIntent);
+    void stub.readUsefulness(["m1"], withoutIntent);
+    expect(true).toBe(true);
+  });
+});

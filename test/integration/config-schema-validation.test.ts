@@ -52,6 +52,8 @@ describe("Config Schema Validation", () => {
       // Snapshot-style guard: bump this count when a new top-level section is
       // added so the change surfaces in code review. Count reflects all scalars
       // plus all object sections currently in AppConfigSchema.shape.
+      // Merge note: v1.5 (#147) removed the top-level `oauth` section (folded into
+      // the unified credential storage), dropping this from 42 → 41.
       expect(allKeys).toHaveLength(41);
     });
 

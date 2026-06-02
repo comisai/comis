@@ -35,14 +35,19 @@
 #              Comis recall cell) and write the committable PARTIAL manifest under
 #              benchmarks/results/2026-06-01-phase104-prove/ (override via COMIS_PROVE_REPORT_DIR).
 #              No keys, no provider call, no cost. Then the credential-shape sweep over the dir.
-#   gate       PROVE-03 per-release CONTINUOUS REGRESSION GATE: run the keyless machine,
-#              which PROVES the append-only never-overwrite ledger MECHANISM over a fresh
-#              tmp dir. The keyless run writes NO dated row to benchmarks/results/history/
-#              (it does not exist on the keyless path) — the real dated append is the
-#              operator-COSTED pass (GATE-REPORT.md §4). When that committed history dir
-#              exists, the gate sweeps it for credential shapes. Wiring a CI `schedule:`
-#              cron is an OPERATOR step (the COSTED run with real competitor installs +
-#              judge spend) — the `gate` MODE itself is the in-scope $0-testable unit.
+#   gate       PROVE-03 / GATE-01 per-release CONTINUOUS REGRESSION GATE: runs two
+#              honest harnesses. (1) The head-to-head machine PROVES the append-only
+#              never-overwrite ledger MECHANISM over a fresh tmp dir (writes NO dated row
+#              to benchmarks/results/history/ on the keyless path). (2) The regression-gate
+#              harness compares per-category accuracy vs the COMMITTED J1 baseline
+#              (benchmarks/results/2026-05-31-j1-baseline/qa-report.judge-a.json): keyless
+#              it proves the compareToBaseline MECHANISM; with COMIS_GATE_CURRENT_MANIFEST
+#              pointing at a real run's manifest it EXITS NON-ZERO on a real category
+#              regression (below baseline beyond tolerance AND statistically significant).
+#              A keyless run claims NO regression-pass (WR-01). This gate mode is what the
+#              scheduled CI job (.github/workflows/bench-regression.yml) runs; the COSTED
+#              pass (real keys + judge spend, secrets ONLY from scripts/bench-memory.env)
+#              writes the current manifest the gate then compares.
 #
 # Config: copy scripts/bench-memory.env.example → scripts/bench-memory.env and fill it
 # (the runner sources it automatically), or export the COMIS_BENCH_* / LLAMA_* vars yourself.
@@ -76,6 +81,11 @@ PERSONALIZATION_TEST="$BENCH_DIR/personalization-loaders.test.ts"
 # PROVE (Phase 104, Track J) — the keyless head-to-head proving-machine harness + the
 # per-release continuous gate (routed by the `head-to-head` / `gate` modes below).
 HEAD_TO_HEAD="$BENCH_DIR/head-to-head.bench.test.ts"
+# GATE (Phase 116, GATE-01) — the per-release REGRESSION gate harness. Keyless it
+# proves the compareToBaseline MECHANISM against the committed J1 baseline; when
+# COMIS_GATE_CURRENT_MANIFEST points at a real run's manifest it FAILS on a real
+# category regression vs that baseline (the operator-costed pass). Routed by `gate`.
+REGRESSION_GATE="$BENCH_DIR/regression-gate.bench.test.ts"
 
 # The full tier allowlist (drives `suite all` + the usage line). The order is the
 # keyless tiers first, then the answer+judge tiers, then the external loaders.
@@ -228,20 +238,34 @@ case "$MODE" in
     echo "  → manifest: $COMIS_PROVE_REPORT_DIR"
     ;;
   gate)
-    # PROVE-03 — the per-release CONTINUOUS REGRESSION GATE entry point. Runs the
-    # keyless proving machine, which PROVES the append-only never-overwrite ledger
-    # MECHANISM over a fresh tmp history dir (head-to-head.bench.test.ts: write a
-    # dated row, refuse a 2nd same-path write with prior bytes byte-identical, let a
-    # different-date row coexist). The keyless run writes a SYNTHETIC row to a tmp
-    # dir — it does NOT touch the committed benchmarks/results/history/ (that real
-    # dated append is the operator-COSTED pass; see GATE-REPORT.md §4).
+    # PROVE-03 / GATE-01 — the per-release CONTINUOUS REGRESSION GATE entry point.
+    # Two harnesses run, both honest about keyless vs costed:
     #
-    # OPERATOR/FOLLOW-UP: wiring a CI `schedule:` cron to run this `gate` mode is an
-    # OPERATOR step, NOT shipped here — the COSTED head-to-head (real competitor installs
-    # + keys + LLM judge spend) is what fills the real cross-judged numbers, and a keyless
-    # scheduled run would never produce a useful headline. The `gate` MODE is the in-scope,
-    # $0-testable unit; the scheduled spend is deferred to the operator (RESEARCH Open Q #2).
+    #  (1) head-to-head.bench.test.ts — PROVES the append-only never-overwrite
+    #      ledger MECHANISM over a fresh tmp history dir (write a dated row, refuse a
+    #      2nd same-path write with prior bytes byte-identical, let a different-date
+    #      row coexist). The keyless run writes a SYNTHETIC row to a tmp dir — it does
+    #      NOT touch the committed benchmarks/results/history/.
+    #
+    #  (2) regression-gate.bench.test.ts (GATE-01) — the per-category regression
+    #      comparison vs the COMMITTED J1 baseline
+    #      (benchmarks/results/2026-05-31-j1-baseline/qa-report.judge-a.json, judge A
+    #      = gpt-4o). KEYLESS it proves the compareToBaseline MECHANISM (baseline vs
+    #      itself = no regression; a synthetic significant drop = detected). When the
+    #      operator sets COMIS_GATE_CURRENT_MANIFEST to a real run's manifest, it
+    #      additionally runs the COSTED comparison and EXITS NON-ZERO on a real
+    #      category regression (a drop below baseline beyond the tolerance band AND
+    #      statistically significant) — `set -e` propagates the non-zero out of the
+    #      gate. COMIS_GATE_CURRENT_MANIFEST is a committed-results PATH pointer, never
+    #      a secret; the secrets that PRODUCE that manifest come ONLY from
+    #      scripts/bench-memory.env (the costed qa/all/prove2 run that writes it).
+    #
+    # The CI `schedule:` cron (.github/workflows/bench-regression.yml) runs THIS gate
+    # mode: keyless when no secrets are configured (mechanism proof only, no costed
+    # regression-pass claim), or — with the benchmark secrets in scripts/bench-memory.env
+    # — the costed qa/all run + this gate's costed comparison vs the committed baseline.
     run "$HEAD_TO_HEAD"
+    run "$REGRESSION_GATE"
     HISTORY_DIR="$ROOT/benchmarks/results/history"
     # HONESTY (WR-01): only claim a dated row + a history sweep when the dir actually
     # exists with operator-costed rows. The keyless run never writes here, so by
@@ -250,11 +274,23 @@ case "$MODE" in
     if [ -d "$HISTORY_DIR" ] && [ -n "$(ls -A "$HISTORY_DIR" 2>/dev/null)" ]; then
       sweep_dir "$HISTORY_DIR"
       echo "  → swept benchmarks/results/history/ (operator-costed dated rows)"
+    fi
+    # HONESTY (WR-01) — the regression-gate verdict, split by whether a REAL current
+    # manifest was supplied. With COMIS_GATE_CURRENT_MANIFEST set, the costed
+    # comparison ABOVE already ran and (since we got here) found no regression — that
+    # is a real pass. Without it, the keyless run proved only the MECHANISM and makes
+    # NO regression-pass claim.
+    if [ -n "${COMIS_GATE_CURRENT_MANIFEST:-}" ]; then
+      echo "  → regression gate: the current run ($COMIS_GATE_CURRENT_MANIFEST) shows"
+      echo "    NO category regression vs the committed J1 baseline"
+      echo "    (benchmarks/results/2026-05-31-j1-baseline/qa-report.judge-a.json)."
     else
-      echo "  → keyless gate: the append-only never-overwrite ledger MECHANISM is"
-      echo "    PROVEN over a fresh tmp dir (the keyless run writes NO dated row to"
-      echo "    benchmarks/results/history/). The real dated append is the operator-"
-      echo "    costed pass — reproduce with the steps in"
+      echo "  → keyless gate: the regression-comparison MECHANISM is PROVEN against the"
+      echo "    committed J1 baseline (baseline-vs-itself = no regression; a synthetic"
+      echo "    significant drop is detected). NO real current manifest was supplied, so"
+      echo "    NO regression-pass is claimed. The real costed pass sets"
+      echo "    COMIS_GATE_CURRENT_MANIFEST to a fresh costed run's qa-report manifest —"
+      echo "    reproduce with the steps in"
       echo "    benchmarks/results/2026-06-01-phase104-prove/GATE-REPORT.md §4."
     fi
     ;;

@@ -419,6 +419,31 @@ export interface BootContext {
    *  siblings. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory
    *  cut). Dormant until an operator enables `agents.<id>.rag.feedback.enabled` (default OFF). */
   usefulnessStore: Awaited<ReturnType<typeof setupMemory>>["usefulnessStore"];
+  /** Per-user representation store (Phase 107, USER-03 — Track E1) — threaded into setupAgents (the
+   *  executor recall read path -> prompt-assembly's LLM-free `<user_profile>` standing-block injection)
+   *  AND the offline-builder cron (setup-channels -> the __USER_REPRESENTATION__ sentinel). Built in
+   *  setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until the
+   *  offline builder writes rows (default-OFF cost gate). */
+  userRepresentationStore: Awaited<ReturnType<typeof setupMemory>>["userRepresentationStore"];
+  /** Directional relationship store (Phase 108, SOCIAL-01/02 — Track E2) — threaded into setupAgents
+   *  (the executor recall read path -> prompt-assembly's LLM-free `<channel_relationships>` standing-block
+   *  injection) AND the offline-builder cron (setup-channels -> the __SOCIAL_MODELING__ sentinel). Built
+   *  in setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). Dormant until the
+   *  offline builder writes rows AND the operator enables the SOCIAL-03 dual gate (default-OFF +
+   *  sign-off-gated). */
+  relationshipStore: Awaited<ReturnType<typeof setupMemory>>["relationshipStore"];
+  /** Tuned-alpha store (Phase 111, LEARN-03 — Track H2) — threaded into setupAgents (the executor
+   *  recall read path -> prompt-assembly's buildScoringAlphas overlay) AND the OFFLINE bandit cron
+   *  (setup-channels -> the __ONLINE_TUNING__ sentinel). Built in setup-memory on the shared db;
+   *  injected as the port TYPE (agent↛memory cut). Dormant until BOTH the recall-side gate
+   *  (`rag.onlineTuning.enabled`) AND the bandit cron (`memoryOnlineTuning.enabled`) are on. */
+  tunedAlphaStore: Awaited<ReturnType<typeof setupMemory>>["tunedAlphaStore"];
+  /** Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C) — threaded into the cron
+   *  path ONLY (the KEYLESS __MEMORY_LIFECYCLE__ sentinel → the DORMANT runLifecycleSweep). NOT
+   *  the executor recall path (RQ8: daemon-cron-side, no 3-hop forwarding). Built in setup-memory
+   *  on the shared db; injected as the port TYPE (agent↛memory cut). Dormant — even when the cron
+   *  (`memoryLifecycle.enabled`, default OFF) is on the sweep evicts/demotes 0 rows. */
+  memoryLifecycleStore: Awaited<ReturnType<typeof setupMemory>>["memoryLifecycleStore"];
   /** Consolidation store (Phase 84, CONS-07) — threaded into the cron path ONLY (the
    *  registerCronEventListeners → runMemoryConsolidation sentinel). NOT the executor recall
    *  path. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). */

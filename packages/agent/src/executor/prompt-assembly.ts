@@ -69,7 +69,10 @@ import {
 } from "../bootstrap/index.js";
 import { createHybridMemoryInjector } from "../rag/hybrid-memory-injector.js";
 import { createMemoryRecall } from "../rag/memory-recall.js";
+import { buildScoringAlphas } from "../rag/scoring-overlay.js";
 import { buildTemporalGuidanceBlock } from "../rag/temporal-guidance.js";
+import { buildUserRepresentationBlock } from "./user-representation-block.js";
+import { buildRelationshipBlock } from "./relationship-block.js";
 import { BOOTSTRAP_BUDGET_WARN_PERCENT, CHARS_PER_TOKEN_RATIO } from "../context-engine/index.js";
 import { isBootContentEffectivelyEmpty, BOOT_FILE_NAME } from "../workspace/boot-file.js";
 import { detectOnboardingState } from "../workspace/onboarding-detector.js";
@@ -292,6 +295,27 @@ export interface PromptAssemblyParams {
     /** Optional usefulness store for createMemoryRecall's usefulness read (FEED-03;
      *  default-OFF via config.rag.feedback). TYPE-only (the agent↛memory build cut). */
     usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
+    /** Optional learned-alpha store for the deterministic apply overlay (LEARN-03;
+     *  default-OFF via config.rag.onlineTuning). Gated read → buildScoringAlphas overlays
+     *  the four non-trust weights; absent / off / no-row ⇒ no read, the static
+     *  config.rag.scoring alphas pass unchanged (byte-identical recall, the cost gate).
+     *  The read is a pure deterministic store.read scoped to (tenantId, agentId) — NO
+     *  model call crosses onto the recall hot path (the milestone's #1 constraint).
+     *  TYPE-only (the agent↛memory build cut). */
+    tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
+    /** Optional per-user profile store for the LLM-free standing-block injection
+     *  (USER-03; default-OFF). Absent ⇒ no read, no push, byte-identical prompt
+     *  (the cost gate). The agent receives the port TYPE only — the agent↛memory
+     *  build cut. The read is a deterministic store.read + a pure formatter; NO
+     *  model call crosses onto the recall hot path (the milestone's #1 constraint). */
+    userRepresentationStore?: import("@comis/core").UserRepresentationStore;
+    /** Optional channel-relationship store for the LLM-free directional standing-block
+     *  injection (SOCIAL-02 read side; default-OFF, gated on the SOCIAL-03 sign-off).
+     *  Absent ⇒ no read, no push, byte-identical prompt (the cost gate). The agent
+     *  receives the port TYPE only — the agent↛memory build cut. The read is a
+     *  deterministic store.read scoped to channelId = sessionKey.channelId + a pure
+     *  formatter; NO model call crosses onto the recall hot path (the #1 constraint). */
+    relationshipStore?: import("@comis/core").RelationshipStore;
     timers?: import("@comis/core").TimerPort;
     hookRunner?: HookRunner;
     secretManager?: SecretManager;
@@ -766,6 +790,27 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       // `scoring` below) — there is NO alpha on `feedback`.
       const ragFeedback = (config.rag as typeof config.rag & { feedback?: { enabled: boolean } })
         .feedback;
+      // LEARN-03: the deterministic apply overlay. Read the learned alpha vector
+      // GATED on config.rag.onlineTuning.enabled AND a present store dep, then overlay
+      // the four non-trust alphas via buildScoringAlphas (trust STILL from config.rag.scoring
+      // — belt #2). The `onlineTuning` field lands on the schema in 111-04, so it is read
+      // through a structural widening that compiles against today's strict RagConfig (the
+      // same posture as `feedback` above). Default-OFF byte-identity (Pitfall 3): with the
+      // knob off OR no store dep OR no learned row, `tunedVector` stays undefined → the
+      // store is NEVER read and buildScoringAlphas returns config.rag.scoring unchanged. The
+      // read is PURE + non-fatal: a read failure → undefined → byte-identical fallback. NO
+      // model call crosses onto the recall hot path (the milestone's #1 constraint).
+      let tunedVector: import("@comis/core").TunedAlphaVector | undefined;
+      const onlineTuningEnabled =
+        (config.rag as typeof config.rag & { onlineTuning?: { enabled: boolean } }).onlineTuning
+          ?.enabled === true;
+      if (onlineTuningEnabled && deps.tunedAlphaStore) {
+        const tr = await deps.tunedAlphaStore.read({
+          tenantId: deps.tenantId ?? sessionKey.tenantId,
+          agentId: agentId ?? config.name,
+        });
+        if (tr.ok) tunedVector = tr.value;
+      }
       const recall = createMemoryRecall(
         {
           memoryPort: deps.memoryPort,
@@ -787,7 +832,11 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           minScore: config.rag.minScore,
           includeTrustLevels: config.rag.includeTrustLevels,
           rerank: config.rag.rerank,
-          scoring: config.rag.scoring,
+          // LEARN-03: the deterministic apply overlay (PURE — no clock, no LLM, no
+          // randomness). tunedVector present (tuning ON + a learned row) → the four
+          // non-trust alphas come from it, trustAlpha STILL from config (belt #2).
+          // tunedVector undefined (default-OFF) → config.rag.scoring unchanged.
+          scoring: buildScoringAlphas(config.rag.scoring, tunedVector),
           lanes: config.rag.lanes,
           entityLane: config.rag.entityLane,
           // IQ-01 MMR diversity re-rank + IQ-02/03 query understanding. Both are
@@ -797,6 +846,12 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           // byte-identical until an operator opts in (rag.mmr.enabled / rag.queryUnderstanding.*).
           mmr: config.rag.mmr,
           queryUnderstanding: config.rag.queryUnderstanding,
+          // FORGET-01: the FadeMem per-type decay gate. A fully-defaulted RagConfig field
+          // (112-01: .strictObject + .default()), so it passes DIRECTLY — same as mmr/
+          // queryUnderstanding, no optional-chaining / structural widening. Default-OFF ⇒
+          // score.ts forces forgetFactor to exactly 1.0 ⇒ byte-identical recall until an
+          // operator opts in (rag.forget.enabled); the neutral byte-identity holds even when on.
+          forget: config.rag.forget,
           ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
         },
       );
@@ -863,6 +918,94 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
       logger.debug({ agentId, resultCount: recalled.ok ? recalled.value.length : 0, durationMs: deps.clock.now() - ragStart }, "RAG recall complete");
     } catch (err) {
       logger.warn({ agentId, err, durationMs: deps.clock.now() - ragStart, hint: "RAG recall failed — agent will proceed without memory context", errorKind: "dependency" as const }, "RAG recall failed (non-fatal)");
+    }
+  }
+
+  // USER-03 STANDING BLOCK (HR-01): the LLM-free per-user-profile block is a DURABLE
+  // standing block ("what we know about this user"), NOT a per-recall-conditional one.
+  // It is injected on its OWN gate — `config.memoryUserRepresentation.enabled` (the
+  // 107-05 knob) AND the optional store dep — INDEPENDENT of whether RAG ran, whether
+  // recall hit, and independent of `rag.enabled`. This is why it lives OUTSIDE the
+  // `if (deps.memoryPort && config.rag?.enabled ...)` recall block above: nesting it
+  // there silently dropped the profile on every zero-recall turn (greetings/off-topic/
+  // sparse store) and gave RAG-off deployments ZERO injection (HR-01).
+  //
+  // Default-OFF byte-identity (the cost gate): with the knob off OR no store dep,
+  // read() is NEVER called and the prompt is byte-identical. When ON, a DETERMINISTIC
+  // store.read scoped to THIS prompt's own (tenant, agent, user) + the pure
+  // buildUserRepresentationBlock formatter (NO model call — the recall hot path stays
+  // LLM-free). The formatter returns null on an empty profile ⇒ nothing pushed ⇒
+  // byte-identity. Non-fatal: a read err is swallowed so the agent proceeds without the
+  // profile. The profile content was redaction-checked + validateMemoryWrite-clean +
+  // high-trust at WRITE time. memorySections is seeded by the recall block (or empty),
+  // so the profile appends after any retrieved sections + temporal guidance.
+  if (config.memoryUserRepresentation?.enabled && deps.userRepresentationStore) {
+    try {
+      const profile = await deps.userRepresentationStore.read({
+        tenantId: deps.tenantId ?? sessionKey.tenantId,
+        agentId: agentId ?? config.name,
+        userId: sessionKey.userId,
+      });
+      if (profile.ok && profile.value.length > 0) {
+        const profileBlock = buildUserRepresentationBlock(profile.value);
+        if (profileBlock) memorySections.push(profileBlock);
+      }
+    } catch (profileErr) {
+      logger.debug(
+        {
+          agentId,
+          err: profileErr,
+          hint: "user-profile read failed; proceeding without the standing block",
+          errorKind: "dependency" as const,
+        },
+        "User-representation standing-block read failed (non-fatal)",
+      );
+    }
+  }
+
+  // SOCIAL-02/03 STANDING BLOCK: the LLM-free channel-relationship block is a DURABLE
+  // standing block ("how participants in this channel relate"), the directional analog
+  // of the USER-03 block above. It is injected on its OWN dual gate — the SOCIAL-03
+  // sign-off (`config.socialModeling.enabled && config.socialModeling.privacyReviewSignedOffBy`,
+  // the 108-05 knob + a RECORDED privacy-review sign-off) AND the optional store dep —
+  // INDEPENDENT of whether RAG ran, whether recall hit, and independent of `rag.enabled`
+  // (the HR-01 lesson: a standing block must not be nested in the recall-hit branch).
+  //
+  // The SOCIAL-03 gate is the headline read-side proof: the knob alone does NOT
+  // activate — a non-empty `privacyReviewSignedOffBy` is required. With the gate
+  // closed (off OR no sign-off) OR no store dep, read() is NEVER called and the prompt
+  // is byte-identical (the cost gate + the privacy gate). When open, a DETERMINISTIC
+  // store.read scoped to channelId = sessionKey.channelId (the SOCIAL-02 read-side
+  // boundary — the per-channel privacy axis) + the pure buildRelationshipBlock
+  // formatter (NO model call — the recall hot path stays LLM-free). The formatter
+  // returns null on an empty channel ⇒ nothing pushed ⇒ byte-identity. Non-fatal: a
+  // read err is swallowed so the agent proceeds without the block. The relationship
+  // content was redaction-checked + validateMemoryWrite-clean + high-trust at WRITE
+  // time (Plan 108-02/03).
+  if (
+    config.socialModeling?.enabled && config.socialModeling?.privacyReviewSignedOffBy &&
+    deps.relationshipStore
+  ) {
+    try {
+      const rels = await deps.relationshipStore.read({
+        tenantId: deps.tenantId ?? sessionKey.tenantId,
+        agentId: agentId ?? config.name,
+        channelId: sessionKey.channelId,
+      });
+      if (rels.ok && rels.value.length > 0) {
+        const relBlock = buildRelationshipBlock(rels.value);
+        if (relBlock) memorySections.push(relBlock);
+      }
+    } catch (relErr) {
+      logger.debug(
+        {
+          agentId,
+          err: relErr,
+          hint: "channel-relationship read failed; proceeding without the standing block",
+          errorKind: "dependency" as const,
+        },
+        "Channel-relationship standing-block read failed (non-fatal)",
+      );
     }
   }
 

@@ -1,0 +1,347 @@
+{
+  "harness": "prove2-qa-lift",
+  "harnessVersion": "phase-114-prove2-v1",
+  "generatedAt": 1780419537367,
+  "keyless": false,
+  "dataset": {
+    "name": "operator-haystack",
+    "questionCount": 8,
+    "sha256": "8aae67cb8589616a56ed1da8fcbc586c6d6ec6b46e7b4a7652a57ff41f06733a"
+  },
+  "models": {
+    "answer": {
+      "provider": "anthropic",
+      "modelId": "claude-sonnet-4-6"
+    },
+    "judge1": {
+      "provider": "openai",
+      "modelId": "gpt-4o-2024-11-20"
+    },
+    "judge2": {
+      "provider": "anthropic",
+      "modelId": "claude-sonnet-4-6"
+    },
+    "embedding": {
+      "provider": "local",
+      "modelUri": "hf:nomic-ai/nomic-embed-text-v1.5-GGUF:nomic-embed-text-v1.5.Q8_0.gguf"
+    },
+    "reranker": {
+      "provider": "local",
+      "modelUri": "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf"
+    }
+  },
+  "defaults": {
+    "maxResults": 5,
+    "includeTrustLevels": [
+      "system",
+      "learned"
+    ],
+    "rerankEnabled": true,
+    "scoringAlphas": {
+      "recency": 0.2,
+      "temporal": 0.2,
+      "proof": 0.1,
+      "trust": 0.1
+    }
+  },
+  "capabilitiesMeasured": [
+    "comis-graphspread",
+    "comis-intent-reweight",
+    "comis-forget"
+  ],
+  "capabilitiesDeferred": {
+    "note": "USER/SOCIAL/REASON/DIALECTIC are write-path/tool features with no recall-config toggle on verbatim-ingested docs; LEARN-RANK (onlineTuning) needs a learned tuned-alpha store the standard protocol never builds; KG graphSpread needs a built tripleStore. Their costed QA-lift needs an enrichment-aware harness; their v2.9 keyless mechanical proofs stand.",
+    "list": [
+      "user-representation",
+      "social-modeling",
+      "memory-reasoning",
+      "dialectic",
+      "learn-rank-online-tuning"
+    ],
+    "unrunnableOnThisBench": [
+      {
+        "label": "comis-graphspread",
+        "reason": "Cannot read properties of undefined (reading 'weight')"
+      }
+    ]
+  },
+  "systems": [
+    {
+      "label": "comis-baseline",
+      "isControl": false,
+      "isCompetitor": false,
+      "identicalToBaselineCount": 8,
+      "recallErrorCount": 0,
+      "judge1": {
+        "overall": 87.5,
+        "correct": 7,
+        "validTotal": 8,
+        "invalid": 0,
+        "perCategory": {
+          "single-session-user": {
+            "correct": 7,
+            "total": 8,
+            "invalid": 0,
+            "accuracy": 87.5
+          }
+        }
+      },
+      "judge2": {
+        "overall": 87.5,
+        "correct": 7,
+        "validTotal": 8,
+        "invalid": 0
+      },
+      "ci": {
+        "n": 8,
+        "pHat": 0.875,
+        "lo": 0.5291118177871464,
+        "hi": 0.9775825085499433
+      },
+      "vsBaseline": {
+        "deltaPts": 0,
+        "n": 16,
+        "pValue": 0.9999999989503827,
+        "significant": false
+      },
+      "crossJudge": {
+        "overallSpread": 0,
+        "surviving": true,
+        "perCategory": [
+          {
+            "category": "single-session-user",
+            "judgeA": 87.5,
+            "judgeB": 87.5,
+            "spread": 0,
+            "survives": true
+          }
+        ]
+      }
+    },
+    {
+      "label": "comis-intent-reweight",
+      "isControl": false,
+      "isCompetitor": false,
+      "identicalToBaselineCount": 8,
+      "recallErrorCount": 0,
+      "judge1": {
+        "overall": 87.5,
+        "correct": 7,
+        "validTotal": 8,
+        "invalid": 0,
+        "perCategory": {
+          "single-session-user": {
+            "correct": 7,
+            "total": 8,
+            "invalid": 0,
+            "accuracy": 87.5
+          }
+        }
+      },
+      "judge2": {
+        "overall": 87.5,
+        "correct": 7,
+        "validTotal": 8,
+        "invalid": 0
+      },
+      "ci": {
+        "n": 8,
+        "pHat": 0.875,
+        "lo": 0.5291118177871464,
+        "hi": 0.9775825085499433
+      },
+      "vsBaseline": {
+        "deltaPts": 0,
+        "n": 16,
+        "pValue": 0.9999999989503827,
+        "significant": false
+      },
+      "crossJudge": {
+        "overallSpread": 0,
+        "surviving": true,
+        "perCategory": [
+          {
+            "category": "single-session-user",
+            "judgeA": 87.5,
+            "judgeB": 87.5,
+            "spread": 0,
+            "survives": true
+          }
+        ]
+      }
+    },
+    {
+      "label": "comis-forget",
+      "isControl": false,
+      "isCompetitor": false,
+      "identicalToBaselineCount": 8,
+      "recallErrorCount": 0,
+      "judge1": {
+        "overall": 87.5,
+        "correct": 7,
+        "validTotal": 8,
+        "invalid": 0,
+        "perCategory": {
+          "single-session-user": {
+            "correct": 7,
+            "total": 8,
+            "invalid": 0,
+            "accuracy": 87.5
+          }
+        }
+      },
+      "judge2": {
+        "overall": 87.5,
+        "correct": 7,
+        "validTotal": 8,
+        "invalid": 0
+      },
+      "ci": {
+        "n": 8,
+        "pHat": 0.875,
+        "lo": 0.5291118177871464,
+        "hi": 0.9775825085499433
+      },
+      "vsBaseline": {
+        "deltaPts": 0,
+        "n": 16,
+        "pValue": 0.9999999989503827,
+        "significant": false
+      },
+      "crossJudge": {
+        "overallSpread": 0,
+        "surviving": true,
+        "perCategory": [
+          {
+            "category": "single-session-user",
+            "judgeA": 87.5,
+            "judgeB": 87.5,
+            "spread": 0,
+            "survives": true
+          }
+        ]
+      }
+    },
+    {
+      "label": "filesystem-baseline-full-context-control",
+      "isControl": true,
+      "isCompetitor": false,
+      "identicalToBaselineCount": 0,
+      "recallErrorCount": 0,
+      "judge1": {
+        "overall": 50,
+        "correct": 4,
+        "validTotal": 8,
+        "invalid": 0,
+        "perCategory": {
+          "single-session-user": {
+            "correct": 4,
+            "total": 8,
+            "invalid": 0,
+            "accuracy": 50
+          }
+        }
+      },
+      "judge2": {
+        "overall": 50,
+        "correct": 4,
+        "validTotal": 8,
+        "invalid": 0
+      },
+      "ci": {
+        "n": 8,
+        "pHat": 0.5,
+        "lo": 0.21521606221387757,
+        "hi": 0.7847839377861224
+      },
+      "vsBaseline": {
+        "deltaPts": -37.5,
+        "n": 16,
+        "pValue": 0.1056454137163092,
+        "significant": false
+      },
+      "crossJudge": {
+        "overallSpread": 0,
+        "surviving": true,
+        "perCategory": [
+          {
+            "category": "single-session-user",
+            "judgeA": 50,
+            "judgeB": 50,
+            "spread": 0,
+            "survives": true
+          }
+        ]
+      }
+    },
+    {
+      "label": "mem0",
+      "isControl": false,
+      "isCompetitor": true,
+      "identicalToBaselineCount": 0,
+      "recallErrorCount": 0,
+      "judge1": {
+        "overall": 87.5,
+        "correct": 7,
+        "validTotal": 8,
+        "invalid": 0,
+        "perCategory": {
+          "single-session-user": {
+            "correct": 7,
+            "total": 8,
+            "invalid": 0,
+            "accuracy": 87.5
+          }
+        }
+      },
+      "judge2": {
+        "overall": 87.5,
+        "correct": 7,
+        "validTotal": 8,
+        "invalid": 0
+      },
+      "ci": {
+        "n": 8,
+        "pHat": 0.875,
+        "lo": 0.5291118177871464,
+        "hi": 0.9775825085499433
+      },
+      "vsBaseline": {
+        "deltaPts": 0,
+        "n": 16,
+        "pValue": 0.9999999989503827,
+        "significant": false
+      },
+      "crossJudge": {
+        "overallSpread": 0,
+        "surviving": true,
+        "perCategory": [
+          {
+            "category": "single-session-user",
+            "judgeA": 87.5,
+            "judgeB": 87.5,
+            "spread": 0,
+            "survives": true
+          }
+        ]
+      }
+    }
+  ],
+  "cost": {
+    "answerTokensPerQuery": 46322,
+    "judgeTokensPerQuery": 258.7083333333333,
+    "answerCostUsd": 4.178496750000001,
+    "judgeCostUsd": 0.05009649999999999,
+    "totalCostUsd": 4.228593250000001,
+    "uniqueAnswerCalls": 24,
+    "note": "context-hash verdict cache: a capability whose recall is byte-identical to another system reuses its verdict at $0."
+  },
+  "latency": {
+    "answerP50Ms": 3027.742333000002,
+    "answerP95Ms": 6789.084667000003,
+    "judgeP50Ms": 1587.066583000007,
+    "judgeP95Ms": 2961.1328330000106
+  },
+  "coi": "answer=anthropic; judge1=openai; judge2=anthropic. Judge-2 shares the answer provider in the operator wiring (self-preference COI) — headline relies on judge-1 (LongMemEval reference) + the cross-judge spread, never judge-2 alone.",
+  "honestyProtocol": "≥2 judges; competitors re-run by us as pre-rendered contexts (never imported); N + Wilson CI + two-proportion significance; cost + latency; raw verdicts from fixed harness code. No 'beats X' headline before the spread survives."
+}

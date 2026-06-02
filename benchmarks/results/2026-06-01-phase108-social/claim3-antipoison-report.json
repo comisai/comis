@@ -1,0 +1,10 @@
+{
+  "harnessVersion": "phase-108-05-v1",
+  "claim": "external-rejected-and-redaction-clean",
+  "directExternalUpsertRejected": true,
+  "externalOnlySourcesWritten": 0,
+  "firewallFlaggedSecret": true,
+  "blockedCount": 1,
+  "secretLeakedToStore": false,
+  "pass": true
+}

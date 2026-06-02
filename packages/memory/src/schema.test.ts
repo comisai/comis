@@ -6,8 +6,10 @@ import {
   isVecAvailable,
   ensureMemoryColumns,
   ensureEntityTables,
+  ensureUsefulnessTable,
   ensureTripleTable,
 } from "./schema.js";
+import { createSqliteMemoryUsefulnessStore } from "./sqlite-memory-usefulness-store.js";
 
 describe("initSchema", () => {
   let db: Database.Database;
@@ -989,6 +991,298 @@ describe("ensureTripleTable (Phase 100, KG-01)", () => {
     expect(() => ensureTripleTable(db)).not.toThrow();
     expect(
       (db.prepare("SELECT COUNT(*) AS c FROM memory_triples").get() as { c: number }).c,
+    ).toBe(1);
+  });
+});
+
+// =====================================================================
+// ensureUsefulnessTable (Phase 110, LEARN-01) — the additive `intent`
+// bucket on `memory_usefulness`. Fresh DBs get the 4-col PK
+// (tenant, agent, memory, intent) + an `intent TEXT NOT NULL DEFAULT ''`
+// column; a PRE-110 DB (the old 3-col PK + rows) gets a guarded
+// ALTER ADD COLUMN (the PRAGMA table_info precedent) so existing rows
+// survive AS the global ('') bucket — the headline PK-widening-on-
+// existing-DB safety (RESEARCH Pitfall 3). Both paths gain the idempotent
+// `idx_usefulness_intent` unique index so the adapter's 4-col ON CONFLICT
+// target resolves on a pre-110 DB too.
+// =====================================================================
+
+describe("ensureUsefulnessTable intent column (Phase 110, LEARN-01)", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+  });
+
+  /** Column names of `memory_usefulness`. */
+  const usefulnessCols = (): string[] =>
+    (
+      db.prepare("PRAGMA table_info(memory_usefulness)").all() as Array<{ name: string }>
+    ).map((c) => c.name);
+
+  /** Index names on `memory_usefulness`. */
+  const usefulnessIndexes = (): string[] =>
+    (
+      db.prepare("PRAGMA index_list(memory_usefulness)").all() as Array<{ name: string }>
+    ).map((r) => r.name);
+
+  /**
+   * Hand-create the PRE-110 `memory_usefulness` at the OLD 3-col-PK shape
+   * (NO `intent` column) — the EXACT shape a live ~/.comis DB has from Phase 93
+   * but before this phase, INCLUDING the `memory_id REFERENCES memories(id) ON
+   * DELETE CASCADE` FK (so the CR-01 rebuild's FK-preservation is exercised — not
+   * a stripped-down stand-in). Mirrors `createPreReasoningTable`.
+   */
+  function createPre110UsefulnessTable(target: Database.Database): void {
+    // The FK target. The real pre-110 `memory_usefulness.memory_id` REFERENCES
+    // `memories(id)` (Phase 93 DDL), so the parent must exist for any usefulness
+    // INSERT (FK enforced at DML under foreign_keys=ON) AND for the CR-01
+    // transactional table-REBUILD to re-declare the FK. A minimal stand-in column
+    // set suffices (these pre-110 tests never call initSchema, so no full-schema
+    // memories row is inserted); seed the 'm1' parent every pre-110 test uses.
+    target.exec(`CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, content TEXT NOT NULL DEFAULT '');`);
+    target.prepare(`INSERT INTO memories (id, content) VALUES ('m1', 'a fact')`).run();
+    target.exec(`
+      CREATE TABLE memory_usefulness (
+        tenant_id      TEXT NOT NULL,
+        agent_id       TEXT NOT NULL,
+        memory_id      TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+        used_count     INTEGER NOT NULL DEFAULT 0,
+        ignored_count  INTEGER NOT NULL DEFAULT 0,
+        last_useful_at INTEGER,
+        PRIMARY KEY (tenant_id, agent_id, memory_id)
+      );
+    `);
+  }
+
+  /** PK column names of `memory_usefulness` (PRAGMA table_info pk>0, in pk order). */
+  const usefulnessPkColumns = (): string[] =>
+    (
+      db.prepare("PRAGMA table_info(memory_usefulness)").all() as Array<{
+        name: string;
+        pk: number;
+      }>
+    )
+      .filter((c) => c.pk > 0)
+      .sort((a, b) => a.pk - b.pk)
+      .map((c) => c.name);
+
+  // --- FRESH DB: the 4-col PK + the intent column ---
+
+  it("FRESH DB: adds an `intent` column (TEXT, NOT NULL, default '') after initSchema", () => {
+    initSchema(db, 1536);
+    const cols = usefulnessCols();
+    expect(cols).toContain("intent");
+
+    const intentCol = (
+      db.prepare("PRAGMA table_info(memory_usefulness)").all() as Array<{
+        name: string;
+        type: string;
+        notnull: number;
+        dflt_value: string | null;
+      }>
+    ).find((c) => c.name === "intent");
+    expect(intentCol).toBeDefined();
+    expect(intentCol!.type).toBe("TEXT");
+    expect(intentCol!.notnull).toBe(1);
+    // The default is the global bucket '' (sqlite reports the literal incl. quotes).
+    expect(intentCol!.dflt_value).toBe("''");
+  });
+
+  it("FRESH DB: the PRIMARY KEY is (tenant_id, agent_id, memory_id, intent) — two rows differing ONLY in intent on one (tenant,agent,memory) both persist", () => {
+    initSchema(db, 1536);
+    db.prepare(
+      `INSERT INTO memories (id, user_id, content, trust_level, source_who, created_at)
+       VALUES ('m1', 'u1', 'a fact', 'learned', 'agent', 1)`,
+    ).run();
+
+    // Two rows: same (tenant, agent, memory), DIFFERENT intent ('' global + 'temporal').
+    db.prepare(
+      `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count, last_useful_at)
+       VALUES ('t1', 'a1', 'm1', '', 3, 0, 100)`,
+    ).run();
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count, last_useful_at)
+           VALUES ('t1', 'a1', 'm1', 'temporal', 1, 0, 200)`,
+        )
+        .run(),
+    ).not.toThrow(); // distinct intent → distinct PK row, not a collision
+
+    const rows = db
+      .prepare(
+        "SELECT intent, used_count FROM memory_usefulness WHERE tenant_id='t1' AND agent_id='a1' AND memory_id='m1' ORDER BY intent",
+      )
+      .all() as Array<{ intent: string; used_count: number }>;
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.intent)).toEqual(["", "temporal"]);
+
+    // Re-inserting the SAME 4-col key DOES collide (the widened PK is still a PK).
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, intent, used_count, ignored_count, last_useful_at)
+           VALUES ('t1', 'a1', 'm1', 'temporal', 1, 0, 300)`,
+        )
+        .run(),
+    ).toThrow();
+  });
+
+  it("FRESH DB: declares the idempotent idx_usefulness_intent UNIQUE index (the 4-col ON CONFLICT target for the adapter)", () => {
+    initSchema(db, 1536);
+    expect(usefulnessIndexes()).toContain("idx_usefulness_intent");
+  });
+
+  // --- PRE-110 (existing) DB: the PK-widening-on-existing-DB safety (Pitfall 3) ---
+
+  it("EXISTING (pre-110) DB: a guarded ALTER adds `intent` with default '' WITHOUT corrupting the seeded row — the row survives as the GLOBAL bucket", () => {
+    createPre110UsefulnessTable(db);
+    // Seed a pre-110 row (intent absent — the column does not exist yet).
+    db.prepare(
+      `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, used_count, ignored_count, last_useful_at)
+       VALUES ('t1', 'a1', 'm1', 3, 1, 555)`,
+    ).run();
+
+    // Pre-condition: no `intent` column on the pre-110 table.
+    expect(usefulnessCols()).not.toContain("intent");
+
+    expect(() => ensureUsefulnessTable(db)).not.toThrow();
+
+    // The column was added with the '' default; the seeded row is intact and
+    // reads back AS the global bucket (intent='') with its ORIGINAL counts —
+    // no corruption, no row loss, no backfill of a non-'' intent.
+    expect(usefulnessCols()).toContain("intent");
+    const row = db
+      .prepare(
+        "SELECT used_count, ignored_count, last_useful_at, intent FROM memory_usefulness WHERE tenant_id='t1' AND agent_id='a1' AND memory_id='m1' AND intent=''",
+      )
+      .get() as
+      | { used_count: number; ignored_count: number; last_useful_at: number | null; intent: string }
+      | undefined;
+    expect(row).toBeDefined();
+    expect(row!.used_count).toBe(3);
+    expect(row!.ignored_count).toBe(1);
+    expect(row!.last_useful_at).toBe(555);
+    expect(row!.intent).toBe("");
+
+    // Total rows unchanged — the existing row was NOT duplicated by the migration.
+    expect(
+      (db.prepare("SELECT COUNT(*) AS c FROM memory_usefulness").get() as { c: number }).c,
+    ).toBe(1);
+  });
+
+  it("EXISTING (pre-110) DB: ensureUsefulnessTable genuinely WIDENS the PRIMARY KEY to 4-col (tenant,agent,memory,intent) — not just an ADD COLUMN that leaves the 3-col PK (CR-01)", () => {
+    createPre110UsefulnessTable(db);
+    db.prepare(
+      `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, used_count, ignored_count, last_useful_at)
+       VALUES ('t1', 'a1', 'm1', 3, 1, 555)`,
+    ).run();
+    // Pre-condition: the OLD 3-col PK.
+    expect(usefulnessPkColumns()).toEqual(["tenant_id", "agent_id", "memory_id"]);
+
+    ensureUsefulnessTable(db);
+
+    // The PK is now the 4-col tuple — the table was rebuilt, not just ALTER-ADD'd.
+    // (On the broken ADD-COLUMN-only code the PK stays 3-col and this FAILS.)
+    expect(usefulnessPkColumns()).toEqual(["tenant_id", "agent_id", "memory_id", "intent"]);
+    // The pre-110 row survives in the GLOBAL ('') bucket with its original counts.
+    const row = db
+      .prepare(
+        "SELECT used_count, ignored_count, last_useful_at, intent FROM memory_usefulness WHERE tenant_id='t1' AND agent_id='a1' AND memory_id='m1'",
+      )
+      .get() as
+      | { used_count: number; ignored_count: number; last_useful_at: number | null; intent: string }
+      | undefined;
+    expect(row).toEqual({ used_count: 3, ignored_count: 1, last_useful_at: 555, intent: "" });
+  });
+
+  it("EXISTING (pre-110) DB: the migrated table lets the ADAPTER upsert BOTH the global '' bucket AND a per-intent bucket for the SAME memory without throwing — LEARN-01 per-intent learning works on the existing fleet (CR-01 / WR-02)", async () => {
+    // This is the regression the BLOCKER (CR-01) describes: on the broken
+    // ADD-COLUMN-only migration the surviving 3-col PK aborts the SECOND intent
+    // bucket's upsert with `UNIQUE constraint failed`. It drives the REAL adapter
+    // (createSqliteMemoryUsefulnessStore.recordUsage), the path WR-02 noted the
+    // old index-only test never exercised.
+    createPre110UsefulnessTable(db);
+    // A pre-110 row (no `intent` column yet) — the global signal a v2.8 DB carries.
+    db.prepare(
+      `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, used_count, ignored_count, last_useful_at)
+       VALUES ('t1', 'a1', 'm1', 3, 0, 555)`,
+    ).run();
+
+    ensureUsefulnessTable(db); // the migration under test
+
+    const store = createSqliteMemoryUsefulnessStore({ db });
+    const scope = { tenantId: "t1", agentId: "a1", now: 1_000 } as const;
+
+    // 1) Global ('') bucket: bumps the migrated pre-110 row (3 -> 4).
+    const globalWrite = await store.recordUsage(["m1"], [], scope);
+    expect(globalWrite.ok).toBe(true);
+
+    // 2) A DIFFERENT intent bucket for the SAME memory. On the broken code this
+    //    recordUsage returns err (UNIQUE constraint failed on the surviving 3-col
+    //    PK) — the LEARN-01 signal silently dies. After the rebuild it succeeds.
+    const intentWrite = await store.recordUsage(["m1"], [], { ...scope, intent: "temporal" });
+    expect(intentWrite.ok).toBe(true);
+
+    // Both buckets coexist: the migrated global row (now used_count=4, last=1000)
+    // AND a fresh 'temporal' row (used_count=1) — no clobber, no row loss.
+    const rows = db
+      .prepare(
+        "SELECT intent, used_count, ignored_count, last_useful_at FROM memory_usefulness WHERE tenant_id='t1' AND agent_id='a1' AND memory_id='m1' ORDER BY intent",
+      )
+      .all() as Array<{
+      intent: string;
+      used_count: number;
+      ignored_count: number;
+      last_useful_at: number | null;
+    }>;
+    expect(rows).toEqual([
+      { intent: "", used_count: 4, ignored_count: 0, last_useful_at: 1_000 },
+      { intent: "temporal", used_count: 1, ignored_count: 0, last_useful_at: 1_000 },
+    ]);
+  });
+
+  it("EXISTING (pre-110) DB: the idx_usefulness_intent unique index is created and PRESERVES the memory_id -> memories(id) ON DELETE CASCADE FK across the rebuild", () => {
+    createPre110UsefulnessTable(db);
+    db.prepare(
+      `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, used_count, ignored_count, last_useful_at)
+       VALUES ('t1', 'a1', 'm1', 3, 1, 555)`,
+    ).run();
+    expect(usefulnessIndexes()).not.toContain("idx_usefulness_intent");
+
+    ensureUsefulnessTable(db);
+
+    expect(usefulnessIndexes()).toContain("idx_usefulness_intent");
+    // The CASCADE FK survived the rebuild: deleting the parent memory drops the
+    // usefulness row (foreign_keys=ON is set in beforeEach).
+    db.prepare("DELETE FROM memories WHERE id='m1'").run();
+    expect(
+      (db.prepare("SELECT COUNT(*) AS c FROM memory_usefulness").get() as { c: number }).c,
+    ).toBe(0);
+  });
+
+  // --- Idempotency on both paths ---
+
+  it("is idempotent on a FRESH DB — running ensureUsefulnessTable twice is a no-op (the column-presence guard)", () => {
+    initSchema(db, 1536);
+    expect(() => ensureUsefulnessTable(db)).not.toThrow();
+    // The `intent` column appears EXACTLY once.
+    expect(usefulnessCols().filter((c) => c === "intent")).toHaveLength(1);
+  });
+
+  it("is idempotent on a PRE-110 DB — a second ensureUsefulnessTable after the ALTER does not error and preserves the row", () => {
+    createPre110UsefulnessTable(db);
+    db.prepare(
+      `INSERT INTO memory_usefulness (tenant_id, agent_id, memory_id, used_count, ignored_count, last_useful_at)
+       VALUES ('t1', 'a1', 'm1', 3, 1, 555)`,
+    ).run();
+    ensureUsefulnessTable(db); // first add (ALTER + index)
+    expect(() => ensureUsefulnessTable(db)).not.toThrow(); // second is a no-op
+    expect(usefulnessCols().filter((c) => c === "intent")).toHaveLength(1);
+    expect(
+      (db.prepare("SELECT COUNT(*) AS c FROM memory_usefulness").get() as { c: number }).c,
     ).toBe(1);
   });
 });

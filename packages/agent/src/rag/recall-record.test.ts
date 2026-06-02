@@ -110,6 +110,50 @@ describe("buildRecallRecord", () => {
   });
 });
 
+describe("buildRecallRecord — citation→sourceId chain (DIAL-03)", () => {
+  it("carries the citation chain (ids only) when obs.citations is populated", () => {
+    const rec = buildRecallRecord(
+      obs({
+        citations: [
+          { citationId: "id-a", sourceIds: ["src-1", "src-2"] },
+          { citationId: "id-b", sourceIds: [] },
+        ],
+      }),
+    );
+    expect(rec.citations).toEqual([
+      { citationId: "id-a", sourceIds: ["src-1", "src-2"] },
+      { citationId: "id-b", sourceIds: [] },
+    ]);
+  });
+
+  it("OMITS the citations key entirely when obs.citations is absent (byte-identical default path)", () => {
+    const rec = buildRecallRecord(obs());
+    expect("citations" in rec).toBe(false);
+  });
+
+  it("OMITS the citations key when obs.citations is an empty array", () => {
+    const rec = buildRecallRecord(obs({ citations: [] }));
+    expect("citations" in rec).toBe(false);
+  });
+
+  it("the serialized record carries only ids/sourceIds in the chain — never a memory body", () => {
+    // The chain is redaction-safe: citationId is the recalled entry.id, sourceIds are
+    // the entry's sourceIds — no `content` ever reaches this field (DIAL-03 / OBS-02).
+    const rec = buildRecallRecord(
+      obs({
+        query: "secret question about apollo",
+        citations: [{ citationId: "id-a", sourceIds: ["src-1"] }],
+      }),
+    );
+    const serialized = JSON.stringify(rec);
+    expect(serialized).not.toContain("apollo");
+    expect(serialized).not.toContain("content for");
+    // The chain is present and shaped ids-only.
+    expect(serialized).toContain("id-a");
+    expect(serialized).toContain("src-1");
+  });
+});
+
 describe("vectorLaneCouldContribute", () => {
   it("is true for a normal embeddable query", () => {
     expect(vectorLaneCouldContribute("what is the plan")).toBe(true);

@@ -1,0 +1,11 @@
+{
+  "harnessVersion": "phase-110-06-v1",
+  "claim": "citation-feed-accrual",
+  "citedUsedCountBefore": 0,
+  "citedUsedCountAfter": 1,
+  "otherUsedCountAfter": 0,
+  "citedUsedRate": 1,
+  "otherUsedRate": 0,
+  "citedAccrues": true,
+  "pass": true
+}

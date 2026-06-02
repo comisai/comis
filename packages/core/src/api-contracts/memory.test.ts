@@ -26,6 +26,7 @@ import {
   ContextConversationsContract,
   ContextTreeContract,
   ContextSearchByConversationContract,
+  MemoryAskContract,
   MEMORY_CONTRACTS,
   MemoryRecallTraceContract,
   MemoryObservationsContract,
@@ -40,17 +41,19 @@ describe("memory + context domain contracts", () => {
   // Aggregator sanity
   // -------------------------------------------------------------------------
 
-  it("MEMORY_CONTRACTS has exactly 19 entries (8 memory + 4 OBS-06 diagnostics + 7 context)", () => {
-    // Plan 05 closed the cross-wave seam: the 4 MEMORY_DIAGNOSTIC_CONTRACTS are
-    // now spread in (8 + 4 + 7 = 19), in the same wave that landed their daemon
-    // handlers, so the registry ↔ handler set stays 1:1.
-    expect(MEMORY_CONTRACTS.length).toBe(19);
+  it("MEMORY_CONTRACTS has exactly 20 entries (9 memory + 4 OBS-06 diagnostics + 7 context)", () => {
+    // Plan 05 closed the OBS-06 cross-wave seam (the 4 MEMORY_DIAGNOSTIC_CONTRACTS).
+    // Phase 109 Plan 03 closed the memory.ask cross-wave seam: MemoryAskContract is
+    // now spread in (9 + 4 + 7 = 20), in the same diff that landed its daemon handler,
+    // so the registry ↔ handler set stays 1:1.
+    expect(MEMORY_CONTRACTS.length).toBe(20);
   });
 
   it("MEMORY_CONTRACTS method names cover every handler-factory method", () => {
     const methods = new Set(MEMORY_CONTRACTS.map((c) => c.method));
-    // memory-handlers.ts (8):
+    // memory-handlers.ts (9):
     expect(methods.has("memory.search_files")).toBe(true);
+    expect(methods.has("memory.ask")).toBe(true);
     expect(methods.has("memory.get_file")).toBe(true);
     expect(methods.has("memory.store")).toBe(true);
     expect(methods.has("memory.stats")).toBe(true);
@@ -795,5 +798,58 @@ describe("memory diagnostic contracts (OBS-06) — admin-scoped", () => {
         recallHitRate: 0,
       }),
     ).toThrow();
+  });
+});
+
+// ===========================================================================
+// memory.ask — the dialectic grounded-Q&A contract (Phase 109 — DIAL-01/02).
+//
+// CROSS-WAVE SEAM CLOSED (Plan 03): the contract SHAPE shipped in Plan 01 with a
+// `@contract-deferred-handler: 109-03` tag, kept OUT of `MEMORY_CONTRACTS` until
+// its daemon handler existed. Plan 03 landed the `[MemoryAskContract.method]:`
+// handler in memory-handlers.ts and, in the SAME diff, spread the contract into
+// MEMORY_CONTRACTS + removed the tag — so the registry ↔ handler set is 1:1 by
+// construction (contract-handler-parity + bidirectional 1:1 both green).
+// ===========================================================================
+
+describe("memory.ask dialectic contract (DIAL-01/02)", () => {
+  it("method is memory.ask, scoped rpc", () => {
+    expect(MemoryAskContract.method).toBe("memory.ask");
+    expect(MemoryAskContract.scopes).toEqual(["rpc"]);
+  });
+
+  it("request requires a question (parsing {} throws)", () => {
+    expect(() => MemoryAskContract.request.parse({ question: "x" })).not.toThrow();
+    expect(() => MemoryAskContract.request.parse({})).toThrow();
+  });
+
+  it("request accepts an optional numeric limit", () => {
+    expect(() => MemoryAskContract.request.parse({ question: "x", limit: 5 })).not.toThrow();
+  });
+
+  it("response carries { answer, citations: string[], abstained } — abstained is required", () => {
+    expect(() =>
+      MemoryAskContract.response.parse({ answer: "a", citations: ["id1"], abstained: false }),
+    ).not.toThrow();
+    // abstention is an explicit, required boolean — never inferred from an
+    // empty answer string. A response MISSING `abstained` throws.
+    expect(() =>
+      MemoryAskContract.response.parse({ answer: "a", citations: ["id1"] }),
+    ).toThrow();
+  });
+
+  it("response accepts the abstain sentinel { answer:'', citations:[], abstained:true }", () => {
+    expect(() =>
+      MemoryAskContract.response.parse({ answer: "", citations: [], abstained: true }),
+    ).not.toThrow();
+  });
+
+  it("IS in MEMORY_CONTRACTS now that its handler landed (cross-wave seam closed in Plan 03)", () => {
+    // Plan 03 spread MemoryAskContract into MEMORY_CONTRACTS in the SAME diff that
+    // landed its `[MemoryAskContract.method]:` daemon handler (and removed the
+    // @contract-deferred-handler: 109-03 tag), so it is now registered and the
+    // bidirectional 1:1 + contract-handler-parity gates require the handler present.
+    const registered = new Set(MEMORY_CONTRACTS.map((c) => c.method));
+    expect(registered.has("memory.ask")).toBe(true);
   });
 });

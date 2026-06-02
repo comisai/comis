@@ -1,0 +1,8 @@
+{
+  "harnessVersion": "phase-109-04-v1",
+  "claim": "sourceids-in-trace",
+  "chainCount": 1,
+  "sourceIdCount": 2,
+  "noBodyLeak": true,
+  "pass": true
+}

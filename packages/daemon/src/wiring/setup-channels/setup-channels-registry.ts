@@ -13,11 +13,11 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
-import type { createSessionStore } from "@comis/memory";
+import type { createSessionStore, MemoryApi } from "@comis/memory";
 import type { CommandQueue } from "@comis/orchestrator";
 import type { VoiceResponsePipelineDeps, LifecycleReactor } from "@comis/channels";
 import type { ChannelManager, ActivityBreakerGate } from "@comis/orchestrator";
@@ -178,6 +178,10 @@ export interface ChannelsDeps {
   defaultWorkspaceDir?: string;
   /** Memory adapter for storing media file references. */
   memoryAdapter?: MemoryPort;
+  /** Memory read API (Phase 107, USER-04) — the __USER_REPRESENTATION__ sentinel scopes the
+   *  per-(tenant, agent, user) high-trust source read over `inspect`. Built in setup-memory;
+   *  daemon-side (the agent imports no memory package). */
+  memoryApi?: MemoryApi;
   /** Entity-associative store (Phase 83) — forwarded to registerCronEventListeners so
    *  runMemoryReview (the write path) populates entity links after each successful store.
    *  Built in setup-memory on the shared db handle. */
@@ -201,6 +205,36 @@ export interface ChannelsDeps {
    *  write path. Absent => the reasoning sentinel cannot run (the cron is off-by-default
    *  anyway, so a default-config agent never reaches it). */
   tripleStore?: TripleStorePort;
+  /** Per-user representation store (Phase 107, USER-03 — Track E1) — forwarded to the cron path
+   *  so the opt-in __USER_REPRESENTATION__ sentinel runs runUserRepresentationBuild's offline
+   *  upsert write. Built in setup-memory on the shared db handle; injected as the port TYPE
+   *  (agent↛memory cut). Threaded the full daemon → registry → credentials chain — a missing
+   *  thread silently disables the offline-builder write path (Pitfall 1). Absent => the
+   *  representation sentinel cannot run (the cron is off-by-default anyway). */
+  userRepresentationStore?: UserRepresentationStore;
+  /** Directional relationship store (Phase 108, SOCIAL-01/02 — Track E2) — forwarded to the cron path
+   *  so the opt-in + sign-off-gated __SOCIAL_MODELING__ sentinel runs runRelationshipBuild's offline
+   *  per-channel directional-edge upsert write. Built in setup-memory on the shared db handle; injected
+   *  as the port TYPE (agent↛memory cut). Threaded the full daemon → registry → credentials chain — a
+   *  missing thread silently disables the offline-builder write path (Pitfall 6). Absent => the
+   *  relationship sentinel cannot run (the cron is off-by-default + sign-off-gated anyway). */
+  relationshipStore?: RelationshipStore;
+  /** Tuned-alpha store (Phase 111, LEARN-03 — Track H2) — forwarded to the cron path so the
+   *  opt-in __ONLINE_TUNING__ bandit sentinel runs runOnlineTuning's tuned-vector upsert. Built
+   *  in setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut).
+   *  Threaded the full daemon → registry → credentials chain — a missing thread silently disables
+   *  the bandit write (the field-plumbing lesson). Absent => off-by-default, never reached. */
+  tunedAlphaStore?: TunedAlphaStore;
+  /** Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C) — forwarded to the cron path so
+   *  the opt-in KEYLESS __MEMORY_LIFECYCLE__ sentinel runs the DORMANT runLifecycleSweep. Built in
+   *  setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). Threaded
+   *  the full daemon → registry → credentials chain — a missing thread silently disables the sweep
+   *  (the field-plumbing lesson). Absent => off-by-default, never reached. */
+  memoryLifecycleStore?: MemoryLifecyclePort;
+  /** Recall-utility usefulness READ surface (Phase 93 / Phase 111) — forwarded to the cron path so
+   *  the __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over it. Built in setup-memory
+   *  on the shared db handle; injected as the port TYPE (agent↛memory cut). */
+  usefulnessStore?: MemoryUsefulnessStore;
   /** Default tenant ID for memory storage. */
   tenantId?: string;
   /** Embedding queue for new memory entries (optional). */
@@ -350,6 +384,12 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     causalStore: deps.causalStore,
     consolidationStore: deps.consolidationStore,
     tripleStore: deps.tripleStore,
+    userRepresentationStore: deps.userRepresentationStore,
+    relationshipStore: deps.relationshipStore,
+    tunedAlphaStore: deps.tunedAlphaStore,
+    memoryLifecycleStore: deps.memoryLifecycleStore,
+    usefulnessStore: deps.usefulnessStore,
+    memoryApi: deps.memoryApi,
     tenantId: deps.tenantId,
     piSessionAdapters: deps.piSessionAdapters,
     cronExecutionTrackers: deps.cronExecutionTrackers,

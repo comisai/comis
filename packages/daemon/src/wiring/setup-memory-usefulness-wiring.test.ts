@@ -71,6 +71,59 @@ describe("wireMemoryUsefulness — bus → usefulnessStore.recordUsage write-bac
     );
   });
 
+  it("forwards the event intent into the recordUsage scope (LEARN-01 write — the per-intent bucket)", async () => {
+    const bus = new TypedEventBus();
+    const recordUsage = vi.fn(async (): Promise<Result<void, Error>> => ok(undefined));
+    const usefulnessStore = {
+      recordUsage,
+      readUsefulness: vi.fn(async () => ok(new Map())),
+    };
+
+    wireMemoryUsefulness({
+      eventBus: bus,
+      usefulnessStore,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      feedbackEnabled: () => true,
+    });
+
+    bus.emit("memory:recall_used", recallUsedPayload({ intent: "temporal" }));
+    await Promise.resolve();
+
+    expect(recordUsage).toHaveBeenCalledTimes(1);
+    const scope = recordUsage.mock.calls[0]![2] as { intent?: string };
+    // The event's intent reaches recordUsage so the per-intent usefulness bucket
+    // is actually written (the LEARN-01 write side).
+    expect(scope.intent).toBe("temporal");
+  });
+
+  it("omits intent from the scope when the event carries none (the GLOBAL bucket — byte-identical v2.8)", async () => {
+    const bus = new TypedEventBus();
+    const recordUsage = vi.fn(async (): Promise<Result<void, Error>> => ok(undefined));
+    const usefulnessStore = {
+      recordUsage,
+      readUsefulness: vi.fn(async () => ok(new Map())),
+    };
+
+    wireMemoryUsefulness({
+      eventBus: bus,
+      usefulnessStore,
+      clock: createFakeClock(NOW),
+      logger: createMockLogger(),
+      feedbackEnabled: () => true,
+    });
+
+    // No `intent` override → the recallUsedPayload helper emits no intent field.
+    bus.emit("memory:recall_used", recallUsedPayload());
+    await Promise.resolve();
+
+    expect(recordUsage).toHaveBeenCalledTimes(1);
+    const scope = recordUsage.mock.calls[0]![2] as Record<string, unknown>;
+    // No intent key at all (NOT intent: undefined) → the adapter resolves the
+    // global bucket; the scope is byte-identical to the pre-LEARN-01 write.
+    expect("intent" in scope).toBe(false);
+  });
+
   it("derives the scope per-agent: agentId from the event, tenantId from the sessionKey (no cross-agent collapse)", async () => {
     const bus = new TypedEventBus();
     const recordUsage = vi.fn(async (): Promise<Result<void, Error>> => ok(undefined));

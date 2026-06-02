@@ -51,13 +51,13 @@
  * The 23 helpers that were extracted into the stages/* layer by an earlier
  * decomposition pass are now back here in two forms:
  *
- *   - **Top-level functions** (12 of 23): helpers called from inside a
+ *   - **Top-level functions** (11 of 23): helpers called from inside a
  *     single boot* function but whose body is large enough to deserve a
  *     named scope. Each lives in the helper section above the boot*
  *     blocks, grouped by which stage consumes them (foundation / agents /
  *     channels / gateway / shutdown). Examples: `buildMergedEnv`,
- *     `restoreApprovalState`, `buildChannelManagerDeps`, `createHotAdd`,
- *     `emitStartupBanner`.
+ *     `buildChannelManagerDeps`, `createHotAdd`, `emitStartupBanner`.
+ *     (`restoreApprovalState` was extracted to `wiring/main-helpers.ts`.)
  *
  *   - **Inlined at call site** (11 of 23): helpers that were trivially
  *     wrapped one-call-site builders. Their bodies were copied verbatim
@@ -194,7 +194,7 @@ import { createProcessMonitor } from "./process/process-monitor.js";
 import { ok, err, suppressError } from "@comis/shared";
 import { exportTrajectoryBundle } from "@comis/observability";
 import { randomUUID } from "node:crypto";
-import { existsSync, chmodSync, statSync, mkdirSync, readFileSync, unlinkSync, cpSync } from "node:fs";
+import { existsSync, chmodSync, statSync, mkdirSync, readFileSync, cpSync } from "node:fs";
 import { writeFile as fsWriteFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve as pathResolve } from "node:path";
@@ -207,7 +207,9 @@ import {
   buildMcpStatusLine,
 } from "./wiring/restart-continuation.js";
 import { setupSingleAgent } from "./wiring/setup-agents/index.js";
+import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js"; // Phase 109 DIAL-01/02
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
+import { restoreApprovalState } from "./wiring/main-helpers.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -440,71 +442,15 @@ function buildMergedEnv(
 // ---------------------------------------------------------------------------
 // Agents helpers
 // ---------------------------------------------------------------------------
-// Helpers consumed by `bootAgents`. Two top-level functions kept (large
-// bodies, single call site each): `restoreApprovalState` (file I/O against
-// the approvals JSON snapshot left by graceful shutdown) and
-// `wirePostAgentsCleanup` (eventBus.on subscriber wiring for
-// session:expired → registry release + Gemini cache cleanup + MCP
-// disconnect cleanup; returns the per-session FileStateTracker pool).
-// Three other helpers (setupMcpManager, buildAuditBundle,
-// buildDeferredCronWakeCallback) were inlined directly into bootAgents.
+// Helpers consumed by `bootAgents`. `wirePostAgentsCleanup` (eventBus.on
+// subscriber wiring for session:expired → registry release + Gemini cache
+// cleanup + MCP disconnect cleanup; returns the per-session FileStateTracker
+// pool) is kept here as a top-level function (large body, single call site).
+// `restoreApprovalState` (file I/O against the approvals JSON snapshot left by
+// graceful shutdown) lives in `wiring/main-helpers.ts` to keep this file under
+// its architecture line cap. Three other helpers (setupMcpManager,
+// buildAuditBundle, buildDeferredCronWakeCallback) were inlined into bootAgents.
 // ---------------------------------------------------------------------------
-
-/**
- * Restore approval pending requests and cache from disk at startup.
- *
- * Reads `<dataDir>/restart-approvals.json` and
- * `<dataDir>/restart-approval-cache.json` (written by graceful shutdown),
- * restores into the in-memory ApprovalGate, then deletes the files.
- * Best-effort on JSON parse failure: log warn + unlink.
- */
-function restoreApprovalState(deps: {
-  approvalGate: ReturnType<typeof createApprovalGate>;
-  dataDir: string;
-  containerDataDir: string | undefined;
-  daemonLogger: ReturnType<typeof setupLogging>["daemonLogger"];
-}): void {
-  const { approvalGate, dataDir, containerDataDir, daemonLogger } = deps;
-  // 6.6.8.6.1. Restore pending approvals from previous restart
-  const approvalRestorePath = safePath(containerDataDir || dataDir, "restart-approvals.json");
-  if (existsSync(approvalRestorePath)) {
-    try {
-      const raw = readFileSync(approvalRestorePath, "utf-8");
-      const records = JSON.parse(raw);
-      unlinkSync(approvalRestorePath);
-      const restored = approvalGate.restorePending(records);
-      if (restored > 0) {
-        daemonLogger.info({ count: restored, total: records.length }, "Pending approvals restored from previous session");
-      }
-    } catch (restoreErr) {
-      daemonLogger.warn(
-        { err: restoreErr, hint: "Could not restore pending approvals; operators may need to re-approve", errorKind: "internal" as const },
-        "Failed to restore pending approvals",
-      );
-      try { unlinkSync(approvalRestorePath); } catch { /* ignore */ }
-    }
-  }
-
-  // 6.6.8.6.2. Restore approval cache from previous session
-  const approvalCacheRestorePath = safePath(containerDataDir || dataDir, "restart-approval-cache.json");
-  if (existsSync(approvalCacheRestorePath)) {
-    try {
-      const raw = readFileSync(approvalCacheRestorePath, "utf-8");
-      unlinkSync(approvalCacheRestorePath); // Consume immediately
-      const entries = JSON.parse(raw);
-      const restored = approvalGate.restoreApprovalCache(entries);
-      if (restored > 0) {
-        daemonLogger.info({ count: restored, total: entries.length }, "Approval cache restored from previous session");
-      }
-    } catch (restoreErr) {
-      daemonLogger.warn(
-        { err: restoreErr, hint: "Could not restore approval cache; users may need to re-approve", errorKind: "internal" as const },
-        "Failed to restore approval cache",
-      );
-      try { unlinkSync(approvalCacheRestorePath); } catch { /* ignore */ }
-    }
-  }
-}
 
 /**
  * Wire post-setupAgents cleanup listeners: session:expired releases
@@ -607,7 +553,7 @@ function buildChannelManagerDeps(deps: {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
-    workspaceDirs, defaultWorkspaceDir, memoryAdapter, entityStore, causalStore, consolidationStore, tripleStore, embeddingQueue,
+    workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, usefulnessStore, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
@@ -679,10 +625,10 @@ function buildChannelManagerDeps(deps: {
     // Forwarded into registerCronEventListeners -> runMemoryConsolidation (the opt-in
     // __MEMORY_CONSOLIDATION__ cron path). The executor recall path does NOT receive it.
     consolidationStore,
-    // Phase 101 (REASON-02): the triple store → registerCronEventListeners →
-    // runMemoryReasoning (the opt-in __MEMORY_REASONING__ cron, DEDUCTIVE upsertTriple
-    // write) — completes the field-plumbing chain daemon → registry → credentials.
-    tripleStore,
+    // P101·REASON-02 tripleStore + P107 userRepresentationStore + P108 relationshipStore + P111·LEARN-03
+    // tunedAlphaStore/usefulnessStore + P112·FORGET-02 memoryLifecycleStore + memoryApi ride the SAME cron-deps chain → the __MEMORY_REASONING__ /
+    // __USER_REPRESENTATION__ / __SOCIAL_MODELING__ / __ONLINE_TUNING__ / __MEMORY_LIFECYCLE__ sentinels (the last two are KEYLESS: the bandit over the FEED signal + the DORMANT lifecycle sweep).
+    tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, usefulnessStore, memoryApi,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,
@@ -1061,9 +1007,7 @@ function buildRpcDispatchDeps(deps: {
     recallTimeoutMs: c.agentsConfig[c.defaultAgentId]?.contextEngine?.recallTimeoutMs ?? 120000,
   };
   // Inlined buildTokenStoreMutators.
-  const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => {
-    g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes });
-  };
+  const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => { g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes }); };
   const removeFromTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["removeFromTokenStore"] = (id) => {
     g.removedTokenIds.add(id);
     const idx = g.runtimeTokens.findIndex((t) => t.id === id);
@@ -1088,6 +1032,7 @@ function buildRpcDispatchDeps(deps: {
   // memory.recall_stats handler (comis memory stats reads live counters). The
   // gauge is daemon-lifetime — it resets on restart (Assumption A2).
   const recallCounters = c.recallCounters;
+  const dialecticWiring = buildDialecticWiring(dialecticWiringDepsFromBoot(c)); // Phase 109 DIAL-01/02: the memory.ask seam + per-agent recall factory (setup-dialectic.ts owns the wiring; the cost gate returns {} when off). Spread into the dispatch deps below; the forward-presence belt locks the spread.
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
@@ -1098,7 +1043,7 @@ function buildRpcDispatchDeps(deps: {
     // for the 4 admin-gated memory.* diagnostic handlers. (usefulnessStore is NOT
     // here — no diagnostic handler consumes it; FEED-03's read path is the setupAgents
     // injection at the setupAgents({…}) call below, mirroring entityStore.)
-    consolidationStore: c.consolidationStore, entityStore: c.entityStore, recallCounters,
+    consolidationStore: c.consolidationStore, entityStore: c.entityStore, recallCounters, ...dialecticWiring, onSuspiciousContent: c.onSuspiciousContent,
     tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
     sessionStore: g.sessionStoreBridge,
@@ -1689,7 +1634,7 @@ async function bootFoundation(
     disposeEmbedding, cachedPort, memoryAdapter, db,
     sessionStore, memoryApi, embeddingQueue, backgroundIndexingPromise,
     embeddingCacheStats, embeddingCircuitBreakerState, maintenanceTick,
-    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, consolidationStore, recallCounters,
+    rerankerPort, rerankerModelPresent, disposeReranker, entityStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters,
   } = await setupMemory({ container, memoryLogger, clock });
 
   // Observability persistence (dual-write to SQLite). obsStore +
@@ -1840,7 +1785,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, consolidationStore, recallCounters, maintenanceTick,
+    embeddingCircuitBreakerState, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence, contextStore,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
@@ -1901,7 +1846,7 @@ async function bootAgents(
     temporalStore, // Phase 95 (LANES-02): threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the recall temporal-spread read path); dormant until rag.lanes.temporal.enabled
     causalStore, // Phase 96 (EXTRACT-03): threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 5th causal read lane, dormant until rag.lanes.causal.enabled) AND the cron review -> runMemoryReview -> linkCausal (the write path) — one segregated port, both halves
     tripleStore, // Phase 100 (KG-01): threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 6th graph-spread read lane, dormant until rag.lanes.graphSpread.enabled); the agent receives the port TYPE only (the agent↛memory cut)
-    embeddingStore, usefulnessStore, // P102·IQ-01 (MMR re-rank's scoped embedding read, dormant until rag.mmr.enabled) + P93·FEED-03 (recall usefulness read, dormant until rag.feedback.enabled) -> setupAgents -> createPiExecutor -> createMemoryRecall; the agent receives the port TYPEs only (the agent↛memory cut)
+    embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, // P102·IQ-01 (MMR re-rank's scoped embedding read) + P93·FEED-03 (recall usefulness read) + P107·USER-03 (the LLM-free <user_profile> standing-block read) + P108·SOCIAL-02 (the LLM-free <channel_relationships> standing-block read, dormant until the offline builder writes rows + the SOCIAL-03 sign-off) + P111·LEARN-03 (the buildScoringAlphas tuned-vector read, dormant until rag.onlineTuning.enabled + the bandit cron) -> setupAgents -> createPiExecutor -> prompt-assembly; the agent receives the port TYPEs only (the agent↛memory cut)
     contextStore,
     activeRunRegistry, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, geminiCacheManager,
@@ -2021,7 +1966,7 @@ async function bootAgents(
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts,
   } = await setupAgents({
-    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, outboundMediaEnabled: true,
+    container, memoryAdapter, sessionStore, agentLogger, rerankerPort, rerankerModelPresent, entityStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, outboundMediaEnabled: true,
     autonomousMediaEnabled: !container.config.integrations.media.transcription.autoTranscribe
       || !container.config.integrations.media.vision.enabled
       || !container.config.integrations.media.documentExtraction.enabled,

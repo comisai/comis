@@ -176,6 +176,14 @@ export interface MemoryRecallConfig {
    *  identity. Optional so a caller predating the field (or the daemon before 102-05 wiring)
    *  leaves it absent → off. */
   mmr?: { enabled: boolean; lambda: number };
+  /** FadeMem per-type decay gate (FORGET-01; sourced from RagConfig.forget). The toggle ONLY —
+   *  there is NO forgetAlpha here. The decay MAGNITUDE is the single canonical
+   *  `rag.scoring.forgetAlpha` (on {@link MemoryRecallConfig.scoring}, exactly like the other
+   *  alphas), so there is no second knob and no drift. Default-OFF (`enabled:false`) → score.ts
+   *  forces the forgetFactor to EXACTLY 1.0 → byte-identical recall (the safety gate, way #1);
+   *  the neutral-importance byte-identity holds even when ON (event-age 0 → factor 1.0, way #2).
+   *  Optional so a caller predating the field leaves it absent → off. */
+  forget?: { enabled: boolean };
   /** Query-understanding knobs (IQ-02/03; sourced from RagConfig.queryUnderstanding). All
    *  default-OFF → no reweight, no expansion, no range filter (byte-identical). Optional so a
    *  caller predating the field leaves it absent → off. */

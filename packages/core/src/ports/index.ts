@@ -31,6 +31,31 @@ export type {
   TripleInput,
 } from "./triple-store.js";
 export type {
+  UserRepresentationStore,
+  UserRepresentationScope,
+  UserRepresentationTrust,
+  UserRepresentationEntry,
+  UserRepresentationInput,
+} from "./user-representation-store.js";
+export type {
+  TunedAlphaStore,
+  TunedAlphaScope,
+  TunedAlphaVector,
+} from "./tuned-alpha-store.js";
+export type {
+  MemoryLifecyclePort,
+  MemoryLifecycleScope,
+  MemoryTier,
+  LifecycleSweepReport,
+} from "./memory-lifecycle.js";
+export type {
+  RelationshipStore,
+  RelationshipScope,
+  RelationshipTrust,
+  RelationshipEntry,
+  RelationshipInput,
+} from "./relationship-store.js";
+export type {
   MemoryUsefulnessStore,
   UsefulnessScope,
   UsefulnessSignal,

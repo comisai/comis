@@ -1,0 +1,10 @@
+{
+  "harnessVersion": "phase-108-05-v1",
+  "claim": "social-03-signoff-gate",
+  "gateClosedWithoutSignoff": true,
+  "readsWithoutSignoff": 0,
+  "gateOpensWithSignoff": true,
+  "blockNullWithoutSignoff": true,
+  "blockRendersWithSignoff": true,
+  "pass": true
+}

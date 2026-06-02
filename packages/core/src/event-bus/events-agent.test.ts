@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, expectTypeOf } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
@@ -1091,6 +1091,92 @@ describe("Phase 93 memory:recall_used recall-usage attribution event (FEED-01)",
     // The counts+ids payload fields MUST be present.
     expect(block, "usedIds present").toMatch(/^\s*usedIds:/m);
     expect(block, "ignoredIds present").toMatch(/^\s*ignoredIds:/m);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 110 (LEARN-01 / H1) — the optional intent on memory:recall_used.
+//
+// Additive + forward-only: the payload gains an OPTIONAL `intent?: string` (the
+// deterministic classifyIntent bucket for the recall that produced these ids).
+// When present the daemon write-back records the per-intent bucket; when OMITTED
+// it records the GLOBAL bucket — byte-identical to v2.8, so today's two emit
+// sites compile unchanged. The intent string is metadata (a closed-union
+// factual|temporal|preference|enumeration), NOT memory content — ids/counts/
+// intent ONLY ever cross the bus (AGENTS.md §2.7), never bodies/query/response.
+// ---------------------------------------------------------------------------
+
+describe("Phase 110 memory:recall_used optional intent (LEARN-01 write bucket)", () => {
+  it("accepts a payload WITH intent:'temporal' AND one WITHOUT intent (additive/byte-identity)", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+
+    const withIntent: EventMap["memory:recall_used"] = {
+      agentId: "agent-1",
+      sessionKey: "t1:u1:c1",
+      traceId: "trace-recall-used-intent-001",
+      usedIds: ["m-aaa"],
+      ignoredIds: ["m-bbb"],
+      usedCount: 1,
+      ignoredCount: 1,
+      timestamp: Date.now(),
+      intent: "temporal",
+    };
+    bus.on("memory:recall_used", handler);
+    bus.emit("memory:recall_used", withIntent);
+    expect(handler).toHaveBeenCalledWith(withIntent);
+    const r = handler.mock.calls[0]![0] as EventMap["memory:recall_used"];
+    expect(r.intent).toBe("temporal");
+    expectTypeOf(r.intent).toEqualTypeOf<string | undefined>();
+
+    // intent is OPTIONAL — omitting it is byte-identical to v2.8 (today's emit
+    // sites compile unchanged; the daemon write-back records the global bucket).
+    const noIntent: EventMap["memory:recall_used"] = {
+      agentId: "agent-1",
+      traceId: "trace-recall-used-intent-002",
+      usedIds: ["m-ccc"],
+      ignoredIds: [],
+      usedCount: 1,
+      ignoredCount: 0,
+      timestamp: Date.now(),
+    };
+    bus.emit("memory:recall_used", noIntent);
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler.mock.calls[1]![0].intent).toBeUndefined();
+  });
+
+  it("payload still rejects content/response/query (the new intent stays ids/counts/intent-only)", () => {
+    const bus = new TypedEventBus();
+    // Source-grep the memory:recall_used block: the new optional intent field is
+    // present AND documented ids/counts (§2.7), and no body/content/response/
+    // query leaks in alongside it.
+    const src = readFileSync(resolve(here, "./events-agent.ts"), "utf8");
+    const match = src.match(/"memory:recall_used":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "memory:recall_used event block must exist").toBeTruthy();
+    const block = match![0];
+    // RED: fails on the pre-patch event (no optional intent field yet).
+    expect(block, "optional intent?: string present on the payload").toMatch(
+      /^\s*intent\?:\s*string\b/m,
+    );
+    // The §2.7 counts-only discipline is documented on/near the new field.
+    expect(block, "the ids/counts discipline is documented").toMatch(/ids\/counts|§2\.7/);
+    // No body/content leaks alongside the new metadata field.
+    expect(block, "no raw content field").not.toMatch(/^\s*content[?]?:/m);
+    expect(block, "no response field").not.toMatch(/^\s*response[?]?:/m);
+    expect(block, "no query/queryText field").not.toMatch(/^\s*query(?:Text)?[?]?:/m);
+
+    // Type safety: the intent must be a string, never an object carrying a body.
+    bus.emit("memory:recall_used", {
+      agentId: "a",
+      traceId: "t",
+      usedIds: [],
+      ignoredIds: [],
+      usedCount: 0,
+      ignoredCount: 0,
+      timestamp: 1,
+      // @ts-expect-error - intent is a closed-union string, never a content-bearing object
+      intent: { body: "the recalled memory body" },
+    });
   });
 });
 

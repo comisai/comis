@@ -17,6 +17,7 @@ export { setupMedia, createImageGenGetter, type MediaResult } from "./setup-medi
 export { setupCrossSession, type CrossSessionResult } from "./setup-cross-session/index.js";
 export { setupAgents, type AgentsResult } from "./setup-agents/index.js";
 export { setupSchedulers, type SchedulersResult } from "./setup-schedulers.js";
+export { emitMemoryCostFeatureNotice, type MemoryCostFeatureNoticeDeps } from "./setup-memory-cost-notice.js";
 export { setupChannels, type ChannelsResult } from "./setup-channels/index.js";
 export {
   resolveInteractiveCallbackSigningSecret,
