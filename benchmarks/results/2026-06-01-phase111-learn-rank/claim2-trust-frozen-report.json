@@ -1,0 +1,10 @@
+{
+  "harnessVersion": "phase-111-05-v1",
+  "claim": "trust-frozen-under-tuning",
+  "episodes": 5,
+  "configTrustAlpha": 0.1,
+  "trustAlphaPerEpisode": [0.1, 0.1, 0.1, 0.1, 0.1],
+  "trustAlphaStableAcrossEpisodes": true,
+  "externalDropped": true,
+  "pass": true
+}
