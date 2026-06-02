@@ -2,7 +2,7 @@
 phase: 114
 milestone: v2.10
 requirement: PROVE2-01, PROVE2-02
-verdict: MEASURED (costed, cross-judged) — capability lift COMPLETE; competitor head-to-head PARTIAL
+verdict: MEASURED (costed, cross-judged) — capability-lift + competitor head-to-head COMPLETE (best-effort N=8); Comis ties mem0 (87.5%), both +37.5pt over the full-dump control
 date: 2026-06-02
 keyless: false
 ---
@@ -68,18 +68,41 @@ believable):**
    an **enrichment-aware harness**. Their **v2.9 keyless mechanical proofs stand**
    (`benchmarks/results/2026-06-01-phase11{0,1,2}-*`, `2026-06-01-phase100-kg`, etc.).
 
-## §3. PROVE2-01 — competitor head-to-head (PARTIAL — in progress)
+## §3. PROVE2-01 — competitor head-to-head (COMPLETE, best-effort N=8)
 
-Best-effort, competitors re-run by us under the same answer + judges (apples-to-apples).
-- **mem0** (`mem0ai 2.0.4`, isolated venv, OpenAI extractor + embedder, in-memory qdrant)
-  — runner `scripts/prove/mem0-runner.py`, grading the **byte-identical** sampled items it
-  consumed from the harness's exported `prove2-sample.json`. **[results appended on completion]**
-- **letta-fs control** (full-haystack dump, no ranking) — the honesty anchor / saturation probe.
-- **Comis** (as-shipped recall) — same answer + judges.
-- **Hindsight / Mnemosyne / Zep** — `../hindsight`, `../mnemosyne`, `../graphiti` cloned but
-  not wired to the protocol in this run; **mem0 / Zep not installed as protocol adapters** →
-  honestly **skip-with-disclosure** (never a fabricated number). The structurally-impossible-
-  to-fabricate skeleton adapters (`competitor-adapter.ts`) hold the integrity invariant.
+Competitors re-run by us under the SAME answer + both judges (apples-to-apples), on 8
+LongMemEval questions, the byte-identical sampled items mem0 consumed from the harness's
+exported `prove2-sample.json`. Machine-readable: `head-to-head-report.json`. Cost $4.23
+(the full-haystack control answers dominate). Cross-judge spread **0.0 on every cell**
+(the two judges agreed perfectly) — every number survives.
+
+| System | gpt-4o | claude | spread | vs control | note |
+|---|---|---|---|---|---|
+| **comis** (as-shipped recall) | **87.5%** (7/8) | 87.5% | 0.0 ✅ | **+37.5 pt** | LLM-free recall, **$0 on-device** |
+| **mem0** (`mem0ai 2.0.4`, re-run by us) | **87.5%** (7/8) | 87.5% | 0.0 ✅ | +37.5 pt | LLM fact-extraction at ingest (~53 min / 8 items, paid) |
+| letta-fs control (full-haystack dump) | 50.0% (4/8) | 50.0% | 0.0 ✅ | — | the honesty anchor |
+
+**Findings (honest, N=8):**
+1. **Comis ties mem0 on quality** — both 7/8 (87.5%), cross-judge-stable. At N=8 the two are
+   **statistically indistinguishable on accuracy** (a 1-question difference is 12.5 pt). The
+   honest claim is **"competitive-with mem0,"** never "beats" (binding constraint #8).
+2. **Both beat the letta-fs full-dump control by +37.5 pt** — the bench is **discriminating**
+   (ranked recall / extracted memory ≫ naive full-context dump). This refutes a saturation
+   worry: the 98% on the §2 50-question mix was a LoCoMo-easiness artifact; on harder
+   LongMemEval-only questions there is real headroom and the control fails half of them.
+3. **The differentiator is cost / latency / locality.** Comis recall is **LLM-free and runs
+   on-device at $0** (local embed + rerank); mem0 spent real OpenAI fact-extraction across
+   ~53 min of ingest for the same 8 items. Equal answer quality, very different production
+   economics — the "competitive-with / at-$0-on-device" axis.
+
+**Skipped-with-disclosure (never a fabricated number):** Zep (not installed), Hindsight /
+Mnemosyne / Graphiti (cloned at `../{hindsight,mnemosyne,graphiti}` but not wired to the
+protocol in this best-effort run). The discriminated-union skeleton adapters
+(`competitor-adapter.ts`) make a fabricated competitor number structurally impossible.
+
+**Caveat:** N=8 is a best-effort sample (operator-costed, this autonomous run), not the
+definitive scale. The committed harness + `mem0-runner.py` + `prove2-sample.json` reproduce
+and extend it (raise `COMIS_BENCH_LIMIT` / mem0 `--limit`).
 
 ## §4. Activation decision (gates Phase 115)
 

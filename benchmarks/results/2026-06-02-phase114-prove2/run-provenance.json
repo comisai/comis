@@ -37,8 +37,16 @@
     ]
   },
   "headToHead": {
-    "status": "PARTIAL — in progress",
-    "report": "head-to-head-report.json (appended on completion)",
+    "status": "COMPLETE (best-effort N=8, cross-judged, spread 0.0 on every cell)",
+    "report": "head-to-head-report.json",
+    "questionCount": 8,
+    "costUsd": 4.23,
+    "results": {
+      "comis": { "judge1": 87.5, "judge2": 87.5, "correct": "7/8", "note": "LLM-free recall, $0 on-device" },
+      "mem0": { "judge1": 87.5, "judge2": 87.5, "correct": "7/8", "note": "mem0ai 2.0.4, re-run by us; LLM fact-extraction at ingest (~53 min/8 items, paid)" },
+      "letta-fs-control": { "judge1": 50.0, "judge2": 50.0, "correct": "4/8", "note": "full-haystack dump; the honesty anchor" }
+    },
+    "finding": "Comis ties mem0 on quality (both 7/8, indistinguishable at N=8); both beat the full-dump control by +37.5pt (the bench discriminates). Differentiator = cost/latency/on-device (LLM-free $0 recall vs mem0's paid ingest). Honest framing: 'competitive-with mem0 / at-$0-on-device', NEVER 'beats' (constraint #8).",
     "competitorsReRunByUs": ["mem0 (mem0ai 2.0.4)", "letta-fs-control"],
     "competitorsSkippedWithDisclosure": ["zep (not installed)", "hindsight (cloned, not wired this run)", "mnemosyne (cloned, not wired this run)"],
     "mem0Runner": "scripts/prove/mem0-runner.py"
