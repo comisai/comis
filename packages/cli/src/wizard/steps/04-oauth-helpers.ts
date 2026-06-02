@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import {
   createFileLock,
   loadConfigFile,
+  loadEnvFile,
   validateConfig,
   safePath,
   selectOAuthCredentialStore,
@@ -33,7 +34,15 @@ export async function loadWizardStorageMode(): Promise<
   const envPaths = systemGetEnv("COMIS_CONFIG_PATHS");
   const configPath =
     envPaths?.split(":")[0] ?? safePath(homedir(), ".comis", "config.yaml");
-  const loadResult = loadConfigFile(configPath);
+
+  // Resolve ${VAR} refs before validation — consistent with daemon bootstrap.
+  // Use COMIS_DATA_DIR if set (test isolation), else the standard data dir.
+  const dataDir = systemGetEnv("COMIS_DATA_DIR") ?? safePath(homedir(), ".comis");
+  loadEnvFile(safePath(dataDir, ".env"));
+
+  const loadResult = loadConfigFile(configPath, {
+    getSecret: (k) => systemGetEnv(k),
+  });
   if (!loadResult.ok) {
     return "file";
   }
