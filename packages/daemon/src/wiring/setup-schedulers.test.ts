@@ -745,6 +745,85 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // __USEFULNESS_JUDGE__ cron registration (Phase 110, LEARN-02 OPTIONAL). OFF
+  // by default (a cost gate — an OFFLINE cheap-model judge). Registered ONLY
+  // when the operator sets memoryUsefulnessJudge.enabled; a default agent
+  // registers NO job → byte-identical with the config absent. Default 0 7 * * *
+  // runs AFTER social's 0 6. Mirrors the reasoning gate 1:1.
+  // -------------------------------------------------------------------------
+
+  it("registers NO __USEFULNESS_JUDGE__ cron for a default (judge-off) agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // memoryUsefulnessJudge undefined => default OFF (the cost gate — byte-identical).
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const judgeAdds = addJob.mock.calls.filter(
+      (c) => (c[0] as any)?.payload?.text === "__USEFULNESS_JUDGE__",
+    );
+    expect(judgeAdds.length).toBe(0);
+  });
+
+  it("registers the __USEFULNESS_JUDGE__ cron (default 0 7 * * *) for an enabled agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryUsefulnessJudge: { enabled: true },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const judgeAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__USEFULNESS_JUDGE__");
+    expect(judgeAdd).toBeDefined();
+    expect(judgeAdd.id).toBe("memory-usefulness-judge-agent-1");
+    expect(judgeAdd.name).toBe("Memory usefulness judge");
+    // Default schedule runs AFTER social's 0 6 so the judge scores over a
+    // fully-settled night.
+    expect(judgeAdd.schedule).toEqual({ kind: "cron", expr: "0 7 * * *" });
+    expect(judgeAdd.sessionTarget).toBe("isolated");
+    expect(judgeAdd.sessionStrategy).toBe("fresh");
+    expect(judgeAdd.payload).toEqual({ kind: "system_event", text: "__USEFULNESS_JUDGE__" });
+  });
+
+  it("honors a custom usefulness-judge schedule when the operator overrides it", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryUsefulnessJudge: { enabled: true, schedule: "30 8 * * 0" },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const judgeAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__USEFULNESS_JUDGE__");
+    expect(judgeAdd?.schedule).toEqual({ kind: "cron", expr: "30 8 * * 0" });
+  });
+
+  // -------------------------------------------------------------------------
   // 13.5. sessionStrategy and maxHistoryTurns propagated in event emission
   // -------------------------------------------------------------------------
 
