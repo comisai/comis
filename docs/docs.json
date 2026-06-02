@@ -56,7 +56,7 @@
           { "group": "Core", "pages": ["agents/index", "agents/lifecycle", "agents/identity", "agents/routing", "agents/slash-commands"] },
           { "group": "Conversations", "pages": ["agents/sessions", "agents/subagent-lifecycle", "context-management", "agents/compaction", "agents/rag", "agents/queue"] },
           { "group": "Orchestration", "pages": ["agents/execution-graphs"] },
-          { "group": "Memory", "pages": ["agents/memory", "agents/search", "agents/embeddings", "agents/memory-benchmarks"] },
+          { "group": "Memory", "pages": ["agents/memory", "agents/memory-config", "agents/search", "agents/embeddings", "agents/memory-benchmarks"] },
           { "group": "Advanced", "pages": ["agents/models", "agents/safety", "agents/resilience", "agents/cache"] }
         ]
       },
