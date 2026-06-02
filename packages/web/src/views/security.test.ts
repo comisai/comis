@@ -112,16 +112,6 @@ function priv(el: IcSecurityView) {
     _loadState: string;
     _activeTab: string;
     _error: string;
-    _auditEntries: unknown[];
-    _paused: boolean;
-    _pauseBuffer: unknown[];
-    _securityConfig: Record<string, unknown>;
-    _tokens: Array<{ id: string; scopes: string[] }>;
-    _pendingApprovals: unknown[];
-    _resolvedApprovals: unknown[];
-    _approvalRules: { defaultMode: string; timeoutMs: number };
-    _newTokenScopes: string[];
-    _newSecretName: string;
     _sse: unknown;
     _initSse(): void;
     eventDispatcher: EventDispatcher | null;
