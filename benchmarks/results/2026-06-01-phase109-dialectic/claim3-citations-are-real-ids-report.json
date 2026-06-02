@@ -1,0 +1,9 @@
+{
+  "harnessVersion": "phase-109-04-v1",
+  "claim": "citations-are-real-recalled-ids",
+  "recalledCount": 1,
+  "citationCount": 1,
+  "bogusDropped": true,
+  "allCitationsReal": true,
+  "pass": true
+}

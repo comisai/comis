@@ -1,0 +1,8 @@
+{
+  "harnessVersion": "phase-109-04-v1",
+  "claim": "recall-stays-llm-free",
+  "recalledCount": 2,
+  "completeSimpleCalls": 0,
+  "getModelCalls": 0,
+  "pass": true
+}

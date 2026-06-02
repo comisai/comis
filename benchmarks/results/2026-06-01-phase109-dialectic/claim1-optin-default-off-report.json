@@ -1,0 +1,9 @@
+{
+  "harnessVersion": "phase-109-04-v1",
+  "claim": "opt-in-default-off",
+  "isConditional": true,
+  "absentWhenAbsent": true,
+  "absentWhenFalse": true,
+  "presentWhenOn": true,
+  "pass": true
+}

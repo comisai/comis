@@ -1,0 +1,10 @@
+{
+  "harnessVersion": "phase-109-04-v1",
+  "claim": "trust-first-contradiction",
+  "recalledCount": 2,
+  "systemPositionInGrounding": 39,
+  "externalPositionInGrounding": 114,
+  "systemFirst": true,
+  "firstOrderedIsSystem": true,
+  "pass": true
+}
