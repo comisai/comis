@@ -1579,6 +1579,60 @@ describe("createChannelManager", () => {
     });
   });
 
+  describe("WR-01: secret:changed handler is void-synchronous — rejection does not bubble to bus", () => {
+    it("adapter.stop() rejection is caught internally and does not propagate as unhandled rejection", async () => {
+      let secretChangedListener: ((ev: { name: string; action: "upserted" | "removed"; timestamp: number }) => void) | undefined;
+      const captureEventBus = {
+        ...makeEventBus(),
+        on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+          if (event === "secret:changed") {
+            secretChangedListener = listener as typeof secretChangedListener;
+          }
+          return captureEventBus;
+        }),
+      } as any;
+
+      const stopError = new Error("stop failed");
+      const telegramStop = vi.fn(async () => { throw stopError; });
+      const telegramStart = vi.fn(async () => ok(undefined));
+      const telegramAdapter = makeAdapter({ channelType: "telegram", channelId: "tg-1", stop: telegramStop, start: telegramStart });
+
+      const channelCredentialMap = new Map([["TELEGRAM_BOT_TOKEN", "telegram"]]);
+      const deps = makeDeps({
+        eventBus: captureEventBus,
+        adapters: [telegramAdapter],
+        channelCredentialMap,
+        processInboundMessage: vi.fn(async () => {}) as unknown as ChannelManagerDeps["processInboundMessage"],
+      });
+
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+      expect(secretChangedListener).toBeDefined();
+      vi.clearAllMocks();
+
+      // The listener must return void synchronously — if it returned a rejected
+      // Promise, the bus would surface an unhandled rejection (WR-01). We verify
+      // the return value is not a Promise (undefined), and that the rejection is
+      // captured internally (warn logged) rather than thrown to the caller.
+      const returnValue = secretChangedListener!({ name: "TELEGRAM_BOT_TOKEN", action: "upserted", timestamp: Date.now() });
+      expect(returnValue).toBeUndefined();
+
+      // Yield microtasks so the internal async IIFE completes
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // stop() was called and threw — warn was emitted, start() was NOT called
+      expect(telegramStop).toHaveBeenCalledOnce();
+      expect(telegramStart).not.toHaveBeenCalled();
+      const warnCalls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const reconnectWarn = warnCalls.find((c: any[]) =>
+        typeof c[1] === "string" && c[1].includes("Channel adapter reconnect failed"),
+      );
+      expect(reconnectWarn).toBeDefined();
+    });
+  });
+
   describe("getRawHandlerCounts()", () => {
     it("reports rawHandlerCount of 1 for a single cleanly wired adapter", async () => {
       const adapter = makeAdapter({ channelType: "echo", channelId: "echo-1" });

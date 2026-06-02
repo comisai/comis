@@ -315,37 +315,43 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
   // action="removed" is NOT handled here — deletion is the responsibility of the
   // credential-deletion plan (the adapter stops, it does not restart with nothing).
   if (deps.channelCredentialMap && deps.channelCredentialMap.size > 0) {
-    deps.eventBus.on("secret:changed", async ({ name, action }) => {
+    deps.eventBus.on("secret:changed", ({ name, action }) => {
       if (action !== "upserted") return;
       const channelType = deps.channelCredentialMap!.get(name);
       if (!channelType) return;
       const adapter = adaptersByType.get(channelType);
       if (!adapter) return;
-      try {
-        await adapter.stop();
-        await adapter.start();
-        deps.logger.info(
-          {
-            submodule: "credential-rotation-reconnect",
-            step: "credential-rotation-reconnect",
-            channelType,
-            credentialName: name,
-          },
-          "Channel adapter reconnected after credential rotation",
-        );
-      } catch (err) {
-        deps.logger.warn(
-          {
-            submodule: "credential-rotation-reconnect",
-            err: err instanceof Error ? err : new Error(String(err)),
-            channelType,
-            credentialName: name,
-            hint: "Channel adapter reconnect failed after credential rotation; adapter may be in stopped state",
-            errorKind: "platform" as const,
-          },
-          "Channel adapter reconnect failed after credential rotation",
-        );
-      }
+      // Fire-and-forget with explicit error capture: the event bus is void-typed
+      // and does not observe the returned Promise, so an unhandled async throw
+      // would produce an unhandled rejection. The void-IIFE ensures rejections
+      // are always caught here (WR-01).
+      void (async () => {
+        try {
+          await adapter.stop();
+          await adapter.start();
+          deps.logger.info(
+            {
+              submodule: "credential-rotation-reconnect",
+              step: "credential-rotation-reconnect",
+              channelType,
+              credentialName: name,
+            },
+            "Channel adapter reconnected after credential rotation",
+          );
+        } catch (err) {
+          deps.logger.warn(
+            {
+              submodule: "credential-rotation-reconnect",
+              err: err instanceof Error ? err : new Error(String(err)),
+              channelType,
+              credentialName: name,
+              hint: "Channel adapter reconnect failed after credential rotation; adapter may be in stopped state",
+              errorKind: "platform" as const,
+            },
+            "Channel adapter reconnect failed after credential rotation",
+          );
+        }
+      })();
     });
   }
 
