@@ -336,17 +336,6 @@ export interface WorkspaceApiDeps {
    *  Same shape as AuthApiDeps.secretStore / ConfigApiDeps.secretStore
    *  so the ApiDispatchDeps multi-extends remains well-formed. */
   secretStore: SecretStorePort;
-  /**
-   * Daemon-owned write handle over the shared SecretManager backing Map.
-   * mcp-handlers passes it to processHeaderCredentials so MCP-extracted
-   * static-secret headers are live-applied via upsert after secretStore.set
-   * succeeds — broker/exec observe the value on their next request without a
-   * daemon restart (additive no-restart — REQ-13 / P4a).
-   * Optional (not required) to preserve backward compat with test fixtures that
-   * construct deps without the mutable handle. Production always wires it via
-   * buildRpcDispatchDeps (c.mutableHandle → mutableSecretManager in daemon.ts).
-   */
-  mutableSecretManager?: MutableSecretManager;
   /** mcp-handlers reads deps.persistDeps for YAML writes via persistMcpServers.
    *  Same shape as ChannelsApiDeps.persistDeps / AgentsApiDeps.persistDeps /
    *  OrchestratorApiDeps.persistDeps so the ApiDispatchDeps multi-extends

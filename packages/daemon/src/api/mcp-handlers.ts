@@ -59,10 +59,13 @@ import type { RpcHandler } from "./types.js";
 // ---------------------------------------------------------------------------
 
 // Re-aliased from the cluster slice in api/types.ts.
-// Single source of truth: WorkspaceApiDeps (shared with workspace, browser,
-// approval, skill, notification handlers).
-import type { WorkspaceApiDeps as McpHandlerDeps } from "./types.js";
-export type { McpHandlerDeps };
+// WorkspaceApiDeps extended with optional mutableSecretManager for live-apply
+// of extracted MCP header secrets (REQ-13). Declared via intersection here
+// (not in WorkspaceApiDeps) to avoid TS2320 multi-extends conflict with
+// AuthApiDeps.mutableSecretManager (required). Production wires it always.
+import type { WorkspaceApiDeps } from "./types.js";
+import type { MutableSecretManager } from "@comis/core";
+export type McpHandlerDeps = WorkspaceApiDeps & { mutableSecretManager?: MutableSecretManager };
 
 import { looksLikeSecretValue } from "@comis/core";
 // Persisted-entry construction extracted (single source of
