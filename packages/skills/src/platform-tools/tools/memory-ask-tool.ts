@@ -64,19 +64,18 @@ export function createMemoryAskTool(rpcCall: RpcCall): AgentTool<typeof MemoryAs
       _toolCallId: string,
       params: Record<string, unknown>,
     ): Promise<AgentToolResult<unknown>> {
-      try {
-        const question = readStringParam(params, "question");
-        const limit = readNumberParam(params, "limit", false);
+      const question = readStringParam(params, "question");
+      const limit = readNumberParam(params, "limit", false);
 
-        const result = await rpcCall("memory.ask", {
-          question,
-          ...(limit !== undefined && { limit }),
-        });
-        return jsonResult(result);
-      } catch (err) {
-        if (err instanceof Error && err.message.startsWith("[")) throw err;
-        throw err instanceof Error ? err : new Error(String(err));
-      }
+      // rpcCall + readStringParam/readNumberParam errors propagate as-is (the dispatcher
+      // converts them to the tool-error result). CR-05: the prior try/catch was a no-op —
+      // both branches rethrew `err`, the only effect being a non-Error normalization that the
+      // single fallthrough already covered. Dropped; nothing here can throw a non-Error.
+      const result = await rpcCall("memory.ask", {
+        question,
+        ...(limit !== undefined && { limit }),
+      });
+      return jsonResult(result);
     },
   };
 }
