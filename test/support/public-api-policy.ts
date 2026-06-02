@@ -244,6 +244,23 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RelationshipCandidate",
       "RelationshipBuildOutput",
       "RelationshipSeamDeps",
+      // Offline tuned-alpha bandit (Phase 111, Track H2 — LEARN-03). runOnlineTuning is a
+      // transient ahead-of-consumer planned-orphan tracked here by 111-04 Task 1 (the job +
+      // its @comis/agent re-export) — its consumer, the daemon __ONLINE_TUNING__ cron-sentinel
+      // dispatch (setup-channels-memory-crons.ts), lands in 111-04 Task 3 of THIS plan, at
+      // which point this entry SHRINKS out (the interface-first cross-task seam posture; the
+      // 107-05 / 108-05 builder-shrink precedent — allowlist-shrink enforces shrink-only). The
+      // Deps/Config/Stats/Result SHAPE types + the Baseline/FeedEntry read-shapes are referenced
+      // via inline objects only (the dispatch constructs them structurally) — baseline orphans
+      // (mirror MemoryUserRepresentationDeps). The PURE computeTunedAlphas + buildScoringAlphas
+      // are agent-INTERNAL (no public barrel export → no orphan churn, the 111-01/03 posture).
+      "runOnlineTuning",
+      "MemoryOnlineTuningDeps",
+      "MemoryOnlineTuningConfig",
+      "MemoryOnlineTuningStats",
+      "MemoryOnlineTuningResult",
+      "OnlineTuningBaselineAlphas",
+      "OnlineTuningFeedEntry",
       // (Phase 109 DIAL-04: the createDialecticSeam / DialecticSeamDeps / DialecticParsed
       //  ahead-of-consumer orphans were REMOVED here — Plan 04's setup-dialectic.ts now
       //  NAME-imports all three in non-test daemon wiring [the seam factory build + the
@@ -2070,18 +2087,16 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RelationshipRowSchema",
       // Tuned-alpha store (Phase 111-02, Track H2 — LEARN-03). createSqliteTunedAlphaStore
       // is the SOLE TunedAlphaStore adapter (the per-(tenant, agent) tuned-4-alpha-vector
-      // upsert + scoped read; undefined-on-absent). Surfaced on the public barrel AHEAD of
-      // its consumers: the daemon composition-root constructs it on the shared db handle in
-      // setup-memory (Plan 111-05) and the recall apply overlay reads it (Plan 111-03) — both
-      // land in later waves of this phase. Tracked as a transient factory-orphan here (mirror
-      // createSqliteTripleStore @ 100-05 / the user-representation + relationship adapters);
-      // REMOVE @ 111-05 (when the daemon consumer lands, the factory-orphan dance SHRINKS on
-      // schedule, enforced by allowlist-shrink.test.ts). MemoryTunedAlphaStoreDeps is the
+      // upsert + scoped read; undefined-on-absent). SHRUNK @ 111-04: the daemon
+      // composition-root now CONSTRUCTS it on the shared db handle in setup-memory (this plan,
+      // Task 2 — the construction landed here rather than the originally-projected 111-05), so
+      // the transient factory-orphan was REMOVED from this list (the factory-orphan shrink —
+      // mirror createSqliteTripleStore @ 100-05 / the user-representation + relationship adapter
+      // shrinks; allowlist-shrink enforces shrink-only). MemoryTunedAlphaStoreDeps is the
       // constructor-deps SHAPE type (referenced via inline objects only); TunedAlphaRowSchema
       // is the row schema consumed by createRowMapper inside the adapter (an intra-file value
       // reference, not a cross-file import) — both PERMANENT baseline orphans (mirror
       // MemoryRelationshipStoreDeps / RelationshipRowSchema above).
-      "createSqliteTunedAlphaStore",
       "MemoryTunedAlphaStoreDeps",
       "TunedAlphaRowSchema",
       // Scoped embedding-read store (Phase 102-03/05, IQ-01). createSqliteMemoryEmbeddingStore

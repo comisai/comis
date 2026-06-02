@@ -421,6 +421,12 @@ export interface BootContext {
    *  offline builder writes rows AND the operator enables the SOCIAL-03 dual gate (default-OFF +
    *  sign-off-gated). */
   relationshipStore: Awaited<ReturnType<typeof setupMemory>>["relationshipStore"];
+  /** Tuned-alpha store (Phase 111, LEARN-03 — Track H2) — threaded into setupAgents (the executor
+   *  recall read path -> prompt-assembly's buildScoringAlphas overlay) AND the OFFLINE bandit cron
+   *  (setup-channels -> the __ONLINE_TUNING__ sentinel). Built in setup-memory on the shared db;
+   *  injected as the port TYPE (agent↛memory cut). Dormant until BOTH the recall-side gate
+   *  (`rag.onlineTuning.enabled`) AND the bandit cron (`memoryOnlineTuning.enabled`) are on. */
+  tunedAlphaStore: Awaited<ReturnType<typeof setupMemory>>["tunedAlphaStore"];
   /** Consolidation store (Phase 84, CONS-07) — threaded into the cron path ONLY (the
    *  registerCronEventListeners → runMemoryConsolidation sentinel). NOT the executor recall
    *  path. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). */

@@ -215,6 +215,10 @@ export async function setupAgents(deps: {
    *  createPiExecutor like userRepresentationStore (the recall LLM-free `<channel_relationships>`
    *  injection read path). Built in setup-memory on the shared db. */
   relationshipStore?: import("@comis/core").RelationshipStore;
+  /** Tuned-alpha store (Phase 111, LEARN-03 — Track H2). Threaded into each per-agent createPiExecutor
+   *  like relationshipStore (the recall buildScoringAlphas tuned-vector read path). Built in
+   *  setup-memory on the shared db. */
+  tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */
@@ -442,6 +446,7 @@ export async function setupAgents(deps: {
     usefulnessStore: deps.usefulnessStore,
     userRepresentationStore: deps.userRepresentationStore,
     relationshipStore: deps.relationshipStore,
+    tunedAlphaStore: deps.tunedAlphaStore,
     deliveryMirror: deps.deliveryMirror,
     deliveryMirrorConfig: deps.deliveryMirrorConfig,
     geminiCacheManager: deps.geminiCacheManager,

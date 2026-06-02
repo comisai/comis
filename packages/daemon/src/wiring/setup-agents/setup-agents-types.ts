@@ -114,6 +114,13 @@ export interface SingleAgentDeps {
    *  SOCIAL-03 dual gate (`socialModeling.enabled` + a recorded `privacyReviewSignedOffBy`); absent ⇒
    *  no read, no push, byte-identical prompt. */
   relationshipStore?: import("@comis/core").RelationshipStore;
+  /** Tuned-alpha store (Phase 111, LEARN-03 — Track H2). Threaded into each per-agent createPiExecutor
+   *  (the executor recall read path -> prompt-assembly's buildScoringAlphas overlay; the four learned
+   *  non-trust alphas, the trust weight stays config-sourced — belt #2). Built in setup-memory on the
+   *  shared db handle; the segregated port TYPE (agent↛memory cut). Dormant until BOTH the recall-side
+   *  gate (`rag.onlineTuning.enabled`) AND the OFFLINE bandit cron (`memoryOnlineTuning.enabled`) are on;
+   *  absent ⇒ no read, byte-identical recall. */
+  tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
   /** Delivery mirror port for session mirroring injection */
   deliveryMirror?: import("@comis/core").DeliveryMirrorPort;
   /** Delivery mirror config for injection budget */

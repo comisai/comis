@@ -35,6 +35,7 @@ import {
   createSqliteMemoryEmbeddingStore,
   createSqliteUserRepresentationStore,
   createSqliteRelationshipStore,
+  createSqliteTunedAlphaStore,
   type MemoryApi,
 } from "@comis/memory";
 import {
@@ -179,6 +180,15 @@ export interface MemoryResult {
    *  `agents.<id>.rag.feedback.enabled` (default OFF). The write-back subscriber is Plan 93-02 —
    *  this plan only builds + exposes the store + its read capability. */
   usefulnessStore: import("@comis/core").MemoryUsefulnessStore;
+  /** Tuned-alpha store (Phase 111, LEARN-03 — Track H2). The SOLE adapter for the segregated
+   *  `TunedAlphaStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
+   *  memory adapter + usefulness store (the (tenant, agent) isolation scope is consistent). No
+   *  model/IO cost to building it, so it is always present; it stays dormant until BOTH the
+   *  recall-side gate (`rag.onlineTuning.enabled` — the gated read) AND the OFFLINE KEYLESS
+   *  bandit cron (`memoryOnlineTuning.enabled` — the __ONLINE_TUNING__ write) are on. Threaded
+   *  into the recall read path (setup-agents-* -> createPiExecutor -> prompt-assembly) AND the
+   *  __ONLINE_TUNING__ cron (setup-channels) — the agent receives the port TYPE only. */
+  tunedAlphaStore: import("@comis/core").TunedAlphaStore;
   /** Live in-process recall-counter wiring (Phase 86, OBS-07). The single
    *  `wireRecallCounters(container.eventBus)` subscriber is stood up HERE — the
    *  memory composition site that already holds the event bus — so there is ONE
@@ -522,6 +532,19 @@ export async function setupMemory(deps: {
   // (it depends on a recall-attribution bus event this plan does not yet declare).
   const usefulnessStore = createSqliteMemoryUsefulnessStore({ db, logger: memoryLogger });
 
+  // 6.5.2d-bis. Tuned-alpha store (Phase 111, LEARN-03 — Track H2). Built on the SAME
+  // shared `db` handle the memory adapter owns — NOT a second Database — so the
+  // tuned_alpha table and the memories table share one connection and the (tenant, agent)
+  // isolation scope is consistent. Always constructed (no model/IO cost, like the
+  // usefulness store); it stays dormant until BOTH the recall-side gate
+  // (`agents.<id>.rag.onlineTuning.enabled` — the gated read in 111-03) AND the offline
+  // KEYLESS bandit cron (`agents.<id>.memoryOnlineTuning.enabled` — the __ONLINE_TUNING__
+  // write) are on. This is the composition-root join: the daemon builds the @comis/memory
+  // adapter here and threads the port TYPE into BOTH the recall read path (setup-agents-*
+  // -> createPiExecutor -> prompt-assembly's buildScoringAlphas) AND the __ONLINE_TUNING__
+  // cron (setup-channels) — the agent receives the port TYPE only (the agent↛memory cut).
+  const tunedAlphaStore = createSqliteTunedAlphaStore({ db, logger: memoryLogger });
+
   // 6.5.2e. Recall-counter composition (Phase 86, OBS-07). Stand up the SINGLE
   // in-process recall-counter registry and subscribe it to the `memory:*` bus
   // events HERE — the memory composition site already holds `container.eventBus`,
@@ -689,6 +712,7 @@ export async function setupMemory(deps: {
     relationshipStore,
     consolidationStore,
     usefulnessStore,
+    tunedAlphaStore,
     recallCounters,
     maintenanceTick,
   };
