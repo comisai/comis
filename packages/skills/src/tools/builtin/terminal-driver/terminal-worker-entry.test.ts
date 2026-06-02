@@ -256,6 +256,85 @@ describe("createTerminalWorker — OPS-07 ALS traceId re-establishment", () => {
   });
 });
 
+describe("createTerminalWorker — LR-01 inbound context is validated, not trusted", () => {
+  it("regenerates a fresh UUID traceId when the wire traceId is NOT a valid UUID (log-correlation poisoning defense)", async () => {
+    // An arbitrary attacker-chosen / forged traceId off the wire must NOT be
+    // stamped onto worker logs verbatim — runWithContext does not validate against
+    // RequestContextSchema (traceId: z.guid()), so the worker must sanitize it.
+    let seenTraceId: string | undefined;
+    const fake = makeFakeBackend();
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(() => {
+        seenTraceId = tryGetContext()?.traceId;
+      }),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: fake.spawn }), logger }));
+
+    const forged = "../../etc/passwd; DROP TABLE traces; not-a-uuid";
+    await worker.handle(
+      createFrame(
+        { sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 },
+        { traceId: forged },
+      ),
+    );
+
+    // The forged string is rejected; a freshly-generated UUID is used instead.
+    expect(seenTraceId).toBeDefined();
+    expect(seenTraceId).not.toBe(forged);
+    // The replacement is a valid v-anything UUID (8-4-4-4-12 hex).
+    expect(seenTraceId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  it("passes a VALID wire UUID traceId through unchanged (legitimate correlation preserved)", async () => {
+    let seenTraceId: string | undefined;
+    const fake = makeFakeBackend();
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(() => {
+        seenTraceId = tryGetContext()?.traceId;
+      }),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: fake.spawn }), logger }));
+
+    await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }),
+    );
+    expect(seenTraceId).toBe(TRACE_ID); // a valid UUID is preserved
+  });
+
+  it("does NOT unconditionally elevate the worker context to trustLevel:'admin' (no latent EoP foothold)", async () => {
+    // The worker makes no authorization decisions (create/read only); an
+    // unconditional admin context is a latent trust-elevation foothold for any
+    // future worker-side code that reads getContext().trustLevel. It must be the
+    // least-privileged level, not admin.
+    let seenTrust: string | undefined;
+    const fake = makeFakeBackend();
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(() => {
+        seenTrust = tryGetContext()?.trustLevel;
+      }),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: fake.spawn }), logger }));
+
+    await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }),
+    );
+    expect(seenTrust).toBeDefined();
+    expect(seenTrust).not.toBe("admin");
+    expect(seenTrust).toBe("guest"); // least privilege — the worker gates on nothing
+  });
+});
+
 describe("createTerminalWorker — H-1 read frame handler", () => {
   it("returns {screen,cursor,cols,rows,alt,alive} from the per-session stdout ring", async () => {
     const fake = makeFakeBackend();
