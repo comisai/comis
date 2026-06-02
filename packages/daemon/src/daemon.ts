@@ -1131,8 +1131,7 @@ function buildRpcDispatchDeps(deps: {
   // memory.recall_stats handler (comis memory stats reads live counters). The
   // gauge is daemon-lifetime — it resets on restart (Assumption A2).
   const recallCounters = c.recallCounters;
-  // Phase 109 (DIAL-01/02): the dialectic seam + per-agent recall factory (setup-dialectic.ts owns all wiring — daemon.ts is at the line cap). Spread into the dispatch deps below; the cost gate returns {} when dialectic.enabled !== true; the forward-presence belt locks the spread.
-  const dialecticWiring = buildDialecticWiring(dialecticWiringDepsFromBoot(c));
+  const dialecticWiring = buildDialecticWiring(dialecticWiringDepsFromBoot(c)); // Phase 109 DIAL-01/02: the memory.ask seam + per-agent recall factory (setup-dialectic.ts owns the wiring; the cost gate returns {} when off). Spread into the dispatch deps below; the forward-presence belt locks the spread.
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
