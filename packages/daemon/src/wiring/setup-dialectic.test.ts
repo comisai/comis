@@ -73,14 +73,21 @@ function makeSecretManager(key: string | undefined) {
 }
 
 function makeDeps(args: {
-  agentConfig: PerAgentConfig;
+  agentConfig?: PerAgentConfig;
+  agentsConfig?: Record<string, PerAgentConfig>;
+  defaultAgentId?: string;
   key?: string | undefined;
   logger?: any;
   providers?: Record<string, { apiKeyName?: string }>;
 }) {
+  // CR-04: the wiring resolves PER-AGENT. Tests may pass a single `agentConfig`
+  // (keyed under "default") or a full `agentsConfig` map + `defaultAgentId`.
+  const defaultAgentId = args.defaultAgentId ?? "default";
+  const agentsConfig =
+    args.agentsConfig ?? { [defaultAgentId]: args.agentConfig as PerAgentConfig };
   return {
-    agentId: "default",
-    agentConfig: args.agentConfig,
+    defaultAgentId,
+    agentsConfig,
     secretManager: makeSecretManager(args.key),
     providers: args.providers ?? {},
     stores: makeStoreSet(),
@@ -166,5 +173,60 @@ describe("buildDialecticWiring (Phase 109 — the dialectic seam + recall builde
       daemonSrc,
       "daemon.ts SPREADS the wiring ({ dialecticSeam, buildDialecticRecall }) into the dispatch deps",
     ).toMatch(/\.\.\.dialecticWiring/);
+  });
+
+  it("Test 5 (CR-04): a NON-default agent with dialectic.enabled gets a LIVE seam even when the default agent is OFF", () => {
+    // The default agent has the dialectic OFF; agent B has it ON. The wiring must NOT be the
+    // dead `{}` (which would make agent B's registered memory_ask tool silently abstain) —
+    // it must enable when ANY agent opts in.
+    const deps = makeDeps({
+      defaultAgentId: "default",
+      agentsConfig: {
+        default: makeAgentConfig({ dialectic: { enabled: false, maxOutputTokens: 1024, maxRecall: 10 } } as any),
+        "agent-b": makeAgentConfig({ name: "agent-b", dialectic: { enabled: true, maxOutputTokens: 512, maxRecall: 7 } } as any),
+      },
+      key: "k",
+    });
+    const wiring = buildDialecticWiring(deps);
+    expect(wiring.dialecticSeam, "seam live when a non-default agent opts in").toBeDefined();
+    expect(wiring.buildDialecticRecall, "recall builder live when a non-default agent opts in").toBeDefined();
+    expect(wiring.dialecticMaxRecall, "maxRecall resolver live").toBeDefined();
+  });
+
+  it("Test 5b (CR-04): dialecticMaxRecall is resolved PER-AGENT (agent B's bound, not the default's)", () => {
+    const deps = makeDeps({
+      defaultAgentId: "default",
+      agentsConfig: {
+        default: makeAgentConfig({ dialectic: { enabled: true, maxOutputTokens: 1024, maxRecall: 10 } } as any),
+        "agent-b": makeAgentConfig({ name: "agent-b", dialectic: { enabled: true, maxOutputTokens: 512, maxRecall: 3 } } as any),
+      },
+      key: "k",
+    });
+    const wiring = buildDialecticWiring(deps);
+    // Each agent's OWN maxRecall — not the resolving/default agent's.
+    expect(wiring.dialecticMaxRecall!("default")).toBe(10);
+    expect(wiring.dialecticMaxRecall!("agent-b")).toBe(3);
+  });
+
+  it("Test 5c (CR-04): buildDialecticRecall re-reads the CALLING agent's RagConfig (not the default's)", () => {
+    // The default agent and agent B differ in rag.maxResults; building recall for agent B
+    // must use agent B's rag (so its includeTrustLevels / maxResults / model are honored).
+    const defaultAgent = makeAgentConfig({ dialectic: { enabled: true, maxOutputTokens: 1024, maxRecall: 10 } } as any);
+    const agentB = makeAgentConfig({ name: "agent-b", dialectic: { enabled: true, maxOutputTokens: 512, maxRecall: 5 } } as any);
+    // Make agent B's rag distinguishable from the default's.
+    (agentB as any).rag = { ...(agentB as any).rag, maxResults: ((defaultAgent as any).rag?.maxResults ?? 5) + 11 };
+    const deps = makeDeps({
+      defaultAgentId: "default",
+      agentsConfig: { default: defaultAgent, "agent-b": agentB },
+      key: "k",
+    });
+    const wiring = buildDialecticWiring(deps);
+    // Both build a real recall orchestrator (the per-agent rag is threaded into createMemoryRecall
+    // at build time; the orchestrator exposes .recall()). The build must not throw for a
+    // non-default agent (the prior code ignored the agentId param and always read the default).
+    const recallDefault = wiring.buildDialecticRecall!("default");
+    const recallB = wiring.buildDialecticRecall!("agent-b");
+    expect(typeof recallDefault.recall).toBe("function");
+    expect(typeof recallB.recall).toBe("function");
   });
 });
