@@ -7,8 +7,9 @@
  *
  * CR-01 (the BLOCKER this file reproduces): the precedence read the "explicit" signal
  * from a config object that is ALREADY Zod-parsed, where `rag.rerank.enabled` has been
- * defaulted to a concrete `false`. So the genuine "unset" signal was erased before it
- * reached `resolveEffectiveRerank`, and auto-on (unset + modelPresent) could NEVER fire.
+ * defaulted to a concrete boolean (v2.9 increment 2: `.default(true)`). So the genuine
+ * "unset" signal was erased before it reached `resolveEffectiveRerank`, and the
+ * zero-download precedence (unset → auto-on iff modelPresent) could NEVER work.
  * The pre-Phase-92 `resolveEffectiveRerank` unit test passed but proved nothing about
  * whether the caller could ever supply `undefined` (IN-01). This file closes that gap:
  * it asserts the EFFECTIVE config written back to `container.config.agents[agentId]`,
@@ -68,7 +69,8 @@ vi.mock("@comis/skills", () => ({
 }));
 
 // Stub only the filesystem-touching @comis/core helpers; keep PerAgentConfigSchema REAL
-// (its `.default(false)` on rerank.enabled is what reproduces CR-01).
+// (its `.default()` on rerank.enabled — v2.9 increment 2: default-ON — is what makes the
+// parsed value a concrete boolean that erases the unset signal, reproducing CR-01).
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
@@ -194,9 +196,10 @@ describe("setupSingleAgent rag.rerank auto-on through the real parsed-config boo
   });
 
   it("auto-enables rerank for a genuinely all-default agent when the model is present", async () => {
-    // CR-01 reproduction: rerank is UNSET (the operator never set it). On the current
-    // code the precedence reads the Zod-parsed `false`, so this asserts `true` and FAILS
-    // (RED) until the raw unset signal is threaded. modelPresent=true must flip auto-on.
+    // rerank is UNSET (the operator never set it) — the raw map carries `undefined`. The
+    // precedence threads that raw tri-state (NOT the parsed default, which v2.9 increment 2
+    // makes a concrete `true`), so modelPresent=true resolves auto-on. (Pre-Phase-92 the
+    // precedence read the parsed default and could never see the unset signal — CR-01.)
     const { effectiveEnabled } = await runAndReadEffectiveRerank(undefined, true);
     expect(effectiveEnabled).toBe(true);
   });

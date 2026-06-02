@@ -606,12 +606,17 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "string"
   },
   {
+    "default": {
+      "enabled": true,
+      "maxOutputTokens": 1024,
+      "maxRecall": 10
+    },
     "immutable": true,
     "path": "agents.dialectic",
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.dialectic.enabled",
     "type": "boolean"
@@ -727,6 +732,18 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "integer"
   },
   {
+    "default": {
+      "autoTags": [],
+      "consolidateExternal": false,
+      "dedupThreshold": 0.9,
+      "enabled": true,
+      "maxCandidatesPerRun": 200,
+      "maxClusterSize": 12,
+      "maxClustersPerRun": 25,
+      "maxConsolidationTokens": 1024,
+      "schedule": "30 3 * * *",
+      "similarityThreshold": 0.82
+    },
     "immutable": true,
     "path": "agents.memoryConsolidation",
     "type": "object"
@@ -750,7 +767,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "number"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.memoryConsolidation.enabled",
     "type": "boolean"
@@ -845,12 +862,17 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "number"
   },
   {
+    "default": {
+      "enabled": true,
+      "maxSourceMemories": 200,
+      "schedule": "0 8 * * *"
+    },
     "immutable": true,
     "path": "agents.memoryOnlineTuning",
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.memoryOnlineTuning.enabled",
     "type": "boolean"
@@ -868,6 +890,17 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "string"
   },
   {
+    "default": {
+      "autoTags": [],
+      "enabled": true,
+      "knnK": 10,
+      "maxCandidatesPerRun": 200,
+      "maxObservationsPerRun": 25,
+      "maxReasoningTokens": 1024,
+      "reasonExternal": false,
+      "schedule": "0 4 * * *",
+      "surprisalTopFraction": 0.1
+    },
     "immutable": true,
     "path": "agents.memoryReasoning",
     "type": "object"
@@ -879,7 +912,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "array"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.memoryReasoning.enabled",
     "type": "boolean"
@@ -927,6 +960,15 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "number"
   },
   {
+    "default": {
+      "autoTags": [],
+      "dedupThreshold": 0.85,
+      "enabled": true,
+      "maxReviewTokens": 4096,
+      "maxSessionsPerRun": 10,
+      "minMessages": 5,
+      "schedule": "0 2 * * *"
+    },
     "immutable": true,
     "path": "agents.memoryReview",
     "type": "object"
@@ -944,7 +986,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "number"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.memoryReview.enabled",
     "type": "boolean"
@@ -974,12 +1016,18 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "string"
   },
   {
+    "default": {
+      "enabled": true,
+      "maxSourceChars": 24000,
+      "maxSourceMemories": 200,
+      "schedule": "0 7 * * *"
+    },
     "immutable": true,
     "path": "agents.memoryUsefulnessJudge",
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.memoryUsefulnessJudge.enabled",
     "type": "boolean"
@@ -1003,12 +1051,19 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "string"
   },
   {
+    "default": {
+      "enabled": true,
+      "maxEntriesPerRun": 50,
+      "maxSourceChars": 24000,
+      "maxSourceMemories": 200,
+      "schedule": "0 5 * * *"
+    },
     "immutable": true,
     "path": "agents.memoryUserRepresentation",
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.memoryUserRepresentation.enabled",
     "type": "boolean"
@@ -1298,16 +1353,16 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "default": {
       "enabled": true,
       "entityLane": {
-        "enabled": false,
+        "enabled": true,
         "perEntityCap": 200,
         "seedCount": 5,
         "weight": 1
       },
       "feedback": {
-        "enabled": false
+        "enabled": true
       },
       "forget": {
-        "enabled": false
+        "enabled": true
       },
       "includeTrustLevels": [
         "system",
@@ -1315,20 +1370,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       ],
       "lanes": {
         "causal": {
-          "enabled": false,
+          "enabled": true,
           "weight": 1
         },
         "fts": {
           "weight": 1
         },
         "graphSpread": {
-          "enabled": false,
+          "enabled": true,
           "fanOut": 8,
           "maxDepth": 2,
           "weight": 1
         },
         "temporal": {
-          "enabled": false,
+          "enabled": true,
           "weight": 1,
           "windowDays": 7
         },
@@ -1340,19 +1395,19 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       "maxResults": 5,
       "minScore": 0.1,
       "mmr": {
-        "enabled": false,
+        "enabled": true,
         "lambda": 0.7
       },
       "onlineTuning": {
-        "enabled": false
+        "enabled": true
       },
       "queryUnderstanding": {
-        "intentReweight": false,
-        "synonyms": false,
-        "temporalParse": false
+        "intentReweight": true,
+        "synonyms": true,
+        "temporalParse": true
       },
       "rerank": {
-        "enabled": false,
+        "enabled": true,
         "maxCandidates": 40,
         "minResults": 1,
         "timeoutMs": 800
@@ -1378,7 +1433,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "perEntityCap": 200,
       "seedCount": 5,
       "weight": 1
@@ -1388,7 +1443,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.rag.entityLane.enabled",
     "type": "boolean"
@@ -1413,28 +1468,28 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false
+      "enabled": true
     },
     "immutable": true,
     "path": "agents.rag.feedback",
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.rag.feedback.enabled",
     "type": "boolean"
   },
   {
     "default": {
-      "enabled": false
+      "enabled": true
     },
     "immutable": true,
     "path": "agents.rag.forget",
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.rag.forget.enabled",
     "type": "boolean"
@@ -1451,20 +1506,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   {
     "default": {
       "causal": {
-        "enabled": false,
+        "enabled": true,
         "weight": 1
       },
       "fts": {
         "weight": 1
       },
       "graphSpread": {
-        "enabled": false,
+        "enabled": true,
         "fanOut": 8,
         "maxDepth": 2,
         "weight": 1
       },
       "temporal": {
-        "enabled": false,
+        "enabled": true,
         "weight": 1,
         "windowDays": 7
       },
@@ -1478,7 +1533,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "weight": 1
     },
     "immutable": true,
@@ -1486,7 +1541,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.rag.lanes.causal.enabled",
     "type": "boolean"
@@ -1513,7 +1568,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "fanOut": 8,
       "maxDepth": 2,
       "weight": 1
@@ -1523,7 +1578,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.rag.lanes.graphSpread.enabled",
     "type": "boolean"
@@ -1548,7 +1603,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "weight": 1,
       "windowDays": 7
     },
@@ -1557,7 +1612,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.rag.lanes.temporal.enabled",
     "type": "boolean"
@@ -1608,7 +1663,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "lambda": 0.7
     },
     "immutable": true,
@@ -1616,7 +1671,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.rag.mmr.enabled",
     "type": "boolean"
@@ -1629,49 +1684,49 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
-      "enabled": false
+      "enabled": true
     },
     "immutable": true,
     "path": "agents.rag.onlineTuning",
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.rag.onlineTuning.enabled",
     "type": "boolean"
   },
   {
     "default": {
-      "intentReweight": false,
-      "synonyms": false,
-      "temporalParse": false
+      "intentReweight": true,
+      "synonyms": true,
+      "temporalParse": true
     },
     "immutable": true,
     "path": "agents.rag.queryUnderstanding",
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.rag.queryUnderstanding.intentReweight",
     "type": "boolean"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.rag.queryUnderstanding.synonyms",
     "type": "boolean"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.rag.queryUnderstanding.temporalParse",
     "type": "boolean"
   },
   {
     "default": {
-      "enabled": false,
+      "enabled": true,
       "maxCandidates": 40,
       "minResults": 1,
       "timeoutMs": 800
@@ -1681,7 +1736,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.rag.rerank.enabled",
     "type": "boolean"
@@ -7397,6 +7452,11 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
             "group": "message_tool"
           }
         },
+        "dialectic": {
+          "enabled": true,
+          "maxOutputTokens": 1024,
+          "maxRecall": 10
+        },
         "elevatedReply": {
           "defaultTrustLevel": "external",
           "enabled": false,
@@ -7413,6 +7473,56 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "maxContextChars": 100000,
         "maxSteps": 150,
         "maxToolResultChars": 50000,
+        "memoryConsolidation": {
+          "autoTags": [],
+          "consolidateExternal": false,
+          "dedupThreshold": 0.9,
+          "enabled": true,
+          "maxCandidatesPerRun": 200,
+          "maxClusterSize": 12,
+          "maxClustersPerRun": 25,
+          "maxConsolidationTokens": 1024,
+          "schedule": "30 3 * * *",
+          "similarityThreshold": 0.82
+        },
+        "memoryOnlineTuning": {
+          "enabled": true,
+          "maxSourceMemories": 200,
+          "schedule": "0 8 * * *"
+        },
+        "memoryReasoning": {
+          "autoTags": [],
+          "enabled": true,
+          "knnK": 10,
+          "maxCandidatesPerRun": 200,
+          "maxObservationsPerRun": 25,
+          "maxReasoningTokens": 1024,
+          "reasonExternal": false,
+          "schedule": "0 4 * * *",
+          "surprisalTopFraction": 0.1
+        },
+        "memoryReview": {
+          "autoTags": [],
+          "dedupThreshold": 0.85,
+          "enabled": true,
+          "maxReviewTokens": 4096,
+          "maxSessionsPerRun": 10,
+          "minMessages": 5,
+          "schedule": "0 2 * * *"
+        },
+        "memoryUsefulnessJudge": {
+          "enabled": true,
+          "maxSourceChars": 24000,
+          "maxSourceMemories": 200,
+          "schedule": "0 7 * * *"
+        },
+        "memoryUserRepresentation": {
+          "enabled": true,
+          "maxEntriesPerRun": 50,
+          "maxSourceChars": 24000,
+          "maxSourceMemories": 200,
+          "schedule": "0 5 * * *"
+        },
         "model": "default",
         "modelFailover": {
           "allowedModels": [],
@@ -7435,16 +7545,16 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "rag": {
           "enabled": true,
           "entityLane": {
-            "enabled": false,
+            "enabled": true,
             "perEntityCap": 200,
             "seedCount": 5,
             "weight": 1
           },
           "feedback": {
-            "enabled": false
+            "enabled": true
           },
           "forget": {
-            "enabled": false
+            "enabled": true
           },
           "includeTrustLevels": [
             "system",
@@ -7452,20 +7562,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           ],
           "lanes": {
             "causal": {
-              "enabled": false,
+              "enabled": true,
               "weight": 1
             },
             "fts": {
               "weight": 1
             },
             "graphSpread": {
-              "enabled": false,
+              "enabled": true,
               "fanOut": 8,
               "maxDepth": 2,
               "weight": 1
             },
             "temporal": {
-              "enabled": false,
+              "enabled": true,
               "weight": 1,
               "windowDays": 7
             },
@@ -7477,19 +7587,19 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "maxResults": 5,
           "minScore": 0.1,
           "mmr": {
-            "enabled": false,
+            "enabled": true,
             "lambda": 0.7
           },
           "onlineTuning": {
-            "enabled": false
+            "enabled": true
           },
           "queryUnderstanding": {
-            "intentReweight": false,
-            "synonyms": false,
-            "temporalParse": false
+            "intentReweight": true,
+            "synonyms": true,
+            "temporalParse": true
           },
           "rerank": {
-            "enabled": false,
+            "enabled": true,
             "maxCandidates": 40,
             "minResults": 1,
             "timeoutMs": 800
@@ -14939,9 +15049,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     },
     "dialectic": {
       "additionalProperties": false,
+      "default": {
+        "enabled": true,
+        "maxOutputTokens": 1024,
+        "maxRecall": 10
+      },
       "properties": {
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "maxOutputTokens": {
@@ -15079,6 +15194,18 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     },
     "memoryConsolidation": {
       "additionalProperties": false,
+      "default": {
+        "autoTags": [],
+        "consolidateExternal": false,
+        "dedupThreshold": 0.9,
+        "enabled": true,
+        "maxCandidatesPerRun": 200,
+        "maxClusterSize": 12,
+        "maxClustersPerRun": 25,
+        "maxConsolidationTokens": 1024,
+        "schedule": "30 3 * * *",
+        "similarityThreshold": 0.82
+      },
       "properties": {
         "autoTags": {
           "default": [],
@@ -15098,7 +15225,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "number"
         },
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "maxCandidatesPerRun": {
@@ -15212,9 +15339,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     },
     "memoryOnlineTuning": {
       "additionalProperties": false,
+      "default": {
+        "enabled": true,
+        "maxSourceMemories": 200,
+        "schedule": "0 8 * * *"
+      },
       "properties": {
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "maxSourceMemories": {
@@ -15237,6 +15369,17 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     },
     "memoryReasoning": {
       "additionalProperties": false,
+      "default": {
+        "autoTags": [],
+        "enabled": true,
+        "knnK": 10,
+        "maxCandidatesPerRun": 200,
+        "maxObservationsPerRun": 25,
+        "maxReasoningTokens": 1024,
+        "reasonExternal": false,
+        "schedule": "0 4 * * *",
+        "surprisalTopFraction": 0.1
+      },
       "properties": {
         "autoTags": {
           "default": [],
@@ -15246,7 +15389,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "array"
         },
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "knnK": {
@@ -15303,6 +15446,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     },
     "memoryReview": {
       "additionalProperties": false,
+      "default": {
+        "autoTags": [],
+        "dedupThreshold": 0.85,
+        "enabled": true,
+        "maxReviewTokens": 4096,
+        "maxSessionsPerRun": 10,
+        "minMessages": 5,
+        "schedule": "0 2 * * *"
+      },
       "properties": {
         "autoTags": {
           "default": [],
@@ -15318,7 +15470,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "number"
         },
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "maxReviewTokens": {
@@ -15357,9 +15509,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     },
     "memoryUsefulnessJudge": {
       "additionalProperties": false,
+      "default": {
+        "enabled": true,
+        "maxSourceChars": 24000,
+        "maxSourceMemories": 200,
+        "schedule": "0 7 * * *"
+      },
       "properties": {
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "maxSourceChars": {
@@ -15389,9 +15547,16 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     },
     "memoryUserRepresentation": {
       "additionalProperties": false,
+      "default": {
+        "enabled": true,
+        "maxEntriesPerRun": 50,
+        "maxSourceChars": 24000,
+        "maxSourceMemories": 200,
+        "schedule": "0 5 * * *"
+      },
       "properties": {
         "enabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "maxEntriesPerRun": {
@@ -15750,16 +15915,16 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       "default": {
         "enabled": true,
         "entityLane": {
-          "enabled": false,
+          "enabled": true,
           "perEntityCap": 200,
           "seedCount": 5,
           "weight": 1
         },
         "feedback": {
-          "enabled": false
+          "enabled": true
         },
         "forget": {
-          "enabled": false
+          "enabled": true
         },
         "includeTrustLevels": [
           "system",
@@ -15767,20 +15932,20 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         ],
         "lanes": {
           "causal": {
-            "enabled": false,
+            "enabled": true,
             "weight": 1
           },
           "fts": {
             "weight": 1
           },
           "graphSpread": {
-            "enabled": false,
+            "enabled": true,
             "fanOut": 8,
             "maxDepth": 2,
             "weight": 1
           },
           "temporal": {
-            "enabled": false,
+            "enabled": true,
             "weight": 1,
             "windowDays": 7
           },
@@ -15792,19 +15957,19 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "maxResults": 5,
         "minScore": 0.1,
         "mmr": {
-          "enabled": false,
+          "enabled": true,
           "lambda": 0.7
         },
         "onlineTuning": {
-          "enabled": false
+          "enabled": true
         },
         "queryUnderstanding": {
-          "intentReweight": false,
-          "synonyms": false,
-          "temporalParse": false
+          "intentReweight": true,
+          "synonyms": true,
+          "temporalParse": true
         },
         "rerank": {
-          "enabled": false,
+          "enabled": true,
           "maxCandidates": 40,
           "minResults": 1,
           "timeoutMs": 800
@@ -15826,14 +15991,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "entityLane": {
           "additionalProperties": false,
           "default": {
-            "enabled": false,
+            "enabled": true,
             "perEntityCap": 200,
             "seedCount": 5,
             "weight": 1
           },
           "properties": {
             "enabled": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "perEntityCap": {
@@ -15865,11 +16030,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "feedback": {
           "additionalProperties": false,
           "default": {
-            "enabled": false
+            "enabled": true
           },
           "properties": {
             "enabled": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             }
           },
@@ -15881,11 +16046,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "forget": {
           "additionalProperties": false,
           "default": {
-            "enabled": false
+            "enabled": true
           },
           "properties": {
             "enabled": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             }
           },
@@ -15913,20 +16078,20 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "additionalProperties": false,
           "default": {
             "causal": {
-              "enabled": false,
+              "enabled": true,
               "weight": 1
             },
             "fts": {
               "weight": 1
             },
             "graphSpread": {
-              "enabled": false,
+              "enabled": true,
               "fanOut": 8,
               "maxDepth": 2,
               "weight": 1
             },
             "temporal": {
-              "enabled": false,
+              "enabled": true,
               "weight": 1,
               "windowDays": 7
             },
@@ -15938,12 +16103,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "causal": {
               "additionalProperties": false,
               "default": {
-                "enabled": false,
+                "enabled": true,
                 "weight": 1
               },
               "properties": {
                 "enabled": {
-                  "default": false,
+                  "default": true,
                   "type": "boolean"
                 },
                 "weight": {
@@ -15978,14 +16143,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "graphSpread": {
               "additionalProperties": false,
               "default": {
-                "enabled": false,
+                "enabled": true,
                 "fanOut": 8,
                 "maxDepth": 2,
                 "weight": 1
               },
               "properties": {
                 "enabled": {
-                  "default": false,
+                  "default": true,
                   "type": "boolean"
                 },
                 "fanOut": {
@@ -16017,13 +16182,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "temporal": {
               "additionalProperties": false,
               "default": {
-                "enabled": false,
+                "enabled": true,
                 "weight": 1,
                 "windowDays": 7
               },
               "properties": {
                 "enabled": {
-                  "default": false,
+                  "default": true,
                   "type": "boolean"
                 },
                 "weight": {
@@ -16093,12 +16258,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "mmr": {
           "additionalProperties": false,
           "default": {
-            "enabled": false,
+            "enabled": true,
             "lambda": 0.7
           },
           "properties": {
             "enabled": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "lambda": {
@@ -16117,11 +16282,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "onlineTuning": {
           "additionalProperties": false,
           "default": {
-            "enabled": false
+            "enabled": true
           },
           "properties": {
             "enabled": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             }
           },
@@ -16133,21 +16298,21 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "queryUnderstanding": {
           "additionalProperties": false,
           "default": {
-            "intentReweight": false,
-            "synonyms": false,
-            "temporalParse": false
+            "intentReweight": true,
+            "synonyms": true,
+            "temporalParse": true
           },
           "properties": {
             "intentReweight": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "synonyms": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "temporalParse": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             }
           },
@@ -16161,14 +16326,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "rerank": {
           "additionalProperties": false,
           "default": {
-            "enabled": false,
+            "enabled": true,
             "maxCandidates": 40,
             "minResults": 1,
             "timeoutMs": 800
           },
           "properties": {
             "enabled": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "maxCandidates": {
@@ -17477,7 +17642,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
     "contextGuard",
     "toolLifecycle",
     "activity",
-    "delivery"
+    "delivery",
+    "memoryReview",
+    "memoryConsolidation",
+    "memoryReasoning",
+    "memoryUserRepresentation",
+    "dialectic",
+    "memoryUsefulnessJudge",
+    "memoryOnlineTuning"
   ],
   "type": "object"
 }"
@@ -24570,9 +24742,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "dialectic": {
             "additionalProperties": false,
+            "default": {
+              "enabled": true,
+              "maxOutputTokens": 1024,
+              "maxRecall": 10
+            },
             "properties": {
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "maxOutputTokens": {
@@ -24710,6 +24887,18 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "memoryConsolidation": {
             "additionalProperties": false,
+            "default": {
+              "autoTags": [],
+              "consolidateExternal": false,
+              "dedupThreshold": 0.9,
+              "enabled": true,
+              "maxCandidatesPerRun": 200,
+              "maxClusterSize": 12,
+              "maxClustersPerRun": 25,
+              "maxConsolidationTokens": 1024,
+              "schedule": "30 3 * * *",
+              "similarityThreshold": 0.82
+            },
             "properties": {
               "autoTags": {
                 "default": [],
@@ -24729,7 +24918,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "number"
               },
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "maxCandidatesPerRun": {
@@ -24843,9 +25032,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "memoryOnlineTuning": {
             "additionalProperties": false,
+            "default": {
+              "enabled": true,
+              "maxSourceMemories": 200,
+              "schedule": "0 8 * * *"
+            },
             "properties": {
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "maxSourceMemories": {
@@ -24868,6 +25062,17 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "memoryReasoning": {
             "additionalProperties": false,
+            "default": {
+              "autoTags": [],
+              "enabled": true,
+              "knnK": 10,
+              "maxCandidatesPerRun": 200,
+              "maxObservationsPerRun": 25,
+              "maxReasoningTokens": 1024,
+              "reasonExternal": false,
+              "schedule": "0 4 * * *",
+              "surprisalTopFraction": 0.1
+            },
             "properties": {
               "autoTags": {
                 "default": [],
@@ -24877,7 +25082,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "array"
               },
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "knnK": {
@@ -24934,6 +25139,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "memoryReview": {
             "additionalProperties": false,
+            "default": {
+              "autoTags": [],
+              "dedupThreshold": 0.85,
+              "enabled": true,
+              "maxReviewTokens": 4096,
+              "maxSessionsPerRun": 10,
+              "minMessages": 5,
+              "schedule": "0 2 * * *"
+            },
             "properties": {
               "autoTags": {
                 "default": [],
@@ -24949,7 +25163,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "number"
               },
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "maxReviewTokens": {
@@ -24988,9 +25202,15 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "memoryUsefulnessJudge": {
             "additionalProperties": false,
+            "default": {
+              "enabled": true,
+              "maxSourceChars": 24000,
+              "maxSourceMemories": 200,
+              "schedule": "0 7 * * *"
+            },
             "properties": {
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "maxSourceChars": {
@@ -25020,9 +25240,16 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           },
           "memoryUserRepresentation": {
             "additionalProperties": false,
+            "default": {
+              "enabled": true,
+              "maxEntriesPerRun": 50,
+              "maxSourceChars": 24000,
+              "maxSourceMemories": 200,
+              "schedule": "0 5 * * *"
+            },
             "properties": {
               "enabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "maxEntriesPerRun": {
@@ -25381,16 +25608,16 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "default": {
               "enabled": true,
               "entityLane": {
-                "enabled": false,
+                "enabled": true,
                 "perEntityCap": 200,
                 "seedCount": 5,
                 "weight": 1
               },
               "feedback": {
-                "enabled": false
+                "enabled": true
               },
               "forget": {
-                "enabled": false
+                "enabled": true
               },
               "includeTrustLevels": [
                 "system",
@@ -25398,20 +25625,20 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               ],
               "lanes": {
                 "causal": {
-                  "enabled": false,
+                  "enabled": true,
                   "weight": 1
                 },
                 "fts": {
                   "weight": 1
                 },
                 "graphSpread": {
-                  "enabled": false,
+                  "enabled": true,
                   "fanOut": 8,
                   "maxDepth": 2,
                   "weight": 1
                 },
                 "temporal": {
-                  "enabled": false,
+                  "enabled": true,
                   "weight": 1,
                   "windowDays": 7
                 },
@@ -25423,19 +25650,19 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "maxResults": 5,
               "minScore": 0.1,
               "mmr": {
-                "enabled": false,
+                "enabled": true,
                 "lambda": 0.7
               },
               "onlineTuning": {
-                "enabled": false
+                "enabled": true
               },
               "queryUnderstanding": {
-                "intentReweight": false,
-                "synonyms": false,
-                "temporalParse": false
+                "intentReweight": true,
+                "synonyms": true,
+                "temporalParse": true
               },
               "rerank": {
-                "enabled": false,
+                "enabled": true,
                 "maxCandidates": 40,
                 "minResults": 1,
                 "timeoutMs": 800
@@ -25457,14 +25684,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "entityLane": {
                 "additionalProperties": false,
                 "default": {
-                  "enabled": false,
+                  "enabled": true,
                   "perEntityCap": 200,
                   "seedCount": 5,
                   "weight": 1
                 },
                 "properties": {
                   "enabled": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   },
                   "perEntityCap": {
@@ -25496,11 +25723,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "feedback": {
                 "additionalProperties": false,
                 "default": {
-                  "enabled": false
+                  "enabled": true
                 },
                 "properties": {
                   "enabled": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   }
                 },
@@ -25512,11 +25739,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "forget": {
                 "additionalProperties": false,
                 "default": {
-                  "enabled": false
+                  "enabled": true
                 },
                 "properties": {
                   "enabled": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   }
                 },
@@ -25544,20 +25771,20 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "additionalProperties": false,
                 "default": {
                   "causal": {
-                    "enabled": false,
+                    "enabled": true,
                     "weight": 1
                   },
                   "fts": {
                     "weight": 1
                   },
                   "graphSpread": {
-                    "enabled": false,
+                    "enabled": true,
                     "fanOut": 8,
                     "maxDepth": 2,
                     "weight": 1
                   },
                   "temporal": {
-                    "enabled": false,
+                    "enabled": true,
                     "weight": 1,
                     "windowDays": 7
                   },
@@ -25569,12 +25796,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "causal": {
                     "additionalProperties": false,
                     "default": {
-                      "enabled": false,
+                      "enabled": true,
                       "weight": 1
                     },
                     "properties": {
                       "enabled": {
-                        "default": false,
+                        "default": true,
                         "type": "boolean"
                       },
                       "weight": {
@@ -25609,14 +25836,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "graphSpread": {
                     "additionalProperties": false,
                     "default": {
-                      "enabled": false,
+                      "enabled": true,
                       "fanOut": 8,
                       "maxDepth": 2,
                       "weight": 1
                     },
                     "properties": {
                       "enabled": {
-                        "default": false,
+                        "default": true,
                         "type": "boolean"
                       },
                       "fanOut": {
@@ -25648,13 +25875,13 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "temporal": {
                     "additionalProperties": false,
                     "default": {
-                      "enabled": false,
+                      "enabled": true,
                       "weight": 1,
                       "windowDays": 7
                     },
                     "properties": {
                       "enabled": {
-                        "default": false,
+                        "default": true,
                         "type": "boolean"
                       },
                       "weight": {
@@ -25724,12 +25951,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "mmr": {
                 "additionalProperties": false,
                 "default": {
-                  "enabled": false,
+                  "enabled": true,
                   "lambda": 0.7
                 },
                 "properties": {
                   "enabled": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   },
                   "lambda": {
@@ -25748,11 +25975,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "onlineTuning": {
                 "additionalProperties": false,
                 "default": {
-                  "enabled": false
+                  "enabled": true
                 },
                 "properties": {
                   "enabled": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   }
                 },
@@ -25764,21 +25991,21 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "queryUnderstanding": {
                 "additionalProperties": false,
                 "default": {
-                  "intentReweight": false,
-                  "synonyms": false,
-                  "temporalParse": false
+                  "intentReweight": true,
+                  "synonyms": true,
+                  "temporalParse": true
                 },
                 "properties": {
                   "intentReweight": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   },
                   "synonyms": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   },
                   "temporalParse": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   }
                 },
@@ -25792,14 +26019,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "rerank": {
                 "additionalProperties": false,
                 "default": {
-                  "enabled": false,
+                  "enabled": true,
                   "maxCandidates": 40,
                   "minResults": 1,
                   "timeoutMs": 800
                 },
                 "properties": {
                   "enabled": {
-                    "default": false,
+                    "default": true,
                     "type": "boolean"
                   },
                   "maxCandidates": {
@@ -27108,7 +27335,14 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "contextGuard",
           "toolLifecycle",
           "activity",
-          "delivery"
+          "delivery",
+          "memoryReview",
+          "memoryConsolidation",
+          "memoryReasoning",
+          "memoryUserRepresentation",
+          "dialectic",
+          "memoryUsefulnessJudge",
+          "memoryOnlineTuning"
         ],
         "type": "object"
       },
@@ -27159,6 +27393,11 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "group": "message_tool"
             }
           },
+          "dialectic": {
+            "enabled": true,
+            "maxOutputTokens": 1024,
+            "maxRecall": 10
+          },
           "elevatedReply": {
             "defaultTrustLevel": "external",
             "enabled": false,
@@ -27175,6 +27414,56 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "maxContextChars": 100000,
           "maxSteps": 150,
           "maxToolResultChars": 50000,
+          "memoryConsolidation": {
+            "autoTags": [],
+            "consolidateExternal": false,
+            "dedupThreshold": 0.9,
+            "enabled": true,
+            "maxCandidatesPerRun": 200,
+            "maxClusterSize": 12,
+            "maxClustersPerRun": 25,
+            "maxConsolidationTokens": 1024,
+            "schedule": "30 3 * * *",
+            "similarityThreshold": 0.82
+          },
+          "memoryOnlineTuning": {
+            "enabled": true,
+            "maxSourceMemories": 200,
+            "schedule": "0 8 * * *"
+          },
+          "memoryReasoning": {
+            "autoTags": [],
+            "enabled": true,
+            "knnK": 10,
+            "maxCandidatesPerRun": 200,
+            "maxObservationsPerRun": 25,
+            "maxReasoningTokens": 1024,
+            "reasonExternal": false,
+            "schedule": "0 4 * * *",
+            "surprisalTopFraction": 0.1
+          },
+          "memoryReview": {
+            "autoTags": [],
+            "dedupThreshold": 0.85,
+            "enabled": true,
+            "maxReviewTokens": 4096,
+            "maxSessionsPerRun": 10,
+            "minMessages": 5,
+            "schedule": "0 2 * * *"
+          },
+          "memoryUsefulnessJudge": {
+            "enabled": true,
+            "maxSourceChars": 24000,
+            "maxSourceMemories": 200,
+            "schedule": "0 7 * * *"
+          },
+          "memoryUserRepresentation": {
+            "enabled": true,
+            "maxEntriesPerRun": 50,
+            "maxSourceChars": 24000,
+            "maxSourceMemories": 200,
+            "schedule": "0 5 * * *"
+          },
           "model": "default",
           "modelFailover": {
             "allowedModels": [],
@@ -27197,16 +27486,16 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "rag": {
             "enabled": true,
             "entityLane": {
-              "enabled": false,
+              "enabled": true,
               "perEntityCap": 200,
               "seedCount": 5,
               "weight": 1
             },
             "feedback": {
-              "enabled": false
+              "enabled": true
             },
             "forget": {
-              "enabled": false
+              "enabled": true
             },
             "includeTrustLevels": [
               "system",
@@ -27214,20 +27503,20 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             ],
             "lanes": {
               "causal": {
-                "enabled": false,
+                "enabled": true,
                 "weight": 1
               },
               "fts": {
                 "weight": 1
               },
               "graphSpread": {
-                "enabled": false,
+                "enabled": true,
                 "fanOut": 8,
                 "maxDepth": 2,
                 "weight": 1
               },
               "temporal": {
-                "enabled": false,
+                "enabled": true,
                 "weight": 1,
                 "windowDays": 7
               },
@@ -27239,19 +27528,19 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "maxResults": 5,
             "minScore": 0.1,
             "mmr": {
-              "enabled": false,
+              "enabled": true,
               "lambda": 0.7
             },
             "onlineTuning": {
-              "enabled": false
+              "enabled": true
             },
             "queryUnderstanding": {
-              "intentReweight": false,
-              "synonyms": false,
-              "temporalParse": false
+              "intentReweight": true,
+              "synonyms": true,
+              "temporalParse": true
             },
             "rerank": {
-              "enabled": false,
+              "enabled": true,
               "maxCandidates": 40,
               "minResults": 1,
               "timeoutMs": 800

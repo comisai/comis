@@ -141,14 +141,17 @@ describe("dialectic recall config parity with the main recall path (v2.9 audit f
     expect(config.forget).toEqual((agentConfig as any).rag.forget);
   });
 
-  it("WARNING-1 (LEARN-03/DIAL): with onlineTuning OFF (default) the tuned store is NEVER read and `scoring` is the static config (byte-identical)", async () => {
+  it("WARNING-1 (LEARN-03/DIAL): with onlineTuning EXPLICITLY OFF the tuned store is NEVER read and `scoring` is the static config (byte-identical)", async () => {
+    // v2.9 increment 2 — rag.onlineTuning now defaults ON (v1 opt-out posture), so the OFF-path
+    // guard must construct the OFF state EXPLICITLY. With onlineTuning:false the dialectic recall
+    // must NOT read the tuned-alpha store and `scoring` stays the unchanged static config.
     const tunedAlphaStore = makeTunedAlphaStore({
       recencyAlpha: 0.9,
       temporalAlpha: 0.9,
       proofAlpha: 0.9,
       usefulnessAlpha: 0.9,
     });
-    const agentConfig = makeAgentConfig(); // onlineTuning defaults OFF
+    const agentConfig = makeAgentConfig({ onlineTuning: { enabled: false } }); // EXPLICIT OFF
     const config = await captureRecallConfig(makeDeps({ agentConfig, tunedAlphaStore }));
     expect(tunedAlphaStore.read, "tuned store NOT read when onlineTuning is OFF").not.toHaveBeenCalled();
     expect(config.scoring, "scoring is the unchanged static config when tuning OFF").toEqual(

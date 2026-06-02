@@ -460,8 +460,9 @@ describe("setupSingleAgent rerank auto-on precedence (RERANK-01)", () => {
   it("feeds resolveEffectiveRerank the GENUINE raw tri-state signal, not the zod-defaulted parse (CR-01)", () => {
     // CR-01 fix: the precedence MUST read the RAW (pre-Zod-default) rerank value.
     // The parsed agentConfig.rag.rerank.enabled is ALWAYS a concrete boolean
-    // (.default(false)), so reading it would erase the unset signal and make auto-on
-    // impossible. The raw value comes from the explicit `rawRerankEnabled` arg (hot-add)
+    // (it carries a `.default()` — v2.9 increment 2: default-ON), so reading it would
+    // erase the unset signal and make the zero-download auto-on precedence impossible.
+    // The raw value comes from the explicit `rawRerankEnabled` arg (hot-add)
     // else the daemon-wide map on the container (boot path). The OLD broken code read
     // `rawAgentConfig.rag?.rerank?.enabled` (a misnomer — that object was already parsed);
     // assert that dead pattern is GONE.

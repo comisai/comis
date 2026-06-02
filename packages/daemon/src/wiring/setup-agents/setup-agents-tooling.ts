@@ -93,7 +93,11 @@ export function resolveAgentModel(
  * Explicit operator value wins both directions; unset → auto-on iff the model
  * is locally present. `explicit` MUST be read from the RAW (pre-zod-default)
  * config — see setup-agents-runtime.ts — because RagConfigSchema.rerank.enabled
- * has .default(false), so a parsed value cannot distinguish unset from false.
+ * carries a `.default()` (v2.9 increment 2: default-ON), so a parsed value can
+ * never be `undefined` and would erase the genuine unset signal. Threading the
+ * raw tri-state keeps the RERANK-02 zero-download posture: an unset config with
+ * the model ABSENT stays effective-off, so a bare default-ON config does NOT
+ * trigger a 606MB fetch.
  */
 export function resolveEffectiveRerank(explicit: boolean | undefined, present: boolean): boolean {
   if (explicit !== undefined) return explicit;
