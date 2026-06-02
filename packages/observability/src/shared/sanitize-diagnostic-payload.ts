@@ -100,6 +100,15 @@ export const CREDENTIAL_KEYS = new Set<string>([
   "credentials",          // widening
   "credential",           // singular form (preserves prior coverage)
   "authorization",
+  // CR-01: bare OAuth token field names used by the auth.set RPC contract
+  // ({ access: "<bearer>", refresh: "<token>" }). Absent from the set
+  // prior to this fix — meaning any dispatcher error log carrying params
+  // for a failed auth.set call would emit both tokens unredacted.
+  // Adding them here covers: (a) sanitizeDiagnosticPayload field-drop in
+  // the diagnostic chain, and (b) Pino redact.paths auto-generation
+  // (case-sensitive, so the bare lowercase forms are the load-bearing lane).
+  "access",
+  "refresh",
   // -------------------------------------------------------------------
   // snake_case forms (required for Pino redact.paths on snake_case
   // payloads — Pino's matcher is case-sensitive).

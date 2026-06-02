@@ -406,10 +406,22 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       // operator debugging (e.g., `context.expand id=abc-123`) doesn't
       // need a separate grep — the offending input is on the same log line.
       const classified = classifyRpcError(err);
+      // CR-01 defense-in-depth: auth.set params carry bare `access` and
+      // `refresh` OAuth token fields at the RPC boundary. Redact them
+      // before logging so a transient failure (SQLITE_BUSY, admin-gate
+      // rejection) does not write raw bearer tokens to the daemon log.
+      // This is defense-in-depth — Part A (CREDENTIAL_KEYS) is the
+      // primary, cross-cutting fix; this per-method projection is the
+      // second layer that survives any future sanitizer bypass or new
+      // credential-bearing field in the auth.set contract.
+      const safeParams: Record<string, unknown> =
+        method === "auth.set"
+          ? { ...params, access: "[REDACTED]", refresh: "[REDACTED]", accountId: "[REDACTED]" }
+          : params;
       deps.logger[classified.level](
         {
           method,
-          params,
+          params: safeParams,
           err,
           hint: classified.hint,
           errorKind: classified.errorKind,
