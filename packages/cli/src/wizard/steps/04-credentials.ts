@@ -589,11 +589,16 @@ async function handleCodexOAuth(
           "OAuth profile stored. Restart or reload the daemon before the new credential takes effect.",
         );
 
+        // WR-01: do NOT store v.access as apiKey in wizard state for
+        // encrypted mode. The token is already persisted by the daemon
+        // via the auth.set RPC above. Setting apiKey here would keep a
+        // live bearer token in WizardState.provider for the remainder of
+        // the wizard session, creating a fragile residency guarantee that
+        // depends on openai-codex staying absent from PROVIDER_ENV_KEYS.
         return updateState(state, {
           provider: {
             id: "openai-codex",
             authMethod: "oauth",
-            apiKey: v.access,
             oauthProfileId: v.profileId,
             validated: true,
           } as ProviderConfig,
