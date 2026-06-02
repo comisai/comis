@@ -1495,4 +1495,179 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     const idFences = grounding.match(/\[id-\d+\]/g) ?? [];
     expect(idFences.length).toBe(4); // capped to maxRecall (4), not the hardcoded 10
   });
+
+  // -------------------------------------------------------------------------
+  // LEARN-02 (H3) — the dialectic's VALIDATED citations feed the SHIPPED FEED
+  // write path. On a grounded (!abstained) answer the handler emits the EXISTING
+  // `memory:recall_used` event with `usedIds = result.citations` (⊆ recalled ids —
+  // definitively used) and `ignoredIds = recalled ∖ citations`. The existing
+  // wireMemoryUsefulness subscriber consumes it (NO new event, NO new subscriber).
+  // On abstain it emits NOTHING (no false "used" attribution). ids/counts ONLY.
+  // -------------------------------------------------------------------------
+
+  it("Test 11 (LEARN-02): a grounded answer emits ONE memory:recall_used with usedIds=citations + ignoredIds=recalled∖citations", async () => {
+    // Recalled set [m1, m2, m3]; the seam cites [m1, m3]. The emit must split the
+    // recalled ids into used=[m1,m3] (the citations) and ignored=[m2] (the complement).
+    const recall = makeRecall([
+      memResult("m1", "fact one", "learned"),
+      memResult("m2", "fact two", "learned"),
+      memResult("m3", "fact three", "learned"),
+    ]);
+    const seam = makeSeam({ abstain: false, answer: "grounded", citedIds: ["m1", "m3"] });
+    const emit = vi.fn();
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+      eventBus: { emit } as never,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    const result = (await handlers["memory.ask"]!({
+      question: "q",
+      _agentId: "agent-1",
+      _callerSessionKey: "tenant-1:chan:user",
+    })) as AskResult;
+
+    expect(result.abstained).toBe(false);
+    // Exactly ONE memory:recall_used emit on the grounded path.
+    const recallUsedEmits = emit.mock.calls.filter((c) => c[0] === "memory:recall_used");
+    expect(recallUsedEmits.length).toBe(1);
+    const payload = recallUsedEmits[0]![1] as {
+      agentId: string;
+      usedIds: string[];
+      ignoredIds: string[];
+      usedCount: number;
+      ignoredCount: number;
+      traceId: string;
+      timestamp: number;
+    };
+    // usedIds are EXACTLY the validated citations; ignoredIds are the complement.
+    expect(payload.usedIds).toEqual(["m1", "m3"]);
+    expect(payload.ignoredIds).toEqual(["m2"]);
+    expect(payload.usedCount).toBe(2);
+    expect(payload.ignoredCount).toBe(1);
+    expect(payload.agentId).toBe("agent-1");
+    // traceId is REQUIRED on the event — present + a non-empty string (the
+    // formatted-session-key fallback when no AsyncLocalStorage trace context).
+    expect(typeof payload.traceId).toBe("string");
+    expect(payload.traceId.length).toBeGreaterThan(0);
+    expect(typeof payload.timestamp).toBe("number");
+
+    // VALIDATED citations: every usedId is one of the recalled ids (a forged id
+    // dropped by assembleSynthesis can never become a usedId).
+    const recalledIds = ["m1", "m2", "m3"];
+    for (const id of payload.usedIds) expect(recalledIds).toContain(id);
+  });
+
+  it("Test 12 (LEARN-02): a bogus cited id never becomes a usedId (usedIds ⊆ recalled ids)", async () => {
+    // The seam cites a real id + a forged one; assembleSynthesis drops the forged id
+    // BEFORE the emit, so the emitted usedIds are exactly the validated citations.
+    const recall = makeRecall([
+      memResult("m1", "fact one", "learned"),
+      memResult("m2", "fact two", "learned"),
+    ]);
+    const seam = makeSeam({ abstain: false, answer: "grounded", citedIds: ["m1", "m-FORGED"] });
+    const emit = vi.fn();
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+      eventBus: { emit } as never,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    await handlers["memory.ask"]!({
+      question: "q",
+      _agentId: "agent-1",
+      _callerSessionKey: "tenant-1:chan:user",
+    });
+
+    const recallUsedEmits = emit.mock.calls.filter((c) => c[0] === "memory:recall_used");
+    expect(recallUsedEmits.length).toBe(1);
+    const payload = recallUsedEmits[0]![1] as { usedIds: string[]; ignoredIds: string[] };
+    // The forged id is NOT a usedId; m1 is used, m2 is ignored. usedIds ⊆ recalled.
+    expect(payload.usedIds).toEqual(["m1"]);
+    expect(payload.usedIds).not.toContain("m-FORGED");
+    expect(payload.ignoredIds).toEqual(["m2"]);
+    for (const id of payload.usedIds) expect(["m1", "m2"]).toContain(id);
+  });
+
+  it("Test 13 (LEARN-02): on abstain the handler emits NO memory:recall_used (no false 'used' attribution)", async () => {
+    // An abstained turn has no grounded, cited answer — emitting "used" would
+    // inflate usefulness for memories that did not actually ground an answer (Pitfall 4).
+    const recall = makeRecall([
+      memResult("m1", "fact one", "learned"),
+      memResult("m2", "fact two", "learned"),
+    ]);
+    const seam = makeSeam({ abstain: true });
+    const emit = vi.fn();
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+      eventBus: { emit } as never,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    const result = (await handlers["memory.ask"]!({
+      question: "q",
+      _agentId: "agent-1",
+      _callerSessionKey: "tenant-1:chan:user",
+    })) as AskResult;
+
+    expect(result.abstained).toBe(true);
+    const recallUsedEmits = emit.mock.calls.filter((c) => c[0] === "memory:recall_used");
+    expect(recallUsedEmits.length).toBe(0);
+  });
+
+  it("Test 14 (LEARN-02): no eventBus ⇒ the handler does not throw and returns the result normally", async () => {
+    // deps.eventBus is undefined (the emit is guarded). The grounded answer must
+    // still return normally — the FEED emit is a non-fatal side effect.
+    const recall = makeRecall([memResult("m1", "fact one", "learned")]);
+    const seam = makeSeam({ abstain: false, answer: "grounded", citedIds: ["m1"] });
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+      // eventBus intentionally omitted (undefined).
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    const result = (await handlers["memory.ask"]!({
+      question: "q",
+      _agentId: "agent-1",
+      _callerSessionKey: "tenant-1:chan:user",
+    })) as AskResult;
+
+    expect(result).toEqual({ answer: "grounded", citations: ["m1"], abstained: false });
+  });
+
+  it("Test 15 (LEARN-02): the recall_used emit is ids/counts-only — never the question, recalled content, or answer", async () => {
+    // The FEED event carries no bodies (AGENTS.md §2.7). Serialize the emit payload
+    // and assert no secret string leaks through it.
+    const recall = makeRecall([memResult("m1", "SECRET-MEMORY-CONTENT", "learned")]);
+    const seam = makeSeam({ abstain: false, answer: "SECRET-ANSWER-TEXT", citedIds: ["m1"] });
+    const emit = vi.fn();
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+      eventBus: { emit } as never,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    await handlers["memory.ask"]!({
+      question: "SECRET-QUESTION-TEXT",
+      _agentId: "agent-1",
+      _callerSessionKey: "tenant-1:chan:user",
+    });
+
+    const recallUsedEmits = emit.mock.calls.filter((c) => c[0] === "memory:recall_used");
+    expect(recallUsedEmits.length).toBe(1);
+    const serialized = JSON.stringify(recallUsedEmits[0]![1]);
+    expect(serialized).not.toContain("SECRET-QUESTION-TEXT");
+    expect(serialized).not.toContain("SECRET-MEMORY-CONTENT");
+    expect(serialized).not.toContain("SECRET-ANSWER-TEXT");
+  });
 });
