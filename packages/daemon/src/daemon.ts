@@ -1835,7 +1835,7 @@ async function bootFoundation(
     processMonitor,
     disposeEmbedding, cachedPort, memoryAdapter, db, sessionStore, memoryApi,
     embeddingQueue, backgroundIndexingPromise, embeddingCacheStats,
-    embeddingCircuitBreakerState, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, consolidationStore, recallCounters, maintenanceTick,
+    embeddingCircuitBreakerState, rerankerPort, rerankerModelPresent, disposeReranker, entityStore, temporalStore, causalStore, tripleStore, embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, consolidationStore, recallCounters, maintenanceTick,
     obsStore, obsPersistence, contextStore,
     activeRunRegistry, sessionResolver, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, startMirrorPrune, shutdownMirror,
