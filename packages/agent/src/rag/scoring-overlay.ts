@@ -49,5 +49,11 @@ export function buildScoringAlphas(
     // belt #2 (the OD2 ship-gate): the trust weight is read EXPLICITLY from config,
     // NEVER from `tuned` — the learned vector cannot move trust.
     trustAlpha: configScoring.trustAlpha,
+    // FORGET-01: the FadeMem decay weight is likewise config-sourced, NEVER tuned — the
+    // learned 4-tuple has no such dimension (TunedAlphaVector, belt #1) and the bandit
+    // never reads/writes it (online-tuning-job's baseline is the four non-trust weights).
+    // So the overlay passes it through from config unchanged (a stale memory's decay is an
+    // operator knob, not a learned one) — keeping buildScoringAlphas total over ScoringAlphas.
+    forgetAlpha: configScoring.forgetAlpha,
   };
 }
