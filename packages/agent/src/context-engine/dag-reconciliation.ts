@@ -98,15 +98,32 @@ export function flattenMessageContent(message: AgentMessage): string {
 
 /**
  * Map SDK message roles to DAG storage roles.
+ *
+ * `ctx_messages.role` enforces CHECK (role IN ('system','user','assistant',
+ * 'tool')) — see context-schema.ts. Every value returned here MUST be one of
+ * those four: anything else makes `store.insertMessage` throw SqliteError the
+ * instant the DAG ingestion hook mirrors the message, and that throw escapes
+ * the tool-result emission path and cascades into consecutive empty model
+ * turns — surfacing to the user as "didn't produce a response" (observed in
+ * production on an MCP tool result, 2026-06-02: `toolResult` was mapped to the
+ * out-of-schema `tool_result` and blew up the turn).
+ *
+ * The SDK emits richer role tags than the DAG stores, so collapse them onto
+ * the canonical four (a tool *result* → "tool", consumers match role ===
+ * "tool"; a tool *call* is part of the assistant's turn). Unknown roles
+ * default to "assistant" rather than passing an arbitrary role straight
+ * through — raw passthrough is exactly what violated the constraint before.
  */
 export function mapMessageRole(message: AgentMessage): string {
   const roleMap: Record<string, string> = {
+    system: "system",
     user: "user",
     assistant: "assistant",
-    toolResult: "tool_result",
-    tool_use: "tool_use",
+    tool: "tool",
+    toolResult: "tool",
+    tool_use: "assistant",
   };
-  return roleMap[message.role] ?? message.role;
+  return roleMap[message.role] ?? "assistant";
 }
 
 // ---------------------------------------------------------------------------
