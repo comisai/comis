@@ -44,7 +44,7 @@ daemon.
 ## Storage Backends
 
 OAuth profiles are stored on disk in one of two backends, selected via the
-[`oauth.storage`](/reference/config-yaml#oauth) config key:
+[`security.storage`](/reference/config-yaml#security) config key:
 
 | Backend | Path | Algorithm | Hot-reload |
 |---------|------|-----------|------------|
@@ -283,7 +283,7 @@ labels in `04-credentials.ts` (**T-DOC-MISDIRECTION**).
   <Card title="CLI: comis auth" icon="terminal" href="/reference/cli#comis-auth">
     Login, list, logout, status
   </Card>
-  <Card title="Config: oauth.storage" icon="gear" href="/reference/config-yaml#oauth">
+  <Card title="Config: security.storage" icon="gear" href="/reference/config-yaml#security">
     YAML configuration reference
   </Card>
   <Card title="Env Var: OAUTH_OPENAI_CODEX" icon="key" href="/reference/environment-variables#oauth_openai_codex">
