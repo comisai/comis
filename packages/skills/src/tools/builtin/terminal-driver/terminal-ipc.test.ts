@@ -177,18 +177,17 @@ describe("createFrameDecoder — HR-01 max-frame guard (memory-DoS / desync)", (
   });
 
   it("still decodes a legitimately large frame at exactly MAX_FRAME_BYTES (the cap is inclusive, not off-by-one)", () => {
-    // A frame whose body is EXACTLY the cap must decode (the cap is a ceiling, not
-    // a strict-less-than that would reject a maximal-but-valid screen+JSON frame).
-    const bodyStr = "x".repeat(MAX_FRAME_BYTES);
-    const body = Buffer.from(JSON.stringify(bodyStr), "utf8");
-    // Ensure the JSON body length is within the cap (the quotes add 2 bytes); trim.
-    const fitted = body.length <= MAX_FRAME_BYTES ? body : body.subarray(0, MAX_FRAME_BYTES);
+    // A valid JSON body whose encoded length is EXACTLY the cap must decode (the
+    // cap is a ceiling, not a strict-less-than that would reject a maximal-but-
+    // valid screen+JSON frame). `JSON.stringify("x".repeat(n))` is `"` + n×`x` +
+    // `"` = n+2 bytes, so target n = MAX_FRAME_BYTES-2 to land the body at the cap.
+    const body = Buffer.from(JSON.stringify("x".repeat(MAX_FRAME_BYTES - 2)), "utf8");
+    expect(body.length).toBe(MAX_FRAME_BYTES); // body sits exactly on the inclusive cap
     const prefix = Buffer.alloc(4);
-    prefix.writeUInt32BE(fitted.length, 0);
-    expect(fitted.length).toBeLessThanOrEqual(MAX_FRAME_BYTES);
+    prefix.writeUInt32BE(body.length, 0);
     const decoder = createFrameDecoder();
-    // Should NOT throw — a body length <= cap is accepted (here it is valid JSON).
-    expect(() => decoder.push(Buffer.concat([prefix, fitted]))).not.toThrow();
+    // Should NOT throw — a body length == cap is accepted (and here is valid JSON).
+    expect(() => decoder.push(Buffer.concat([prefix, body]))).not.toThrow();
   });
 });
 

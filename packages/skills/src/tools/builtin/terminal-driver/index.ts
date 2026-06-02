@@ -51,6 +51,17 @@ export {
   type SessionStatus,
 } from "./terminal-session-registry.js";
 
+// The length-prefixed IPC framer's max-frame guard (HR-01) — the registry's
+// stdout handler branches on FrameTooLargeError to drop a corrupt worker.
+export {
+  FrameTooLargeError,
+  MAX_FRAME_BYTES,
+  type TerminalReplyFrame,
+  type TerminalRequestFrame,
+  type TerminalEventFrame,
+  type TerminalFrame,
+} from "./terminal-ipc.js";
+
 // The canonical-binary allowlist matcher + the config-mapping types.
 export {
   matchAllowEntry,

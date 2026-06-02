@@ -53,6 +53,45 @@ export type TerminalFrame =
 const LENGTH_PREFIX_BYTES = 4;
 
 /**
+ * Hard ceiling on a single frame's declared body length (HR-01).
+ *
+ * The length prefix is an attacker/garbage-controlled `uint32` (0 …
+ * 4 294 967 295). Without a ceiling, one corrupt/hostile prefix (e.g.
+ * `0xFFFFFFFF`) drives the streaming decoder to buffer every subsequent byte
+ * forever, waiting for a ~4 GiB body that never completes — an unbounded
+ * `Buffer.concat` growth (memory DoS) that also permanently desyncs the stream.
+ *
+ * 16 MiB is ample for the worker↔daemon traffic (a screen grid + JSON envelope
+ * is kilobytes; even a large scrollback dump is well under this). Anything
+ * larger is treated as corrupt/hostile: the decoder REFUSES to buffer toward it
+ * and throws {@link FrameTooLargeError} so the caller can drop the frame, log
+ * `errorKind:"protocol"`, and — at the registry — treat the worker as corrupt
+ * and re-spawn it (HR-02). The load-bearing property is the bound itself.
+ */
+export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Thrown by the decoder when a frame's declared body length exceeds
+ * {@link MAX_FRAME_BYTES} (HR-01). Carries the offending `declaredBytes` and the
+ * `maxBytes` ceiling so the caller can log a precise `errorKind:"protocol"`
+ * diagnostic and resync/re-spawn rather than grow the buffer toward a hostile
+ * length. A typed error (not a bare `Error`) so the registry's stdout handler
+ * (HR-02) can branch on `instanceof` if it ever needs frame-specific recovery.
+ */
+export class FrameTooLargeError extends Error {
+  readonly declaredBytes: number;
+  readonly maxBytes: number;
+  constructor(declaredBytes: number, maxBytes: number) {
+    super(
+      `terminal IPC frame body length ${declaredBytes} exceeds the ${maxBytes}-byte cap (corrupt/hostile length prefix)`,
+    );
+    this.name = "FrameTooLargeError";
+    this.declaredBytes = declaredBytes;
+    this.maxBytes = maxBytes;
+  }
+}
+
+/**
  * Encode a frame as `[uint32-BE body-length][utf8 JSON body]`.
  *
  * The length prefix lets the decoder reassemble a frame from arbitrary chunk
@@ -98,6 +137,15 @@ export function createFrameDecoder(): { push(chunk: Buffer): TerminalFrame[] } {
     for (;;) {
       if (buffered.length < LENGTH_PREFIX_BYTES) break; // not even a full length prefix yet
       const bodyLen = buffered.readUInt32BE(0);
+      // HR-01: refuse a corrupt/hostile length before reserving toward it. Never
+      // grow `buffered` toward a multi-GiB body — that is the DoS primitive. The
+      // caller (registry stdout handler, HR-02) catches this, drops the worker as
+      // corrupt, and re-spawns. The buffer is left intact (not consumed): a 2nd
+      // push re-reads the same oversized prefix and re-throws — it never silently
+      // accumulates the follow-on bytes.
+      if (bodyLen > MAX_FRAME_BYTES) {
+        throw new FrameTooLargeError(bodyLen, MAX_FRAME_BYTES);
+      }
       const frameEnd = LENGTH_PREFIX_BYTES + bodyLen;
       if (buffered.length < frameEnd) break; // body not fully arrived yet
 
