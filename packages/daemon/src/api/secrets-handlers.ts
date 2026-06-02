@@ -601,7 +601,11 @@ export function createSecretsHandlers(
         });
       }
 
-      const result = { name, deleted: delResult.value, restarting: existed };
+      // Use existed || delResult.value for deleted so the response is internally
+      // consistent: if the Map tracked the name (existed=true), deletion is
+      // authoritative regardless of any store soft-delete quirk. This prevents
+      // the { deleted: false, restarting: true } contradictory state (WR-02).
+      const result = { name, deleted: existed || delResult.value, restarting: existed };
       if (systemGetEnv("NODE_ENV") !== "production") {
         SecretsDeleteContract.response.parse(result);
       }

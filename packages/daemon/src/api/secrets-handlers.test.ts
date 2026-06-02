@@ -506,4 +506,67 @@ describe("03-03 — secrets restart-truth and event emit", () => {
     );
     expect(changedCalls).toHaveLength(0);
   });
+
+  // WR-02: deleted/restarting consistency — derive deleted from existed||delResult.value
+  // so Map-store desync (e.g. secret in store but absent from Map due to prior WR-01 bug)
+  // cannot produce contradictory { deleted: false, restarting: true } or
+  // { deleted: true, restarting: false } where the CLI shows "Secret not found"
+  // while SIGUSR2 fires.
+  it("secrets.delete: deleted=true when store delete returns true regardless of existed (WR-02 consistency)", async () => {
+    // Simulate the WR-01 desync: secret is in store (store.delete returns true)
+    // but NOT in the shared Map (existed = false). After WR-01 fix this can't
+    // happen in practice for newly extracted secrets, but the invariant must
+    // still hold for any legacy state.
+    const { handlers } = makeHandlersWithSecretManager(
+      {}, // Map is empty — existed will be false
+      { delete: vi.fn(() => ok(true)) }, // store says it deleted something
+    );
+
+    const result = await handlers["secrets.delete"]!({
+      _trustLevel: "admin",
+      name: "LEGACY_STORE_ONLY_KEY",
+    }) as Record<string, unknown>;
+
+    // deleted must reflect the store truth (or Map truth) — never false when
+    // the store actually deleted something.
+    expect(result.deleted).toBe(true);
+    // restarting: false because existed=false (secret was never live in the Map)
+    expect(result.restarting).toBe(false);
+  });
+
+  it("secrets.delete: deleted=true and restarting=true when secret is in both Map and store (normal case)", async () => {
+    const { handlers } = makeHandlersWithSecretManager(
+      { BOTH_KEY: "val" }, // Map has it — existed=true
+      { delete: vi.fn(() => ok(true)) }, // store also deletes it
+    );
+
+    const result = await handlers["secrets.delete"]!({
+      _trustLevel: "admin",
+      name: "BOTH_KEY",
+    }) as Record<string, unknown>;
+
+    expect(result.deleted).toBe(true);
+    expect(result.restarting).toBe(true);
+  });
+
+  it("secrets.delete: deleted=true (not false) when Map had key (existed=true) even if store.delete returns false (WR-02 soft-delete regression guard)", async () => {
+    // Simulates a hypothetical store soft-delete regression: existed=true (Map has it)
+    // but store.delete returns false. Without the fix, this produces
+    // { deleted: false, restarting: true } — CLI shows "Secret not found" while
+    // SIGUSR2 fires. With existed||delResult.value the response is consistent.
+    const { handlers } = makeHandlersWithSecretManager(
+      { SOFT_DELETE_KEY: "val" }, // Map has it — existed=true
+      { delete: vi.fn(() => ok(false)) }, // store soft-delete returns false (regression scenario)
+    );
+
+    const result = await handlers["secrets.delete"]!({
+      _trustLevel: "admin",
+      name: "SOFT_DELETE_KEY",
+    }) as Record<string, unknown>;
+
+    // deleted must be true because Map had the key (existed=true) — the Map is
+    // authoritative for what was live-tracked (existed || delResult.value).
+    expect(result.deleted).toBe(true);
+    expect(result.restarting).toBe(true);
+  });
 });
