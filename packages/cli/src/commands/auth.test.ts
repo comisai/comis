@@ -457,3 +457,100 @@ describe("auth login — mode branching", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// loadStorageMode env-ref resolution (TDD RED tests — Task 1 of plan 260602-rtj)
+//
+// Bug 2: loadStorageMode calls loadConfigFile without getSecret, so
+// ${VAR} refs are not resolved before validateConfig. A config whose
+// gateway.tokens[0].secret is written as ${COMIS_GATEWAY_TOKEN} fails
+// Zod min(32) validation (the literal ref is 22 chars) → exit:1.
+//
+// These tests must FAIL on the pre-patch code (RED). After the fix
+// (GREEN), loadStorageMode loads ~/.comis/.env before validating so refs
+// are resolved correctly.
+// ---------------------------------------------------------------------------
+
+describe("loadStorageMode env-ref resolution", () => {
+  let tmpDir: string;
+  let configPath: string;
+  let envPath: string;
+
+  beforeEach(async () => {
+    vi.resetAllMocks();
+    const nodeFs = await import("node:fs");
+    const nodeOs = await import("node:os");
+    const nodePath = await import("node:path");
+
+    tmpDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), "comis-envref-"));
+    configPath = nodePath.join(tmpDir, "config.yaml");
+    envPath = nodePath.join(tmpDir, ".env");
+
+    // Config with a gateway token whose secret is an ${ENV} ref (22 chars —
+    // below the Zod min:32 threshold). loadStorageMode must resolve the ref
+    // via loadEnvFile before validateConfig or it will exit:1.
+    nodeFs.writeFileSync(
+      configPath,
+      [
+        "security:",
+        "  storage: encrypted",
+        "gateway:",
+        "  tokens:",
+        '    - id: api-token',
+        '      secret: "${COMIS_GATEWAY_TOKEN}"',
+      ].join("\n"),
+    );
+    // The .env file provides the resolved value (34 chars — above min:32).
+    nodeFs.writeFileSync(envPath, "COMIS_GATEWAY_TOKEN=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n");
+
+    // eslint-disable-next-line no-restricted-syntax -- test sets env for isolation
+    process.env.COMIS_CONFIG_PATHS = configPath;
+    // eslint-disable-next-line no-restricted-syntax -- test sets env for isolation
+    process.env.COMIS_DATA_DIR = tmpDir;
+
+    // Reset mocked modules to their default passing states
+    const rpcClientMod = await import("../client/rpc-client.js");
+    const daemonRequiredMod = await import("../util/daemon-required.js");
+    (rpcClientMod.withClient as ReturnType<typeof vi.fn>).mockImplementation(
+      async (fn: (c: unknown) => unknown) => fn({}),
+    );
+    (rpcClientMod.callTyped as ReturnType<typeof vi.fn>).mockResolvedValue({ profiles: [] });
+    (daemonRequiredMod.requireDaemonOrExit as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    // eslint-disable-next-line no-restricted-syntax -- cleanup
+    delete process.env.COMIS_CONFIG_PATHS;
+    // eslint-disable-next-line no-restricted-syntax -- cleanup
+    delete process.env.COMIS_DATA_DIR;
+    // eslint-disable-next-line no-restricted-syntax -- cleanup
+    delete process.env.COMIS_GATEWAY_TOKEN;
+    const nodeFs = await import("node:fs");
+    nodeFs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("loadStorageMode resolves ${ENV} refs from .env before validateConfig so auth list does not exit:1", async () => {
+    // PRE-FIX (RED): loadStorageMode calls loadConfigFile without getSecret.
+    // validateConfig receives the literal "${COMIS_GATEWAY_TOKEN}" (22 chars)
+    // which fails z.string().min(32) → process.exit(1).
+    //
+    // POST-FIX (GREEN): loadStorageMode calls loadEnvFile(dataDir/.env) first,
+    // then loadConfigFile(configPath, { getSecret: k => process.env[k] }).
+    // The ref resolves to 34 chars → validateConfig passes → encrypted mode.
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const program = new Command();
+    registerAuthCommand(program);
+
+    // Must NOT exit:1 — the ref should be resolved before schema validation.
+    await expect(
+      program.parseAsync(["node", "test", "auth", "list"]),
+    ).resolves.not.toThrow();
+
+    exitSpy.mockRestore();
+  });
+});

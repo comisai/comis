@@ -82,7 +82,7 @@ vi.mock("../../util/daemon-required.js", () => ({
 
 import { credentialsStep } from "./04-credentials.js";
 import { getModels } from "@earendil-works/pi-ai";
-import { loginOpenAICodexOAuth, isRemoteEnvironment, loadConfigFile } from "@comis/core";
+import { loginOpenAICodexOAuth, isRemoteEnvironment, loadConfigFile, validateConfig } from "@comis/core";
 import { callTyped, withClient } from "../../client/rpc-client.js";
 import { requireDaemonOrExit } from "../../util/daemon-required.js";
 
@@ -1102,5 +1102,121 @@ describe("credentialsStep — storage mode branching (encrypted/env)", () => {
     // File mode must use the store adapter, not callTyped
     expect(selectOAuthCredentialStore).toHaveBeenCalled();
     expect(callTyped).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadWizardStorageMode env-ref resolution (TDD RED tests — Task 1 of plan 260602-rtj)
+//
+// Bug 1: loadWizardStorageMode calls loadConfigFile without getSecret so
+// ${VAR} refs are not resolved before validateConfig. A config whose
+// security.storage is "encrypted" but also contains a gateway token with
+// a ${VAR} ref fails Zod validation → falls back to "file" → the
+// handleCodexOAuth encrypted branch (requireDaemonOrExit) is skipped.
+//
+// These tests must FAIL on the pre-patch code (RED). After the fix (GREEN),
+// loadWizardStorageMode passes getSecret to loadConfigFile so refs are
+// resolved and the encrypted mode is correctly detected.
+// ---------------------------------------------------------------------------
+
+describe("loadWizardStorageMode env-ref resolution (Bug 1)", () => {
+  beforeEach(() => {
+    vi.mocked(loginOpenAICodexOAuth).mockReset();
+    vi.mocked(callTyped).mockReset();
+    vi.mocked(withClient).mockReset();
+    vi.mocked(requireDaemonOrExit).mockReset();
+    vi.mocked(isRemoteEnvironment).mockReturnValue(false);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200 }));
+
+    // Default: callTyped and withClient succeed
+    vi.mocked(callTyped).mockResolvedValue({ profileId: "openai-codex:test@example.com", stored: true });
+    vi.mocked(withClient).mockImplementation(async (fn) => fn({}));
+    vi.mocked(requireDaemonOrExit).mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    // Restore loadConfigFile/validateConfig to their module-default mocks
+    vi.mocked(loadConfigFile).mockReturnValue({ ok: false, error: new Error("no config") });
+    vi.mocked(validateConfig).mockImplementation((raw: unknown) => ({ ok: true, value: raw }));
+  });
+
+  it("loadWizardStorageMode detects encrypted mode when getSecret resolves ${ENV} refs so requireDaemonOrExit is called", async () => {
+    // Simulate the pre-fix scenario:
+    // - loadConfigFile WITHOUT getSecret returns raw config with unresolved refs
+    // - validateConfig FAILS on the unresolved ref (simulates the min:32 violation)
+    // → loadWizardStorageMode falls back to "file" → requireDaemonOrExit NOT called
+    //
+    // POST-FIX (GREEN): loadConfigFile is called WITH getSecret.
+    // The mock detects getSecret and returns a resolved config.
+    // validateConfig SUCCEEDS → "encrypted" → requireDaemonOrExit IS called.
+    //
+    // This test asserts the post-fix behavior (requireDaemonOrExit IS called).
+    // It FAILS pre-fix because the fallback to "file" skips requireDaemonOrExit.
+    vi.mocked(loadConfigFile).mockImplementation((_path, options) => {
+      if (options?.getSecret) {
+        // Post-fix: getSecret provided → simulate resolved config (no ${} refs)
+        return {
+          ok: true as const,
+          value: { security: { storage: "encrypted" } },
+        };
+      }
+      // Pre-fix: no getSecret → unresolved config with ${} ref in secret field
+      return {
+        ok: true as const,
+        value: {
+          security: { storage: "encrypted" },
+          gateway: { tokens: [{ id: "api-token", secret: "${COMIS_GATEWAY_TOKEN}" }] },
+        },
+      };
+    });
+
+    vi.mocked(validateConfig).mockImplementation((raw: unknown) => {
+      // Simulate Zod validation: fail if any field contains an unresolved ${} ref
+      const serialized = JSON.stringify(raw);
+      if (serialized.includes("${")) {
+        return {
+          ok: false as const,
+          error: {
+            code: "VALIDATION_ERROR" as const,
+            message: "gateway.tokens.0.secret: Too small — min 32 chars required",
+          },
+        };
+      }
+      // Resolved config passes validation
+      return { ok: true as const, value: raw as Parameters<typeof validateConfig>[0] };
+    });
+
+    vi.mocked(loginOpenAICodexOAuth).mockResolvedValue({
+      ok: true,
+      value: {
+        access: "tok_envref",
+        refresh: "ref_envref",
+        expires: Date.now() + 3_600_000,
+        accountId: "acct_envref",
+        email: "envref@example.com",
+        displayName: "EnvRef User",
+        profileId: "openai-codex:envref@example.com",
+      },
+    });
+
+    const prompter = createMockPrompter();
+    vi.mocked(prompter.select).mockResolvedValueOnce("device-code");
+
+    const startState: WizardState = {
+      ...INITIAL_STATE,
+      provider: { id: "openai-codex" } as ProviderConfig,
+    };
+
+    await credentialsStep.execute(startState, prompter);
+
+    // POST-FIX: loadWizardStorageMode must detect "encrypted" and call
+    // requireDaemonOrExit before the OAuth flow proceeds.
+    // PRE-FIX: falls back to "file" → requireDaemonOrExit NOT called → test FAILS (RED).
+    expect(requireDaemonOrExit).toHaveBeenCalled();
+    // And the profile must be persisted via daemon RPC (callTyped), not file store
+    expect(callTyped).toHaveBeenCalled();
+    const callTypedArgs = vi.mocked(callTyped).mock.calls[0]!;
+    expect((callTypedArgs[1] as { method: string }).method).toBe("auth.set");
   });
 });
