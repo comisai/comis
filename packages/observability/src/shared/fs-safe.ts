@@ -46,7 +46,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { safePath } from "@comis/core";
-import { ok, err, type Result } from "@comis/shared";
+import { ok, err, isFsyncDisabledByPermissionModel, type Result } from "@comis/shared";
 
 /**
  * Returned when the immediate parent of the target is a symbolic link.
@@ -284,8 +284,14 @@ export function appendRegularFile(
   }
 
   try {
-    // Step 3: defensive chmod.
-    fs.fchmodSync(fd, 0o600);
+    // Step 3: defensive chmod. Node's Permission Model disables the fchmod
+    // API outright (no allow-flag); swallow that refusal — the file was just
+    // opened with mode 0o600 — while still surfacing genuine I/O errors.
+    try {
+      fs.fchmodSync(fd, 0o600);
+    } catch (chmodErr) {
+      if (!isFsyncDisabledByPermissionModel(chmodErr)) throw chmodErr;
+    }
 
     // Step 4: size-cap check.
     const stat = fs.fstatSync(fd);
@@ -455,8 +461,14 @@ export function writeRegularFile(
   }
 
   try {
-    // Step 4: defensive chmod.
-    fs.fchmodSync(fd, 0o600);
+    // Step 4: defensive chmod. Node's Permission Model disables the fchmod
+    // API outright (no allow-flag); swallow that refusal — the file was just
+    // opened with mode 0o600 — while still surfacing genuine I/O errors.
+    try {
+      fs.fchmodSync(fd, 0o600);
+    } catch (chmodErr) {
+      if (!isFsyncDisabledByPermissionModel(chmodErr)) throw chmodErr;
+    }
 
     // Step 5: write.
     fs.writeSync(fd, buf);

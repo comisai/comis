@@ -15,6 +15,27 @@ describe("isFsyncDisabledByPermissionModel", () => {
     expect(isFsyncDisabledByPermissionModel(e)).toBe(true);
   });
 
+  it("matches the fchmod message (same disabled-fs-API family)", () => {
+    // Node --permission disables the whole fd-based fs API family with the
+    // same wording. fchmod refusal blocked MCP OAuth discovery and
+    // session-metadata writes on a production VPS (2026-06-02).
+    const e = new Error("fchmod API is disabled when Permission Model is enabled.");
+    expect(isFsyncDisabledByPermissionModel(e)).toBe(true);
+  });
+
+  it("matches other disabled fd-syscalls (fdatasync, fchown)", () => {
+    expect(
+      isFsyncDisabledByPermissionModel(
+        new Error("fdatasync API is disabled when Permission Model is enabled."),
+      ),
+    ).toBe(true);
+    expect(
+      isFsyncDisabledByPermissionModel(
+        new Error("fchown API is disabled when Permission Model is enabled."),
+      ),
+    ).toBe(true);
+  });
+
   it("matches by ERR_ACCESS_DENIED code regardless of message wording", () => {
     const e = Object.assign(new Error("whatever"), { code: "ERR_ACCESS_DENIED" });
     expect(isFsyncDisabledByPermissionModel(e)).toBe(true);

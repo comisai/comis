@@ -7,8 +7,12 @@ import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 // under ESM (vi.spyOn cannot redefine non-configurable namespace
 // properties on `node:fs`). Default false → real chmod runs everywhere
 // else in this file (existing tests rely on real chmod behavior).
-const { chmodSyncThrowsEperm } = vi.hoisted(() => ({
+const { chmodSyncThrowsEperm, fchmodSyncMode } = vi.hoisted(() => ({
   chmodSyncThrowsEperm: { value: false },
+  // "real" → run real fchmod; "permission-model" → throw the --permission
+  // refusal (must be swallowed, file already opened 0o600); "eio" → throw a
+  // genuine I/O error (must propagate). Drives the fchmod-disabled guard.
+  fchmodSyncMode: { value: "real" as "real" | "permission-model" | "eio" },
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -20,6 +24,19 @@ vi.mock("node:fs", async (importOriginal) => {
         throw Object.assign(new Error("EPERM"), { code: "EPERM" });
       }
       return real.chmodSync(...args);
+    },
+    fchmodSync: (...args: Parameters<typeof real.fchmodSync>) => {
+      if (fchmodSyncMode.value === "permission-model") {
+        throw new Error(
+          "fchmod API is disabled when Permission Model is enabled.",
+        );
+      }
+      if (fchmodSyncMode.value === "eio") {
+        throw Object.assign(new Error("EIO: i/o error, fchmod"), {
+          code: "EIO",
+        });
+      }
+      return real.fchmodSync(...args);
     },
   };
 });
@@ -43,6 +60,49 @@ afterEach(() => {
   if (tmpDir) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+describe("fchmod disabled by Node Permission Model (regression: 2026-06-02)", () => {
+  // The production daemon runs under `node --permission`, which disables
+  // fchmod outright. The defensive `fchmodSync(fd, 0o600)` in both writers
+  // must tolerate that refusal (the file was already opened 0o600) instead
+  // of failing the write — an unguarded throw here broke MCP OAuth discovery
+  // and session-metadata persistence on a live VPS.
+  afterEach(() => {
+    fchmodSyncMode.value = "real";
+  });
+
+  it("writeRegularFile persists content when fchmod is refused by the permission model", () => {
+    fchmodSyncMode.value = "permission-model";
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-permmodel-w-"));
+    const target = path.join(tmpDir, "out.txt");
+
+    const result = writeRegularFile({ path: target, content: "hello world" });
+
+    expect(result.ok).toBe(true);
+    expect(fs.readFileSync(target, "utf8")).toBe("hello world");
+  });
+
+  it("appendRegularFile persists content when fchmod is refused by the permission model", () => {
+    fchmodSyncMode.value = "permission-model";
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-permmodel-a-"));
+    const target = path.join(tmpDir, "out.jsonl");
+
+    const result = appendRegularFile({ path: target, content: "line one\n" });
+
+    expect(result.ok).toBe(true);
+    expect(fs.readFileSync(target, "utf8")).toBe("line one\n");
+  });
+
+  it("still returns err on a genuine fchmod I/O error (EIO), not silently swallowed", () => {
+    fchmodSyncMode.value = "eio";
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-safe-eio-"));
+    const target = path.join(tmpDir, "out.txt");
+
+    const result = writeRegularFile({ path: target, content: "x" });
+
+    expect(result.ok).toBe(false);
+  });
 });
 
 describe("appendRegularFile — happy path", () => {
