@@ -971,6 +971,269 @@ describe("createMemoryRecall — usefulness signal read-path (FEED-03)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase 110 Plan 03 (LEARN-01) — recall passes the ALREADY-computed deterministic
+// classifyIntent into readUsefulness so the per-intent usefulness bucket drives the
+// order. The binding constraint: this stays LLM-FREE (the `intent` const at
+// memory-recall.ts:91 is the SAME pure classify already done for lane reweighting —
+// NO second classify, NO model call on the read path). Absence of a per-intent row
+// degrades to the global bucket then to the shipped neutral 1.0 factor; feedback OFF
+// skips the read entirely (read-spy = 0 + byte-identical).
+// ---------------------------------------------------------------------------
+describe("createMemoryRecall — per-intent usefulness read (LEARN-01)", () => {
+  // Only usefulnessAlpha is live so the usefulness factor is the SOLE reorder lever.
+  const USEFULNESS_ONLY = {
+    recencyAlpha: 0,
+    temporalAlpha: 0,
+    proofAlpha: 0,
+    trustAlpha: 0,
+    usefulnessAlpha: 0.1,
+  };
+  const FLAG_ON = { enabled: true };
+  const FLAG_OFF = { enabled: false };
+  // intentReweight toggles whether recall classifies the query at all (memory-recall.ts:91).
+  const QU_INTENT_ON = { intentReweight: true, synonyms: false, temporalParse: false };
+  const QU_INTENT_OFF = { intentReweight: false, synonyms: false, temporalParse: false };
+
+  /**
+   * An intent-AWARE usefulness store stub. `readUsefulness` records every (ids, scope) it
+   * receives — so the test can assert `scope.intent` — AND returns a DIFFERENT signal map
+   * per requested intent bucket (so a per-intent bucket can drive a different order than the
+   * global bucket). When the requested intent has no entry in `byIntent`, it falls back to
+   * `byIntent[""]` (the global bucket) — mirroring the adapter's degrade-to-global (Plan 110-02).
+   */
+  function fakeIntentUsefulnessStore(byIntent: Record<string, Map<string, UsefulnessSignal>>): {
+    store: MemoryUsefulnessStore;
+    readUsefulness: ReturnType<typeof vi.fn>;
+    scopes: Array<{ tenantId: string; agentId: string; intent?: string }>;
+  } {
+    const scopes: Array<{ tenantId: string; agentId: string; intent?: string }> = [];
+    const readUsefulness = vi.fn(
+      async (_ids: string[], scope: { tenantId: string; agentId: string; intent?: string }) => {
+        scopes.push(scope);
+        const bucket = scope.intent !== undefined ? scope.intent : "";
+        const map = byIntent[bucket] ?? byIntent[""] ?? new Map<string, UsefulnessSignal>();
+        return ok(map);
+      },
+    );
+    const store = {
+      async recordUsage() {
+        return ok(undefined);
+      },
+      readUsefulness,
+    } as unknown as MemoryUsefulnessStore;
+    return { store, readUsefulness, scopes };
+  }
+
+  it("PER-INTENT DRIVES ORDER: the classified intent reaches scope.intent and the per-intent bucket reorders vs the global bucket", async () => {
+    // m1 leads on base; m2 is proven-useful ONLY under the "temporal" bucket (global bucket
+    // ignores it). A "temporal"-classified query (intentReweight ON) fetches the temporal
+    // bucket → m2's used-rate 1.0 flips it above m1. The scope MUST carry intent="temporal".
+    const input = [
+      makeResult("m1", { base: 0.51, trustLevel: "learned", createdAt: NOW }),
+      makeResult("m2", { base: 0.5, trustLevel: "learned", createdAt: NOW }),
+    ];
+    const { store, scopes } = fakeIntentUsefulnessStore({
+      // Global bucket: m2 is recalled-but-ignored (would NOT flip).
+      "": new Map<string, UsefulnessSignal>([["m2", { usedCount: 0, ignoredCount: 5 }]]),
+      // temporal bucket: m2 is proven-useful (flips it above m1).
+      temporal: new Map<string, UsefulnessSignal>([["m2", { usedCount: 5, ignoredCount: 0 }]]),
+    });
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        usefulnessStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: USEFULNESS_ONLY,
+        feedback: FLAG_ON,
+        queryUnderstanding: QU_INTENT_ON,
+      } as Partial<MemoryRecallConfig>),
+    );
+    // "when did the deploy happen" → classifyIntent → "temporal".
+    const got = await recall.recall("when did the deploy happen", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // The deterministic classified intent reached the read scope.
+    expect(scopes[0]?.intent).toBe("temporal");
+    // The per-intent bucket reordered the output — m2 (proven-useful for temporal) leads.
+    const ids = got.value.map((r) => r.entry.id);
+    expect(ids.indexOf("m2")).toBeLessThan(ids.indexOf("m1"));
+  });
+
+  it("PER-INTENT vs OFF: the SAME query+store yields a DIFFERENT order with intentReweight ON vs OFF (the per-intent lift is real, not the global bucket)", async () => {
+    const input = [
+      makeResult("m1", { base: 0.51, trustLevel: "learned", createdAt: NOW }),
+      makeResult("m2", { base: 0.5, trustLevel: "learned", createdAt: NOW }),
+    ];
+    const byIntent = {
+      "": new Map<string, UsefulnessSignal>([["m2", { usedCount: 0, ignoredCount: 5 }]]),
+      temporal: new Map<string, UsefulnessSignal>([["m2", { usedCount: 5, ignoredCount: 0 }]]),
+    };
+    const makeRecall = (qu: typeof QU_INTENT_ON) => {
+      const { store } = fakeIntentUsefulnessStore({
+        "": new Map(byIntent[""]),
+        temporal: new Map(byIntent.temporal),
+      });
+      return createMemoryRecall(
+        {
+          memoryPort: fakeMemoryPort(input),
+          usefulnessStore: store,
+          clock: fixedClock,
+          logger: noopLogger,
+        } as unknown as Parameters<typeof createMemoryRecall>[0],
+        baseConfig({
+          scoring: USEFULNESS_ONLY,
+          feedback: FLAG_ON,
+          queryUnderstanding: qu,
+        } as Partial<MemoryRecallConfig>),
+      );
+    };
+    const on = await makeRecall(QU_INTENT_ON).recall("when did the deploy happen", SESSION_KEY_OBJ, "agent_y");
+    const off = await makeRecall(QU_INTENT_OFF).recall("when did the deploy happen", SESSION_KEY_OBJ, "agent_y");
+    expect(on.ok && off.ok).toBe(true);
+    if (!on.ok || !off.ok) return;
+    const onIds = on.value.map((r) => r.entry.id);
+    const offIds = off.value.map((r) => r.entry.id);
+    // ON reads the temporal bucket (m2 proven-useful → m2 first); OFF reads the global
+    // bucket (m2 ignored → base order m1 first). The per-intent read CHANGES the order.
+    expect(onIds).not.toEqual(offIds);
+    expect(onIds.indexOf("m2")).toBeLessThan(onIds.indexOf("m1"));
+    expect(offIds.indexOf("m1")).toBeLessThan(offIds.indexOf("m2"));
+  });
+
+  it("INTENT OFF: with intentReweight off the read scope OMITS intent (the adapter reads the global bucket → byte-identical to v2.8)", async () => {
+    const input = [makeResult("m1", { base: 0.5, trustLevel: "learned", createdAt: NOW })];
+    const { store, scopes } = fakeIntentUsefulnessStore({
+      "": new Map<string, UsefulnessSignal>(),
+    });
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        usefulnessStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: USEFULNESS_ONLY,
+        feedback: FLAG_ON,
+        queryUnderstanding: QU_INTENT_OFF,
+      } as Partial<MemoryRecallConfig>),
+    );
+    // A temporal-shaped query, but intentReweight is OFF → intent stays undefined → omitted.
+    const got = await recall.recall("when did the deploy happen", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // The read still ran (feedback ON) but the scope carries NO intent → global bucket.
+    expect(scopes).toHaveLength(1);
+    expect(scopes[0]).not.toHaveProperty("intent");
+  });
+
+  it("DEGRADE-TO-GLOBAL: a per-intent bucket with NO entry for an id → recall does not crash; the id falls to neutral (base order preserved)", async () => {
+    // The store returns an EMPTY map for the requested intent (no per-intent row, no global
+    // row) → usefulnessNorm(undefined) → 0.5 → factor 1.0. Recall must succeed with base order.
+    const input = [
+      makeResult("m1", { base: 0.51, trustLevel: "learned", createdAt: NOW }),
+      makeResult("m2", { base: 0.5, trustLevel: "learned", createdAt: NOW }),
+    ];
+    const { store, scopes } = fakeIntentUsefulnessStore({
+      // Only an empty global bucket — the temporal request degrades to it (still empty).
+      "": new Map<string, UsefulnessSignal>(),
+    });
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        usefulnessStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: USEFULNESS_ONLY,
+        feedback: FLAG_ON,
+        queryUnderstanding: QU_INTENT_ON,
+      } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("when did the deploy happen", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // intent reached the scope (temporal) but the empty map → neutral → base order kept.
+    expect(scopes[0]?.intent).toBe("temporal");
+    expect(got.value.map((r) => r.entry.id)).toEqual(["m1", "m2"]);
+  });
+
+  it("DEFAULT-OFF SPY=0 + BYTE-IDENTITY: feedback OFF → readUsefulness called 0 times even with a flipping per-intent bucket + intentReweight ON (mirror the readEmbeddingsCalls===0 guard)", async () => {
+    const input = [
+      makeResult("m1", { base: 0.5, trustLevel: "learned", createdAt: NOW }),
+      makeResult("m2", { base: 0.5, trustLevel: "learned", createdAt: NOW }),
+    ];
+    // A temporal bucket that WOULD flip m2 above m1 if the read ran — proving the OFF skip,
+    // not an empty read.
+    const { store, readUsefulness } = fakeIntentUsefulnessStore({
+      temporal: new Map<string, UsefulnessSignal>([["m2", { usedCount: 9, ignoredCount: 0 }]]),
+    });
+    // Reference: the same pipeline with NO signal (factor neutral) → base order.
+    const fused = fuse([{ results: input, weight: 1.0 }]);
+    const scored = score(fused, USEFULNESS_ONLY, NOW);
+    const allowed = new Set<TrustLevel>(["system", "learned"]);
+    const expected = deduplicateResults(scored.filter((r) => allowed.has(r.entry.trustLevel))).map(
+      (r) => r.entry.id,
+    );
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        usefulnessStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: USEFULNESS_ONLY,
+        feedback: FLAG_OFF,
+        queryUnderstanding: QU_INTENT_ON,
+      } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("when did the deploy happen", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    // The binding default-OFF guarantee: the read NEVER ran (spy = 0) …
+    expect(readUsefulness).not.toHaveBeenCalled();
+    // … and the order is byte-identical to the no-signal reference.
+    expect(got.value.map((r) => r.entry.id)).toEqual(expected);
+  });
+
+  it("LLM-FREE: a recall run (feedback ON + intentReweight ON, the per-intent read path) makes NO query-time model call", async () => {
+    vi.mocked(completeSimple).mockClear();
+    vi.mocked(getModel).mockClear();
+    const input = [
+      makeResult("m1", { base: 0.51, trustLevel: "learned", createdAt: NOW }),
+      makeResult("m2", { base: 0.5, trustLevel: "learned", createdAt: NOW }),
+    ];
+    const { store } = fakeIntentUsefulnessStore({
+      "": new Map<string, UsefulnessSignal>(),
+      temporal: new Map<string, UsefulnessSignal>([["m2", { usedCount: 5, ignoredCount: 0 }]]),
+    });
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        usefulnessStore: store,
+        clock: fixedClock,
+        logger: noopLogger,
+      } as unknown as Parameters<typeof createMemoryRecall>[0],
+      baseConfig({
+        scoring: USEFULNESS_ONLY,
+        feedback: FLAG_ON,
+        queryUnderstanding: QU_INTENT_ON,
+      } as Partial<MemoryRecallConfig>),
+    );
+    const got = await recall.recall("when did the deploy happen", SESSION_KEY_OBJ, "agent_y");
+    expect(got.ok).toBe(true);
+    // The intent is classifyIntent (pure) — the per-intent read touched NO model surface.
+    expect(completeSimple).not.toHaveBeenCalled();
+    expect(getModel).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Plan 03 — recall-trace capture + memory:recalled/reranked emit + vec→FTS signal
 // ---------------------------------------------------------------------------
 
