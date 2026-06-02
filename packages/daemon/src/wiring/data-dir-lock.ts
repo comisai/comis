@@ -18,6 +18,7 @@
  */
 import * as fs from "node:fs";
 import { safePath } from "@comis/core";
+import { isFsyncDisabledByPermissionModel } from "@comis/shared";
 
 const LOCK_FILE = ".daemon.lock";
 
@@ -63,7 +64,14 @@ export function acquireDataDirLock(dataDir: string): void {
       0o600,
     );
     fs.writeSync(fd, String(process.pid));
-    fs.fsyncSync(fd);
+    // Best-effort durability fsync — Node's Permission Model (--permission)
+    // disables the fsync API; swallow that refusal so the daemon still boots,
+    // while letting genuine I/O errors propagate.
+    try {
+      fs.fsyncSync(fd);
+    } catch (fsyncErr) {
+      if (!isFsyncDisabledByPermissionModel(fsyncErr)) throw fsyncErr;
+    }
     fs.closeSync(fd);
     fd = undefined;
 
@@ -72,6 +80,8 @@ export function acquireDataDirLock(dataDir: string): void {
     const dirFd = fs.openSync(dataDir, fs.constants.O_RDONLY);
     try {
       fs.fsyncSync(dirFd);
+    } catch (fsyncErr) {
+      if (!isFsyncDisabledByPermissionModel(fsyncErr)) throw fsyncErr;
     } finally {
       fs.closeSync(dirFd);
     }

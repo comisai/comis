@@ -22,7 +22,7 @@
 
 import * as fs from "node:fs";
 import { dirname } from "node:path";
-import { ok, err, type Result } from "@comis/shared";
+import { ok, err, isFsyncDisabledByPermissionModel, type Result } from "@comis/shared";
 
 /** Suffix for the temp file used during the atomic write dance. */
 const TEMP_SUFFIX = ".sync-tooling.tmp";
@@ -95,7 +95,14 @@ export function atomicWriteFile(
   try {
     fd = fs.openSync(tempPath, "w", 0o600);
     fs.writeSync(fd, content);
-    fs.fsyncSync(fd);
+    // Best-effort durability fsync — Node's Permission Model disables the
+    // fsync API; swallow that refusal (bytes already written) but let genuine
+    // I/O errors fall through to the WRITE_FAILED path below.
+    try {
+      fs.fsyncSync(fd);
+    } catch (fsyncErr) {
+      if (!isFsyncDisabledByPermissionModel(fsyncErr)) throw fsyncErr;
+    }
   } catch (e) {
     if (fd !== undefined) {
       try {

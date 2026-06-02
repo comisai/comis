@@ -6,6 +6,9 @@ export { ok, err, tryCatch, fromPromise } from "./result.js";
 export { suppressError } from "./suppress-error.js";
 export { withTimeout, TimeoutError } from "./timeout.js";
 export { checkAborted } from "./abort.js";
+// Permission-model fsync refusal predicate — lets fsync sites degrade
+// gracefully under `node --permission` (which disables the fsync API).
+export { isFsyncDisabledByPermissionModel } from "./fsync-permission.js";
 export { createTTLCache } from "./ttl-cache.js";
 export type { TTLCache, TTLCacheOptions } from "./ttl-cache.js";
 

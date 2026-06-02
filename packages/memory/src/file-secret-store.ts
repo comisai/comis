@@ -16,7 +16,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
-import { ok, err } from "@comis/shared";
+import { ok, err, isFsyncDisabledByPermissionModel } from "@comis/shared";
 import type { Result } from "@comis/shared";
 import type { SecretStorePort, SecretMetadata } from "@comis/core";
 import { systemNowMs } from "@comis/core";
@@ -110,8 +110,14 @@ function persistSecretsFile(
     // Step 4: write the JSON content
     fs.writeSync(tmpFd, json);
 
-    // Step 5: fsync the file to ensure data is durable on disk
-    fs.fsyncSync(tmpFd);
+    // Step 5: fsync the file to ensure data is durable on disk. Node's
+    // Permission Model disables the fsync API — swallow that refusal (the
+    // bytes are written) while surfacing genuine I/O errors.
+    try {
+      fs.fsyncSync(tmpFd);
+    } catch (fsyncErr) {
+      if (!isFsyncDisabledByPermissionModel(fsyncErr)) throw fsyncErr;
+    }
     fs.closeSync(tmpFd);
     tmpFd = undefined;
 
@@ -122,6 +128,8 @@ function persistSecretsFile(
     const dirFd = fs.openSync(dataDir, fs.constants.O_RDONLY);
     try {
       fs.fsyncSync(dirFd);
+    } catch (fsyncErr) {
+      if (!isFsyncDisabledByPermissionModel(fsyncErr)) throw fsyncErr;
     } finally {
       fs.closeSync(dirFd);
     }
