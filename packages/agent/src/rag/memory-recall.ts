@@ -359,14 +359,27 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       // we WARN and rank WITHOUT the signal — recall never fails because usefulness read failed.
       // The signal rides this side map into scoreWithBreakdown (MemorySearchResult unchanged).
       // TYPE-only port (the agent↛memory cut) — the daemon injects the concrete adapter.
+      //
+      // LEARN-01 (per-intent bucket, LLM-FREE): when intentReweight is ON the read scope carries
+      // the ALREADY-computed `intent` (the SAME pure classifyIntent done at :91 for lane
+      // reweighting — NO second classify, NO model call on this read path), so the adapter fetches
+      // that intent's usefulness bucket and a memory used-for-X ranks higher for an X-query. When
+      // `intent` is undefined (intentReweight off) the scope OMITS it and the adapter reads the
+      // global ('') bucket — DEGRADE-TO-GLOBAL is the same omitted-intent path that keeps the OFF
+      // case byte-identical to v2.8. An absent per-intent (and global) row falls through the
+      // UNCHANGED score.ts fold (usefulnessNorm(undefined) -> 0.5 -> factor 1.0), so recall never
+      // crashes on a missing bucket — it simply degrades to neutral.
       let usefulnessById: ReadonlyMap<string, UsefulnessSignal> | undefined;
       if (cfg.feedback?.enabled === true && deps.usefulnessStore !== undefined && ranked.length > 0) {
         const ids = ranked.map((r) => r.entry.id);
         // Scope mirrors memoryPort.search / the entity lane: tenant from the session key,
-        // agent from the recall arg (else the session key's agent, else "default").
+        // agent from the recall arg (else the session key's agent, else "default"). LEARN-01:
+        // the spread adds the per-intent bucket ONLY when `intent` is defined (intentReweight
+        // on); omitted -> the adapter's global ('') bucket (degrade-to-global, byte-identity off).
         const scope = {
           tenantId: sessionKey.tenantId,
           agentId: agentId ?? sessionKey.agentId ?? "default",
+          ...(intent !== undefined ? { intent } : {}),
         };
         const u = await deps.usefulnessStore.readUsefulness(ids, scope);
         if (u.ok) {
