@@ -339,9 +339,10 @@ describe("createTerminalSessionRegistry — HR-02 malformed-frame on stdout does
 
     // The corrupt worker is dropped: the running session flips to 'lost'.
     expect(registry.get(sessionId)?.status).toBe("lost");
-    // A WARN with errorKind:'protocol' was logged.
+    // A WARN with a closed-union errorKind ('validation' — the frame failed
+    // structural decode) was logged for the corrupt frame.
     const warn = logger.warn.mock.calls.find(
-      ([obj]) => (obj as { errorKind?: string }).errorKind === "protocol",
+      ([obj]) => (obj as { errorKind?: string }).errorKind === "validation",
     );
     expect(warn).toBeDefined();
   });

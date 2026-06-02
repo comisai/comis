@@ -65,7 +65,7 @@ const LENGTH_PREFIX_BYTES = 4;
  * is kilobytes; even a large scrollback dump is well under this). Anything
  * larger is treated as corrupt/hostile: the decoder REFUSES to buffer toward it
  * and throws {@link FrameTooLargeError} so the caller can drop the frame, log
- * `errorKind:"protocol"`, and — at the registry — treat the worker as corrupt
+ * `errorKind:"validation"`, and — at the registry — treat the worker as corrupt
  * and re-spawn it (HR-02). The load-bearing property is the bound itself.
  */
 export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
@@ -73,7 +73,7 @@ export const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 /**
  * Thrown by the decoder when a frame's declared body length exceeds
  * {@link MAX_FRAME_BYTES} (HR-01). Carries the offending `declaredBytes` and the
- * `maxBytes` ceiling so the caller can log a precise `errorKind:"protocol"`
+ * `maxBytes` ceiling so the caller can log a precise `errorKind:"validation"`
  * diagnostic and resync/re-spawn rather than grow the buffer toward a hostile
  * length. A typed error (not a bare `Error`) so the registry's stdout handler
  * (HR-02) can branch on `instanceof` if it ever needs frame-specific recovery.
@@ -143,6 +143,16 @@ export function createFrameDecoder(): { push(chunk: Buffer): TerminalFrame[] } {
       // corrupt, and re-spawns. The buffer is left intact (not consumed): a 2nd
       // push re-reads the same oversized prefix and re-throws — it never silently
       // accumulates the follow-on bytes.
+      //
+      // @allow-throw: the framer is a decode-protocol boundary — a typed decode
+      // error IS the contract here (symmetric with the built-in JSON.parse throw
+      // on the very next decode step). The sole caller (registry stdout 'data'
+      // handler, HR-02) wraps decoder.push in try/catch, logs errorKind:
+      // "validation", and drops/re-spawns the worker; it never reaches
+      // uncaughtException. Returning a Result here would force every push() caller
+      // (incl. the tests' in-process bridge) to branch on a discriminated union on
+      // the hot decode path for a condition that only fires on corrupt/hostile
+      // input — the throw + single guarded catch is the cleaner boundary.
       if (bodyLen > MAX_FRAME_BYTES) {
         throw new FrameTooLargeError(bodyLen, MAX_FRAME_BYTES);
       }

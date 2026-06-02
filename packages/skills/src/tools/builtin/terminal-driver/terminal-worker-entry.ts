@@ -438,7 +438,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       const { traceId, regenerated } = sanitizeTraceId(frame.traceId);
       if (regenerated) {
         logger.warn(
-          { sessionId: frame.sessionId, method: frame.method, hint: "invalid wire traceId; regenerated", errorKind: "protocol" as const },
+          { sessionId: frame.sessionId, method: frame.method, hint: "invalid wire traceId; regenerated", errorKind: "validation" as const },
           "terminal worker traceId sanitized",
         );
       }

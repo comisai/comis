@@ -359,7 +359,9 @@ export function createTerminalSessionRegistry(
           err instanceof FrameTooLargeError
             ? "oversized worker frame length (corrupt/hostile prefix); dropping worker"
             : "corrupt worker frame on stdout; dropping worker";
-        logger.warn({ err, hint, errorKind: "protocol" as const }, "terminal worker frame decode failed");
+        // errorKind:"validation" — the inbound frame failed structural decode
+        // (the closest closed-union member for a corrupt/malformed wire frame).
+        logger.warn({ err, hint, errorKind: "validation" as const }, "terminal worker frame decode failed");
         markRunningSessionsLost();
         clearWorker();
         return;
