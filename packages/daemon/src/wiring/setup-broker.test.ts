@@ -36,7 +36,7 @@ import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createFakeClock } from "../../../../test/support/fake-clock.js";
 import { createFakeTimers } from "../../../../test/support/fake-timers.js";
-import { createSecretManager, TypedEventBus } from "@comis/core";
+import { createSecretManager, createSecretManagerWithMutableHandle, TypedEventBus } from "@comis/core";
 import type { BrokerBinding } from "@comis/core";
 import { createMitmBroker, createSessionManager } from "@comis/infra";
 import { setupBroker } from "./setup-broker.js";
@@ -543,5 +543,96 @@ describe("setupBroker (INTEG-04 T-04-1..T-04-6) — in-process daemon-driven bro
     // Give a moment to ensure no upstream request was forwarded
     await new Promise((r) => setTimeout(r, 100));
     expect(upstream.receivedHeaders.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 03-04 — broker resolves newly upserted secretRef per-request (REQ-18)
+// ---------------------------------------------------------------------------
+// Verifies the shared-Map invariant: after mutableHandle.upsert(key, value),
+// the broker's per-request secretManager.get() resolves the new value without
+// any daemon restart. This is the load-bearing "additive no-restart" assertion
+// for the broker credential-injection path.
+
+describe("03-04 — broker resolves newly upserted secretRef per-request without restart (REQ-18)", () => {
+  const FIXTURE_HOST_03 = "broker-resolve-fixture.local";
+  let upstream03: Awaited<ReturnType<typeof makeUpstreamFixture>>;
+  let brokerPort03: number;
+  let brokerStop03: () => Promise<void>;
+  let sessionMgr03: ReturnType<typeof createSessionManager>;
+
+  afterEach(async () => {
+    await brokerStop03?.().catch(() => undefined);
+    upstream03?.server.close();
+  });
+
+  it("broker resolves newly upserted secret on next per-request get (no restart, shared-Map invariant)", async () => {
+    upstream03 = await makeUpstreamFixture();
+
+    // Create shared-Map SecretManager + MutableSecretManager handle.
+    // secretManager starts EMPTY — NEW_BROKER_KEY_03_04 is NOT in the store yet.
+    const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle({});
+
+    const clock = createFakeClock(1_700_000_000_000);
+    sessionMgr03 = createSessionManager({ clock });
+
+    const binding: BrokerBinding = {
+      secretRef: "NEW_BROKER_KEY_03_04",
+      hostRules: [
+        {
+          pattern: { kind: "exact", host: FIXTURE_HOST_03 },
+          inject: [
+            {
+              kind: "setHeader",
+              name: "authorization",
+              format: "bearer",
+            },
+          ],
+        },
+      ],
+    };
+
+    // Wire broker with the SHARED secretManager (same backing Map as mutableHandle).
+    // caManager intentionally absent: plain-TCP tunnel, no TLS termination.
+    const broker = createMitmBroker({
+      sessionManager: sessionMgr03,
+      secretManager,
+      bindings: [binding],
+      eventBus: new TypedEventBus(),
+      logger: createMockLogger(),
+      clock,
+      timers: createFakeTimers(),
+    });
+
+    brokerPort03 = await broker.start();
+    brokerStop03 = () => broker.stop();
+
+    // --- Step 1: Upsert NEW_BROKER_KEY_03_04 into the shared Map ---
+    // This simulates what the RPC handler does after env.set / secrets.set
+    // on a new name: mutableHandle.upsert(key, value).
+    // No daemon restart is performed — the shared Map is updated in-place.
+    mutableHandle.upsert("NEW_BROKER_KEY_03_04", "live-value");
+
+    // --- Step 2: Make a broker request — broker resolves via secretManager.get() ---
+    // The broker reads from the same backing Map on every request (per-request resolution).
+    // Since we just upserted, the new value is immediately visible.
+    const { proxyToken } = sessionMgr03.issueToken("integ-03-04-agent");
+
+    const { statusCode, socket } = await connectThroughProxy(
+      brokerPort03,
+      proxyToken,
+      `${FIXTURE_HOST_03}:${upstream03.port}`,
+    );
+    expect(statusCode).toBe(200);
+
+    await sendGetThroughTunnel(socket, FIXTURE_HOST_03, "/");
+    socket.destroy();
+
+    // Give the upstream a moment to record the request
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Upstream must have received the Authorization header with the upserted value
+    expect(upstream03.receivedHeaders.length).toBeGreaterThan(0);
+    expect(upstream03.receivedHeaders[0]?.["authorization"]).toBe("Bearer live-value");
   });
 });

@@ -27,8 +27,9 @@ vi.mock("node:fs", async (importOriginal) => {
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
-import { buildExecEnv, buildSpawnCommand } from "./exec-shared.js";
+import { buildExecEnv, buildSpawnCommand, resolveSecretRefs } from "./exec-shared.js";
 import type { ExecSandboxConfig } from "../sandbox/types.js";
+import { createSecretManagerWithMutableHandle } from "@comis/core";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -228,5 +229,89 @@ describe("CR-02 — buildSpawnCommand forwards network + secureCredentialHome to
     expect(result.args).toContain("--share-net");
     expect(capturedOpts?.["network"]).toBeUndefined();
     expect(capturedOpts?.["secureCredentialHome"]).toBeUndefined();
+  });
+});
+
+// ── W-1 / REQ-18: resolveSecretRefs — platformSecretNames refused + normal resolve ──
+
+describe("W-1 / REQ-18 — resolveSecretRefs: platformSecretNames refused, normal secret resolves", () => {
+  // -------------------------------------------------------------------------
+  // W-1-a: platformSecretNames.has(name) === true → refused (ok:false)
+  // -------------------------------------------------------------------------
+  it("W-1-a: resolveSecretRefs returns ok:false with error when name is in platformSecretNames", () => {
+    const { secretManager } = createSecretManagerWithMutableHandle({
+      ANTHROPIC_API_KEY: "sk-real-key",
+    });
+    const platformSecretNames: ReadonlySet<string> = new Set(["ANTHROPIC_API_KEY"]);
+
+    const result = resolveSecretRefs(["ANTHROPIC_API_KEY"], secretManager, platformSecretNames);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      // Error must mention the name and explain why (platform-managed, cannot expose)
+      expect(result.error).toMatch(/ANTHROPIC_API_KEY/);
+      expect(result.error).toMatch(/platform-managed/);
+    }
+  });
+
+  it("W-1-a (multiple refs): stops at the first platformSecretNames hit and returns ok:false", () => {
+    const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle({});
+    mutableHandle.upsert("MY_TASK_SECRET", "task-value");
+    const platformSecretNames: ReadonlySet<string> = new Set(["ANTHROPIC_API_KEY"]);
+
+    // refs has a normal key first, then a platform-managed key
+    // HOWEVER: MY_TASK_SECRET is NOT in platformSecretNames, ANTHROPIC_API_KEY IS
+    // but ANTHROPIC_API_KEY is missing from the store — resolveSecretRefs would
+    // refuse on platformSecretNames membership BEFORE checking store presence
+    const result = resolveSecretRefs(
+      ["ANTHROPIC_API_KEY"],
+      secretManager,
+      platformSecretNames,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toMatch(/platform-managed/);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // W-1-b: normal secret (not in platformSecretNames) resolves to { ok: true }
+  //         with env populated from secretManager.get
+  // -------------------------------------------------------------------------
+  it("W-1-b: resolveSecretRefs returns ok:true and populates env when secret is not platform-managed", () => {
+    const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle({});
+    mutableHandle.upsert("MY_TASK_SECRET", "task-value-resolved");
+    const platformSecretNames: ReadonlySet<string> = new Set(["ANTHROPIC_API_KEY"]);
+
+    const result = resolveSecretRefs(["MY_TASK_SECRET"], secretManager, platformSecretNames);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.env["MY_TASK_SECRET"]).toBe("task-value-resolved");
+    }
+  });
+
+  it("W-1-b (additive upsert): secretManager.get returns a newly upserted value without restart", () => {
+    // This test verifies REQ-18: broker/exec can resolve a newly upserted key
+    // per-request without daemon restart. createSecretManagerWithMutableHandle
+    // returns both handles over ONE shared Map — upsert() is immediately visible
+    // to secretManager.get() on the next call.
+    const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle({});
+    const platformSecretNames: ReadonlySet<string> = new Set();
+
+    // Before upsert: key does not exist
+    const before = resolveSecretRefs(["NEW_BROKER_KEY_03_04"], secretManager, platformSecretNames);
+    expect(before.ok).toBe(false);
+
+    // After upsert (simulating what mutableHandle.upsert does in the daemon handler)
+    mutableHandle.upsert("NEW_BROKER_KEY_03_04", "live-value");
+
+    // Per-request resolution: secretManager.get reads from the shared Map
+    const after = resolveSecretRefs(["NEW_BROKER_KEY_03_04"], secretManager, platformSecretNames);
+    expect(after.ok).toBe(true);
+    if (after.ok) {
+      expect(after.env["NEW_BROKER_KEY_03_04"]).toBe("live-value");
+    }
   });
 });

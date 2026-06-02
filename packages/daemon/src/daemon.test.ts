@@ -176,6 +176,7 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
     eventBus: createMockEventBus(),
     secretManager: {
       get: vi.fn().mockReturnValue(undefined),
+      has: vi.fn().mockReturnValue(false),
       keys: vi.fn().mockReturnValue([]),
     } as unknown as AppContainer["secretManager"],
     // Stage-2 scrub reads container.platformSecretNames after bootstrap.
@@ -1098,7 +1099,9 @@ describe("02-04 — selectSecretStore dispatch + scrub + store-wins", () => {
         "env.set",
         { key: "STRIPE_SECRET_KEY", value: "sk-stripe-test", _trustLevel: "admin" },
       );
-      expect(setResult).toMatchObject({ set: true, key: "STRIPE_SECRET_KEY", restarting: true });
+      // STRIPE_SECRET_KEY is a brand-new key (not in the mock secretManager),
+      // so the additive restart rule applies: restarting:false (live-applied).
+      expect(setResult).toMatchObject({ set: true, key: "STRIPE_SECRET_KEY", restarting: false });
     } finally {
       delete process.env["SECRETS_MASTER_KEY"];
       rmSync(freshDataDir, { recursive: true, force: true });
@@ -1155,7 +1158,9 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
       expect(setResult.set).toBe(true);
       expect(setResult.key).toBe("MY_API_KEY");
       expect(setResult.storage).toBe("file");
-      expect(setResult.restarting).toBe(true);
+      // MY_API_KEY is a brand-new key (not in the mock secretManager),
+      // so the additive restart rule applies: restarting:false (live-applied).
+      expect(setResult.restarting).toBe(false);
 
       // secrets.get must return the same value that was set
       const getResult = await instance.rpcCall(
@@ -1361,6 +1366,304 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
 
       // MY_CUSTOM_TOKEN must have been removed by stage-2 scrub (REQ-15)
       expect(process.env["MY_CUSTOM_TOKEN"]).toBeUndefined();
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 03-04: Additive no-restart integration — REQ-07/REQ-13/REQ-18
+// ---------------------------------------------------------------------------
+// End-to-end integration tests for the Phase 3 additive-no-restart behavior.
+// Verifies that the daemon satisfies Phase 3 ROADMAP success criteria:
+//   1. env.set BRAND_NEW_KEY → restarting:false, NO SIGUSR2, value live in store
+//   2. secrets.set OTHER_NEW_KEY → restarting:false, stored:true, NO SIGUSR2
+//   3. Value readable via secrets.get after additive env.set (live-applied)
+//   4. env.set EXISTING_KEY (rotation) → restarting:true, SIGUSR2 scheduled
+//   5. secrets.delete EXISTING → restarting:true, deleted:true, SIGUSR2 scheduled
+//   6. secrets.delete ABSENT → restarting:false, deleted:false, NO SIGUSR2
+
+describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () => {
+  const originalEnv = process.env;
+  const instances: DaemonInstance[] = [];
+  let killSpy: ReturnType<typeof vi.spyOn> | null = null;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(async () => {
+    // Restore process.kill spy before shutdown (prevent SIGUSR2 calls from
+    // interfering with shutdown). The spy is nulled after restoration.
+    if (killSpy) {
+      killSpy.mockRestore();
+      killSpy = null;
+    }
+    while (instances.length > 0) {
+      const inst = instances.shift()!;
+      try { await inst.shutdownHandle.trigger("test-cleanup"); } catch { /* ignore */ }
+      try { inst.shutdownHandle.dispose(); } catch { /* idempotent */ }
+    }
+    process.env = originalEnv;
+  });
+
+  // -------------------------------------------------------------------------
+  // 03-04-1: env.set NEW_KEY → restarting:false, SIGUSR2 NOT sent
+  // -------------------------------------------------------------------------
+  it("03-04-1: env.set on a brand-new key returns restarting:false (additive live-applied, no SIGUSR2)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-env-new-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // Spy on process.kill to verify SIGUSR2 is NOT sent (additive path)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      killSpy = vi.spyOn(process, "kill" as any).mockImplementation((() => true) as never);
+
+      const setResult = await instance.rpcCall(
+        "env.set",
+        { key: "BRAND_NEW_KEY_03_04", value: "hello-live", _trustLevel: "admin" },
+      ) as { set: boolean; key: string; storage: string; restarting: boolean };
+
+      // Let any async timers fire (rotation schedules SIGUSR2 after 200ms;
+      // additive path should NOT have scheduled one)
+      await new Promise((r) => setTimeout(r, 250));
+
+      expect(setResult.set).toBe(true);
+      expect(setResult.key).toBe("BRAND_NEW_KEY_03_04");
+      expect(setResult.restarting).toBe(false);
+
+      // SIGUSR2 must NOT have been sent (additive live-apply, no restart)
+      const sigusr2Calls = (killSpy.mock.calls as unknown[][]).filter(
+        (args) => args[0] === process.pid && args[1] === "SIGUSR2",
+      );
+      expect(sigusr2Calls.length).toBe(0);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 03-04-2: secrets.set OTHER_NEW_KEY → restarting:false, stored:true, no SIGUSR2
+  // -------------------------------------------------------------------------
+  it("03-04-2: secrets.set on a brand-new key returns restarting:false and stored:true (additive, no SIGUSR2)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-sec-new-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      killSpy = vi.spyOn(process, "kill" as any).mockImplementation((() => true) as never);
+
+      const setResult = await instance.rpcCall(
+        "secrets.set",
+        { name: "OTHER_NEW_KEY_03_04", value: "secret-live", _trustLevel: "admin" },
+      ) as { name: string; stored: boolean; restarting: boolean };
+
+      await new Promise((r) => setTimeout(r, 250));
+
+      expect(setResult.stored).toBe(true);
+      expect(setResult.name).toBe("OTHER_NEW_KEY_03_04");
+      expect(setResult.restarting).toBe(false);
+
+      const sigusr2Calls = (killSpy.mock.calls as unknown[][]).filter(
+        (args) => args[0] === process.pid && args[1] === "SIGUSR2",
+      );
+      expect(sigusr2Calls.length).toBe(0);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 03-04-3: daemon still responsive after additive env.set; value readable
+  // -------------------------------------------------------------------------
+  it("03-04-3: after additive env.set, daemon is responsive and value is readable via secrets.get", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-env-read-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      killSpy = vi.spyOn(process, "kill" as any).mockImplementation((() => true) as never);
+
+      // Step 1: additive write
+      const setResult = await instance.rpcCall(
+        "env.set",
+        { key: "BRAND_NEW_KEY_03_04", value: "hello-live", _trustLevel: "admin" },
+      ) as { set: boolean; restarting: boolean };
+      expect(setResult.set).toBe(true);
+      expect(setResult.restarting).toBe(false);
+
+      // Step 2: daemon must still be responsive — call another RPC
+      const getResult = await instance.rpcCall(
+        "secrets.get",
+        { name: "BRAND_NEW_KEY_03_04", _trustLevel: "admin" },
+      ) as { name: string; value: string | undefined; exists: boolean };
+
+      // The value was persisted to the file store by env.set (via secretStore.set)
+      // and is now readable via secrets.get (which reads from the same file store).
+      // This also proves the daemon did NOT restart (restart would reload from file;
+      // the value being immediately readable via the same instance proves live-apply).
+      expect(getResult.exists).toBe(true);
+      expect(getResult.value).toBe("hello-live");
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 03-04-4: env.set EXISTING_KEY → restarting:true (rotation interim)
+  // -------------------------------------------------------------------------
+  it("03-04-4: env.set on an existing key returns restarting:true (rotation, SIGUSR2 scheduled)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-env-exist-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      // Override bootstrap to return a container where secretManager.has("EXISTING_KEY") is true
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+      overrides.bootstrap = vi.fn().mockImplementation(() => {
+        const container = createMockContainer();
+        // Simulate the key already existing in the secretManager
+        (container.secretManager as { has: ReturnType<typeof vi.fn> }).has = vi.fn().mockImplementation(
+          (k: string) => k === "EXISTING_KEY_03_04",
+        );
+        return { ok: true, value: container };
+      });
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // Intercept SIGUSR2 so the test process doesn't actually restart
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      killSpy = vi.spyOn(process, "kill" as any).mockImplementation((() => true) as never);
+
+      const setResult = await instance.rpcCall(
+        "env.set",
+        { key: "EXISTING_KEY_03_04", value: "v2", _trustLevel: "admin" },
+      ) as { set: boolean; key: string; restarting: boolean };
+
+      // Advance past the 200ms timeout so the spy captures the SIGUSR2 call
+      await new Promise((r) => setTimeout(r, 250));
+
+      expect(setResult.set).toBe(true);
+      expect(setResult.restarting).toBe(true);
+
+      // SIGUSR2 must have been scheduled (rotation restart)
+      const sigusr2Calls = (killSpy.mock.calls as unknown[][]).filter(
+        (args) => args[0] === process.pid && args[1] === "SIGUSR2",
+      );
+      expect(sigusr2Calls.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 03-04-5: secrets.delete EXISTING → restarting:true, deleted:true
+  // -------------------------------------------------------------------------
+  it("03-04-5: secrets.delete on an existing key returns restarting:true and deleted:true (deletion, SIGUSR2 scheduled)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-sec-del-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // First create the secret so it exists in the file store
+      await instance.rpcCall(
+        "secrets.set",
+        { name: "DELETE_TARGET_03_04", value: "to-be-deleted", _trustLevel: "admin" },
+      );
+
+      // Now the key is in the store; secretManager.has() uses the mock.
+      // We need to make has() return true for DELETE_TARGET_03_04.
+      // Override the mock for this call only by updating the spy.
+      const container = (instance as unknown as { container: AppContainer }).container;
+      (container.secretManager as { has: ReturnType<typeof vi.fn> }).has = vi.fn().mockImplementation(
+        (k: string) => k === "DELETE_TARGET_03_04",
+      );
+
+      // Intercept SIGUSR2 so the test process doesn't actually restart
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      killSpy = vi.spyOn(process, "kill" as any).mockImplementation((() => true) as never);
+
+      const delResult = await instance.rpcCall(
+        "secrets.delete",
+        { name: "DELETE_TARGET_03_04", _trustLevel: "admin" },
+      ) as { name: string; deleted: boolean; restarting: boolean };
+
+      await new Promise((r) => setTimeout(r, 250));
+
+      expect(delResult.deleted).toBe(true);
+      expect(delResult.restarting).toBe(true);
+
+      const sigusr2Calls = (killSpy.mock.calls as unknown[][]).filter(
+        (args) => args[0] === process.pid && args[1] === "SIGUSR2",
+      );
+      expect(sigusr2Calls.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 03-04-6: secrets.delete ABSENT → restarting:false, deleted:false, NO SIGUSR2
+  // -------------------------------------------------------------------------
+  it("03-04-6: secrets.delete on a non-existent key returns restarting:false and deleted:false (no-op, no SIGUSR2)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-sec-noexist-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      killSpy = vi.spyOn(process, "kill" as any).mockImplementation((() => true) as never);
+
+      const delResult = await instance.rpcCall(
+        "secrets.delete",
+        { name: "NEVER_EXISTED_03_04", _trustLevel: "admin" },
+      ) as { name: string; deleted: boolean; restarting: boolean };
+
+      await new Promise((r) => setTimeout(r, 250));
+
+      expect(delResult.deleted).toBe(false);
+      expect(delResult.restarting).toBe(false);
+
+      const sigusr2Calls = (killSpy.mock.calls as unknown[][]).filter(
+        (args) => args[0] === process.pid && args[1] === "SIGUSR2",
+      );
+      expect(sigusr2Calls.length).toBe(0);
     } finally {
       rmSync(freshDataDir, { recursive: true, force: true });
     }
