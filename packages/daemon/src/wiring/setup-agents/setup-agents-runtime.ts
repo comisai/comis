@@ -36,6 +36,7 @@ import {
   createComisSessionManager,
   cleanupStaleLocks,
   createAuthStorageAdapter,
+  DEFAULT_PROVIDER_KEYS,
   createModelRegistryAdapter,
   registerCustomProviders,
   createAuthProfileManager,
@@ -208,6 +209,20 @@ export async function setupSingleAgent(
   const piAuthStorage = createAuthStorageAdapter({
     secretManager: scopedManager,
     customProviderEntries,
+  });
+
+  // Phase 6 (REQ-13): hot-swap provider API keys on secret rotation without restart
+  container.eventBus.on("secret:changed", ({ name, action }) => {
+    const entry = Object.entries(DEFAULT_PROVIDER_KEYS).find(([, k]) => k === name);
+    if (!entry) return;
+    const [provider] = entry;
+    if (action === "upserted") {
+      const newKey = container.secretManager.get(name);
+      if (newKey) piAuthStorage.setRuntimeApiKey(provider, newKey);
+    } else if (action === "removed") {
+      piAuthStorage.removeRuntimeApiKey(provider); // OQ-1 resolved: dedicated remove API (auth-storage.d.ts:67)
+    }
+    // NEVER log name or value (residency invariant — REQ-10)
   });
 
   // FIRST daemon-side OAuth wiring — see setup-agents-oauth.ts for the full
