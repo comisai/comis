@@ -425,3 +425,76 @@ describe("close() does NOT close the shared secretsDb handle", () => {
     await expect(store.close()).resolves.not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Group 10 — decrypt-failure rejects (IN-02)
+// ---------------------------------------------------------------------------
+
+describe("Group 10 — decrypt-failure rejects, does not return garbage", () => {
+  it("tokens() rejects when the row was encrypted with a different key", async () => {
+    const otherCrypto = createSecretsCrypto(Buffer.alloc(32, 0xff));
+    const db = new Database(":memory:");
+    const writer = createMcpTokenStoreEncrypted(db, otherCrypto);
+    await writer.saveTokens(SERVER, TOKENS);
+
+    const reader = createMcpTokenStoreEncrypted(db, testCrypto);
+    await expect(reader.tokens(SERVER)).rejects.toThrow();
+  });
+
+  it("clientInformation() rejects when the row was encrypted with a different key", async () => {
+    const otherCrypto = createSecretsCrypto(Buffer.alloc(32, 0xff));
+    const db = new Database(":memory:");
+    const writer = createMcpTokenStoreEncrypted(db, otherCrypto);
+    await writer.saveClientInformation(SERVER, CLIENT_INFO);
+
+    const reader = createMcpTokenStoreEncrypted(db, testCrypto);
+    await expect(reader.clientInformation(SERVER)).rejects.toThrow();
+  });
+
+  it("discoveryState() rejects when the row was encrypted with a different key", async () => {
+    const otherCrypto = createSecretsCrypto(Buffer.alloc(32, 0xff));
+    const db = new Database(":memory:");
+    const writer = createMcpTokenStoreEncrypted(db, otherCrypto);
+    await writer.saveDiscoveryState(SERVER, DISCOVERY);
+
+    const reader = createMcpTokenStoreEncrypted(db, testCrypto);
+    await expect(reader.discoveryState(SERVER)).rejects.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Group 11 — created_at preserved on rotation (IN-01 regression guard)
+// ---------------------------------------------------------------------------
+
+describe("Group 11 — created_at preserved on token rotation (IN-01)", () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+  });
+
+  it("saveTokens twice: created_at from first write is preserved, updated_at advances", async () => {
+    const store = createMcpTokenStoreEncrypted(db, testCrypto);
+    const first: OAuthTokens = { access_token: "first_tok", token_type: "Bearer", expires_in: 3600 };
+    const second: OAuthTokens = { access_token: "second_tok", token_type: "Bearer", expires_in: 7200 };
+
+    await store.saveTokens(SERVER, first);
+    const rowAfterFirst = db
+      .prepare("SELECT created_at, updated_at FROM mcp_credentials WHERE server=? AND artifact='tokens'")
+      .get(SERVER) as { created_at: number; updated_at: number };
+    const createdAtOriginal = rowAfterFirst.created_at;
+
+    // Small pause to ensure updated_at can differ (system clock resolution)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    await store.saveTokens(SERVER, second);
+    const rowAfterSecond = db
+      .prepare("SELECT created_at, updated_at FROM mcp_credentials WHERE server=? AND artifact='tokens'")
+      .get(SERVER) as { created_at: number; updated_at: number };
+
+    // created_at must be preserved from the original insert
+    expect(rowAfterSecond.created_at).toBe(createdAtOriginal);
+    // updated_at must be >= original created_at (advanced or equal)
+    expect(rowAfterSecond.updated_at).toBeGreaterThanOrEqual(createdAtOriginal);
+  });
+});
