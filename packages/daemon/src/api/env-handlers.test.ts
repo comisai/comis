@@ -345,20 +345,20 @@ describe("env.set handler", () => {
   // Restart scheduling
   // -----------------------------------------------------------------------
 
-  it("schedules SIGUSR2 restart after successful set on EXISTING key", async () => {
+  it("06-02: env.set on EXISTING key live-applies (no SIGUSR2, restarting:false)", async () => {
     const secretStore = createMockSecretStore();
-    // Use a container where has() returns true (existing key) so SIGUSR2 fires.
+    // Use a container where has() returns true (existing key — rotation).
     const container = createMockContainer(createMockEventBus(), "encrypted");
     (container.secretManager.has as ReturnType<typeof vi.fn>).mockReturnValue(true);
     const deps = makeDeps({ secretStore, container });
     const handlers = createEnvHandlers(deps);
 
-    await handlers["env.set"]!({ key: "MY_KEY", value: "val", _trustLevel: "admin" });
+    const result = await handlers["env.set"]!({ key: "MY_KEY", value: "val", _trustLevel: "admin" }) as Record<string, unknown>;
 
-    // Advance timers to trigger the 200ms setTimeout
-    vi.advanceTimersByTime(200);
-
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
+    // P4b/06-02: rotation live-applies — no SIGUSR2, restarting:false always.
+    vi.advanceTimersByTime(500);
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(result.restarting).toBe(false);
   });
 
   // -----------------------------------------------------------------------
@@ -761,7 +761,7 @@ describe("03-03 — additive restart rule (env.set)", () => {
     expect(killSpy).not.toHaveBeenCalled();
   });
 
-  it("env.set on a key already in secretManager returns restarting true and schedules SIGUSR2", async () => {
+  it("06-02: env.set on a key already in secretManager live-applies (restarting:false, no SIGUSR2)", async () => {
     const eventBus = createMockEventBus();
     const container = makeContainerWithManager({ EXISTING_KEY: "old-value" }, eventBus);
     const mutableSecretManager = createSecretManagerWithMutableHandle({}).mutableHandle;
@@ -770,9 +770,10 @@ describe("03-03 — additive restart rule (env.set)", () => {
 
     const result = await handlers["env.set"]!({ key: "EXISTING_KEY", value: "new-value", _trustLevel: "admin" }) as Record<string, unknown>;
 
-    expect(result.restarting).toBe(true);
-    vi.advanceTimersByTime(200);
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
+    // P4b/06-02: rotation live-applies — restarting:false, no SIGUSR2.
+    expect(result.restarting).toBe(false);
+    vi.advanceTimersByTime(500);
+    expect(killSpy).not.toHaveBeenCalled();
   });
 
   it("env.set on new key emits secret:changed with action upserted and no value field", async () => {

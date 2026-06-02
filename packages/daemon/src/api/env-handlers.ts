@@ -40,7 +40,6 @@ import {
   stripInternalFields,
   systemGetEnv,
   systemNowMs,
-  systemSetTimeout,
 } from "@comis/core";
 
 import type { RpcHandler } from "./types.js";
@@ -218,20 +217,11 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
           "Env secret set",
         );
 
-        // Additive restart rule: new names live-apply (no restart); existing names restart.
-        if (!isNew) {
-          // Existing name (rotation): restart so boot-cached consumers refresh (P4b removes this).
-          systemSetTimeout(() => { process.kill(process.pid, "SIGUSR2"); }, 200);
-        } else {
-          // New name: upsert into live Map so broker/exec observe it on next request.
-          deps.mutableSecretManager.upsert(key, value);
-        }
+        // Live-apply for ALL cases (new and rotation): upsert into shared Map so
+        // broker/exec observe the new value on the very next request. No restart needed.
+        deps.mutableSecretManager.upsert(key, value);
 
         // Emit secret:changed event — metadata only, never the value (residency — T-03-09).
-        // Note: for rotation writes (!isNew), secretManager.get() still returns the OLD
-        // value until the daemon restarts (SIGUSR2 was scheduled above). Phase 6/P4b
-        // will make rotation live-apply too. Subscribers must not read get() for the
-        // new value in response to this event on the rotation path.
         deps.container.eventBus.emit("secret:changed", {
           name: key,
           action: "upserted" as const,
@@ -244,7 +234,7 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
           // Reflect the active storage mode (REQ-14). Env mode never reaches
           // here — its set() returns err before this line.
           storage: deps.container.config.security.storage as "encrypted" | "file",
-          restarting: !isNew,
+          restarting: false as const,
         };
         if (systemGetEnv("NODE_ENV") !== "production") {
           EnvSetContract.response.parse(result);

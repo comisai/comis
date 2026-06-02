@@ -56,7 +56,6 @@ import {
   stripInternalFields,
   systemGetEnv,
   systemNowMs,
-  systemSetTimeout,
 } from "@comis/core";
 
 import type { RpcHandler } from "./types.js";
@@ -401,27 +400,18 @@ export function createSecretsHandlers(
         "Secret stored",
       );
 
-      // Additive restart rule: new names live-apply; existing names restart.
-      if (!isNew) {
-        // Existing name (rotation): restart so boot-cached consumers refresh (P4b removes this).
-        systemSetTimeout(() => { process.kill(process.pid, "SIGUSR2"); }, 200);
-      } else {
-        // New name: upsert into live Map so broker/exec observe it on next request.
-        deps.mutableSecretManager.upsert(name, value);
-      }
+      // Live-apply for ALL cases (new and rotation): upsert into shared Map so
+      // broker/exec observe the new value on the very next request. No restart needed.
+      deps.mutableSecretManager.upsert(name, value);
 
       // Emit secret:changed event — metadata only, never the value (residency — T-03-09).
-      // Note: for rotation writes (!isNew), secretManager.get() still returns the OLD
-      // value until the daemon restarts (SIGUSR2 was scheduled above). Phase 6/P4b
-      // will make rotation live-apply too. Subscribers must not read get() for the
-      // new value in response to this event on the rotation path.
       deps.container.eventBus.emit("secret:changed", {
         name,
         action: "upserted" as const,
         timestamp: systemNowMs(),
       });
 
-      const result = { name, stored: true, restarting: !isNew };
+      const result = { name, stored: true, restarting: false as const };
       if (systemGetEnv("NODE_ENV") !== "production") {
         SecretsSetContract.response.parse(result);
       }
@@ -590,13 +580,11 @@ export function createSecretsHandlers(
         "Secret deleted",
       );
 
-      // Delete restart rule: only emit/restart if the name was actually tracked.
-      // No-op deletes (name absent from Map) skip both SIGUSR2 and secret:changed.
+      // Delete live-apply: only emit if the name was actually tracked.
+      // No-op deletes (name absent from Map) skip both remove and secret:changed.
       if (existed) {
         // Remove from live Map to keep it consistent with the store.
         deps.mutableSecretManager.remove(name);
-        // Delete is rotation-like: boot-cached consumers may hold the value — restart (P4b removes).
-        systemSetTimeout(() => { process.kill(process.pid, "SIGUSR2"); }, 200);
         // Emit secret:changed — metadata only, never the value (residency — T-03-09).
         deps.container.eventBus.emit("secret:changed", {
           name,
@@ -609,7 +597,7 @@ export function createSecretsHandlers(
       // consistent: if the Map tracked the name (existed=true), deletion is
       // authoritative regardless of any store soft-delete quirk. This prevents
       // the { deleted: false, restarting: true } contradictory state (WR-02).
-      const result = { name, deleted: existed || delResult.value, restarting: existed };
+      const result = { name, deleted: existed || delResult.value, restarting: false as const };
       if (systemGetEnv("NODE_ENV") !== "production") {
         SecretsDeleteContract.response.parse(result);
       }

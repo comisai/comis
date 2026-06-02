@@ -402,7 +402,7 @@ describe("03-03 — secrets restart-truth and event emit", () => {
     expect(result.restarting).toBe(false);
   });
 
-  it("secrets.set on an existing name returns restarting true", async () => {
+  it("06-02: secrets.set on an existing name live-applies (restarting:false)", async () => {
     const { handlers } = makeHandlersWithSecretManager({ EXISTING_SECRET: "old-val" });
     const result = await handlers["secrets.set"]!({
       _trustLevel: "admin",
@@ -410,10 +410,11 @@ describe("03-03 — secrets restart-truth and event emit", () => {
       value: "new-val",
     }) as Record<string, unknown>;
 
-    expect(result.restarting).toBe(true);
+    // P4b/06-02: rotation live-applies — restarting:false always.
+    expect(result.restarting).toBe(false);
   });
 
-  it("secrets.set on existing name schedules SIGUSR2 restart", async () => {
+  it("06-02: secrets.set on existing name does not schedule SIGUSR2 restart", async () => {
     const { handlers } = makeHandlersWithSecretManager({ EXISTING_SECRET: "old-val" });
 
     await handlers["secrets.set"]!({
@@ -422,11 +423,11 @@ describe("03-03 — secrets restart-truth and event emit", () => {
       value: "new-val",
     });
 
-    vi.advanceTimersByTime(200);
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
+    vi.advanceTimersByTime(500);
+    expect(killSpy).not.toHaveBeenCalled();
   });
 
-  it("secrets.delete on an existing name returns restarting true", async () => {
+  it("06-02: secrets.delete on an existing name live-applies (restarting:false)", async () => {
     const { handlers } = makeHandlersWithSecretManager({ TO_DELETE: "val" }, {
       delete: vi.fn(() => ok(true)),
     });
@@ -435,7 +436,8 @@ describe("03-03 — secrets restart-truth and event emit", () => {
       name: "TO_DELETE",
     }) as Record<string, unknown>;
 
-    expect(result.restarting).toBe(true);
+    // P4b/06-02: delete live-applies — restarting:false always.
+    expect(result.restarting).toBe(false);
   });
 
   it("secrets.delete on a name not in secretManager returns restarting false and deleted false", async () => {
@@ -534,7 +536,7 @@ describe("03-03 — secrets restart-truth and event emit", () => {
     expect(result.restarting).toBe(false);
   });
 
-  it("secrets.delete: deleted=true and restarting=true when secret is in both Map and store (normal case)", async () => {
+  it("secrets.delete: deleted=true when secret is in both Map and store (normal case)", async () => {
     const { handlers } = makeHandlersWithSecretManager(
       { BOTH_KEY: "val" }, // Map has it — existed=true
       { delete: vi.fn(() => ok(true)) }, // store also deletes it
@@ -546,14 +548,15 @@ describe("03-03 — secrets restart-truth and event emit", () => {
     }) as Record<string, unknown>;
 
     expect(result.deleted).toBe(true);
-    expect(result.restarting).toBe(true);
+    // P4b/06-02: restarting:false always — live-applies without restart.
+    expect(result.restarting).toBe(false);
   });
 
   it("secrets.delete: deleted=true (not false) when Map had key (existed=true) even if store.delete returns false (WR-02 soft-delete regression guard)", async () => {
     // Simulates a hypothetical store soft-delete regression: existed=true (Map has it)
     // but store.delete returns false. Without the fix, this produces
-    // { deleted: false, restarting: true } — CLI shows "Secret not found" while
-    // SIGUSR2 fires. With existed||delResult.value the response is consistent.
+    // { deleted: false } — CLI shows "Secret not found" even though Map tracked it.
+    // With existed||delResult.value the deleted field is consistent.
     const { handlers } = makeHandlersWithSecretManager(
       { SOFT_DELETE_KEY: "val" }, // Map has it — existed=true
       { delete: vi.fn(() => ok(false)) }, // store soft-delete returns false (regression scenario)
@@ -567,7 +570,8 @@ describe("03-03 — secrets restart-truth and event emit", () => {
     // deleted must be true because Map had the key (existed=true) — the Map is
     // authoritative for what was live-tracked (existed || delResult.value).
     expect(result.deleted).toBe(true);
-    expect(result.restarting).toBe(true);
+    // P4b/06-02: restarting:false always — live-applies without restart.
+    expect(result.restarting).toBe(false);
   });
 });
 
