@@ -14,7 +14,11 @@
  * to abstain at call time; the cron no-key discipline), builds `createDialecticSeam`, and a
  * `buildDialecticRecall(agentId)` factory that constructs the FULL `createMemoryRecall` (NOT
  * `memoryApi.search`) over the daemon's store set + the per-agent RagConfig — reconstructing
- * the A1 deps + config exactly as prompt-assembly's executor read path does.
+ * the A1 deps + config exactly as prompt-assembly's executor read path does, INCLUDING the two
+ * v2.9 recall-config inputs the main path passes (the main↔dialectic recall-parity fix): the
+ * `forget` FadeMem decay gate (WARNING-2 / FORGET-01) and the LLM-free tuned-alpha overlay
+ * (WARNING-1 / LEARN-03 — gated on `rag.onlineTuning.enabled`, applied via `buildScoringAlphas`
+ * with the trust weight STILL config-frozen, belt #2). Both default-OFF ⇒ byte-identical recall.
  *
  * The agent receives the store port TYPEs only (the agent↛memory build cut is untouched —
  * every store dep is a @comis/core port type; the concrete adapters are daemon-constructed
@@ -28,6 +32,7 @@ import {
   resolveProviderFamily,
   createDialecticSeam,
   createMemoryRecall,
+  buildScoringAlphas,
   type MemoryRecall,
   type DialecticParsed,
   type DialecticSeamDeps,
@@ -44,6 +49,8 @@ import type {
   TripleStorePort,
   MemoryEmbeddingStore,
   MemoryUsefulnessStore,
+  TunedAlphaStore,
+  TunedAlphaVector,
   TypedEventBus,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
@@ -60,6 +67,14 @@ export interface DialecticStoreSet {
   tripleStore?: TripleStorePort;
   embeddingStore?: MemoryEmbeddingStore;
   usefulnessStore?: MemoryUsefulnessStore;
+  /** Tuned-alpha store (LEARN-03 — Track H2). When present AND the invoking agent's
+   *  `rag.onlineTuning.enabled`, the dialectic recall reads the learned 4-tuple at recall time
+   *  (scoped to (tenant, agent)) and overlays the four non-trust alphas via `buildScoringAlphas`
+   *  — the SAME deterministic, LLM-free overlay prompt-assembly applies (the main↔dialectic recall
+   *  parity fix). Absent OR tuning-off OR no learned row ⇒ the static `rag.scoring` is used
+   *  unchanged (default-OFF byte-identity). The TRUST weight is NEVER tuned (config-sourced in
+   *  buildScoringAlphas, belt #2). A @comis/core port TYPE (the agent↛memory cut). */
+  tunedAlphaStore?: TunedAlphaStore;
 }
 
 /** Injected dependencies for the dialectic wiring. CR-04: the dialectic resolves PER-AGENT —
@@ -81,6 +96,11 @@ export interface DialecticWiringDeps {
   providers: Record<string, { apiKeyName?: string } | undefined>;
   /** The daemon-constructed recall store set (the SAME stores prompt-assembly wires). */
   stores: DialecticStoreSet;
+  /** The configured tenant (`container.config.tenantId`) — the (tenant, agent) scope for the
+   *  LEARN-03 tuned-alpha read on the dialectic recall path, mirroring prompt-assembly's
+   *  `deps.tenantId ?? sessionKey.tenantId` apply-site scope. Required so a tuned vector written
+   *  under one tenant is never read for another. */
+  tenantId: string;
   /** Wall-clock reads for the seam + recall recency boost (via the injected clock port, never a wall-clock global). */
   clock: ClockPort;
   /** Timer port for the recall rerank deadline + the seam abort timer wrapping. */
@@ -122,7 +142,12 @@ export interface DialecticBootSlice {
   agentsConfig: Record<string, PerAgentConfig>;
   container: {
     secretManager: { get: (name: string) => string | undefined };
-    config: { providers?: { entries?: Record<string, { apiKeyName?: string } | undefined> } };
+    config: {
+      providers?: { entries?: Record<string, { apiKeyName?: string } | undefined> };
+      /** The configured tenant — the (tenant, agent) scope for the LEARN-03 tuned-alpha read on
+       *  the dialectic recall path (the SAME field daemon.ts reads for the handler's tenantId). */
+      tenantId: string;
+    };
     eventBus?: TypedEventBus;
   };
   memoryAdapter: MemoryPort;
@@ -133,6 +158,11 @@ export interface DialecticBootSlice {
   tripleStore?: TripleStorePort;
   embeddingStore?: MemoryEmbeddingStore;
   usefulnessStore?: MemoryUsefulnessStore;
+  /** Tuned-alpha store (LEARN-03) — the SAME concrete adapter daemon.ts threads into
+   *  createPiExecutor (built in setup-memory on the shared db). Threaded onto the dialectic recall
+   *  so `memory.ask` applies the SAME tuned-alpha overlay as prompt-assembly. A @comis/core port
+   *  TYPE (the agent↛memory cut); the seam/recall consume the TYPE only. */
+  tunedAlphaStore?: TunedAlphaStore;
   clock: ClockPort;
   timers?: TimerPort;
   logger: ComisLogger;
@@ -159,7 +189,12 @@ export function dialecticWiringDepsFromBoot(c: DialecticBootSlice): DialecticWir
       tripleStore: c.tripleStore,
       embeddingStore: c.embeddingStore,
       usefulnessStore: c.usefulnessStore,
+      // LEARN-03/DIAL: thread the tuned-alpha store so the dialectic recall applies the SAME
+      // buildScoringAlphas overlay as the main path (the main↔dialectic recall-parity fix).
+      tunedAlphaStore: c.tunedAlphaStore,
     },
+    // The (tenant, agent) scope for the dialectic's tuned-alpha read (mirrors the handler's tenantId).
+    tenantId: c.container.config.tenantId,
     clock: c.clock,
     timers: c.timers,
     eventBus: c.container.eventBus,
@@ -179,7 +214,7 @@ const DIALECTIC_DEFAULT_MAX_RECALL = 10;
  * for the seam, RagConfig for recall, maxRecall for the DoS bound), memoizing the seam per agent.
  */
 export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring {
-  const { defaultAgentId, agentsConfig, secretManager, providers, stores, clock, timers, eventBus, logger } = deps;
+  const { defaultAgentId, agentsConfig, secretManager, providers, stores, tenantId, clock, timers, eventBus, logger } = deps;
 
   // The cost gate: enable when ANY agent opts in (CR-04 — a non-default opt-in must not be dead).
   // No agent enabled ⇒ no seam/recall/maxRecall ⇒ the handler abstains (no query-time-LLM wired).
@@ -257,38 +292,91 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
   // ignored its agentId param and always read the default agentʼs rag — so a non-default agentʼs
   // includeTrustLevels / maxResults / scoring were never honored). The FULL createMemoryRecall
   // (trust-filtered) is reconstructed exactly as prompt-assemblyʼs executor read path does.
+  //
+  // v2.9 main↔dialectic recall-parity fix:
+  //   - WARNING-2 (FORGET-01/DIAL): `forget` (the FadeMem decay gate) is now passed — the SAME
+  //     field the main path passes at prompt-assembly.ts:854 — so memory.ask applies the per-type
+  //     decay when `rag.forget.enabled`. Default-OFF byte-identity holds (score.ts forces the
+  //     forgetFactor to EXACTLY 1.0 when off).
+  //   - WARNING-1 (LEARN-03/DIAL): the LLM-free tuned-alpha overlay. GATED on
+  //     `rag.onlineTuning.enabled` AND a present `tunedAlphaStore`, the learned 4-tuple is read
+  //     (scoped to (tenant, agent)) at recall time and overlaid via `buildScoringAlphas` — the
+  //     SAME deterministic, single-source-of-truth overlay prompt-assembly applies. Default-OFF
+  //     byte-identity holds (no gate / no store / no row ⇒ the static `rag.scoring` unchanged).
+  //     The TRUST weight stays config-sourced (buildScoringAlphas belt #2) — the bandit can NEVER
+  //     move trust on the dialectic path, exactly as on the main path.
+  //
+  // The factory stays SYNCHRONOUS (`(agentId) => MemoryRecall`; the handler reads it without an
+  // `await`). The tuned-alpha read is async + needs the (tenant, agent) scope, so it runs at
+  // recall-CALL time inside the returned orchestrator's `.recall()` — where the live SessionKey
+  // scope exists — exactly once per memory.ask (mirroring prompt-assembly's once-per-recall read).
   const buildDialecticRecall = (agentId: string): MemoryRecall => {
     const rag = configFor(agentId).rag;
     // FEED-03: `feedback` predates its config landing — structural-widen like prompt-assembly.
     const ragFeedback = (rag as typeof rag & { feedback?: { enabled: boolean } }).feedback;
-    return createMemoryRecall(
-      {
-        memoryPort: stores.memoryPort,
-        ...(stores.rerankerPort !== undefined ? { reranker: stores.rerankerPort } : {}),
-        ...(stores.entityStore !== undefined ? { entityStore: stores.entityStore } : {}),
-        ...(stores.temporalStore !== undefined ? { temporalStore: stores.temporalStore } : {}),
-        ...(stores.causalStore !== undefined ? { causalStore: stores.causalStore } : {}),
-        ...(stores.tripleStore !== undefined ? { tripleStore: stores.tripleStore } : {}),
-        ...(stores.embeddingStore !== undefined ? { embeddingStore: stores.embeddingStore } : {}),
-        ...(stores.usefulnessStore !== undefined ? { usefulnessStore: stores.usefulnessStore } : {}),
-        ...(timers !== undefined ? { timers } : {}),
-        clock,
-        logger,
-        ...(eventBus !== undefined ? { eventBus } : {}),
+    // LEARN-03: `onlineTuning` is read through a structural widening (the SAME posture as
+    // prompt-assembly.ts:804-806) so the gate compiles regardless of RagConfig type drift.
+    const onlineTuningEnabled =
+      (rag as typeof rag & { onlineTuning?: { enabled: boolean } }).onlineTuning?.enabled === true;
+
+    // Construct the FULL orchestrator with a resolved `scoring` (config, or the tuned overlay).
+    // Everything except `scoring` is identical to the main path's recall deps/config.
+    const buildWithScoring = (scoring: typeof rag.scoring): MemoryRecall =>
+      createMemoryRecall(
+        {
+          memoryPort: stores.memoryPort,
+          ...(stores.rerankerPort !== undefined ? { reranker: stores.rerankerPort } : {}),
+          ...(stores.entityStore !== undefined ? { entityStore: stores.entityStore } : {}),
+          ...(stores.temporalStore !== undefined ? { temporalStore: stores.temporalStore } : {}),
+          ...(stores.causalStore !== undefined ? { causalStore: stores.causalStore } : {}),
+          ...(stores.tripleStore !== undefined ? { tripleStore: stores.tripleStore } : {}),
+          ...(stores.embeddingStore !== undefined ? { embeddingStore: stores.embeddingStore } : {}),
+          ...(stores.usefulnessStore !== undefined ? { usefulnessStore: stores.usefulnessStore } : {}),
+          ...(timers !== undefined ? { timers } : {}),
+          clock,
+          logger,
+          ...(eventBus !== undefined ? { eventBus } : {}),
+        },
+        {
+          maxResults: rag.maxResults,
+          minScore: rag.minScore,
+          includeTrustLevels: rag.includeTrustLevels,
+          rerank: rag.rerank,
+          // WARNING-1: the deterministic apply overlay (config alphas, or the tuned 4-tuple with
+          // the trust weight STILL from config — belt #2). buildScoringAlphas with `undefined`
+          // returns `rag.scoring` unchanged (the default-OFF byte-identity no-op).
+          scoring,
+          lanes: rag.lanes,
+          entityLane: rag.entityLane,
+          mmr: rag.mmr,
+          queryUnderstanding: rag.queryUnderstanding,
+          // WARNING-2: the FadeMem decay gate — the SAME field prompt-assembly.ts:854 passes.
+          forget: rag.forget,
+          ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
+        },
+      );
+
+    // Default-OFF fast path: no tuning gate OR no store ⇒ the tuned store is NEVER read and the
+    // recall config is byte-identical to a static-scoring build (no wrapper indirection cost).
+    if (!onlineTuningEnabled || stores.tunedAlphaStore === undefined) {
+      return buildWithScoring(rag.scoring);
+    }
+
+    // Tuning ON + a store present: do the gated, scoped tuned-alpha read at recall-CALL time
+    // (where the live scope exists), overlay via buildScoringAlphas, then delegate. The read is
+    // PURE + non-fatal (a read failure → undefined → byte-identical config fallback); NO model
+    // call crosses onto the recall hot path. Scoped to (tenant, agent) — a tuned vector written
+    // under one scope is never read for another (the TunedAlphaStore isolation boundary).
+    const tunedAlphaStore = stores.tunedAlphaStore;
+    return {
+      async recall(query, sessionKey, recallAgentId) {
+        let tunedVector: TunedAlphaVector | undefined;
+        const tr = await tunedAlphaStore.read({ tenantId, agentId });
+        if (tr.ok) tunedVector = tr.value;
+        const inner = buildWithScoring(buildScoringAlphas(rag.scoring, tunedVector));
+        return inner.recall(query, sessionKey, recallAgentId);
       },
-      {
-        maxResults: rag.maxResults,
-        minScore: rag.minScore,
-        includeTrustLevels: rag.includeTrustLevels,
-        rerank: rag.rerank,
-        scoring: rag.scoring,
-        lanes: rag.lanes,
-        entityLane: rag.entityLane,
-        mmr: rag.mmr,
-        queryUnderstanding: rag.queryUnderstanding,
-        ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
-      },
-    );
+    };
   };
 
   // CR-02/CR-04: the per-agent DoS bound the handler clamps `limit` to — the INVOKING agentʼs

@@ -91,6 +91,8 @@ function makeDeps(args: {
     secretManager: makeSecretManager(args.key),
     providers: args.providers ?? {},
     stores: makeStoreSet(),
+    // The (tenant, agent) scope for the LEARN-03 tuned-alpha read on the dialectic recall path.
+    tenantId: "default",
     clock: { now: () => 1_700_000_000_000 } as any,
     timers: { setTimeout: vi.fn(), clearTimeout: vi.fn() } as any,
     logger: args.logger ?? makeLogger(),
