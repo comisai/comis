@@ -1958,10 +1958,11 @@ async function bootAgents(
   // In Encrypted mode, MCP tokens route through the mcp_credentials table via
   // createMcpTokenStoreEncrypted (threaded as secretsDb/secretsCrypto below).
   // In File mode, oauthCredentialStoreForceMcp provides the portBackedStore seam.
+  // In Env mode, OAuth credential storage is not available — no portBackedStore.
   const oauthCredentialStoreForceMcp =
-    container.config.security.storage !== "encrypted"
+    container.config.security.storage === "file"
       ? selectOAuthCredentialStore({
-          storage: container.config.security.storage,
+          storage: "file",
           dataDir: container.config.dataDir && container.config.dataDir.length > 0
             ? container.config.dataDir
             : dataDir,

@@ -387,12 +387,24 @@ export async function setupAgents(deps: {
   // single shared instance is correct.
   const fileLock = createFileLock();
 
-  const oauthCredentialStore = selectOAuthCredentialStore({
-    storage: container.config.security.storage,
-    dataDir: dataDirAbsForOauth,
-    fileLock,
-    encryptedStore,
-  });
+  // In "env" mode, OAuth credential storage is unavailable (read-only secret store).
+  // Construct a minimal stub that returns err() on mutations so the daemon boots
+  // without throwing, and OAuth-write RPCs surface an actionable error at runtime.
+  const oauthCredentialStore: OAuthCredentialStorePort =
+    container.config.security.storage === "env"
+      ? {
+          async get() { return { ok: true as const, value: undefined }; },
+          async set() { return { ok: false as const, error: new Error("OAuth credential store is read-only in 'env' storage mode. Set security.storage to 'file' or 'encrypted' in config.yaml to enable OAuth login.") }; },
+          async delete() { return { ok: false as const, error: new Error("OAuth credential store is read-only in 'env' storage mode. Set security.storage to 'file' or 'encrypted' in config.yaml to enable OAuth login.") }; },
+          async list() { return { ok: true as const, value: [] }; },
+          async has() { return { ok: true as const, value: false }; },
+        }
+      : selectOAuthCredentialStore({
+          storage: container.config.security.storage,
+          dataDir: dataDirAbsForOauth,
+          fileLock,
+          encryptedStore,
+        });
 
   // Construct the session-scoped trajectory recorder registry ONCE here.
   // The registry is the single owner of per-session TrajectoryRecorder

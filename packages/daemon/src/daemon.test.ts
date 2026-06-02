@@ -248,9 +248,16 @@ function createMockMediaResult(): MediaResult {
  * Build a full set of overrides that mock all dependencies.
  * Tracks call order for sequence verification.
  */
-function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
+function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>, storageMode: "encrypted" | "file" | "env" = "file") {
   const callOrder: string[] = [];
   const container = createMockContainer(gatewayOverrides);
+  // WR-03: container.config.security.storage must match the preReadStorageMode
+  // for the boot invariant assertion to pass. Tests that override preReadStorageMode
+  // must also pass the matching storageMode here.
+  (container.config as Record<string, unknown>)["security"] = {
+    ...((container.config as Record<string, unknown>)["security"] as Record<string, unknown>),
+    storage: storageMode,
+  };
   const logger = createMockLogger();
   const logLevelManager = createMockLogLevelManager();
   const tokenTracker = createMockTokenTracker();
@@ -261,7 +268,7 @@ function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
   const overrides: DaemonOverrides = {
     // Default to "file" mode in tests — avoids requiring SECRETS_MASTER_KEY
     // in the environment. Tests that need a specific mode override this field.
-    preReadStorageMode: vi.fn().mockReturnValue("file"),
+    preReadStorageMode: vi.fn().mockReturnValue(storageMode),
     setupMedia: vi.fn().mockResolvedValue(createMockMediaResult()),
     bootstrap: vi.fn().mockImplementation(() => {
       callOrder.push("bootstrap");
@@ -907,8 +914,7 @@ describe("opt-out and same-boot init", () => {
     process.env["SECRETS_MASTER_KEY"] = keyHex;
     // Ensure opt-out is NOT set so writeMasterKeyIfAbsent is called
     delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
-    const { overrides } = buildOverrides();
-    overrides.preReadStorageMode = vi.fn().mockReturnValue("encrypted");
+    const { overrides } = buildOverrides(undefined, "encrypted");
     const mockWriteMasterKeyIfAbsent = vi.fn().mockReturnValue({ written: true, keyHex });
     overrides.writeMasterKeyIfAbsent = mockWriteMasterKeyIfAbsent;
 
@@ -1013,8 +1019,7 @@ describe("02-04 — selectSecretStore dispatch + scrub + store-wins", () => {
       process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
       process.env["ANTHROPIC_API_KEY"] = "sk-test-env-scrub-key";
 
-      const { overrides } = buildOverrides();
-      overrides.preReadStorageMode = vi.fn().mockReturnValue("env");
+      const { overrides } = buildOverrides(undefined, "env");
       overrides.setupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
 
       const instance = await main(overrides);
@@ -1085,8 +1090,7 @@ describe("02-04 — selectSecretStore dispatch + scrub + store-wins", () => {
       process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
       process.env["SECRETS_MASTER_KEY"] = keyHex;
 
-      const { overrides } = buildOverrides();
-      overrides.preReadStorageMode = vi.fn().mockReturnValue("encrypted");
+      const { overrides } = buildOverrides(undefined, "encrypted");
       // Do NOT override setupSecrets — let the real implementation run
       // so the encrypted path via selectSecretStore is exercised end-to-end.
 
@@ -1226,8 +1230,7 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
       process.env["COMIS_DATA_DIR"] = freshDataDir;
       process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
 
-      const { overrides } = buildOverrides();
-      overrides.preReadStorageMode = vi.fn().mockReturnValue("env");
+      const { overrides } = buildOverrides(undefined, "env");
 
       const instance = await main(overrides);
       instances.push(instance);
@@ -1250,8 +1253,7 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
       process.env["COMIS_DATA_DIR"] = freshDataDir;
       process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
 
-      const { overrides } = buildOverrides();
-      overrides.preReadStorageMode = vi.fn().mockReturnValue("env");
+      const { overrides } = buildOverrides(undefined, "env");
 
       const instance = await main(overrides);
       instances.push(instance);
@@ -1274,8 +1276,7 @@ describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)
       process.env["COMIS_DATA_DIR"] = freshDataDir;
       process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
 
-      const { overrides } = buildOverrides();
-      overrides.preReadStorageMode = vi.fn().mockReturnValue("env");
+      const { overrides } = buildOverrides(undefined, "env");
 
       const instance = await main(overrides);
       instances.push(instance);
