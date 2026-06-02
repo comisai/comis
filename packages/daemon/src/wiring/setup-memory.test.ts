@@ -156,6 +156,15 @@ const mockCreateSqliteTunedAlphaStore = vi.hoisted(() => vi.fn(() => ({
   upsert: vi.fn(async () => ({ ok: true, value: undefined })),
   read: vi.fn(async () => ({ ok: true, value: undefined })),
 })));
+// Memory-lifecycle sweep store factory (Phase 112, FORGET-02 — Track C) — mocked so setup wires
+// it without a real DB. setupMemory builds this on the shared db handle (mirror the tuned-alpha
+// store); without the mock entry the @comis/memory factory is undefined and EVERY setup call
+// throws `createSqliteMemoryLifecycleStore is not a function` (the MEMORY.md "setup-memory mock"
+// gate — Pitfall 4). The sole port method is stubbed (the DORMANT runLifecycleSweep — the
+// scaffold evicts/demotes 0 rows, so the all-0 report).
+const mockCreateSqliteMemoryLifecycleStore = vi.hoisted(() => vi.fn(() => ({
+  runLifecycleSweep: vi.fn(async () => ({ ok: true, value: { scanned: 0, promoted: 0, demoted: 0, evicted: 0 } })),
+})));
 
 vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
@@ -179,6 +188,7 @@ vi.mock("@comis/memory", () => ({
   createSqliteUserRepresentationStore: mockCreateSqliteUserRepresentationStore,
   createSqliteRelationshipStore: mockCreateSqliteRelationshipStore,
   createSqliteTunedAlphaStore: mockCreateSqliteTunedAlphaStore,
+  createSqliteMemoryLifecycleStore: mockCreateSqliteMemoryLifecycleStore,
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));
@@ -1126,6 +1136,27 @@ describe("setupMemory", () => {
       expect.objectContaining({ db: mockDb }),
     );
     expect(result.tunedAlphaStore).toBeDefined();
+  });
+
+  it("builds the memory-lifecycle sweep store on the SAME shared db handle and returns it (Phase 112, FORGET-02)", async () => {
+    const container = createMinimalContainer(); // all-default config (lifecycle cron OFF)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // Built UNCONDITIONALLY (no model/IO cost; it stays DORMANT — even when the KEYLESS
+    // __MEMORY_LIFECYCLE__ cron memoryLifecycle.enabled is on, the sweep evicts/demotes 0 rows).
+    expect(mockCreateSqliteMemoryLifecycleStore).toHaveBeenCalledOnce();
+    // The SOLE adapter must share the memory adapter's db handle — NOT a second Database — so the
+    // sweep scans the SAME (tenant, agent)-scoped memories rows + the additive marker columns.
+    expect(mockCreateSqliteMemoryLifecycleStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb }),
+    );
+    expect(result.memoryLifecycleStore).toBeDefined();
   });
 
   it("builds the temporal-spread store on the SAME shared db handle and returns it (Phase 95, LANES-02)", async () => {
