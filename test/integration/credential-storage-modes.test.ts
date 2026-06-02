@@ -238,8 +238,16 @@ describe("credential-storage-modes: encrypted mode (REQ-08)", () => {
 describe("credential-storage-modes: file mode (REQ-18)", () => {
   let handle: TestDaemonHandle;
   let ws: WebSocket;
+  let tempDataDir: string;
+  const originalDataDir = process.env["COMIS_DATA_DIR"];
 
   beforeAll(async () => {
+    // Isolate from the shared ~/.comis data dir — same pattern as Suite 1.
+    // Secrets written by this suite (FILE_TEST_KEY, FILE_MULTI_KEY_A/B, OAuth
+    // profile) must not accumulate across runs or leak to other suites.
+    tempDataDir = mkdtempSync(resolve(tmpdir(), "comis-storage-modes-file-"));
+    process.env["COMIS_DATA_DIR"] = tempDataDir;
+
     handle = await startTestDaemon({
       configPath: CONFIG_PATH_FILE,
     });
@@ -247,6 +255,12 @@ describe("credential-storage-modes: file mode (REQ-18)", () => {
   }, 60_000);
 
   afterAll(async () => {
+    // Restore original COMIS_DATA_DIR (or remove if it was unset).
+    if (originalDataDir === undefined) {
+      delete process.env["COMIS_DATA_DIR"];
+    } else {
+      process.env["COMIS_DATA_DIR"] = originalDataDir;
+    }
     try {
       ws?.close();
     } catch {
@@ -261,6 +275,12 @@ describe("credential-storage-modes: file mode (REQ-18)", () => {
           throw err;
         }
       }
+    }
+    // Remove the per-run temp data directory.
+    try {
+      rmSync(tempDataDir, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup
     }
   }, 30_000);
 
