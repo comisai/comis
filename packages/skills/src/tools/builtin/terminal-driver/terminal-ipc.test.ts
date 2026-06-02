@@ -20,6 +20,8 @@ import {
   decodeFrames,
   createFrameDecoder,
   correlate,
+  FrameTooLargeError,
+  MAX_FRAME_BYTES,
   type TerminalReplyFrame,
 } from "./terminal-ipc.js";
 
@@ -128,6 +130,65 @@ describe("correlate (OPS-08 framing half)", () => {
     const pending = new Map<string, (f: TerminalReplyFrame) => void>();
     const orphan: TerminalReplyFrame = { sessionId: "s1", requestId: "ghost", ok: false, error: "gone" };
     expect(correlate(pending, orphan)).toBe(false);
+  });
+});
+
+describe("createFrameDecoder — HR-01 max-frame guard (memory-DoS / desync)", () => {
+  it("throws FrameTooLargeError on a length prefix above MAX_FRAME_BYTES instead of buffering toward a ~4 GiB body", () => {
+    // A single hostile/corrupt uint32 length prefix (0xFFFFFFFF = ~4 GiB) with
+    // NO body. The pre-patch decoder computes frameEnd = 4 + 4294967295, sees
+    // buffered.length < frameEnd, breaks, and RETAINS the buffer forever —
+    // unbounded growth as a steadily-writing peer keeps feeding bytes.
+    const hostile = Buffer.alloc(4);
+    hostile.writeUInt32BE(0xffffffff, 0);
+
+    const decoder = createFrameDecoder();
+    expect(() => decoder.push(hostile)).toThrow(FrameTooLargeError);
+  });
+
+  it("the thrown FrameTooLargeError carries the offending length + the cap (so the caller can log/resync)", () => {
+    const hostile = Buffer.alloc(4);
+    hostile.writeUInt32BE(0xffffffff, 0);
+    const decoder = createFrameDecoder();
+
+    let caught: unknown;
+    try {
+      decoder.push(hostile);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(FrameTooLargeError);
+    expect((caught as FrameTooLargeError).declaredBytes).toBe(0xffffffff);
+    expect((caught as FrameTooLargeError).maxBytes).toBe(MAX_FRAME_BYTES);
+  });
+
+  it("does NOT grow the accumulation buffer toward an oversized body — a 2nd push still rejects, never OOMs", () => {
+    // Prove the buffer is not silently accumulating: feed the oversized prefix,
+    // then a follow-on chunk. The pre-patch decoder would Buffer.concat the
+    // follow-on onto the retained buffer (unbounded); the guarded decoder keeps
+    // rejecting the oversized prefix rather than buffering toward 4 GiB.
+    const hostile = Buffer.alloc(4);
+    hostile.writeUInt32BE(MAX_FRAME_BYTES + 1, 0);
+    const decoder = createFrameDecoder();
+
+    expect(() => decoder.push(hostile)).toThrow(FrameTooLargeError);
+    // A subsequent body chunk must not be silently swallowed into an ever-growing buffer.
+    expect(() => decoder.push(Buffer.alloc(1024, 0x41))).toThrow(FrameTooLargeError);
+  });
+
+  it("still decodes a legitimately large frame at exactly MAX_FRAME_BYTES (the cap is inclusive, not off-by-one)", () => {
+    // A frame whose body is EXACTLY the cap must decode (the cap is a ceiling, not
+    // a strict-less-than that would reject a maximal-but-valid screen+JSON frame).
+    const bodyStr = "x".repeat(MAX_FRAME_BYTES);
+    const body = Buffer.from(JSON.stringify(bodyStr), "utf8");
+    // Ensure the JSON body length is within the cap (the quotes add 2 bytes); trim.
+    const fitted = body.length <= MAX_FRAME_BYTES ? body : body.subarray(0, MAX_FRAME_BYTES);
+    const prefix = Buffer.alloc(4);
+    prefix.writeUInt32BE(fitted.length, 0);
+    expect(fitted.length).toBeLessThanOrEqual(MAX_FRAME_BYTES);
+    const decoder = createFrameDecoder();
+    // Should NOT throw — a body length <= cap is accepted (here it is valid JSON).
+    expect(() => decoder.push(Buffer.concat([prefix, fitted]))).not.toThrow();
   });
 });
 
