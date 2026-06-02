@@ -89,6 +89,12 @@ export interface BootstrapOptions {
   configPaths: string[];
   /** Environment variables to seed the SecretManager (required — no process.env fallback). */
   env: Record<string, string | undefined>;
+  /**
+   * Pre-constructed SecretManager to use instead of calling createSecretManager(env).
+   * The daemon composition root injects the shared-backing-map manager so the mutable
+   * handle and AppContainer.secretManager share one Map. Non-daemon callers omit this.
+   */
+  secretManager?: SecretManager;
 }
 
 /**
@@ -147,9 +153,9 @@ export interface AppContainer {
  * Returns Result<AppContainer, ConfigError> — does not throw.
  */
 export function bootstrap(options: BootstrapOptions): Result<AppContainer, ConfigError> {
-  // 1. Create SecretManager
+  // 1. Create SecretManager (or use the daemon-injected shared-map one)
   const env = options.env;
-  const secretManager = createSecretManager(env);
+  const secretManager = options.secretManager ?? createSecretManager(env);
 
   // 2. Load layered config (with env var substitution via SecretManager).
   // Wrap getSecret to record every name referenced by the config — the set

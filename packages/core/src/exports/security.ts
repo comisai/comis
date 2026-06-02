@@ -5,8 +5,8 @@ export { safePath, PathTraversalError } from "../security/index.js";
 // Master-key file helpers (daemon-free `secrets init` body)
 export { writeMasterKeyIfAbsent, generateMasterKey } from "../security/index.js";
 export type { MasterKeyWriteResult } from "../security/index.js";
-export { createSecretManager, envSubset } from "../security/index.js";
-export type { SecretManager } from "../security/index.js";
+export { createSecretManager, createSecretManagerWithMutableHandle, envSubset } from "../security/index.js";
+export type { SecretManager, MutableSecretManager } from "../security/index.js";
 export { classifyAction, requiresConfirmation } from "../security/index.js";
 export type { ActionClassification } from "../security/index.js";
 export { AuditEventSchema, createAuditEvent } from "../security/index.js";

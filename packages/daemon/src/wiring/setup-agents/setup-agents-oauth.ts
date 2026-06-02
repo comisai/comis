@@ -17,7 +17,7 @@
  */
 
 import { createAuthProvider, type AuthProvider, type AuthProviderConfig } from "@comis/agent";
-import { safePath, type AppContainer, type FileLockPort, type OAuthCredentialStorePort } from "@comis/core";
+import { safePath, type AppContainer, type CredentialStorageMode, type FileLockPort, type OAuthCredentialStorePort } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 
 /** Inputs for {@link wireAuthProvider} — exactly the locals the OAuth block needs. */
@@ -34,8 +34,8 @@ export interface WireAuthProviderArgs {
   fileLock: FileLockPort;
   /** Resolved absolute data dir (defaults to ~/.comis upstream). */
   dataDirAbs: string;
-  /** OAuth storage mode ("file" enables the auth-profiles.json watcher). */
-  oauthStorageMode: "file" | "encrypted";
+  /** OAuth storage mode ("file" enables the auth-profiles.json watcher; "env"/"encrypted" → no watcher). */
+  oauthStorageMode: CredentialStorageMode;
   /** Agent-scoped logger. */
   agentLogger: ComisLogger;
 }
@@ -107,6 +107,27 @@ export function wireAuthProvider(args: WireAuthProviderArgs): AuthProvider {
         container.config.agents?.[agentId]?.oauthProfiles,
     },
   });
+
+  // Encrypted-mode cache-invalidation subscription: auth:profile_added fires
+  // from auth-handlers.ts auth.set after a CLI `comis auth login` writes a
+  // new OAuth profile via daemon RPC. The file-mode chokidar watcher already
+  // handles this for file mode (no change to that path). Encrypted mode has
+  // no watcher (watchPath: undefined above), so we subscribe here instead.
+  //
+  // INVARIANT (WR-02): This subscription is installed exactly ONCE per agentId.
+  // setup-agents-registry calls setupSingleAgent once per agentId at boot;
+  // createHotAdd (daemon.ts) only calls it for NEW agentIds that are not yet
+  // registered. If a future hot-reload path needs to re-invoke setupSingleAgent
+  // for an EXISTING agentId (e.g. a live config update), the old listener MUST
+  // be removed before installing the new one — failure to do so multiplies
+  // listeners on the shared container.eventBus for that authProvider, leaking
+  // references to the discarded instance. The caller must capture the unsubscribe
+  // handle returned by the on() call and call .off() on re-invocation.
+  if (oauthStorageMode === "encrypted") {
+    container.eventBus.on("auth:profile_added", () => {
+      authProvider.oauth?.invalidate();
+    });
+  }
 
   agentLogger.debug(
     {

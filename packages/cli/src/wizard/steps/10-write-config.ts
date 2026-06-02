@@ -336,13 +336,22 @@ export const writeConfigStep: WizardStep = {
         writeFileSync(envPath, envContent, { mode: 0o600 });
         spinner.update(".env written (0600)");
       } else {
-        // 10. Secrets store mode: minimal .env with placeholder
+        // 10. Secrets store mode: minimal .env — but NEVER drop an existing
+        // SECRETS_MASTER_KEY. The encrypted secrets.db is sealed with it; if
+        // this overwrite removed it, the next daemon boot would regenerate a
+        // fresh key that no longer matches the store (DECRYPTION_FAILED), and
+        // every stored secret would be orphaned/lost. (This branch previously
+        // clobbered .env, which bricked the encrypted store after `comis init`.)
         const secretsEnvLines = [
           "# Comis secrets -- managed by secrets store",
           "# API keys are stored encrypted in secrets.db",
           "# Run: comis secrets set <KEY_NAME> to add keys",
           "",
         ];
+        const existingMasterKey = existingEnv.SECRETS_MASTER_KEY;
+        if (existingMasterKey !== undefined && existingMasterKey !== "") {
+          secretsEnvLines.push(`SECRETS_MASTER_KEY=${existingMasterKey}`, "");
+        }
         writeFileSync(envPath, secretsEnvLines.join("\n") + "\n", { mode: 0o600 });
         spinner.update(".env written (secrets store mode)");
       }

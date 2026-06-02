@@ -572,6 +572,28 @@ export interface InfraEvents {
     timestamp: number;
   };
 
+  /**
+   * Secret written to or removed from the live SecretManager (metadata only — never the value).
+   *
+   * For `action: "upserted"` on a NEW key: the value is immediately available
+   * via `secretManager.get()` — live-applied to the shared Map (additive no-restart, P4a).
+   *
+   * For `action: "upserted"` on an EXISTING key (rotation): the Map holds the OLD value
+   * until the daemon restarts (SIGUSR2 is scheduled); do NOT call `secretManager.get()`
+   * in response to this event expecting the new value. Phase 6/P4b will make rotation
+   * live-apply too, at which point this note becomes obsolete.
+   *
+   * For `action: "removed"`: the key is no longer in the Map (removed before emit).
+   */
+  "secret:changed": {
+    /** Key name (identifier — not a credential value) */
+    name: string;
+    /** What happened: "upserted" for set/add/update; "removed" for delete */
+    action: "upserted" | "removed";
+    /** ms-epoch timestamp */
+    timestamp: number;
+  };
+
   // -------------------------------------------------------------------------
   // Security warning events
   // -------------------------------------------------------------------------

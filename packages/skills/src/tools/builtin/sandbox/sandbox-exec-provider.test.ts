@@ -225,20 +225,28 @@ describe("SandboxExecProvider", () => {
       expect(args[0]).toBe("sandbox-exec");
     });
 
-    it("generated SBPL profile includes claude CLI paths when they exist", () => {
-      // Simulate ~/.claude.json existing on disk
-      vi.mocked(existsSync).mockImplementation((p) =>
-        typeof p === "string" && p.endsWith(".claude.json"),
-      );
+    it("generated SBPL profile omits hardcoded claude CLI credential paths even when they exist", () => {
+      // Worst case: ~/.claude.json, ~/.claude, and ~/.local/share/claude all
+      // exist on disk. The hardcoded claude binds were removed, so the SBPL
+      // profile must not grant any claude-specific read/write rule.
+      vi.mocked(existsSync).mockImplementation((p) => {
+        const s = String(p);
+        return (
+          s.endsWith(".claude.json") ||
+          s.endsWith(".claude") ||
+          s.endsWith(".local/share/claude")
+        );
+      });
 
       const provider = new SandboxExecProvider();
       const args = provider.buildArgs(makeOpts());
       const profile = args[2]!;
 
-      // ~/.claude.json literal read+write (auth/config file at HOME root)
-      // Path may be resolved via realpathSync, so check for the pattern
-      expect(profile).toMatch(/\(allow file-read\* \(literal ".*\.claude\.json"\)\)/);
-      expect(profile).toMatch(/\(allow file-write\* \(literal ".*\.claude\.json"\)\)/);
+      // No ~/.claude.json literal rule, no ~/.local/share/claude subpath rule,
+      // and no standalone ~/.claude subpath rule.
+      expect(profile).not.toMatch(/\.claude\.json/);
+      expect(profile).not.toMatch(/\.local\/share\/claude/);
+      expect(profile).not.toMatch(/"[^"]*\/\.claude"/);
     });
 
     it("tempDir is added to write paths when it differs from /tmp and /private/tmp", () => {

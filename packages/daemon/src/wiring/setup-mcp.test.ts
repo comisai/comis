@@ -43,6 +43,22 @@ const mockCreatePortBackedMcpTokenStore = vi.hoisted(() => vi.fn(() => ({
   close: vi.fn(),
 })));
 
+const mockCreateMcpTokenStoreEncrypted = vi.hoisted(() => vi.fn(() => ({
+  tokens: vi.fn(),
+  saveTokens: vi.fn(),
+  saveClientInformation: vi.fn(),
+  clientInformation: vi.fn(),
+  saveDiscoveryState: vi.fn(),
+  discoveryState: vi.fn(),
+  deleteAll: vi.fn(),
+  startWatch: vi.fn(),
+  close: vi.fn(),
+})));
+
+vi.mock("./mcp-token-store-encrypted.js", () => ({
+  createMcpTokenStoreEncrypted: mockCreateMcpTokenStoreEncrypted,
+}));
+
 vi.mock("@comis/skills", () => ({
   createMcpClientManager: mockCreateMcpClientManager,
   // resolveDiscovery is used by setup-mcp.ts in the oauthDeps seam.
@@ -862,6 +878,135 @@ describe("setupMcp", () => {
 
       const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
       expect(factoryArg).not.toHaveProperty("oauthDeps");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Encrypted-branch mode selection (secretsDb + secretsCrypto → createMcpTokenStoreEncrypted)
+  // ---------------------------------------------------------------------------
+
+  describe("encrypted-branch mode selection", () => {
+    /** Minimal Database mock — only needs to be truthy for the injection path. */
+    function makeDbMock() {
+      return {} as import("better-sqlite3").Database;
+    }
+
+    /** Minimal SecretsCrypto mock. */
+    function makeCryptoMock() {
+      return {
+        encrypt: vi.fn(),
+        decrypt: vi.fn(),
+      } as unknown as import("@comis/core").SecretsCrypto;
+    }
+
+    it("uses createMcpTokenStoreEncrypted when secretsDb and secretsCrypto are provided", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+      const secretsDb = makeDbMock();
+      const secretsCrypto = makeCryptoMock();
+
+      await callSetupMcp({
+        servers: [],
+        logger,
+        secretsDb,
+        secretsCrypto,
+      });
+
+      // Encrypted store factory must be called with the injected db + crypto handles.
+      expect(mockCreateMcpTokenStoreEncrypted).toHaveBeenCalledTimes(1);
+      expect(mockCreateMcpTokenStoreEncrypted).toHaveBeenCalledWith(secretsDb, secretsCrypto);
+      // createMcpClientManager must be called with oauthDeps.createTokenStore in encrypted mode.
+      const factoryArg = mockCreateMcpClientManager.mock.calls[0][0] as Record<string, unknown>;
+      expect(factoryArg).toHaveProperty("oauthDeps");
+      const oauthDeps = factoryArg["oauthDeps"] as Record<string, unknown>;
+      expect(typeof oauthDeps["createTokenStore"]).toBe("function");
+    });
+
+    it("does NOT call createPortBackedMcpTokenStore in encrypted mode", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+
+      await callSetupMcp({
+        servers: [],
+        logger,
+        secretsDb: makeDbMock(),
+        secretsCrypto: makeCryptoMock(),
+      });
+
+      // The chokidar/port-backed store must NOT be constructed in encrypted mode.
+      expect(mockCreatePortBackedMcpTokenStore).not.toHaveBeenCalled();
+    });
+
+    it("falls back to portBackedStore (file mode) when secretsDb/secretsCrypto absent", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+      const { OAuthCredentialStorePort: _unused, ...rest } = {} as { OAuthCredentialStorePort: never };
+      void _unused; void rest;
+      const oauthCredentialStore: OAuthCredentialStorePort = {
+        async get() { return { ok: true as const, value: undefined }; },
+        async set() { return { ok: true as const, value: undefined }; },
+        async delete() { return { ok: true as const, value: false }; },
+        async list() { return { ok: true as const, value: [] }; },
+        async has() { return { ok: true as const, value: false }; },
+      };
+
+      await callSetupMcp({
+        servers: [],
+        logger,
+        oauthCredentialStore,
+        dataDir: "/fake/data",
+        // secretsDb and secretsCrypto intentionally absent
+      });
+
+      // File mode: portBackedStore is used, encrypted store is NOT.
+      expect(mockCreatePortBackedMcpTokenStore).toHaveBeenCalledTimes(1);
+      expect(mockCreateMcpTokenStoreEncrypted).not.toHaveBeenCalled();
+    });
+
+    it("McpDeps accepts secretsDb and secretsCrypto fields (structural TypeScript check)", () => {
+      const deps: McpDeps = {
+        servers: [],
+        logger,
+        secretsDb: makeDbMock(),
+        secretsCrypto: makeCryptoMock(),
+      };
+      expect(deps.secretsDb).toBeDefined();
+      expect(deps.secretsCrypto).toBeDefined();
+    });
+
+    // ---------------------------------------------------------------------------
+    // WR-02: partial-config guard — one of secretsDb/secretsCrypto without the other
+    // must throw, not silently disable OAuth (wiring defect detection)
+    // ---------------------------------------------------------------------------
+
+    it("throws when only secretsDb provided without secretsCrypto (partial encrypted config)", async () => {
+      await expect(callSetupMcp({
+        servers: [],
+        logger,
+        secretsDb: makeDbMock(),
+        // secretsCrypto intentionally absent
+      })).rejects.toThrow(/secretsDb and secretsCrypto must both be present or both absent/);
+    });
+
+    it("throws when only secretsCrypto provided without secretsDb (partial encrypted config)", async () => {
+      await expect(callSetupMcp({
+        servers: [],
+        logger,
+        secretsCrypto: makeCryptoMock(),
+        // secretsDb intentionally absent
+      })).rejects.toThrow(/secretsDb and secretsCrypto must both be present or both absent/);
+    });
+
+    it("does NOT throw when both secretsDb and secretsCrypto are absent (file/env mode)", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+      await expect(callSetupMcp({ servers: [], logger })).resolves.toBeDefined();
+    });
+
+    it("does NOT throw when both secretsDb and secretsCrypto are provided (encrypted mode)", async () => {
+      mockGetAllConnections.mockReturnValue([]);
+      await expect(callSetupMcp({
+        servers: [],
+        logger,
+        secretsDb: makeDbMock(),
+        secretsCrypto: makeCryptoMock(),
+      })).resolves.toBeDefined();
     });
   });
 

@@ -61,6 +61,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | activityStreamPort | optional | WIRE-03: absent → the inbound pipeline activity gate (execution-pipeline.ts:395) is false; no per-turn coordinator is built and renderer.apply never fires (fail-closed §22.2 Day-0) | packages/orchestrator/src/channel-manager.ts:192 |
 | coordinatorFactory | optional | WIRE-03: absent → the activity gate stays false (the daemon supplies it only alongside activityStreamPort); the turn runs exactly as before with no activity rendering | packages/orchestrator/src/channel-manager.ts:196 |
 | adapterRegistry | optional | injectMessage falls back to the daemon's live boot adapter map for adapters registered after startAll(); absent → only startAll()-registered adapters drive injectMessage (production registers every real adapter at boot) | packages/orchestrator/src/channel-manager.ts:224 |
+| channelCredentialMap | optional | absent → no channel reconnect hook on credential rotation (secret:changed events are ignored for adapter restart; production wires from setup-channels with the per-channel credential name map) | packages/orchestrator/src/channel-manager.ts:236 |
 
 ## Removed Fields (stale-fallback)
 
@@ -68,7 +69,7 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 
 ## Summary
 
-- **Total fields:** 39 (7 required + 32 optional)
+- **Total fields:** 40 (7 required + 33 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value)
 

@@ -1,7 +1,7 @@
 # Comis Test Configuration -- Auth-State Matrix, encrypted storage
 #
 # Dedicated config for test/integration/auth-state-matrix.test.ts (encrypted rows).
-# Configures `oauth.storage: encrypted` so the CLI's auth list/logout/status
+# Configures `security.storage: encrypted` so the CLI's auth list/logout/status
 # subcommands take the daemon-RPC path. The matrix test verifies:
 #   - (encrypted, up)   -> CLI succeeds via auth.list / auth.logout RPC.
 #   - (encrypted, down) -> CLI exits 4 + REMEDIATION_MESSAGE.
@@ -52,9 +52,6 @@ gateway:
   maxBatchSize: 50
   wsHeartbeatMs: 30000
 
-oauth:
-  storage: "encrypted"
-
 scheduler:
   cron:
     enabled: true
@@ -72,6 +69,7 @@ memory:
   dbPath: "test-memory-auth-encrypted.db"
 
 security:
+  storage: encrypted
   agentToAgent:
     enabled: true
 

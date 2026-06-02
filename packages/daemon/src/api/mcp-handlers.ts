@@ -59,10 +59,13 @@ import type { RpcHandler } from "./types.js";
 // ---------------------------------------------------------------------------
 
 // Re-aliased from the cluster slice in api/types.ts.
-// Single source of truth: WorkspaceApiDeps (shared with workspace, browser,
-// approval, skill, notification handlers).
-import type { WorkspaceApiDeps as McpHandlerDeps } from "./types.js";
-export type { McpHandlerDeps };
+// WorkspaceApiDeps extended with optional mutableSecretManager for live-apply
+// of extracted MCP header secrets (REQ-13). Declared via intersection here
+// (not in WorkspaceApiDeps) to avoid TS2320 multi-extends conflict with
+// AuthApiDeps.mutableSecretManager (required). Production wires it always.
+import type { WorkspaceApiDeps } from "./types.js";
+import type { MutableSecretManager } from "@comis/core";
+export type McpHandlerDeps = WorkspaceApiDeps & { mutableSecretManager?: MutableSecretManager };
 
 import { looksLikeSecretValue } from "@comis/core";
 // Persisted-entry construction extracted (single source of
@@ -205,8 +208,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // McpConnectContract.request.parse and into buildPersistedMcpEntry.
       // processHeaderCredentials mutates the headers map in place (${VAR} refs
       // for persistence) and returns resolvedHeaders with RAW values for the
-      // immediate live connect — the ${VAR} literal is not yet
-      // resolved in the in-memory SecretManager which is a frozen boot snapshot.
+      // immediate live connect. mutableSecretManager.upsert is called for each
+      // extracted static-secret header so the shared SecretManager Map is updated
+      // immediately — additive writes are live without a daemon restart (REQ-13).
       const headersBlock = userParams.headers as Record<string, string> | undefined;
       let resolvedConnectHeaders: Record<string, string> | undefined;
       if (headersBlock) {
@@ -217,6 +221,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           plaintextOptOut,
           logger: deps.logger,
           method: "mcp.connect",
+          mutableSecretManager: deps.mutableSecretManager,
         });
         resolvedConnectHeaders = credResult.resolvedHeaders;
       }
@@ -266,10 +271,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         // Use resolvedConnectHeaders (raw values) for the live connect so the
         // immediate connection uses the actual credential, not the unresolved ${VAR}
         // literal that processHeaderCredentials wrote into params.headers for config
-        // persistence. The in-memory SecretManager is a frozen boot snapshot that
-        // secretStore.set does NOT update — ${VAR} refs in headers are only resolved
-        // after the NEXT daemon restart. resolvedConnectHeaders carries the raw values
-        // that were just extracted (already in hand) so the connect succeeds immediately.
+        // persistence. processHeaderCredentials also called mutableSecretManager.upsert
+        // for each extracted secret, so the shared SecretManager Map is already updated
+        // for future secretManager.get() calls — no restart needed for additive writes.
         headers: resolvedConnectHeaders ?? params.headers,
         enabled: true,
         safetyAllowedEnvKeys: mcpConfigRoot?.safetyAllowedEnvKeys,
@@ -569,9 +573,9 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // These throws propagate directly (outside the inner try/catch that wraps
       // tempManager.connect) so the caller sees a proper RPC error, not a
       // success:false response.
-      // resolvedTestHeaders carries raw values for
-      // the live connect, headersBlockTest gets ${VAR} refs (not persisted but
-      // consistent with the extraction flow).
+      // resolvedTestHeaders carries raw values for the live test connect.
+      // mutableSecretManager live-applies extracted secrets to the shared Map
+      // (additive no-restart — REQ-13), consistent with the mcp.connect path.
       const headersBlockTest = userParams.headers as Record<string, string> | undefined;
       let resolvedTestHeaders: Record<string, string> | undefined;
       if (headersBlockTest) {
@@ -582,6 +586,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
           plaintextOptOut,
           logger: deps.logger,
           method: "mcp.test",
+          mutableSecretManager: deps.mutableSecretManager,
         });
         resolvedTestHeaders = credResult.resolvedHeaders;
       }

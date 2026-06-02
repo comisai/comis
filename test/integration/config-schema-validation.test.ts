@@ -52,7 +52,9 @@ describe("Config Schema Validation", () => {
       // Snapshot-style guard: bump this count when a new top-level section is
       // added so the change surfaces in code review. Count reflects all scalars
       // plus all object sections currently in AppConfigSchema.shape.
-      expect(allKeys).toHaveLength(42);
+      // Merge note: v1.5 (#147) removed the top-level `oauth` section (folded into
+      // the unified credential storage), dropping this from 42 → 41.
+      expect(allKeys).toHaveLength(41);
     });
 
     it("empty config {} produces valid defaults for all sections", () => {
@@ -66,16 +68,13 @@ describe("Config Schema Validation", () => {
       expect(result.value.dataDir).toBe("");
 
       // Object sections should all exist and be objects.
-      // `executor` is intentionally optional (no default): the credential
-      // broker is an opt-in security feature, absent unless configured — a
-      // daemon with no `executor:` block is a valid state, and consumers read
-      // it via `config.executor?.broker`. So it is excluded here alongside the
-      // scalar keys.
+      // `executor` is the one opt-in section: ExecutorConfigSchema.optional() with
+      // no default (credential-broker config, INTEG-02/WIRE-02 — schema.ts:135). It is
+      // legitimately `undefined` when absent from config, so unlike every other section
+      // it has no default object to assert here. The scalars are excluded for the
+      // separate "not an object section" reason.
       const objectKeys = allKeys.filter(
-        (k) =>
-          !["tenantId", "logLevel", "dataDir", "agentDir", "executor"].includes(
-            k,
-          ),
+        (k) => !["tenantId", "logLevel", "dataDir", "agentDir", "executor"].includes(k),
       );
       for (const key of objectKeys) {
         const section = (result.value as Record<string, unknown>)[key];

@@ -15,7 +15,7 @@
  *   auth.test.ts; the integration value here is the runner + pi-ai +
  *   mock-server end-to-end loop.
  * - List/logout/status: seed profiles directly via store.set, then
- *   spawn the CLI binary with HOME override + a real `oauth.storage: file`
+ *   spawn the CLI binary with HOME override + a real `security.storage: file`
  *   config so the CLI talks to the same on-disk file.
  * - Wizard OpenAI OAuth + Anthropic regression: import credentialsStep
  *   and execute it with a scripted mock prompter, asserting wizard state +
@@ -145,12 +145,14 @@ function cleanupTmpDir(dir: string | undefined): void {
  * empty content, which `loadConfigFile` may handle inconsistently across Node
  * builds (it can either parse to `null` and trigger Zod's "Expected object,
  * received null" error, or be treated as an absent file). A real file with
- * the bare `oauth.storage: file` setting routes the CLI deterministically
- * through the file-adapter path that these tests need.
+ * the bare `security.storage: file` setting routes the CLI deterministically
+ * through the file-adapter path that these tests need. (v1.5: the legacy
+ * `oauth.storage` key was removed — a config using it now fails boot with a
+ * [MIGRATION_ERROR]; `security.storage` is the unified switch.)
  */
 function writeFakeConfig(fakeComis: string): string {
   const fakeConfig = path.join(fakeComis, "config.yaml");
-  fs.writeFileSync(fakeConfig, "oauth:\n  storage: file\n", "utf8");
+  fs.writeFileSync(fakeConfig, "security:\n  storage: file\n", "utf8");
   return fakeConfig;
 }
 

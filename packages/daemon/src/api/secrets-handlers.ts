@@ -192,13 +192,6 @@ export function createSecretsHandlers(
       const params = SecretsGetContract.request.parse(userParams);
       const name = params.name;
 
-      if (!deps.secretStore) {
-        throw new Error(
-          "Encrypted secrets store not configured (SECRETS_MASTER_KEY missing). " +
-            "Run `comis secrets init --write` then restart the daemon.",
-        );
-      }
-
       const decryptResult = deps.secretStore.getDecrypted(name);
       if (!decryptResult.ok) {
         deps.container.eventBus.emit("audit:event", {
@@ -348,13 +341,7 @@ export function createSecretsHandlers(
       const description = params.description;
       const expiresAt = params.expiresAt;
 
-      if (!deps.secretStore) {
-        throw new Error(
-          "Encrypted secrets store not configured (SECRETS_MASTER_KEY missing). " +
-            "Run `comis secrets init --write` then restart the daemon.",
-        );
-      }
-
+      // SecretStorePort is always wired (REQ-04); env-mode set() returns err.
       // The value parameter is the plaintext. It flows directly into the
       // store's set() call below and is NEVER assigned to any other binding,
       // logged, or included in an audit event.
@@ -387,7 +374,7 @@ export function createSecretsHandlers(
           },
           "Secret store failed",
         );
-        throw new Error(`Failed to store secret "${name}"`);
+        throw new Error(`Failed to store secret "${name}": ${setResult.error.message}`);
       }
 
       deps.container.eventBus.emit("audit:event", {
@@ -409,7 +396,18 @@ export function createSecretsHandlers(
         "Secret stored",
       );
 
-      const result = { name, stored: true };
+      // Live-apply for ALL cases (new and rotation): upsert into shared Map so
+      // broker/exec observe the new value on the very next request. No restart needed.
+      deps.mutableSecretManager.upsert(name, value);
+
+      // Emit secret:changed event — metadata only, never the value (residency — T-03-09).
+      deps.container.eventBus.emit("secret:changed", {
+        name,
+        action: "upserted" as const,
+        timestamp: systemNowMs(),
+      });
+
+      const result = { name, stored: true, restarting: false as const };
       if (systemGetEnv("NODE_ENV") !== "production") {
         SecretsSetContract.response.parse(result);
       }
@@ -433,19 +431,8 @@ export function createSecretsHandlers(
       const userParams = stripInternalFields(rawParams);
       SecretsListContract.request.parse(userParams);
 
-      if (!deps.secretStore) {
-        // No master key configured -- return empty list, not an error.
-        deps.logger.debug(
-          { method: "secrets.list", durationMs: systemNowMs() - startMs },
-          "Secrets list returning empty (no encrypted store configured)",
-        );
-        const emptyResult = { secrets: [] };
-        if (systemGetEnv("NODE_ENV") !== "production") {
-          SecretsListContract.response.parse(emptyResult);
-        }
-        return emptyResult;
-      }
-
+      // SecretStorePort is always wired (REQ-04); env-mode list() returns the
+      // name-scoped snapshot (empty in typical env mode with no sensitive vars set).
       const listResult = deps.secretStore.list();
       if (!listResult.ok) {
         deps.logger.error(
@@ -539,11 +526,9 @@ export function createSecretsHandlers(
       const params = SecretsDeleteContract.request.parse(userParams);
       const name = params.name;
 
-      if (!deps.secretStore) {
-        throw new Error(
-          "Encrypted secrets store not configured (SECRETS_MASTER_KEY missing).",
-        );
-      }
+      // Additive restart rule (P4a): check BEFORE store delete to know if this
+      // name was live-tracked. Must be pre-delete so the Map reflects current state.
+      const existed = deps.container.secretManager.has(name);
 
       const delResult = deps.secretStore.delete(name);
       if (!delResult.ok) {
@@ -568,7 +553,7 @@ export function createSecretsHandlers(
           },
           "Secret delete failed",
         );
-        throw new Error(`Failed to delete secret "${name}"`);
+        throw new Error(`Failed to delete secret "${name}": ${delResult.error.message}`);
       }
 
       deps.container.eventBus.emit("audit:event", {
@@ -591,7 +576,24 @@ export function createSecretsHandlers(
         "Secret deleted",
       );
 
-      const result = { name, deleted: delResult.value };
+      // Delete live-apply: only emit if the name was actually tracked.
+      // No-op deletes (name absent from Map) skip both remove and secret:changed.
+      if (existed) {
+        // Remove from live Map to keep it consistent with the store.
+        deps.mutableSecretManager.remove(name);
+        // Emit secret:changed — metadata only, never the value (residency — T-03-09).
+        deps.container.eventBus.emit("secret:changed", {
+          name,
+          action: "removed" as const,
+          timestamp: systemNowMs(),
+        });
+      }
+
+      // Use existed || delResult.value for deleted so the response is internally
+      // consistent: if the Map tracked the name (existed=true), deletion is
+      // authoritative regardless of any store soft-delete quirk. This prevents
+      // the { deleted: false, restarting: true } contradictory state (WR-02).
+      const result = { name, deleted: existed || delResult.value, restarting: false as const };
       if (systemGetEnv("NODE_ENV") !== "production") {
         SecretsDeleteContract.response.parse(result);
       }

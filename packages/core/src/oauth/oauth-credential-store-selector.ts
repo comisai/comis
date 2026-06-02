@@ -26,17 +26,17 @@
 import type { OAuthCredentialStorePort } from "../ports/oauth-credential-store.js";
 import type { FileLockPort } from "../ports/file-lock.js";
 import { createOAuthCredentialStoreFile } from "./oauth-credential-store-file.js";
+import type { CredentialStorageMode } from "../config/schema-security.js";
 
-/** Storage backend selector from `appConfig.oauth.storage`. */
-export type OAuthStorageMode = "file" | "encrypted";
+export type { CredentialStorageMode };
 
 /**
  * Inputs for selectOAuthCredentialStore. Extracted to a typed shape so the
  * helper can be unit-tested without spinning up a full setupSingleAgent path.
  */
 export interface SelectOAuthCredentialStoreInput {
-  /** Storage backend selector from `appConfig.oauth.storage`. */
-  storage: OAuthStorageMode;
+  /** Storage backend selector from `appConfig.security.storage`. */
+  storage: CredentialStorageMode;
   /** Absolute data directory (e.g. ~/.comis). Constructed via `safePath` upstream. */
   dataDir: string;
   /**
@@ -67,7 +67,7 @@ export interface SelectOAuthCredentialStoreInput {
 
 /**
  * Select and instantiate the right OAuthCredentialStorePort adapter from
- * `appConfig.oauth.storage`. Used by both the daemon (setup-agents.ts) and
+ * `appConfig.security.storage`. Used by both the daemon (setup-agents.ts) and
  * the CLI commands (`comis auth login/list/logout/status`).
  *
  * The encrypted-mode store is constructed by the daemon composition root
@@ -93,6 +93,18 @@ export function selectOAuthCredentialStore(
       );
     }
     return encryptedStore;
+  }
+
+  // WR-01: env mode has no writable OAuth credential store. The CLI rejects
+  // OAuth login before reaching this point; the daemon should never attempt
+  // to write OAuth profiles in env mode. Fail fast rather than silently
+  // falling through to the file adapter (which would write credentials to
+  // a file that is never read in env mode).
+  if (storage === "env") {
+    throw new Error(
+      "OAuth credential store is read-only in 'env' storage mode. " +
+        "Set security.storage to 'file' or 'encrypted' in config.yaml to enable OAuth login.",
+    );
   }
 
   // Default: plaintext file-backed adapter at ${dataDir}/auth-profiles.json.

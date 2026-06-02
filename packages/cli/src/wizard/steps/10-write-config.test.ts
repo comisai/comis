@@ -35,10 +35,12 @@ vi.mock("@comis/core", async (importOriginal) => {
   return {
     ...actual,
     safePath: vi.fn((...parts: string[]) => parts.join("/")),
+    loadEnvFile: vi.fn(),
   };
 });
 
 import { existsSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
+import { loadEnvFile } from "@comis/core";
 import type { WizardPrompter, WizardState, Spinner } from "../index.js";
 import { writeConfigStep } from "./10-write-config.js";
 
@@ -442,5 +444,36 @@ describe("writeConfigStep", () => {
     expect(configWriteCall).toBeDefined();
     const configContent = JSON.parse(configWriteCall![1] as string);
     expect(configContent.agents.default.model).toBe("gpt-5.1");
+  });
+
+  // ---------- Regression: secrets-store mode must not clobber the master key ----------
+
+  it("secrets store mode PRESERVES an existing SECRETS_MASTER_KEY (no encrypted-store clobber)", async () => {
+    // Regression: the secrets-store branch used to overwrite .env with a
+    // comment-only placeholder, dropping the daemon-generated SECRETS_MASTER_KEY.
+    // The next boot regenerated a new key that no longer matched the already-
+    // sealed secrets.db -> DECRYPTION_FAILED, and every stored secret was lost.
+    vi.mocked(existsSync)
+      .mockReturnValueOnce(true) // secrets.db exists -> offer secrets store
+      .mockReturnValueOnce(true) // .env exists -> load existing keys
+      .mockReturnValue(false); // dataDir, etc.
+    vi.mocked(loadEnvFile).mockImplementation(
+      (_path: string, env: Record<string, string | undefined>) => {
+        env.SECRETS_MASTER_KEY = "a".repeat(64);
+      },
+    );
+    const prompter = createMockPrompter({ select: ["secrets"] });
+
+    await writeConfigStep.execute(populatedState(), prompter);
+
+    const envWriteCall = vi.mocked(writeFileSync).mock.calls.find(
+      ([path]) => typeof path === "string" && path.includes(".env"),
+    );
+    expect(envWriteCall).toBeDefined();
+    const envContent = envWriteCall![1] as string;
+    // The pre-existing master key must survive (else the encrypted store is orphaned).
+    expect(envContent).toContain(`SECRETS_MASTER_KEY=${"a".repeat(64)}`);
+    // Still secrets-store mode: no plaintext API key leaked into .env.
+    expect(envContent).not.toContain("sk-test-key-123");
   });
 });

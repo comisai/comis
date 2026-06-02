@@ -153,6 +153,7 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
           subAgentRetentionMs: 3_600_000,
           waitTimeoutMs: 60_000,
         },
+        storage: "file" as const,
       },
       approvals: {
         enabled: false,
@@ -167,9 +168,6 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
       tenantId: "default",
       logLevel: "info",
       agentDir: "/tmp/test-agent-dir",
-      // setupSingleAgent now reads container.config.oauth.storage for OAuth
-      // credential store wiring. Default to "file" (the YAML default).
-      oauth: { storage: "file" as const },
       // setupSingleAgent reads container.config.tooling to construct the
       // per-agent ToolCapabilityPort adapter. Use the schema's full-default
       // tree so tests don't pin individual cluster IDs.
@@ -178,8 +176,12 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
     eventBus: createMockEventBus(),
     secretManager: {
       get: vi.fn().mockReturnValue(undefined),
+      has: vi.fn().mockReturnValue(false),
       keys: vi.fn().mockReturnValue([]),
     } as unknown as AppContainer["secretManager"],
+    // Stage-2 scrub reads container.platformSecretNames after bootstrap.
+    // Provide an empty set so the scrub loop is a no-op in unit tests.
+    platformSecretNames: new Set<string>(),
     shutdown: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   };
 }
@@ -246,9 +248,16 @@ function createMockMediaResult(): MediaResult {
  * Build a full set of overrides that mock all dependencies.
  * Tracks call order for sequence verification.
  */
-function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
+function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>, storageMode: "encrypted" | "file" | "env" = "file") {
   const callOrder: string[] = [];
   const container = createMockContainer(gatewayOverrides);
+  // WR-03: container.config.security.storage must match the preReadStorageMode
+  // for the boot invariant assertion to pass. Tests that override preReadStorageMode
+  // must also pass the matching storageMode here.
+  (container.config as Record<string, unknown>)["security"] = {
+    ...((container.config as Record<string, unknown>)["security"] as Record<string, unknown>),
+    storage: storageMode,
+  };
   const logger = createMockLogger();
   const logLevelManager = createMockLogLevelManager();
   const tokenTracker = createMockTokenTracker();
@@ -257,6 +266,9 @@ function buildOverrides(gatewayOverrides?: Partial<GatewayConfig>) {
   const gatewayHandle = createMockGatewayHandle();
 
   const overrides: DaemonOverrides = {
+    // Default to "file" mode in tests — avoids requiring SECRETS_MASTER_KEY
+    // in the environment. Tests that need a specific mode override this field.
+    preReadStorageMode: vi.fn().mockReturnValue(storageMode),
     setupMedia: vi.fn().mockResolvedValue(createMockMediaResult()),
     bootstrap: vi.fn().mockImplementation(() => {
       callOrder.push("bootstrap");
@@ -470,7 +482,22 @@ describe("daemon main()", () => {
     // we drop VITEST for the duration of the call.
     const prevVitest = process.env["VITEST"];
     delete process.env["VITEST"];
+    // P0: preReadStorageMode reads the default config files (if they exist) before
+    // bootstrap. If the developer's real ~/.comis/config.yaml contains legacy keys,
+    // the migration guard throws before bootstrap is called, breaking this test.
+    // Override COMIS_DATA_DIR to a fresh tmpdir so the default paths point at
+    // non-existent files, which preReadStorageMode silently skips (returns "encrypted").
+    // Note: DEFAULT_CONFIG_PATHS is based on os.homedir(), not COMIS_DATA_DIR —
+    // the path assert below is still valid because we are testing the shape of
+    // DEFAULT_CONFIG_PATHS, not the actual file location.
     const { overrides } = buildOverrides();
+    // P0: preReadStorageMode reads the default config files (if they exist) before
+    // bootstrap. If the developer's real ~/.comis/config.yaml contains legacy keys,
+    // the migration guard throws before bootstrap is called, breaking this test.
+    // Use the override seam to return "file" so the boot gate passes
+    // regardless of the actual ~/.comis/config.yaml content on this machine
+    // (file mode does not require SECRETS_MASTER_KEY).
+    overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
 
     try {
       instances.push(await main(overrides));
@@ -510,6 +537,31 @@ describe("daemon main()", () => {
     });
 
     await expect(main(overrides)).rejects.toThrow("Bootstrap failed: Config file not found");
+  });
+
+  it("releases the singleton lock when a post-foundation boot stage throws (CR-01)", async () => {
+    // Use an isolated temp dataDir so the lock file doesn't collide with other tests.
+    const freshDataDir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "daemon-cr01-lock-test-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+
+      const { overrides } = buildOverrides();
+      // Inject a failure inside bootAgents (stage 2) via setupMedia — this fires
+      // after bootFoundation acquires the lock, simulating a post-foundation throw.
+      (overrides.setupMedia as ReturnType<typeof vi.fn>).mockRejectedValue(
+        new Error("simulated post-foundation boot failure"),
+      );
+
+      await expect(main(overrides)).rejects.toThrow("simulated post-foundation boot failure");
+
+      // The singleton lock must have been released — if not, the lock file survives
+      // and subsequent daemon starts would need stale-PID recovery.
+      const lockPath = nodePath.join(freshDataDir, ".daemon.lock");
+      expect(fs.existsSync(lockPath)).toBe(false);
+    } finally {
+      delete process.env["COMIS_DATA_DIR"];
+      try { fs.rmSync(freshDataDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
   });
 
   // The two assertions previously here checked
@@ -628,6 +680,24 @@ describe("hardenDataDirPermissions", () => {
       expect(c.oldMode).toBe(0o644);
       expect(c.newMode).toBe(0o600);
     }
+  });
+
+  it("hardens secrets.json to 0o600 when present with loose permissions (CR-02)", () => {
+    fs.chmodSync(testDir, 0o700);
+    const secretsJsonPath = nodePath.join(testDir, "secrets.json");
+    fs.writeFileSync(secretsJsonPath, '{"schemaVersion":1,"secrets":{}}');
+    // Simulate a file written with a loose umask (e.g. operator ran mkdir manually)
+    fs.chmodSync(secretsJsonPath, 0o644);
+
+    const corrections = hardenDataDirPermissions(testDir);
+
+    const secretsCorrection = corrections.find((c) => c.file === secretsJsonPath);
+    expect(secretsCorrection).toBeDefined();
+    expect(secretsCorrection!.oldMode).toBe(0o644);
+    expect(secretsCorrection!.newMode).toBe(0o600);
+
+    const stat = fs.statSync(secretsJsonPath);
+    expect(stat.mode & 0o777).toBe(0o600);
   });
 });
 
@@ -807,135 +877,61 @@ describe("opt-out and same-boot init", () => {
     process.env = originalEnv;
   });
 
-  it("emits WARN with hint about backup obligation when COMIS_DISABLE_ENCRYPTED_SECRETS=1", async () => {
-    // Set opt-out flag
+  it("fails boot with MIGRATION_ERROR when COMIS_DISABLE_ENCRYPTED_SECRETS=1 (P0: legacy env var removed)", async () => {
+    // P0: COMIS_DISABLE_ENCRYPTED_SECRETS is no longer supported — daemon boot
+    // must throw a migration error instead of continuing with opt-out behavior.
     process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"] = "1";
-    const { overrides, mocks } = buildOverrides();
-    const mockSetupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
-    overrides.setupSecrets = mockSetupSecrets;
+    const { overrides } = buildOverrides();
 
-    const instance = await main(overrides);
-    instances.push(instance);
-
-    // daemonLogger (obtained from logLevelManager.getLogger) emits warn with
-    // backup-obligation message. Access pattern mirrors daemon.test.ts:437.
-    const daemonLogger = (mocks.logLevelManager.getLogger as ReturnType<typeof vi.fn>).mock.results[0]?.value;
-    const warnCalls = (daemonLogger.warn as ReturnType<typeof vi.fn>).mock.calls;
-    // Must find a warn whose message (2nd arg) OR hint (in 1st arg object) contains
-    // "COMIS_DISABLE_ENCRYPTED_SECRETS" — specifically the opt-out WARN, not generic
-    // config warns (none of which mention this flag).
-    const optOutWarn = warnCalls.find((args: unknown[]) => {
-      const msg = String(args[1] ?? "");
-      const hint = typeof args[0] === "object" && args[0] !== null
-        ? String((args[0] as Record<string, unknown>)["hint"] ?? "")
-        : "";
-      return msg.includes("COMIS_DISABLE_ENCRYPTED_SECRETS") ||
-             hint.includes("COMIS_DISABLE_ENCRYPTED_SECRETS") ||
-             hint.includes("backup obligation");
-    });
-    expect(optOutWarn).toBeDefined();
+    await expect(main(overrides)).rejects.toThrow(/MIGRATION_ERROR.*COMIS_DISABLE_ENCRYPTED_SECRETS/);
   });
 
-  // COMIS_DISABLE_ENCRYPTED_SECRETS=1 must make secretStore=undefined EVEN when
-  // SECRETS_MASTER_KEY already exists in the environment (the common post-first-boot case).
-  // When disableEncrypted=true, the store construction must be skipped entirely; otherwise
-  // bootstrapSecretsAndEnv would run unconditionally, find the env key, and build a live
-  // store. The WARN says "disabled" but a live store would be contradictory and dangerous.
-  //
-  // The test seeds a real SECRETS_MASTER_KEY into process.env and passes the REAL setupSecrets
-  // through a spy-wrapper so we can observe whether a live store was returned. We assert via the
-  // daemonLogger banner that secrets.encrypted === false.
-  it("COMIS_DISABLE_ENCRYPTED_SECRETS=1 with existing SECRETS_MASTER_KEY must yield secretStore=undefined", async () => {
+  // P0: COMIS_DISABLE_ENCRYPTED_SECRETS is no longer supported — daemon boot
+  // must throw a migration error, even when SECRETS_MASTER_KEY already exists.
+  it("fails boot with MIGRATION_ERROR when COMIS_DISABLE_ENCRYPTED_SECRETS=1 even with existing SECRETS_MASTER_KEY", async () => {
     const { randomBytes: cryptoRandomBytes } = await import("node:crypto");
     const existingKeyHex = cryptoRandomBytes(32).toString("hex");
 
-    // Use a fresh tmpdir so there is no pre-existing secrets.db to collide with.
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-cr02-test-"));
     process.env["COMIS_DATA_DIR"] = freshDataDir;
-    // Plant a real key in the test env BEFORE setting the opt-out flag (simulates
-    // the post-first-boot state where the key was already loaded from ~/.comis/.env)
     process.env["SECRETS_MASTER_KEY"] = existingKeyHex;
     process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"] = "1";
 
-    const { overrides, mocks } = buildOverrides();
-    // Use real setupSecrets via spy: do NOT mock it to null (that hides the bug).
-    // Track whether the real setupSecrets returned a live SecretsBootResult.
-    let setupSecretsReturnedStore = false;
-    const { setupSecrets: realSetupSecrets } = await import("@comis/memory");
-    overrides.setupSecrets = vi.fn((opts) => {
-      const result = realSetupSecrets(opts);
-      if (result.ok && result.value !== null) {
-        setupSecretsReturnedStore = true;
-      }
-      return result;
-    });
-
-    const instance = await main(overrides);
-    instances.push(instance);
-
-    // Access the daemonLogger (index 0 from logLevelManager.getLogger calls)
-    const daemonLogger = (mocks.logLevelManager.getLogger as ReturnType<typeof vi.fn>).mock.results[0]?.value;
-    const infoCallArgs = (daemonLogger.info as ReturnType<typeof vi.fn>).mock.calls;
-    // Find the startup banner call — it logs { manifest: { secrets: { encrypted: bool } } }
-    const bannerCall = infoCallArgs.find((args: unknown[]) => {
-      if (typeof args[0] !== "object" || args[0] === null) return false;
-      const obj = args[0] as Record<string, unknown>;
-      const manifest = obj["manifest"] as Record<string, unknown> | undefined;
-      return manifest !== undefined && typeof (manifest["secrets"] as Record<string, unknown> | undefined)?.["encrypted"] === "boolean";
-    });
-
-    // With disableEncrypted=1, secrets.encrypted MUST be false even though a
-    // real SECRETS_MASTER_KEY was planted in the env. The expected state is
-    // setupSecretsCalled=false OR banner shows encrypted=false (store inactive).
-    if (bannerCall) {
-      const bannerManifest = (bannerCall[0] as Record<string, unknown>)["manifest"] as Record<string, unknown>;
-      const secretsEncrypted = (bannerManifest["secrets"] as Record<string, unknown>)["encrypted"];
-      expect(secretsEncrypted).toBe(false);
-    } else {
-      // Banner not found → check the spy: setupSecrets must not have returned a live store
-      expect(setupSecretsReturnedStore).toBe(false);
-    }
+    const { overrides } = buildOverrides();
+    await expect(main(overrides)).rejects.toThrow(/MIGRATION_ERROR.*COMIS_DISABLE_ENCRYPTED_SECRETS/);
 
     rmSync(freshDataDir, { recursive: true, force: true });
   });
 
-  it("passes seedKeyHex to setupSecrets on first boot with a fresh data directory", async () => {
+  it("calls writeMasterKeyIfAbsent on first boot with a fresh data directory (encrypted mode)", async () => {
     // Fresh tmpdir — no .env file present; use a subdirectory so writeMasterKeyIfAbsent
     // writes there rather than the shared sandbox COMIS_DATA_DIR.
+    const { randomBytes } = await import("node:crypto");
+    const keyHex = randomBytes(32).toString("hex");
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-first-boot-test-"));
     process.env["COMIS_DATA_DIR"] = freshDataDir;
+    process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+    process.env["SECRETS_MASTER_KEY"] = keyHex;
     // Ensure opt-out is NOT set so writeMasterKeyIfAbsent is called
     delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
-    const { overrides } = buildOverrides();
-    const mockSetupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
-    overrides.setupSecrets = mockSetupSecrets;
+    const { overrides } = buildOverrides(undefined, "encrypted");
+    const mockWriteMasterKeyIfAbsent = vi.fn().mockReturnValue({ written: true, keyHex });
+    overrides.writeMasterKeyIfAbsent = mockWriteMasterKeyIfAbsent;
 
     const instance = await main(overrides);
     instances.push(instance);
 
-    // Capture the call args to setupSecrets
-    const calls = mockSetupSecrets.mock.calls;
-    expect(calls.length).toBeGreaterThan(0);
-    const firstCallOpts = calls[0]![0] as Record<string, unknown>;
-    // seedKeyHex must be a 64-char hex string on first boot.
-    expect(typeof firstCallOpts["seedKeyHex"]).toBe("string");
-    expect(String(firstCallOpts["seedKeyHex"])).toMatch(/^[0-9a-f]{64}$/);
+    // writeMasterKeyIfAbsent must have been called with the dataDir on first boot.
+    expect(mockWriteMasterKeyIfAbsent).toHaveBeenCalledWith(freshDataDir);
 
+    delete process.env["SECRETS_MASTER_KEY"];
     rmSync(freshDataDir, { recursive: true, force: true });
   });
 
-  // Config-driven opt-out: when YAML sets `security.secrets.enabled: false`,
-  // the encrypted secrets store must NOT bootstrap — even with no env var set
-  // and even on a fresh data directory. The daemon must consult the YAML
-  // BEFORE writeMasterKeyIfAbsent so `.env` is left untouched (no SECRETS_MASTER_KEY
-  // line is appended) and setupSecrets is never called.
-  //
-  // Pre-fix, the schema field `secrets.enabled` was read only by the web view
-  // and the daemon ignored it — secrets.db would be created on first boot
-  // regardless of what config said. This test pins the contract that the
-  // daemon honors the config-level opt-out.
-  it("YAML security.secrets.enabled=false skips writeMasterKeyIfAbsent and setupSecrets on a fresh data dir", async () => {
-    // Fresh data dir (no pre-existing .env), and a YAML that explicitly opts out.
+  // P0: security.secrets.enabled is a legacy key removed in v1.5.
+  // The daemon must throw a migration error when the YAML contains this key,
+  // ensuring no key material is created before the error is emitted (REQ-17).
+  it("fails boot with MIGRATION_ERROR when YAML sets security.secrets.enabled=false (legacy key removed in v1.5)", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-cfg-opt-out-test-"));
     const configPath = nodePath.resolve(freshDataDir, "config.yaml");
     fs.writeFileSync(
@@ -947,30 +943,732 @@ describe("opt-out and same-boot init", () => {
     process.env["COMIS_DATA_DIR"] = freshDataDir;
     process.env["COMIS_CONFIG_PATHS"] = configPath;
     delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
-    // Ensure no SECRETS_MASTER_KEY leaks from the test runner env into the daemon.
     delete process.env["SECRETS_MASTER_KEY"];
 
     const { overrides } = buildOverrides();
-    const mockSetupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
-    overrides.setupSecrets = mockSetupSecrets;
+    // Use the real preReadStorageMode so the legacy-key detection fires.
+    delete overrides.preReadStorageMode;
+    await expect(main(overrides)).rejects.toThrow(/MIGRATION_ERROR/);
 
-    const instance = await main(overrides);
-    instances.push(instance);
-
-    // 1. The daemon must NOT have invoked setupSecrets — the store-bootstrap
-    //    branch is gated entirely behind the combined disable check, which is
-    //    now true because YAML explicitly opted out.
-    expect(mockSetupSecrets).not.toHaveBeenCalled();
-
-    // 2. writeMasterKeyIfAbsent must NOT have run, so `.env` either does not
-    //    exist or contains no SECRETS_MASTER_KEY line. We assert the strict
-    //    form: no key written.
-    const envPath = nodePath.resolve(freshDataDir, ".env");
-    if (fs.existsSync(envPath)) {
-      const contents = fs.readFileSync(envPath, "utf-8");
+    // writeMasterKeyIfAbsent must NOT have run — no SECRETS_MASTER_KEY in .env
+    const envFilePath = nodePath.resolve(freshDataDir, ".env");
+    if (fs.existsSync(envFilePath)) {
+      const contents = fs.readFileSync(envFilePath, "utf-8");
       expect(contents).not.toMatch(/^SECRETS_MASTER_KEY=/m);
     }
 
     rmSync(freshDataDir, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 02-04: selectSecretStore dispatch + store-wins + two-stage scrub (TDD RED)
+// ---------------------------------------------------------------------------
+// RED: these tests verify behaviors introduced by Plan 02-04.
+// Before GREEN (before selectSecretStore is wired into bootFoundation),
+// the file/env paths leave process.env unscrubbed and never call
+// buildMergedEnv, so the scrub + shadow-WARN assertions fail.
+
+describe("02-04 — selectSecretStore dispatch + scrub + store-wins", () => {
+  const originalEnv = process.env;
+  const instances: DaemonInstance[] = [];
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(async () => {
+    while (instances.length > 0) {
+      const inst = instances.shift()!;
+      try { await inst.shutdownHandle.trigger("test-cleanup"); } catch { /* ignore */ }
+      try { inst.shutdownHandle.dispose(); } catch { /* idempotent */ }
+    }
+    process.env = originalEnv;
+  });
+
+  // -------------------------------------------------------------------------
+  // REQ-15 / stage-1: file mode must call scrubProcessEnv
+  // -------------------------------------------------------------------------
+
+  it("file mode: ANTHROPIC_API_KEY is removed from process.env after boot (stage-1 scrub)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-04-file-scrub-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      // Use a non-existent config path (avoids reading real ~/.comis/config.yaml)
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+      process.env["ANTHROPIC_API_KEY"] = "sk-test-file-scrub-key";
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+      overrides.setupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // scrubProcessEnv must have run — ANTHROPIC_API_KEY must be gone
+      expect(process.env["ANTHROPIC_API_KEY"]).toBeUndefined();
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("env mode: ANTHROPIC_API_KEY is removed from process.env after boot (stage-1 scrub)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-04-env-scrub-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+      process.env["ANTHROPIC_API_KEY"] = "sk-test-env-scrub-key";
+
+      const { overrides } = buildOverrides(undefined, "env");
+      overrides.setupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // scrubProcessEnv must have run in env mode too — ANTHROPIC_API_KEY must be gone
+      expect(process.env["ANTHROPIC_API_KEY"]).toBeUndefined();
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // REQ-16 / store-wins: WARN emitted when store value shadows process.env
+  // -------------------------------------------------------------------------
+
+  it("file mode: WARN logged with secretName when store value shadows process.env (REQ-16 store-wins)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-04-shadow-warn-"));
+    try {
+      // Pre-create secrets.json so the file store finds DISCORD_TOKEN on boot.
+      const secretsJson = JSON.stringify({
+        schemaVersion: 1,
+        secrets: {
+          DISCORD_TOKEN: {
+            value: "store-discord-value",
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          },
+        },
+      });
+      fs.writeFileSync(nodePath.resolve(freshDataDir, "secrets.json"), secretsJson, { mode: 0o600 });
+
+      // Also set the same key in process.env so store-wins logic fires
+      process.env["DISCORD_TOKEN"] = "env-discord-value";
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides, mocks } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+      overrides.setupSecrets = vi.fn().mockReturnValue({ ok: true, value: null });
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // buildMergedEnv must have emitted a WARN with secretName: "DISCORD_TOKEN"
+      const logLevelManager = mocks.logLevelManager;
+      const sharedLogger = (logLevelManager.getLogger as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+      expect(sharedLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ submodule: "secrets-overlay", secretName: "DISCORD_TOKEN" }),
+        expect.stringContaining("store value is authoritative"),
+      );
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Encrypted-mode regression: selectSecretStore dispatch must not break
+  // the existing encrypted store set/get round-trip
+  // -------------------------------------------------------------------------
+
+  it("encrypted mode regression: daemon boots and env.set persists via selectSecretStore dispatch", async () => {
+    const { randomBytes } = await import("node:crypto");
+    const keyHex = randomBytes(32).toString("hex");
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-04-enc-regression-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+      process.env["SECRETS_MASTER_KEY"] = keyHex;
+
+      const { overrides } = buildOverrides(undefined, "encrypted");
+      // Do NOT override setupSecrets — let the real implementation run
+      // so the encrypted path via selectSecretStore is exercised end-to-end.
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // Encrypted mode must wire a real secretStore (not undefined).
+      // Verify by calling env.set which requires secretStore to be present.
+      const setResult = await instance.rpcCall(
+        "env.set",
+        { key: "STRIPE_SECRET_KEY", value: "sk-stripe-test", _trustLevel: "admin" },
+      );
+      // STRIPE_SECRET_KEY is a brand-new key (not in the mock secretManager),
+      // so the additive restart rule applies: restarting:false (live-applied).
+      expect(setResult).toMatchObject({ set: true, key: "STRIPE_SECRET_KEY", restarting: false });
+    } finally {
+      delete process.env["SECRETS_MASTER_KEY"];
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 02-05: Per-mode daemon harness — REQ-04/REQ-10/REQ-14/REQ-15/REQ-16
+// ---------------------------------------------------------------------------
+// Integration/regression assertions over already-assembled behavior (Plans 01-04).
+// These tests verify that the assembled system satisfies the ROADMAP success
+// criteria end-to-end. RED-first does not apply to cross-cutting integration
+// verification of already-tested units (see 02-05-PLAN.md objective note).
+
+describe("02-05 — per-mode daemon harness (REQ-04/REQ-10/REQ-14/REQ-15/REQ-16)", () => {
+  const originalEnv = process.env;
+  const instances: DaemonInstance[] = [];
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(async () => {
+    while (instances.length > 0) {
+      const inst = instances.shift()!;
+      try { await inst.shutdownHandle.trigger("test-cleanup"); } catch { /* ignore */ }
+      try { inst.shutdownHandle.dispose(); } catch { /* idempotent */ }
+    }
+    process.env = originalEnv;
+  });
+
+  // -------------------------------------------------------------------------
+  // REQ-04: file mode — env.set persists to secrets.json + read back
+  // -------------------------------------------------------------------------
+
+  it("file mode: env.set persists to secrets.json and reads back via secrets.get (REQ-04)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-file-envset-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // env.set must persist to the file store and return storage:"file"
+      const setResult = await instance.rpcCall(
+        "env.set",
+        { key: "MY_API_KEY", value: "test-api-value-12345", _trustLevel: "admin" },
+      ) as { set: boolean; key: string; storage: string; restarting: boolean };
+      expect(setResult.set).toBe(true);
+      expect(setResult.key).toBe("MY_API_KEY");
+      expect(setResult.storage).toBe("file");
+      // MY_API_KEY is a brand-new key (not in the mock secretManager),
+      // so the additive restart rule applies: restarting:false (live-applied).
+      expect(setResult.restarting).toBe(false);
+
+      // secrets.get must return the same value that was set
+      const getResult = await instance.rpcCall(
+        "secrets.get",
+        { name: "MY_API_KEY", _trustLevel: "admin" },
+      ) as { name: string; value: string | undefined; exists: boolean };
+      expect(getResult.exists).toBe(true);
+      expect(getResult.value).toBe("test-api-value-12345");
+
+      // secrets.json must be created with 0600 permissions (residency + security)
+      const secretsPath = nodePath.resolve(freshDataDir, "secrets.json");
+      expect(fs.existsSync(secretsPath)).toBe(true);
+      const stat = fs.statSync(secretsPath);
+      expect(stat.mode & 0o777).toBe(0o600);
+
+      // dataDir must have 0700 permissions
+      const dirStat = fs.statSync(freshDataDir);
+      expect(dirStat.mode & 0o777).toBe(0o700);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("file mode: secrets.set persists and secrets.get reads back (REQ-04)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-file-secsset-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // secrets.set must persist to the file store
+      const setResult = await instance.rpcCall(
+        "secrets.set",
+        { name: "STRIPE_SECRET", value: "sk-stripe-test-99", _trustLevel: "admin" },
+      ) as { name: string; stored: boolean };
+      expect(setResult.stored).toBe(true);
+      expect(setResult.name).toBe("STRIPE_SECRET");
+
+      // secrets.get must return the persisted value
+      const getResult = await instance.rpcCall(
+        "secrets.get",
+        { name: "STRIPE_SECRET", _trustLevel: "admin" },
+      ) as { name: string; value: string | undefined; exists: boolean };
+      expect(getResult.exists).toBe(true);
+      expect(getResult.value).toBe("sk-stripe-test-99");
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // REQ-04 / REQ-14: env mode — both env.set and secrets.set rejected
+  // -------------------------------------------------------------------------
+
+  it("env mode: env.set returns error containing 'read-only' (REQ-04)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-env-envset-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides(undefined, "env");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // env.set must throw with a message containing "read-only" in env mode
+      await expect(
+        instance.rpcCall(
+          "env.set",
+          { key: "SOME_SECRET", value: "some-value", _trustLevel: "admin" },
+        ),
+      ).rejects.toThrow(/read-only/);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("env mode: secrets.set returns error containing 'read-only' (REQ-04)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-env-secset-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides(undefined, "env");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // secrets.set must throw with a message containing "read-only" in env mode
+      await expect(
+        instance.rpcCall(
+          "secrets.set",
+          { name: "SOME_SECRET", value: "some-value", _trustLevel: "admin" },
+        ),
+      ).rejects.toThrow(/read-only/);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("env mode: env_set error message mentions security.storage and not SECRETS_MASTER_KEY (REQ-14)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-env-hint-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides(undefined, "env");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // The error must mention "security.storage" so the operator knows
+      // how to switch to a writable store (REQ-14 actionable hint).
+      // It must NOT mention SECRETS_MASTER_KEY (stale guidance removed in Plan 02-02).
+      let thrownMessage = "";
+      try {
+        await instance.rpcCall(
+          "env.set",
+          { key: "SOME_KEY", value: "some-val", _trustLevel: "admin" },
+        );
+      } catch (e: unknown) {
+        thrownMessage = e instanceof Error ? e.message : String(e);
+      }
+      expect(thrownMessage).toMatch(/read-only/);
+      expect(thrownMessage).toMatch(/security\.storage/);
+      expect(thrownMessage).not.toMatch(/SECRETS_MASTER_KEY/);
+      expect(thrownMessage).not.toMatch(/~\/\.comis\/\.env/);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // REQ-10: file mode residency canary — secrets.list returns no value field
+  // -------------------------------------------------------------------------
+
+  it("file mode: secrets.list returns names+metadata only, no value field (REQ-10)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-file-list-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // Store a secret via secrets.set
+      await instance.rpcCall(
+        "secrets.set",
+        { name: "MY_KEY", value: "MY_VALUE", _trustLevel: "admin" },
+      );
+
+      // secrets.list must return entries with name but NO value field (REQ-10)
+      const listResult = await instance.rpcCall(
+        "secrets.list",
+        { _trustLevel: "admin" },
+      ) as { secrets: Array<Record<string, unknown>> };
+      expect(listResult.secrets.length).toBeGreaterThan(0);
+      const entry = listResult.secrets.find((s) => s.name === "MY_KEY");
+      expect(entry).toBeDefined();
+      expect(entry).not.toHaveProperty("value");
+      expect(entry).not.toHaveProperty("plaintext");
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // REQ-15: stage-2 scrub — config-referenced custom secret absent post-boot
+  // -------------------------------------------------------------------------
+
+  it("stage-2 scrub: platformSecretNames secret absent from process.env after boot (REQ-15)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-05-stage2-scrub-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+      // Set a custom secret that is NOT in the SENSITIVE_PREFIXES list
+      // (so it survives stage-1 scrub but must be removed by stage-2 scrub).
+      process.env["MY_CUSTOM_TOKEN"] = "super-secret-custom-value";
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+      // Override bootstrap to return a container where platformSecretNames
+      // includes MY_CUSTOM_TOKEN — simulating it being referenced in config.yaml.
+      overrides.bootstrap = vi.fn().mockImplementation(() => {
+        const container = createMockContainer();
+        container.platformSecretNames = new Set<string>(["MY_CUSTOM_TOKEN"]);
+        return { ok: true, value: container };
+      });
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // MY_CUSTOM_TOKEN must have been removed by stage-2 scrub (REQ-15)
+      expect(process.env["MY_CUSTOM_TOKEN"]).toBeUndefined();
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 03-04: Additive no-restart integration — REQ-07/REQ-13/REQ-18
+// ---------------------------------------------------------------------------
+// End-to-end integration tests for the Phase 3 additive-no-restart behavior.
+// Verifies that the daemon satisfies Phase 3 ROADMAP success criteria:
+//   1. env.set BRAND_NEW_KEY → restarting:false, NO SIGUSR2, value live in store
+//   2. secrets.set OTHER_NEW_KEY → restarting:false, stored:true, NO SIGUSR2
+//   3. Value readable via secrets.get after additive env.set (live-applied)
+//   4. env.set EXISTING_KEY (rotation) → restarting:true, SIGUSR2 scheduled
+//   5. secrets.delete EXISTING → restarting:true, deleted:true, SIGUSR2 scheduled
+//   6. secrets.delete ABSENT → restarting:false, deleted:false, NO SIGUSR2
+
+describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () => {
+  const originalEnv = process.env;
+  const instances: DaemonInstance[] = [];
+  let killSpy: ReturnType<typeof vi.spyOn> | null = null;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  afterEach(async () => {
+    // Restore process.kill spy before shutdown (prevent SIGUSR2 calls from
+    // interfering with shutdown). The spy is nulled after restoration.
+    if (killSpy) {
+      killSpy.mockRestore();
+      killSpy = null;
+    }
+    while (instances.length > 0) {
+      const inst = instances.shift()!;
+      try { await inst.shutdownHandle.trigger("test-cleanup"); } catch { /* ignore */ }
+      try { inst.shutdownHandle.dispose(); } catch { /* idempotent */ }
+    }
+    process.env = originalEnv;
+  });
+
+  // -------------------------------------------------------------------------
+  // 03-04-1: env.set NEW_KEY → restarting:false, SIGUSR2 NOT sent
+  // -------------------------------------------------------------------------
+  it("03-04-1: env.set on a brand-new key returns restarting:false (additive live-applied, no SIGUSR2)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-env-new-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // Spy on process.kill to verify SIGUSR2 is NOT sent (additive path)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      killSpy = vi.spyOn(process, "kill" as any).mockImplementation((() => true) as never);
+
+      const setResult = await instance.rpcCall(
+        "env.set",
+        { key: "BRAND_NEW_KEY_03_04", value: "hello-live", _trustLevel: "admin" },
+      ) as { set: boolean; key: string; storage: string; restarting: boolean };
+
+      // Let any async timers fire (rotation schedules SIGUSR2 after 200ms;
+      // additive path should NOT have scheduled one)
+      await new Promise((r) => setTimeout(r, 250));
+
+      expect(setResult.set).toBe(true);
+      expect(setResult.key).toBe("BRAND_NEW_KEY_03_04");
+      expect(setResult.restarting).toBe(false);
+
+      // SIGUSR2 must NOT have been sent (additive live-apply, no restart)
+      const sigusr2Calls = (killSpy.mock.calls as unknown[][]).filter(
+        (args) => args[0] === process.pid && args[1] === "SIGUSR2",
+      );
+      expect(sigusr2Calls.length).toBe(0);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 03-04-2: secrets.set OTHER_NEW_KEY → restarting:false, stored:true, no SIGUSR2
+  // -------------------------------------------------------------------------
+  it("03-04-2: secrets.set on a brand-new key returns restarting:false and stored:true (additive, no SIGUSR2)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-sec-new-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      killSpy = vi.spyOn(process, "kill" as any).mockImplementation((() => true) as never);
+
+      const setResult = await instance.rpcCall(
+        "secrets.set",
+        { name: "OTHER_NEW_KEY_03_04", value: "secret-live", _trustLevel: "admin" },
+      ) as { name: string; stored: boolean; restarting: boolean };
+
+      await new Promise((r) => setTimeout(r, 250));
+
+      expect(setResult.stored).toBe(true);
+      expect(setResult.name).toBe("OTHER_NEW_KEY_03_04");
+      expect(setResult.restarting).toBe(false);
+
+      const sigusr2Calls = (killSpy.mock.calls as unknown[][]).filter(
+        (args) => args[0] === process.pid && args[1] === "SIGUSR2",
+      );
+      expect(sigusr2Calls.length).toBe(0);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 03-04-3: daemon still responsive after additive env.set; value readable
+  // -------------------------------------------------------------------------
+  it("03-04-3: after additive env.set, daemon is responsive and value is readable via secrets.get", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-env-read-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      killSpy = vi.spyOn(process, "kill" as any).mockImplementation((() => true) as never);
+
+      // Step 1: additive write
+      const setResult = await instance.rpcCall(
+        "env.set",
+        { key: "BRAND_NEW_KEY_03_04", value: "hello-live", _trustLevel: "admin" },
+      ) as { set: boolean; restarting: boolean };
+      expect(setResult.set).toBe(true);
+      expect(setResult.restarting).toBe(false);
+
+      // Step 2: daemon must still be responsive — call another RPC
+      const getResult = await instance.rpcCall(
+        "secrets.get",
+        { name: "BRAND_NEW_KEY_03_04", _trustLevel: "admin" },
+      ) as { name: string; value: string | undefined; exists: boolean };
+
+      // The value was persisted to the file store by env.set (via secretStore.set)
+      // and is now readable via secrets.get (which reads from the same file store).
+      // This also proves the daemon did NOT restart (restart would reload from file;
+      // the value being immediately readable via the same instance proves live-apply).
+      expect(getResult.exists).toBe(true);
+      expect(getResult.value).toBe("hello-live");
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 03-04-4: env.set EXISTING_KEY → restarting:false, NO SIGUSR2 (Plans 06-02+06-03)
+  // -------------------------------------------------------------------------
+  it("03-04-4: env.set on an existing key returns restarting:false with no SIGUSR2 (live-rotation, no restart)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-env-exist-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      // Override bootstrap to return a container where secretManager.has("EXISTING_KEY") is true
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+      overrides.bootstrap = vi.fn().mockImplementation(() => {
+        const container = createMockContainer();
+        // Simulate the key already existing in the secretManager
+        (container.secretManager as { has: ReturnType<typeof vi.fn> }).has = vi.fn().mockImplementation(
+          (k: string) => k === "EXISTING_KEY_03_04",
+        );
+        return { ok: true, value: container };
+      });
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // Intercept SIGUSR2 to detect any unexpected restart signal
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      killSpy = vi.spyOn(process, "kill" as any).mockImplementation((() => true) as never);
+
+      const setResult = await instance.rpcCall(
+        "env.set",
+        { key: "EXISTING_KEY_03_04", value: "v2", _trustLevel: "admin" },
+      ) as { set: boolean; key: string; restarting: boolean };
+
+      // Wait past any potential timer (Plans 06-02 removed the SIGUSR2 timer)
+      await new Promise((r) => setTimeout(r, 250));
+
+      expect(setResult.set).toBe(true);
+      // Plans 06-02+06-03: rotation now live-applies without restart
+      expect(setResult.restarting).toBe(false);
+
+      // SIGUSR2 must NOT have been called (no restart on rotation)
+      const sigusr2Calls = (killSpy.mock.calls as unknown[][]).filter(
+        (args) => args[0] === process.pid && args[1] === "SIGUSR2",
+      );
+      expect(sigusr2Calls.length).toBe(0);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 03-04-5: secrets.delete EXISTING → restarting:false, deleted:true, NO SIGUSR2 (Plans 06-02)
+  // -------------------------------------------------------------------------
+  it("03-04-5: secrets.delete on an existing key returns restarting:false and deleted:true (live-delete, no restart)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-sec-del-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // First create the secret so it exists in the file store
+      await instance.rpcCall(
+        "secrets.set",
+        { name: "DELETE_TARGET_03_04", value: "to-be-deleted", _trustLevel: "admin" },
+      );
+
+      // Now the key is in the store; secretManager.has() uses the mock.
+      // Override the mock to indicate the key exists before delete.
+      const container = (instance as unknown as { container: AppContainer }).container;
+      (container.secretManager as { has: ReturnType<typeof vi.fn> }).has = vi.fn().mockImplementation(
+        (k: string) => k === "DELETE_TARGET_03_04",
+      );
+
+      // Intercept SIGUSR2 to detect any unexpected restart signal
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      killSpy = vi.spyOn(process, "kill" as any).mockImplementation((() => true) as never);
+
+      const delResult = await instance.rpcCall(
+        "secrets.delete",
+        { name: "DELETE_TARGET_03_04", _trustLevel: "admin" },
+      ) as { name: string; deleted: boolean; restarting: boolean };
+
+      await new Promise((r) => setTimeout(r, 250));
+
+      expect(delResult.deleted).toBe(true);
+      // Plans 06-02: deletion now live-applies without restart
+      expect(delResult.restarting).toBe(false);
+
+      // SIGUSR2 must NOT have been called (no restart on delete)
+      const sigusr2Calls = (killSpy.mock.calls as unknown[][]).filter(
+        (args) => args[0] === process.pid && args[1] === "SIGUSR2",
+      );
+      expect(sigusr2Calls.length).toBe(0);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 03-04-6: secrets.delete ABSENT → restarting:false, deleted:false, NO SIGUSR2
+  // -------------------------------------------------------------------------
+  it("03-04-6: secrets.delete on a non-existent key returns restarting:false and deleted:false (no-op, no SIGUSR2)", async () => {
+    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-sec-noexist-"));
+    try {
+      process.env["COMIS_DATA_DIR"] = freshDataDir;
+      process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
+
+      const { overrides } = buildOverrides();
+      overrides.preReadStorageMode = vi.fn().mockReturnValue("file");
+
+      const instance = await main(overrides);
+      instances.push(instance);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      killSpy = vi.spyOn(process, "kill" as any).mockImplementation((() => true) as never);
+
+      const delResult = await instance.rpcCall(
+        "secrets.delete",
+        { name: "NEVER_EXISTED_03_04", _trustLevel: "admin" },
+      ) as { name: string; deleted: boolean; restarting: boolean };
+
+      await new Promise((r) => setTimeout(r, 250));
+
+      expect(delResult.deleted).toBe(false);
+      expect(delResult.restarting).toBe(false);
+
+      const sigusr2Calls = (killSpy.mock.calls as unknown[][]).filter(
+        (args) => args[0] === process.pid && args[1] === "SIGUSR2",
+      );
+      expect(sigusr2Calls.length).toBe(0);
+    } finally {
+      rmSync(freshDataDir, { recursive: true, force: true });
+    }
   });
 });

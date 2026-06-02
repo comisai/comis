@@ -19,7 +19,7 @@
  *
  * Storage mode handling: the CLI process cannot bootstrap the encrypted
  * secrets store without `SECRETS_MASTER_KEY`, so when
- * `appConfig.oauth.storage === "encrypted"` the per-profile sub-check
+ * `appConfig.security.storage === "encrypted"` the per-profile sub-check
  * returns a single skip finding pointing the operator at the daemon host.
  *
  * NEVER prints `profile.access` or `profile.refresh` in any DoctorFinding
@@ -96,9 +96,7 @@ async function checkProfiles(
 ): Promise<DoctorFinding[]> {
   const findings: DoctorFinding[] = [];
 
-  const storage = (context.config?.oauth?.storage ?? "file") as
-    | "file"
-    | "encrypted";
+  const storage = context.config?.security?.storage ?? "file";
 
   if (storage === "encrypted") {
     // CLI cannot bootstrap encrypted store without SECRETS_MASTER_KEY.
@@ -113,7 +111,24 @@ async function checkProfiles(
           "OAuth storage mode is 'encrypted' — doctor cannot read profiles from CLI",
         suggestion:
           "Run doctor on the daemon host (with SECRETS_MASTER_KEY set), " +
-          "or set oauth.storage to 'file' to use the plaintext file backend.",
+          "or set security.storage to 'file' in config.yaml to use the plaintext file backend.",
+        repairable: false,
+      },
+    ];
+  }
+
+  // WR-02: env mode has no OAuth credential store — credentials are supplied
+  // via environment variables at runtime. No profiles to read; skip cleanly.
+  if (storage === "env") {
+    return [
+      {
+        category: CATEGORY,
+        check: "Profile store",
+        status: "skip",
+        message:
+          "OAuth storage mode is 'env' — no OAuth credential store is active",
+        suggestion:
+          "Set security.storage to 'file' or 'encrypted' in config.yaml to enable OAuth login.",
         repairable: false,
       },
     ];

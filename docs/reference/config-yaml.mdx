@@ -1249,6 +1249,56 @@ Controls how sub-agent sessions receive context, condense results, and manage th
 | `enabled` | `boolean` | `false` | Enable encrypted secrets store |
 | `dbPath` | `string` | `"secrets.db"` | Path to secrets database relative to dataDir |
 
+**Storage Mode (security.storage)**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `storage` | `"encrypted"` \| `"file"` \| `"env"` | `"encrypted"` | Credential storage mode (`security.storage`) for all three stores (secrets, OAuth profiles, MCP tokens). |
+
+Three modes are supported:
+
+**`storage: "encrypted"` (default — secure-by-default)** — AES-256-GCM-encrypted rows in
+`~/.comis/secrets.db` (SQLite). Requires `SECRETS_MASTER_KEY` to be set (generated automatically
+on first boot). Defends against disk/backup theft at the cost of making `SECRETS_MASTER_KEY`
+the crown jewel.
+
+**`storage: "file"` — plaintext opt-in bargain** — structured JSON at `~/.comis/secrets.json`,
+`~/.comis/auth-profiles.json`, and `~/.comis/mcp-tokens/` with mode `0600` (user-only read) in a
+`0700` directory. Defends against other local users reading secrets; does **not** defend against
+root, disk/backup theft, or process-memory inspection. No `SECRETS_MASTER_KEY` required.
+Hot-reload: `comis auth login` writes are picked up without a daemon restart.
+
+**`storage: "env"` (`security.storage: env`) — read-only posture** — snapshots `.env`/`process.env` into the
+`SecretManager` at boot and scrubs sensitive names from `process.env`. Runtime writes
+(`env.set`, `secrets.set`, `comis auth login`) are rejected with an actionable error. Use
+for read-only deployments where credentials are injected via environment variables.
+
+<Warning>
+`security.storage` is **runtime-immutable** — changing it requires editing `config.yaml`
+and restarting the daemon. The config schema is `z.strictObject`, so a mismatch between
+the old v1.4 config shape and the new v1.5 layout fails boot with a precise migration error.
+**Back up `~/.comis/config.yaml` before editing.**
+</Warning>
+
+<Info>
+**Migration from v1.4:** The legacy top-level `oauth:` block, `security.secrets.enabled`,
+and `COMIS_DISABLE_ENCRYPTED_SECRETS` keys were removed in v1.5. Replace with
+`security: storage: encrypted|file|env`. See the [v1.5 Changelog](#) for the migration guide.
+</Info>
+
+<Info>
+**Mode mismatch detection:** If you switch modes while credentials remain in the inactive
+backend, the daemon emits a boot WARN naming the stranded store and the manual migration step.
+Cross-mode migration tooling is planned for a future release.
+</Info>
+
+```yaml title="~/.comis/config.yaml"
+security:
+  storage: encrypted  # default — AES-256-GCM, requires SECRETS_MASTER_KEY
+  # storage: file     # plaintext opt-in — 0600 JSON files, no SECRETS_MASTER_KEY
+  # storage: env      # read-only — snapshots process.env, rejects runtime writes
+```
+
 <Info>See [Security](/security/index) for a comprehensive overview of the security model.</Info>
 
 </Accordion>
@@ -1278,36 +1328,6 @@ Action approval workflow. Rules are evaluated in order (first match wins).
 | `minTrustLevel` | `enum` | `"verified"` | Trust level for auto-approve: `untrusted`, `basic`, `verified`, `admin` |
 
 <Info>See [Approvals](/security/approvals) for approval workflow configuration patterns.</Info>
-
-</Accordion>
-
-</AccordionGroup>
-
-## OAuth
-
-OAuth credential storage configuration for providers using subscription-based authentication (currently OpenAI Codex). Stored separately from the read-only [`SecretManager`](/reference/secret-manager) so the daemon can refresh tokens at runtime without violating the secret-store's read-only contract.
-
-<AccordionGroup>
-
-<Accordion title="oauth">
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `storage` | `"file"` \| `"encrypted"` | `"file"` | Storage backend for OAuth profiles. See [OAuth concepts -> Storage backends](/security/oauth#storage-backends) for the full comparison. |
-
-**`storage: "file"`** -- plaintext JSON at `~/.comis/auth-profiles.json` with mode `0o600` (user-only read). Atomic write (tmp -> fsync -> rename) with cross-process file locking via `proper-lockfile`. Hot-reload via chokidar with 100ms debounce -- `comis auth login` writes are picked up by the daemon without restart.
-
-**`storage: "encrypted"`** -- AES-256-GCM-encrypted rows in the `oauth_profiles` table inside the same SQLite database as `secrets.db`. Each row stores the full profile JSON as one ciphertext blob with per-row IV/auth-tag, plus a denormalized `expires_at` column for fast doctor scans.
-
-<Info>The `encrypted` backend requires [`SECRETS_MASTER_KEY`](/reference/environment-variables#secrets_master_key) to be set. The daemon fails to start with a clear hint otherwise. See [Setting up the encrypted store](/security/secrets#setting-up-the-encrypted-store) for key generation.</Info>
-
-<Warning>The `encrypted` backend does **not** support hot-reload from external processes (e.g., `comis auth login` from a different shell). The SQLite WAL journal masks `fs.watch` change events. Restart the daemon to pick up new profiles. The `file` backend has no such limitation.</Warning>
-
-```yaml title="~/.comis/config.yaml"
-oauth:
-  storage: file        # default -- plaintext, hot-reloadable, mode 0o600
-  # storage: encrypted   # production -- AES-256-GCM, requires SECRETS_MASTER_KEY
-```
 
 </Accordion>
 

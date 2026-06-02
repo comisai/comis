@@ -135,14 +135,14 @@ export interface SingleAgentDeps {
   /**
    * SecretsCrypto engine bound to SECRETS_MASTER_KEY. Defined when the daemon
    * was started with a valid master key (encrypted-secrets mode). Required
-   * when `appConfig.oauth.storage === "encrypted"` — selectOAuthCredentialStore
+   * when `appConfig.security.storage === "encrypted"` — selectOAuthCredentialStore
    * fails fast with an operator hint when missing.
    */
   secretsCrypto?: SecretsCrypto;
   /**
    * Shared better-sqlite3 handle to secrets.db (the SqliteSecretStoreHandle.db
    * field, plumbed through from daemon.ts after createSqliteSecretStore).
-   * Required when `appConfig.oauth.storage === "encrypted"` so the OAuth
+   * Required when `appConfig.security.storage === "encrypted"` so the OAuth
    * profile adapter can share the existing connection rather than opening a
    * second handle to the same DB file — eliminates the dual-handle lifecycle
    * hazards: close-order, schema-init double-execution, prepared-statement

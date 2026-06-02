@@ -268,9 +268,9 @@ describe("oauthHealthCheck — encrypted-mode skip", () => {
   it("encrypted storage yields one skip explaining CLI cannot read", async () => {
     const ctx: DoctorContext = {
       ...baseContext,
-      // Minimal config shape that exposes oauth.storage; cast to avoid
+      // Minimal config shape that exposes security.storage; cast to avoid
       // building a full AppConfig.
-      config: { oauth: { storage: "encrypted" } } as unknown as DoctorContext["config"],
+      config: { security: { storage: "encrypted" } } as unknown as DoctorContext["config"],
     };
     const findings = await oauthHealthCheck.run(ctx);
     const skip = findings.find(
@@ -375,6 +375,44 @@ describe("oauthHealthCheck — TLS preflight", () => {
       tlsFinding!.suggestion!.toLowerCase().includes("firewall") ||
         tlsFinding!.suggestion!.toLowerCase().includes("dns"),
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Env-mode skip (WR-02)
+// ---------------------------------------------------------------------------
+
+describe("oauthHealthCheck — env-mode skip", () => {
+  it("env storage returns exactly one skip with check 'Profile store' and message containing 'env'", async () => {
+    const ctx: DoctorContext = {
+      ...baseContext,
+      config: { security: { storage: "env" } } as unknown as DoctorContext["config"],
+    };
+    const findings = await oauthHealthCheck.run(ctx);
+    const profileStoreFindings = findings.filter((f) => f.check === "Profile store");
+    expect(profileStoreFindings).toHaveLength(1);
+    expect(profileStoreFindings[0]!.status).toBe("skip");
+    expect(profileStoreFindings[0]!.message).toContain("env");
+  });
+
+  it("env storage does NOT call selectOAuthCredentialStore (no store opened)", async () => {
+    const ctx: DoctorContext = {
+      ...baseContext,
+      config: { security: { storage: "env" } } as unknown as DoctorContext["config"],
+    };
+    await oauthHealthCheck.run(ctx);
+    expect(agent.selectOAuthCredentialStore).not.toHaveBeenCalled();
+  });
+
+  it("env storage skip has a suggestion pointing to file or encrypted", async () => {
+    const ctx: DoctorContext = {
+      ...baseContext,
+      config: { security: { storage: "env" } } as unknown as DoctorContext["config"],
+    };
+    const findings = await oauthHealthCheck.run(ctx);
+    const profileStoreSkip = findings.find((f) => f.check === "Profile store");
+    expect(profileStoreSkip!.suggestion).toBeDefined();
+    expect(profileStoreSkip!.suggestion!.toLowerCase()).toMatch(/file|encrypted/);
   });
 });
 

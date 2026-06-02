@@ -30,6 +30,7 @@ import type {
   SecretStorePort,
   ExecGitFn,
   ContextStorePort,
+  MutableSecretManager,
 } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi, SqliteMemoryAdapter, createEmbeddingQueue } from "@comis/memory";
@@ -362,11 +363,10 @@ export interface WorkspaceApiDeps {
   /** mcp-handlers reads deps.secretManager?.has for env-ref validation. */
   secretManager?: import("@comis/core").SecretManager;
   /** mcp-handlers reads deps.secretStore for static-secret header extraction.
-   *  Optional — undefined when COMIS_DISABLE_ENCRYPTED_SECRETS=1 (opt-out);
-   *  extraction will fail-safe (throw [plaintext_secret_in_headers]) rather than
-   *  persist plaintext. Same shape as AuthApiDeps.secretStore / ConfigApiDeps.secretStore
+   *  Always wired after Plan 02-04 (selectSecretStore returns a store for all modes).
+   *  Same shape as AuthApiDeps.secretStore / ConfigApiDeps.secretStore
    *  so the ApiDispatchDeps multi-extends remains well-formed. */
-  secretStore?: SecretStorePort;
+  secretStore: SecretStorePort;
   /** mcp-handlers reads deps.persistDeps for YAML writes via persistMcpServers.
    *  Same shape as ChannelsApiDeps.persistDeps / AgentsApiDeps.persistDeps /
    *  OrchestratorApiDeps.persistDeps so the ApiDispatchDeps multi-extends
@@ -405,10 +405,14 @@ export interface ConfigApiDeps {
    *  AgentsApiDeps.oauthCredentialStore + AuthApiDeps.oauthCredentialStore so the
    *  ApiDispatchDeps multi-extends remains well-formed. */
   oauthCredentialStore?: import("@comis/core").OAuthCredentialStorePort;
-  /** env-handlers reads deps.secretStore for the encrypted-secret
-   *  write path. Same shape as AuthApiDeps.secretStore so the ApiDispatchDeps
-   *  multi-extends remains well-formed. */
-  secretStore?: SecretStorePort;
+  /** env-handlers reads deps.secretStore for the secret write path.
+   *  Always wired after Plan 02-04 (selectSecretStore returns a store for all modes).
+   *  Same shape as AuthApiDeps.secretStore so the ApiDispatchDeps multi-extends remains well-formed. */
+  secretStore: SecretStorePort;
+  /** Daemon-owned write handle over the shared SecretManager backing Map.
+   *  Used by env-handlers to upsert new-name writes live (additive no-restart — P4a).
+   *  MUST NOT appear on AppContainer. Required — always wired at the composition root. */
+  mutableSecretManager: MutableSecretManager;
   /**
    * When `false`, config-handlers skip the config-audit JSONL append
    * at the config.patch RPC handler call sites (config-write.ts:124,
@@ -425,8 +429,11 @@ export interface ConfigApiDeps {
  * (auth.oauth.list/connect, secrets.get/set, tokens.list/create/revoke).
  */
 export interface AuthApiDeps {
-  // Secret store (env-handlers, secrets-handlers)
-  secretStore?: SecretStorePort;
+  // Secret store (env-handlers, secrets-handlers) — always wired after Plan 02-04
+  secretStore: SecretStorePort;
+  /** Daemon-owned write handle over the shared SecretManager backing Map.
+   *  Used by secrets-handlers to upsert/remove live (additive no-restart — P4a). Required. */
+  mutableSecretManager: MutableSecretManager;
   // Token management deps. The structural shape mirrors `TokenRegistry`
   // declared in `./token-handlers.ts` -- inlined here to keep this file at
   // the bottom of the api/ import graph (madge cycle constraint).

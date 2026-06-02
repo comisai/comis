@@ -227,6 +227,14 @@ export interface ChannelManagerDeps {
    */
   exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
   /**
+   * REQ-13: Credential-to-channelType mapping for targeted reconnect on secret rotation.
+   * Maps credential name (e.g. "TELEGRAM_BOT_TOKEN") to channelType (e.g. "telegram").
+   * When present, a secret:changed event with action="upserted" triggers stop()+start()
+   * on the adapter whose channelType matches the mapped value.
+   * When absent, no channel reconnect is attempted on credential rotation.
+   */
+  channelCredentialMap?: Map<string, string>;
+  /**
    * The daemon's LIVE boot adapter registry (`adaptersByType`, exposed as
    * `DaemonInstance.adapterRegistry`). `injectMessage` consults it as a fallback
    * when an adapter for the requested channelType was not registered in
@@ -299,6 +307,53 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
   deps.eventBus.on("session:expired", (ev) => {
     sendOverrides.delete(formatSessionKey(ev.sessionKey));
   });
+
+  // REQ-13: Targeted channel adapter reconnect on credential rotation.
+  // When a channel credential is rotated (action="upserted"), stop() the specific
+  // adapter and start() it again so it picks up the new credential value from the
+  // live secretManager. Only fires when channelCredentialMap is configured.
+  // action="removed" is NOT handled here — deletion is the responsibility of the
+  // credential-deletion plan (the adapter stops, it does not restart with nothing).
+  if (deps.channelCredentialMap && deps.channelCredentialMap.size > 0) {
+    deps.eventBus.on("secret:changed", ({ name, action }) => {
+      if (action !== "upserted") return;
+      const channelType = deps.channelCredentialMap!.get(name);
+      if (!channelType) return;
+      const adapter = adaptersByType.get(channelType);
+      if (!adapter) return;
+      // Fire-and-forget with explicit error capture: the event bus is void-typed
+      // and does not observe the returned Promise, so an unhandled async throw
+      // would produce an unhandled rejection. The void-IIFE ensures rejections
+      // are always caught here (WR-01).
+      void (async () => {
+        try {
+          await adapter.stop();
+          await adapter.start();
+          deps.logger.info(
+            {
+              submodule: "credential-rotation-reconnect",
+              step: "credential-rotation-reconnect",
+              channelType,
+              credentialName: name,
+            },
+            "Channel adapter reconnected after credential rotation",
+          );
+        } catch (err) {
+          deps.logger.warn(
+            {
+              submodule: "credential-rotation-reconnect",
+              err: err instanceof Error ? err : new Error(String(err)),
+              channelType,
+              credentialName: name,
+              hint: "Channel adapter reconnect failed after credential rotation; adapter may be in stopped state",
+              errorKind: "platform" as const,
+            },
+            "Channel adapter reconnect failed after credential rotation",
+          );
+        }
+      })();
+    });
+  }
 
   return {
     async startAll(): Promise<void> {

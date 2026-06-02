@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: partial-encrypted-config guard (WR-02 precondition — wiring defect, fail-fast at composition root)
 /**
  * MCP server connection setup: reads integrations.mcp.servers from config,
  * creates an McpClientManager, and connects to each enabled server.
@@ -10,20 +11,25 @@
 
 import { mkdirSync } from "node:fs";
 import { safePath } from "@comis/core";
-import type { McpServerEntry, TypedEventBus, OAuthCredentialStorePort } from "@comis/core";
+import type { McpServerEntry, TypedEventBus, OAuthCredentialStorePort, SecretsCrypto } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import {
   createMcpClientManager,
   resolveDiscovery,
   type McpClientManager,
   type McpServerConfig,
+  type TokenStore,
 } from "@comis/skills";
+import type Database from "better-sqlite3";
 import { createPortBackedMcpTokenStore } from "./mcp-token-port-adapter.js";
+import { createMcpTokenStoreEncrypted } from "./mcp-token-store-encrypted.js";
 
 // ---------------------------------------------------------------------------
 // Deps / Result types
 // ---------------------------------------------------------------------------
 
+// @optional-field-count: secretsDb and secretsCrypto are mode-conditional (encrypted mode only;
+// absent in file/env mode) — genuinely conditional, same pattern as oauthCredentialStore/dataDir.
 /** Dependencies for MCP server setup. */
 export interface McpDeps {
   /** MCP server entries from config (integrations.mcp.servers). */
@@ -62,6 +68,18 @@ export interface McpDeps {
    * token store with the correct tokensDir (`{dataDir}/mcp-tokens`).
    */
   readonly dataDir?: string;
+  /**
+   * Pre-opened secrets.db handle from the encrypted selectSecretStore variant.
+   * When present together with secretsCrypto, setup-mcp constructs
+   * createMcpTokenStoreEncrypted internally for Encrypted mode.
+   * Absent in file/env mode — field is optional.
+   */
+  readonly secretsDb?: Database.Database;
+  /**
+   * SecretsCrypto from the encrypted selectSecretStore variant.
+   * Absent in file/env mode — field is optional.
+   */
+  readonly secretsCrypto?: SecretsCrypto;
 }
 
 /** Result of MCP server setup. */
@@ -148,34 +166,49 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
   // configured at startup. If this throws, it's a build/deploy defect,
   // not a runtime condition — re-raise so bootstrap surfaces the failure
   // loudly rather than masking it behind a nulled manager.
-  // Build the port-backed oauthDeps seam when the daemon wiring supplies both
-  // oauthCredentialStore and dataDir. The adapter wraps createTokenStore (chokidar
-  // watch + 0600 preserved) and syncs tokens to the unified OAuthCredentialStorePort
-  // on every saveTokens call. When either field is absent, oauthDeps is omitted
-  // and createMcpClientManager applies its own default (disk token store at
-  // ~/.comis/mcp-tokens/ + real resolveDiscovery cascade).
+
+  // Mode-select: Encrypted → dedicated mcp_credentials table (AES-256-GCM, no disk files);
+  // File/env → existing chokidar-backed portBackedStore (unchanged).
   //
   // Constructed ONCE at setupMcp wiring time (singleton per setupMcp invocation).
-  // All keepalive ticks reuse the same wrapper instance — no per-tick allocation.
-  const portBackedStore =
-    deps.oauthCredentialStore !== undefined && deps.dataDir !== undefined
-      ? createPortBackedMcpTokenStore(deps.oauthCredentialStore, {
-          tokensDir: safePath(deps.dataDir, "mcp-tokens"),
-          logger: deps.logger,
-        })
-      : undefined;
+  // All keepalive ticks reuse the same store instance — no per-tick allocation.
+  type OAuthDepsArg = { oauthDeps?: { createTokenStore: () => TokenStore; resolveDiscovery: typeof resolveDiscovery } };
+  let oauthDepsArg: OAuthDepsArg = {};
 
-  const oauthDepsArg =
-    portBackedStore !== undefined
-      ? {
-          oauthDeps: {
-            createTokenStore: () => portBackedStore, // same instance every call
-            // Use the real discovery cascade from skills (same as the default).
-            // Passed explicitly so TypeScript sees a complete McpOAuthDeps.
-            resolveDiscovery,
-          },
-        }
-      : {};
+  // WR-02: guard against partial encrypted config — exactly one of secretsDb/secretsCrypto
+  // provided is a wiring defect; it silently disables MCP OAuth with no diagnostic.
+  if ((deps.secretsDb !== undefined) !== (deps.secretsCrypto !== undefined)) {
+    throw new Error(
+      "setup-mcp: secretsDb and secretsCrypto must both be present or both absent. " +
+      `Got secretsDb=${deps.secretsDb !== undefined}, secretsCrypto=${deps.secretsCrypto !== undefined}. ` +
+      "This is a wiring defect — both are required for encrypted MCP token storage.",
+    );
+  }
+
+  if (deps.secretsDb !== undefined && deps.secretsCrypto !== undefined) {
+    // Encrypted mode: full AES-256-GCM TokenStore on mcp_credentials table.
+    // Zero disk files written; no chokidar watch; client_secret stays in the encrypted blob.
+    const encryptedStore = createMcpTokenStoreEncrypted(deps.secretsDb, deps.secretsCrypto);
+    oauthDepsArg = {
+      oauthDeps: {
+        createTokenStore: () => encryptedStore,
+        resolveDiscovery,
+      },
+    };
+  } else if (deps.oauthCredentialStore !== undefined && deps.dataDir !== undefined) {
+    // File mode: existing chokidar disk store (unchanged); tokens synced to unified port.
+    const portBackedStore = createPortBackedMcpTokenStore(deps.oauthCredentialStore, {
+      tokensDir: safePath(deps.dataDir, "mcp-tokens"),
+      logger: deps.logger,
+    });
+    oauthDepsArg = {
+      oauthDeps: {
+        createTokenStore: () => portBackedStore,
+        resolveDiscovery,
+      },
+    };
+  }
+  // Else: oauthDepsArg stays {} — createMcpClientManager uses its default (no OAuth).
 
   const manager = createMcpClientManager({
     logger,

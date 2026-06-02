@@ -15,7 +15,7 @@
 export { selectOAuthCredentialStore } from "./oauth-credential-store-selector.js";
 export type {
   SelectOAuthCredentialStoreInput,
-  OAuthStorageMode,
+  CredentialStorageMode,
 } from "./oauth-credential-store-selector.js";
 
 export { loginOpenAICodexOAuth } from "./oauth-login-runner.js";

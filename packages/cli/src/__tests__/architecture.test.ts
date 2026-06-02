@@ -35,9 +35,15 @@ const SRC_ROOT = resolve(here, "..");
 // cli → @comis/agent imports have been retargeted to @comis/core.
 // @comis/agent is now in HARD_FORBIDDEN_PACKAGES (see below).
 
-// L11: closed once the secrets RPC migration eliminated the last
-// cli → memory value-import.
-const L11_ALLOWLIST: readonly string[] = [];
+// L11 re-opened for exactly one site: the CLI's offline secrets adapter.
+// This is the ONLY permitted @comis/cli → @comis/memory import site.
+// All other CLI memory access routes through daemon RPC.
+// Rationale: the offline fallback path (daemon-free first-time bootstrap)
+// must open the encrypted SQLite store directly. A single bounded adapter
+// file contains all @comis/memory imports so future L11 closure is one deletion.
+const L11_ALLOWLIST: readonly string[] = [
+  "util/offline-secrets-store.ts",
+];
 
 // L12 (CLOSED): the previous 3-site allowlist is empty — all
 // cli → @comis/infra imports have been retargeted to @comis/core
@@ -148,25 +154,30 @@ describe("@comis/cli -- architecture invariants", () => {
 // ---------------------------------------------------------------------------
 // Daemon-required help-text patterns.
 //
-// Every store-backed secrets subcommand must document the daemon precondition
-// in its Commander .description() string. Source-grep approach (simpler than
-// rendering Commander help).
+// Store-backed secrets subcommands must document daemon precondition or
+// fallback behavior in their Commander .description() string.
+// Source-grep approach (simpler than rendering Commander help).
 //
-// Store-backed (REQUIRE suffix): set, get, list, delete, import.
-// Daemon-free  (FORBID suffix):  init, audit.
+// Fallback-capable (set, list, import): daemon RPC when up; direct store when down.
+// Daemon-required  (get, delete):       always require daemon — no offline fallback.
+// Daemon-free      (init, audit):       never mention daemon as required.
 // ---------------------------------------------------------------------------
 
 describe("daemon-required help-text patterns", () => {
   const SECRETS_FILE = resolve(SRC_ROOT, "commands/secrets.ts");
+  // Pattern for subcommands that require the daemon with no fallback (get, delete).
   const SECRETS_REQUIRED_PATTERN = /Requires the comis daemon to be running\./;
+  // Pattern for subcommands with an offline fallback (set, list, import).
+  const SECRETS_FALLBACK_PATTERN =
+    /Uses daemon RPC when running; falls back to direct store when daemon is offline\./;
 
-  it("secrets set description contains the daemon-required precondition string", () => {
+  it("secrets set description contains the daemon-fallback precondition string", () => {
     const contents = readFileSync(SECRETS_FILE, "utf8");
     const sec = extractSubcommandDescription(contents, "set <name>");
     expect(
       sec,
-      "secrets set description must declare daemon precondition",
-    ).toMatch(SECRETS_REQUIRED_PATTERN);
+      "secrets set description must declare daemon-fallback precondition",
+    ).toMatch(SECRETS_FALLBACK_PATTERN);
   });
 
   it("secrets get description contains the daemon-required precondition string", () => {
@@ -175,10 +186,10 @@ describe("daemon-required help-text patterns", () => {
     expect(sec).toMatch(SECRETS_REQUIRED_PATTERN);
   });
 
-  it("secrets list description contains the daemon-required precondition string", () => {
+  it("secrets list description contains the daemon-fallback precondition string", () => {
     const contents = readFileSync(SECRETS_FILE, "utf8");
     const sec = extractSubcommandDescription(contents, "list");
-    expect(sec).toMatch(SECRETS_REQUIRED_PATTERN);
+    expect(sec).toMatch(SECRETS_FALLBACK_PATTERN);
   });
 
   it("secrets delete description contains the daemon-required precondition string", () => {
@@ -187,10 +198,10 @@ describe("daemon-required help-text patterns", () => {
     expect(sec).toMatch(SECRETS_REQUIRED_PATTERN);
   });
 
-  it("secrets import description contains the daemon-required precondition string", () => {
+  it("secrets import description contains the daemon-fallback precondition string", () => {
     const contents = readFileSync(SECRETS_FILE, "utf8");
     const sec = extractSubcommandDescription(contents, "import");
-    expect(sec).toMatch(SECRETS_REQUIRED_PATTERN);
+    expect(sec).toMatch(SECRETS_FALLBACK_PATTERN);
   });
 
   it("secrets init description does NOT contain the daemon-required precondition (init is daemon-free)", () => {
@@ -217,8 +228,8 @@ describe("daemon-required help-text patterns", () => {
 
 describe("auth help-text patterns", () => {
   const AUTH_FILE = resolve(SRC_ROOT, "commands/auth.ts");
-  const AUTH_ENCRYPTED_PATTERN = /Requires the comis daemon to be running when oauth\.storage is 'encrypted'\./;
-  const AUTH_LOGIN_PATTERN = /Runs locally for file-backed storage\. Daemon-assisted login for encrypted storage is not yet supported\./;
+  const AUTH_ENCRYPTED_PATTERN = /Requires the comis daemon to be running when security\.storage is 'encrypted'\./;
+  const AUTH_LOGIN_PATTERN = /File mode stores locally\. Encrypted mode routes through the daemon \(auth\.set RPC\)\./;
 
   it("auth list description contains the conditional daemon-required precondition string", () => {
     const contents = readFileSync(AUTH_FILE, "utf8");
@@ -241,12 +252,12 @@ describe("auth help-text patterns", () => {
     expect(sec).toMatch(AUTH_ENCRYPTED_PATTERN);
   });
 
-  it("auth login description names the file-backed local + encrypted-not-supported contract", () => {
+  it("auth login description names the file-backed local + encrypted-daemon-assisted contract", () => {
     const contents = readFileSync(AUTH_FILE, "utf8");
     const sec = extractSubcommandDescription(contents, "login");
     expect(
       sec,
-      "auth login must declare file-backed-local + encrypted-not-supported",
+      "auth login must declare file-backed-local + encrypted-daemon-assisted (auth.set RPC)",
     ).toMatch(AUTH_LOGIN_PATTERN);
   });
 });

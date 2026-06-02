@@ -134,7 +134,7 @@ function makeContainer(agentId: string, rawRerankInput: boolean | undefined): Ap
       models: { defaultModel: "", defaultProvider: "" },
       dataDir: "/tmp/test-data",
       tenantId: "test-tenant",
-      oauth: { storage: "file" },
+      security: { storage: "file" },
       providers: { entries: {} },
       tooling: {},
       diagnostics: {},

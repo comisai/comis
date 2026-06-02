@@ -99,4 +99,24 @@ describe("selectOAuthCredentialStore", () => {
       }),
     ).toThrow(/setup-agents/);
   });
+
+  // WR-01: env branch — must throw actionable error (env is read-only; no writable store)
+  it("storage='env' throws with actionable error mentioning 'env' and 'read-only' or 'login'", () => {
+    const fileLock = makeStubFileLock();
+    expect(() =>
+      selectOAuthCredentialStore({
+        storage: "env",
+        dataDir: "/tmp/comis-test-selector",
+        fileLock,
+      }),
+    ).toThrow(/env/i);
+    // Error must be actionable — must mention either "read-only" or "login"
+    expect(() =>
+      selectOAuthCredentialStore({
+        storage: "env",
+        dataDir: "/tmp/comis-test-selector",
+        fileLock,
+      }),
+    ).toThrow(/read-only|login/i);
+  });
 });

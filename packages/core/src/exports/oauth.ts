@@ -18,7 +18,7 @@ export {
 
 export type {
   SelectOAuthCredentialStoreInput,
-  OAuthStorageMode,
+  CredentialStorageMode,
   LoginError,
   LoginRunnerSuccess,
   LoginRunnerParams,

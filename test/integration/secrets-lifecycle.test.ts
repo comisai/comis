@@ -6,7 +6,8 @@
  * and secret:accessed audit event emission -- end-to-end with a real daemon.
  *
  * Covers:
- *   - Daemon boots with encrypted secrets store via setupSecrets override
+ *   - Daemon boots with encrypted secrets store (pre-seeded <dataDir>/secrets.db
+ *     loaded into the manager at boot via buildMergedEnv → decryptAll)
  *   - ScopedSecretManager allows matching secrets and emits success events
  *   - ScopedSecretManager denies non-matching secrets and emits denied events
  *   - secret:accessed audit events have correct structure
@@ -23,20 +24,17 @@
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
-import { unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   startTestDaemon,
   type TestDaemonHandle,
 } from "../support/daemon-harness.js";
 import { createLogCapture } from "../support/log-verifier.js";
-import { ok } from "@comis/shared";
-import {
-  createSecretsCrypto,
-  createScopedSecretManager,
-} from "@comis/core";
+import { createScopedSecretManager } from "@comis/core";
 import type { EventMap } from "@comis/core";
-import { createSqliteSecretStore } from "@comis/memory";
+import { createSqliteSecretStore, setupSecrets } from "@comis/memory";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -55,58 +53,56 @@ const DENIED_VALUE = "test-openai-key-value";
 describe("Secrets Lifecycle Integration Tests", () => {
   let handle: TestDaemonHandle;
   let logCapture: ReturnType<typeof createLogCapture>;
-  let tempSecretsDbPath: string;
+  let tempDataDir: string;
+  let originalDataDir: string | undefined;
+  let originalMasterKey: string | undefined;
 
   beforeAll(async () => {
     logCapture = createLogCapture();
 
-    // 1. Generate a test master key and create crypto engine
-    const testMasterKey = randomBytes(32);
-    const crypto = createSecretsCrypto(testMasterKey);
+    // v1.5: the daemon builds its encrypted store via selectSecretStore →
+    // setupSecrets({ env, dataDir }), which reads SECRETS_MASTER_KEY from the
+    // environment and opens <dataDir>/secrets.db. (The old daemon-level
+    // `setupSecrets` override is no longer on that path.) So: isolate to a fresh
+    // COMIS_DATA_DIR, set a known master key, then pre-seed <dataDir>/secrets.db
+    // using the SAME setupSecrets() result — guaranteeing the crypto + dbPath
+    // match exactly what the daemon opens at boot. The daemon's buildMergedEnv →
+    // secretStore.decryptAll() then overlays these secrets into the manager.
+    originalDataDir = process.env["COMIS_DATA_DIR"];
+    originalMasterKey = process.env["SECRETS_MASTER_KEY"];
+    tempDataDir = mkdtempSync(resolve(tmpdir(), "comis-secrets-lifecycle-"));
+    process.env["COMIS_DATA_DIR"] = tempDataDir;
+    process.env["SECRETS_MASTER_KEY"] = randomBytes(32).toString("hex");
 
-    // 2. Create a temp secrets.db and pre-populate with test secrets
-    tempSecretsDbPath = `/tmp/comis-test-secrets-lifecycle-${Date.now()}.db`;
-    const store = createSqliteSecretStore(tempSecretsDbPath, crypto);
+    // Derive crypto + dbPath exactly as the daemon will (same function, same key).
+    const setup = setupSecrets({ env: process.env, dataDir: tempDataDir });
+    if (!setup.ok || setup.value === null) {
+      throw new Error(
+        `setupSecrets failed to derive crypto/dbPath for seeding: ${setup.ok ? "null (no master key)" : setup.error.message}`,
+      );
+    }
+    const { crypto, dbPath } = setup.value;
+    const store = createSqliteSecretStore(dbPath, crypto);
 
     const setAllowedResult = store.set(ALLOWED_SECRET, ALLOWED_VALUE);
     if (!setAllowedResult.ok) {
       throw new Error(`Failed to set ${ALLOWED_SECRET}: ${setAllowedResult.error.message}`);
     }
-
     const setDeniedResult = store.set(DENIED_SECRET, DENIED_VALUE);
     if (!setDeniedResult.ok) {
       throw new Error(`Failed to set ${DENIED_SECRET}: ${setDeniedResult.error.message}`);
     }
-
-    // Close the store so daemon can open it
+    // Close the store so the daemon can open the same db at boot.
     store.close();
 
-    // 3. Start daemon with setupSecrets override that returns the pre-built crypto + dbPath
     handle = await startTestDaemon({
       configPath: CONFIG_PATH,
       logStream: logCapture.stream,
-      overrides: {
-        setupSecrets: () => ok({ crypto, dbPath: tempSecretsDbPath }),
-      },
     });
   }, 60_000);
 
   afterAll(async () => {
-    // Clean up temp secrets db
-    try {
-      unlinkSync(tempSecretsDbPath);
-    } catch {
-      // Best-effort cleanup
-    }
-    for (const suffix of ["-wal", "-shm"]) {
-      try {
-        unlinkSync(tempSecretsDbPath + suffix);
-      } catch {
-        // WAL/SHM files may not exist
-      }
-    }
-
-    // Clean up daemon
+    // Clean up daemon first (releases the data-dir lock + closes the db).
     if (handle) {
       try {
         await handle.cleanup();
@@ -116,6 +112,23 @@ describe("Secrets Lifecycle Integration Tests", () => {
           throw err;
         }
       }
+    }
+
+    // Restore env and remove the isolated temp data dir (secrets.db + .env + memory db).
+    if (originalDataDir === undefined) {
+      delete process.env["COMIS_DATA_DIR"];
+    } else {
+      process.env["COMIS_DATA_DIR"] = originalDataDir;
+    }
+    if (originalMasterKey === undefined) {
+      delete process.env["SECRETS_MASTER_KEY"];
+    } else {
+      process.env["SECRETS_MASTER_KEY"] = originalMasterKey;
+    }
+    try {
+      rmSync(tempDataDir, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
     }
   }, 30_000);
 

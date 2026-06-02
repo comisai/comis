@@ -242,10 +242,10 @@ describe("oauthHealthCheck — store.list() schema-mismatch surfacing", () => {
 // ---------------------------------------------------------------------------
 
 describe("oauthHealthCheck — encrypted storage skips CLI-side profile reading", () => {
-  it("returns skip finding pointing to daemon host when oauth.storage is 'encrypted' in config", async () => {
+  it("returns skip finding pointing to daemon host when security.storage is 'encrypted' in config", async () => {
     const findings = await oauthHealthCheck.run({
       ...baseContext,
-      config: { oauth: { storage: "encrypted" } } as never,
+      config: { security: { storage: "encrypted" } } as never,
     });
     const skipFinding = findings.find(
       (f) => f.check === "Profile store" && f.status === "skip",

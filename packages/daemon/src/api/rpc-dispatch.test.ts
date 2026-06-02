@@ -169,6 +169,46 @@ vi.mock("./provider-handlers.js", () => ({
   })),
 }));
 
+vi.mock("./auth-handlers.js", () => ({
+  createAuthHandlers: vi.fn(() => ({
+    "auth.list": vi.fn(async () => ({ profiles: [] })),
+    "auth.logout": vi.fn(async () => ({ deleted: true })),
+    "auth.set": vi.fn(async () => ({ profileId: "test", stored: true })),
+  })),
+}));
+
+vi.mock("./secrets-handlers.js", () => ({
+  createSecretsHandlers: vi.fn(() => ({
+    "secrets.list": vi.fn(async () => ({ secrets: [] })),
+    "secrets.set": vi.fn(async () => ({ stored: true })),
+    "secrets.delete": vi.fn(async () => ({ deleted: true })),
+    "secrets.init": vi.fn(async () => ({ initialized: true })),
+  })),
+}));
+
+vi.mock("./mcp-oauth-handlers.js", () => ({
+  createMcpOauthHandlers: vi.fn(() => ({
+    "mcp.oauth_login": vi.fn(async () => ({ authUrl: "" })),
+    "mcp.oauth_logout": vi.fn(async () => ({ deleted: true })),
+  })),
+}));
+
+vi.mock("./notification-handlers.js", () => ({
+  createNotificationHandlers: vi.fn(() => ({})),
+}));
+
+vi.mock("./image-handlers.js", () => ({
+  createImageHandlers: vi.fn(() => ({})),
+}));
+
+vi.mock("./context-handlers.js", () => ({
+  createContextHandlers: vi.fn(() => ({})),
+}));
+
+vi.mock("./graph-handlers/index.js", () => ({
+  createGraphHandlers: vi.fn(() => ({})),
+}));
+
 // ---------------------------------------------------------------------------
 // Tests: classifyRpcError (pure function)
 // ---------------------------------------------------------------------------
@@ -434,5 +474,58 @@ describe("createRpcDispatch", () => {
 
     const result = (await dispatch("image.analyze", {})) as { description: string };
     expect(result.description).toBe("img");
+  });
+
+  // -----------------------------------------------------------------------
+  // CR-01: auth.set failure MUST NOT log raw access/refresh tokens
+  // -----------------------------------------------------------------------
+
+  it("CR-01: auth.set handler error — dispatcher must NOT emit raw bearer or refresh token in log payload", async () => {
+    // The dispatcher error log path includes `params` on the log object.
+    // For auth.set, params carries { access: "<bearer>", refresh: "<token>" }.
+    // Before the fix, these bare field names were absent from CREDENTIAL_KEYS
+    // so the Pino/diagnostic sanitizer did not redact them.
+    //
+    // This test simulates an auth.set failure (e.g. SQLITE_BUSY) and asserts
+    // that neither ACCESS_SENTINEL nor REFRESH_SENTINEL appears in the log
+    // payload written to logger.error.
+    const ACCESS_SENTINEL = "tok-bearer-DISPATCH-CR01-SENTINEL";
+    const REFRESH_SENTINEL = "tok-refresh-DISPATCH-CR01-SENTINEL";
+
+    const { createAuthHandlers } = await import("./auth-handlers.js");
+    (createAuthHandlers as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      "auth.set": vi.fn(async () => {
+        throw new Error("database is locked");
+      }),
+    });
+
+    const { createRpcDispatch } = await import("./rpc-dispatch.js");
+    const dispatch = createRpcDispatch(mockDeps);
+
+    const authSetParams = {
+      _trustLevel: "admin",
+      provider: "openai-codex",
+      profileId: "openai-codex:user@example.com",
+      access: ACCESS_SENTINEL,
+      refresh: REFRESH_SENTINEL,
+      expires: Date.now() + 3_600_000,
+      accountId: "acct-SENTINEL",
+      version: 1,
+    };
+
+    await expect(dispatch("auth.set", authSetParams)).rejects.toThrow("database is locked");
+
+    // The dispatcher must have logged an error
+    expect(mockLogger.error).toHaveBeenCalledTimes(1);
+    const [logObj] = mockLogger.error.mock.calls[0]!;
+
+    // Serialize the log payload and confirm token sentinels are absent.
+    // The safeParams projection in the dispatcher (Part B defense-in-depth)
+    // must replace access/refresh with "[REDACTED]" before they reach the
+    // log call. CREDENTIAL_KEYS redaction (Part A) ensures the diagnostic
+    // sanitizer also catches any future bypass.
+    const logSerialized = JSON.stringify(logObj);
+    expect(logSerialized).not.toContain(ACCESS_SENTINEL);
+    expect(logSerialized).not.toContain(REFRESH_SENTINEL);
   });
 });

@@ -2137,3 +2137,105 @@ describe("refresh_token_reused detection", () => {
     expect(events[0].errorKind).toBe("callback_timeout");
   });
 });
+
+// =============================================================================
+// Phase 6 Wave 0: OAuthTokenManager.invalidate() RED test
+//
+// REQ-13 / REQ-08: OAuthTokenManager must expose an invalidate() method that
+// clears the in-memory cache so that the next getApiKey() call re-fetches from
+// the credential store. This is the encrypted-mode gap closure: when a CLI
+// `auth login` writes a new OAuth profile (a separate process), the daemon's
+// OAuthTokenManager must be able to invalidate its hot-path cache so the new
+// profile is visible without a daemon restart.
+//
+// This test MUST fail RED because invalidate() does NOT exist on the
+// OAuthTokenManager interface or the object returned by createOAuthTokenManager.
+// Plan 06-03 will add the invalidate() method.
+//
+// OQ-2 RESOLVED (from 06-RESEARCH.md, confirmed reading oauth-token-manager.ts):
+//   (a) Cache: `const cache = new Map<string, OAuthProfile>()` at line ~506 —
+//       factory-closure variable, not a class field. Implementation is `cache.clear()`.
+//   (b) Interface: `OAuthTokenManager` is an exported named interface at line ~142.
+//       `invalidate(): void` must be added as a required method.
+//   (c) auth.set handler (auth-handlers.ts): does NOT emit auth:profile_added —
+//       it only emits audit:event. Plan 06-03 must add the auth:profile_added
+//       emission to auth.set (after successful write) so that the encrypted-mode
+//       subscription in setup-agents-oauth.ts can fire tokenManager.invalidate().
+// =============================================================================
+
+describe("Phase 6 Wave 0: OAuthTokenManager.invalidate() RED test (not yet implemented)", () => {
+  let eventBus: TypedEventBus;
+  let fetchShim: { restore: () => void };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    eventBus = new TypedEventBus();
+    mockWithLock.mockImplementation(async (_path: string, fn: () => Promise<unknown>) =>
+      _ok(await fn()),
+    );
+    // The openai-codex bypass routes through globalThis.fetch (not pi-ai's
+    // getOAuthApiKey). Install the shim so the bypass reads the
+    // mockGetOAuthApiKey result instead of making a real network call.
+    fetchShim = installCodexBypassFetchShim();
+  });
+
+  afterEach(() => {
+    fetchShim.restore();
+  });
+
+  // Phase 6 Wave 0: invalidate() RED test
+  it("invalidate() clears the cache so getApiKey() re-fetches from store after a profile update (RED — method does not exist yet)", async () => {
+    // Arrange: construct manager with a mock store that returns profile v1 initially.
+    const credentialStore = makeMockCredentialStore();
+    mockGetOAuthProvider.mockReturnValue(makeFakeProvider("openai-codex"));
+
+    const profileV1 = makeStoredProfile({ refresh: "refresh-v1", access: "access-v1" });
+
+    // Prime the store with v1.
+    vi.mocked(credentialStore.get).mockResolvedValue(_ok(profileV1));
+    vi.mocked(credentialStore.list).mockResolvedValue(_ok([profileV1]));
+    // Mock getOAuthApiKey to return v1 access token (no real refresh needed).
+    mockGetOAuthApiKey.mockResolvedValue({
+      newCredentials: { ...profileV1 } as never,
+      apiKey: "access-v1",
+    });
+
+    const manager = createOAuthTokenManager({
+      secretManager: makeSecretManager({}),
+      eventBus,
+      credentialStore,
+      logger: makeMockLogger(),
+      dataDir: "/tmp/comis-test-invalidate",
+      fileLock: makeFileLockStub(),
+    });
+
+    // Act: call getApiKey() once to prime the in-memory cache.
+    await manager.getApiKey("openai-codex");
+
+    // Now "rotate": the CLI writes a new profile to the store (v2).
+    const profileV2 = makeStoredProfile({ refresh: "refresh-v2", access: "access-v2" });
+    vi.mocked(credentialStore.get).mockResolvedValue(_ok(profileV2));
+    vi.mocked(credentialStore.list).mockResolvedValue(_ok([profileV2]));
+    mockGetOAuthApiKey.mockResolvedValue({
+      newCredentials: { ...profileV2 } as never,
+      apiKey: "access-v2",
+    });
+
+    // Assert: invalidate() must exist as a function on the manager.
+    // This is the Phase 6 RED assertion — the method is not yet implemented.
+    expect(typeof (manager as unknown as Record<string, unknown>).invalidate).toBe("function");
+
+    // After invalidate(), getApiKey() must return the v2 access token.
+    // (This assertion will only be reached if the line above passes GREEN —
+    // i.e., after Plan 06-03 adds the method.)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only cast for missing method
+    await (manager as unknown as Record<string, (...args: unknown[]) => unknown>).invalidate?.();
+
+    const result = await manager.getApiKey("openai-codex");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // access-v2 is the api key after invalidation + re-fetch.
+      expect(result.value).toBe("access-v2");
+    }
+  });
+});

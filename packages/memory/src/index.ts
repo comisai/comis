@@ -176,8 +176,16 @@ export type { BatchIndexer, BatchIndexerOptions, BatchIndexerResult } from "./em
 export { openSqliteDatabase, chmodDbFiles } from "./sqlite-adapter-base.js";
 export type { SqliteAdapterOptions } from "./sqlite-adapter-base.js";
 
-// SQLite secret store (SecretStorePort implementation)
+// SQLite secret store (SecretStorePort encrypted SQLite implementation)
 export { createSqliteSecretStore } from "./sqlite-secret-store.js";
+export type { SqliteSecretStoreHandle } from "./sqlite-secret-store.js";
+
+// File secret store (SecretStorePort file-backed implementation)
+export { createFileSecretStore } from "./file-secret-store.js";
+
+// Secret store selector (mode-dispatched factory)
+export { selectSecretStore } from "./select-secret-store.js";
+export type { SelectedSecretStore } from "./select-secret-store.js";
 
 // OAuth profile schema + encrypted SQLite OAuthCredentialStorePort adapter
 export { initOAuthProfileSchema } from "./oauth-profile-schema.js";
@@ -186,6 +194,9 @@ export { createOAuthProfileStoreEncrypted } from "./oauth-profile-store-encrypte
 // Secret store bootstrap (master key resolution)
 export { setupSecrets } from "./setup-secrets.js";
 export type { SecretsBootResult } from "./setup-secrets.js";
+
+// Offline secrets write helpers (CLI daemon-free bootstrap path)
+export { offlineSecretSet, offlineSecretsList } from "./offline-secrets-write.js";
 
 // Named graph store (server-side pipeline persistence)
 export { createNamedGraphStore } from "./named-graph-store.js";

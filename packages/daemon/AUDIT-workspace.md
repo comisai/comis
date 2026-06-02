@@ -4,7 +4,7 @@
 **Status:** FINAL
 **Interface source:** `packages/daemon/src/api/types.ts:253–307`
 **Construction site:** `packages/daemon/src/daemon.ts:1863` (`buildRpcDispatchDeps`); call site at `packages/daemon/src/daemon.ts:2066`
-**Field count:** 19 (12 required + 7 optional + 0 stale-fallback)
+**Field count:** 19 (13 required + 6 optional + 0 stale-fallback)
 **Packaging:** Co-located with the `@comis/daemon` package; `files: ["dist", "bundled-skills"]` in `packages/daemon/package.json` excludes this audit doc from the npm tarball.
 
 ## Field Classification
@@ -30,18 +30,18 @@ The table below uses a tight Markdown shape — `| <fieldName> | <required|optio
 | container | required | — | packages/daemon/src/api/types.ts:291 |
 | eventBus | optional | skill lifecycle events (`skill:enabled`, `skill:disabled`, etc.) are not emitted; observers and audit consumers do not learn of skill state changes | packages/daemon/src/api/types.ts:293 |
 | secretManager | optional | mcp-handlers' env-ref validation is skipped (`mcp-handlers` reads `deps.secretManager?.has`); MCP server configs with missing env refs fail later at connect time | packages/daemon/src/api/types.ts:295 |
-| secretStore | optional | mcp-handlers' static-secret header extraction (CRED-05) is unavailable; a plaintext secret in `headers` throws `[plaintext_secret_in_headers]` rather than being auto-extracted (fail-safe, not fail-open); absent when `COMIS_DISABLE_ENCRYPTED_SECRETS=1` | packages/daemon/src/api/types.ts:304 |
+| secretStore | required | — | packages/daemon/src/api/types.ts:304 |
 | persistDeps | optional | mcp-handlers' YAML writes via `persistMcpServers` become best-effort no-ops; MCP server registrations succeed at runtime but do not persist to `config.yaml`, so subsequent daemon restarts forget them | packages/daemon/src/api/types.ts:293 |
 | createTokenStore | optional | mcp-handlers' Fix-4 token-aware short-circuit for `auth:"oauth"` connects is skipped; `manager.connect` runs blind even when no token exists, the SDK's DCR fails with `invalid_redirect_uri` (Comis only carries a real redirect URI during `mcp.oauth_login`), and the user gets the raw error instead of the `needs_oauth_login` hint. Test harnesses omit this field and rely on the post-failure persist path | packages/daemon/src/api/types.ts:319 |
 
 ## Removed Fields (stale-fallback — deleted)
 
-**None.** Every optional field corresponds to a feature-gate documented above. `approvalGate`, `skillRegistries`, `notificationService` are configurable subsystems with explicit fallback behavior; `eventBus` and `secretManager` are observability / validation hooks that the handlers query defensively with `?.` so absence is non-fatal.
+**None.** Every optional field corresponds to a feature-gate documented above. `approvalGate`, `skillRegistries`, `notificationService` are configurable subsystems with explicit fallback behavior; `eventBus` and `secretManager` are observability / validation hooks that the handlers query defensively with `?.` so absence is non-fatal. `secretStore` is required (Plan 02-04) — always wired with file/encrypted/env adapter so mcp-handlers always have a backend for static-secret header extraction.
 
 ## Summary
 
 - **Pre-audit count:** 18
-- **Final count:** 19 (12 required + 7 optional)
+- **Final count:** 19 (13 required + 6 optional)
 - **Removed (stale-fallback):** 0
 - **`stale-fallback` classification rows:** 0 (architecture test enforces; no row may carry this terminal value at any commit)
 

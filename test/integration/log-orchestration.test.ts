@@ -25,6 +25,8 @@ import { openAuthenticatedWebSocket, sendJsonRpc } from "../support/ws-helpers.j
 import { RPC_FAST_MS } from "../support/timeouts.js";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = resolve(__dirname, "../config/config.test-log-orchestration.yaml");
@@ -37,8 +39,16 @@ const GATEWAY_PORT = 8480;
 describe("Log Orchestration", () => {
   let handle: TestDaemonHandle;
   const logCapture = createLogCapture();
+  let tempDataDir: string;
+  let originalDataDir: string | undefined;
 
   beforeAll(async () => {
+    // Isolate the data dir so the Phase 7 REQ-09 boot mismatch-warn does not fire on
+    // stranded file-side credentials left in the shared ~/.comis by dev usage or other
+    // tests — this suite's log-quality validation asserts no unexpected daemon warnings.
+    originalDataDir = process.env["COMIS_DATA_DIR"];
+    tempDataDir = mkdtempSync(resolve(tmpdir(), "comis-log-orchestration-"));
+    process.env["COMIS_DATA_DIR"] = tempDataDir;
     handle = await startTestDaemon({
       configPath: CONFIG_PATH,
       logStream: logCapture.stream,
@@ -55,6 +65,16 @@ describe("Log Orchestration", () => {
           throw err;
         }
       }
+    }
+    if (originalDataDir === undefined) {
+      delete process.env["COMIS_DATA_DIR"];
+    } else {
+      process.env["COMIS_DATA_DIR"] = originalDataDir;
+    }
+    try {
+      rmSync(tempDataDir, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
     }
   }, 30_000);
 

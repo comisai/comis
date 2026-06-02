@@ -111,13 +111,13 @@ export {
   ModelCostSchema,
   OperationModelEntrySchema,
   OperationModelsSchema,
-  OAuthConfigSchema,
   substituteEnvVars,
   warnSuspiciousEnvValues,
   findUnresolvedEnvRefs,
   formatMissingEnvRefError,
   loadConfigFile,
-  preReadSecretsEnabled,
+  preReadStorageMode,
+  checkLegacyConfigKeys,
   validateConfig,
   deepMerge,
   mergeLayered,
@@ -176,6 +176,7 @@ export type {
   PermissionConfig,
   ActionConfirmationConfig,
   AgentToAgentConfig,
+  CredentialStorageMode,
   SkillsConfig,
   DaemonConfig,
   LoggingConfig,
@@ -275,7 +276,8 @@ export type {
   ModelOperationType,
   // Tooling subtree (capability layer v1.1)
   ToolingConfig,
-  OAuthConfig,
   // Broker binding config type (INTEG-02/03)
   BrokerBindingConfig,
+  // Pre-read storage mode (pre-Zod boot gate)
+  StorageModePreRead,
 } from "../config/index.js";

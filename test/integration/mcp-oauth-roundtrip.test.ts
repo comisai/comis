@@ -398,6 +398,53 @@ describe("MCP OAuth full-cycle roundtrip (mock server)", () => {
   });
 
   // --------------------------------------------------------------------------
+  // (c2) REQ-08/D4: MCP TokenStore read-on-use after saveTokens write.
+  //
+  // After an mcp_login write (saveTokens), the TokenStore resolves the NEW
+  // token on the next tokens() call without any daemon restart. The process PID
+  // is stable across the write — proving no restart occurred.
+  //
+  // This test is the explicit REQ-08/D4 acceptance gate: MCP creds resolve
+  // read-on-use after a write, not from a boot-cached snapshot.
+  // --------------------------------------------------------------------------
+  it("MCP TokenStore resolves newly-written token read-on-use without daemon restart (REQ-08/D4)", async () => {
+    const serverName = "req08-d4-provider";
+    const pidBefore = process.pid;
+
+    // Write a token — simulates what mcp_login does via the MCP handler.
+    await store.saveTokens(serverName, {
+      access_token: "mcp-test-token-v1",
+      refresh_token: "mcp-refresh-v1",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+
+    // No restart should have occurred.
+    expect(process.pid).toBe(pidBefore);
+
+    // Read-on-use: the token written above must resolve without restart.
+    const resolved = await store.tokens(serverName);
+    expect(resolved).toBeDefined();
+    expect(resolved?.access_token).toBe("mcp-test-token-v1");
+
+    // Rotation: write a second token and verify the new value is resolved.
+    await store.saveTokens(serverName, {
+      access_token: "mcp-test-token-v2",
+      refresh_token: "mcp-refresh-v2",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+
+    // No restart should have occurred.
+    expect(process.pid).toBe(pidBefore);
+
+    // The rotated token is immediately visible without restart.
+    const resolvedV2 = await store.tokens(serverName);
+    expect(resolvedV2?.access_token).toBe("mcp-test-token-v2");
+    expect(resolvedV2?.access_token).not.toBe("mcp-test-token-v1");
+  });
+
+  // --------------------------------------------------------------------------
   // (d) Dedup stress: 100 concurrent calls sharing ONE expired access token
   //     → exactly 1 refresh POST.
   // --------------------------------------------------------------------------

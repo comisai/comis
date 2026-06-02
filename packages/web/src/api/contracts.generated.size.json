@@ -1,6 +1,6 @@
 {
-  "totalMinified": 112915,
-  "totalGzipped": 10473,
+  "totalMinified": 113701,
+  "totalGzipped": 10567,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -23,6 +23,7 @@
     "audio.transcribe": 336,
     "auth.list": 578,
     "auth.logout": 399,
+    "auth.set": 740,
     "browser.act": 363,
     "browser.close": 328,
     "browser.console": 429,
@@ -71,7 +72,7 @@
     "delivery.queue.status": 476,
     "discord.action": 268,
     "env.list": 751,
-    "env.set": 544,
+    "env.set": 539,
     "gateway.restart": 375,
     "gateway.status": 611,
     "graph.cancel": 387,
@@ -166,10 +167,10 @@
     "providers.list": 703,
     "providers.update": 585,
     "scheduler.wake": 345,
-    "secrets.delete": 379,
+    "secrets.delete": 424,
     "secrets.get": 403,
     "secrets.list": 577,
-    "secrets.set": 516,
+    "secrets.set": 561,
     "session.compact": 639,
     "session.delete": 778,
     "session.export": 709,

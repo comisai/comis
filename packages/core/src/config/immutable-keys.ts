@@ -104,6 +104,13 @@ export const IMMUTABLE_CONFIG_PREFIXES: readonly string[] = [
   // v1.1 capability layer -- operator-only; agents must not self-configure
   // capability map or detour policy.
   "tooling",
+
+  // REQ-19/D16 §8.1: broker anti-exfiltration guard — executor section is
+  // operator-only. An agent must NOT be able to self-configure
+  // executor.broker.bindings to route credentials to an attacker-controlled
+  // host. "executor" as the prefix catches all three write paths:
+  // config.patch{key:"broker.bindings"}, config.patch{whole-section}, config.apply.
+  "executor",
 ] as const;
 
 /**

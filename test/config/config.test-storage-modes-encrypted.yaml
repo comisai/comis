@@ -1,0 +1,92 @@
+# Comis Test Configuration -- Storage-Modes Integration Suite, encrypted storage
+#
+# Dedicated config for test/integration/credential-storage-modes.test.ts
+# (encrypted-mode describe block).
+#
+# Uses security.storage: encrypted (unified key, NOT the removed oauth.storage).
+# SECRETS_MASTER_KEY is supplied at runtime by the test via process.env — NOT in
+# this file. The test sets process.env.SECRETS_MASTER_KEY = randomBytes(32).toString("hex")
+# in beforeAll and cleans up in afterAll.
+#
+# Uses port 8800 to avoid conflicts with other test suites:
+#   8560 = secrets-lifecycle
+#   8561 = secret-rpc-residency
+#   8562 = auth-file-test
+#   8563 = auth-encrypted-test
+
+tenantId: "storage-modes-encrypted-test"
+logLevel: "debug"
+dataDir: "" # Resolves to ~/.comis at runtime
+
+agents:
+  default:
+    name: "StorageModesEncryptedTestAgent"
+    model: default
+    thinkingLevel: "off"
+    provider: default
+    maxSteps: 10
+    budgets:
+      perExecution: 500000
+      perHour: 5000000
+      perDay: 50000000
+    circuitBreaker:
+      failureThreshold: 100
+      resetTimeoutMs: 1000
+      halfOpenTimeoutMs: 500
+    rag:
+      enabled: false
+    scheduler:
+      cron:
+        enabled: true
+        maxConcurrentRuns: 5
+        defaultTimezone: "UTC"
+
+gateway:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8800
+  tokens:
+    - id: "admin-token"
+      secret: "admin-secret-key-for-storage-modes-encrypted-test"
+      scopes: ["rpc", "ws", "admin"]
+  rateLimit:
+    windowMs: 60000
+    maxRequests: 10000
+  maxBatchSize: 50
+  wsHeartbeatMs: 30000
+
+scheduler:
+  cron:
+    enabled: true
+    maxConcurrentRuns: 5
+    defaultTimezone: "UTC"
+  heartbeat:
+    intervalMs: 300000
+    showOk: false
+    showAlerts: true
+  quietHours:
+    enabled: false
+    criticalBypass: true
+
+memory:
+  dbPath: "test-memory-storage-modes-encrypted.db"
+
+security:
+  storage: encrypted
+  agentToAgent:
+    enabled: true
+
+monitoring:
+  disk:
+    enabled: false
+  resources:
+    enabled: false
+  systemd:
+    enabled: false
+  securityUpdates:
+    enabled: false
+  git:
+    enabled: false
+
+models:
+  defaultProvider: anthropic

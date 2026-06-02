@@ -66,12 +66,8 @@ export const SYSTEM_RO_PATHS = [
  * or ~/.ssh which is intentionally NOT mounted).
  *
  * @param home - User home directory path.
- * @param secureCredentialHome - When true, omits ~/.claude.json so that no
- *   credential files are reachable inside the sandbox (EGRESS-02). The
- *   ~/.claude and ~/.local/share/claude RW binds are gated separately in
- *   buildArgs via getClaudeCodeRwPaths.
  */
-function getUserRoPaths(home: string, secureCredentialHome?: boolean): string[] {
+function getUserRoPaths(home: string): string[] {
   return [
     safePath(home, ".gitconfig"),
     safePath(home, ".config", "git"),
@@ -81,23 +77,6 @@ function getUserRoPaths(home: string, secureCredentialHome?: boolean): string[] 
     safePath(home, ".local"),
     // nvm Node.js — npm/npx need to read their cli.js source files
     safePath(home, ".nvm"),
-    // claude CLI auth/config at HOME root (not inside ~/.claude/ directory).
-    // Without read access, `claude -p` hangs indefinitely producing zero output.
-    // Omitted when secureCredentialHome is true (EGRESS-02): no credential files
-    // must be reachable inside the sandbox.
-    ...(secureCredentialHome ? [] : [safePath(home, ".claude.json")]),
-  ].filter((p) => existsSync(p));
-}
-
-/**
- * Per-user claude CLI paths that need read-write access.
- * ~/.claude/ stores history, cache, settings, hooks, and skills.
- * ~/.local/share/claude/ stores version data and session state.
- */
-function getClaudeCodeRwPaths(home: string): string[] {
-  return [
-    safePath(home, ".claude"),
-    safePath(home, ".local", "share", "claude"),
   ].filter((p) => existsSync(p));
 }
 
@@ -186,19 +165,8 @@ export class BwrapProvider implements SandboxProvider {
     }
 
     // -- User config paths (read-only) --
-    // Filtered by secureCredentialHome: when true, ~/.claude.json is omitted
-    // so the single flag gates all credential paths (EGRESS-02).
-    for (const up of getUserRoPaths(os.homedir(), opts.secureCredentialHome)) {
+    for (const up of getUserRoPaths(os.homedir())) {
       args.push("--ro-bind", up, up);
-    }
-
-    // -- claude CLI paths (read-write) --
-    // Omitted entirely when secureCredentialHome is true (EGRESS-02).
-    // This gates ~/.claude and ~/.local/share/claude.
-    if (!opts.secureCredentialHome) {
-      for (const cp of getClaudeCodeRwPaths(os.homedir())) {
-        args.push("--bind", cp, cp);
-      }
     }
 
     // -- Dev tool RW paths (read-write) --
@@ -208,11 +176,12 @@ export class BwrapProvider implements SandboxProvider {
     // Mirror of systemd ReadWritePaths in comis.service.template.
     //
     // EGRESS-02 (CR-01 fix): When secureCredentialHome is true, skip
-    // ~/.local/share entirely — a RW bind over the parent directory would
-    // re-expose ~/.local/share/claude through the parent mount even though
-    // getClaudeCodeRwPaths is gated above. Skipping the ~/.local/share bind
-    // is the safest correct option; dev tools can still use workspace-redirected
-    // paths from wrapEnv() (XDG_DATA_HOME, UV_TOOL_DIR, PIPX_HOME, etc.).
+    // ~/.local/share entirely — a RW bind over this parent directory would
+    // expose any credential material living under it (e.g. a stray
+    // ~/.local/share/<cli> auth dir) to the sandbox. Skipping the ~/.local/share
+    // bind is the safest correct option; dev tools can still use
+    // workspace-redirected paths from wrapEnv() (XDG_DATA_HOME, UV_TOOL_DIR,
+    // PIPX_HOME, etc.).
     const localSharePath = safePath(os.homedir(), ".local", "share");
     for (const dp of getDevToolRwPaths(os.homedir())) {
       if (opts.secureCredentialHome && dp === localSharePath) continue;

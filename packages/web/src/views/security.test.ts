@@ -112,16 +112,6 @@ function priv(el: IcSecurityView) {
     _loadState: string;
     _activeTab: string;
     _error: string;
-    _auditEntries: unknown[];
-    _paused: boolean;
-    _pauseBuffer: unknown[];
-    _securityConfig: Record<string, unknown>;
-    _tokens: Array<{ id: string; scopes: string[] }>;
-    _pendingApprovals: unknown[];
-    _resolvedApprovals: unknown[];
-    _approvalRules: { defaultMode: string; timeoutMs: number };
-    _newTokenScopes: string[];
-    _newSecretName: string;
     _sse: unknown;
     _initSse(): void;
     eventDispatcher: EventDispatcher | null;
@@ -234,16 +224,19 @@ describe("IcSecurityView", () => {
   it("error state on all RPC failures with retry button", async () => {
     const rpc = createSecurityMockRpcClient(() => Promise.reject(new Error("RPC failed")));
     const el = await createElement({ rpcClient: rpc });
+    // Flush the rejected promise through _loadData's try/catch
     await flush(el);
 
-    // Security uses Promise.allSettled but catches at top-level
+    // _loadData catches the config.read rejection and sets _loadState = "error"
+    expect(priv(el)._loadState).toBe("error");
+
+    // Error state renders .error-message
     const errorMsg = el.shadowRoot?.querySelector(".error-message");
-    // Even with allSettled, if all fail the top-level try-catch sets error
-    // The view transitions to loaded state with empty data when allSettled succeeds
-    // but only errors out on unhandled exception. Check load state.
-    const loadState = priv(el)._loadState;
-    // allSettled doesn't reject, so loadState should be "loaded" even when all calls fail
-    expect(loadState === "loaded" || loadState === "error").toBe(true);
+    expect(errorMsg).toBeTruthy();
+
+    // Error state renders .retry-btn
+    const retryBtn = el.shadowRoot?.querySelector(".retry-btn");
+    expect(retryBtn).toBeTruthy();
   });
 
   // --- Audit tab tests ---
@@ -404,22 +397,25 @@ describe("IcSecurityView", () => {
 
   // --- Secrets tab tests ---
 
-  it("secrets tab renders enabled toggle and db path", async () => {
+  it("secrets tab renders read-only storage mode and db path (no toggle — D17 runtime-immutable)", async () => {
     const rpc = createSecurityMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
     await switchTab(el, "secrets");
 
+    // security.storage is runtime-immutable (D17) — no write control offered.
     const toggle = el.shadowRoot?.querySelector("ic-toggle");
-    expect(toggle).toBeTruthy();
-    expect((toggle as any).label).toContain("Enabled");
+    expect(toggle).toBeNull();
 
-    const dbPath = el.shadowRoot?.querySelector(".tls-value");
+    // DB path row is still displayed (second .tls-value; first is storage mode).
+    const tlsValues = el.shadowRoot?.querySelectorAll(".tls-value");
+    expect(tlsValues?.length).toBeGreaterThanOrEqual(2);
+    const dbPath = tlsValues?.[1];
     expect(dbPath).toBeTruthy();
     expect(dbPath!.textContent).toContain("secrets.db");
   });
 
-  it("secrets tab shows section header", async () => {
+  it("secrets tab shows credential storage section header", async () => {
     const rpc = createSecurityMockRpcClient();
     const el = await createElement({ rpcClient: rpc });
     await flush(el);
@@ -427,7 +423,36 @@ describe("IcSecurityView", () => {
 
     const header = el.shadowRoot?.querySelector(".section-header");
     expect(header).toBeTruthy();
-    expect(header!.textContent).toContain("Encrypted Secrets Store");
+    expect(header!.textContent).toContain("Credential Storage");
+  });
+
+  // --- Secrets tab storage mode rendering (all 3 values, REQ-11) ---
+
+  describe("secrets tab storage mode rendering (all 3 values, REQ-11)", () => {
+    for (const mode of ["encrypted", "file", "env"] as const) {
+      it(`renders storage mode '${mode}' in Secrets tab`, async () => {
+        const rpc = createSecurityMockRpcClient(async (method: string) => {
+          if (method === "config.read")
+            return {
+              config: {
+                security: { ...MOCK_SECURITY_CONFIG, storage: mode },
+              },
+              sections: ["security"],
+            };
+          if (method === "tokens.list") return { tokens: [] };
+          if (method === "admin.approval.pending") return { requests: [], total: 0 };
+          return {};
+        });
+        const el = await createElement({ rpcClient: rpc });
+        await flush(el);
+        await switchTab(el, "secrets");
+
+        // First .tls-value in Secrets tab is the storage mode
+        const tlsValues = el.shadowRoot?.querySelectorAll(".tls-value");
+        const storageModeValue = tlsValues?.[0];
+        expect(storageModeValue?.textContent?.trim()).toBe(mode);
+      });
+    }
   });
 
   // --- Rules tab tests (formerly Policies) ---
