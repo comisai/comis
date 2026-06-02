@@ -205,6 +205,7 @@ import {
   buildMcpStatusLine,
 } from "./wiring/restart-continuation.js";
 import { setupSingleAgent } from "./wiring/setup-agents/index.js";
+import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js"; // Phase 109 DIAL-01/02
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
@@ -1105,9 +1106,7 @@ function buildRpcDispatchDeps(deps: {
     recallTimeoutMs: c.agentsConfig[c.defaultAgentId]?.contextEngine?.recallTimeoutMs ?? 120000,
   };
   // Inlined buildTokenStoreMutators.
-  const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => {
-    g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes });
-  };
+  const addToTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["addToTokenStore"] = (entry) => { g.runtimeTokens.push({ id: entry.id, secretBuf: Buffer.from(entry.secret, "utf-8"), scopes: entry.scopes }); };
   const removeFromTokenStore: import("./api/rpc-dispatch.js").ApiDispatchDeps["removeFromTokenStore"] = (id) => {
     g.removedTokenIds.add(id);
     const idx = g.runtimeTokens.findIndex((t) => t.id === id);
@@ -1132,6 +1131,8 @@ function buildRpcDispatchDeps(deps: {
   // memory.recall_stats handler (comis memory stats reads live counters). The
   // gauge is daemon-lifetime — it resets on restart (Assumption A2).
   const recallCounters = c.recallCounters;
+  // Phase 109 (DIAL-01/02): the dialectic seam + per-agent recall factory (setup-dialectic.ts owns all wiring — daemon.ts is at the line cap). Spread into the dispatch deps below; the cost gate returns {} when dialectic.enabled !== true; the forward-presence belt locks the spread.
+  const dialecticWiring = buildDialecticWiring(dialecticWiringDepsFromBoot(c));
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
@@ -1142,7 +1143,7 @@ function buildRpcDispatchDeps(deps: {
     // for the 4 admin-gated memory.* diagnostic handlers. (usefulnessStore is NOT
     // here — no diagnostic handler consumes it; FEED-03's read path is the setupAgents
     // injection at the setupAgents({…}) call below, mirroring entityStore.)
-    consolidationStore: c.consolidationStore, entityStore: c.entityStore, recallCounters,
+    consolidationStore: c.consolidationStore, entityStore: c.entityStore, recallCounters, ...dialecticWiring,
     tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
     sessionStore: g.sessionStoreBridge,
