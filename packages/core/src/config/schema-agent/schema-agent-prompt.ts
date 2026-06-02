@@ -90,6 +90,13 @@ export const RagConfigSchema = z.strictObject({
          *  memory is boosted but CANNOT overturn trust-first ordering — Pitfall 5. Neutral
          *  (factor 1.0) whenever the per-memory usefulness signal is absent. */
         usefulnessAlpha: z.number().min(0).max(1).default(0.1),
+        /** FadeMem decay boost weight (Phase-112/FORGET-01; the SINGLE canonical decay knob —
+         *  the recall-side gate `rag.forget` carries only the on/off toggle, NOT a magnitude).
+         *  Bounded small (same magnitude as trust/proof/usefulness) so a stale memory's decay
+         *  RANKS but CANNOT overturn trust-first ordering — Pitfall 2. The factor only ever
+         *  demotes (∈ [0.5,1], wrapped by this alpha), and is neutral (factor 1.0) whenever
+         *  forget is OFF (default) OR at event-age 0 (the neutral-in-time byte-identity point). */
+        forgetAlpha: z.number().min(0).max(1).default(0.1),
       })
       .default(() => ({
         recencyAlpha: 0.2,
@@ -97,6 +104,7 @@ export const RagConfigSchema = z.strictObject({
         proofAlpha: 0.1,
         trustAlpha: 0.1,
         usefulnessAlpha: 0.1,
+        forgetAlpha: 0.1,
       })),
     /** Per-lane RRF weights for the FTS + vector fusion lanes (LANES-01). These REPLACE the
      *  weights hybridSearch.ts hardcoded (computeRRF 1.0/1.5) — they now live at the agent's
@@ -218,6 +226,16 @@ export const RagConfigSchema = z.strictObject({
         lambda: z.number().min(0).max(1).default(0.7),
       })
       .default(() => ({ enabled: false, lambda: 0.7 })),
+    /** FadeMem per-type decay (Phase-112/FORGET-01). Default-OFF; the recall-side gate for the
+     *  6th 0.5-centered scoring multiplicand `0.5 + 0.5·exp(−λ·Δt^β)`. OFF ⇒ forgetFactor forced
+     *  to EXACTLY 1.0 in score.ts ⇒ byte-identical recall (the safety gate, way #1). The
+     *  neutral-importance byte-identity holds even when ON: at event-age 0 the factor is exactly
+     *  1.0 (way #2), so a legacy/neutral fresh row never silently shifts. The magnitude is the
+     *  single canonical `rag.scoring.forgetAlpha` (NOT duplicated here — one knob, no drift). A
+     *  `.strictObject` so a stray field (e.g. a smuggled `forgetAlpha`) is REJECTED at parse,
+     *  structurally enforcing the single-knob invariant. NOT a back-compat fallback — a config
+     *  gate (the `mmr`/`feedback`/`onlineTuning` default-OFF discipline). */
+    forget: z.strictObject({ enabled: z.boolean().default(false) }).default(() => ({ enabled: false })),
     /** LLM-free query understanding (IQ-02/03). All default-OFF; each toggle is an additive
      *  deterministic capability over the existing recall path (byte-identical when off — the
      *  ENT-04 no-op discipline). `intentReweight` multiplies the existing lane weights by a

@@ -846,6 +846,12 @@ export async function assembleExecutionPrompt(params: PromptAssemblyParams): Pro
           // byte-identical until an operator opts in (rag.mmr.enabled / rag.queryUnderstanding.*).
           mmr: config.rag.mmr,
           queryUnderstanding: config.rag.queryUnderstanding,
+          // FORGET-01: the FadeMem per-type decay gate. A fully-defaulted RagConfig field
+          // (112-01: .strictObject + .default()), so it passes DIRECTLY — same as mmr/
+          // queryUnderstanding, no optional-chaining / structural widening. Default-OFF ⇒
+          // score.ts forces forgetFactor to exactly 1.0 ⇒ byte-identical recall until an
+          // operator opts in (rag.forget.enabled); the neutral byte-identity holds even when on.
+          forget: config.rag.forget,
           ...(ragFeedback !== undefined ? { feedback: ragFeedback } : {}),
         },
       );

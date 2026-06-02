@@ -466,8 +466,15 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
               cfg.scoring,
               deps.clock.now(),
               usefulnessById,
+              cfg.forget,
             );
-            const scoredTail = scoreWithBreakdown(tail, cfg.scoring, deps.clock.now(), usefulnessById);
+            const scoredTail = scoreWithBreakdown(
+              tail,
+              cfg.scoring,
+              deps.clock.now(),
+              usefulnessById,
+              cfg.forget,
+            );
             for (const r of rerankedPool) breakdownById.set(r.entry.id, r.breakdown);
             for (const r of scoredTail) breakdownById.set(r.entry.id, r.breakdown);
             ranked = rerankedPool.concat(scoredTail);
@@ -522,7 +529,13 @@ export function createMemoryRecall(deps: MemoryRecallDeps, cfg: MemoryRecallConf
       //    the Task-1 characterization), so using it here is behavior-preserving — it just
       //    additionally yields the per-memory breakdowns the trace records.
       if (!rerankApplied) {
-        const scored = scoreWithBreakdown(ranked, cfg.scoring, deps.clock.now(), usefulnessById);
+        const scored = scoreWithBreakdown(
+          ranked,
+          cfg.scoring,
+          deps.clock.now(),
+          usefulnessById,
+          cfg.forget,
+        );
         for (const r of scored) breakdownById.set(r.entry.id, r.breakdown);
         ranked = scored;
       }
