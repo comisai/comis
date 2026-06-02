@@ -795,3 +795,71 @@ describe("03-03 — additive restart rule (env.set)", () => {
     expect(JSON.stringify(payload)).not.toContain("some-secret-val");
   });
 });
+
+// ---------------------------------------------------------------------------
+// 06-02 — rotation must live-apply (restarting:false, no SIGUSR2) — RED phase
+// ---------------------------------------------------------------------------
+
+describe("06-02 — env.set rotation: restarting:false, upsert called, no SIGUSR2", () => {
+  let killSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function makeContainerWithManager(
+    initialEnv: Record<string, string> = {},
+    eventBus = createMockEventBus(),
+  ): AppContainer {
+    const { secretManager } = createSecretManagerWithMutableHandle(initialEnv);
+    return {
+      eventBus,
+      config: { tenantId: "test-tenant", security: { storage: "encrypted" } },
+      secretManager,
+    } as unknown as AppContainer;
+  }
+
+  it("env.set rotation: returns restarting:false", async () => {
+    const eventBus = createMockEventBus();
+    const container = makeContainerWithManager({ EXISTING_KEY: "old-value" }, eventBus);
+    const { mutableHandle: mutableSecretManager } = createSecretManagerWithMutableHandle({});
+    const deps = makeDeps({ container, mutableSecretManager } as unknown as Partial<EnvHandlerDeps>);
+    const handlers = createEnvHandlers(deps);
+
+    const result = await handlers["env.set"]!({ key: "EXISTING_KEY", value: "new-value", _trustLevel: "admin" }) as Record<string, unknown>;
+
+    expect(result.restarting).toBe(false);
+  });
+
+  it("env.set rotation: calls mutableSecretManager.upsert with key and new value", async () => {
+    const eventBus = createMockEventBus();
+    const container = makeContainerWithManager({ EXISTING_KEY: "old-value" }, eventBus);
+    const upsertSpy = vi.fn();
+    const mutableSecretManager = { upsert: upsertSpy, remove: vi.fn() };
+    const deps = makeDeps({ container, mutableSecretManager } as unknown as Partial<EnvHandlerDeps>);
+    const handlers = createEnvHandlers(deps);
+
+    await handlers["env.set"]!({ key: "EXISTING_KEY", value: "new-value", _trustLevel: "admin" });
+
+    expect(upsertSpy).toHaveBeenCalledWith("EXISTING_KEY", "new-value");
+  });
+
+  it("env.set rotation: does not call process.kill (no SIGUSR2)", async () => {
+    const eventBus = createMockEventBus();
+    const container = makeContainerWithManager({ EXISTING_KEY: "old-value" }, eventBus);
+    const { mutableHandle: mutableSecretManager } = createSecretManagerWithMutableHandle({});
+    const deps = makeDeps({ container, mutableSecretManager } as unknown as Partial<EnvHandlerDeps>);
+    const handlers = createEnvHandlers(deps);
+
+    await handlers["env.set"]!({ key: "EXISTING_KEY", value: "new-value", _trustLevel: "admin" });
+    vi.advanceTimersByTime(500);
+
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+});

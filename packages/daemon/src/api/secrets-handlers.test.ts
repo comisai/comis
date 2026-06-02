@@ -570,3 +570,119 @@ describe("03-03 — secrets restart-truth and event emit", () => {
     expect(result.restarting).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 06-02 — rotation/delete must live-apply (restarting:false, no SIGUSR2) — RED phase
+// ---------------------------------------------------------------------------
+
+describe("06-02 — secrets rotation/delete: restarting:false, upsert/remove called, no SIGUSR2", () => {
+  let killSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function makeHandlersForRotation(
+    initialEnv: Record<string, string> = {},
+    secretStoreOverrides?: Partial<SecretStorePort>,
+  ): { handlers: ReturnType<typeof createSecretsHandlers>; eventBus: ReturnType<typeof createMockEventBus> } {
+    const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle(initialEnv);
+    const eventBus = createMockEventBus();
+    const container = {
+      config: { tenantId: "test-tenant" },
+      eventBus,
+      secretManager,
+    } as unknown as AppContainer;
+    const secretStore = createMockSecretStore(secretStoreOverrides);
+    const deps: SecretsHandlerDeps = {
+      secretStore,
+      container,
+      logger: createMockLogger(),
+      mutableSecretManager: mutableHandle,
+    } as unknown as SecretsHandlerDeps;
+    const handlers = createSecretsHandlers(deps);
+    return { handlers, eventBus };
+  }
+
+  it("secrets.set rotation: returns restarting:false", async () => {
+    const { handlers } = makeHandlersForRotation({ EXISTING_SECRET: "old-val" });
+    const result = await handlers["secrets.set"]!({
+      _trustLevel: "admin",
+      name: "EXISTING_SECRET",
+      value: "new-val",
+    }) as Record<string, unknown>;
+
+    expect(result.restarting).toBe(false);
+  });
+
+  it("secrets.set rotation: calls mutableSecretManager.upsert unconditionally", async () => {
+    const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle({ EXISTING_SECRET: "old-val" });
+    const upsertSpy = vi.fn();
+    const eventBus = createMockEventBus();
+    const container = {
+      config: { tenantId: "test-tenant" },
+      eventBus,
+      secretManager,
+    } as unknown as AppContainer;
+    const deps: SecretsHandlerDeps = {
+      secretStore: createMockSecretStore(),
+      container,
+      logger: createMockLogger(),
+      mutableSecretManager: { upsert: upsertSpy, remove: mutableHandle.remove.bind(mutableHandle) },
+    } as unknown as SecretsHandlerDeps;
+    const handlers = createSecretsHandlers(deps);
+
+    await handlers["secrets.set"]!({
+      _trustLevel: "admin",
+      name: "EXISTING_SECRET",
+      value: "new-val",
+    });
+
+    expect(upsertSpy).toHaveBeenCalledWith("EXISTING_SECRET", "new-val");
+  });
+
+  it("secrets.set rotation: does not call process.kill (no SIGUSR2)", async () => {
+    const { handlers } = makeHandlersForRotation({ EXISTING_SECRET: "old-val" });
+
+    await handlers["secrets.set"]!({
+      _trustLevel: "admin",
+      name: "EXISTING_SECRET",
+      value: "new-val",
+    });
+    vi.advanceTimersByTime(500);
+
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  it("secrets.delete: returns restarting:false", async () => {
+    const { handlers } = makeHandlersForRotation({ TO_DELETE: "val" }, {
+      delete: vi.fn(() => ok(true)),
+    });
+    const result = await handlers["secrets.delete"]!({
+      _trustLevel: "admin",
+      name: "TO_DELETE",
+    }) as Record<string, unknown>;
+
+    expect(result.restarting).toBe(false);
+  });
+
+  it("secrets.delete: does not call process.kill after remove (no SIGUSR2)", async () => {
+    const { handlers } = makeHandlersForRotation({ TO_DELETE: "val" }, {
+      delete: vi.fn(() => ok(true)),
+    });
+
+    await handlers["secrets.delete"]!({
+      _trustLevel: "admin",
+      name: "TO_DELETE",
+    });
+    vi.advanceTimersByTime(500);
+
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+});
