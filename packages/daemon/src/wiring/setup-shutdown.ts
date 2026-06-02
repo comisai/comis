@@ -18,6 +18,7 @@ import type { BrowserService, MediaTempManager } from "@comis/skills";
 import type { SessionResetScheduler } from "@comis/agent";
 import { safePath, systemNowMs, systemSetTimeout, systemClearTimeout, systemClearInterval } from "@comis/core";
 import { withStepTimeout } from "./shutdown-step-timeout.js";
+import { releaseDataDirLock } from "./data-dir-lock.js";
 // Re-export STEP_TIMEOUT_MS so existing imports of it from setup-shutdown.ts continue to work.
 export { STEP_TIMEOUT_MS } from "./shutdown-step-timeout.js";
 import { writeRegularFile } from "@comis/observability";
@@ -647,6 +648,9 @@ export function setupShutdown(deps: ShutdownDeps): ShutdownResult {
       }
       // Context pipeline collector dispose (already disposed above via observability block;
       // kept as explicit step for documentation; the ?. guard makes double-call safe)
+
+      // Release data-dir singleton lock (D14) — after stores close, before db.
+      if (dataDir) { releaseDataDirLock(dataDir); }
 
       // DB close is ALWAYS last -- no withStepTimeout (must complete or the outer 30s hard timeout handles it)
       {

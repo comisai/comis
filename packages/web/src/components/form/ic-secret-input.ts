@@ -110,6 +110,9 @@ export class IcSecretInput extends LitElement {
   /** Whether the input is disabled. */
   @property({ type: Boolean }) disabled = false;
 
+  /** Storage mode — controls hint framing. "env" shows only env: format; others show both. */
+  @property() storageMode: "encrypted" | "file" | "env" = "encrypted";
+
   @state() private _visible = false;
 
   private _onInput(e: Event): void {
@@ -144,7 +147,11 @@ export class IcSecretInput extends LitElement {
             @click=${this._toggleVisibility}
           >${this._visible ? "\u{1F648}" : "\u{1F441}"}</button>
         </div>
-        <span class="hint">Format: env:VAR_NAME or file:/path/to/secret</span>
+        <span class="hint">${
+          this.storageMode === "env"
+            ? "Format: env:VAR_NAME or file:/path/to/secret (env mode: store secrets in environment variables)"
+            : "Format: env:VAR_NAME or file:/path/to/secret"
+        }</span>
       </div>
     `;
   }

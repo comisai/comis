@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { SecretManager } from "./secret-manager.js";
-import { createSecretManager, envSubset, createScopedSecretManager } from "./secret-manager.js";
+import { createSecretManager, envSubset, createScopedSecretManager, createSecretManagerWithMutableHandle } from "./secret-manager.js";
 import { TypedEventBus } from "../event-bus/index.js";
 import type { EventMap } from "../event-bus/index.js";
 
@@ -392,6 +392,76 @@ describe("ScopedSecretManager", () => {
     expect(event.outcome).toBe("success");
     expect(typeof event.timestamp).toBe("number");
     expect(event.timestamp).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 03-01 — MutableSecretManager shared-map invariants
+// ---------------------------------------------------------------------------
+
+describe("03-01 — MutableSecretManager shared-map invariants", () => {
+  it("createSecretManagerWithMutableHandle returns secretManager and mutableHandle", () => {
+    const result = createSecretManagerWithMutableHandle({});
+    expect(result).toHaveProperty("secretManager");
+    expect(result).toHaveProperty("mutableHandle");
+  });
+
+  it("upsert new key is immediately visible via secretManager.get", () => {
+    const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle({});
+    mutableHandle.upsert("NEW_KEY", "new-value");
+    expect(secretManager.get("NEW_KEY")).toBe("new-value");
+  });
+
+  it("upsert existing key overwrites and secretManager.get returns new value", () => {
+    const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle({
+      EXISTING_KEY: "old-value",
+    });
+    mutableHandle.upsert("EXISTING_KEY", "updated-value");
+    expect(secretManager.get("EXISTING_KEY")).toBe("updated-value");
+  });
+
+  it("remove existing key returns true and secretManager.has returns false after", () => {
+    const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle({
+      EXISTING_KEY: "some-value",
+    });
+    const existed = mutableHandle.remove("EXISTING_KEY");
+    expect(existed).toBe(true);
+    expect(secretManager.has("EXISTING_KEY")).toBe(false);
+  });
+
+  it("remove non-existent key returns false and secretManager.has stays false", () => {
+    const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle({});
+    const existed = mutableHandle.remove("ABSENT_KEY");
+    expect(existed).toBe(false);
+    expect(secretManager.has("ABSENT_KEY")).toBe(false);
+  });
+
+  it("secretManager exposes no upsert method", () => {
+    const { secretManager } = createSecretManagerWithMutableHandle({});
+    expect("upsert" in secretManager).toBe(false);
+  });
+
+  it("secretManager exposes no remove method", () => {
+    const { secretManager } = createSecretManagerWithMutableHandle({});
+    expect("remove" in secretManager).toBe(false);
+  });
+
+  it("createSecretManager still returns a SecretManager with get/has/require/keys", () => {
+    const manager = createSecretManager({ EXISTING: "val" });
+    expect(typeof manager.get).toBe("function");
+    expect(typeof manager.has).toBe("function");
+    expect(typeof manager.require).toBe("function");
+    expect(typeof manager.keys).toBe("function");
+    expect(manager.get("EXISTING")).toBe("val");
+  });
+
+  it("two separate createSecretManagerWithMutableHandle calls have independent Maps", () => {
+    const handle1 = createSecretManagerWithMutableHandle({ SHARED_NAME: "value-1" });
+    const handle2 = createSecretManagerWithMutableHandle({ SHARED_NAME: "value-2" });
+    handle1.mutableHandle.upsert("UNIQUE_TO_CALL_1", "only-in-one");
+    expect(handle2.secretManager.has("UNIQUE_TO_CALL_1")).toBe(false);
+    expect(handle1.secretManager.get("SHARED_NAME")).toBe("value-1");
+    expect(handle2.secretManager.get("SHARED_NAME")).toBe("value-2");
   });
 });
 

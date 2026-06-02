@@ -26,7 +26,7 @@
  */
 
 import { classifyHeaderCredential } from "@comis/core";
-import type { SecretStorePort, ComisLogger } from "@comis/core";
+import type { SecretStorePort, ComisLogger, MutableSecretManager } from "@comis/core";
 
 /**
  * Derive a `${VAR}` variable name from a server id + header name.
@@ -68,7 +68,7 @@ export interface ProcessHeaderCredentialsOpts {
   headers: Record<string, string>;
   /** The server name (used in error messages and variable naming). */
   serverName: string;
-  /** Encrypted secret store for static-secret extraction. Undefined when COMIS_DISABLE_ENCRYPTED_SECRETS=1. */
+  /** Encrypted secret store for static-secret extraction. Undefined when security.storage is 'file' or 'env'. */
   secretStore: SecretStorePort | undefined;
   /** When true, static-secret detection logs WARN and passes through (operator bears risk). OAuth-bearer refusal is NOT affected. */
   plaintextOptOut: boolean;
@@ -76,6 +76,14 @@ export interface ProcessHeaderCredentialsOpts {
   logger: ComisLogger;
   /** RPC method name for log fields ("mcp.connect" | "mcp.test"). */
   method: string;
+  /**
+   * Optional daemon-owned write handle over the shared SecretManager backing Map.
+   * When provided, extracted MCP header secrets are live-applied via upsert after
+   * secretStore.set succeeds — so broker/exec observe the value on their next request
+   * without a daemon restart (additive no-restart — P4a). Optional chaining guards legacy
+   * callers and test setups that don't wire the mutable handle.
+   */
+  mutableSecretManager?: MutableSecretManager;
 }
 
 /**
@@ -167,7 +175,7 @@ export function processHeaderCredentials(opts: ProcessHeaderCredentialsOpts): Pr
       throw new Error(
         `[plaintext_secret_in_headers] headers.${headerName} (server "${serverName}") ` +
         `looks like a plaintext credential and no encrypted secret store is available. ` +
-        `Hint: ensure COMIS_DISABLE_ENCRYPTED_SECRETS is not set (or is "0"), or store ` +
+        `Hint: ensure security.storage is not set to 'file' or 'env' in your config.yaml, or store ` +
         `the secret via secrets_manage and reference it as "\${VAR}".`,
       );
     }
@@ -184,6 +192,10 @@ export function processHeaderCredentials(opts: ProcessHeaderCredentialsOpts): Pr
         `Hint: fix the secret store, then retry.`,
       );
     }
+    // Live-apply: upsert into the shared SecretManager Map so broker/exec observe the new
+    // value on their next request without a restart (additive no-restart — P4a).
+    // Optional chaining guards callers (tests, legacy paths) that don't wire the handle.
+    opts.mutableSecretManager?.upsert(varName, headerValue);
     // Rewrite the header value in place to the ${VAR} reference (for persistence).
     // resolvedHeaders already holds the raw value from the initial copy above.
     // static-secret means NO Bearer scheme in the raw value (classifyHeaderCredential

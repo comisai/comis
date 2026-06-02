@@ -220,13 +220,13 @@ export async function setupAgents(deps: {
   /**
    * SecretsCrypto engine bound to SECRETS_MASTER_KEY. Defined when daemon
    * was started with a valid master key. Required for
-   * `appConfig.oauth.storage === "encrypted"` mode.
+   * `appConfig.security.storage === "encrypted"` mode.
    */
   secretsCrypto?: SecretsCrypto;
   /**
    * Shared better-sqlite3 handle to secrets.db. Plumbed from daemon.ts where
    * createSqliteSecretStore now exposes its db field. Required for
-   * `appConfig.oauth.storage === "encrypted"` mode.
+   * `appConfig.security.storage === "encrypted"` mode.
    */
   secretsDb?: Database.Database;
   /**
@@ -263,7 +263,7 @@ export async function setupAgents(deps: {
   // exactly once per daemon process — not N times for N agents. Operator
   // sees this in startup logs without surprise; daemon restart is required
   // to pick up CLI-written OAuth profiles in encrypted-store mode.
-  const overallStorageMode = container.config.oauth.storage;
+  const overallStorageMode = container.config.security.storage;
   if (overallStorageMode === "encrypted" && !encryptedModeWarnFired) {
     encryptedModeWarnFired = true;
     agentLogger.warn(
@@ -368,12 +368,12 @@ export async function setupAgents(deps: {
   // produce a `TypeError: Cannot read properties of undefined` at runtime —
   // exactly the failure mode the old in-selector pre-check avoided.
   let encryptedStore: OAuthCredentialStorePort | undefined;
-  if (container.config.oauth.storage === "encrypted") {
+  if (container.config.security.storage === "encrypted") {
     if (!deps.secretsDb || !deps.secretsCrypto) {
       throw new Error(
         "OAuth storage mode is 'encrypted' but secretsDb/secretsCrypto were not initialized. " +
           "Hint: set SECRETS_MASTER_KEY env var (and restart the daemon) so the encrypted " +
-          "secrets store boots, or change appConfig.oauth.storage to 'file' to use the " +
+          "secrets store boots, or change security.storage to 'file' in your config.yaml to use the " +
           "plaintext file backend.",
       );
     }
@@ -387,12 +387,24 @@ export async function setupAgents(deps: {
   // single shared instance is correct.
   const fileLock = createFileLock();
 
-  const oauthCredentialStore = selectOAuthCredentialStore({
-    storage: container.config.oauth.storage,
-    dataDir: dataDirAbsForOauth,
-    fileLock,
-    encryptedStore,
-  });
+  // In "env" mode, OAuth credential storage is unavailable (read-only secret store).
+  // Construct a minimal stub that returns err() on mutations so the daemon boots
+  // without throwing, and OAuth-write RPCs surface an actionable error at runtime.
+  const oauthCredentialStore: OAuthCredentialStorePort =
+    container.config.security.storage === "env"
+      ? {
+          async get() { return { ok: true as const, value: undefined }; },
+          async set() { return { ok: false as const, error: new Error("OAuth credential store is read-only in 'env' storage mode. Set security.storage to 'file' or 'encrypted' in config.yaml to enable OAuth login.") }; },
+          async delete() { return { ok: false as const, error: new Error("OAuth credential store is read-only in 'env' storage mode. Set security.storage to 'file' or 'encrypted' in config.yaml to enable OAuth login.") }; },
+          async list() { return { ok: true as const, value: [] }; },
+          async has() { return { ok: true as const, value: false }; },
+        }
+      : selectOAuthCredentialStore({
+          storage: container.config.security.storage,
+          dataDir: dataDirAbsForOauth,
+          fileLock,
+          encryptedStore,
+        });
 
   // Construct the session-scoped trajectory recorder registry ONCE here.
   // The registry is the single owner of per-session TrajectoryRecorder

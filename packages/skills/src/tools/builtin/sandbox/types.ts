@@ -32,9 +32,11 @@ export interface SandboxOptions {
    */
   network?: { mode: "open" } | { mode: "broker-only"; brokerSocketPath: string };
   /**
-   * When true, omit ~/.claude, ~/.claude.json, and ~/.local/share/claude binds.
-   * Prevents credential files from being reachable inside the sandbox (EGRESS-02).
+   * When true, skip the ~/.local/share RW bind so credential material living
+   * under that XDG dir is not read-write-exposed inside the sandbox (EGRESS-02).
    * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
+   * (Hardcoded ~/.claude* binds are no longer emitted by any provider, so this
+   * flag no longer needs to gate them.)
    */
   secureCredentialHome?: boolean;
 }
@@ -72,7 +74,8 @@ export interface ExecSandboxConfig {
    */
   network?: SandboxOptions["network"];
   /**
-   * When true, omit credential home paths from the sandbox (EGRESS-02/CR-02).
+   * When true, skip the ~/.local/share RW bind so credential material under it
+   * is not read-write-exposed inside the sandbox (EGRESS-02/CR-02).
    * Forwarded to SandboxOptions.secureCredentialHome. Defaults to false/undefined.
    * Phase 6 daemon wiring activates this; Phase 5 only makes the path reachable.
    */

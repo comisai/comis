@@ -1434,6 +1434,205 @@ describe("createChannelManager", () => {
     });
   });
 
+  describe("credential-rotation targeted reconnect (REQ-13)", () => {
+    it("rotated channel token triggers targeted stop+start for the matching adapter only", async () => {
+      // Capture the secret:changed listener registered by createChannelManager.
+      // The makeEventBus() mock records all on() calls — we look up the listener
+      // for "secret:changed" and invoke it directly to simulate a rotation event.
+      let secretChangedListener: ((ev: { name: string; action: "upserted" | "removed"; timestamp: number }) => void) | undefined;
+      const captureEventBus = {
+        ...makeEventBus(),
+        on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+          if (event === "secret:changed") {
+            secretChangedListener = listener as typeof secretChangedListener;
+          }
+          return captureEventBus;
+        }),
+      } as any;
+
+      const telegramStop = vi.fn(async () => ok(undefined));
+      const telegramStart = vi.fn(async () => ok(undefined));
+      const discordStop = vi.fn(async () => ok(undefined));
+      const discordStart = vi.fn(async () => ok(undefined));
+
+      const telegramAdapter = makeAdapter({
+        channelType: "telegram",
+        channelId: "tg-1",
+        stop: telegramStop,
+        start: telegramStart,
+      });
+      const discordAdapter = makeAdapter({
+        channelType: "discord",
+        channelId: "dc-1",
+        stop: discordStop,
+        start: discordStart,
+      });
+
+      // channelCredentialMap: credential name -> channelType
+      const channelCredentialMap = new Map([
+        ["TELEGRAM_BOT_TOKEN", "telegram"],
+        ["DISCORD_BOT_TOKEN", "discord"],
+      ]);
+
+      const deps = makeDeps({
+        eventBus: captureEventBus,
+        adapters: [telegramAdapter, discordAdapter],
+        channelCredentialMap,
+        processInboundMessage: vi.fn(async () => {}) as unknown as ChannelManagerDeps["processInboundMessage"],
+      });
+
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+
+      // Sanity: listener was wired
+      expect(secretChangedListener).toBeDefined();
+
+      // Clear the start/stop call counts from startAll (start was called once per adapter)
+      vi.clearAllMocks();
+
+      // Simulate rotation of TELEGRAM_BOT_TOKEN
+      secretChangedListener!({ name: "TELEGRAM_BOT_TOKEN", action: "upserted", timestamp: Date.now() });
+
+      // Yield microtasks so async stop()+start() complete
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Only Telegram adapter reconnected
+      expect(telegramStop).toHaveBeenCalledOnce();
+      expect(telegramStart).toHaveBeenCalledOnce();
+      // Discord adapter must NOT have been reconnected
+      expect(discordStop).not.toHaveBeenCalled();
+      expect(discordStart).not.toHaveBeenCalled();
+    });
+
+    it("action=removed does not trigger reconnect (deletion is handled by delete plan)", async () => {
+      let secretChangedListener: ((ev: { name: string; action: "upserted" | "removed"; timestamp: number }) => void) | undefined;
+      const captureEventBus = {
+        ...makeEventBus(),
+        on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+          if (event === "secret:changed") {
+            secretChangedListener = listener as typeof secretChangedListener;
+          }
+          return captureEventBus;
+        }),
+      } as any;
+
+      const telegramStop = vi.fn(async () => ok(undefined));
+      const telegramStart = vi.fn(async () => ok(undefined));
+      const telegramAdapter = makeAdapter({ channelType: "telegram", channelId: "tg-2", stop: telegramStop, start: telegramStart });
+
+      const channelCredentialMap = new Map([["TELEGRAM_BOT_TOKEN", "telegram"]]);
+      const deps = makeDeps({
+        eventBus: captureEventBus,
+        adapters: [telegramAdapter],
+        channelCredentialMap,
+        processInboundMessage: vi.fn(async () => {}) as unknown as ChannelManagerDeps["processInboundMessage"],
+      });
+
+      createChannelManager(deps);
+      vi.clearAllMocks();
+
+      // Emit "removed" action — should not trigger stop()+start()
+      secretChangedListener!({ name: "TELEGRAM_BOT_TOKEN", action: "removed", timestamp: Date.now() });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(telegramStop).not.toHaveBeenCalled();
+      expect(telegramStart).not.toHaveBeenCalled();
+    });
+
+    it("unknown credential name in secret:changed does not reconnect any adapter", async () => {
+      let secretChangedListener: ((ev: { name: string; action: "upserted" | "removed"; timestamp: number }) => void) | undefined;
+      const captureEventBus = {
+        ...makeEventBus(),
+        on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+          if (event === "secret:changed") {
+            secretChangedListener = listener as typeof secretChangedListener;
+          }
+          return captureEventBus;
+        }),
+      } as any;
+
+      const telegramStop = vi.fn(async () => ok(undefined));
+      const telegramStart = vi.fn(async () => ok(undefined));
+      const telegramAdapter = makeAdapter({ channelType: "telegram", channelId: "tg-3", stop: telegramStop, start: telegramStart });
+
+      const channelCredentialMap = new Map([["TELEGRAM_BOT_TOKEN", "telegram"]]);
+      const deps = makeDeps({
+        eventBus: captureEventBus,
+        adapters: [telegramAdapter],
+        channelCredentialMap,
+        processInboundMessage: vi.fn(async () => {}) as unknown as ChannelManagerDeps["processInboundMessage"],
+      });
+
+      createChannelManager(deps);
+      vi.clearAllMocks();
+
+      // Unknown credential — no adapter matches
+      secretChangedListener!({ name: "OPENAI_API_KEY", action: "upserted", timestamp: Date.now() });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(telegramStop).not.toHaveBeenCalled();
+      expect(telegramStart).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("WR-01: secret:changed handler is void-synchronous — rejection does not bubble to bus", () => {
+    it("adapter.stop() rejection is caught internally and does not propagate as unhandled rejection", async () => {
+      let secretChangedListener: ((ev: { name: string; action: "upserted" | "removed"; timestamp: number }) => void) | undefined;
+      const captureEventBus = {
+        ...makeEventBus(),
+        on: vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+          if (event === "secret:changed") {
+            secretChangedListener = listener as typeof secretChangedListener;
+          }
+          return captureEventBus;
+        }),
+      } as any;
+
+      const stopError = new Error("stop failed");
+      const telegramStop = vi.fn(async () => { throw stopError; });
+      const telegramStart = vi.fn(async () => ok(undefined));
+      const telegramAdapter = makeAdapter({ channelType: "telegram", channelId: "tg-1", stop: telegramStop, start: telegramStart });
+
+      const channelCredentialMap = new Map([["TELEGRAM_BOT_TOKEN", "telegram"]]);
+      const deps = makeDeps({
+        eventBus: captureEventBus,
+        adapters: [telegramAdapter],
+        channelCredentialMap,
+        processInboundMessage: vi.fn(async () => {}) as unknown as ChannelManagerDeps["processInboundMessage"],
+      });
+
+      const manager = createChannelManager(deps);
+      await manager.startAll();
+      expect(secretChangedListener).toBeDefined();
+      vi.clearAllMocks();
+
+      // The listener must return void synchronously — if it returned a rejected
+      // Promise, the bus would surface an unhandled rejection (WR-01). We verify
+      // the return value is not a Promise (undefined), and that the rejection is
+      // captured internally (warn logged) rather than thrown to the caller.
+      const returnValue = secretChangedListener!({ name: "TELEGRAM_BOT_TOKEN", action: "upserted", timestamp: Date.now() });
+      expect(returnValue).toBeUndefined();
+
+      // Yield microtasks so the internal async IIFE completes
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // stop() was called and threw — warn was emitted, start() was NOT called
+      expect(telegramStop).toHaveBeenCalledOnce();
+      expect(telegramStart).not.toHaveBeenCalled();
+      const warnCalls = (deps.logger.warn as ReturnType<typeof vi.fn>).mock.calls;
+      const reconnectWarn = warnCalls.find((c: any[]) =>
+        typeof c[1] === "string" && c[1].includes("Channel adapter reconnect failed"),
+      );
+      expect(reconnectWarn).toBeDefined();
+    });
+  });
+
   describe("getRawHandlerCounts()", () => {
     it("reports rawHandlerCount of 1 for a single cleanly wired adapter", async () => {
       const adapter = makeAdapter({ channelType: "echo", channelId: "echo-1" });

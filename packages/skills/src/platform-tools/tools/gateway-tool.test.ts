@@ -1072,6 +1072,65 @@ describe("gateway tool", () => {
       expect(rpcCall).not.toHaveBeenCalledWith("env.set", expect.anything());
     });
 
+    // ---------------------------------------------------------------------------
+    // Plan 02-02: mode-accurate hint — RED tests
+    // These tests fail until the stale hint text is replaced with:
+    //   "To store secrets, set security.storage: encrypted or security.storage: file
+    //    in config.yaml and restart the daemon."
+    // ---------------------------------------------------------------------------
+
+    it("(02-02) env-mode preflight hint does NOT mention SECRETS_MASTER_KEY (stale hint removed)", async () => {
+      const rpcCall = createUnavailableStoreMockRpcCall();
+      const tool = createGatewayTool(rpcCall, mockLogger);
+
+      const result = await tool.execute("call-store-hint-01", {
+        action: "env_set" as "read",
+        env_key: "MY_SECRET",
+        env_value: "secret-value-here",
+        _confirmed: true,
+      } as any);
+
+      const details = result.details as Record<string, unknown>;
+      expect(details.error).toBe("secrets_store_unavailable");
+      const hint = String(details.hint);
+      // Stale hint must be gone
+      expect(hint).not.toContain("SECRETS_MASTER_KEY");
+      expect(hint).not.toContain("~/.comis/.env");
+    });
+
+    it("(02-02) env-mode preflight hint mentions security.storage: encrypted", async () => {
+      const rpcCall = createUnavailableStoreMockRpcCall();
+      const tool = createGatewayTool(rpcCall, mockLogger);
+
+      const result = await tool.execute("call-store-hint-02", {
+        action: "env_set" as "read",
+        env_key: "MY_SECRET",
+        env_value: "secret-value-here",
+        _confirmed: true,
+      } as any);
+
+      const details = result.details as Record<string, unknown>;
+      const hint = String(details.hint);
+      // Mode-accurate guidance must be present
+      expect(hint).toContain("security.storage: encrypted");
+    });
+
+    it("(02-02) env-mode preflight hint mentions security.storage: file", async () => {
+      const rpcCall = createUnavailableStoreMockRpcCall();
+      const tool = createGatewayTool(rpcCall, mockLogger);
+
+      const result = await tool.execute("call-store-hint-03", {
+        action: "env_set" as "read",
+        env_key: "MY_SECRET",
+        env_value: "secret-value-here",
+        _confirmed: true,
+      } as any);
+
+      const details = result.details as Record<string, unknown>;
+      const hint = String(details.hint);
+      expect(hint).toContain("security.storage: file");
+    });
+
     it("does not consume write rate-limit on repeated env_set calls when store is unavailable", async () => {
       const rpcCall = createUnavailableStoreMockRpcCall();
       const tool = createGatewayTool(rpcCall, mockLogger);

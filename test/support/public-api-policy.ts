@@ -952,6 +952,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "OutputGuardFinding",
       "OutputGuardResult",
       "createSecretManager",
+      // Phase 3 (P4a) shared-Map refactor. createSecretManagerWithMutableHandle
+      // is the daemon composition root factory (setup-secret-manager.ts + daemon.ts);
+      // it returns { secretManager, mutableHandle } over ONE backing Map.
+      // MutableSecretManager is the write-authority interface (upsert/remove);
+      // held only by the daemon composition root, never placed on AppContainer.
+      // Both are consumed by @comis/daemon — no in-repo consumer outside daemon.
+      "createSecretManagerWithMutableHandle",
+      "MutableSecretManager",
       "requiresConfirmation",
       "ActionClassification",
       "AuditEventSchema",
@@ -1660,6 +1668,18 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // construct a TripleInput by naming the trust literal) — tracked here.
       // Shrinks when the Plan-02 offline writer / Plan-04 lane reference it directly.
       "TripleTrust",
+      // v1.5 credential-storage config foundation (Phase 1, Plans 03/04).
+      // checkLegacyConfigKeys detects removed legacy config keys (oauth.storage /
+      // security.secrets.enabled) before Zod parse; consumed internally by
+      // loader.ts but exported for embedders that call validateConfig and want to
+      // surface migration errors via the same guard. StorageModePreRead is the
+      // return type of preReadStorageMode (daemon-boot pre-read); the daemon
+      // imports preReadStorageMode (which has an in-repo consumer) but does not
+      // import the return type name directly. Both symbols are part of the
+      // documented migration-guard API surface and shrink when a real cross-package
+      // consumer materializes.
+      "checkLegacyConfigKeys",
+      "StorageModePreRead",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four
     // value-side root re-exports (createAnnouncementDeadLetterQueue,
@@ -1781,6 +1801,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // createMcpHandlers / _resetSigusr1Timer precedents above).
       "persistMcpServers",
       "PersistMcpResult",
+      // Auth handlers: auth.set / auth.list / auth.logout RPC handler factory
+      // + deps type. Re-exported so the auth-set-encrypted integration test
+      // (test/integration/auth-set-encrypted.test.ts) can drive the real
+      // admin-gated auth.set handler against a mock OAuthCredentialStorePort,
+      // proving the REQ-05 round-trip + residency invariant (no plaintext
+      // token bytes in responses / logs / audit) without spinning up a full
+      // daemon. Same rationale as createContextHandlers + createMemoryHandlers:
+      // public-export-consumers AST walker excludes test/** so this orphan
+      // list is the canonical place to record the planned test consumer.
+      "createAuthHandlers",
+      "AuthHandlerDeps",
     ])],
     // @comis/gateway: baseline orphans tracked here.
     // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is
@@ -2103,6 +2134,23 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "IdProjectionRowFromSchema",
       "CountProjectionRowSchema",
       "CountProjectionRowFromSchema",
+      // File-backed SecretStore (Phase 02-01, REQ-03/REQ-10). createFileSecretStore is the sole
+      // FileSecretStore adapter; the daemon composition root wires it via selectSecretStore
+      // in Plan 02-04 (bootstrapSecretsAndEnv). selectSecretStore and SelectedSecretStore are
+      // the factory + discriminated-union type consumed by the daemon wiring. Baseline orphans
+      // until Plan 02-04 adds the daemon consumer.
+      "createFileSecretStore",
+      "selectSecretStore",
+      "SelectedSecretStore",
+      // SQLite-backed SecretStore (Phase 06, REQ-05). createSqliteSecretStore is the AES-256-GCM
+      // encrypted secret store adapter. The production daemon wires it via selectSecretStore
+      // (via the encrypted path in bootstrapSecretsAndEnv); selectSecretStore is the caller.
+      // Directly consumed by integration tests (secret-rotation-fail-closed.test.ts) for
+      // canary-mismatch + rotation fail-closed verification. SqliteSecretStoreHandle is the
+      // extended type (SecretStorePort + db field). Baseline orphans tracked here — the
+      // daemon's existing selectSecretStore call is the sole production consumer of the factory.
+      "createSqliteSecretStore",
+      "SqliteSecretStoreHandle",
     ])],
     // @comis/scheduler: baseline orphans tracked here.
     ["@comis/scheduler", new Set<string>([

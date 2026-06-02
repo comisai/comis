@@ -93,10 +93,18 @@ describe("secrets-domain contracts", () => {
 
   it("secrets.set: response shape requires { name, stored: boolean }", () => {
     expect(() =>
-      SecretsSetContract.response.parse({ name: "FOO", stored: true }),
+      SecretsSetContract.response.parse({
+        name: "FOO",
+        stored: true,
+        restarting: false,
+      }),
     ).not.toThrow();
     expect(() =>
-      SecretsSetContract.response.parse({ name: "FOO", stored: false }),
+      SecretsSetContract.response.parse({
+        name: "FOO",
+        stored: false,
+        restarting: true,
+      }),
     ).not.toThrow();
     expect(() =>
       SecretsSetContract.response.parse({ name: "FOO", stored: "yes" }),
@@ -251,13 +259,121 @@ describe("secrets-domain contracts", () => {
 
   it("secrets.delete: response shape requires { name, deleted: boolean }", () => {
     expect(() =>
-      SecretsDeleteContract.response.parse({ name: "FOO", deleted: true }),
+      SecretsDeleteContract.response.parse({
+        name: "FOO",
+        deleted: true,
+        restarting: false,
+      }),
     ).not.toThrow();
     expect(() =>
-      SecretsDeleteContract.response.parse({ name: "FOO", deleted: false }),
+      SecretsDeleteContract.response.parse({
+        name: "FOO",
+        deleted: false,
+        restarting: true,
+      }),
     ).not.toThrow();
     expect(() =>
       SecretsDeleteContract.response.parse({ name: "FOO", deleted: "yes" }),
     ).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 03-02 — restart-truth contract fields
+// ---------------------------------------------------------------------------
+
+describe("03-02 — restart-truth contract fields", () => {
+  // --- SecretsSetContract restarting field ----------------------------------
+
+  it("SecretsSetContract response parses an object with name, stored, and restarting fields", () => {
+    expect(() =>
+      SecretsSetContract.response.parse({
+        name: "OPENAI_API_KEY",
+        stored: true,
+        restarting: false,
+      }),
+    ).not.toThrow();
+  });
+
+  it("SecretsSetContract response rejects an object missing the restarting field", () => {
+    const result = SecretsSetContract.response.safeParse({
+      name: "OPENAI_API_KEY",
+      stored: true,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("SecretsSetContract response restarting field accepts true (restart scheduled)", () => {
+    const result = SecretsSetContract.response.safeParse({
+      name: "OPENAI_API_KEY",
+      stored: true,
+      restarting: true,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("SecretsSetContract response restarting field accepts false (live applied)", () => {
+    const result = SecretsSetContract.response.safeParse({
+      name: "OPENAI_API_KEY",
+      stored: true,
+      restarting: false,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("SecretsSetContract response rejects non-boolean restarting", () => {
+    const result = SecretsSetContract.response.safeParse({
+      name: "OPENAI_API_KEY",
+      stored: true,
+      restarting: "yes",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  // --- SecretsDeleteContract restarting field -------------------------------
+
+  it("SecretsDeleteContract response parses an object with name, deleted, and restarting fields", () => {
+    expect(() =>
+      SecretsDeleteContract.response.parse({
+        name: "OPENAI_API_KEY",
+        deleted: true,
+        restarting: false,
+      }),
+    ).not.toThrow();
+  });
+
+  it("SecretsDeleteContract response rejects an object missing the restarting field", () => {
+    const result = SecretsDeleteContract.response.safeParse({
+      name: "OPENAI_API_KEY",
+      deleted: true,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("SecretsDeleteContract response restarting field accepts true", () => {
+    const result = SecretsDeleteContract.response.safeParse({
+      name: "OPENAI_API_KEY",
+      deleted: true,
+      restarting: true,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("SecretsDeleteContract response restarting field accepts false", () => {
+    const result = SecretsDeleteContract.response.safeParse({
+      name: "OPENAI_API_KEY",
+      deleted: false,
+      restarting: false,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("SecretsDeleteContract response rejects non-boolean restarting", () => {
+    const result = SecretsDeleteContract.response.safeParse({
+      name: "OPENAI_API_KEY",
+      deleted: true,
+      restarting: 1,
+    });
+    expect(result.success).toBe(false);
   });
 });

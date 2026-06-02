@@ -35,23 +35,25 @@ import { getModels, type KnownProvider } from "@earendil-works/pi-ai";
 // (selectOAuthCredentialStore lives there). The browser opener is the
 // `open` package (exact-pinned in @comis/cli per CLAUDE.md
 // supply-chain invariants).
-import { homedir } from "node:os";
 import open from "open";
 import { // All symbol groups below live in @comis/core; the CLI does not
-  // route through @comis/agent for these. createFileLock is sourced from
-  // @comis/core (originally exported via @comis/scheduler).
-  createFileLock, isRemoteEnvironment, loginOpenAICodexOAuth, selectOAuthCredentialStore, systemClearTimeout, systemEnvSnapshot, systemGetEnv, systemSetTimeout } from "@comis/core";
+  // route through @comis/agent for these.
+  isRemoteEnvironment, loginOpenAICodexOAuth, systemClearTimeout, systemEnvSnapshot, systemSetTimeout } from "@comis/core";
 import {
-  loadConfigFile,
-  validateConfig,
-  safePath,
   redactEmailForLog,
   // createConsoleLogger is the Pino-free replacement for @comis/infra's
   // createLogger. CLI does not import from @comis/infra.
   createConsoleLogger,
+  AuthSetContract,
   type OAuthCredentialStorePort,
   type OAuthProfile,
 } from "@comis/core";
+import { callTyped, withClient } from "../../client/rpc-client.js";
+import { requireDaemonOrExit } from "../../util/daemon-required.js";
+import {
+  loadWizardStorageMode,
+  openWizardOAuthStore,
+} from "./04-oauth-helpers.js";
 
 // ---------- Provider Help URLs ----------
 
@@ -440,39 +442,6 @@ async function handleStandardProvider(
 const wizardLogger = createConsoleLogger("info", { name: "wizard-oauth" });
 
 /**
- * Open the OAuth credential store from the current config (mirrors the
- * helper installed in `auth.ts`). Defaults to file storage when config
- * is absent or doesn't set `oauth.storage`. Encrypted-mode CLI wiring
- * requires SECRETS_MASTER_KEY + secretsDb — if `storage='encrypted'`,
- * the wizard surfaces a fail-fast error (operator can switch to file mode
- * for the wizard, then back to encrypted after).
- */
-async function openWizardOAuthStore(): Promise<OAuthCredentialStorePort> {
-  const dataDir = safePath(homedir(), ".comis");
-  const fileLock = createFileLock();
-  const envPaths = systemGetEnv("COMIS_CONFIG_PATHS");
-  const configPath = envPaths?.split(":")[0] ??
-    safePath(homedir(), ".comis", "config.yaml");
-  const loadResult = loadConfigFile(configPath);
-  if (!loadResult.ok) {
-    return selectOAuthCredentialStore({ storage: "file", dataDir, fileLock });
-  }
-  const validated = validateConfig(loadResult.value);
-  if (!validated.ok) {
-    return selectOAuthCredentialStore({ storage: "file", dataDir, fileLock });
-  }
-  const storage = validated.value.oauth?.storage ?? "file";
-  if (storage === "encrypted") {
-    throw new Error(
-      "OAuth storage mode is 'encrypted' but the wizard cannot bootstrap the encrypted store. " +
-        "Hint: set appConfig.oauth.storage to 'file' temporarily for the wizard, or run " +
-        "`comis auth login --provider openai-codex` from a shell where SECRETS_MASTER_KEY is exported.",
-    );
-  }
-  return selectOAuthCredentialStore({ storage: "file", dataDir, fileLock });
-}
-
-/**
  * Branch D: openai-codex OAuth — interactive method picker + runner dispatch.
  *
  * Surfaces the runner's three login methods (browser auto-open, browser
@@ -494,6 +463,22 @@ async function handleCodexOAuth(
 ): Promise<WizardState> {
   const isRemoteDefault = isRemoteEnvironment({ env: systemEnvSnapshot() });
   const maxRetries = 3;
+
+  // Resolve storage mode FIRST — before prompting for method or calling OAuth.
+  // This implements the preferred restructured approach (checker_guidance):
+  // check mode at the TOP so env/encrypted branches return early without
+  // opening a store or showing confusing partial prompts.
+  const wizardStorage = await loadWizardStorageMode();
+
+  if (wizardStorage === "env") {
+    // Env is read-only — credentials come from environment variables.
+    // OAuth login cannot persist a profile in this mode.
+    prompter.log.error(
+      "OAuth login is not supported in 'env' storage mode (read-only). " +
+        "Set security.storage to 'file' or 'encrypted' in config.yaml to enable OAuth login.",
+    );
+    return state;
+  }
 
   // Inline helpNote -- AUTH_METHOD_PROVIDERS no longer has an openai entry,
   // so we cannot pull the note from the map. Keep the wording user-facing
@@ -548,6 +533,102 @@ async function handleCodexOAuth(
       break;
   }
 
+  // Encrypted mode: gate on daemon availability BEFORE the OAuth flow so the
+  // user sees a clear error message rather than a partial interactive OAuth
+  // prompt followed by a daemon-unavailable crash.
+  if (wizardStorage === "encrypted") {
+    await requireDaemonOrExit();
+    // Run the OAuth flow locally (browser/device-code — user's interactive
+    // machine). The daemon handles encrypted persistence via the auth.set RPC.
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const result = await loginOpenAICodexOAuth({
+        prompter,
+        isRemote,
+        openUrl: open,
+        logger: wizardLogger,
+        method,
+      });
+
+      if (result.ok) {
+        const v = result.value;
+        try {
+          await withClient((client) =>
+            callTyped(client, AuthSetContract, {
+              provider: "openai-codex",
+              profileId: v.profileId,
+              access: v.access,
+              refresh: v.refresh,
+              expires: v.expires,
+              accountId: v.accountId,
+              email: v.email,
+              displayName: v.displayName,
+              version: 1,
+            }),
+          );
+        } catch (rpcErr) {
+          prompter.log.error(
+            `Failed to persist OAuth profile via daemon: ${rpcErr instanceof Error ? rpcErr.message : String(rpcErr)}`,
+          );
+          if (attempt === maxRetries) return state;
+          continue;
+        }
+
+        wizardLogger.info(
+          {
+            provider: "openai-codex",
+            profileId: v.profileId,
+            identity:
+              redactEmailForLog(v.email) ?? `id-${v.accountId ?? "<unknown>"}`,
+            action: "wizard-login",
+            submodule: "wizard-oauth",
+          },
+          "OAuth profile stored via daemon RPC",
+        );
+
+        prompter.log.info(
+          "OAuth profile stored. Restart or reload the daemon before the new credential takes effect.",
+        );
+
+        // WR-01: do NOT store v.access as apiKey in wizard state for
+        // encrypted mode. The token is already persisted by the daemon
+        // via the auth.set RPC above. Setting apiKey here would keep a
+        // live bearer token in WizardState.provider for the remainder of
+        // the wizard session, creating a fragile residency guarantee that
+        // depends on openai-codex staying absent from PROVIDER_ENV_KEYS.
+        return updateState(state, {
+          provider: {
+            id: "openai-codex",
+            authMethod: "oauth",
+            oauthProfileId: v.profileId,
+            validated: true,
+          } as ProviderConfig,
+        });
+      }
+
+      // Failure path -- surface the rewritten error + recovery options.
+      prompter.log.warn(result.error.message);
+      if (result.error.hint) prompter.log.info(result.error.hint);
+
+      const isLastAttempt = attempt === maxRetries;
+      const recoveryOptions = isLastAttempt
+        ? [{ value: "skip" as const, label: "Skip provider setup" }]
+        : [
+            { value: "retry" as const, label: "Try again" },
+            { value: "skip" as const, label: "Skip provider setup" },
+          ];
+
+      const choice = await prompter.select<"retry" | "skip">({
+        message: "What would you like to do?",
+        options: recoveryOptions,
+      });
+      if (choice === "skip") return state;
+      // choice === "retry" -> continue loop
+    }
+
+    return state;
+  }
+
+  // File mode: open the store adapter and write directly.
   let store: OAuthCredentialStorePort;
   try {
     store = await openWizardOAuthStore();

@@ -37,8 +37,8 @@ describe("IMMUTABLE_CONFIG_PREFIXES", () => {
     expect(IMMUTABLE_CONFIG_PREFIXES).toContain("tooling");
   });
 
-  it("has exactly 13 entries", () => {
-    expect(IMMUTABLE_CONFIG_PREFIXES).toHaveLength(13);
+  it("has exactly 14 entries", () => {
+    expect(IMMUTABLE_CONFIG_PREFIXES).toHaveLength(14);
   });
 });
 
@@ -481,6 +481,33 @@ describe("isImmutableConfigPath -- tooling root prefix", () => {
       (p) => p.startsWith("tooling.") || p === "tooling",
     );
     expect(overrides).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// REQ-19 / D16 §8.1: executor section is OPERATOR-ONLY — broker anti-exfiltration
+// guard. An LLM-driven agent MUST NOT be able to self-configure
+// executor.broker.bindings to route credentials to an attacker-controlled host.
+// "executor" as a top-level prefix catches all three write paths:
+//   1. config.patch keyed write  — isImmutableConfigPath("executor", "broker.bindings")
+//   2. config.patch whole-section — isImmutableConfigPath("executor", undefined)
+//   3. config.apply section       — isImmutableConfigPath("executor")
+// ---------------------------------------------------------------------------
+describe("REQ-19: executor section is operator-only (broker anti-exfiltration guard)", () => {
+  it("isImmutableConfigPath rejects keyed config.patch on executor.broker.bindings", () => {
+    expect(isImmutableConfigPath("executor", "broker.bindings")).toBe(true);
+  });
+
+  it("isImmutableConfigPath rejects whole-section config.patch on executor", () => {
+    expect(isImmutableConfigPath("executor", undefined)).toBe(true);
+  });
+
+  it("isImmutableConfigPath rejects config.apply on executor section", () => {
+    expect(isImmutableConfigPath("executor")).toBe(true);
+  });
+
+  it("isImmutableConfigPath allows broker top-level section (not executor)", () => {
+    expect(isImmutableConfigPath("broker")).toBe(false);
   });
 });
 

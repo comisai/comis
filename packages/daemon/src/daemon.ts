@@ -21,7 +21,7 @@
  *   3.  hardenDataDirPermissions
  *   4.  runPreflightDoctor
  *   5.  process.env scrub helpers (SENSITIVE_PREFIXES, SENSITIVE_EXACT_KEYS,
- *       scrubProcessEnv, bootstrapSecretsAndEnv)
+ *       scrubProcessEnv, buildMergedEnv)
  *   6.  Agents-stage helpers (restoreApprovalState, wirePostAgentsCleanup)
  *   7.  Channels-stage helpers (buildChannelManagerDeps,
  *       buildGraphCoordinatorDeps, setupChannelHealthMonitor,
@@ -55,7 +55,7 @@
  *     single boot* function but whose body is large enough to deserve a
  *     named scope. Each lives in the helper section above the boot*
  *     blocks, grouped by which stage consumes them (foundation / agents /
- *     channels / gateway / shutdown). Examples: `bootstrapSecretsAndEnv`,
+ *     channels / gateway / shutdown). Examples: `buildMergedEnv`,
  *     `restoreApprovalState`, `buildChannelManagerDeps`, `createHotAdd`,
  *     `emitStartupBanner`.
  *
@@ -95,12 +95,13 @@ import {
   themeForName,
   BackgroundTasksConfigSchema,
   writeMasterKeyIfAbsent,
-  preReadSecretsEnabled,
+  preReadStorageMode,
   systemGetEnv,
   systemNowMs,
   selectOAuthCredentialStore,
   createFileLock,
   type SecretStorePort,
+  type CredentialStorageMode,
   type ToolCapabilityPort,
   type PerAgentConfig,
   type WrapExternalContentOptions,
@@ -114,8 +115,7 @@ import {
   createNamedGraphStore,
   createContextStore,
   createObservabilityStore,
-  createSqliteSecretStore,
-  createOAuthProfileStoreEncrypted,
+  selectSecretStore,
 } from "@comis/memory";
 import { createGatewayServer } from "@comis/gateway";
 import {
@@ -128,6 +128,7 @@ import {
   setupChannels,
   createInteractiveCallbackWiring,
   setupMedia,
+  createImageGenGetter,
   setupCrossSession,
   setupTools,
   setupMonitoring,
@@ -146,6 +147,8 @@ import {
   setupOutputRetention,
   type SetupOutputRetentionHandle,
   setupBroker,
+  acquireDataDirLock,
+  releaseDataDirLock,
 } from "./wiring/index.js";
 import {
   createActiveRunRegistry,
@@ -163,7 +166,6 @@ import {
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import {
   createFileStateTracker,
-  createImageGenProvider,
   createImageGenRateLimiter,
   detectSandboxProvider,
   createTokenStore as defaultCreateMcpTokenStore,
@@ -205,11 +207,13 @@ import {
   buildMcpStatusLine,
 } from "./wiring/restart-continuation.js";
 import { setupSingleAgent } from "./wiring/setup-agents/index.js";
+import { setupSecretManager } from "./wiring/setup-secret-manager.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
 import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
 import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "./wiring/oauth-preflight.js";
 import { emitStartupInvariants } from "./wiring/setup-startup-invariants.js";
+import { checkStorageModeConsistency } from "./wiring/setup-storage-mismatch-warn.js";
 import { buildPlaceholdersFromBindings } from "./wiring/broker-placeholder-builder.js";
 import os from "node:os";
 import { dirname as pathDirname } from "node:path";
@@ -279,7 +283,7 @@ export function hardenDataDirPermissions(dataDir: string): PermissionCorrection[
   } catch { /* best-effort */ }
 
   // Fix known sensitive files
-  const sensitiveFiles = ["config.yaml", "config.local.yaml", ".env", "secrets.db"];
+  const sensitiveFiles = ["config.yaml", "config.local.yaml", ".env", "secrets.db", "secrets.json"];
   for (const filename of sensitiveFiles) {
     try {
       const filePath = `${dataDir}/${filename}`;
@@ -349,21 +353,7 @@ export async function runPreflightDoctor(
 }
 
 // ---------------------------------------------------------------------------
-// Foundation helpers
-// ---------------------------------------------------------------------------
-// Helpers consumed by `bootFoundation`. Layout (top-down):
-//   1. SENSITIVE_PREFIXES / SENSITIVE_EXACT_KEYS + scrubProcessEnv —
-//      process.env hygiene; sole caller is `bootstrapSecretsAndEnv`. Kept
-//      adjacent to its caller to avoid hint-of-cycle when the daemon module
-//      grew its `./stages/` extraction (the helper was pulled to a sibling
-//      file then re-inlined). The two constants are file-private to keep
-//      the surface tight.
-//   2. bootstrapSecretsAndEnv — opens the encrypted secrets DB if present,
-//      decrypts all secrets, builds the merged env snapshot, and scrubs
-//      process.env so credentials do not propagate to subprocess inherit.
-//      Returns the secret store + crypto handle + raw db handle so the
-//      caller can thread them into setupAgents (the OAuth credential
-//      store shares the better-sqlite3 connection in encrypted mode).
+// Foundation helpers — scrub + store-wins env merge
 // ---------------------------------------------------------------------------
 
 /**
@@ -393,23 +383,10 @@ const SENSITIVE_EXACT_KEYS = new Set([
 ]);
 
 /**
- * Remove sensitive environment variables from process.env.
- * Called AFTER mergedEnv snapshot is built but BEFORE bootstrap().
- * Preserves operational vars: COMIS_*, PATH, HOME, NODE_ENV, etc.
- *
- * COMIS_* PRESERVATION: `COMIS_DATA_DIR` and `COMIS_CONFIG_PATHS` are
- * INTENTIONALLY preserved across the scrub. They are filesystem-layout
- * pointers, not credentials -- subprocesses (MCP stdio servers, exec tools,
- * the apply-patch helper) need them to locate the daemon's data dir.
- *
- * Filesystem-layout pointers are still mildly sensitive (a misbehaving
- * subprocess could log them, surfacing the daemon's on-disk location). The
- * mitigation is per-spawn-site: untrusted-child spawns (exec-tool, MCP stdio
- * adapters, ffmpeg, etc.) MUST go through `envSubset(secretManager,
- * [...SUBPROCESS_SYSTEM])` -- see bootAgents -- which yields a minimal env
- * (PATH, HOME, LANG, ...) and explicitly EXCLUDES COMIS_*. New subprocess
- * spawn sites MUST follow this pattern; do NOT pass `process.env` directly
- * to a child even after scrub, because COMIS_* values are still present.
+ * Stage-1 scrub: remove sensitive env vars from process.env (ALL storage modes).
+ * Preserves COMIS_* (filesystem-layout pointers, not credentials — kept for
+ * subprocess path resolution; per-spawn-site envSubset() excludes them from
+ * untrusted-child envs). Preserves PATH, HOME, NODE_ENV, etc.
  */
 function scrubProcessEnv(): void {
 
@@ -429,56 +406,35 @@ function scrubProcessEnv(): void {
   }
 }
 
-/**
- * Bootstrap secrets and build merged-env / process.env scrub. Returns a
- * bundle of the secret store + crypto + db handle and the merged-env map.
- * Control flow: decryptAll throws → fatal; null secretsBootResult → no-op.
- */
-function bootstrapSecretsAndEnv(deps: {
-  setupSecrets: typeof _setupSecretsImpl;
-  dataDir: string;
-  /** undefined on normal boot; 64-char hex string on first-boot auto-init */
-  seedKeyHex?: string;
-}): {
-  mergedEnv: Record<string, string | undefined>;
-  secretStore: SecretStorePort | undefined;
-  secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
-  secretsDb: import("better-sqlite3").Database | undefined;
-} {
-  const secretsBootResult = deps.setupSecrets({
-    env: process.env as Record<string, string | undefined>,
-    dataDir: deps.dataDir,
-    seedKeyHex: deps.seedKeyHex, // thread first-boot key for same-boot usability
-  });
-  if (!secretsBootResult.ok) {
-    throw new Error(`Secrets bootstrap failed: ${secretsBootResult.error.message}`);
+/** Build mergedEnv: store-wins (REQ-16/D12), stage-1 scrub for ALL modes.
+ * Returns shadowed names for deferred WARN logging (logger not yet available). */
+function buildMergedEnv(
+  secretStore: SecretStorePort,
+  mode: CredentialStorageMode,
+): { mergedEnv: Record<string, string | undefined>; shadowedNames: string[] } {
+  const merged: Record<string, string | undefined> = {
+    ...(process.env as Record<string, string | undefined>),
+  };
+  if (mode === "env") {
+    // Env mode: env IS the source. No store values to overlay.
+    scrubProcessEnv();
+    return { mergedEnv: merged, shadowedNames: [] };
   }
-  if (secretsBootResult.value === null) {
-    return {
-      mergedEnv: process.env as Record<string, string | undefined>,
-      secretStore: undefined,
-      secretsCrypto: undefined,
-      secretsDb: undefined,
-    };
-  }
-  const { crypto, dbPath } = secretsBootResult.value;
-  const store = createSqliteSecretStore(dbPath, crypto);
-  const decryptResult = store.decryptAll();
+  // file / encrypted: store is authoritative (REQ-16/D12).
+  const decryptResult = secretStore.decryptAll();
   if (!decryptResult.ok) {
     throw new Error(`Secret decryption failed: ${decryptResult.error.message}`);
   }
-  const merged: Record<string, string | undefined> = {};
-  for (const [name, value] of decryptResult.value) merged[name] = value;
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) merged[key] = value;
+  const shadowedNames: string[] = [];
+  for (const [name, value] of decryptResult.value) {
+    if (merged[name] !== undefined && merged[name] !== value) {
+      // REQ-16: store wins; collect name for deferred WARN (logger not yet available).
+      shadowedNames.push(name);
+    }
+    merged[name] = value;
   }
   scrubProcessEnv();
-  return {
-    mergedEnv: merged,
-    secretStore: store as SecretStorePort,
-    secretsCrypto: crypto,
-    secretsDb: store.db,
-  };
+  return { mergedEnv: merged, shadowedNames };
 }
 
 // ---------------------------------------------------------------------------
@@ -1154,7 +1110,7 @@ function buildRpcDispatchDeps(deps: {
     logger: c.logger, container: c.container, configPaths: c.configPaths, defaultConfigPaths,
     configGitManager: c.configGitManager,
     configWebhook: c.container.config.daemon.configWebhook as { url?: string; timeoutMs?: number; secret?: string },
-    secretStore: c.secretStore, envFilePath: c.envPath, logLevelManager: c.logLevelManager,
+    secretStore: c.secretStore, mutableSecretManager: c.mutableHandle, envFilePath: c.envPath, logLevelManager: c.logLevelManager,
     getAgentBrowserService: c.getAgentBrowserService,
     resolveAttachment: c.resolveAttachment, transcriber: c.transcriber, fileExtractor: c.fileExtractor,
     approvalGate: c.approvalGate, suspendedAgents: c.suspendedAgents,
@@ -1445,7 +1401,8 @@ async function bootFoundation(
 ): Promise<void> {
   const { overrides, startupStartMs, instanceId } = input;
   const _bootstrap = overrides.bootstrap ?? bootstrap;
-  const _setupSecrets = overrides.setupSecrets ?? _setupSecretsImpl;
+  const _preReadStorageMode = overrides.preReadStorageMode ?? preReadStorageMode;
+  const _writeMasterKeyIfAbsent = overrides.writeMasterKeyIfAbsent ?? writeMasterKeyIfAbsent;
   const _createTracingLogger = overrides.createTracingLogger ?? createTracingLogger;
   const _createLogLevelManager = overrides.createLogLevelManager ?? createLogLevelManager;
   const _createTokenTracker = overrides.createTokenTracker ?? createTokenTracker;
@@ -1456,69 +1413,94 @@ async function bootFoundation(
   const dataDir = process.env["COMIS_DATA_DIR"] ?? safePath(os.homedir(), ".comis");
   const envPath = safePath(dataDir, ".env");
 
-  // Resolve config paths up front so we can pre-read security.secrets.enabled
-  // before writeMasterKeyIfAbsent. The full bootstrap (which validates the
+  // Resolve config paths up front so we can pre-read security.storage
+  // before writeMasterKeyIfAbsent (REQ-17). The full bootstrap (which validates the
   // whole config + does ${VAR} substitution) runs later — it depends on
   // mergedEnv, which depends on whether the encrypted store opened.
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution + VITEST guard
   const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"]; if (process.env["VITEST"] === "true" && !rawConfigPaths) throw new Error("VITEST=true and COMIS_CONFIG_PATHS unset — refusing to read ~/.comis/config.yaml from a test process. Set COMIS_CONFIG_PATHS to a sandbox path in your test setup, or import test/support/vitest-process-listeners.ts.");
   const requestedConfigPaths = rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS;
 
-  // Opt-out checks — TWO independent paths, either disables the store:
-  //   1. env: COMIS_DISABLE_ENCRYPTED_SECRETS=1|true|on
-  //   2. config: security.secrets.enabled: false (in any YAML config path)
-  // Both are evaluated BEFORE writeMasterKeyIfAbsent so an opt-out leaves
-  // ~/.comis/.env completely untouched (no SECRETS_MASTER_KEY line appended).
-  const parseDisableFlag = (raw: string | undefined): boolean => {
-    if (typeof raw !== "string") return false;
-    const norm = raw.trim().toLowerCase();
-    return norm === "1" || norm === "true" || norm === "on";
-  };
-  const disableEncryptedPreLoad = parseDisableFlag(systemGetEnv("COMIS_DISABLE_ENCRYPTED_SECRETS"));
-  const secretsEnabledByConfig = preReadSecretsEnabled(requestedConfigPaths);
-  const disableEncryptedAtStart = disableEncryptedPreLoad || !secretsEnabledByConfig;
+  // P0 boot gate: REQ-17 — ensure file/env first boot creates no key material.
+  //
+  // Step 1 (pre-loadEnvFile): Detect the removed legacy env var and fail with a
+  // migration error. This var was removed in v1.5 — use security.storage: env instead.
+  if (systemGetEnv("COMIS_DISABLE_ENCRYPTED_SECRETS")) { // MIGRATION_ERROR gate: detect removed legacy env var
+    throw new Error("[MIGRATION_ERROR] COMIS_DISABLE_ENCRYPTED_SECRETS is no longer supported. Set security.storage: env in your config.yaml and remove the env var. See the migration guide in the changelog."); // MIGRATION-GATE
+  }
 
-  // Auto-generate master key on first boot (before loadEnvFile — key must be in
-  // memory, not re-read from env, for same-boot usability).
-  // NEVER log autoInitKeyHex — it is raw 32-byte key material.
-  let autoInitKeyHex: string | undefined;
-  if (!disableEncryptedAtStart) {
-    const writeResult = writeMasterKeyIfAbsent(dataDir);
-    autoInitKeyHex = writeResult.keyHex; // defined iff written===true (first boot only)
+  // Step 2: Pre-read security.storage from YAML (layered, last-wins). Returns
+  // "encrypted"|"file"|"env"|"legacy". NEVER writes key material before this check.
+  const storageMode = _preReadStorageMode(requestedConfigPaths);
+
+  // Step 3: If legacy keys detected in YAML, fail before any key material is written.
+  if (storageMode === "legacy") {
+    throw new Error(
+      "[MIGRATION_ERROR] Legacy config keys detected in your config.yaml. " +
+        "[MIGRATION] Legacy credential-storage keys were removed in v1.5. " +
+        "Replace with: security.storage: encrypted|file|env (default: encrypted). " +
+        "See the migration guide in the changelog.",
+    );
+  }
+
+  // Step 4: Write master key ONLY when storageMode is "encrypted" (REQ-17).
+  // file/env modes create NO key material on first boot.
+  if (storageMode === "encrypted") {
+    _writeMasterKeyIfAbsent(dataDir);
+    // loadEnvFile below picks up the freshly-written key from the .env file,
+    // so selectSecretStore can read SECRETS_MASTER_KEY from process.env.
   }
 
   loadEnvFile(envPath);
 
-  // Re-evaluate opt-out after loadEnvFile so COMIS_DISABLE_ENCRYPTED_SECRETS in
-  // ~/.comis/.env is honoured for the store-construction gate (not just key auto-gen).
-  // The config-driven opt-out (`secretsEnabledByConfig`) is fixed once at pre-read
-  // time — YAML is read directly off disk and is not affected by loadEnvFile.
+  // Step 5 (post-loadEnvFile): Re-check for removed legacy env var (MIGRATION_ERROR gate)
+  // that may have been loaded from ~/.comis/.env. Fail with migration error if present.
   // eslint-disable-next-line no-restricted-syntax -- must re-read process.env after loadEnvFile
-  const disableEncryptedByEnvAfterLoad = parseDisableFlag(process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"]);
-  const disableEncrypted = disableEncryptedAtStart || disableEncryptedByEnvAfterLoad;
+  if (process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"]) { // MIGRATION_ERROR gate: detect legacy env var in .env
+    throw new Error("[MIGRATION_ERROR] COMIS_DISABLE_ENCRYPTED_SECRETS found in .env file. This env var is no longer supported. Set security.storage: env in your config.yaml and remove the env var from ~/.comis/.env. See the migration guide in the changelog."); // MIGRATION-GATE
+  }
 
-  // 0.5. Decrypt secrets, merge with env, scrub process.env.
+  // 0.5. Select secret store by mode, merge with env, scrub process.env.
   const permissionCorrections = hardenDataDirPermissions(dataDir);
-  // Gate the entire store bootstrap on disableEncrypted: when opt-out is true,
-  // skip store construction entirely (mergedEnv = process.env). Otherwise
-  // bootstrapSecretsAndEnv would run unconditionally — after loadEnvFile loaded
-  // SECRETS_MASTER_KEY from ~/.comis/.env, setupSecrets would find it and build
-  // a live store even when the opt-out was set.
-  let mergedEnv: Record<string, string | undefined>;
-  let secretStore: import("@comis/core").SecretStorePort | undefined;
+  // D14 singleton lock — must run before any store bootstrap (REQ-03).
+  acquireDataDirLock(dataDir);
+  // On boot failure (e.g. selectSecretStore error, bootstrap failure), release
+  // the lock. Under normal boot setupShutdown.onShutdown owns the release.
+  try {
+
+  // selectSecretStore is called BEFORE scrubProcessEnv so encrypted mode
+  // can still read SECRETS_MASTER_KEY from process.env (Pitfall 5 in RESEARCH).
+  //
+  // sensitiveNames: built here at the composition root (a sanctioned process.env
+  // access point per AGENTS.md §2.8). In file/encrypted modes the names are
+  // passed to the env adapter via selectSecretStore but ignored there.
+  // NOTE: sensitiveNames and env snapshot must be built AFTER loadEnvFile so ~/.comis/.env vars are included.
+  const sensitiveNames = new Set<string>([
+    ...SENSITIVE_EXACT_KEYS,
+    ...Object.keys(process.env).filter(k =>
+      SENSITIVE_PREFIXES.some(p => k.startsWith(p))
+    ),
+  ]);
+  const storeResult = selectSecretStore({
+    mode: storageMode,
+    dataDir,
+    env: process.env as Record<string, string | undefined>,
+    sensitiveNames,
+  });
+  if (!storeResult.ok) {
+    throw new Error(`Failed to open secret store (mode: ${storageMode}): ${storeResult.error.message}`);
+  }
+  const selected = storeResult.value;
+  const secretStore: import("@comis/core").SecretStorePort = selected.secretStore;
   let secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
   let secretsDb: import("better-sqlite3").Database | undefined;
-  if (disableEncrypted) {
-    // Opt-out: no store construction. Keep loadEnvFile output (non-secret vars) in mergedEnv.
-    // eslint-disable-next-line no-restricted-syntax -- building mergedEnv from process.env after loadEnvFile
-    mergedEnv = process.env as Record<string, string | undefined>;
-  } else {
-    ({ mergedEnv, secretStore, secretsCrypto, secretsDb } = bootstrapSecretsAndEnv({
-      setupSecrets: _setupSecrets,
-      dataDir,
-      seedKeyHex: autoInitKeyHex, // undefined on normal boot; hex string on first boot
-    }));
+  if (selected.kind === "encrypted") {
+    secretsCrypto = selected.secretsCrypto;
+    secretsDb = selected.secretsDb;
   }
+
+  // Build mergedEnv (store-wins, REQ-16/D12) + stage-1 scrub.
+  const { mergedEnv, shadowedNames } = buildMergedEnv(secretStore, storageMode);
 
   // 0.6. Runtime adapter construction (composition root). overrides.timers is opt-in for test fake-timers; never set in production.
   const clock = createSystemClock(); const env = createSystemEnv(mergedEnv); const timers = overrides.timers ?? createSystemTimers();
@@ -1533,11 +1515,11 @@ async function bootFoundation(
   // auto-quiesces that pair across turns. Threaded down via BootContext →
   // buildChannelManagerDeps → ChannelsDeps → buildAndStartChannelManager.
   const activityBreaker = createActivityCircuitBreaker(clock);
-
-  // 1. Bootstrap core container. (Config paths were resolved + VITEST-guarded
-  // in step 0 so security.secrets.enabled could be pre-read before the
-  // encrypted-store bootstrap.)
-  const { configPaths, bootResult } = await runConfigBootstrapAndEmitObserve({ requestedConfigPaths, mergedEnv, bootstrap: _bootstrap });
+  // Shared-map SecretManager (P4a): construct BEFORE bootstrap; same Map → AppContainer + mutableHandle.
+  const { secretManager: sharedSecretManager, mutableHandle } = setupSecretManager(mergedEnv);
+  const wrappedBootstrap = (opts: Parameters<typeof _bootstrap>[0]) => _bootstrap({ ...opts, secretManager: sharedSecretManager });
+  // 1. Bootstrap core container. (security.storage pre-read in step 0 before encrypted-store bootstrap.)
+  const { configPaths, bootResult } = await runConfigBootstrapAndEmitObserve({ requestedConfigPaths, mergedEnv, bootstrap: wrappedBootstrap });
   if (!bootResult.ok) {
     throw new Error(`Bootstrap failed: ${bootResult.error.message}`);
   }
@@ -1551,6 +1533,12 @@ async function bootFoundation(
     throw new Error(`SecretRef resolution failed: ${refResult.error.message}`);
   }
   const container = { ...initialContainer, config: refResult.value as unknown as typeof initialContainer.config };
+
+  // Stage-2 scrub: remove config-referenced SecretRef names from process.env (REQ-15); runs after config parse.
+  for (const name of container.platformSecretNames) {
+    // eslint-disable-next-line no-restricted-syntax -- stage-2 scrub per REQ-15
+    delete process.env[name];
+  }
 
   // 1.5. Config git versioning (inlined wireConfigGitManager).
   const execGit = createExecGit();
@@ -1596,24 +1584,41 @@ async function bootFoundation(
     }
   }
 
-  // Deferred opt-out WARN (logger not available before setupLogging).
-  // Two opt-out sources, surfaced separately so the hint matches the reason:
-  //   - env: COMIS_DISABLE_ENCRYPTED_SECRETS=1 (process.env or ~/.comis/.env)
-  //   - config: security.secrets.enabled: false (YAML, applied at boot)
-  if (disableEncrypted) {
-    const envDisabled = disableEncryptedPreLoad || disableEncryptedByEnvAfterLoad;
-    const source = envDisabled ? "env" : "config";
+  // Deferred REQ-16 WARNs: store-wins shadow notifications (collected pre-logger).
+  // Log name only — never value (residency invariant).
+  for (const name of shadowedNames) {
     daemonLogger.warn(
+      { submodule: "secrets-overlay", secretName: name },
+      `Secret '${name}' defined in both the active store and process.env — ` +
+      "store value is authoritative (REQ-16). The env var has been removed from process.env.",
+    );
+  }
+
+  // WR-03: Assert pre-read storageMode === post-bootstrap security.storage (D17 invariant).
+  // security.storage is a boot-critical, runtime-immutable switch that must be a literal
+  // value — ${VAR} substitution is not supported for this field, because preReadStorageMode
+  // (raw YAML scan, no variable expansion) gates key-material writes (REQ-17) before
+  // bootstrap resolves the substitution. A mismatch means ${VAR} was used and the two
+  // values disagree — fail boot loudly rather than silently misrouting credential storage.
+  if (container.config.security.storage !== storageMode) {
+    throw new Error(
+      `[CONFIG_ERROR] security.storage resolved to '${container.config.security.storage}' ` +
+      `after config substitution, but pre-read value was '${storageMode}'. ` +
+      "security.storage must be a literal value (encrypted|file|env); " +
+      "${VAR} references are not supported for this field.",
+    );
+  }
+
+  // P0 boot: file/env storage mode INFO log (logger now available).
+  // No WARN needed — the legacy opt-out path now fails at the boot gate above.
+  // If we reach here with storageMode !== "encrypted", it is a valid P0 mode.
+  if (storageMode !== "encrypted") {
+    daemonLogger.info(
       {
-        errorKind: "config" as const,
-        optOutSource: source,
-        hint: envDisabled
-          ? "Back up ~/.comis/.env immediately. Losing SECRETS_MASTER_KEY makes secrets.db permanently unreadable. To re-enable, unset COMIS_DISABLE_ENCRYPTED_SECRETS and restart."
-          : "Back up ~/.comis/.env immediately. Losing SECRETS_MASTER_KEY makes secrets.db permanently unreadable. To re-enable, set security.secrets.enabled: true (or remove the field) and restart.",
+        storageMode,
+        hint: "Credential stores operating in non-encrypted mode. SECRETS_MASTER_KEY and secrets.db are not created.",
       },
-      envDisabled
-        ? "COMIS_DISABLE_ENCRYPTED_SECRETS=1: encrypted secrets store disabled. Daemon running in envfile-only mode. Backup obligation is on the operator."
-        : "security.secrets.enabled=false: encrypted secrets store disabled by config. Daemon running in envfile-only mode. Backup obligation is on the operator.",
+      `security.storage: ${storageMode} — no key material created (REQ-17).`,
     );
   }
 
@@ -1824,7 +1829,7 @@ async function bootFoundation(
   Object.assign(boot, {
     container, dataDir, configPaths, envPath,
     clock, env, timers, activityBreaker, activityRendererFactoryOverride: activityRendererFactory,
-    secretStore, secretsCrypto, secretsDb, permissionCorrections,
+    secretStore, mutableHandle, secretsCrypto, secretsDb, permissionCorrections,
     execGit, configGitManager,
     logger, logLevelManager, daemonLogger, gatewayLogger, channelsLogger, agentLogger,
     schedulerLogger, skillsLogger, memoryLogger, daemonVersion,
@@ -1843,6 +1848,12 @@ async function bootFoundation(
     backgroundTaskManager, bgNotifyFn,
     brokerHandle,
   });
+  } catch (e: unknown) {
+    // Boot failed — release the lock. Under normal boot, setupShutdown.onShutdown
+    // owns the release; catch here handles bootstrap/selectSecretStore failures.
+    releaseDataDirLock(dataDir);
+    throw e;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1945,47 +1956,27 @@ async function bootAgents(
     logger: skillsLogger,
   });
 
-  // Hoist oauthCredentialStore construction to BEFORE
-  // setupMcp so MCP OAuth tokens are routed through the unified
-  // OAuthCredentialStorePort (not the disk-default fallback).
-  //
-  // All dependencies are available here from `foundation`:
-  //   - container.config.oauth.storage, dataDir  → already in scope
-  //   - secretsCrypto, secretsDb                 → from foundation (line ~1713)
-  //   - createFileLock()                         → pure factory, no deps
-  //
-  // The same store instance is later consumed by setupAgents (threaded into
-  // singleAgentDeps.oauthCredentialStore) and the RPC dispatcher. This is
-  // safe: setupAgents in setup-agents-registry.ts already guards against
-  // double-construction — it constructs its own if not provided. However,
-  // since we declare it here, we pass it through so both sites share one
-  // instance (no duplicate SQLite handles for the encrypted-mode store).
-  let encryptedStoreForMcp: import("@comis/core").OAuthCredentialStorePort | undefined;
-  if (container.config.oauth.storage === "encrypted") {
-    if (!secretsCrypto || !secretsDb) {
-      throw new Error(
-        "OAuth storage mode is 'encrypted' but secretsDb/secretsCrypto were not initialized. " +
-          "Hint: set SECRETS_MASTER_KEY env var (and restart the daemon) so the encrypted " +
-          "secrets store boots, or change appConfig.oauth.storage to 'file' to use the " +
-          "plaintext file backend.",
-      );
-    }
-    encryptedStoreForMcp = createOAuthProfileStoreEncrypted(secretsDb, secretsCrypto);
-  }
-  const oauthCredentialStoreForceMcp = selectOAuthCredentialStore({
-    storage: container.config.oauth.storage,
-    dataDir: container.config.dataDir && container.config.dataDir.length > 0
-      ? container.config.dataDir
-      : dataDir,
-    fileLock: createFileLock(),
-    encryptedStore: encryptedStoreForMcp,
-  });
+  // In Encrypted mode, MCP tokens route through the mcp_credentials table via
+  // createMcpTokenStoreEncrypted (threaded as secretsDb/secretsCrypto below).
+  // In File mode, oauthCredentialStoreForceMcp provides the portBackedStore seam.
+  // In Env mode, OAuth credential storage is not available — no portBackedStore.
+  const oauthCredentialStoreForceMcp =
+    container.config.security.storage === "file"
+      ? selectOAuthCredentialStore({
+          storage: "file",
+          dataDir: container.config.dataDir && container.config.dataDir.length > 0
+            ? container.config.dataDir
+            : dataDir,
+          fileLock: createFileLock(),
+          encryptedStore: undefined,
+        })
+      : undefined;
 
   // Construct daemon-global MCP manager BEFORE setupAgents (ordering constraint
   // -- per-agent ToolCapabilityPort adapters close over mcpClientManager).
-  // oauthCredentialStore + dataDir are threaded in so MCP OAuth tokens
-  // go through the unified OAuthCredentialStorePort (not the disk default).
-  // Inlined setupMcpManager — pure in-memory state holder construction.
+  // In Encrypted mode, secretsDb/secretsCrypto route MCP tokens through
+  // mcp_credentials (AES-256-GCM). In File mode, oauthCredentialStore+dataDir
+  // construct the chokidar portBackedStore seam inside setup-mcp.ts.
   const { mcpClientManager } = await setupMcp({
     servers: container.config.integrations.mcp.servers,
     logger: skillsLogger,
@@ -2001,7 +1992,10 @@ async function bootAgents(
     globalKeepaliveIntervalMs: container.config.integrations.mcp.keepaliveIntervalMs,
     circuitBreakerThreshold: container.config.integrations.mcp.circuitBreakerThreshold,
     circuitBreakerCooldownMs: container.config.integrations.mcp.circuitBreakerCooldownMs,
-    // Route MCP OAuth tokens through the unified credential port.
+    // Encrypted mode: route MCP tokens through mcp_credentials table (AES-256-GCM).
+    secretsDb,
+    secretsCrypto,
+    // File mode: portBackedStore seam (oauthCredentialStore + dataDir).
     oauthCredentialStore: oauthCredentialStoreForceMcp,
     dataDir: container.config.dataDir && container.config.dataDir.length > 0
       ? container.config.dataDir
@@ -2144,7 +2138,7 @@ async function bootAgents(
 
   // 6.6.7. Media (moved up from 6.6.8 -- media infrastructure must be ready before channels)
   const {
-    ttsAdapter, visionRegistry, linkRunner,
+    ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner,
     mediaTempManager, mediaSemaphore, audioConverter,
     transcriber, ssrfFetcher, fileExtractor,
   } = await _setupMedia({ container, skillsLogger, onSuspiciousContent });
@@ -2203,7 +2197,7 @@ async function bootAgents(
     systemEventQueue, cronSchedulers, executionTrackers, browserServices, resetSchedulers,
     getAgentCronScheduler, getAgentBrowserService,
     sessionTrackerRegistry, auditAggregator, onSuspiciousContent,
-    ttsAdapter, visionRegistry, linkRunner, mediaTempManager, mediaSemaphore, audioConverter,
+    ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner, mediaTempManager, mediaSemaphore, audioConverter,
     transcriber, ssrfFetcher, fileExtractor,
     rpcCall, wireDispatch, approvalGate, interactiveCallbackWiring,
     channelAdaptersRef, deliveryQueue, drainAndStartDeliveryPrune, shutdownDeliveryQueue,
@@ -2294,22 +2288,18 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // because setupTools consumes both as direct inputs).
   const sandboxProvider = detectSandboxProvider(skillsLogger);
   if (sandboxProvider) skillsLogger.info({ provider: sandboxProvider.name }, "Exec sandbox provider detected");
-  // Inlined buildImageGenBundle: image-generation provider + rate limiter + config.
+  // Inlined buildImageGenBundle: image-generation provider (lazy getter) + rate limiter + config.
+  // Phase 6 (REQ-13): lazy getter re-reads secretManager on each call so key rotation is live.
   const imageGenConfig = container.config.integrations.media.imageGeneration;
-  const imageGenResult = createImageGenProvider(imageGenConfig, container.secretManager);
-  const imageGenProvider = imageGenResult.ok ? imageGenResult.value : undefined;
+  const getImageGenProvider = createImageGenGetter(imageGenConfig, container.secretManager);
+  const imageGenProvider = getImageGenProvider(); // boot-time probe for rate-limiter + logging
   const imageGenRateLimiter = imageGenProvider
     ? createImageGenRateLimiter({ maxPerHour: imageGenConfig.maxPerHour })
     : undefined;
   if (imageGenProvider) {
     skillsLogger.info({ provider: imageGenConfig.provider }, "Image generation provider initialized");
-  } else if (imageGenResult.ok) {
-    skillsLogger.debug("Image generation disabled: API key not configured");
   } else {
-    skillsLogger.warn(
-      { err: imageGenResult.error, hint: "Check image generation config provider value", errorKind: "config" as const },
-      "Image generation provider creation failed",
-    );
+    skillsLogger.debug("Image generation disabled: API key not configured or provider unknown");
   }
 
   // 6.6.8.5. Tools + message preprocessing — HOISTED above setupChannels.
@@ -2866,6 +2856,7 @@ async function bootShutdown(
     alertBudgetPolicy: container.config.observability?.alertBudget,
     eventBus: container.eventBus,
   });
+  checkStorageModeConsistency({ logger: daemonLogger, activeMode: boot.container.config.security.storage, dataDir: boot.dataDir, secretsDb: boot.secretsDb });
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.
@@ -2934,25 +2925,28 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   // mirroring + Gemini cache + background tasks + deferred refs.
   await bootFoundation(boot, { overrides, startupStartMs, instanceId });
 
-  // Stage 2: agents. Owns agent executors + mcpClientManager + schedulers +
-  // media + RPC bridge + approval gate (with restore) + delivery queue.
-  await bootAgents(boot, { overrides });
-
-  // Stage 3: channels. Owns sandbox/image-gen + tools (HOISTED) + channel
-  // adapters + notifications + bg completion runner + cross-session + graph
-  // + monitoring + heartbeat + wake coalescer + agent runtime state.
-  await bootChannels(boot);
-
-  // Stage 4: gateway. Owns token registry + session store bridge + shutdown
-  // ref slot + hot-add/hot-remove closures + RPC dispatch deps assembly +
-  // gateway server + restart continuation replay.
-  await bootGateway(boot, { overrides, startupStartMs, instanceId });
-
-  // Stage 5: shutdown. Constructs shutdown handle, populates
-  // boot.shutdownRef.value (cross-stage deferred-ref), wires health logging,
-  // emits the startup banner ("Comis daemon started"), and returns the
-  // DaemonInstance.
-  return await bootShutdown(boot, { overrides, startupStartMs, instanceId });
+  // Stages 2-5: wrapped so a failure in any post-foundation stage releases the
+  // singleton lock (CR-01). Under normal boot, setupShutdown.onShutdown owns
+  // the release; this catch handles partial-boot failures before that fires.
+  try {
+    // Stage 2: agents. Owns agent executors + mcpClientManager + schedulers +
+    // media + RPC bridge + approval gate (with restore) + delivery queue.
+    await bootAgents(boot, { overrides });
+    // Stage 3: channels. Owns sandbox/image-gen + tools (HOISTED) + channel
+    // adapters + notifications + bg completion runner + cross-session + graph
+    // + monitoring + heartbeat + wake coalescer + agent runtime state.
+    await bootChannels(boot);
+    // Stage 4: gateway. Owns token registry + session store bridge + shutdown
+    // ref slot + hot-add/hot-remove closures + RPC dispatch deps assembly +
+    // gateway server + restart continuation replay.
+    await bootGateway(boot, { overrides, startupStartMs, instanceId });
+    // Stage 5: shutdown. Constructs shutdown handle, wires health logging,
+    // emits the startup banner ("Comis daemon started"), returns DaemonInstance.
+    return await bootShutdown(boot, { overrides, startupStartMs, instanceId });
+  } catch (e: unknown) {
+    releaseDataDirLock(boot.dataDir);
+    throw e;
+  }
 }
 
 // Only run when invoked directly (not imported).

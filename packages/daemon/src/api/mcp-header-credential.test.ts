@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
 import { buildVarName, processHeaderCredentials } from "./mcp-header-credential.js";
-import type { SecretStorePort, ComisLogger } from "@comis/core";
+import type { SecretStorePort, ComisLogger, MutableSecretManager } from "@comis/core";
 import { ok, err } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
@@ -340,6 +340,126 @@ describe("processHeaderCredentials — plaintextOptOut static-secret warn-and-al
       expect.objectContaining({ errorKind: "config", method: "mcp.connect" }),
       expect.any(String),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// processHeaderCredentials — mutableSecretManager live-apply (WR-01)
+// ---------------------------------------------------------------------------
+
+describe("processHeaderCredentials — mutableSecretManager live-apply", () => {
+  function makeMutableSecretManager(): MutableSecretManager & { upsertCalls: Array<[string, string]> } {
+    const upsertCalls: Array<[string, string]> = [];
+    return {
+      upsertCalls,
+      upsert: vi.fn((key: string, value: string) => { upsertCalls.push([key, value]); }),
+      remove: vi.fn().mockReturnValue(false),
+    } as unknown as MutableSecretManager & { upsertCalls: Array<[string, string]> };
+  }
+
+  it("calls mutableSecretManager.upsert with varName and raw value after secretStore.set succeeds", () => {
+    const rawValue = "sk-ant-abc123defghijklmnopqrstuvwxyz";
+    const secretStore = makeSecretStore();
+    const mutableSecretManager = makeMutableSecretManager();
+    const headers: Record<string, string> = { "X-Api-Key": rawValue };
+
+    processHeaderCredentials({
+      headers,
+      serverName: "context7",
+      secretStore,
+      plaintextOptOut: false,
+      logger: makeLogger(),
+      method: "mcp.connect",
+      mutableSecretManager,
+    });
+
+    expect(mutableSecretManager.upsert).toHaveBeenCalledOnce();
+    expect(mutableSecretManager.upsert).toHaveBeenCalledWith("MCP_CONTEXT7__X_API_KEY", rawValue);
+  });
+
+  it("secretManager.get returns the extracted value immediately after processHeaderCredentials (no restart needed)", () => {
+    const rawValue = "sk-ant-abc123defghijklmnopqrstuvwxyz";
+    const secretStore = makeSecretStore();
+    const backingMap = new Map<string, string>();
+    const mutableSecretManager: MutableSecretManager = {
+      upsert: (key, value) => { backingMap.set(key, value); },
+      remove: (key) => backingMap.delete(key),
+    };
+    const secretManager = { get: (key: string) => backingMap.get(key), has: (key: string) => backingMap.has(key), require: (key: string) => { const v = backingMap.get(key); if (!v) throw new Error(key); return v; }, keys: () => [...backingMap.keys()] };
+
+    const headers: Record<string, string> = { "X-Api-Key": rawValue };
+    processHeaderCredentials({
+      headers,
+      serverName: "context7",
+      secretStore,
+      plaintextOptOut: false,
+      logger: makeLogger(),
+      method: "mcp.connect",
+      mutableSecretManager,
+    });
+
+    // The paired secretManager should see the new value immediately — no restart required.
+    expect(secretManager.get("MCP_CONTEXT7__X_API_KEY")).toBe(rawValue);
+  });
+
+  it("does NOT call mutableSecretManager.upsert when secretStore.set fails (no partial live-apply)", () => {
+    const secretStore = makeSecretStore({
+      set: vi.fn().mockReturnValue(err(new Error("encryption failure"))),
+    });
+    const mutableSecretManager = makeMutableSecretManager();
+    const headers: Record<string, string> = { "X-Api-Key": "sk-ant-abc123defghijklmnopqrstuvwxyz" };
+
+    expect(() =>
+      processHeaderCredentials({
+        headers,
+        serverName: "srv",
+        secretStore,
+        plaintextOptOut: false,
+        logger: makeLogger(),
+        method: "mcp.connect",
+        mutableSecretManager,
+      }),
+    ).toThrow("[plaintext_secret_in_headers]");
+
+    expect(mutableSecretManager.upsert).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call mutableSecretManager.upsert for ref headers (already in Map from boot)", () => {
+    const secretStore = makeSecretStore();
+    const mutableSecretManager = makeMutableSecretManager();
+    const headers: Record<string, string> = { Authorization: "${MY_TOKEN}" };
+
+    processHeaderCredentials({
+      headers,
+      serverName: "srv",
+      secretStore,
+      plaintextOptOut: false,
+      logger: makeLogger(),
+      method: "mcp.connect",
+      mutableSecretManager,
+    });
+
+    expect(mutableSecretManager.upsert).not.toHaveBeenCalled();
+  });
+
+  it("works without mutableSecretManager (optional — legacy callers unaffected)", () => {
+    const rawValue = "sk-ant-abc123defghijklmnopqrstuvwxyz";
+    const secretStore = makeSecretStore();
+    const headers: Record<string, string> = { "X-Api-Key": rawValue };
+
+    // Must not throw when mutableSecretManager is undefined
+    expect(() =>
+      processHeaderCredentials({
+        headers,
+        serverName: "context7",
+        secretStore,
+        plaintextOptOut: false,
+        logger: makeLogger(),
+        method: "mcp.connect",
+        // mutableSecretManager intentionally omitted
+      }),
+    ).not.toThrow();
+    expect(secretStore.set).toHaveBeenCalledOnce();
   });
 });
 

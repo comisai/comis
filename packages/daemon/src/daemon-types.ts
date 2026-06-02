@@ -53,6 +53,9 @@ import type {
   createAuditAggregator,
   createApprovalGate,
   createModelCatalog,
+  preReadStorageMode,
+  writeMasterKeyIfAbsent,
+  MutableSecretManager,
 } from "@comis/core";
 import type { createActiveRunRegistry } from "@comis/agent";
 import type { setupSecrets, ObservabilityStore } from "@comis/memory";
@@ -197,6 +200,10 @@ export interface DaemonOverrides {
   bootstrap?: typeof bootstrap;
   /** Override setupSecrets for test isolation */
   setupSecrets?: typeof setupSecrets;
+  /** Override preReadStorageMode for test isolation (avoids reading real ~/.comis/config.yaml). */
+  preReadStorageMode?: typeof preReadStorageMode;
+  /** Override writeMasterKeyIfAbsent for test isolation (spy on key-material creation gate). */
+  writeMasterKeyIfAbsent?: typeof writeMasterKeyIfAbsent;
   /** Override createTracingLogger. */
   createTracingLogger?: typeof createTracingLogger;
   /** Override createLogLevelManager. */
@@ -329,8 +336,12 @@ export interface BootContext {
   // (mirrors the `timers` test-only discipline). Inert on the inbound path until
   // Plan 03 builds the inbound coordinatorFactory over the renderers map.
   activityRendererFactoryOverride?: (channelType: string) => ChannelActivityRenderer | undefined;
-  // Secrets (4 fields)
-  secretStore: SecretStorePort | undefined;
+  // Secrets (5 fields) — secretStore is always wired after Plan 02-04
+  secretStore: SecretStorePort;
+  /** Daemon-owned write handle over the shared SecretManager backing Map (P4a).
+   *  Threaded from bootFoundation to buildRpcDispatchDeps via PostChannelsBootContext.
+   *  MUST NOT appear on AppContainer or any agent-accessible path. */
+  mutableHandle: MutableSecretManager;
   secretsCrypto: import("@comis/core").SecretsCrypto | undefined;
   secretsDb: import("better-sqlite3").Database | undefined;
   permissionCorrections: PermissionCorrection[];
@@ -488,6 +499,9 @@ export interface BootContext {
   // Media
   ttsAdapter?: Awaited<ReturnType<typeof setupMedia>>["ttsAdapter"];
   visionRegistry?: Awaited<ReturnType<typeof setupMedia>>["visionRegistry"];
+  /** REQ-13 (WR-05): stable holder for the vision registry — updated on first
+   *  materialisation (undefined → Map) so late-bound consumers observe rotation. */
+  visionRegistryHolder?: Awaited<ReturnType<typeof setupMedia>>["visionRegistryHolder"];
   linkRunner?: Awaited<ReturnType<typeof setupMedia>>["linkRunner"];
   mediaTempManager?: Awaited<ReturnType<typeof setupMedia>>["mediaTempManager"];
   mediaSemaphore?: Awaited<ReturnType<typeof setupMedia>>["mediaSemaphore"];

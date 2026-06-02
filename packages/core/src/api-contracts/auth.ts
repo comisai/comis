@@ -110,11 +110,60 @@ export const AuthLogoutContract = defineContract({
 });
 
 // ---------------------------------------------------------------------------
+// auth.set
+// ---------------------------------------------------------------------------
+
+/**
+ * `auth.set` — Admin-scoped OAuth profile write RPC.
+ *
+ * Carries a completed OAuthProfile (token-bearing) from the CLI to the daemon.
+ * The daemon persists through the OAuthCredentialStorePort (file or encrypted,
+ * selected by security.storage). Response is token-free — access/refresh/accountId
+ * NEVER appear in the response. See §8.1 of DESIGN-credential-storage-modes.md.
+ *
+ * Residency: Zod response.parse() strips any accidentally-added fields because
+ * the schema is closed (no .passthrough()). Dev-mode canary in the handler calls
+ * AuthSetContract.response.parse(result) before returning.
+ *
+ * Request fields mirror {@link OAuthProfile} from
+ * `packages/core/src/ports/oauth-credential-store.ts`, with `version: z.literal(1)`
+ * so the handler rejects any future schema version before persisting.
+ */
+export const AuthSetContract = defineContract({
+  method: "auth.set",
+  request: z.object({
+    provider: z.string().min(1),
+    profileId: z.string().min(1),
+    access: z.string().min(1),
+    refresh: z.string().min(1),
+    expires: z.number(),
+    accountId: z.string().optional(),
+    email: z.string().optional(),
+    displayName: z.string().optional(),
+    version: z.literal(1),
+  }),
+  response: z.object({
+    profileId: z.string(),
+    stored: z.literal(true),
+    // NO access, refresh, or accountId — residency enforced by closed schema
+  }),
+  scopes: ["admin"] as const,
+});
+
+// ---------------------------------------------------------------------------
 // Domain array — registered into API_CONTRACTS_ORDERED in index.ts.
 // ---------------------------------------------------------------------------
 
 /**
  * Auth-domain contract array. Registered into
  * `API_CONTRACTS_ORDERED` by `packages/core/src/api-contracts/index.ts`.
+ *
+ * AUTH_CONTRACTS grows 2 → 3 with `AuthSetContract`. The bidirectional
+ * architecture test (`test/architecture/api-contracts-bidirectional.test.ts`)
+ * enforces handler–contract count parity automatically.
  */
-export const AUTH_CONTRACTS = [AuthListContract, AuthLogoutContract] as const;
+export const AUTH_CONTRACTS = [
+  AuthListContract,
+  AuthLogoutContract,
+  AuthSetContract, // AUTH_CONTRACTS grows 2 → 3
+] as const;

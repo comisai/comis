@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Sandbox: hardcoded Claude Code CLI credential binds removed — behavior break
+
+#### Breaking Changes
+
+- **Both OS-level sandbox providers (`bwrap` on Linux, `sandbox-exec` on macOS) no
+  longer bind the Claude Code CLI credential paths** `~/.claude.json`, `~/.claude`,
+  and `~/.local/share/claude` into the sandbox. The sandbox is no longer coupled to
+  one specific driven CLI.
+- **Impact:** a `claude -p` (or any tool) spawned inside the sandbox can no longer
+  read its auth/config from those paths and will hang / produce empty output. If you
+  rely on driving the Claude Code CLI inside the exec sandbox, run it outside the
+  sandbox or supply its credentials by another mechanism.
+- The `secureCredentialHome` broker flag (EGRESS-02) is retained but narrowed: it now
+  only skips the generic `~/.local/share` RW bind in broker-only mode; it no longer
+  gates the (now-removed) `~/.claude*` binds.
+
+### Credential storage config migration — breaking changes (v1.5)
+
+#### Breaking Changes
+
+**Config migration required** — three legacy credential-storage config keys have
+been removed (no-BC, AGENTS.md §2.9):
+
+- `oauth.storage` — removed; replace with `security.storage: encrypted|file|env`
+- `security.secrets.enabled` — removed; `security.storage: env` is the replacement
+- `COMIS_DISABLE_ENCRYPTED_SECRETS` env var — removed; set `security.storage: env`
+  in your `config.yaml` instead
+
+A config still containing these keys will fail boot with a `ConfigError`
+(`MIGRATION_ERROR`) naming `security.storage` and the exact replacement.
+Mixed-mode configs (e.g. `oauth.storage: file` + encrypted secrets) will receive
+an error explaining which credential store would be stranded.
+
+**Migration steps:**
+1. Back up your config: `cp ~/.comis/config.yaml ~/.comis/config.yaml.pre-v1.5`
+2. Remove legacy keys and add `security.storage: encrypted` (default) or `file`/`env`
+3. Edit config BEFORE starting the new binary (stale config fails boot)
+4. Rolling back requires restoring both the binary and the pre-v1.5 config.
+
+---
+
 ### Encrypted secrets store — behavior break (v1.1)
 
 #### Breaking Changes

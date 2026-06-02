@@ -1,26 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-import { z } from "zod";
-
 /**
- * OAuth credential storage configuration.
- *
- * Forward-room to later add clientId, scopes, profileSelectors etc.
- * without scattering OAuth config across the codebase. Today only the
- * storage-backend selector is meaningful.
- *
  * @module
+ * The `oauth` root config section and `OAuthConfigSchema` have been removed in
+ * v1.5 (P0 — unified storage mode). The storage backend is now controlled by
+ * `security.storage: encrypted | file | env` (a single switch governing all
+ * credential stores). This file is intentionally empty — there is no replacement
+ * export from here.
+ *
+ * Consumers that previously imported `OAuthConfigSchema` or `OAuthConfig` should
+ * remove those imports — they are no longer part of the public config surface.
  */
-
-export const OAuthConfigSchema = z.strictObject({
-  /**
-   * Storage backend for refreshed OAuth credentials.
-   * - "encrypted" (default): AES-256-GCM SQLite (requires SECRETS_MASTER_KEY)
-   * - "file": plaintext JSON at ${dataDir}/auth-profiles.json with mode 0o600
-   *
-   * Provider tokens are stored AES-256-GCM encrypted at rest by default.
-   */
-  storage: z.enum(["file", "encrypted"]).default("encrypted"),
-});
-
-/** Inferred OAuth configuration type. */
-export type OAuthConfig = z.infer<typeof OAuthConfigSchema>;

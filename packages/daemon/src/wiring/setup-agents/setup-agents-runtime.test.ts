@@ -505,3 +505,48 @@ describe("setupSingleAgent rerank auto-on precedence (RERANK-01)", () => {
     expect(daemonSource).toContain("rerankerModelPresent");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 6 Wave 0: AuthStorage hot-swap RED tests
+//
+// These tests describe behaviour that Plan 06-04 will wire into
+// setup-agents-runtime.ts (or setup-agents-registry.ts). They MUST fail
+// RED because the subscription does not exist in production code yet.
+//
+// Design: the subscription fires when secret:changed { action: "upserted" }
+// and the changed key maps to a known provider (e.g. ANTHROPIC_API_KEY →
+// "anthropic"). The handler calls:
+//   piAuthStorage.setRuntimeApiKey(provider, secretManager.get(name))
+// A non-provider key (e.g. MY_DATABASE_URL) is a no-op.
+// ---------------------------------------------------------------------------
+
+describe("Phase 6 Wave 0: AuthStorage secret:changed hot-swap wiring (RED — not yet implemented)", () => {
+  const runtimeSrc = readFileSync(
+    join(__dirname, "setup-agents-runtime.ts"),
+    "utf-8",
+  );
+  const registrySrc = readFileSync(
+    join(__dirname, "setup-agents-registry.ts"),
+    "utf-8",
+  );
+
+  it("secret:changed subscription is wired in setup-agents wiring source (RED)", () => {
+    // Asserts that the production source contains the hot-swap subscription.
+    // Fails RED because Plan 06-04 has not landed yet.
+    // After Plan 06-04, one of these sources will subscribe to secret:changed.
+    const runtimeContains = runtimeSrc.includes('"secret:changed"');
+    const registryContains = registrySrc.includes('"secret:changed"');
+    expect(runtimeContains || registryContains).toBe(true);
+  });
+
+  it("setup-agents wiring calls setRuntimeApiKey in response to secret:changed upserted event (RED)", () => {
+    // When secret:changed fires for a provider key (e.g. ANTHROPIC_API_KEY),
+    // the wiring must call piAuthStorage.setRuntimeApiKey(provider, newValue).
+    // Fails RED because the wiring-level hot-swap call is not implemented yet.
+    // Currently only auth-rotation-adapter.ts calls setRuntimeApiKey at runtime
+    // (not at boot wiring). Plan 06-04 adds the composition-root subscription.
+    const runtimeContains = runtimeSrc.includes("secret:changed") && runtimeSrc.includes("setRuntimeApiKey");
+    const registryContains = registrySrc.includes("secret:changed") && registrySrc.includes("setRuntimeApiKey");
+    expect(runtimeContains || registryContains).toBe(true);
+  });
+});

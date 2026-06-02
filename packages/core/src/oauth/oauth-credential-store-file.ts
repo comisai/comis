@@ -34,7 +34,7 @@
 
 import * as fs from "node:fs/promises";
 import type { Result } from "@comis/shared";
-import { ok, err, fromPromise, suppressError } from "@comis/shared";
+import { ok, err, fromPromise, suppressError, isFsyncDisabledByPermissionModel } from "@comis/shared";
 import { safePath } from "../security/safe-path.js";
 import { validateProfileId } from "../security/profile-id.js";
 import type { OAuthCredentialStorePort, OAuthProfile } from "../ports/oauth-credential-store.js";
@@ -142,6 +142,8 @@ async function atomicWriteJson(
   const tmpFd = await fs.open(tmpPath, "r");
   try {
     await tmpFd.sync();
+  } catch (fsyncErr) {
+    if (!isFsyncDisabledByPermissionModel(fsyncErr)) throw fsyncErr;
   } finally {
     await tmpFd.close();
   }
@@ -149,6 +151,8 @@ async function atomicWriteJson(
   const dirFd = await fs.open(parentDir, "r");
   try {
     await dirFd.sync();
+  } catch (fsyncErr) {
+    if (!isFsyncDisabledByPermissionModel(fsyncErr)) throw fsyncErr;
   } finally {
     await dirFd.close();
   }

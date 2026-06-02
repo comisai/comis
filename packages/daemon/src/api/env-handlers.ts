@@ -40,7 +40,6 @@ import {
   stripInternalFields,
   systemGetEnv,
   systemNowMs,
-  systemSetTimeout,
 } from "@comis/core";
 
 import type { RpcHandler } from "./types.js";
@@ -188,16 +187,8 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       EnvSetContract.request.parse(userParams);
 
       try {
-        // Write to storage backend. SecretStorePort is mandatory; the
-        // legacy `.env` file-append fallback was removed. Daemons without
-        // a master key (SECRETS_MASTER_KEY unset) reject env.set with an
-        // actionable error mirroring secrets-handlers.ts:196.
-        if (!deps.secretStore) {
-          throw new Error(
-            "Encrypted secrets store not configured (SECRETS_MASTER_KEY missing). " +
-              "Run `comis secrets init --write` then restart the daemon.",
-          );
-        }
+        // Write to storage backend. SecretStorePort is always wired (REQ-04).
+        // Env-mode adapter's set() returns err with an actionable message.
         const setResult = deps.secretStore.set(key, value);
         if (!setResult.ok) {
           throw new Error(`Secret store write failed: ${setResult.error.message}`);
@@ -222,17 +213,24 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
           "Env secret set",
         );
 
-        // Schedule daemon restart (same 200ms + SIGUSR2 pattern as config-handlers)
-        systemSetTimeout(() => {
-          process.kill(process.pid, "SIGUSR2");
-        }, 200);
+        // Live-apply for ALL cases (new and rotation): upsert into shared Map so
+        // broker/exec observe the new value on the very next request. No restart needed.
+        deps.mutableSecretManager.upsert(key, value);
+
+        // Emit secret:changed event — metadata only, never the value (residency — T-03-09).
+        deps.container.eventBus.emit("secret:changed", {
+          name: key,
+          action: "upserted" as const,
+          timestamp: systemNowMs(),
+        });
 
         const result = {
           set: true as const,
           key,
-          // SecretStorePort is the only backend.
-          storage: "encrypted" as const,
-          restarting: true as const,
+          // Reflect the active storage mode (REQ-14). Env mode never reaches
+          // here — its set() returns err before this line.
+          storage: deps.container.config.security.storage as "encrypted" | "file",
+          restarting: false as const,
         };
         if (systemGetEnv("NODE_ENV") !== "production") {
           EnvSetContract.response.parse(result);

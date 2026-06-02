@@ -183,10 +183,15 @@ export function bindConfigReadHandlers(deps: ConfigHandlerDeps): Record<string, 
         nodeVersion: process.version,
         configPaths: deps.configPaths,
         sections: getConfigSections(),
-        // Expose store availability via a REAL contract field so the
-        // env_set preflight in gateway-tool.ts can read a truthful signal
-        // instead of the non-existent manifest.secrets.encrypted field.
-        secretsStoreAvailable: deps.secretStore !== undefined,
+        // REQ-14 / T-02-09: secretsStoreAvailable means "a *writable* store is wired",
+        // not merely "an adapter is present". In env mode the adapter IS defined (after
+        // Plan 04 it is always present) but is read-only — so env mode returns false.
+        // Only "file" and "encrypted" storage modes provide a writable store.
+        // This prevents the env_set preflight in gateway-tool.ts from incorrectly
+        // allowing env.set calls when the daemon is in read-only env mode.
+        secretsStoreAvailable:
+          deps.container.config.security.storage === "file" ||
+          deps.container.config.security.storage === "encrypted",
       };
       if (systemGetEnv("NODE_ENV") !== "production") {
         GatewayStatusContract.response.parse(result);

@@ -83,8 +83,29 @@ export const SecurityConfigSchema = z.strictObject({
      * Default is "warn" — never "block" by default (false-positive risk on .env.example / hex SHAs / ${VAR} refs).
      */
     writeSecretGuard: z.enum(["warn", "block", "off"]).default("warn").optional(),
+    /**
+     * Credential storage backend for ALL credential stores (secrets, OAuth, MCP tokens).
+     * - "encrypted" (default): AES-256-GCM SQLite — requires SECRETS_MASTER_KEY
+     * - "file": plaintext JSON/files at 0600
+     * - "env": read-only, reads .env/process.env only
+     *
+     * Runtime-immutable (sits under security.* in IMMUTABLE_CONFIG_PREFIXES — D17).
+     * Mode switching requires an operator config-file edit + daemon restart.
+     */
+    storage: z.enum(["encrypted", "file", "env"]).default("encrypted"),
   });
 
 export type SecurityConfig = z.infer<typeof SecurityConfigSchema>;
 export type PermissionConfig = z.infer<typeof PermissionConfigSchema>;
 export type ActionConfirmationConfig = z.infer<typeof ActionConfirmationConfigSchema>;
+
+/**
+ * Shared credential storage mode type — derived from the security.storage enum
+ * so the type and the valid values stay in sync automatically.
+ *
+ * Supersedes the former two-value type that only covered "file" | "encrypted"
+ * and extends it with "env" as a first-class read-only mode.
+ *
+ * Used by all three credential stores: secrets, OAuth profiles, MCP tokens.
+ */
+export type CredentialStorageMode = z.infer<typeof SecurityConfigSchema.shape.storage>;

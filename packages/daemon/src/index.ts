@@ -30,6 +30,16 @@ export type { AnnouncementDeadLetterQueue, DeadLetterEntry } from "@comis/orches
 export { createContextHandlers } from "./api/context-handlers.js";
 export type { ContextHandlerDeps } from "./api/context-handlers.js";
 
+// Auth handlers: encrypted OAuth-profile management (auth.set / auth.list /
+// auth.logout) — re-exported so the auth-set-encrypted integration test can
+// drive the real admin-gated auth.set handler against a mock
+// OAuthCredentialStorePort, proving the round-trip + residency invariant
+// (no plaintext token bytes in responses/logs/audit) without spinning up a
+// full daemon or opening a real secrets.db (T-04-16 / T-04-17 / T-04-18).
+// Consumer: test/integration/auth-set-encrypted.test.ts
+export { createAuthHandlers } from "./api/auth-handlers.js";
+export type { AuthHandlerDeps } from "./api/auth-handlers.js";
+
 // Memory handlers: memory + memory-diagnostic (OBS-06/OBS-08) RPC handlers —
 // re-exported so the recall-diagnostics isolation integration test can drive
 // the actual admin-gated memory.observations / memory.entities /

@@ -162,7 +162,7 @@ describe("bwrap secure profile — network mode + credential home gating (EGRESS
     expect(credentialSubpathIsolated).toBe(true);
   });
 
-  it("secureCredentialHome:false (default) → ~/.claude present when path exists (no-regression)", () => {
+  it("secureCredentialHome:false (default) → hardcoded claude binds absent even when paths exist", () => {
     vi.mocked(existsSync).mockImplementation((p) => {
       const existing = [
         "/home/testuser/.claude",
@@ -175,7 +175,10 @@ describe("bwrap secure profile — network mode + credential home gating (EGRESS
     const provider = createAvailableProvider();
     const args = provider.buildArgs(makeOpts({ secureCredentialHome: false }));
 
-    // ~/.claude must be rw-bound when secureCredentialHome is false and path exists
-    expect(hasBind(args, "--bind", "/home/testuser/.claude", "/home/testuser/.claude")).toBe(true);
+    // The hardcoded claude credential binds were removed from the provider, so
+    // they are no longer emitted even in default (non-secure) mode.
+    expect(args).not.toContain("/home/testuser/.claude");
+    expect(args).not.toContain("/home/testuser/.claude.json");
+    expect(args).not.toContain("/home/testuser/.local/share/claude");
   });
 });

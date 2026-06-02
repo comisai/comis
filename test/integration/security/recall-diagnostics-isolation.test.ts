@@ -465,7 +465,8 @@ describe("recall-trace redaction (end-to-end, OBS-02)", () => {
         minScore: 0,
         includeTrustLevels: ["system", "learned"],
         rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
-        scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 },
+        // usefulnessAlpha is required: scoreWithBreakdown computes usefulness = 1 + usefulnessAlpha*(norm-0.5); omitting it yields NaN → serialized null → fails RecallTraceEventSchema (usefulness/final are z.number()). Prod AppConfig default: 0.1.
+        scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1, usefulnessAlpha: 0.1 },
       },
     );
 
@@ -578,7 +579,8 @@ describe("memory.recall_trace read-back via the REAL production recorder (WR-01)
         minScore: 0,
         includeTrustLevels: ["system", "learned"],
         rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
-        scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 },
+        // usefulnessAlpha is required: scoreWithBreakdown computes usefulness = 1 + usefulnessAlpha*(norm-0.5); omitting it yields NaN → serialized null → fails RecallTraceEventSchema (usefulness/final are z.number()). Prod AppConfig default: 0.1.
+        scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1, usefulnessAlpha: 0.1 },
       },
     );
     const result = await recall.recall("quarterly plan", scope, scope.agentId as string);

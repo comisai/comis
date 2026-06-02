@@ -195,6 +195,133 @@ describe("createAuthHandlers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // auth.set (daemon-assisted OAuth login RPC — §8.1 threat-model amendment)
+  // -------------------------------------------------------------------------
+
+  describe("auth.set handler", () => {
+    it("rejects non-admin callers before any other logic (trustLevel !== admin)", async () => {
+      const { handlers } = makeMockedDeps();
+      await expect(
+        handlers["auth.set"]!({
+          _trustLevel: "rpc",
+          provider: "openai-codex",
+          profileId: "openai-codex:x@y.com",
+          access: "tok",
+          refresh: "ref",
+          expires: Date.now(),
+          version: 1,
+        }),
+      ).rejects.toThrow("Admin access required for auth.set");
+    });
+
+    it("throws actionable config error when oauthCredentialStore is missing (Daemon must be running)", async () => {
+      const { handlers } = makeMockedDeps(undefined, { withoutStore: true });
+      await expect(
+        handlers["auth.set"]!({
+          _trustLevel: "admin",
+          provider: "openai-codex",
+          profileId: "openai-codex:x@y.com",
+          access: "tok",
+          refresh: "ref",
+          expires: Date.now(),
+          version: 1,
+        }),
+      ).rejects.toThrow(/Daemon must be running|security\.storage/);
+    });
+
+    it("calls oauthCredentialStore.set exactly once with correct profile shape including version:1", async () => {
+      const setMock = vi.fn(async () => ok(undefined as void));
+      const { handlers, oauthCredentialStore } = makeMockedDeps({ set: setMock });
+      const expires = Date.now() + 3_600_000;
+      await handlers["auth.set"]!({
+        _trustLevel: "admin",
+        provider: "openai-codex",
+        profileId: "openai-codex:test@example.com",
+        access: "tok-access",
+        refresh: "tok-refresh",
+        expires,
+        accountId: "acct-123",
+        email: "test@example.com",
+        displayName: "Test User",
+        version: 1,
+      });
+      expect(oauthCredentialStore.set).toHaveBeenCalledTimes(1);
+      expect(oauthCredentialStore.set).toHaveBeenCalledWith(
+        "openai-codex:test@example.com",
+        expect.objectContaining({
+          provider: "openai-codex",
+          profileId: "openai-codex:test@example.com",
+          access: "tok-access",
+          refresh: "tok-refresh",
+          expires,
+          accountId: "acct-123",
+          email: "test@example.com",
+          displayName: "Test User",
+          version: 1,
+        }),
+      );
+    });
+
+    it("returns { profileId, stored: true } — token-free response", async () => {
+      const setMock = vi.fn(async () => ok(undefined as void));
+      const { handlers } = makeMockedDeps({ set: setMock });
+      const result = await handlers["auth.set"]!({
+        _trustLevel: "admin",
+        provider: "openai-codex",
+        profileId: "openai-codex:test@example.com",
+        access: "tok-access",
+        refresh: "tok-refresh",
+        expires: Date.now() + 3_600_000,
+        version: 1,
+      });
+      expect(result).toEqual({
+        profileId: "openai-codex:test@example.com",
+        stored: true,
+      });
+    });
+
+    it("RESIDENCY CANARY — response contains no access, refresh, or accountId; JSON.stringify contains no LEAK_SENTINEL", async () => {
+      const setMock = vi.fn(async () => ok(undefined as void));
+      const { handlers } = makeMockedDeps({ set: setMock });
+      const result = (await handlers["auth.set"]!({
+        _trustLevel: "admin",
+        provider: "openai-codex",
+        profileId: "openai-codex:test@example.com",
+        access: "LEAK_SENTINEL_ACCESS",
+        refresh: "LEAK_SENTINEL_REFRESH",
+        expires: Date.now() + 3_600_000,
+        accountId: "LEAK_SENTINEL_ACCOUNT",
+        email: "test@example.com",
+        displayName: "Test",
+        version: 1,
+      })) as Record<string, unknown>;
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain("LEAK_SENTINEL");
+      expect(result).not.toHaveProperty("access");
+      expect(result).not.toHaveProperty("refresh");
+      expect(result).not.toHaveProperty("accountId");
+      expect(result).toEqual({ profileId: "openai-codex:test@example.com", stored: true });
+    });
+
+    it("SQLITE_BUSY — maps database is locked error to actionable retryable hint (locked or retry in message)", async () => {
+      const { handlers } = makeMockedDeps({
+        set: vi.fn(async () => err(new Error("database is locked"))),
+      });
+      await expect(
+        handlers["auth.set"]!({
+          _trustLevel: "admin",
+          provider: "openai-codex",
+          profileId: "openai-codex:test@example.com",
+          access: "tok",
+          refresh: "ref",
+          expires: Date.now() + 3_600_000,
+          version: 1,
+        }),
+      ).rejects.toThrow(/locked|retry/i);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // auth.logout
   // -------------------------------------------------------------------------
 

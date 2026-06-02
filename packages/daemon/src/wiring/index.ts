@@ -13,7 +13,7 @@ export { setupLogging, type LoggingResult } from "./setup-logging.js";
 export { setupObservability, type ObservabilityResult } from "./setup-observability.js";
 export { setupHealth, type HealthResult, setupMonitoring, type MonitoringResult } from "./setup-health.js";
 export { setupMemory, type MemoryResult } from "./setup-memory.js";
-export { setupMedia, type MediaResult } from "./setup-media.js";
+export { setupMedia, createImageGenGetter, type MediaResult } from "./setup-media.js";
 export { setupCrossSession, type CrossSessionResult } from "./setup-cross-session/index.js";
 export { setupAgents, type AgentsResult } from "./setup-agents/index.js";
 export { setupSchedulers, type SchedulersResult } from "./setup-schedulers.js";
@@ -55,3 +55,4 @@ export type {
 } from "./setup-output-retention.js";
 export { setupBroker } from "./setup-broker.js";
 export type { BrokerHandle, SetupBrokerDeps } from "./setup-broker.js";
+export { acquireDataDirLock, releaseDataDirLock } from "./data-dir-lock.js";

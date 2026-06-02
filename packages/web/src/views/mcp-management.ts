@@ -434,6 +434,7 @@ export class IcMcpManagement extends LitElement {
   @state() private _loadState: LoadState = "loading";
   @state() private _servers: McpServerListEntry[] = [];
   @state() private _mcpConfig: McpServerEntry[] = [];
+  @state() private _storageMode = "encrypted";
   @state() private _expandedServer: string | null = null;
   @state() private _serverDetail: McpServerDetail | null = null;
   @state() private _showAddForm = false;
@@ -495,10 +496,16 @@ export class IcMcpManagement extends LitElement {
     try {
       const [mcpResp, configResp] = await Promise.all([
         rpc.call<{ servers: McpServerListEntry[]; total: number }>("mcp.list"),
-        rpc.call<{ config: { integrations?: { mcp?: { servers?: McpServerEntry[] } } } }>("config.read"),
+        rpc.call<{
+          config: {
+            integrations?: { mcp?: { servers?: McpServerEntry[] } };
+            security?: { storage?: string };
+          };
+        }>("config.read"),
       ]);
       this._servers = mcpResp.servers ?? [];
       this._mcpConfig = (configResp.config?.integrations?.mcp?.servers ?? []) as McpServerEntry[];
+      this._storageMode = configResp.config?.security?.storage ?? "encrypted";
       this._loadState = "loaded";
     } catch {
       this._loadState = "error";
@@ -1083,6 +1090,10 @@ export class IcMcpManagement extends LitElement {
         <div class="header-row">
           <span class="header-title">${this._servers.length + configOnly.length} server${(this._servers.length + configOnly.length) !== 1 ? "s" : ""}</span>
           <button class="connect-btn" @click=${() => { this._showAddForm = true; }}>Add Server</button>
+        </div>
+        <div class="tls-row" style="margin-bottom: var(--ic-space-sm);">
+          <span class="tls-label">Credential Storage</span>
+          <span class="tls-value mcp-storage-mode-badge">${this._storageMode}</span>
         </div>
         <div class="server-list">
           ${this._servers.map((s) => this._renderServer(s))}

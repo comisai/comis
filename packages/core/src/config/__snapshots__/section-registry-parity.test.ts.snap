@@ -6802,25 +6802,16 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
     "type": "boolean"
   },
   {
-    "default": {
-      "dbPath": "secrets.db",
-      "enabled": true
-    },
+    "default": {},
     "immutable": true,
     "path": "security.secrets",
     "type": "object"
   },
   {
-    "default": "secrets.db",
+    "default": "encrypted",
     "immutable": true,
-    "path": "security.secrets.dbPath",
+    "path": "security.storage",
     "type": "string"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "security.secrets.enabled",
-    "type": "boolean"
   },
   {
     "default": "warn",
@@ -10333,29 +10324,29 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "string"
   },
   {
-    "immutable": false,
+    "immutable": true,
     "path": "executor",
     "type": "object"
   },
   {
-    "immutable": false,
+    "immutable": true,
     "path": "executor.broker",
     "type": "object"
   },
   {
     "default": {},
-    "immutable": false,
+    "immutable": true,
     "path": "executor.broker.bindings",
     "type": "object"
   },
   {
     "default": 0,
-    "immutable": false,
+    "immutable": true,
     "path": "executor.broker.port",
     "type": "integer"
   },
   {
-    "immutable": false,
+    "immutable": true,
     "path": "executor.broker.socketPath",
     "type": "string"
   },
@@ -11917,20 +11908,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
   },
   {
     "default": {
-      "storage": "encrypted"
-    },
-    "immutable": false,
-    "path": "oauth",
-    "type": "object"
-  },
-  {
-    "default": "encrypted",
-    "immutable": false,
-    "path": "oauth.storage",
-    "type": "string"
-  },
-  {
-    "default": {
       "alertBudget": {
         "enabled": true,
         "thresholds": {
@@ -12756,10 +12733,8 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "allowedNetHosts": [],
         "enableNodePermissions": false
       },
-      "secrets": {
-        "dbPath": "secrets.db",
-        "enabled": true
-      },
+      "secrets": {},
+      "storage": "encrypted",
       "writeSecretGuard": "warn"
     },
     "immutable": true,
@@ -13085,25 +13060,16 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "boolean"
   },
   {
-    "default": {
-      "dbPath": "secrets.db",
-      "enabled": true
-    },
+    "default": {},
     "immutable": true,
     "path": "security.secrets",
     "type": "object"
   },
   {
-    "default": "secrets.db",
+    "default": "encrypted",
     "immutable": true,
-    "path": "security.secrets.dbPath",
+    "path": "security.storage",
     "type": "string"
-  },
-  {
-    "default": true,
-    "immutable": true,
-    "path": "security.secrets.enabled",
-    "type": "boolean"
   },
   {
     "default": "warn",
@@ -22790,25 +22756,18 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
     },
     "secrets": {
       "additionalProperties": false,
-      "default": {
-        "dbPath": "secrets.db",
-        "enabled": true
-      },
-      "properties": {
-        "dbPath": {
-          "default": "secrets.db",
-          "type": "string"
-        },
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "enabled",
-        "dbPath"
-      ],
+      "default": {},
+      "properties": {},
       "type": "object"
+    },
+    "storage": {
+      "default": "encrypted",
+      "enum": [
+        "encrypted",
+        "file",
+        "env"
+      ],
+      "type": "string"
     },
     "writeSecretGuard": {
       "default": "warn",
@@ -22826,7 +22785,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
     "permission",
     "actionConfirmation",
     "agentToAgent",
-    "secrets"
+    "secrets",
+    "storage"
   ],
   "type": "object"
 }"
@@ -32531,26 +32491,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       ],
       "type": "object"
     },
-    "oauth": {
-      "additionalProperties": false,
-      "default": {
-        "storage": "encrypted"
-      },
-      "properties": {
-        "storage": {
-          "default": "encrypted",
-          "enum": [
-            "file",
-            "encrypted"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "storage"
-      ],
-      "type": "object"
-    },
     "observability": {
       "additionalProperties": false,
       "default": {
@@ -33857,10 +33797,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "allowedNetHosts": [],
           "enableNodePermissions": false
         },
-        "secrets": {
-          "dbPath": "secrets.db",
-          "enabled": true
-        },
+        "secrets": {},
+        "storage": "encrypted",
         "writeSecretGuard": "warn"
       },
       "properties": {
@@ -34229,25 +34167,18 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         },
         "secrets": {
           "additionalProperties": false,
-          "default": {
-            "dbPath": "secrets.db",
-            "enabled": true
-          },
-          "properties": {
-            "dbPath": {
-              "default": "secrets.db",
-              "type": "string"
-            },
-            "enabled": {
-              "default": true,
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "enabled",
-            "dbPath"
-          ],
+          "default": {},
+          "properties": {},
           "type": "object"
+        },
+        "storage": {
+          "default": "encrypted",
+          "enum": [
+            "encrypted",
+            "file",
+            "env"
+          ],
+          "type": "string"
         },
         "writeSecretGuard": {
           "default": "warn",
@@ -34265,7 +34196,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "permission",
         "actionConfirmation",
         "agentToAgent",
-        "secrets"
+        "secrets",
+        "storage"
       ],
       "type": "object"
     },
@@ -35269,7 +35201,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
     "monitoring",
     "observability",
     "diagnostics",
-    "oauth",
     "plugins",
     "queue",
     "streaming",

@@ -307,23 +307,33 @@ describe("setupMedia", () => {
   // 6. Creates STT provider and fallback chain
   // -------------------------------------------------------------------------
 
-  it("creates STT provider and fallback chain when fallbackProviders configured", async () => {
-    const fbProvider = { transcribe: vi.fn(), name: "groq-stt" };
+  it("creates STT provider and fallback chain when fallbackProviders configured — chain built per transcribe() call (REQ-13)", async () => {
+    // With lazy-delegation wiring (WR-03), createFallbackTranscription is called
+    // on each transcribe() invocation (not during setupMedia). We verify this by
+    // calling transcribe() and asserting the fallback chain was built at that point.
+    const primaryTranscribe = vi.fn(async () => ({ ok: true as const, value: { text: "hello", language: "en" } }));
     mockCreateSTTProvider
-      .mockReturnValueOnce({ ok: true, value: { transcribe: vi.fn(), name: "openai-stt" } })
-      .mockReturnValueOnce({ ok: true, value: fbProvider });
+      .mockReturnValue({ ok: true, value: { transcribe: primaryTranscribe, name: "openai-stt" } });
+    // createFallbackTranscription must delegate to the chain's transcribe()
+    mockCreateFallbackTranscription.mockImplementation((providers: any[]) => ({
+      transcribe: async (...args: any[]) => providers[0].transcribe(...args),
+    }));
 
     const setupMedia = await getSetupMedia();
-
     const result = await setupMedia({
       container: createMinimalMediaConfig({
         transcription: { fallbackProviders: ["groq"] },
       }),
       skillsLogger: createMockLogger() as any,
     });
-
-    expect(mockCreateFallbackTranscription).toHaveBeenCalled();
     expect(result.transcriber).toBeDefined();
+
+    // createFallbackTranscription is NOT called during setupMedia with lazy wiring
+    expect(mockCreateFallbackTranscription).not.toHaveBeenCalled();
+
+    // Calling transcribe() triggers lazy factory resolution + fallback chain build
+    await result.transcriber!.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+    expect(mockCreateFallbackTranscription).toHaveBeenCalled();
   });
 
   it("creates STT provider without fallback when no fallbackProviders", async () => {
@@ -336,8 +346,10 @@ describe("setupMedia", () => {
       skillsLogger: createMockLogger() as any,
     });
 
-    expect(mockCreateFallbackTranscription).not.toHaveBeenCalled();
     expect(result.transcriber).toBeDefined();
+    // No fallback wiring (even lazily)
+    await result.transcriber!.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+    expect(mockCreateFallbackTranscription).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
@@ -440,6 +452,67 @@ describe("setupMedia", () => {
   });
 
   // -------------------------------------------------------------------------
+  // 9b. WR-05: visionRegistryHolder materialises on first secret:changed rotation
+  // -------------------------------------------------------------------------
+
+  it("WR-05: visionRegistryHolder.value is updated when registry materialises from undefined at first rotation", async () => {
+    // Scenario: no vision providers at boot (visionRegistry = undefined).
+    // After a credential rotation, visionRegistryHolder.value must reflect the
+    // newly-materialised registry — even though the BootContext visionRegistry
+    // field holds the original undefined snapshot.
+    mockCreateVisionProviderRegistry.mockReturnValue(new Map()); // boot: empty → undefined
+
+    let secretChangedListener: ((ev: { name: string; action?: string }) => void) | undefined;
+    const fakeEventBus = {
+      on: vi.fn((event: string, fn: (payload: any) => void) => {
+        if (event === "secret:changed") secretChangedListener = fn;
+      }),
+      emit: vi.fn(),
+    };
+    const container = {
+      ...createMinimalMediaConfig(),
+      eventBus: fakeEventBus,
+    } as any;
+
+    const setupMedia = await getSetupMedia();
+    const result = await setupMedia({ container, skillsLogger: createMockLogger() as any });
+
+    // Boot state: no registry (no vision API keys at boot)
+    expect(result.visionRegistry).toBeUndefined();
+    expect(result.visionRegistryHolder.value).toBeUndefined();
+
+    // Simulate rotation: now OPENAI_API_KEY is present — registry materialises
+    const rotatedRegistry = new Map([["openai", { id: "openai", describe: vi.fn() }]]);
+    mockCreateVisionProviderRegistry.mockReturnValue(rotatedRegistry);
+
+    expect(secretChangedListener).toBeDefined();
+    secretChangedListener!({ name: "OPENAI_API_KEY" });
+
+    // WR-05: the holder must be updated — consumers holding visionRegistryHolder
+    // see the new registry on their next access without re-reading the boot snapshot.
+    expect(result.visionRegistryHolder.value).toBe(rotatedRegistry);
+
+    // The point-in-time snapshot (result.visionRegistry) is still undefined —
+    // the holder is the authoritative live reference after first materialisation.
+    expect(result.visionRegistry).toBeUndefined();
+  });
+
+  it("WR-05: visionRegistryHolder.value is set at boot when registry is non-empty", async () => {
+    const bootRegistry = new Map([["openai", { id: "openai", describe: vi.fn() }]]);
+    mockCreateVisionProviderRegistry.mockReturnValue(bootRegistry);
+
+    const setupMedia = await getSetupMedia();
+    const result = await setupMedia({
+      container: createMinimalMediaConfig(),
+      skillsLogger: createMockLogger() as any,
+    });
+
+    // Both the snapshot and the holder point at the same registry at boot
+    expect(result.visionRegistry).toBe(bootRegistry);
+    expect(result.visionRegistryHolder.value).toBe(bootRegistry);
+  });
+
+  // -------------------------------------------------------------------------
   // 10. Creates linkRunner with config and onSuspiciousContent callback
   // -------------------------------------------------------------------------
 
@@ -525,5 +598,166 @@ describe("setupMedia", () => {
     expect(result).toHaveProperty("ssrfFetcher");
     expect(result).toHaveProperty("linkRunner");
     expect(result).toHaveProperty("fileExtractor");
+    // REQ-13 (WR-05): stable holder returned alongside the boot snapshot
+    expect(result).toHaveProperty("visionRegistryHolder");
+    expect(result.visionRegistryHolder).toHaveProperty("value");
+  });
+});
+
+// =============================================================================
+// Phase 6 WR-03: STT/TTS read-on-use behavioral tests
+//
+// These tests verify that the transcriber and ttsAdapter returned by setupMedia
+// are lazy-delegation wrappers: each transcribe()/synthesize() call re-invokes
+// the underlying factory (createSTTProvider / createTTSProvider) with the
+// current secretManager state. This means a rotated API key is observed on the
+// LIVE path without a daemon restart (REQ-13).
+//
+// The key behavioral invariant: createSTTProvider / createTTSProvider are
+// called DURING transcribe()/synthesize(), not only during setupMedia(). After
+// clearing mocks post-setup, a subsequent transcribe()/synthesize() call must
+// invoke the factory again — confirming read-on-use, not boot-snapshot.
+// =============================================================================
+
+describe("Phase 6 WR-03: STT/TTS lazy-delegation — rotated key observed per call without restart", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDetectFfmpeg.mockResolvedValue({
+      ffmpegAvailable: true, ffmpegVersion: "6.0",
+      ffprobeAvailable: true, ffprobeVersion: "6.0",
+    });
+    mockCreateVisionProviderRegistry.mockReturnValue(new Map());
+  });
+
+  async function getSetupMedia() {
+    const mod = await import("./setup-media.js");
+    return mod.setupMedia;
+  }
+
+  // -------------------------------------------------------------------------
+  // 14. STT re-invokes factory on each transcribe() call (read-on-use)
+  // -------------------------------------------------------------------------
+
+  it("STT transcribe() re-invokes createSTTProvider on each call — rotated key is observed without restart", async () => {
+    // The mock adapter returned by createSTTProvider needs transcribe() so the
+    // lazy wrapper can delegate to it.
+    const innerTranscribe = vi.fn(async () => ({
+      ok: true as const,
+      value: { text: "hello", language: "en" },
+    }));
+    mockCreateSTTProvider.mockReturnValue({
+      ok: true,
+      value: { transcribe: innerTranscribe, name: "openai-stt" },
+    });
+
+    const setupMedia = await getSetupMedia();
+    const result = await setupMedia({
+      container: createMinimalMediaConfig({ transcription: { fallbackProviders: [] } }),
+      skillsLogger: createMockLogger() as any,
+    });
+    expect(result.transcriber).toBeDefined();
+
+    // Clear the call counts recorded during setupMedia.
+    // With boot-snapshot: createSTTProvider was called once in setupMedia and
+    //   never again → after clearing, the count stays 0 on the next transcribe().
+    // With lazy-delegation (WR-03): createSTTProvider is called on each
+    //   transcribe() → after clearing, the count is 1 after one transcribe().
+    vi.clearAllMocks();
+
+    await result.transcriber!.transcribe(Buffer.from("audio"), { mimeType: "audio/ogg" });
+
+    // The factory must have been re-invoked during transcribe() — not just at boot.
+    expect(mockCreateSTTProvider).toHaveBeenCalledOnce();
+    // And the inner transcribe delegate was called (the delegation chain works).
+    expect(innerTranscribe).toHaveBeenCalledOnce();
+  });
+
+  it("STT transcribe() re-invokes factory on every call — second call observes second invocation", async () => {
+    const innerTranscribe = vi.fn(async () => ({
+      ok: true as const,
+      value: { text: "hello", language: "en" },
+    }));
+    mockCreateSTTProvider.mockReturnValue({
+      ok: true,
+      value: { transcribe: innerTranscribe, name: "openai-stt" },
+    });
+
+    const setupMedia = await getSetupMedia();
+    const result = await setupMedia({
+      container: createMinimalMediaConfig({ transcription: { fallbackProviders: [] } }),
+      skillsLogger: createMockLogger() as any,
+    });
+    vi.clearAllMocks();
+
+    await result.transcriber!.transcribe(Buffer.from("a1"), { mimeType: "audio/ogg" });
+    await result.transcriber!.transcribe(Buffer.from("a2"), { mimeType: "audio/ogg" });
+
+    // Two transcribe() calls → two factory invocations (the key is read fresh each time).
+    expect(mockCreateSTTProvider).toHaveBeenCalledTimes(2);
+  });
+
+  // -------------------------------------------------------------------------
+  // 15. TTS re-invokes factory on each synthesize() call (read-on-use)
+  // -------------------------------------------------------------------------
+
+  it("TTS synthesize() re-invokes createTTSProvider on each call — rotated key is observed without restart", async () => {
+    const innerSynthesize = vi.fn(async () => ({
+      ok: true as const,
+      value: { audio: Buffer.from("mp3"), mimeType: "audio/mpeg" },
+    }));
+    mockCreateTTSProvider.mockReturnValue({
+      ok: true,
+      value: { synthesize: innerSynthesize, name: "openai-tts" },
+    });
+
+    const setupMedia = await getSetupMedia();
+    const result = await setupMedia({
+      container: createMinimalMediaConfig(),
+      skillsLogger: createMockLogger() as any,
+    });
+    expect(result.ttsAdapter).toBeDefined();
+
+    vi.clearAllMocks();
+
+    await result.ttsAdapter!.synthesize("hello", { voice: "alloy" });
+
+    // Factory must have been re-invoked during synthesize() — read-on-use confirmed.
+    expect(mockCreateTTSProvider).toHaveBeenCalledOnce();
+    expect(innerSynthesize).toHaveBeenCalledOnce();
+  });
+
+  it("TTS synthesize() re-invokes factory on every call — second call observes second invocation", async () => {
+    const innerSynthesize = vi.fn(async () => ({
+      ok: true as const,
+      value: { audio: Buffer.from("mp3"), mimeType: "audio/mpeg" },
+    }));
+    mockCreateTTSProvider.mockReturnValue({
+      ok: true,
+      value: { synthesize: innerSynthesize, name: "openai-tts" },
+    });
+
+    const setupMedia = await getSetupMedia();
+    const result = await setupMedia({
+      container: createMinimalMediaConfig(),
+      skillsLogger: createMockLogger() as any,
+    });
+    vi.clearAllMocks();
+
+    await result.ttsAdapter!.synthesize("hello", {});
+    await result.ttsAdapter!.synthesize("world", {});
+
+    expect(mockCreateTTSProvider).toHaveBeenCalledTimes(2);
+  });
+
+  // -------------------------------------------------------------------------
+  // 16. image-gen lazy factory still exported (symbol-export sanity)
+  // -------------------------------------------------------------------------
+
+  it("createImageGenProviderFactory is exported from setup-media for callers that need on-demand image-gen (REQ-13)", async () => {
+    const mod = await import("./setup-media.js");
+    // The factory is exported so callers can build on-demand image-gen providers
+    // without snapshotting the key at construction time (REQ-13).
+    expect(typeof mod.createImageGenProviderFactory).toBe("function");
+    expect(typeof mod.createImageGenGetter).toBe("function");
   });
 });

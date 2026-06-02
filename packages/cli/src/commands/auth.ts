@@ -5,10 +5,11 @@
  * Four subcommands with storage-mode-branching:
  *
  * - `comis auth login`   — interactive OAuth login (browser + manual paste).
- *                          Runs locally for file-backed storage; encrypted
- *                          storage fails fast (daemon-assisted login is not
- *                          yet supported). Accepts `--profile <id>` to
- *                          override the storage key.
+ *                          File mode stores credentials locally via the file
+ *                          adapter. Encrypted mode runs the OAuth flow
+ *                          locally then delegates persistence to the daemon
+ *                          via `auth.set` RPC (no CLI memory import).
+ *                          Accepts `--profile <id>` to override the storage key.
  * - `comis auth list`    — list stored profiles. File-mode reads the local
  *                          file store; encrypted-mode calls daemon RPC
  *                          `auth.list` (token-stripped projection).
@@ -25,11 +26,13 @@
  *                          daemon RPC method.
  *
  * Storage-mode branching: every store-backed subcommand reads
- * `config.oauth.storage` via `loadOAuthStorageMode()` and either routes
+ * `config.security.storage` via `loadStorageMode()` and either routes
  * through `withClient` (after `requireDaemonOrExit`) or uses the existing
- * `openOAuthStoreFromConfig` helper unchanged. The helper itself fails fast
- * on encrypted storage (defense-in-depth) — encrypted mode never reaches
- * `selectOAuthCredentialStore` from this file.
+ * `openOAuthStoreFromConfig` helper unchanged. For `auth login`, encrypted
+ * mode runs the OAuth flow locally then delegates persistence to the daemon
+ * via `callTyped(AuthSetContract, profile)` so the CLI never touches
+ * secrets.db. `openOAuthStoreFromConfig` still fails fast on encrypted
+ * storage as a defense-in-depth guard for other code paths.
  *
  * Only `--provider openai-codex` is supported for `auth login` today. Other
  * providers ship later. The `--provider` filter on `list` / `status` is
@@ -47,12 +50,14 @@ import type { Command } from "commander";
 import open from "open";
 import {
   loadConfigFile,
+  loadEnvFile,
   validateConfig,
   safePath,
   validateProfileId,
   redactEmailForLog,
   type OAuthCredentialStorePort,
   type OAuthProfile,
+  type CredentialStorageMode,
 } from "@comis/core";
 import {
   selectOAuthCredentialStore,
@@ -66,11 +71,11 @@ import {
   createConsoleLogger,
   type OAuthError,
 } from "@comis/core";
-// auth.list / auth.logout RPC calls go through
+// auth.list / auth.logout / auth.set RPC calls go through
 // `callTyped(client, <Contract>, params)` so the typed RPC surface
 // validates this file. The contracts mirror `auth-handlers.ts` —
 // see `packages/core/src/api-contracts/auth.ts`.
-import { AuthListContract, AuthLogoutContract } from "@comis/core";
+import { AuthListContract, AuthLogoutContract, AuthSetContract } from "@comis/core";
 import { error, info, success } from "../output/format.js";
 import { renderTable } from "../output/table.js";
 import { formatRelativeExpiry } from "../output/relative-time.js";
@@ -158,7 +163,7 @@ const logger = createConsoleLogger("info", { name: "auth-cli" });
 
 // ---------------------------------------------------------------------------
 // Internal: open the OAuth credential store using the same selector the
-// daemon uses. Reads appConfig.oauth.storage from the user's config file
+// daemon uses. Reads appConfig.security.storage from the user's config file
 // with safe defaults when no config exists (e.g., daemon never set up).
 //
 // Both loadConfigFile and validateConfig are Result-typed (per @comis/core),
@@ -178,16 +183,21 @@ const logger = createConsoleLogger("info", { name: "auth-cli" });
  * Returns synchronously today; declared async to leave headroom for a
  * future config-fetch-via-RPC path without breaking call sites.
  */
-async function loadOAuthStorageMode(): Promise<"file" | "encrypted"> {
+async function loadStorageMode(): Promise<CredentialStorageMode> {
   // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
   const envPaths = process.env.COMIS_CONFIG_PATHS;
   const configPath =
-    envPaths?.split(",")[0] ?? safePath(homedir(), ".comis", "config.yaml");
-  const loadResult = loadConfigFile(configPath);
+    envPaths?.split(":")[0] ?? safePath(homedir(), ".comis", "config.yaml");
+
+  // Load ~/.comis/.env before validating — resolves ${VAR} refs before
+  // schema validation (consistent with daemon's loadLayered({getSecret})).
+  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
+  const dataDir = process.env.COMIS_DATA_DIR ?? safePath(homedir(), ".comis");
+  loadEnvFile(safePath(dataDir, ".env"));
+  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
+  const loadResult = loadConfigFile(configPath, { getSecret: (k) => process.env[k] });
   if (!loadResult.ok) {
-    // No config file -> default to file storage (matches
-    // openOAuthStoreFromConfig's fallback path).
-    return "file";
+    return "file"; // no config file → default to file storage
   }
   const validateResult = validateConfig(loadResult.value);
   if (!validateResult.ok) {
@@ -198,11 +208,12 @@ async function loadOAuthStorageMode(): Promise<"file" | "encrypted"> {
     );
     process.exit(1);
   }
-  return validateResult.value.oauth.storage;
+  return validateResult.value.security.storage;
 }
 
 function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
-  const dataDir = safePath(homedir(), ".comis");
+  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
+  const dataDir = process.env.COMIS_DATA_DIR ?? safePath(homedir(), ".comis");
   // CLI composition root: construct the FileLockPort adapter here so agent's
   // selectOAuthCredentialStore can stay scheduler-free. Single instance per
   // CLI invocation — short-lived and stateless.
@@ -210,13 +221,15 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
   // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
   const envPaths = process.env.COMIS_CONFIG_PATHS;
   const configPath =
-    envPaths?.split(",")[0] ?? safePath(homedir(), ".comis", "config.yaml");
+    envPaths?.split(":")[0] ?? safePath(homedir(), ".comis", "config.yaml");
 
-  const loadResult = loadConfigFile(configPath);
+  // Load .env before validating — resolves ${VAR} refs (same as loadStorageMode).
+  loadEnvFile(safePath(dataDir, ".env"));
+  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
+  const loadResult = loadConfigFile(configPath, { getSecret: (k) => process.env[k] });
   if (!loadResult.ok) {
-    // No config file → default to file storage (the file adapter creates
-    // ~/.comis/auth-profiles.json on first set).
-    return selectOAuthCredentialStore({ storage: "file", dataDir, fileLock });
+    // No config file → default to file storage.
+    return selectOAuthCredentialStore({ storage: "file", dataDir: safePath(homedir(), ".comis"), fileLock });
   }
 
   const validateResult = validateConfig(loadResult.value);
@@ -231,7 +244,7 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
     process.exit(1);
   }
 
-  const storage = validateResult.value.oauth.storage;
+  const storage = validateResult.value.security.storage;
 
   if (storage === "encrypted") {
     // Encrypted-mode bootstrap from CLI requires SECRETS_MASTER_KEY + the
@@ -243,7 +256,7 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
     error(
       "OAuth storage mode is 'encrypted' but the CLI cannot bootstrap the encrypted store. " +
         "Hint: Either (1) export SECRETS_MASTER_KEY in this shell and rerun, or (2) change " +
-        "appConfig.oauth.storage to 'file' for `comis auth login` flows.",
+        "security.storage to 'file' in config.yaml for `comis auth login` flows.",
     );
     process.exit(1);
   }
@@ -316,7 +329,7 @@ export function registerAuthCommand(program: Command): void {
   auth
     .command("login")
     .description(
-      "Log in to an OAuth-enabled provider. Runs locally for file-backed storage. Daemon-assisted login for encrypted storage is not yet supported.",
+      "Log in to an OAuth-enabled provider. File mode stores locally. Encrypted mode routes through the daemon (auth.set RPC).",
     )
     .requiredOption(
       "--provider <id>",
@@ -381,6 +394,86 @@ export function registerAuthCommand(program: Command): void {
           process.exit(2);
         }
 
+        // Resolve storage mode FIRST — branches to encrypted RPC, env reject,
+        // or file (falls through to the existing store.set path below).
+        const storage = await loadStorageMode();
+
+        // ----- Env branch: reject immediately (env is read-only) ------------
+        if (storage === "env") {
+          error(
+            "OAuth login is not supported in 'env' storage mode (read-only). " +
+              "Set security.storage to 'file' or 'encrypted' in config.yaml to enable login.",
+          );
+          process.exit(1);
+        }
+
+        // ----- Encrypted branch: daemon-assisted RPC ------------------------
+        if (storage === "encrypted") {
+          // Require a running daemon BEFORE starting the OAuth flow.
+          await requireDaemonOrExit();
+          const isRemote = isRemoteEnvironment({
+            env: process.env,
+            force: opts.remote ? "remote" : opts.local ? "local" : undefined,
+          });
+          const prompter = createClackAdapter();
+          const result = await loginOpenAICodexOAuth({
+            prompter,
+            isRemote,
+            openUrl: open,
+            logger,
+            method,
+          });
+          if (!result.ok) {
+            error(result.error.message);
+            if (result.error.hint) info(result.error.hint);
+            process.exit(1);
+          }
+          const v = result.value;
+          const finalProfileId = opts.profile ?? v.profileId;
+          try {
+            const rpcResult = await withClient((client) =>
+              callTyped(client, AuthSetContract, {
+                provider: PROVIDER_OPENAI_CODEX,
+                profileId: finalProfileId,
+                access: v.access,
+                refresh: v.refresh,
+                expires: v.expires,
+                accountId: v.accountId,
+                email: v.email,
+                displayName: v.displayName,
+                version: 1,
+              }),
+            );
+            logger.info(
+              {
+                provider: PROVIDER_OPENAI_CODEX,
+                profileId: rpcResult.profileId,
+                identity:
+                  redactEmailForLog(v.email) ?? `id-${v.accountId ?? "<unknown>"}`,
+                action: "login",
+                submodule: "auth-cli",
+              },
+              "OAuth profile stored via daemon RPC",
+            );
+            success(
+              `Logged in as ${v.email ?? v.displayName ?? v.profileId} (profile: ${finalProfileId})`,
+            );
+            info(
+              "Note: stored; restart/reload may be required before the running daemon uses it.",
+            );
+          } catch (rpcErr) {
+            if (isOAuthError(rpcErr)) {
+              exitOnOAuthError(rpcErr);
+            }
+            const msg =
+              rpcErr instanceof Error ? rpcErr.message : String(rpcErr);
+            error(`Failed to store OAuth profile: ${msg}`);
+            process.exit(1);
+          }
+          return;
+        }
+
+        // ----- File branch: existing CLI-local store.set path ---------------
         try {
           const store = openOAuthStoreFromConfig();
           const isRemote = isRemoteEnvironment({
@@ -463,11 +556,11 @@ export function registerAuthCommand(program: Command): void {
   auth
     .command("list")
     .description(
-      "List stored OAuth profiles. Requires the comis daemon to be running when oauth.storage is 'encrypted'.",
+      "List stored OAuth profiles. Requires the comis daemon to be running when security.storage is 'encrypted'.",
     )
     .option("--provider <id>", "Filter to one provider")
     .action(async (opts: { provider?: string }) => {
-      const storage = await loadOAuthStorageMode();
+      const storage = await loadStorageMode();
       // ----- Encrypted branch: daemon RPC ----------------------------------
       if (storage === "encrypted") {
         await requireDaemonOrExit();
@@ -524,14 +617,14 @@ export function registerAuthCommand(program: Command): void {
   auth
     .command("logout")
     .description(
-      "Remove a stored OAuth profile. Requires the comis daemon to be running when oauth.storage is 'encrypted'.",
+      "Remove a stored OAuth profile. Requires the comis daemon to be running when security.storage is 'encrypted'.",
     )
     .requiredOption(
       "--profile <id>",
       "Profile ID to remove (e.g., openai-codex:user@example.com)",
     )
     .action(async (opts: { profile: string }) => {
-      const storage = await loadOAuthStorageMode();
+      const storage = await loadStorageMode();
       // ----- Encrypted branch: daemon RPC ----------------------------------
       if (storage === "encrypted") {
         await requireDaemonOrExit();
@@ -608,7 +701,7 @@ export function registerAuthCommand(program: Command): void {
   auth
     .command("status")
     .description(
-      "Show per-provider OAuth status. Requires the comis daemon to be running when oauth.storage is 'encrypted'.",
+      "Show per-provider OAuth status. Requires the comis daemon to be running when security.storage is 'encrypted'.",
     )
     .option("--provider <id>", "Filter to one provider")
     .action(async (opts: { provider?: string }) => {
@@ -617,7 +710,7 @@ export function registerAuthCommand(program: Command): void {
       // no "active profile" concept -- status is just `profileStatus(expires)`
       // applied to each row of the profile list.
       let profiles: DisplayProfile[];
-      const storage = await loadOAuthStorageMode();
+      const storage = await loadStorageMode();
       if (storage === "encrypted") {
         await requireDaemonOrExit();
         try {

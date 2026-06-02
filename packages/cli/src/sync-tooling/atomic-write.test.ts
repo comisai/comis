@@ -308,3 +308,52 @@ describe("atomicWriteFile (failure injection via mocked fs)", () => {
     expect(fs.readFileSync(configPath, "utf-8")).toBe("new: content\n");
   });
 });
+
+describe("atomicWriteFile under Node Permission Model (fsync disabled)", () => {
+  let tempDir: string;
+  let configPath: string;
+
+  beforeEach(async () => {
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.mocked(fs.openSync).mockImplementation(actual.openSync);
+    vi.mocked(fs.writeSync).mockImplementation(actual.writeSync);
+    vi.mocked(fs.fsyncSync).mockImplementation(actual.fsyncSync);
+    vi.mocked(fs.closeSync).mockImplementation(actual.closeSync);
+    vi.mocked(fs.renameSync).mockImplementation(actual.renameSync);
+    vi.mocked(fs.unlinkSync).mockImplementation(actual.unlinkSync);
+    vi.mocked(fs.statSync).mockImplementation(actual.statSync);
+    vi.mocked(fs.chownSync).mockImplementation(actual.chownSync);
+
+    // eslint-disable-next-line no-restricted-syntax -- test code: path.join inside test, not src
+    tempDir = fs.mkdtempSync(join(os.tmpdir(), "sync-tooling-perm-"));
+    // eslint-disable-next-line no-restricted-syntax -- test code: path.join inside test, not src
+    configPath = join(tempDir, "config.yaml");
+  });
+
+  afterEach(() => {
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it("returns ok and writes the file when fsync is refused by the permission model", () => {
+    // Node --permission disables fs.fsyncSync; the write must still succeed.
+    vi.mocked(fs.fsyncSync).mockImplementation(() => {
+      throw new Error("fsync API is disabled when Permission Model is enabled.");
+    });
+
+    const result = atomicWriteFile(configPath, "hello: world\n");
+
+    expect(result.ok).toBe(true);
+    expect(fs.readFileSync(configPath, "utf-8")).toBe("hello: world\n");
+  });
+
+  it("still returns WRITE_FAILED on a genuine fsync I/O error (EIO)", () => {
+    vi.mocked(fs.fsyncSync).mockImplementationOnce(() => {
+      throw Object.assign(new Error("EIO: i/o error, fsync"), { code: "EIO" });
+    });
+
+    const result = atomicWriteFile(configPath, "x");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("WRITE_FAILED");
+  });
+});

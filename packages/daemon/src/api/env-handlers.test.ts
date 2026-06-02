@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { createEnvHandlers, type EnvHandlerDeps } from "./env-handlers.js";
 import type { ComisLogger } from "@comis/infra";
 import type { SecretStorePort, AppContainer } from "@comis/core";
+import { createSecretManagerWithMutableHandle } from "@comis/core";
 import { ok, err } from "@comis/shared";
 import { readFileSync, statSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,11 +13,16 @@ import { createMockLogger } from "../../../../test/support/mock-logger.js";
 import { createMockEventBus } from "../../../../test/support/mock-event-bus.js";
 
 // ---------------------------------------------------------------------------
-function createMockContainer(eventBus = createMockEventBus()): AppContainer {
+function createMockContainer(
+  eventBus = createMockEventBus(),
+  storageMode: "encrypted" | "file" | "env" = "encrypted",
+): AppContainer {
   return {
     eventBus,
-    config: { tenantId: "test-tenant" },
-    secretManager: { get: vi.fn() },
+    config: { tenantId: "test-tenant", security: { storage: storageMode } },
+    // has() returns false by default (new key) so pre-existing tests stay green;
+    // 03-03 tests override via createSecretManagerWithMutableHandle for full behavior.
+    secretManager: { get: vi.fn(), has: vi.fn(() => false) },
   } as unknown as AppContainer;
 }
 
@@ -43,10 +49,14 @@ function createTempEnvDir(): { dir: string; envPath: string; cleanup: () => void
 
 function makeDeps(overrides: Partial<EnvHandlerDeps> = {}): EnvHandlerDeps {
   return {
-    secretStore: undefined,
+    // After Plan 02-04: secretStore is always wired (REQ-04).
+    // Default to a mock that returns ok for reads and set.
+    secretStore: createMockSecretStore(),
     envFilePath: "/tmp/test-nonexistent/.env",
     container: createMockContainer(),
     logger: createMockLogger(),
+    // Default mutableSecretManager (no-op stubs); 03-03 tests use real handles.
+    mutableSecretManager: { upsert: vi.fn(), remove: vi.fn(() => false) },
     ...overrides,
   };
 }
@@ -213,8 +223,9 @@ describe("env.set handler", () => {
     const result = await handlers["env.set"]!({ key: "OPENAI_API_KEY", value: "sk-abc123", _trustLevel: "admin" });
 
     expect(secretStore.set).toHaveBeenCalledWith("OPENAI_API_KEY", "sk-abc123");
+    // restarting depends on has(): mock returns false (new key) → restarting:false
     expect(result).toEqual(
-      expect.objectContaining({ set: true, key: "OPENAI_API_KEY", storage: "encrypted", restarting: true }),
+      expect.objectContaining({ set: true, key: "OPENAI_API_KEY", storage: "encrypted", restarting: false }),
     );
   });
 
@@ -230,23 +241,24 @@ describe("env.set handler", () => {
   });
 
   // -----------------------------------------------------------------------
-  // SecretStore mandatory (legacy .env-file fallback gone)
+  // Env-mode adapter rejection (Plan 02-04: guard removed, adapter err surfaces)
   // -----------------------------------------------------------------------
   //
-  // Previously this section tested the legacy `else { writeToEnvFile(...) }`
-  // fallback (`storage: "envfile"`). The pinning tests for `.env file backend` were
-  // deleted alongside the production code (delete dead branch + pinning
-  // test in the same atomic commit). The new
-  // contract: when `secretStore` is undefined, env.set throws the same
-  // actionable error message as secrets-handlers.ts:196.
+  // After Plan 02-04: secretStore is always wired. Env-mode adapter returns err
+  // from set() with an actionable message. The existing !setResult.ok handler
+  // throws that message. Test with a mock adapter returning err("read-only").
 
-  it("rejects env.set when secretStore is undefined", async () => {
-    const deps = makeDeps({ secretStore: undefined });
+  it("rejects env.set when adapter returns err (env-mode read-only adapter)", async () => {
+    const secretStore = createMockSecretStore();
+    (secretStore.set as ReturnType<typeof vi.fn>).mockReturnValue(
+      err(new Error("Storage mode is 'env' (read-only). Switch to file or encrypted.")),
+    );
+    const deps = makeDeps({ secretStore });
     const handlers = createEnvHandlers(deps);
 
     await expect(
       handlers["env.set"]!({ key: "MY_KEY", value: "my-value", _trustLevel: "admin" }),
-    ).rejects.toThrow("Encrypted secrets store not configured");
+    ).rejects.toThrow("read-only");
   });
 
   // -----------------------------------------------------------------------
@@ -333,17 +345,51 @@ describe("env.set handler", () => {
   // Restart scheduling
   // -----------------------------------------------------------------------
 
-  it("schedules SIGUSR2 restart after successful set", async () => {
+  it("06-02: env.set on EXISTING key live-applies (no SIGUSR2, restarting:false)", async () => {
     const secretStore = createMockSecretStore();
+    // Use a container where has() returns true (existing key — rotation).
+    const container = createMockContainer(createMockEventBus(), "encrypted");
+    (container.secretManager.has as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    const deps = makeDeps({ secretStore, container });
+    const handlers = createEnvHandlers(deps);
+
+    const result = await handlers["env.set"]!({ key: "MY_KEY", value: "val", _trustLevel: "admin" }) as Record<string, unknown>;
+
+    // P4b/06-02: rotation live-applies — no SIGUSR2, restarting:false always.
+    vi.advanceTimersByTime(500);
+    expect(killSpy).not.toHaveBeenCalled();
+    expect(result.restarting).toBe(false);
+  });
+
+  // -----------------------------------------------------------------------
+  // 02-04 RED: storage field reflects config.security.storage (not hardcoded "encrypted")
+  // -----------------------------------------------------------------------
+
+  it("02-04: env.set returns storage:'file' when config.security.storage is 'file'", async () => {
+    const secretStore = createMockSecretStore();
+    const container = createMockContainer(createMockEventBus(), "file");
+    const deps = makeDeps({ secretStore, container });
+    const handlers = createEnvHandlers(deps);
+
+    const result = await handlers["env.set"]!({ key: "OPENAI_API_KEY", value: "sk-test", _trustLevel: "admin" });
+
+    // After Plan 02-04 GREEN: storage reflects config.security.storage, not hardcoded "encrypted"
+    // After Plan 03-03: restarting:false for new key (has() returns false by default)
+    expect(result).toMatchObject({ set: true, storage: "file", restarting: false });
+  });
+
+  it("02-04: env.set with env-mode adapter returning err surfaces the adapter error message", async () => {
+    const secretStore = createMockSecretStore();
+    (secretStore.set as ReturnType<typeof vi.fn>).mockReturnValue(
+      err(new Error("Storage mode is 'env' (read-only). To persist secrets, set security.storage: file or encrypted.")),
+    );
     const deps = makeDeps({ secretStore });
     const handlers = createEnvHandlers(deps);
 
-    await handlers["env.set"]!({ key: "MY_KEY", value: "val", _trustLevel: "admin" });
-
-    // Advance timers to trigger the 200ms setTimeout
-    vi.advanceTimersByTime(200);
-
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGUSR2");
+    // After Plan 02-04 GREEN: guard removed, adapter err surfaces via existing throw block
+    await expect(
+      handlers["env.set"]!({ key: "MY_KEY", value: "val", _trustLevel: "admin" }),
+    ).rejects.toThrow("read-only");
   });
 
   // -----------------------------------------------------------------------
@@ -669,5 +715,152 @@ describe("env.list handler", () => {
     for (const call of allCalls) {
       expect(JSON.stringify(call)).not.toContain(CANARY_VALUE);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 03-03 — additive restart rule (RED: handler doesn't implement this yet)
+// ---------------------------------------------------------------------------
+
+describe("03-03 — additive restart rule (env.set)", () => {
+  let killSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function makeContainerWithManager(
+    initialEnv: Record<string, string> = {},
+    eventBus = createMockEventBus(),
+  ): AppContainer {
+    const { secretManager, mutableHandle: _mutableHandle } = createSecretManagerWithMutableHandle(initialEnv);
+    return {
+      eventBus,
+      config: { tenantId: "test-tenant", security: { storage: "encrypted" } },
+      secretManager,
+    } as unknown as AppContainer;
+  }
+
+  it("env.set on a key not in secretManager returns restarting false and does not call SIGUSR2", async () => {
+    const eventBus = createMockEventBus();
+    const container = makeContainerWithManager({}, eventBus);
+    const mutableSecretManager = createSecretManagerWithMutableHandle({}).mutableHandle;
+    const deps = makeDeps({ container, mutableSecretManager } as unknown as Partial<EnvHandlerDeps>);
+    const handlers = createEnvHandlers(deps);
+
+    const result = await handlers["env.set"]!({ key: "BRAND_NEW_KEY", value: "new-value", _trustLevel: "admin" }) as Record<string, unknown>;
+
+    expect(result.restarting).toBe(false);
+    vi.advanceTimersByTime(200);
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  it("06-02: env.set on a key already in secretManager live-applies (restarting:false, no SIGUSR2)", async () => {
+    const eventBus = createMockEventBus();
+    const container = makeContainerWithManager({ EXISTING_KEY: "old-value" }, eventBus);
+    const mutableSecretManager = createSecretManagerWithMutableHandle({}).mutableHandle;
+    const deps = makeDeps({ container, mutableSecretManager } as unknown as Partial<EnvHandlerDeps>);
+    const handlers = createEnvHandlers(deps);
+
+    const result = await handlers["env.set"]!({ key: "EXISTING_KEY", value: "new-value", _trustLevel: "admin" }) as Record<string, unknown>;
+
+    // P4b/06-02: rotation live-applies — restarting:false, no SIGUSR2.
+    expect(result.restarting).toBe(false);
+    vi.advanceTimersByTime(500);
+    expect(killSpy).not.toHaveBeenCalled();
+  });
+
+  it("env.set on new key emits secret:changed with action upserted and no value field", async () => {
+    const eventBus = createMockEventBus();
+    const container = makeContainerWithManager({}, eventBus);
+    const mutableSecretManager = createSecretManagerWithMutableHandle({}).mutableHandle;
+    const deps = makeDeps({ container, mutableSecretManager } as unknown as Partial<EnvHandlerDeps>);
+    const handlers = createEnvHandlers(deps);
+
+    await handlers["env.set"]!({ key: "BRAND_NEW_KEY_2", value: "some-secret-val", _trustLevel: "admin" });
+
+    const changedCalls = (eventBus.emit.mock.calls as Array<[string, unknown]>).filter(
+      (c) => c[0] === "secret:changed",
+    );
+    expect(changedCalls.length).toBeGreaterThanOrEqual(1);
+    const payload = changedCalls[0]![1] as Record<string, unknown>;
+    expect(payload.name).toBe("BRAND_NEW_KEY_2");
+    expect(payload.action).toBe("upserted");
+    expect(payload).not.toHaveProperty("value");
+    expect(JSON.stringify(payload)).not.toContain("some-secret-val");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 06-02 — rotation must live-apply (restarting:false, no SIGUSR2) — RED phase
+// ---------------------------------------------------------------------------
+
+describe("06-02 — env.set rotation: restarting:false, upsert called, no SIGUSR2", () => {
+  let killSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function makeContainerWithManager(
+    initialEnv: Record<string, string> = {},
+    eventBus = createMockEventBus(),
+  ): AppContainer {
+    const { secretManager } = createSecretManagerWithMutableHandle(initialEnv);
+    return {
+      eventBus,
+      config: { tenantId: "test-tenant", security: { storage: "encrypted" } },
+      secretManager,
+    } as unknown as AppContainer;
+  }
+
+  it("env.set rotation: returns restarting:false", async () => {
+    const eventBus = createMockEventBus();
+    const container = makeContainerWithManager({ EXISTING_KEY: "old-value" }, eventBus);
+    const { mutableHandle: mutableSecretManager } = createSecretManagerWithMutableHandle({});
+    const deps = makeDeps({ container, mutableSecretManager } as unknown as Partial<EnvHandlerDeps>);
+    const handlers = createEnvHandlers(deps);
+
+    const result = await handlers["env.set"]!({ key: "EXISTING_KEY", value: "new-value", _trustLevel: "admin" }) as Record<string, unknown>;
+
+    expect(result.restarting).toBe(false);
+  });
+
+  it("env.set rotation: calls mutableSecretManager.upsert with key and new value", async () => {
+    const eventBus = createMockEventBus();
+    const container = makeContainerWithManager({ EXISTING_KEY: "old-value" }, eventBus);
+    const upsertSpy = vi.fn();
+    const mutableSecretManager = { upsert: upsertSpy, remove: vi.fn() };
+    const deps = makeDeps({ container, mutableSecretManager } as unknown as Partial<EnvHandlerDeps>);
+    const handlers = createEnvHandlers(deps);
+
+    await handlers["env.set"]!({ key: "EXISTING_KEY", value: "new-value", _trustLevel: "admin" });
+
+    expect(upsertSpy).toHaveBeenCalledWith("EXISTING_KEY", "new-value");
+  });
+
+  it("env.set rotation: does not call process.kill (no SIGUSR2)", async () => {
+    const eventBus = createMockEventBus();
+    const container = makeContainerWithManager({ EXISTING_KEY: "old-value" }, eventBus);
+    const { mutableHandle: mutableSecretManager } = createSecretManagerWithMutableHandle({});
+    const deps = makeDeps({ container, mutableSecretManager } as unknown as Partial<EnvHandlerDeps>);
+    const handlers = createEnvHandlers(deps);
+
+    await handlers["env.set"]!({ key: "EXISTING_KEY", value: "new-value", _trustLevel: "admin" });
+    vi.advanceTimersByTime(500);
+
+    expect(killSpy).not.toHaveBeenCalled();
   });
 });
