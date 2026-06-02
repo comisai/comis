@@ -40,6 +40,12 @@ export interface MemoryRow {
   observation_kind: string | null;
   /** Inductive pattern class TEXT; null unless observationKind="inductive" (P101/REASON-01). */
   pattern_type: string | null;
+  /** Unix ms; non-destructive demote marker (P112/FORGET-02); null = not demoted (DORMANT). */
+  lifecycle_demoted_at: number | null;
+  /** Unix ms; non-destructive evict marker (P112/FORGET-02); null = not evicted (DORMANT). */
+  evicted_at: number | null;
+  /** Computed lifecycle strength 0..1 (P112/FORGET-02); null = not yet computed. */
+  strength: number | null;
   /** Unix timestamp in milliseconds, null if never updated */
   updated_at: number | null;
   /** Unix timestamp in milliseconds, null if no expiry */

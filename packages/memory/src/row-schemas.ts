@@ -22,9 +22,7 @@
 
 import { z } from "zod";
 
-// =====================================================================
-// 1. Memory-package-local public rows (paired with packages/memory/src/types.ts)
-// =====================================================================
+// ─── 1. Memory-package-local public rows (paired with packages/memory/src/types.ts) ───
 
 /**
  * Schema for the `memories` table.
@@ -61,6 +59,12 @@ export const MemoryRowSchema = z.strictObject({
   observation_kind: z.string().nullable(),
   /** Inductive pattern class TEXT; null unless observationKind="inductive" (P101/REASON-01). */
   pattern_type: z.string().nullable(),
+  /** Unix ms; non-destructive demote marker (P112/FORGET-02); null = not demoted (DORMANT). */
+  lifecycle_demoted_at: z.number().nullable(),
+  /** Unix ms; non-destructive evict marker (P112/FORGET-02); null = not evicted (DORMANT). */
+  evicted_at: z.number().nullable(),
+  /** Computed lifecycle strength 0..1 (P112/FORGET-02); null = not yet computed. */
+  strength: z.number().nullable(),
   /** Unix timestamp in milliseconds, null if never updated. */
   updated_at: z.number().nullable(),
   /** Unix timestamp in milliseconds, null if no expiry. */
@@ -307,9 +311,7 @@ export const NamedGraphRowSchema = z.strictObject({
   deleted_at: z.number().nullable(),
 });
 
-// =====================================================================
-// 2. Context-store rows (paired with @comis/core/ports/context-store-types)
-// =====================================================================
+// ─── 2. Context-store rows (paired with @comis/core/ports/context-store-types) ───
 
 /**
  * Schema for the `ctx_conversations` table.
@@ -443,9 +445,7 @@ export const CtxExpansionGrantRowSchema = z.strictObject({
   created_at: z.string(),
 });
 
-// =====================================================================
-// 3. Session-store DTOs (paired with @comis/core/ports/session-store-types)
-// =====================================================================
+// ─── 3. Session-store DTOs (paired with @comis/core/ports/session-store-types) ───
 
 /**
  * Schema for SessionStorePort.load() return shape.
@@ -486,10 +486,7 @@ export const SessionDetailedEntrySchema = z.strictObject({
   messageCount: z.number(),
 });
 
-// =====================================================================
-// 4. Internal DB-row schemas (single-source-of-truth for consumer
-// retargeting; source interfaces are file-internal in their adapters)
-// =====================================================================
+// ─── 4. Internal DB-row schemas (SSOT for consumer retargeting; source interfaces are file-internal in their adapters) ───
 
 // --- Observability store (packages/memory/src/observability-store.ts:211-317) ---
 
@@ -781,9 +778,7 @@ export const BatchCacheRowSchema = z.strictObject({
   embedding: z.instanceof(Buffer),
 });
 
-// =====================================================================
-// 5. Common projection shapes (frequently encountered)
-// =====================================================================
+// ─── 5. Common projection shapes (frequently encountered) ───
 
 /** Schema for single-column id projections (`SELECT id FROM ...`); replaces `Array<{ id: string }>` casts. */
 export const IdProjectionRowSchema = z.strictObject({
