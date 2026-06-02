@@ -738,6 +738,25 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
     // @comis/core: baseline orphans tracked here. See inline comments
     // throughout this set for per-entry rationale.
     ["@comis/core", new Set<string>([
+      // ── v2.10 Phase 115 (ACTIVATE — ACT-01) : capability default-activation ──
+      // The default-activation framework: a declarative capability registry +
+      // empty measured-winner set + pure resolver + frozen-trust invariant.
+      // Phase 114 (PROVE2) measured no winner, so the framework flips NOTHING
+      // (ACT-02 byte-identity) and its only consumers today are its own
+      // invariant tests (excluded from the consumer scan). The production
+      // consumers land later: a future costed-winner phase records an
+      // ActivationDecision (the ONLY place a default flips), and an operator
+      // surface reads resolveAllCapabilityDefaults() for the activation posture.
+      // Shrink each entry as a real in-repo production caller lands.
+      "V2_9_CAPABILITIES",
+      "ACTIVATED_CAPABILITIES",
+      "FROZEN_TRUST_PATHS",
+      "resolveCapabilityDefault",
+      "resolveAllCapabilityDefaults",
+      "CapabilityId",
+      "CapabilityDescriptor",
+      "ActivationDecision",
+      "ResolvedCapabilityDefault",
       // ── v2.5 Agent Transparency (Phase 73 — interactive approvals) ──
       // ParsedCallback is the documented return shape of the public
       // parseCallbackData (73-01). The orchestrator router consumes the

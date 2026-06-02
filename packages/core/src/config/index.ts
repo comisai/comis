@@ -404,6 +404,21 @@ export {
   type ManagedSectionRedirect,
 } from "./managed-sections.js";
 
+// v2.9 capability default-activation framework (Phase 115 — ACT-01).
+// Resolves each capability's effective default-OFF→ON state; the activation set
+// is EMPTY (Phase 114 measured no winner) so every capability resolves OFF.
+export {
+  V2_9_CAPABILITIES,
+  ACTIVATED_CAPABILITIES,
+  FROZEN_TRUST_PATHS,
+  resolveCapabilityDefault,
+  resolveAllCapabilityDefaults,
+  type CapabilityId,
+  type CapabilityDescriptor,
+  type ActivationDecision,
+  type ResolvedCapabilityDefault,
+} from "./capability-activation.js";
+
 // Schema serializer (Zod to JSON Schema conversion)
 export { getConfigSchema, getConfigSections } from "./schema-serializer.js";
 
