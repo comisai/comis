@@ -47,9 +47,8 @@ function makeLogger() {
 }
 
 /**
- * A minimal stub child backend: exposes the data/write/resize/kill/pid surface
- * the worker wires for BOTH the pty (onData) and pipe (stdout.on) paths. The
- * test drives stdout by calling `emit(chunk)`.
+ * A minimal stub PTY backend: exposes the node-pty `spawn` → `{onData,...}`
+ * surface the worker wires. The test drives stdout by calling `emit(chunk)`.
  */
 function makeFakeBackend(): {
   spawn: ReturnType<typeof vi.fn>;
@@ -76,6 +75,49 @@ function makeFakeBackend(): {
   return {
     spawn,
     emit: (chunk: string) => onData?.(chunk),
+    lastSpawn: () =>
+      lastBin === undefined || lastArgv === undefined
+        ? undefined
+        : { bin: lastBin, argv: lastArgv },
+  };
+}
+
+/**
+ * A minimal stub PIPE backend (the degraded path): `spawnPipe` returns a child
+ * with the `stdout.on("data")` + `on("close"/"error")` surface
+ * `child_process.spawn` gives. The test drives stdout via `emit(chunk)`.
+ */
+function makeFakePipeBackend(): {
+  spawnPipe: ReturnType<typeof vi.fn>;
+  emit: (chunk: string) => void;
+  close: () => void;
+  lastSpawn: () => { bin: string; argv: string[] } | undefined;
+} {
+  let onData: ((chunk: Buffer) => void) | undefined;
+  let onClose: ((arg?: unknown) => void) | undefined;
+  let lastBin: string | undefined;
+  let lastArgv: string[] | undefined;
+  const spawnPipe = vi.fn((bin: string, argv: string[]) => {
+    lastBin = bin;
+    lastArgv = argv;
+    return {
+      pid: 4243,
+      stdout: {
+        on: (_event: "data", cb: (chunk: Buffer) => void) => {
+          onData = cb;
+        },
+      },
+      stdin: { write: vi.fn() },
+      on: (event: "close" | "error", cb: (arg?: unknown) => void) => {
+        if (event === "close") onClose = cb;
+      },
+      kill: vi.fn(),
+    };
+  });
+  return {
+    spawnPipe,
+    emit: (chunk: string) => onData?.(Buffer.from(chunk, "utf8")),
+    close: () => onClose?.(0),
     lastSpawn: () =>
       lastBin === undefined || lastArgv === undefined
         ? undefined
@@ -111,14 +153,14 @@ function createFrame(
 
 describe("createTerminalWorker — TR-08 backend selection", () => {
   it("selects the pipe backend and reports degraded when loadPty throws (no crash)", async () => {
-    const fake = makeFakeBackend();
+    const pipe = makeFakePipeBackend();
     const logger = makeLogger();
     const worker = createTerminalWorker(
       baseDeps({
         loadPty: () => {
           throw new Error("Cannot find module 'node-pty'");
         },
-        spawnPipe: fake.spawn,
+        spawnPipe: pipe.spawnPipe,
         logger,
       }),
     );
@@ -131,9 +173,46 @@ describe("createTerminalWorker — TR-08 backend selection", () => {
     expect(reply.ok).toBe(true);
     expect((reply.result as { backend: string }).backend).toBe("degraded");
     // The pipe backend was used to spawn the child.
-    expect(fake.spawn).toHaveBeenCalledTimes(1);
+    expect(pipe.spawnPipe).toHaveBeenCalledTimes(1);
     // A warn was logged for the unavailable pty (errorKind: dependency).
     expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it("accumulates the degraded pipe backend stdout into the read ring, and close flips alive=false", async () => {
+    const pipe = makeFakePipeBackend();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => {
+          throw new Error("no node-pty");
+        },
+        spawnPipe: pipe.spawnPipe,
+      }),
+    );
+
+    await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }),
+    );
+    pipe.emit("pipe-out\n");
+
+    let read = await worker.handle({
+      sessionId: "s1",
+      requestId: "rq-read-1",
+      traceId: TRACE_ID,
+      method: "read",
+      params: { sessionId: "s1" },
+    });
+    expect((read.result as { screen: string; alive: boolean }).screen).toBe("pipe-out\n");
+    expect((read.result as { alive: boolean }).alive).toBe(true);
+
+    pipe.close();
+    read = await worker.handle({
+      sessionId: "s1",
+      requestId: "rq-read-2",
+      traceId: TRACE_ID,
+      method: "read",
+      params: { sessionId: "s1" },
+    });
+    expect((read.result as { alive: boolean }).alive).toBe(false);
   });
 
   it("uses the pty backend and reports backend pty when loadPty returns a stub pty", async () => {
