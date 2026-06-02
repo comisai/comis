@@ -96,6 +96,13 @@ export interface ToolAssemblyDeps {
   /** Optional usefulness store (FEED-03), threaded into prompt-assembly's createMemoryRecall.
    *  TYPE-only from @comis/core (the agent↛memory build cut). */
   usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
+  /** Optional learned-alpha store (LEARN-03), threaded into prompt-assembly's deterministic
+   *  apply overlay (the gated buildScoringAlphas read on the recall scoring arg). Absent /
+   *  off / no-row -> no read, the static config.rag.scoring alphas pass unchanged (byte-identical
+   *  recall). The daemon construction + the createPiExecutor forward land in 111-04; a missing
+   *  forward there leaves the overlay a silent no-op (the field-plumbing hazard). TYPE-only from
+   *  @comis/core (the agent↛memory build cut). */
+  tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
   /** Optional per-user representation store (USER-03), threaded into prompt-assembly's LLM-free
    *  `<user_profile>` standing-block injection (a deterministic scoped read + pure formatter, NO
    *  model call). Absent -> no read, no push, byte-identical prompt. TYPE-only from @comis/core

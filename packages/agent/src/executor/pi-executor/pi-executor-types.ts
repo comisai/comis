@@ -23,6 +23,7 @@ import type {
   TripleStorePort,
   MemoryEmbeddingStore,
   MemoryUsefulnessStore,
+  TunedAlphaStore,
   UserRepresentationStore,
   RelationshipStore,
   RerankerPort,
@@ -130,6 +131,13 @@ export interface PiExecutorDeps {
    *  -> no usefulness read (recall scoring unchanged). TYPE-only from @comis/core — the agent
    *  never imports the memory package (the agent↛memory cut). */
   usefulnessStore?: MemoryUsefulnessStore;
+  /** Optional learned-alpha store (LEARN-03). Built in the daemon on the shared memory db handle;
+   *  threaded into prompt-assembly's deterministic apply overlay (the gated buildScoringAlphas read)
+   *  via ToolAssemblyDeps. Absent or flag-off -> no read, the static config.rag.scoring alphas pass
+   *  unchanged (byte-identical recall). The daemon construction + the createPiExecutor forward land
+   *  in 111-04. TYPE-only from @comis/core — the agent never imports the memory package (the
+   *  agent↛memory cut). */
+  tunedAlphaStore?: TunedAlphaStore;
   /** Optional per-user representation store (USER-03). Built in the daemon on the shared memory db
    *  handle; threaded into prompt-assembly's LLM-free `<user_profile>` injection via ToolAssemblyDeps.
    *  Absent -> no profile read, no push, byte-identical prompt (the default-OFF cost gate). TYPE-only

@@ -294,6 +294,14 @@ export interface PromptAssemblyParams {
     /** Optional usefulness store for createMemoryRecall's usefulness read (FEED-03;
      *  default-OFF via config.rag.feedback). TYPE-only (the agent↛memory build cut). */
     usefulnessStore?: import("@comis/core").MemoryUsefulnessStore;
+    /** Optional learned-alpha store for the deterministic apply overlay (LEARN-03;
+     *  default-OFF via config.rag.onlineTuning). Gated read → buildScoringAlphas overlays
+     *  the four non-trust weights; absent / off / no-row ⇒ no read, the static
+     *  config.rag.scoring alphas pass unchanged (byte-identical recall, the cost gate).
+     *  The read is a pure deterministic store.read scoped to (tenantId, agentId) — NO
+     *  model call crosses onto the recall hot path (the milestone's #1 constraint).
+     *  TYPE-only (the agent↛memory build cut). */
+    tunedAlphaStore?: import("@comis/core").TunedAlphaStore;
     /** Optional per-user profile store for the LLM-free standing-block injection
      *  (USER-03; default-OFF). Absent ⇒ no read, no push, byte-identical prompt
      *  (the cost gate). The agent receives the port TYPE only — the agent↛memory
