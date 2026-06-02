@@ -193,6 +193,20 @@ export const RagConfigSchema = z.strictObject({
         enabled: z.boolean().default(false),
       })
       .default(() => ({ enabled: false })),
+    /** Learning-to-rank online tuning (LEARN-03 — Track H2). The RECALL-SIDE apply gate.
+     *  Default-OFF; OFF ⇒ the recall hot path NEVER reads the tuned-alpha store, so
+     *  `buildScoringAlphas` falls through to the static `rag.scoring` alphas and recall is
+     *  byte-identical to today (Pitfall 3 — the 111-03 overlay early-returns the config
+     *  alphas when no tuned vector is read). When ON the gated read overlays the four learned
+     *  non-trust alphas; the trust weight stays config-sourced at the apply site (belt #2). A
+     *  `.strictObject` so a stray field (e.g. a smuggled `trustAlpha`/`schedule`) is REJECTED
+     *  at parse — the cron knob is the SEPARATE `memoryOnlineTuning` (schedule lives there). */
+    onlineTuning: z
+      .strictObject({
+        /** Default-OFF. The recall-side gate: OFF ⇒ no tuned-store read, byte-identical recall. */
+        enabled: z.boolean().default(false),
+      })
+      .default(() => ({ enabled: false })),
     /** MMR diversity re-rank (IQ-01). Default-OFF; λ=1.0 = pure relevance = byte-identical
      *  to the post-rerank order (the neutral guarantee, RESEARCH §IQ-01). λ bounded [0,1]
      *  (T-95-08 style: an out-of-range λ would invert the rel/diversity balance — rejected

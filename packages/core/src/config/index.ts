@@ -58,6 +58,10 @@ export type { SocialModelingConfig } from "./schema-social-modeling.js";
 export { MemoryUsefulnessJudgeConfigSchema } from "./schema-memory-usefulness-judge.js";
 export type { MemoryUsefulnessJudgeConfig } from "./schema-memory-usefulness-judge.js";
 
+// Offline tuned-alpha bandit schema (Phase 111 — LEARN-03, Track H2; default-OFF, KEYLESS cron)
+export { MemoryOnlineTuningConfigSchema } from "./schema-memory-online-tuning.js";
+export type { MemoryOnlineTuningConfig } from "./schema-memory-online-tuning.js";
+
 // Dialectic schema (Phase 109 — DIAL-02): the memory_ask opt-in cost gate
 export { DialecticConfigSchema } from "./schema-dialectic.js";
 export type { DialecticConfig } from "./schema-dialectic.js";

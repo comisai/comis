@@ -233,6 +233,20 @@ export type {
   MemoryUserRepresentationResult,
   UserRepresentationSourceMemory,
 } from "./memory/memory-user-representation-job.js";
+// Offline tuned-alpha bandit job (Phase 111, LEARN-03 — Track H2). The LLM-FREE,
+// DETERMINISTIC, KEYLESS optimizer: default-OFF gate → read the accrued FEED signal
+// → aggregate the bounded used-RATE → computeTunedAlphas (pure clamped step) → upsert
+// via the @comis/core port → counts-only event → non-fatal. The daemon
+// __ONLINE_TUNING__ sentinel (111-04) dispatches it WITHOUT any model/key block.
+export { runOnlineTuning } from "./memory/online-tuning-job.js";
+export type {
+  MemoryOnlineTuningDeps,
+  MemoryOnlineTuningConfig,
+  MemoryOnlineTuningStats,
+  MemoryOnlineTuningResult,
+  OnlineTuningBaselineAlphas,
+  OnlineTuningFeedEntry,
+} from "./memory/online-tuning-job.js";
 // The builder prompt + parser (the build() seam's payload shape) — agent-internal;
 // the daemon __USER_REPRESENTATION__ seam (107-05) imports these to keep the prompt
 // string out of the daemon (mirrors createReasoningSeam).
