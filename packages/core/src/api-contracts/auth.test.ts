@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import {
   AuthListContract,
   AuthLogoutContract,
+  AuthSetContract,
   AUTH_CONTRACTS,
 } from "./auth.js";
 
@@ -131,5 +132,84 @@ describe("auth-domain contracts", () => {
     expect(() =>
       AuthLogoutContract.response.parse({ profileId: "x", deleted: "yes" }),
     ).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AuthSetContract — TDD: contract shape + residency canaries (04-01)
+// ---------------------------------------------------------------------------
+
+describe("AuthSetContract", () => {
+  it("AUTH_CONTRACTS grows to exactly 3 entries after AuthSetContract addition", () => {
+    expect(AUTH_CONTRACTS.length).toBe(3);
+  });
+
+  it("AuthSetContract method identifier is auth.set", () => {
+    expect(AuthSetContract.method).toBe("auth.set");
+  });
+
+  it("AuthSetContract scopes array contains admin for privilege gate", () => {
+    expect(AuthSetContract.scopes).toContain("admin");
+  });
+
+  it("AuthSetContract request accepts valid OAuthProfile fields with version literal 1", () => {
+    expect(() =>
+      AuthSetContract.request.parse({
+        provider: "openai-codex",
+        profileId: "openai-codex:user@example.com",
+        access: "tok-access-abc",
+        refresh: "tok-refresh-xyz",
+        expires: 1_750_000_000_000,
+        accountId: "acct-123",
+        email: "user@example.com",
+        displayName: "Test User",
+        version: 1,
+      }),
+    ).not.toThrow();
+  });
+
+  it("AuthSetContract request rejects version value other than literal 1", () => {
+    expect(() =>
+      AuthSetContract.request.parse({
+        provider: "openai-codex",
+        profileId: "openai-codex:user@example.com",
+        access: "tok-access-abc",
+        refresh: "tok-refresh-xyz",
+        expires: 1_750_000_000_000,
+        version: 2,
+      }),
+    ).toThrow();
+  });
+
+  it("AuthSetContract response parse succeeds with profileId and stored true", () => {
+    expect(() =>
+      AuthSetContract.response.parse({ profileId: "openai-codex:user@example.com", stored: true as const }),
+    ).not.toThrow();
+  });
+
+  it("AuthSetContract response parse strips access refresh accountId from result (residency canary)", () => {
+    const result = AuthSetContract.response.parse({
+      profileId: "openai-codex:user@example.com",
+      stored: true as const,
+      access: "LEAK",
+      refresh: "LEAK",
+      accountId: "LEAK",
+    });
+    expect(result).not.toHaveProperty("access");
+    expect(result).not.toHaveProperty("refresh");
+    expect(result).not.toHaveProperty("accountId");
+    expect(result).toEqual({ profileId: "openai-codex:user@example.com", stored: true });
+  });
+
+  it("AuthSetContract response JSON serialization contains no LEAK token strings (residency canary)", () => {
+    const result = AuthSetContract.response.parse({
+      profileId: "openai-codex:user@example.com",
+      stored: true as const,
+      access: "LEAK",
+      refresh: "LEAK",
+      accountId: "LEAK",
+    });
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("LEAK");
   });
 });
