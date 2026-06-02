@@ -189,6 +189,17 @@ export interface MemoryApiDeps {
    *  Optional so existing handler tests construct deps without it; the handler abstains when
    *  absent. */
   buildDialecticRecall?: (agentId: string) => import("@comis/agent").MemoryRecall;
+  /** The per-ask dialectic grounding-set HARD ceiling (`dialectic.maxRecall`, default 10) —
+   *  the DoS bound on the synthesis LLM input (CR-02). The `memory.ask` handler clamps the
+   *  caller-controlled `limit` to `[1, dialecticMaxRecall]`: a huge/negative `limit` can never
+   *  flood the prompt or negative-slice the grounding. Per-agent (resolved for the invoking
+   *  agent in setup-dialectic). Optional so existing handler tests omit it; the handler falls
+   *  back to the schema default (10) when absent. */
+  dialecticMaxRecall?: number;
+  /** Suspicious-pattern telemetry callback for the dialectic grounding (CR-01) — surfaced to
+   *  `wrapExternalContent` so a detected injection in recalled content is reported (the SAME
+   *  hook rag-retriever threads). Optional; absent ⇒ no telemetry (sanitization still runs). */
+  onSuspiciousContent?: import("@comis/core").WrapExternalContentOptions["onSuspiciousContent"];
 }
 
 /**
