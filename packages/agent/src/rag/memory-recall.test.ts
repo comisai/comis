@@ -51,6 +51,18 @@ import { appendCausalLane } from "./recall-causal-lane.js";
 import { expandSynonyms, parseTemporalRange } from "./query-understanding.js";
 import type { FusionLane } from "./fuse.js";
 
+// DIAL-02 (Phase 109): the binding constraint — the recall hot path is deterministic +
+// LLM-FREE. memory-recall.ts must NEVER reach the query-time LLM surface. We mock the
+// pi-ai call surface as spies; the `llm-free` describe at the foot of this file runs a
+// FULL recall and asserts neither spy was ever called. The mock is file-wide (vi.mock is
+// hoisted) but harmless to every other test here: memory-recall.ts does not import pi-ai,
+// so the spies simply stay at zero — which is exactly the property under assertion.
+vi.mock("@earendil-works/pi-ai", () => ({
+  getModel: vi.fn(() => ({ id: "mock-model" })),
+  completeSimple: vi.fn(async () => ({ content: [{ type: "text", text: "{}" }] })),
+}));
+import { completeSimple, getModel } from "@earendil-works/pi-ai";
+
 const NOW = 1_700_000_000_000;
 const SESSION_KEY = "telegram:chat_1:user_a" as unknown as SessionKey;
 
@@ -2724,5 +2736,46 @@ describe("createMemoryRecall — MMR diversity re-rank (IQ-01)", () => {
     expect(got.value.map((r) => r.entry.id)).not.toContain("EXT"); // never re-surfaced
     // The read saw ONLY the post-trust-filter ids (EXT was already excluded — security boundary).
     expect(calls[0]?.ids).not.toContain("EXT");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DIAL-02 — recall stays LLM-FREE (the binding constraint, Phase 109)
+// ---------------------------------------------------------------------------
+
+describe("llm-free", () => {
+  it("a full recall run makes NO query-time model call (createMemoryRecall never reaches pi-ai)", async () => {
+    // The dialectic's memory.ask is the ONE allowed query-time LLM surface and it lives
+    // in the daemon handler AFTER recall — NOT inside createMemoryRecall. This regression
+    // lock proves recall itself is deterministic + LLM-free: run the full pipeline over a
+    // realistic fixture (mixed trust, dedup, a reranker, a fake timer) and assert neither
+    // pi-ai entrypoint was ever called.
+    vi.mocked(completeSimple).mockClear();
+    vi.mocked(getModel).mockClear();
+
+    const input = [
+      makeResult("sys", { base: 0.9, trustLevel: "system", createdAt: NOW }),
+      makeResult("lrn", { base: 0.6, trustLevel: "learned", createdAt: NOW - 86_400_000 }),
+      makeResult("dup", { base: 0.5, trustLevel: "learned", content: "content for lrn" }),
+      makeResult("ext", { base: 0.3, trustLevel: "external", createdAt: NOW }),
+    ];
+    const { port: rerankerPort } = mockReranker({ available: true });
+    const recall = createMemoryRecall(
+      {
+        memoryPort: fakeMemoryPort(input),
+        reranker: rerankerPort,
+        timers: fakeTimers().port,
+        clock: fixedClock,
+        logger: noopLogger,
+      },
+      baseConfig({ rerank: { enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 } }),
+    );
+
+    const got = await recall.recall("what is the timezone", SESSION_KEY, "default");
+    expect(got.ok).toBe(true);
+
+    // The binding constraint: recall touched NO model surface.
+    expect(completeSimple).not.toHaveBeenCalled();
+    expect(getModel).not.toHaveBeenCalled();
   });
 });
