@@ -178,24 +178,24 @@ export interface MemoryApiDeps {
    *  abstain in CODE without the seam call). Optional so existing handler tests construct
    *  deps without it; the handler abstains gracefully when absent (no key / not wired). */
   dialecticSeam?: (
+    agentId: string,
     question: string,
     groundingText: string,
   ) => Promise<import("@comis/agent").DialecticParsed>;
   /** A per-agent recall factory returning the FULL `createMemoryRecall` orchestrator built
-   *  with the daemon's store set + the agent's RagConfig (Plan 04 supplies it). The
-   *  `memory.ask` handler runs THIS over the question — NOT `deps.memoryApi.search` (which
-   *  bypasses the trust filter + redaction). Injecting the builder keeps the 8-store deps
-   *  off this slice and matches the "build createMemoryRecall inside the handler" guidance.
-   *  Optional so existing handler tests construct deps without it; the handler abstains when
-   *  absent. */
+   *  with the daemon's store set + the INVOKING agent's RagConfig (CR-04 — re-reads the calling
+   *  agent's `rag`, not the default agent's). The `memory.ask` handler runs THIS over the
+   *  question — NOT `deps.memoryApi.search` (which bypasses the trust filter). Injecting the
+   *  builder keeps the 8-store deps off this slice. Optional so existing handler tests construct
+   *  deps without it; the handler abstains when absent. */
   buildDialecticRecall?: (agentId: string) => import("@comis/agent").MemoryRecall;
-  /** The per-ask dialectic grounding-set HARD ceiling (`dialectic.maxRecall`, default 10) —
-   *  the DoS bound on the synthesis LLM input (CR-02). The `memory.ask` handler clamps the
-   *  caller-controlled `limit` to `[1, dialecticMaxRecall]`: a huge/negative `limit` can never
-   *  flood the prompt or negative-slice the grounding. Per-agent (resolved for the invoking
-   *  agent in setup-dialectic). Optional so existing handler tests omit it; the handler falls
-   *  back to the schema default (10) when absent. */
-  dialecticMaxRecall?: number;
+  /** The per-agent dialectic grounding-set HARD ceiling resolver (`dialectic.maxRecall`, default
+   *  10) — the DoS bound on the synthesis LLM input (CR-02/CR-04). The `memory.ask` handler calls
+   *  it with the INVOKING agentId and clamps the caller-controlled `limit` to `[1, ceiling]`: a
+   *  huge/negative `limit` can never flood the prompt or negative-slice the grounding. A function
+   *  (not a scalar) so each agent's OWN bound is honored. Optional so existing handler tests omit
+   *  it; the handler falls back to the schema default (10) when absent. */
+  dialecticMaxRecall?: (agentId: string) => number;
   /** Suspicious-pattern telemetry callback for the dialectic grounding (CR-01) — surfaced to
    *  `wrapExternalContent` so a detected injection in recalled content is reported (the SAME
    *  hook rag-retriever threads). Optional; absent ⇒ no telemetry (sanitization still runs). */

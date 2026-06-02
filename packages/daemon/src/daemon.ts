@@ -1142,7 +1142,7 @@ function buildRpcDispatchDeps(deps: {
     // for the 4 admin-gated memory.* diagnostic handlers. (usefulnessStore is NOT
     // here — no diagnostic handler consumes it; FEED-03's read path is the setupAgents
     // injection at the setupAgents({…}) call below, mirroring entityStore.)
-    consolidationStore: c.consolidationStore, entityStore: c.entityStore, recallCounters, ...dialecticWiring,
+    consolidationStore: c.consolidationStore, entityStore: c.entityStore, recallCounters, ...dialecticWiring, onSuspiciousContent: c.onSuspiciousContent,
     tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
     agentDataDir: safePath(c.container.config.dataDir ?? safePath(os.homedir(), ".comis"), "agents"),
     sessionStore: g.sessionStoreBridge,

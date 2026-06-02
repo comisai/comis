@@ -62,15 +62,19 @@ export interface DialecticStoreSet {
   usefulnessStore?: MemoryUsefulnessStore;
 }
 
-/** Injected dependencies for the dialectic wiring (the daemon-wide slice — the dialectic
- *  config + model resolution is read for the resolving agent; the per-agent RagConfig is
- *  re-read inside buildDialecticRecall at call time). */
+/** Injected dependencies for the dialectic wiring. CR-04: the dialectic resolves PER-AGENT —
+ *  the seam (model/key/maxOutputTokens), the recall RagConfig, and the maxRecall DoS bound are
+ *  all read from the INVOKING agent's config (resolved lazily + memoized per agent), not from
+ *  the default agent. So a non-default agent with `dialectic.enabled: true` gets a live seam
+ *  with its OWN settings even when the default agent has the dialectic off. */
 export interface DialecticWiringDeps {
-  /** The agent whose dialectic config + model are resolved for the daemon-wide seam. */
-  agentId: string;
-  /** The per-agent config (dialectic.enabled + maxOutputTokens + maxRecall + provider/model/
-   *  operationModels + rag). */
-  agentConfig: PerAgentConfig;
+  /** The default agent id — the per-agent resolution fallback when a callerʼs agentId is not in
+   *  `agentsConfig` (defense-in-depth; the handler always passes a real, configured agentId). */
+  defaultAgentId: string;
+  /** ALL per-agent configs (each: dialectic.enabled + maxOutputTokens + maxRecall + provider/
+   *  model/operationModels + rag). The wiring enables when ANY agent opts in and resolves the
+   *  seam/recall/maxRecall per invoking agent from THIS map. */
+  agentsConfig: Record<string, PerAgentConfig>;
   /** Resolves the provider apiKey VALUE by NAME (never logged). */
   secretManager: { get: (name: string) => string | undefined };
   /** Provider entries (for apiKeyName lookup) — `container.config.providers?.entries`. */
@@ -88,13 +92,24 @@ export interface DialecticWiringDeps {
   logger: ComisLogger;
 }
 
-/** The dialectic wiring result spread into the memory.ask handler deps. Both undefined when
- *  the dialectic is off (the cost gate) ⇒ the handler abstains gracefully. */
+/** The dialectic wiring result spread into the memory.ask handler deps. All undefined when NO
+ *  agent has the dialectic enabled (the cost gate) ⇒ the handler abstains gracefully. CR-04:
+ *  each function resolves PER the invoking agentId. */
 export interface DialecticWiring {
-  /** The ONE query-time synthesis seam (Plan 02's createDialecticSeam output). */
-  dialecticSeam?: (question: string, groundingText: string) => Promise<DialecticParsed>;
-  /** A per-agent recall factory returning the FULL createMemoryRecall orchestrator. */
+  /** The ONE query-time synthesis seam, resolved PER-AGENT (CR-04): the model/key/maxOutputTokens
+   *  come from `agentId`ʼs OWN config (lazily resolved + memoized). The handler passes the
+   *  invoking agentId so a non-default agent synthesizes with its own cheap model + key. */
+  dialecticSeam?: (
+    agentId: string,
+    question: string,
+    groundingText: string,
+  ) => Promise<DialecticParsed>;
+  /** A per-agent recall factory returning the FULL createMemoryRecall orchestrator built from
+   *  the INVOKING agentʼs RagConfig (CR-04 — re-reads `agentsConfig[agentId].rag`). */
   buildDialecticRecall?: (agentId: string) => MemoryRecall;
+  /** The per-agent `dialectic.maxRecall` DoS bound (CR-02/CR-04) — the grounding-set ceiling the
+   *  handler clamps `limit` to, resolved from the INVOKING agentʼs config. */
+  dialecticMaxRecall?: (agentId: string) => number;
 }
 
 /** The boot-context slice `buildRpcDispatchDeps` reads to assemble the wiring deps. Typed
@@ -125,19 +140,14 @@ export interface DialecticBootSlice {
 
 /**
  * Map the post-channels boot context to the dialectic wiring deps (the mapping daemon.ts
- * would otherwise inline). Resolves the dialectic config from the default agent (the per-agent
- * tool opt-in already gated registration); the per-agent RagConfig is re-read inside
- * buildDialecticRecall. Lives here so daemon.ts stays at the line cap.
+ * would otherwise inline). CR-04: passes ALL per-agent configs so the wiring enables when ANY
+ * agent opts in and resolves the seam/recall/maxRecall PER the invoking agent. Lives here so
+ * daemon.ts stays at the line cap.
  */
 export function dialecticWiringDepsFromBoot(c: DialecticBootSlice): DialecticWiringDeps {
-  // The resolving agent: the default agent, or the first configured agent as a fallback.
-  const agentConfig =
-    c.agentsConfig[c.defaultAgentId] ?? c.agentsConfig[Object.keys(c.agentsConfig)[0] ?? ""];
   return {
-    agentId: c.defaultAgentId,
-    // agentConfig is guaranteed present at boot (the daemon always has ≥1 agent); the `!`
-    // narrows the structural lookup. A missing block ⇒ buildDialecticWiring returns {} (the gate).
-    agentConfig: agentConfig!,
+    defaultAgentId: c.defaultAgentId,
+    agentsConfig: c.agentsConfig,
     secretManager: c.container.secretManager,
     providers: c.container.config.providers?.entries ?? {},
     stores: {
@@ -157,68 +167,98 @@ export function dialecticWiringDepsFromBoot(c: DialecticBootSlice): DialecticWir
   };
 }
 
+/** The schema default maxRecall (mirrors DialecticConfigSchema) — the fallback ceiling when an
+ *  agentʼs dialectic block is absent (defense-in-depth; the handler also defaults). */
+const DIALECTIC_DEFAULT_MAX_RECALL = 10;
+
 /**
- * Build the dialectic seam + the per-agent recall factory for the memory.ask handler.
- * Returns `{}` (the cost gate) when the dialectic is not enabled for the resolving agent.
+ * Build the dialectic seam + the per-agent recall factory + the per-agent maxRecall resolver
+ * for the memory.ask handler. CR-04: resolution is PER-AGENT. Returns `{}` (the cost gate) ONLY
+ * when NO agent has the dialectic enabled — so a non-default agentʼs opt-in is never silently
+ * dead. Each returned function resolves the invoking agentʼs OWN config (model/key/maxOutputTokens
+ * for the seam, RagConfig for recall, maxRecall for the DoS bound), memoizing the seam per agent.
  */
 export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring {
-  const { agentConfig, secretManager, providers, stores, clock, timers, eventBus, logger } = deps;
+  const { defaultAgentId, agentsConfig, secretManager, providers, stores, clock, timers, eventBus, logger } = deps;
 
-  // The cost gate: default-OFF byte-identity. An absent/off `dialectic` block ⇒ no seam,
-  // no recall builder ⇒ the handler abstains (no query-time-LLM surface wired).
-  if (agentConfig.dialectic?.enabled !== true) {
+  // The cost gate: enable when ANY agent opts in (CR-04 — a non-default opt-in must not be dead).
+  // No agent enabled ⇒ no seam/recall/maxRecall ⇒ the handler abstains (no query-time-LLM wired).
+  const anyEnabled = Object.values(agentsConfig).some((a) => a?.dialectic?.enabled === true);
+  if (!anyEnabled) {
     return {};
   }
 
-  // Resolve the CHEAP "cron"/cheap operation model — never the agent's primary (mirrors the
-  // memory-cron consolidation/review/userrep model resolution verbatim).
-  const resolved = resolveOperationModel({
-    operationType: "cron",
-    agentProvider: agentConfig.provider ?? "anthropic",
-    agentModel: agentConfig.model ?? "anthropic:claude-sonnet-4-20250514",
-    operationModels: agentConfig.operationModels ?? {},
-    providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
-  });
+  // Resolve the invoking agentʼs config, falling back to the default agent then the first
+  // configured agent (defense-in-depth — the handler always passes a real, configured agentId).
+  const configFor = (agentId: string): PerAgentConfig =>
+    agentsConfig[agentId] ??
+    agentsConfig[defaultAgentId] ??
+    agentsConfig[Object.keys(agentsConfig)[0] ?? ""]!;
 
-  // Resolve the apiKey BY NAME. No key ⇒ "" ⇒ the seam degrades to abstain at call time
-  // (the seam itself is the gate; the cron warn-and-continue discipline). NEVER log the value.
-  const providerEntry = providers[resolved.provider];
-  const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
-  const apiKey = secretManager.get(apiKeyName) ?? "";
-  if (apiKey.length === 0) {
-    // Counts/NAME-only WARN (never the value) — the seam will abstain on every call until a
-    // key is set. Surfaced for operator observability (the dialectic is opt-in + enabled but
-    // has no usable key).
-    logger.warn(
-      {
-        agentId: deps.agentId,
-        provider: resolved.provider,
-        hint: `Set ${apiKeyName} in secrets for the memory_ask dialectic (it will abstain until then)`,
-        errorKind: "config" as const,
-      },
-      "Dialectic enabled but no API key resolved — memory.ask will abstain",
-    );
-  }
+  // Per-agent seam memoization: resolve the cheap model + key from THAT agentʼs config once,
+  // then reuse. Keyed by agentId so each agent synthesizes with its own model/key/token bound.
+  const seamByAgent = new Map<string, (q: string, g: string) => Promise<DialecticParsed>>();
+  const seamFor = (agentId: string): (q: string, g: string) => Promise<DialecticParsed> => {
+    const cached = seamByAgent.get(agentId);
+    if (cached !== undefined) return cached;
+    const agentConfig = configFor(agentId);
 
-  // The ONE query-time synthesis seam (bounded by dialectic.maxOutputTokens — the cost axis).
-  const seamDeps: DialecticSeamDeps = {
-    provider: resolved.provider,
-    modelId: resolved.modelId,
-    apiKey,
-    maxOutputTokens: agentConfig.dialectic.maxOutputTokens,
-    clock,
-    logger,
-    agentId: deps.agentId,
+    // Resolve the CHEAP "cron"/cheap operation model — never the agentʼs primary (mirrors the
+    // memory-cron consolidation/review/userrep model resolution verbatim), from THIS agentʼs config.
+    const resolved = resolveOperationModel({
+      operationType: "cron",
+      agentProvider: agentConfig.provider ?? "anthropic",
+      agentModel: agentConfig.model ?? "anthropic:claude-sonnet-4-20250514",
+      operationModels: agentConfig.operationModels ?? {},
+      providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
+    });
+
+    // Resolve the apiKey BY NAME. No key ⇒ "" ⇒ the seam degrades to abstain at call time
+    // (the seam itself is the gate; the cron warn-and-continue discipline). NEVER log the value.
+    const providerEntry = providers[resolved.provider];
+    const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
+    const apiKey = secretManager.get(apiKeyName) ?? "";
+    if (apiKey.length === 0) {
+      // Counts/NAME-only WARN (never the value) — the seam will abstain on every call until a
+      // key is set. Once per agent (memoized). Surfaced for operator observability.
+      logger.warn(
+        {
+          agentId,
+          provider: resolved.provider,
+          hint: `Set ${apiKeyName} in secrets for the memory_ask dialectic (it will abstain until then)`,
+          errorKind: "config" as const,
+        },
+        "Dialectic enabled but no API key resolved — memory.ask will abstain",
+      );
+    }
+
+    // The ONE query-time synthesis seam (bounded by THIS agentʼs dialectic.maxOutputTokens — the
+    // cost axis; falls back to the schema default when the agentʼs dialectic block is absent).
+    const seamDeps: DialecticSeamDeps = {
+      provider: resolved.provider,
+      modelId: resolved.modelId,
+      apiKey,
+      maxOutputTokens: agentConfig.dialectic?.maxOutputTokens ?? 1024,
+      clock,
+      logger,
+      agentId,
+    };
+    const seam = createDialecticSeam(seamDeps);
+    seamByAgent.set(agentId, seam);
+    return seam;
   };
-  const dialecticSeam = createDialecticSeam(seamDeps);
 
-  // The per-agent recall factory: the FULL createMemoryRecall (trust-filtered + redaction-
-  // aware), reconstructing the A1 deps + config exactly as prompt-assembly's executor read
-  // path (prompt-assembly.ts:784-816). The agentId param re-reads the per-agent RagConfig at
-  // call time; here it is the resolving agent's `rag` (the daemon-wide seam serves the agent
-  // whose tool was registered — the per-agent opt-in already gated registration).
-  const buildDialecticRecall = (_agentId: string): MemoryRecall => {
-    const rag = agentConfig.rag;
+  // CR-04: the seam the handler calls passes the invoking agentId so the per-agent model/key/
+  // token bound are used (not the default agentʼs).
+  const dialecticSeam = (agentId: string, question: string, groundingText: string) =>
+    seamFor(agentId)(question, groundingText);
+
+  // CR-04: the per-agent recall factory re-reads the INVOKING agentʼs RagConfig (the prior code
+  // ignored its agentId param and always read the default agentʼs rag — so a non-default agentʼs
+  // includeTrustLevels / maxResults / scoring were never honored). The FULL createMemoryRecall
+  // (trust-filtered) is reconstructed exactly as prompt-assemblyʼs executor read path does.
+  const buildDialecticRecall = (agentId: string): MemoryRecall => {
+    const rag = configFor(agentId).rag;
     // FEED-03: `feedback` predates its config landing — structural-widen like prompt-assembly.
     const ragFeedback = (rag as typeof rag & { feedback?: { enabled: boolean } }).feedback;
     return createMemoryRecall(
@@ -251,5 +291,10 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
     );
   };
 
-  return { dialecticSeam, buildDialecticRecall };
+  // CR-02/CR-04: the per-agent DoS bound the handler clamps `limit` to — the INVOKING agentʼs
+  // dialectic.maxRecall (the schema default when its dialectic block is absent).
+  const dialecticMaxRecall = (agentId: string): number =>
+    configFor(agentId).dialectic?.maxRecall ?? DIALECTIC_DEFAULT_MAX_RECALL;
+
+  return { dialecticSeam, buildDialecticRecall, dialecticMaxRecall };
 }

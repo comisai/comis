@@ -1105,17 +1105,20 @@ function makeRecall(results: MemorySearchResult[]): {
   return { build, buildCalls, recallCalls };
 }
 
-/** A dialecticSeam spy resolving to `parsed`; captures the groundingText it received. */
+/** A dialecticSeam spy resolving to `parsed`; captures the (agentId, groundingText) it received.
+ *  CR-04: the seam is invoked as `(agentId, question, groundingText)`. */
 function makeSeam(parsed: DialecticParsed): {
-  seam: (q: string, g: string) => Promise<DialecticParsed>;
+  seam: (agentId: string, q: string, g: string) => Promise<DialecticParsed>;
   spy: ReturnType<typeof vi.fn>;
   grounding: () => string | undefined;
+  seamAgentId: () => string | undefined;
 } {
-  const spy = vi.fn(async (_q: string, _g: string) => parsed);
+  const spy = vi.fn(async (_agentId: string, _q: string, _g: string) => parsed);
   return {
-    seam: spy as unknown as (q: string, g: string) => Promise<DialecticParsed>,
+    seam: spy as unknown as (agentId: string, q: string, g: string) => Promise<DialecticParsed>,
     spy,
-    grounding: () => spy.mock.calls[0]?.[1] as string | undefined,
+    grounding: () => spy.mock.calls[0]?.[2] as string | undefined,
+    seamAgentId: () => spy.mock.calls[0]?.[0] as string | undefined,
   };
 }
 
@@ -1278,7 +1281,9 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
     const deps = makeDeps({
       logger: noopLogger,
       buildDialecticRecall: recall.build,
-      dialecticSeam: realSeam,
+      // CR-04: the handler's seam is the per-agent (agentId, q, g) wrapper; the agent-side
+      // createDialecticSeam is 2-arg, so adapt it (the wiring does this with the resolved agent).
+      dialecticSeam: (_agentId, q, g) => realSeam(q, g),
     });
     const handlers = createMemoryHandlers(deps);
 
@@ -1395,7 +1400,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       logger: noopLogger,
       buildDialecticRecall: recall.build,
       dialecticSeam: seam.seam,
-      dialecticMaxRecall: 3,
+      dialecticMaxRecall: () => 3,
     });
     const handlers = createMemoryHandlers(deps);
 
@@ -1425,7 +1430,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       logger: noopLogger,
       buildDialecticRecall: recall.build,
       dialecticSeam: seam.seam,
-      dialecticMaxRecall: 10,
+      dialecticMaxRecall: () => 10,
     });
     const handlers = createMemoryHandlers(deps);
 
@@ -1451,7 +1456,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       logger: noopLogger,
       buildDialecticRecall: recall.build,
       dialecticSeam: seam.seam,
-      dialecticMaxRecall: 10,
+      dialecticMaxRecall: () => 10,
     });
     const handlers = createMemoryHandlers(deps);
 
@@ -1476,7 +1481,7 @@ describe("createMemoryHandlers - memory.ask (dialectic)", () => {
       logger: noopLogger,
       buildDialecticRecall: recall.build,
       dialecticSeam: seam.seam,
-      dialecticMaxRecall: 4,
+      dialecticMaxRecall: () => 4,
     });
     const handlers = createMemoryHandlers(deps);
 

@@ -195,7 +195,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       //   - flood the prompt: `limit: 100000` is clamped DOWN to the configured ceiling, and
       //   - negative-slice: `limit: -5` would make `slice(0, -5)` silently drop the LAST 5
       //     (lowest-trust) items — so a non-positive/non-int `limit` falls back to the ceiling.
-      const ceiling = deps.dialecticMaxRecall ?? DIALECTIC_DEFAULT_MAX_RECALL;
+      const ceiling = deps.dialecticMaxRecall?.(agentId) ?? DIALECTIC_DEFAULT_MAX_RECALL;
       const requested = params.limit;
       const cap =
         typeof requested === "number" && Number.isInteger(requested) && requested > 0
@@ -242,10 +242,11 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         })
         .join("\n");
 
-      // The ONE allowed query-time LLM (the injected Plan-02 seam). It returns
-      // the raw parse (or abstains non-fatally); the code-level abstention +
-      // citation validation run AROUND it in assembleSynthesis.
-      const parsed = await deps.dialecticSeam(question, groundingText);
+      // The ONE allowed query-time LLM (the injected Plan-02 seam). CR-04: pass the invoking
+      // agentId so the seam synthesizes with THAT agent's own cheap model/key/token bound. It
+      // returns the raw parse (or abstains non-fatally); the code-level abstention + citation
+      // validation run AROUND it in assembleSynthesis.
+      const parsed = await deps.dialecticSeam(agentId, question, groundingText);
 
       // Assemble: abstain-in-code (parser-abstain / no validated citation) OR a
       // grounded answer with citations VALIDATED ⊆ the recalled ids (bogus
