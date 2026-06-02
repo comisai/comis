@@ -1801,6 +1801,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // createMcpHandlers / _resetSigusr1Timer precedents above).
       "persistMcpServers",
       "PersistMcpResult",
+      // Auth handlers: auth.set / auth.list / auth.logout RPC handler factory
+      // + deps type. Re-exported so the auth-set-encrypted integration test
+      // (test/integration/auth-set-encrypted.test.ts) can drive the real
+      // admin-gated auth.set handler against a mock OAuthCredentialStorePort,
+      // proving the REQ-05 round-trip + residency invariant (no plaintext
+      // token bytes in responses / logs / audit) without spinning up a full
+      // daemon. Same rationale as createContextHandlers + createMemoryHandlers:
+      // public-export-consumers AST walker excludes test/** so this orphan
+      // list is the canonical place to record the planned test consumer.
+      "createAuthHandlers",
+      "AuthHandlerDeps",
     ])],
     // @comis/gateway: baseline orphans tracked here.
     // mTLS auth surface (validateCertificates, extractClientCN, CertPaths) is
