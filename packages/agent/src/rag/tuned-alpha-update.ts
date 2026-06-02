@@ -85,8 +85,21 @@ const STEP = 0.05;
  * Clamp an alpha to `[ALPHA_MIN, ALPHA_MAX]` (the score.ts proofNorm
  * `Math.min(1, Math.max(0, x))` idiom). The runaway guard (Pitfall 2): a
  * pathological gradient can never push the result out of range.
+ *
+ * TOTAL clamp (MR-01): a non-finite input (`NaN` / `±Infinity`) is coerced to
+ * `ALPHA_MIN` so the documented `[0, 1]` invariant holds UNCONDITIONALLY. The bare
+ * `Math.min(1, Math.max(0, x))` returns `NaN` for a `NaN` input (`Math.max(0, NaN)
+ * === NaN`), and a `NaN` alpha collapses the recall score
+ * (`base * (1 + NaN*…) → NaN`, sorting ill-defined). `ALPHA_MIN` (0) is the
+ * conservative "neutralize the boost" choice — it removes the boost rather than
+ * granting a degenerate one (the same direction `-Infinity` already mapped to).
+ * No `NaN` reaches here in production (every upstream input source rejects it —
+ * `z.number()` read-back, count-derived gradients, config min/max), but the
+ * function is exported and the invariant is credited in the module + port JSDoc,
+ * so the defense lives in the clamp itself, not only upstream.
  */
 function clampAlpha(x: number): number {
+  if (!Number.isFinite(x)) return ALPHA_MIN;
   return Math.min(ALPHA_MAX, Math.max(ALPHA_MIN, x));
 }
 
