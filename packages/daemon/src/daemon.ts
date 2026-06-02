@@ -128,6 +128,7 @@ import {
   setupChannels,
   createInteractiveCallbackWiring,
   setupMedia,
+  createImageGenGetter,
   setupCrossSession,
   setupTools,
   setupMonitoring,
@@ -165,7 +166,6 @@ import {
 import { createModelCatalog, resolveWorkspaceDir } from "@comis/core";
 import {
   createFileStateTracker,
-  createImageGenProvider,
   createImageGenRateLimiter,
   detectSandboxProvider,
   createTokenStore as defaultCreateMcpTokenStore,
@@ -2287,22 +2287,18 @@ async function bootChannels(boot: BootContext): Promise<void> {
   // because setupTools consumes both as direct inputs).
   const sandboxProvider = detectSandboxProvider(skillsLogger);
   if (sandboxProvider) skillsLogger.info({ provider: sandboxProvider.name }, "Exec sandbox provider detected");
-  // Inlined buildImageGenBundle: image-generation provider + rate limiter + config.
+  // Inlined buildImageGenBundle: image-generation provider (lazy getter) + rate limiter + config.
+  // Phase 6 (REQ-13): lazy getter re-reads secretManager on each call so key rotation is live.
   const imageGenConfig = container.config.integrations.media.imageGeneration;
-  const imageGenResult = createImageGenProvider(imageGenConfig, container.secretManager);
-  const imageGenProvider = imageGenResult.ok ? imageGenResult.value : undefined;
+  const getImageGenProvider = createImageGenGetter(imageGenConfig, container.secretManager);
+  const imageGenProvider = getImageGenProvider(); // boot-time probe for rate-limiter + logging
   const imageGenRateLimiter = imageGenProvider
     ? createImageGenRateLimiter({ maxPerHour: imageGenConfig.maxPerHour })
     : undefined;
   if (imageGenProvider) {
     skillsLogger.info({ provider: imageGenConfig.provider }, "Image generation provider initialized");
-  } else if (imageGenResult.ok) {
-    skillsLogger.debug("Image generation disabled: API key not configured");
   } else {
-    skillsLogger.warn(
-      { err: imageGenResult.error, hint: "Check image generation config provider value", errorKind: "config" as const },
-      "Image generation provider creation failed",
-    );
+    skillsLogger.debug("Image generation disabled: API key not configured or provider unknown");
   }
 
   // 6.6.8.5. Tools + message preprocessing — HOISTED above setupChannels.

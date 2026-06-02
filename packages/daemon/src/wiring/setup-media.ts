@@ -8,11 +8,12 @@
  * @module
  */
 
-import type { AppContainer, TTSPort, TranscriptionPort, VisionProvider, FileExtractionPort, WrapExternalContentOptions } from "@comis/core";
+import type { AppContainer, TTSPort, TranscriptionPort, VisionProvider, FileExtractionPort, WrapExternalContentOptions, SecretManager, ImageGenerationConfig, TranscriptionConfig, TtsConfig } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import {
   createTTSProvider,
   createSTTProvider,
+  createImageGenProvider,
   createFallbackTranscription,
   createVisionProviderRegistry,
   selectVisionProvider,
@@ -62,6 +63,60 @@ export interface MediaResult {
   /** File extractor for document attachment processing (optional -- disabled by config). */
   fileExtractor?: FileExtractionPort;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 6 (REQ-13): lazy per-call factory functions for boot-snapshot consumer conversion.
+//
+// These factories return a fresh provider on each call by re-reading
+// secretManager.get() at invocation time rather than snapshotting the key at
+// construction time. After secret rotation the next call observes the new value
+// without requiring a daemon restart.
+// ---------------------------------------------------------------------------
+
+/**
+ * Return a lazy getter that re-creates the STT provider on each call,
+ * reading the current secretManager state at invocation time.
+ * Satisfies the read-on-use invariant (REQ-13).
+ */
+export function createSTTProviderFactory(
+  config: TranscriptionConfig,
+  secretManager: SecretManager,
+): () => ReturnType<typeof createSTTProvider> {
+  return () => createSTTProvider(config, secretManager);
+}
+
+/**
+ * Return a lazy getter that re-creates the TTS provider on each call,
+ * reading the current secretManager state at invocation time.
+ * Satisfies the read-on-use invariant (REQ-13).
+ */
+export function createTTSProviderFactory(
+  config: TtsConfig,
+  secretManager: SecretManager,
+): () => ReturnType<typeof createTTSProvider> {
+  return () => createTTSProvider(config, secretManager);
+}
+
+/**
+ * Return a lazy getter that re-creates the image-generation provider on each
+ * call, reading the current secretManager state at invocation time.
+ * Returns undefined when the required API key is absent or config is missing
+ * (graceful degradation). Unwraps the Result returned by createImageGenProvider.
+ * Satisfies the read-on-use invariant (REQ-13).
+ */
+export function createImageGenProviderFactory(
+  imageGenConfig: ImageGenerationConfig | undefined,
+  secretManager: SecretManager,
+): () => import("@comis/core").ImageGenerationPort | undefined {
+  if (!imageGenConfig) return () => undefined;
+  return () => {
+    const r = createImageGenProvider(imageGenConfig, secretManager);
+    return r.ok ? r.value ?? undefined : undefined;
+  };
+}
+
+/** Alias for createImageGenProviderFactory — used by daemon.ts composition root. */
+export const createImageGenGetter = createImageGenProviderFactory;
 
 // ---------------------------------------------------------------------------
 // Setup function
