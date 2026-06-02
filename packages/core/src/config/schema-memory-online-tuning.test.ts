@@ -4,10 +4,13 @@ import { MemoryOnlineTuningConfigSchema } from "./schema-memory-online-tuning.js
 import { PerAgentConfigSchema, RagConfigSchema } from "./schema-agent/index.js";
 
 describe("MemoryOnlineTuningConfigSchema (LEARN-03 — the OFFLINE, KEYLESS bandit cron knob)", () => {
-  it("parses an empty object to the off-by-default bounded configuration", () => {
+  it("parses an empty object to the ON-by-default (v1 opt-out) bounded configuration", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: the bandit cron defaults ON (it is in the
+    // operator-facing cost-feature set, so still force-disabled by the kill switch). The bounded
+    // schedule + DoS-cap constants stay frozen.
     const result = MemoryOnlineTuningConfigSchema.parse({});
     expect(result).toEqual({
-      enabled: false,
+      enabled: true,
       // AFTER the usefulness judge's "0 7" so the FEED signal the bandit reads is
       // fully settled (the judge's recordUsage write, if enabled, has run).
       schedule: "0 8 * * *",
@@ -15,8 +18,8 @@ describe("MemoryOnlineTuningConfigSchema (LEARN-03 — the OFFLINE, KEYLESS band
     });
   });
 
-  it("defaults enabled to false (the bandit is opt-in — no back-compat fallback)", () => {
-    expect(MemoryOnlineTuningConfigSchema.parse({}).enabled).toBe(false);
+  it("defaults enabled to true (v1 opt-out posture; gated by the master cost-feature kill switch)", () => {
+    expect(MemoryOnlineTuningConfigSchema.parse({}).enabled).toBe(true);
   });
 
   it("defaults the per-run INPUT bound (maxSourceMemories — the FEED-read candidate cap)", () => {
@@ -53,9 +56,12 @@ describe("MemoryOnlineTuningConfigSchema (LEARN-03 — the OFFLINE, KEYLESS band
 });
 
 describe("RagConfigSchema onlineTuning field (the recall-side apply gate)", () => {
-  it("defaults rag.onlineTuning.enabled to false (OFF ⇒ no tuned-store read, byte-identical recall)", () => {
+  it("defaults rag.onlineTuning.enabled to true (v1 opt-out posture; the $0 recall-side apply gate)", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: the recall-side APPLY gate is $0 at recall (a gated
+    // read of the on-device tuned-alpha store), default-ON. It is neutral until the OFFLINE bandit
+    // (`memoryOnlineTuning`) writes a tuned vector; trust stays config-sourced (belt #2).
     const result = RagConfigSchema.parse({});
-    expect(result.onlineTuning).toEqual({ enabled: false });
+    expect(result.onlineTuning).toEqual({ enabled: true });
   });
 
   it("accepts rag.onlineTuning.enabled = true", () => {
@@ -76,8 +82,12 @@ describe("PerAgentConfigSchema memoryOnlineTuning field", () => {
     expect(result.memoryOnlineTuning!.enabled).toBe(true);
   });
 
-  it("treats memoryOnlineTuning as optional (absent on a bare config — byte-identical default)", () => {
+  it("defaults memoryOnlineTuning ON for a bare config (v1 opt-out posture; kill-switch-gated)", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: the bandit cron subtree is no longer `.optional()`;
+    // a bare config gets it populated + enabled. The master cost-feature kill switch still
+    // force-disables it at the cron-registration site when off.
     const result = PerAgentConfigSchema.parse({});
-    expect(result.memoryOnlineTuning).toBeUndefined();
+    expect(result.memoryOnlineTuning).toBeDefined();
+    expect(result.memoryOnlineTuning!.enabled).toBe(true);
   });
 });

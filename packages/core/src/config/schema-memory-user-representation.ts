@@ -32,8 +32,10 @@ import { z } from "zod";
  *   prompt can never silently fail the build (the same DoS-bound intent on the read axis)
  */
 export const MemoryUserRepresentationConfigSchema = z.strictObject({
-  /** Enable the periodic per-user profile build for this agent. Default: false (cost opt-in). */
-  enabled: z.boolean().default(false),
+  /** Enable the periodic per-user profile build for this agent. Default: true (v1 opt-out
+   *  posture, v2.9 increment 2). A COST feature — force-disabled when
+   *  `memory.costFeatures.enabled: false`. */
+  enabled: z.boolean().default(true),
   /** Cron schedule for profile builds. Default: daily at 05:00 UTC (after reasoning's 04:00). */
   schedule: z.string().default("0 5 * * *"),
   /** Maximum profile entries written per run (the DoS cost bound, write axis). */

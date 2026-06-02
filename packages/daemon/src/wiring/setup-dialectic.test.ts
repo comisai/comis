@@ -151,11 +151,15 @@ describe("buildDialecticWiring (Phase 109 — the dialectic seam + recall builde
     expect(wiring.buildDialecticRecall, "no recall builder when disabled").toBeUndefined();
   });
 
-  it("Test 3b: dialectic block ABSENT entirely ⇒ returns {} (default-OFF byte-identity)", () => {
+  it("Test 3b: dialectic block ABSENT ⇒ schema default-ON (v1 opt-out) ⇒ LIVE wiring", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: an omitted dialectic block now parses to the
+    // schema default `{ enabled: true, ... }` (makeAgentConfig parses through PerAgentConfigSchema),
+    // so a bare agent gets a LIVE memory_ask seam. The explicit-OFF off-path is guarded by Test 3
+    // (enabled:false ⇒ {}) and the kill-switch off-path by Test 6 (costFeatures off ⇒ {}).
     const deps = makeDeps({ agentConfig: makeAgentConfig(), key: "test-key-value" });
     const wiring = buildDialecticWiring(deps);
-    expect(wiring.dialecticSeam).toBeUndefined();
-    expect(wiring.buildDialecticRecall).toBeUndefined();
+    expect(wiring.dialecticSeam, "default-ON dialectic yields a live seam").toBeDefined();
+    expect(wiring.buildDialecticRecall).toBeDefined();
   });
 
   it("Test 4 (forward-presence belt): the wiring PRODUCES the deps AND daemon.ts SPREADS them into the dispatch-deps object", () => {

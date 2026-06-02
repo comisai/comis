@@ -24,10 +24,13 @@ import { DialecticConfigSchema } from "./schema-dialectic.js";
 import { PerAgentConfigSchema } from "./schema-agent/schema-agent-runtime.js";
 
 describe("DialecticConfigSchema", () => {
-  it("defaults every field with enabled:false (the cost gate — default-OFF)", () => {
+  it("defaults every field with enabled:true (v1 opt-out posture; kill-switch-gated cost feature)", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: memory_ask defaults ON. It is a COST feature (the one
+    // query-time LLM surface), so the master cost-feature kill switch still force-disables it at
+    // the dialectic-wiring layer. The DoS cost bounds stay frozen.
     const parsed = DialecticConfigSchema.parse({});
     expect(parsed).toEqual({
-      enabled: false,
+      enabled: true,
       maxOutputTokens: 1024,
       maxRecall: 10,
     });
@@ -60,10 +63,12 @@ describe("PerAgentConfigSchema dialectic registration", () => {
     });
   });
 
-  it("accepts a per-agent config that omits dialectic entirely (it is .optional())", () => {
+  it("defaults dialectic ON for a config that omits it (v1 opt-out posture; kill-switch-gated)", () => {
+    // v2.9 increment 2 — the knob is no longer `.optional()`; a bare config gets it populated +
+    // enabled. The master cost-feature kill switch still force-disables memory_ask at the wiring
+    // layer (buildDialecticWiring returns the dead `{}` when costFeatures is off).
     const parsed = PerAgentConfigSchema.parse({});
-    // The knob is optional — omitting it leaves it undefined (no existing
-    // default changed; the only behavior change is a NEW optional block).
-    expect(parsed.dialectic).toBeUndefined();
+    expect(parsed.dialectic).toBeDefined();
+    expect(parsed.dialectic!.enabled).toBe(true);
   });
 });

@@ -36,8 +36,9 @@ import { z } from "zod";
  * is deferred; this phase is create-only.
  */
 export const MemoryConsolidationConfigSchema = z.strictObject({
-  /** Enable periodic consolidation for this agent. Default: false (cost opt-in, CONS-07). */
-  enabled: z.boolean().default(false),
+  /** Enable periodic consolidation for this agent. Default: true (v1 opt-out posture, v2.9
+   *  increment 2). A COST feature — force-disabled when `memory.costFeatures.enabled: false`. */
+  enabled: z.boolean().default(true),
   /** Cron schedule for consolidation runs. Default: daily at 03:30 UTC (after review's 02:00). */
   schedule: z.string().default("30 3 * * *"),
   /** Cluster-neighbour cosine threshold (0-1) for greedy single-link clustering. */

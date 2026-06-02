@@ -364,22 +364,32 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   deferredTools: DeferredToolsConfigSchema.optional(),
   /** Background tasks configuration (auto-promotion of long tool calls) */
   backgroundTasks: BackgroundTasksConfigSchema.optional(),
-  /** Periodic memory review configuration (session history extraction) */
-  memoryReview: MemoryReviewConfigSchema.optional(),
-  /** Periodic memory consolidation configuration (observation clustering, Phase 84; off by default) */
-  memoryConsolidation: MemoryConsolidationConfigSchema.optional(),
-  /** Periodic memory reasoning configuration (deductive/inductive observations, Phase 101; off by default) */
-  memoryReasoning: MemoryReasoningConfigSchema.optional(),
-  /** Periodic per-user representation profile-builder configuration (Phase 107; off by default) */
-  memoryUserRepresentation: MemoryUserRepresentationConfigSchema.optional(),
-  /** Directional relationship-modeling configuration (Phase 108; off by default, gated on a recorded privacy-review sign-off) */
+  /** Periodic memory review configuration (session history extraction). v1 opt-out posture (v2.9
+   *  increment 2): default-ON. A COST feature — force-disabled at its registration site when the
+   *  master kill switch `memory.costFeatures.enabled` is false. */
+  memoryReview: MemoryReviewConfigSchema.default(() => MemoryReviewConfigSchema.parse({})),
+  /** Periodic memory consolidation configuration (observation clustering, Phase 84). v1 opt-out
+   *  posture: default-ON; a COST feature gated by the kill switch at its registration site. */
+  memoryConsolidation: MemoryConsolidationConfigSchema.default(() => MemoryConsolidationConfigSchema.parse({})),
+  /** Periodic memory reasoning configuration (deductive/inductive observations, Phase 101). v1
+   *  opt-out posture: default-ON; a COST feature gated by the kill switch at its registration site. */
+  memoryReasoning: MemoryReasoningConfigSchema.default(() => MemoryReasoningConfigSchema.parse({})),
+  /** Periodic per-user representation profile-builder configuration (Phase 107). v1 opt-out
+   *  posture: default-ON; a COST feature gated by the kill switch at its registration site. */
+  memoryUserRepresentation: MemoryUserRepresentationConfigSchema.default(() => MemoryUserRepresentationConfigSchema.parse({})),
+  /** Directional relationship-modeling configuration (Phase 108; STAYS OFF — privacy/consent gate
+   *  `privacyReviewSignedOffBy`, NOT flipped by the v1 opt-out posture). */
   socialModeling: SocialModelingConfigSchema.optional(),
-  /** memory_ask grounded-Q&A tool config; Phase 109; off by default — the ONE allowed query-time LLM surface */
-  dialectic: DialecticConfigSchema.optional(),
-  /** Offline usefulness-judge configuration (Phase 110, LEARN-02 optional; off by default — an OFFLINE cron, never the recall path) */
-  memoryUsefulnessJudge: MemoryUsefulnessJudgeConfigSchema.optional(),
-  /** Offline tuned-alpha bandit cron (Phase 111, LEARN-03; off by default — an OFFLINE, DETERMINISTIC, KEYLESS cron, never the recall path) */
-  memoryOnlineTuning: MemoryOnlineTuningConfigSchema.optional(),
+  /** memory_ask grounded-Q&A tool config; Phase 109 — the ONE allowed query-time LLM surface. v1
+   *  opt-out posture: default-ON; a COST feature gated by the kill switch at its registration site. */
+  dialectic: DialecticConfigSchema.default(() => DialecticConfigSchema.parse({})),
+  /** Offline usefulness-judge configuration (Phase 110, LEARN-02 — an OFFLINE cron, never the
+   *  recall path). v1 opt-out posture: default-ON; a COST feature gated by the kill switch. */
+  memoryUsefulnessJudge: MemoryUsefulnessJudgeConfigSchema.default(() => MemoryUsefulnessJudgeConfigSchema.parse({})),
+  /** Offline tuned-alpha bandit cron (Phase 111, LEARN-03 — an OFFLINE, DETERMINISTIC, KEYLESS
+   *  cron, never the recall path). v1 opt-out posture: default-ON; in the operator-facing
+   *  cost-feature set, so gated by the kill switch at its registration site. */
+  memoryOnlineTuning: MemoryOnlineTuningConfigSchema.default(() => MemoryOnlineTuningConfigSchema.parse({})),
   /** SCAFFOLD-DORMANT memory-lifecycle sweep cron (Phase 112, FORGET-02; off by default — a KEYLESS cron that evicts/demotes NOTHING until the deferred live policy lands, OD4) */
   memoryLifecycle: MemoryLifecycleConfigSchema.optional(),
   /**

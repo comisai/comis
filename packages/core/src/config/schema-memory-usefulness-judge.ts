@@ -39,8 +39,10 @@ import { z } from "zod";
  *   read axis)
  */
 export const MemoryUsefulnessJudgeConfigSchema = z.strictObject({
-  /** Enable the periodic offline usefulness judge for this agent. Default: false (cost opt-in). */
-  enabled: z.boolean().default(false),
+  /** Enable the periodic offline usefulness judge for this agent. Default: true (v1 opt-out
+   *  posture, v2.9 increment 2). A COST feature — force-disabled when
+   *  `memory.costFeatures.enabled: false`. */
+  enabled: z.boolean().default(true),
   /** Cron schedule for judge runs. Default: daily at 07:00 UTC (after social's 06:00). */
   schedule: z.string().default("0 7 * * *"),
   /** INPUT bound: max recalled memories fed into one judge prompt (newest-first). */

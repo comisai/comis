@@ -44,8 +44,10 @@ import { z } from "zod";
  * (T-109-01 / T-109-04).
  */
 export const DialecticConfigSchema = z.strictObject({
-  /** Enable the `memory_ask` grounded-Q&A tool for this agent. Default: false (a COST opt-in — it makes a query-time LLM call). */
-  enabled: z.boolean().default(false),
+  /** Enable the `memory_ask` grounded-Q&A tool for this agent. Default: true (v1 opt-out posture,
+   *  v2.9 increment 2). A COST feature (it makes the one query-time LLM call) — force-disabled
+   *  when `memory.costFeatures.enabled: false`. */
+  enabled: z.boolean().default(true),
   /** Per-ask synthesis-LLM output bound (the cost axis — the DoS bound on one answer). */
   maxOutputTokens: z.number().int().positive().default(1024),
   /** Recall pool size the dialectic synthesizes over (the grounding set — the DoS bound on the LLM input). */

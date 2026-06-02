@@ -4,10 +4,12 @@ import { MemoryConsolidationConfigSchema } from "./schema-memory-consolidation.j
 import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 describe("MemoryConsolidationConfigSchema", () => {
-  it("parses an empty object to the off-by-default bounded configuration", () => {
+  it("parses an empty object to the ON-by-default (v1 opt-out) bounded configuration", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: consolidation defaults ON (a COST feature, still
+    // force-disabled by the master kill switch). All bounded tuning constants stay frozen.
     const result = MemoryConsolidationConfigSchema.parse({});
     expect(result).toEqual({
-      enabled: false,
+      enabled: true,
       schedule: "30 3 * * *",
       similarityThreshold: 0.82,
       dedupThreshold: 0.9,
@@ -20,8 +22,8 @@ describe("MemoryConsolidationConfigSchema", () => {
     });
   });
 
-  it("defaults enabled to false (consolidation is opt-in, a cost gate not back-compat)", () => {
-    expect(MemoryConsolidationConfigSchema.parse({}).enabled).toBe(false);
+  it("defaults enabled to true (v1 opt-out posture; gated by the master cost-feature kill switch)", () => {
+    expect(MemoryConsolidationConfigSchema.parse({}).enabled).toBe(true);
   });
 
   it("overrides only the specified fields and keeps the rest at defaults", () => {
@@ -60,8 +62,11 @@ describe("PerAgentConfigSchema memoryConsolidation field", () => {
     expect(result.memoryConsolidation!.enabled).toBe(true);
   });
 
-  it("treats memoryConsolidation as optional (absent on a bare config)", () => {
+  it("defaults memoryConsolidation ON for a bare config (v1 opt-out posture; kill-switch-gated)", () => {
+    // v2.9 increment 2 — the subtree is no longer `.optional()`; a bare config gets it populated
+    // + enabled. The master cost-feature kill switch still force-disables it at the cron site.
     const result = PerAgentConfigSchema.parse({});
-    expect(result.memoryConsolidation).toBeUndefined();
+    expect(result.memoryConsolidation).toBeDefined();
+    expect(result.memoryConsolidation!.enabled).toBe(true);
   });
 });

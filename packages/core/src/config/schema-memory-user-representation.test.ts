@@ -4,10 +4,12 @@ import { MemoryUserRepresentationConfigSchema } from "./schema-memory-user-repre
 import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 describe("MemoryUserRepresentationConfigSchema", () => {
-  it("parses an empty object to the off-by-default bounded configuration", () => {
+  it("parses an empty object to the ON-by-default (v1 opt-out) bounded configuration", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: the per-user profile build defaults ON (a COST
+    // feature, still force-disabled by the master kill switch). Bounded tuning constants frozen.
     const result = MemoryUserRepresentationConfigSchema.parse({});
     expect(result).toEqual({
-      enabled: false,
+      enabled: true,
       schedule: "0 5 * * *",
       maxEntriesPerRun: 50,
       // MR-02 per-build INPUT bounds (default-bounded so the prompt is never unbounded).
@@ -28,8 +30,8 @@ describe("MemoryUserRepresentationConfigSchema", () => {
     expect(() => MemoryUserRepresentationConfigSchema.parse({ maxSourceMemories: 1.5 })).toThrow();
   });
 
-  it("defaults enabled to false (the per-user profile build is opt-in, a cost gate not back-compat)", () => {
-    expect(MemoryUserRepresentationConfigSchema.parse({}).enabled).toBe(false);
+  it("defaults enabled to true (v1 opt-out posture; gated by the master cost-feature kill switch)", () => {
+    expect(MemoryUserRepresentationConfigSchema.parse({}).enabled).toBe(true);
   });
 
   it("overrides only the specified fields and keeps the rest at the bounded defaults", () => {
@@ -66,8 +68,11 @@ describe("PerAgentConfigSchema memoryUserRepresentation field", () => {
     expect(result.memoryUserRepresentation!.enabled).toBe(true);
   });
 
-  it("treats memoryUserRepresentation as optional (absent on a bare config)", () => {
+  it("defaults memoryUserRepresentation ON for a bare config (v1 opt-out posture; kill-switch-gated)", () => {
+    // v2.9 increment 2 — the subtree is no longer `.optional()`; a bare config gets it populated
+    // + enabled. The master cost-feature kill switch still force-disables it at the cron site.
     const result = PerAgentConfigSchema.parse({});
-    expect(result.memoryUserRepresentation).toBeUndefined();
+    expect(result.memoryUserRepresentation).toBeDefined();
+    expect(result.memoryUserRepresentation!.enabled).toBe(true);
   });
 });

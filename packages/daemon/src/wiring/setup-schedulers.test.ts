@@ -1039,6 +1039,62 @@ describe("setupSchedulers", () => {
     }
   });
 
+  /**
+   * v2.9 increment 2 — KILL SWITCH BEATS DEFAULT-ON. The cost-bearing memory
+   * subtrees now default `{ enabled: true }` at the schema level (the v1 opt-out
+   * posture). A real daemon parses the config, so every cost subtree arrives
+   * present + enabled WITHOUT the operator opting in. This agent mirrors that
+   * PARSED-default shape (the cron subtrees populated + enabled, exactly as
+   * PerAgentConfigSchema.parse({}) now yields — @comis/core is mocked here so the
+   * default object is constructed inline). With the kill switch OFF, NOT ONE cost
+   * cron may register — proving the kill switch wins over the new default-ON.
+   */
+  function defaultOnParsedAgent() {
+    return {
+      name: "Agent 1",
+      skills: { builtinTools: { browser: false } },
+      session: { resetPolicy: { mode: "none" } },
+      scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+      // The post-flip PARSED defaults: each cost subtree present + enabled with no opt-in.
+      memoryReview: { enabled: true, schedule: "0 2 * * *" },
+      memoryConsolidation: { enabled: true, schedule: "30 3 * * *" },
+      memoryReasoning: { enabled: true, schedule: "0 4 * * *" },
+      memoryUserRepresentation: { enabled: true, schedule: "0 5 * * *" },
+      memoryUsefulnessJudge: { enabled: true, schedule: "0 7 * * *" },
+      memoryOnlineTuning: { enabled: true, schedule: "0 8 * * *" },
+    };
+  }
+
+  it("KILL SWITCH BEATS DEFAULT-ON: with the now-default-ON cost subtrees, costFeatures:false registers NO cost cron", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    // Default-ON subtrees (no explicit operator opt-in) + kill switch OFF.
+    await setupSchedulers(depsWithCostSwitch({ "agent-1": defaultOnParsedAgent() }, false));
+
+    const addedSentinels = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    for (const sentinel of COST_CRON_SENTINELS) {
+      expect(
+        addedSentinels,
+        `${sentinel} must NOT register when the kill switch is off, even though the per-agent default is ON`,
+      ).not.toContain(sentinel);
+    }
+  });
+
+  it("KILL SWITCH ON (default): the now-default-ON cost subtrees DO register every cost cron (opt-out posture live)", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    // Same default-ON subtrees + kill switch ON → every cost cron registers without any opt-in.
+    await setupSchedulers(depsWithCostSwitch({ "agent-1": defaultOnParsedAgent() }, true));
+
+    const addedSentinels = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    for (const sentinel of COST_CRON_SENTINELS) {
+      expect(
+        addedSentinels,
+        `${sentinel} must register by default (v1 opt-out) when the kill switch is on`,
+      ).toContain(sentinel);
+    }
+  });
+
   it("leaves the $0 lifecycle sweep and the privacy-gated social cron UNAFFECTED by the cost kill switch", async () => {
     const { addJob } = withRegistrableScheduler();
     const setupSchedulers = await getSetupSchedulers();

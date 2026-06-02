@@ -23,8 +23,9 @@ import { z } from "zod";
  * - autoTags: extra tags applied to extracted memories
  */
 export const MemoryReviewConfigSchema = z.strictObject({
-  /** Enable periodic memory review for this agent. Default: false (opt-in). */
-  enabled: z.boolean().default(false),
+  /** Enable periodic memory review for this agent. Default: true (v1 opt-out posture, v2.9
+   *  increment 2). A COST feature — force-disabled when `memory.costFeatures.enabled: false`. */
+  enabled: z.boolean().default(true),
   /** Cron schedule for review runs. Default: daily at 2 AM UTC. */
   schedule: z.string().default("0 2 * * *"),
   /** Minimum messages in a session to qualify for review. */

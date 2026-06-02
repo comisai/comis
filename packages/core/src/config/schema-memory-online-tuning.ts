@@ -48,8 +48,10 @@ import { z } from "zod";
  *   full history (the same DoS-bound intent as the judge's read axis).
  */
 export const MemoryOnlineTuningConfigSchema = z.strictObject({
-  /** Enable the periodic OFFLINE tuned-alpha bandit for this agent. Default: false (opt-in). */
-  enabled: z.boolean().default(false),
+  /** Enable the periodic OFFLINE tuned-alpha bandit for this agent. Default: true (v1 opt-out
+   *  posture, v2.9 increment 2). Keyless/deterministic, but in the operator-facing cost-feature
+   *  set — force-disabled when `memory.costFeatures.enabled: false` for a single off-switch. */
+  enabled: z.boolean().default(true),
   /** Cron schedule for bandit runs. Default: daily at 08:00 UTC (AFTER the judge's 07:00). */
   schedule: z.string().default("0 8 * * *"),
   /** INPUT bound: max recent candidate memories whose FEED signal is read per run. */

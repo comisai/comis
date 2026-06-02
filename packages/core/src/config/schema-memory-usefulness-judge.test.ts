@@ -4,10 +4,12 @@ import { MemoryUsefulnessJudgeConfigSchema } from "./schema-memory-usefulness-ju
 import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 describe("MemoryUsefulnessJudgeConfigSchema", () => {
-  it("parses an empty object to the off-by-default bounded configuration", () => {
+  it("parses an empty object to the ON-by-default (v1 opt-out) bounded configuration", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: the offline usefulness judge defaults ON (a COST
+    // feature, still force-disabled by the master kill switch). Bounded tuning constants frozen.
     const result = MemoryUsefulnessJudgeConfigSchema.parse({});
     expect(result).toEqual({
-      enabled: false,
+      enabled: true,
       // AFTER social's "0 6" so the judge scores over a fully-settled night
       // (review/consolidation/reasoning/user-repr/social have all run).
       schedule: "0 7 * * *",
@@ -16,8 +18,8 @@ describe("MemoryUsefulnessJudgeConfigSchema", () => {
     });
   });
 
-  it("defaults enabled to false (the offline judge is opt-in — a cost gate, not back-compat)", () => {
-    expect(MemoryUsefulnessJudgeConfigSchema.parse({}).enabled).toBe(false);
+  it("defaults enabled to true (v1 opt-out posture; gated by the master cost-feature kill switch)", () => {
+    expect(MemoryUsefulnessJudgeConfigSchema.parse({}).enabled).toBe(true);
   });
 
   it("defaults the per-run INPUT bounds (maxSourceMemories / maxSourceChars)", () => {
@@ -56,8 +58,11 @@ describe("PerAgentConfigSchema memoryUsefulnessJudge field", () => {
     expect(result.memoryUsefulnessJudge!.enabled).toBe(true);
   });
 
-  it("treats memoryUsefulnessJudge as optional (absent on a bare config — byte-identical default)", () => {
+  it("defaults memoryUsefulnessJudge ON for a bare config (v1 opt-out posture; kill-switch-gated)", () => {
+    // v2.9 increment 2 — the subtree is no longer `.optional()`; a bare config gets it populated
+    // + enabled. The master cost-feature kill switch still force-disables it at the cron site.
     const result = PerAgentConfigSchema.parse({});
-    expect(result.memoryUsefulnessJudge).toBeUndefined();
+    expect(result.memoryUsefulnessJudge).toBeDefined();
+    expect(result.memoryUsefulnessJudge!.enabled).toBe(true);
   });
 });
