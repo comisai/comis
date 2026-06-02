@@ -213,6 +213,7 @@ import { logOperationModelDryRun } from "./wiring/startup-dry-run.js";
 import { emitDockerRestartPolicyWarn } from "./setup-docker-restart-warn.js";
 import { hasAnyOAuthAgent, emitOAuthTlsPreflightWarn } from "./wiring/oauth-preflight.js";
 import { emitStartupInvariants } from "./wiring/setup-startup-invariants.js";
+import { checkStorageModeConsistency } from "./wiring/setup-storage-mismatch-warn.js";
 import { buildPlaceholdersFromBindings } from "./wiring/broker-placeholder-builder.js";
 import os from "node:os";
 import { dirname as pathDirname } from "node:path";
@@ -2855,6 +2856,7 @@ async function bootShutdown(
     alertBudgetPolicy: container.config.observability?.alertBudget,
     eventBus: container.eventBus,
   });
+  checkStorageModeConsistency({ logger: daemonLogger, activeMode: boot.container.config.security.storage, dataDir: boot.dataDir, secretsDb: boot.secretsDb });
 
   // Snapshot current config as last-known-good after successful startup.
   // Honor diagnostics.configAudit.enabled.
