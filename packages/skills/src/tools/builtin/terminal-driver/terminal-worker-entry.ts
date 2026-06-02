@@ -36,6 +36,7 @@
  */
 
 import { spawn as childSpawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import {
   writeFileSync as fsWriteFileSync,
@@ -220,14 +221,50 @@ const defaultFsPort: WorkerFsPort = {
 };
 
 // ---------------------------------------------------------------------------
+// Inbound-context validation (LR-01)
+// ---------------------------------------------------------------------------
+
+/** UUID (8-4-4-4-12 hex) shape — matches `RequestContextSchema.traceId` (`z.guid()`). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Sanitize the inbound wire `traceId` before it becomes the ALS context (LR-01).
+ *
+ * `runWithContext` does NOT validate against `RequestContextSchema` (whose
+ * `traceId` is `z.guid()`), so an arbitrary/attacker-chosen traceId off the wire
+ * would be stamped onto every worker log line — log-correlation poisoning (a
+ * forged id stitches worker logs to an unrelated turn). We accept a valid UUID
+ * verbatim (legitimate correlation preserved) and otherwise REGENERATE a fresh
+ * id rather than trusting the wire. The caller logs the substitution.
+ */
+function sanitizeTraceId(wire: unknown): { traceId: string; regenerated: boolean } {
+  if (typeof wire === "string" && UUID_RE.test(wire)) {
+    return { traceId: wire, regenerated: false };
+  }
+  return { traceId: randomUUID(), regenerated: true };
+}
+
+/**
+ * The least-privileged trust level the worker context runs under (LR-01).
+ *
+ * The worker performs NO authorization decisions — it only spawns from the
+ * already-gated `{bin,argv}` and renders read views. An unconditional
+ * `trustLevel:"admin"` was a latent trust-elevation foothold for any future
+ * worker-side code that consults `getContext().trustLevel`; `guest` (least
+ * privilege) removes it. Worker code MUST NOT make trust decisions — authz lives
+ * entirely on the daemon side, before the create frame is ever sent.
+ */
+const WORKER_TRUST_LEVEL = "guest" as const;
+
+// ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
 
 /**
  * Create a Terminal Worker. The per-session backend + ring map is CLOSURE-local
  * — there is no module-global mutable state. Each `handle(frame)` re-establishes
- * the frame's `traceId` as the ALS context (OPS-07) so worker logs correlate to
- * the originating turn, then dispatches by `frame.method`.
+ * a VALIDATED `traceId` as the ALS context (OPS-07 / LR-01) so worker logs
+ * correlate to the originating turn, then dispatches by `frame.method`.
  */
 export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   // Closure-local — NOT module scope (no module-global mutable state).
@@ -394,12 +431,23 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       // OPS-07: re-establish the originating traceId as the ALS context so the
       // bound logger's mixin carries it through worker handling. (ALS does not
       // cross the process boundary — it is re-established from the frame here.)
+      //
+      // LR-01: the wire traceId is VALIDATED (a non-UUID is regenerated, never
+      // trusted — log-correlation-poisoning defense) and the context runs at the
+      // least-privileged trust level (the worker makes no authz decisions).
+      const { traceId, regenerated } = sanitizeTraceId(frame.traceId);
+      if (regenerated) {
+        logger.warn(
+          { sessionId: frame.sessionId, method: frame.method, hint: "invalid wire traceId; regenerated", errorKind: "protocol" as const },
+          "terminal worker traceId sanitized",
+        );
+      }
       return runWithContext(
         {
           tenantId: "default",
-          traceId: frame.traceId,
+          traceId,
           startedAt: nowMs(),
-          trustLevel: "admin",
+          trustLevel: WORKER_TRUST_LEVEL,
         },
         () => dispatch(frame),
       );
