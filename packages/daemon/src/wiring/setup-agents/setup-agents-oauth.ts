@@ -113,6 +113,16 @@ export function wireAuthProvider(args: WireAuthProviderArgs): AuthProvider {
   // new OAuth profile via daemon RPC. The file-mode chokidar watcher already
   // handles this for file mode (no change to that path). Encrypted mode has
   // no watcher (watchPath: undefined above), so we subscribe here instead.
+  //
+  // INVARIANT (WR-02): This subscription is installed exactly ONCE per agentId.
+  // setup-agents-registry calls setupSingleAgent once per agentId at boot;
+  // createHotAdd (daemon.ts) only calls it for NEW agentIds that are not yet
+  // registered. If a future hot-reload path needs to re-invoke setupSingleAgent
+  // for an EXISTING agentId (e.g. a live config update), the old listener MUST
+  // be removed before installing the new one — failure to do so multiplies
+  // listeners on the shared container.eventBus for that authProvider, leaking
+  // references to the discarded instance. The caller must capture the unsubscribe
+  // handle returned by the on() call and call .off() on re-invocation.
   if (oauthStorageMode === "encrypted") {
     container.eventBus.on("auth:profile_added", () => {
       authProvider.oauth?.invalidate();
