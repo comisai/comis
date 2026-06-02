@@ -635,12 +635,15 @@ describe("RagConfigSchema", () => {
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.rerank", () => {
-  it("defaults reranking OFF with the Phase-79 candidate cap, timeout, and minResults", () => {
+  it("defaults reranking ON (v1 opt-out posture) with the Phase-79 candidate cap, timeout, and minResults", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture supersedes the Phase-79 default-OFF decision:
+    // rerank is a $0-at-recall capability, default-ON at the schema level. The daemon's
+    // EFFECTIVE-rerank precedence (raw pre-Zod signal + model-present) still governs the
+    // auto-on/download path, so a bare config does NOT force a 606MB download.
     const result = RagConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      // Phase-79 DECISION: reranking is opt-in (~777ms p95 @40 exceeds budget).
-      expect(result.data.rerank.enabled).toBe(false);
+      expect(result.data.rerank.enabled).toBe(true);
       expect(result.data.rerank.maxCandidates).toBe(40);
       expect(result.data.rerank.minResults).toBe(1);
       expect(result.data.rerank.timeoutMs).toBe(800);
@@ -832,13 +835,14 @@ describe("RagConfigSchema.lanes", () => {
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.lanes.temporal", () => {
-  it("defaults the temporal lane OFF with weight 1.0 / windowDays 7 (byte-identical to before this plan when absent)", () => {
+  it("defaults the temporal lane ON (v1 opt-out posture) with weight 1.0 / windowDays 7", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: the temporal-spread lane is $0 at recall, default-ON.
+    // It is neutral (the fused lanes are unchanged) whenever no top hit carries an occurred_at
+    // seed (the no-seed gate), so the byte-identity-when-no-event-data property still holds.
     const result = RagConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      // Default-OFF: no agent gets the temporal-spread lane without an explicit opt-in
-      // (a wrong default ships dormant — no surprise ranking change on upgrade, T-95-07).
-      expect(result.data.lanes.temporal.enabled).toBe(false);
+      expect(result.data.lanes.temporal.enabled).toBe(true);
       expect(result.data.lanes.temporal.weight).toBe(1.0);
       expect(result.data.lanes.temporal.windowDays).toBe(7);
     }
@@ -888,13 +892,14 @@ describe("RagConfigSchema.lanes.temporal", () => {
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.lanes.causal", () => {
-  it("defaults the causal lane OFF with weight 1.0 (byte-identical to before this plan when absent)", () => {
+  it("defaults the causal lane ON (v1 opt-out posture) with weight 1.0", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: the causal one-hop lane is $0 at recall, default-ON.
+    // It is neutral (the fused lanes are unchanged) whenever no causal edges exist (the empty-lane
+    // no-op), so the byte-identity-when-no-causal-data property still holds.
     const result = RagConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      // Default-OFF: no agent gets the causal lane without an explicit opt-in (a wrong
-      // default ships dormant — no surprise ranking change on upgrade, T-96-10).
-      expect(result.data.lanes.causal.enabled).toBe(false);
+      expect(result.data.lanes.causal.enabled).toBe(true);
       expect(result.data.lanes.causal.weight).toBe(1.0);
     }
   });
@@ -933,13 +938,15 @@ describe("RagConfigSchema.lanes.causal", () => {
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.lanes.graphSpread", () => {
-  it("defaults the graph-spread lane OFF with weight 1.0 / maxDepth 2 / fanOut 8 (byte-identical to before this plan when absent)", () => {
+  it("defaults the graph-spread lane ON (v1 opt-out posture) with weight 1.0 / maxDepth 2 / fanOut 8", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: the bounded recursive-CTE graph-spread lane is $0 at
+    // recall, default-ON. It is neutral (the fused lanes are unchanged) whenever the triple store
+    // has no connected edges (the empty-lane no-op), so the byte-identity-when-no-graph property
+    // still holds. The walk caps (maxDepth 2 / fanOut 8) keep it O(bounded) on-device.
     const result = RagConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      // Default-OFF: no agent gets the graph-spread lane without an explicit opt-in (a
-      // wrong default ships dormant — no surprise ranking change on upgrade, T-100-04-06).
-      expect(result.data.lanes.graphSpread.enabled).toBe(false);
+      expect(result.data.lanes.graphSpread.enabled).toBe(true);
       expect(result.data.lanes.graphSpread.weight).toBe(1.0);
       expect(result.data.lanes.graphSpread.maxDepth).toBe(2);
       expect(result.data.lanes.graphSpread.fanOut).toBe(8);
@@ -996,14 +1003,14 @@ describe("RagConfigSchema.lanes.graphSpread", () => {
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.feedback", () => {
-  it("defaults the feedback loop OFF (opt-in — byte-identical to v2.6 when absent)", () => {
+  it("defaults the feedback loop ON (v1 opt-out posture)", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: the recall-utility feedback loop is $0 at recall
+    // (the usefulness read + write-back are on-device, no API budget), default-ON. The folded
+    // usefulnessFactor is neutral (1.0) whenever no usefulness signal has been recorded yet.
     const result = RagConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      // FEED-04: the master toggle defaults false. No agent gets the feedback loop
-      // (turn-end attribution + write-back + the recall usefulnessFactor) without an
-      // explicit opt-in — no surprise ranking change on upgrade (T-93-15).
-      expect(result.data.feedback.enabled).toBe(false);
+      expect(result.data.feedback.enabled).toBe(true);
     }
   });
 
@@ -1045,9 +1052,11 @@ describe("RagConfigSchema.feedback", () => {
     }
   });
 
-  it("is additive — every pre-existing RagConfig default is unchanged when feedback is added", () => {
+  it("is additive — every pre-existing RagConfig knob default is unchanged when feedback is added (v1 opt-out flips the $0 enabled toggles ON; tuning constants frozen)", () => {
     // Snapshot the existing defaults (rerank/scoring/entityLane + the top-level fields) so a
     // regression on any of them trips here, not silently downstream (the schema-cascade class).
+    // v2.9 increment 2: the $0-at-recall `enabled` toggles flip ON (opt-out posture); every
+    // tuning CONSTANT (caps/weights/alphas) stays exactly as shipped — the FROZEN values.
     const result = RagConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
@@ -1057,30 +1066,30 @@ describe("RagConfigSchema.feedback", () => {
       expect(result.data.maxContextChars).toBe(4000);
       expect(result.data.minScore).toBe(0.1);
       expect(result.data.includeTrustLevels).toEqual(["system", "learned"]);
-      // rerank sub-object (default-OFF, Phase-79).
-      expect(result.data.rerank.enabled).toBe(false);
+      // rerank sub-object (v1 opt-out: enabled ON; caps/timeout frozen).
+      expect(result.data.rerank.enabled).toBe(true);
       expect(result.data.rerank.maxCandidates).toBe(40);
       expect(result.data.rerank.minResults).toBe(1);
       expect(result.data.rerank.timeoutMs).toBe(800);
-      // scoring sub-object (the five canonical alphas).
+      // scoring sub-object (the five canonical alphas — FROZEN, incl. trustAlpha).
       expect(result.data.scoring.recencyAlpha).toBe(0.2);
       expect(result.data.scoring.temporalAlpha).toBe(0.2);
       expect(result.data.scoring.proofAlpha).toBe(0.1);
       expect(result.data.scoring.trustAlpha).toBe(0.1);
       expect(result.data.scoring.usefulnessAlpha).toBe(0.1);
-      // entityLane sub-object (default-OFF, the FEED-04 analog).
-      expect(result.data.entityLane.enabled).toBe(false);
+      // entityLane sub-object (v1 opt-out: enabled ON; seedCount/cap/weight frozen).
+      expect(result.data.entityLane.enabled).toBe(true);
       expect(result.data.entityLane.seedCount).toBe(5);
       expect(result.data.entityLane.perEntityCap).toBe(200);
       expect(result.data.entityLane.weight).toBe(1.0);
-      // lanes sub-object (LANES-01 parity defaults + LANES-02 temporal default-OFF +
-      // KG-04 graphSpread default-OFF).
+      // lanes sub-object (LANES-01 parity weights FROZEN; LANES-02 temporal + KG-04
+      // graphSpread enabled flipped ON by the v1 opt-out posture).
       expect(result.data.lanes.fts.weight).toBe(1.0);
       expect(result.data.lanes.vector.weight).toBe(1.5);
-      expect(result.data.lanes.temporal.enabled).toBe(false);
+      expect(result.data.lanes.temporal.enabled).toBe(true);
       expect(result.data.lanes.temporal.weight).toBe(1.0);
       expect(result.data.lanes.temporal.windowDays).toBe(7);
-      expect(result.data.lanes.graphSpread.enabled).toBe(false);
+      expect(result.data.lanes.graphSpread.enabled).toBe(true);
       expect(result.data.lanes.graphSpread.weight).toBe(1.0);
       expect(result.data.lanes.graphSpread.maxDepth).toBe(2);
       expect(result.data.lanes.graphSpread.fanOut).toBe(8);
@@ -1094,14 +1103,14 @@ describe("RagConfigSchema.feedback", () => {
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.mmr", () => {
-  it("defaults the MMR re-rank OFF with lambda 0.7 (byte-identical to before this plan when absent)", () => {
+  it("defaults the MMR re-rank ON (v1 opt-out posture) with lambda 0.7", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: MMR diversity re-rank is $0 at recall (an on-device
+    // embedding read + greedy re-rank, no API budget), default-ON. λ=1.0 would be pure relevance
+    // (byte-identical); the default λ=0.7 trades a small relevance margin for diversity.
     const result = RagConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      // Default-OFF: no agent gets the MMR diversity re-rank without an explicit opt-in
-      // (a wrong default ships dormant — no surprise ranking change on upgrade; the neutral
-      // guarantee, RESEARCH §IQ-01). OFF ⇒ no embedding read, no MMR, byte-identical recall.
-      expect(result.data.mmr.enabled).toBe(false);
+      expect(result.data.mmr.enabled).toBe(true);
       expect(result.data.mmr.lambda).toBe(0.7);
     }
   });
@@ -1152,14 +1161,15 @@ describe("RagConfigSchema.mmr", () => {
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.forget", () => {
-  it("defaults the FadeMem decay gate OFF (byte-identical to before this plan when absent)", () => {
+  it("defaults the FadeMem decay gate ON (v1 opt-out posture)", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: the FadeMem decay gate is $0 at recall (a pure
+    // closed-form decay over event age, no API budget), default-ON. The neutral-importance
+    // byte-identity holds even when ON: at event-age 0 the factor is exactly 1.0, so a fresh /
+    // neutral row never silently shifts.
     const result = RagConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      // Default-OFF: no agent gets the FadeMem decay factor without an explicit opt-in (a wrong
-      // default ships dormant — no surprise ranking change on upgrade). OFF ⇒ forgetFactor forced
-      // to EXACTLY 1.0 in score.ts, byte-identical recall (the safety gate, way #1).
-      expect(result.data.forget.enabled).toBe(false);
+      expect(result.data.forget.enabled).toBe(true);
     }
   });
 
@@ -1183,16 +1193,18 @@ describe("RagConfigSchema.forget", () => {
     expect(result.success).toBe(false);
   });
 
-  it("parses an existing config that omits forget and fills it OFF (the additive guard)", () => {
-    // The top-level `.default()` fills `forget` when absent, so an existing config.yaml that
-    // predates Phase 112 parses byte-identically (the decay gate default-OFF).
+  it("parses an existing config that omits forget and fills it ON (v1 opt-out additive guard)", () => {
+    // The top-level `.default()` fills `forget` when absent. v2.9 increment 2: the v1 opt-out
+    // posture defaults the $0 decay gate ON (neutral at event-age 0). The pre-existing tuning
+    // constants below stay frozen — the schema-cascade regression guard.
     const result = RagConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.forget.enabled).toBe(false);
-      // and the pre-existing alphas + knobs are unchanged (the schema-cascade regression guard).
+      expect(result.data.forget.enabled).toBe(true);
+      // and the pre-existing alphas are unchanged (the schema-cascade regression guard); mmr is
+      // likewise a $0 capability flipped ON by the v1 opt-out posture.
       expect(result.data.scoring.recencyAlpha).toBe(0.2);
-      expect(result.data.mmr.enabled).toBe(false);
+      expect(result.data.mmr.enabled).toBe(true);
     }
   });
 });
@@ -1203,16 +1215,16 @@ describe("RagConfigSchema.forget", () => {
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema.queryUnderstanding", () => {
-  it("defaults all query-understanding toggles OFF (byte-identical to before this plan when absent)", () => {
+  it("defaults all query-understanding toggles ON (v1 opt-out posture)", () => {
+    // v2.9 increment 2 — v1 OPT-OUT posture: each toggle is a $0-at-recall DETERMINISTIC,
+    // LLM-FREE capability (no LLM call on the recall hot path), default-ON. intentReweight,
+    // synonyms, and temporalParse all flip ON together under the opt-out posture.
     const result = RagConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      // All default-OFF: no reweight, no expansion, no range filter — the ENT-04 no-op
-      // discipline. Each toggle is an additive deterministic capability over the existing
-      // recall path; an existing config gets none of them without an explicit opt-in.
-      expect(result.data.queryUnderstanding.intentReweight).toBe(false);
-      expect(result.data.queryUnderstanding.synonyms).toBe(false);
-      expect(result.data.queryUnderstanding.temporalParse).toBe(false);
+      expect(result.data.queryUnderstanding.intentReweight).toBe(true);
+      expect(result.data.queryUnderstanding.synonyms).toBe(true);
+      expect(result.data.queryUnderstanding.temporalParse).toBe(true);
     }
   });
 
@@ -1228,13 +1240,15 @@ describe("RagConfigSchema.queryUnderstanding", () => {
     }
   });
 
-  it("accepts a partial queryUnderstanding override and fills the rest from defaults", () => {
-    const result = RagConfigSchema.safeParse({ queryUnderstanding: { temporalParse: true } });
+  it("accepts a partial queryUnderstanding override and fills the rest from the (ON) defaults", () => {
+    // An explicit per-toggle override wins; the unspecified toggles fill from the v1 opt-out
+    // ON defaults. Here temporalParse is force-OFF while intentReweight + synonyms fill ON.
+    const result = RagConfigSchema.safeParse({ queryUnderstanding: { temporalParse: false } });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.queryUnderstanding.intentReweight).toBe(false);
-      expect(result.data.queryUnderstanding.synonyms).toBe(false);
-      expect(result.data.queryUnderstanding.temporalParse).toBe(true);
+      expect(result.data.queryUnderstanding.intentReweight).toBe(true);
+      expect(result.data.queryUnderstanding.synonyms).toBe(true);
+      expect(result.data.queryUnderstanding.temporalParse).toBe(false);
     }
   });
 
@@ -1256,17 +1270,17 @@ describe("RagConfigSchema.queryUnderstanding", () => {
 // ---------------------------------------------------------------------------
 
 describe("RagConfigSchema additive (mmr + queryUnderstanding)", () => {
-  it("parses an existing config that omits mmr + queryUnderstanding and fills them OFF", () => {
-    // The top-level `.default()` on each sub-object fills them when absent, so an existing
-    // config.yaml that predates Phase 102 parses byte-identically (both knobs default-OFF).
+  it("parses an existing config that omits mmr + queryUnderstanding and fills them ON (v1 opt-out)", () => {
+    // The top-level `.default()` on each sub-object fills them when absent. v2.9 increment 2: the
+    // v1 opt-out posture defaults these $0 capabilities ON; the lambda tuning constant stays frozen.
     const result = RagConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.mmr.enabled).toBe(false);
+      expect(result.data.mmr.enabled).toBe(true);
       expect(result.data.mmr.lambda).toBe(0.7);
-      expect(result.data.queryUnderstanding.intentReweight).toBe(false);
-      expect(result.data.queryUnderstanding.synonyms).toBe(false);
-      expect(result.data.queryUnderstanding.temporalParse).toBe(false);
+      expect(result.data.queryUnderstanding.intentReweight).toBe(true);
+      expect(result.data.queryUnderstanding.synonyms).toBe(true);
+      expect(result.data.queryUnderstanding.temporalParse).toBe(true);
     }
   });
 
@@ -1282,17 +1296,18 @@ describe("RagConfigSchema additive (mmr + queryUnderstanding)", () => {
       expect(result.data.maxContextChars).toBe(4000);
       expect(result.data.minScore).toBe(0.1);
       expect(result.data.includeTrustLevels).toEqual(["system", "learned"]);
-      // rerank + scoring + entityLane + feedback sub-objects (unchanged by this plan).
-      expect(result.data.rerank.enabled).toBe(false);
+      // rerank + scoring + entityLane + feedback sub-objects: $0 enabled toggles flipped ON by
+      // the v1 opt-out posture; the usefulnessAlpha tuning constant frozen.
+      expect(result.data.rerank.enabled).toBe(true);
       expect(result.data.scoring.usefulnessAlpha).toBe(0.1);
-      expect(result.data.entityLane.enabled).toBe(false);
-      expect(result.data.feedback.enabled).toBe(false);
-      // lanes sub-object (LANES-01 parity + temporal/causal/graphSpread default-OFF).
+      expect(result.data.entityLane.enabled).toBe(true);
+      expect(result.data.feedback.enabled).toBe(true);
+      // lanes sub-object (LANES-01 parity weights frozen; temporal/causal/graphSpread enabled ON).
       expect(result.data.lanes.fts.weight).toBe(1.0);
       expect(result.data.lanes.vector.weight).toBe(1.5);
-      expect(result.data.lanes.temporal.enabled).toBe(false);
-      expect(result.data.lanes.causal.enabled).toBe(false);
-      expect(result.data.lanes.graphSpread.enabled).toBe(false);
+      expect(result.data.lanes.temporal.enabled).toBe(true);
+      expect(result.data.lanes.causal.enabled).toBe(true);
+      expect(result.data.lanes.graphSpread.enabled).toBe(true);
     }
   });
 });

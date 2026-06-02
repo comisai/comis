@@ -60,11 +60,16 @@ export const RagConfigSchema = z.strictObject({
     minScore: z.number().min(0).max(1).default(0.1),
     /** Trust levels to include in retrieval (external excluded by default for security) */
     includeTrustLevels: z.array(TrustLevelSchema).default(["system", "learned"]),
-    /** Cross-encoder reranking (opt-in; default-OFF per the Phase-79 latency decision). */
+    /** Cross-encoder reranking. v1 OPT-OUT posture (v2.9 increment 2): default-ON as a
+     *  $0-at-recall capability. The daemon resolves the EFFECTIVE rerank via the RAW
+     *  pre-Zod signal (`rawAgentRerankEnabled` → resolveEffectiveRerank): an UNSET config
+     *  auto-ons only when the model is locally present (RERANK-02 zero-download posture),
+     *  so this schema default is the bare-parse value, NOT a forced download. */
     rerank: z
       .strictObject({
-        /** Phase-79 DECISION: opt-in, not default-on (~777ms p95 @40 cands exceeds budget). */
-        enabled: z.boolean().default(false),
+        /** v1 opt-out posture (v2.9 increment 2): default-ON. The daemon's effective-rerank
+         *  precedence (raw-signal + model-present) still governs the auto-on/download path. */
+        enabled: z.boolean().default(true),
         /** Candidate cap bounding worst-case rerank latency (~29ms/candidate). */
         maxCandidates: z.number().int().positive().default(40),
         /** Skip reranking when fewer than this many candidates are present. */
@@ -72,7 +77,7 @@ export const RagConfigSchema = z.strictObject({
         /** Rerank wall-clock timeout (ms); on timeout fall back to fusion order (RANK-08). */
         timeoutMs: z.number().int().positive().default(800),
       })
-      .default(() => ({ enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 })),
+      .default(() => ({ enabled: true, maxCandidates: 40, minResults: 1, timeoutMs: 800 })),
     /** Multiplicative scoring boosts applied to the reranked-or-fused score (RANK-05). */
     scoring: z
       .strictObject({
@@ -120,65 +125,64 @@ export const RagConfigSchema = z.strictObject({
         fts: z.strictObject({ weight: z.number().min(0).default(1.0) }).default(() => ({ weight: 1.0 })),
         /** Vector (KNN) lane weight. Default 1.5 — the parity value (hybrid-search.ts:311). */
         vector: z.strictObject({ weight: z.number().min(0).default(1.5) }).default(() => ({ weight: 1.5 })),
-        /** Temporal-spread lane (LANES-02). Default-OFF; surfaces memories near the seed
-         *  hits' `occurred_at` event times (the "what else happened around then" spread). With
-         *  `enabled:false` the lane is never pushed → fuse() sees the same lanes as before this
-         *  plan → recall output is byte-identical (the ENT-04 no-op reused; a wrong default
-         *  ships dormant — no surprise ranking change on upgrade, T-95-07). `weight` is
-         *  `min(0)` (no negative RRF term, T-95-08); `windowDays` is `int().positive()` (no
-         *  zero/negative window). windowDays:7 surfaces neighbours within a week of the seeds. */
+        /** Temporal-spread lane (LANES-02). v1 OPT-OUT posture (v2.9 increment 2): default-ON;
+         *  surfaces memories near the seed hits' `occurred_at` event times (the "what else
+         *  happened around then" spread). $0 at recall — an additive on-device fusion lane that
+         *  is neutral when no occurred_at seed exists (the no-seed gate). `weight` is `min(0)`
+         *  (no negative RRF term, T-95-08); `windowDays` is `int().positive()` (no zero/negative
+         *  window). windowDays:7 surfaces neighbours within a week of the seeds. */
         temporal: z
           .strictObject({
-            enabled: z.boolean().default(false),
+            enabled: z.boolean().default(true),
             weight: z.number().min(0).default(1.0),
             windowDays: z.number().int().positive().default(7),
           })
-          .default(() => ({ enabled: false, weight: 1.0, windowDays: 7 })),
-        /** Causal one-hop recall lane (EXTRACT-03). Default-OFF; surfaces memories causally
-         *  linked (cause↔effect) to the seeds via the additive memory_causal_edges table. With
-         *  `enabled:false` the lane is never pushed → fuse() unchanged → recall byte-identical
-         *  (the ENT-04 no-op reused; no surprise ranking change on upgrade, T-96-10). `weight` is
-         *  `min(0)` (no negative RRF term, T-95-08). The exact temporal-lane sibling, minus the
-         *  windowDays knob — a causal edge is a discrete one-hop link, not a time window. */
+          .default(() => ({ enabled: true, weight: 1.0, windowDays: 7 })),
+        /** Causal one-hop recall lane (EXTRACT-03). v1 OPT-OUT posture (v2.9 increment 2):
+         *  default-ON; surfaces memories causally linked (cause↔effect) to the seeds via the
+         *  additive memory_causal_edges table. $0 at recall — neutral when no causal edges exist
+         *  (the empty-lane no-op). `weight` is `min(0)` (no negative RRF term, T-95-08). The exact
+         *  temporal-lane sibling, minus the windowDays knob — a causal edge is a discrete one-hop
+         *  link, not a time window. */
         causal: z
           .strictObject({
-            enabled: z.boolean().default(false),
+            enabled: z.boolean().default(true),
             weight: z.number().min(0).default(1.0),
           })
-          .default(() => ({ enabled: false, weight: 1.0 })),
-        /** Graph-spread recall lane (Phase-100/KG-04). Default-OFF; surfaces memories
-         *  STRUCTURALLY connected to the seeds via a bounded recursive-CTE walk over the
-         *  trust-first triple store's OWN current-truth `subject → object` edges
-         *  (`t_valid_end IS NULL`), depth- + fan-out-capped so it stays O(bounded) on-device,
-         *  LLM-free. With `enabled:false` the lane is never pushed → fuse() unchanged → recall
-         *  byte-identical (the ENT-04 no-op reused; no surprise ranking change on upgrade,
-         *  T-100-04-06). `weight` is `min(0)` (no negative RRF term, T-95-08). `maxDepth` (the
-         *  hop cap, default 2 — the "bounded 2-hop weighted spread" of KG-04) and `fanOut` (the
-         *  per-node expansion cap, default 8 — a hub can't blow the recursive frontier,
-         *  T-100-04-01) are `int().positive()` (no zero/negative bound). The triple/causal/
-         *  temporal-lane sibling, plus the two walk caps. */
+          .default(() => ({ enabled: true, weight: 1.0 })),
+        /** Graph-spread recall lane (Phase-100/KG-04). v1 OPT-OUT posture (v2.9 increment 2):
+         *  default-ON; surfaces memories STRUCTURALLY connected to the seeds via a bounded
+         *  recursive-CTE walk over the trust-first triple store's OWN current-truth
+         *  `subject → object` edges (`t_valid_end IS NULL`), depth- + fan-out-capped so it stays
+         *  O(bounded) on-device, LLM-free. $0 at recall — neutral when the triple store has no
+         *  connected edges (the empty-lane no-op). `weight` is `min(0)` (no negative RRF term,
+         *  T-95-08). `maxDepth` (the hop cap, default 2 — the "bounded 2-hop weighted spread" of
+         *  KG-04) and `fanOut` (the per-node expansion cap, default 8 — a hub can't blow the
+         *  recursive frontier, T-100-04-01) are `int().positive()` (no zero/negative bound). The
+         *  triple/causal/temporal-lane sibling, plus the two walk caps. */
         graphSpread: z
           .strictObject({
-            enabled: z.boolean().default(false),
+            enabled: z.boolean().default(true),
             weight: z.number().min(0).default(1.0),
             maxDepth: z.number().int().positive().default(2),
             fanOut: z.number().int().positive().default(8),
           })
-          .default(() => ({ enabled: false, weight: 1.0, maxDepth: 2, fanOut: 8 })),
+          .default(() => ({ enabled: true, weight: 1.0, maxDepth: 2, fanOut: 8 })),
       })
       .default(() => ({
         fts: { weight: 1.0 },
         vector: { weight: 1.5 },
-        temporal: { enabled: false, weight: 1.0, windowDays: 7 },
-        causal: { enabled: false, weight: 1.0 },
-        graphSpread: { enabled: false, weight: 1.0, maxDepth: 2, fanOut: 8 },
+        temporal: { enabled: true, weight: 1.0, windowDays: 7 },
+        causal: { enabled: true, weight: 1.0 },
+        graphSpread: { enabled: true, weight: 1.0, maxDepth: 2, fanOut: 8 },
       })),
-    /** One-hop entity-associative lane (ENT-02). Default-OFF; the daemon enables it once
-     *  the entity store is wired (Phase-83 Plan 05). Empty/disabled -> RRF unchanged (ENT-04). */
+    /** One-hop entity-associative lane (ENT-02). v1 OPT-OUT posture (v2.9 increment 2):
+     *  default-ON. $0 at recall — neutral when no shared-entity neighbours exist (empty/
+     *  disabled -> RRF unchanged, ENT-04). The daemon builds the entity store unconditionally. */
     entityLane: z
       .strictObject({
-        /** Default-OFF; enabled by the daemon once the entity store is wired. */
-        enabled: z.boolean().default(false),
+        /** v1 opt-out posture (v2.9 increment 2): default-ON. */
+        enabled: z.boolean().default(true),
         /** How many top search hits seed the self-join (design §4.4 seedCount). */
         seedCount: z.number().int().positive().default(5),
         /** Max shared-entity neighbour rows the lane returns (design §4.4 perEntityCap default 200). */
@@ -186,21 +190,22 @@ export const RagConfigSchema = z.strictObject({
         /** RRF weight for the entity lane (parity with the other lanes). */
         weight: z.number().min(0).default(1.0),
       })
-      .default(() => ({ enabled: false, seedCount: 5, perEntityCap: 200, weight: 1.0 })),
-    /** Recall-utility feedback loop (FEED-04). Default-OFF; the daemon enables the write-back
-     *  + the score factor only when on. Off => byte-identical to v2.6 (no read, no emit, no
-     *  factor — the read-path in memory-recall.ts, the turn-end emit in
-     *  executor-post-execution.ts, and the daemon write-back subscriber all gate on this flag). */
+      .default(() => ({ enabled: true, seedCount: 5, perEntityCap: 200, weight: 1.0 })),
+    /** Recall-utility feedback loop (FEED-04). v1 OPT-OUT posture (v2.9 increment 2): default-ON.
+     *  $0 at recall (the usefulness read + write-back are on-device, no API budget). When on:
+     *  turn-end attribution emits memory:recall_used, the daemon writes the usefulness signal,
+     *  and recall folds the usefulnessFactor (neutral 1.0 whenever no signal exists yet). */
     feedback: z
       .strictObject({
-        /** Default-OFF. The SINGLE master toggle. When on: turn-end attribution emits
-         *  memory:recall_used, the daemon writes the usefulness signal, and recall folds the
-         *  usefulnessFactor. The magnitude is rag.scoring.usefulnessAlpha (NOT duplicated here —
-         *  one canonical knob, no drift). A `.strictObject` so a stray `usefulnessAlpha` here is
-         *  REJECTED at parse, structurally enforcing the single-knob invariant. */
-        enabled: z.boolean().default(false),
+        /** v1 opt-out posture (v2.9 increment 2): default-ON. The SINGLE master toggle. When on:
+         *  turn-end attribution emits memory:recall_used, the daemon writes the usefulness signal,
+         *  and recall folds the usefulnessFactor. The magnitude is rag.scoring.usefulnessAlpha
+         *  (NOT duplicated here — one canonical knob, no drift). A `.strictObject` so a stray
+         *  `usefulnessAlpha` here is REJECTED at parse, structurally enforcing the single-knob
+         *  invariant. */
+        enabled: z.boolean().default(true),
       })
-      .default(() => ({ enabled: false })),
+      .default(() => ({ enabled: true })),
     /** Learning-to-rank online tuning (LEARN-03 — Track H2). The RECALL-SIDE apply gate.
      *  Default-OFF; OFF ⇒ the recall hot path NEVER reads the tuned-alpha store, so
      *  `buildScoringAlphas` falls through to the static `rag.scoring` alphas and recall is
@@ -211,44 +216,49 @@ export const RagConfigSchema = z.strictObject({
      *  at parse — the cron knob is the SEPARATE `memoryOnlineTuning` (schedule lives there). */
     onlineTuning: z
       .strictObject({
-        /** Default-OFF. The recall-side gate: OFF ⇒ no tuned-store read, byte-identical recall. */
-        enabled: z.boolean().default(false),
+        /** v1 opt-out posture (v2.9 increment 2): default-ON. The recall-side APPLY gate. $0 at
+         *  recall — a gated read of the on-device tuned-alpha store (no API budget). ON ⇒ the
+         *  gated read overlays the four learned non-trust alphas (trust stays config-sourced,
+         *  belt #2); it is neutral when no tuned vector has been written yet. The OFFLINE bandit
+         *  that POPULATES the store is the SEPARATE `memoryOnlineTuning` cron. */
+        enabled: z.boolean().default(true),
       })
-      .default(() => ({ enabled: false })),
-    /** MMR diversity re-rank (IQ-01). Default-OFF; λ=1.0 = pure relevance = byte-identical
-     *  to the post-rerank order (the neutral guarantee, RESEARCH §IQ-01). λ bounded [0,1]
-     *  (T-95-08 style: an out-of-range λ would invert the rel/diversity balance — rejected
-     *  at parse). The daemon constructs the embedding store unconditionally; this knob is the
-     *  cost/behavior gate — OFF ⇒ no embedding read, no MMR, byte-identical recall. */
+      .default(() => ({ enabled: true })),
+    /** MMR diversity re-rank (IQ-01). v1 OPT-OUT posture (v2.9 increment 2): default-ON. $0 at
+     *  recall — an on-device embedding read + greedy re-rank (no API budget). λ=1.0 = pure
+     *  relevance = byte-identical to the post-rerank order (the neutral guarantee, RESEARCH
+     *  §IQ-01); the default λ=0.7 trades a small relevance margin for diversity. λ bounded [0,1]
+     *  (an out-of-range λ would invert the rel/diversity balance — rejected at parse). The daemon
+     *  constructs the embedding store unconditionally. */
     mmr: z
       .strictObject({
-        enabled: z.boolean().default(false),
+        enabled: z.boolean().default(true),
         lambda: z.number().min(0).max(1).default(0.7),
       })
-      .default(() => ({ enabled: false, lambda: 0.7 })),
-    /** FadeMem per-type decay (Phase-112/FORGET-01). Default-OFF; the recall-side gate for the
-     *  6th 0.5-centered scoring multiplicand `0.5 + 0.5·exp(−λ·Δt^β)`. OFF ⇒ forgetFactor forced
-     *  to EXACTLY 1.0 in score.ts ⇒ byte-identical recall (the safety gate, way #1). The
-     *  neutral-importance byte-identity holds even when ON: at event-age 0 the factor is exactly
-     *  1.0 (way #2), so a legacy/neutral fresh row never silently shifts. The magnitude is the
-     *  single canonical `rag.scoring.forgetAlpha` (NOT duplicated here — one knob, no drift). A
-     *  `.strictObject` so a stray field (e.g. a smuggled `forgetAlpha`) is REJECTED at parse,
-     *  structurally enforcing the single-knob invariant. NOT a back-compat fallback — a config
-     *  gate (the `mmr`/`feedback`/`onlineTuning` default-OFF discipline). */
-    forget: z.strictObject({ enabled: z.boolean().default(false) }).default(() => ({ enabled: false })),
-    /** LLM-free query understanding (IQ-02/03). All default-OFF; each toggle is an additive
-     *  deterministic capability over the existing recall path (byte-identical when off — the
-     *  ENT-04 no-op discipline). `intentReweight` multiplies the existing lane weights by a
-     *  pure intent classifier; `synonyms` expands the FTS query terms via a bounded static
-     *  map; `temporalParse` parses NL time expressions into an occurred_at range filter. NO
-     *  LLM call on the recall hot path (binding constraint #1). */
+      .default(() => ({ enabled: true, lambda: 0.7 })),
+    /** FadeMem per-type decay (Phase-112/FORGET-01). v1 OPT-OUT posture (v2.9 increment 2):
+     *  default-ON; the recall-side gate for the 6th 0.5-centered scoring multiplicand
+     *  `0.5 + 0.5·exp(−λ·Δt^β)`. $0 at recall — a pure closed-form decay over event age (no API
+     *  budget). OFF ⇒ forgetFactor forced to EXACTLY 1.0 in score.ts. The neutral-importance
+     *  byte-identity holds even when ON: at event-age 0 the factor is exactly 1.0, so a
+     *  legacy/neutral fresh row never silently shifts. The magnitude is the single canonical
+     *  `rag.scoring.forgetAlpha` (NOT duplicated here — one knob, no drift). A `.strictObject` so
+     *  a stray field (e.g. a smuggled `forgetAlpha`) is REJECTED at parse, structurally enforcing
+     *  the single-knob invariant. */
+    forget: z.strictObject({ enabled: z.boolean().default(true) }).default(() => ({ enabled: true })),
+    /** LLM-free query understanding (IQ-02/03). v1 OPT-OUT posture (v2.9 increment 2): all
+     *  default-ON. $0 at recall — each toggle is an additive DETERMINISTIC, LLM-FREE capability
+     *  over the existing recall path (NO LLM call on the recall hot path — binding constraint #1).
+     *  `intentReweight` multiplies the existing lane weights by a pure intent classifier;
+     *  `synonyms` expands the FTS query terms via a bounded static map; `temporalParse` parses NL
+     *  time expressions into an occurred_at range filter. */
     queryUnderstanding: z
       .strictObject({
-        intentReweight: z.boolean().default(false),
-        synonyms: z.boolean().default(false),
-        temporalParse: z.boolean().default(false),
+        intentReweight: z.boolean().default(true),
+        synonyms: z.boolean().default(true),
+        temporalParse: z.boolean().default(true),
       })
-      .default(() => ({ intentReweight: false, synonyms: false, temporalParse: false })),
+      .default(() => ({ intentReweight: true, synonyms: true, temporalParse: true })),
   });
 
 export type RagConfig = z.infer<typeof RagConfigSchema>;
