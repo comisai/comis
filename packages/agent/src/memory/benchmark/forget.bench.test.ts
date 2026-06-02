@@ -405,7 +405,7 @@ describe.skipIf(!COMIS_BENCH)("forget: deterministic decay effect (FORGET-01 cla
     adapter.close();
   }, 600_000);
 
-  it("an old low-importance ephemeral memory's forget factor decays below a fresh durable memory's", () => {
+  it("an old low-importance ephemeral memory's forget factor is lower than a fresh durable memory's (decays below)", () => {
     // Both factors are recovered and in the demote-only band (0,1] (the factor only ever
     // fades a stale memory; a fresh durable one stays near 1.0).
     expect(oldForgetFactor, "old-ephemeral forget factor recovered").toBeGreaterThan(0);

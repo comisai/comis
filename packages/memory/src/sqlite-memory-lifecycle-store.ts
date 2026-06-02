@@ -243,8 +243,11 @@ export function createSqliteMemoryLifecycleStore(
         // APPLY NOTHING — the SCAFFOLD-DORMANT contract (OD4 + Pitfall 3). The
         // demote/evict/promote step is dead by construction behind LIVE_EVICTION:
         // no UPDATE of a marker column, no DELETE. promoted/demoted/evicted = 0.
-        let promoted = 0;
-        let demoted = 0;
+        // `promoted`/`demoted` are `const` (never reassigned even by the deferred
+        // live branch — that branch marks evictions only); `evicted` stays `let`
+        // because the statically-dead live branch textually reassigns it.
+        const promoted = 0;
+        const demoted = 0;
         let evicted = 0;
         if (LIVE_EVICTION) {
           // DEFERRED LIVE POLICY (operator/v2.10): mark eviction candidates
