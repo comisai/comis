@@ -280,3 +280,280 @@ describe("createTerminalSessionRegistry — no module-global state", () => {
     expect(r2.size()).toBe(0);
   });
 });
+
+/**
+ * Build a fake worker whose stdout can be driven to emit RAW (non-frame) bytes,
+ * so the registry's stdout handler is fed a malformed / hostile chunk. Used by
+ * HR-02. `emitRaw` pushes arbitrary bytes onto the reply channel; `emitOversizedPrefix`
+ * pushes a uint32 length prefix above the framer cap (the HR-01 DoS prefix).
+ */
+function makeRawDrivableWorker(): {
+  child: FakeWorkerChild;
+  emitRaw: (bytes: Buffer) => void;
+  emitOversizedPrefix: () => void;
+} {
+  const emitter = new EventEmitter();
+  const stdout = new EventEmitter();
+  const child: FakeWorkerChild = {
+    pid: 7070,
+    stdin: { write: () => true } as unknown as FakeWorkerChild["stdin"],
+    stdout: stdout as unknown as FakeWorkerChild["stdout"],
+    on: (event: string, cb: (arg?: unknown) => void) => {
+      emitter.on(event, cb);
+      return child;
+    },
+    kill: vi.fn(),
+  };
+  const oversized = Buffer.alloc(4);
+  oversized.writeUInt32BE(0xffffffff, 0); // ~4 GiB declared body → above the framer cap
+  return {
+    child,
+    emitRaw: (bytes: Buffer) => stdout.emit("data", bytes),
+    emitOversizedPrefix: () => stdout.emit("data", oversized),
+  };
+}
+
+describe("createTerminalSessionRegistry — HR-02 malformed-frame on stdout does NOT crash (OPS-01)", () => {
+  it("a non-JSON reply byte on stdout is caught (no uncaughtException), logs WARN errorKind:'protocol', and drops the worker", async () => {
+    const fake = makeRawDrivableWorker();
+    const logger = makeLogger();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { logger }));
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+
+    // A length-prefixed frame whose body is NOT valid JSON ("{" then garbage):
+    // JSON.parse throws INSIDE the stdout 'data' listener. Pre-patch this is an
+    // uncaughtException that takes the daemon down (the precise opposite of OPS-01).
+    const garbageBody = Buffer.from("{not-json", "utf8");
+    const prefix = Buffer.alloc(4);
+    prefix.writeUInt32BE(garbageBody.length, 0);
+
+    // The handler must NOT throw out of the listener.
+    expect(() => fake.emitRaw(Buffer.concat([prefix, garbageBody]))).not.toThrow();
+
+    // The corrupt worker is dropped: the running session flips to 'lost'.
+    expect(registry.get(sessionId)?.status).toBe("lost");
+    // A WARN with errorKind:'protocol' was logged.
+    const warn = logger.warn.mock.calls.find(
+      ([obj]) => (obj as { errorKind?: string }).errorKind === "protocol",
+    );
+    expect(warn).toBeDefined();
+  });
+
+  it("an oversized HR-01 length prefix on stdout is caught (FrameTooLargeError), not rethrown — daemon survives", async () => {
+    const fake = makeRawDrivableWorker();
+    const logger = makeLogger();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { logger }));
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+
+    // The framer throws FrameTooLargeError on this prefix; the handler must swallow it.
+    expect(() => fake.emitOversizedPrefix()).not.toThrow();
+    expect(registry.get(sessionId)?.status).toBe("lost");
+    expect(logger.warn).toHaveBeenCalled();
+  });
+});
+
+describe("createTerminalSessionRegistry — HR-03 worker create failure is surfaced (OPS-07)", () => {
+  it("an ok:false create reply flips the session to 'lost' (list/read agree alive:false) and fires onSpawnFailed", async () => {
+    // The worker's handleCreate throws (bad bin ENOENT, forkpty failure, …) → the
+    // worker replies { ok:false } to the create frame. Pre-patch the registry does
+    // NOT register a create waiter, so correlate() drops the reply and the handle
+    // stays 'running' forever (alive:true) despite a dead child.
+    const fake = makeFakeWorker((req) => {
+      if (req.method !== "create") return undefined;
+      return {
+        sessionId: req.sessionId,
+        requestId: req.requestId,
+        ok: false,
+        error: "spawn ENOENT: /usr/bin/somecli",
+      };
+    });
+    const spawnFailures: Array<{ sessionId: string; error?: string }> = [];
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        onSpawnFailed: (info) => spawnFailures.push(info),
+      }),
+    );
+
+    const { sessionId } = await registry.create({
+      allowId: "somecli",
+      bin: "/usr/bin/somecli",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+
+    // Let the queued microtask reply land.
+    await new Promise((r) => setImmediate(r));
+
+    // The handle reflects the failure — NOT a perpetual alive:true.
+    expect(registry.get(sessionId)?.status).toBe("lost");
+    // list() and read() agree the session is not alive.
+    expect(registry.list().find((s) => s.sessionId === sessionId)?.alive).toBe(false);
+    const view = await registry.read(sessionId);
+    expect(view.alive).toBe(false);
+    // OPS-07: the spawn-failure hook fired with the session id + the worker error.
+    expect(spawnFailures).toHaveLength(1);
+    expect(spawnFailures[0].sessionId).toBe(sessionId);
+    expect(spawnFailures[0].error).toMatch(/ENOENT/);
+  });
+
+  it("an ok:true create reply leaves the session 'running' and does NOT fire onSpawnFailed", async () => {
+    const fake = makeFakeWorker((req) => {
+      if (req.method !== "create") return undefined;
+      return {
+        sessionId: req.sessionId,
+        requestId: req.requestId,
+        ok: true,
+        result: { sessionId: req.sessionId, backend: "pty", cols: 80, rows: 24 },
+      };
+    });
+    const spawnFailures: unknown[] = [];
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, { onSpawnFailed: (info) => spawnFailures.push(info) }),
+    );
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+    await new Promise((r) => setImmediate(r));
+
+    expect(registry.get(sessionId)?.status).toBe("running");
+    expect(spawnFailures).toHaveLength(0);
+  });
+});
+
+describe("createTerminalSessionRegistry — MR-01 request() reply timeout (wedged worker)", () => {
+  it("read() against a worker that never replies settles to alive:false on the injected timeout (no hang, no leaked resolver)", async () => {
+    // A worker that ACCEPTS the read frame but NEVER replies (wedged, not crashed:
+    // no close/error to trigger clearWorker). Pre-patch read() awaits forever.
+    const fake = makeFakeWorker(); // no autoReply → no reply is ever emitted
+
+    // A controllable fake timer: capture the scheduled callback so the test fires it.
+    let firedCb: (() => void) | undefined;
+    let scheduledMs: number | undefined;
+    const setTimer = vi.fn((cb: () => void, ms: number) => {
+      firedCb = cb;
+      scheduledMs = ms;
+      return { id: 1 } as unknown;
+    });
+    const clearTimer = vi.fn();
+
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        requestTimeoutMs: 1234,
+        setTimer: setTimer as never,
+        clearTimer: clearTimer as never,
+      }),
+    );
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+
+    const readPromise = registry.read(sessionId);
+    // The read registered a timeout with the configured duration.
+    expect(setTimer).toHaveBeenCalled();
+    expect(scheduledMs).toBe(1234);
+
+    // Fire the timeout (simulate expiry) → read settles to the not-alive minimal view.
+    firedCb?.();
+    const view = await readPromise;
+    expect(view.alive).toBe(false);
+    expect(view.screen).toBe("");
+  });
+
+  it("a normal reply cancels the pending timeout (clearTimer is called, no spurious timeout fire)", async () => {
+    const fake = makeFakeWorker((req) =>
+      req.method === "read"
+        ? {
+            sessionId: req.sessionId,
+            requestId: req.requestId,
+            ok: true,
+            result: { screen: "ok", cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true },
+          }
+        : undefined,
+    );
+    const clearTimer = vi.fn();
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        setTimer: ((cb: () => void) => ({ cb })) as never,
+        clearTimer: clearTimer as never,
+      }),
+    );
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+    const view = await registry.read(sessionId);
+    expect(view.screen).toBe("ok");
+    // The reply arrived → the timeout was cancelled (clearTimer called for the read key).
+    expect(clearTimer).toHaveBeenCalled();
+  });
+});
+
+describe("createTerminalSessionRegistry — LR-02 clearWorker preserves waiter identity", () => {
+  it("resolves a flushed read waiter with the REAL (sessionId,requestId) — observable via the flush-debug log carrying the real session id, not a blank", async () => {
+    // A worker that accepts the read frame but never replies; then the worker
+    // crashes (close), so clearWorker() flushes the parked read waiter. The
+    // synthetic termination reply must carry the waiter's real (sessionId,
+    // requestId) — NOT blanked empty strings — so identity-keyed callers (a
+    // future interaction tool) cannot mis-handle the termination reply. The
+    // §2.7-observable signal is a per-waiter flush DEBUG carrying the real id.
+    const fake = makeFakeWorker();
+    const logger = makeLogger();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child, { logger }));
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+
+    const readPromise = registry.read(sessionId); // parks a (sessionId,requestId) waiter
+    fake.emitClose(1); // clearWorker flushes the parked waiter
+
+    const view = await readPromise;
+    expect(view.alive).toBe(false);
+
+    // The flush logged the waiter's REAL session id (not "") — proving the
+    // synthetic termination reply preserved identity rather than blanking it.
+    const flushLog = logger.debug.mock.calls.find(
+      ([obj]) =>
+        (obj as { hint?: string }).hint === "flushing pending waiter; worker terminated" &&
+        (obj as { sessionId?: string }).sessionId === sessionId,
+    );
+    expect(flushLog).toBeDefined();
+    const obj = flushLog?.[0] as { sessionId?: string; requestId?: string };
+    expect(obj.sessionId).toBe(sessionId);
+    expect(obj.sessionId).not.toBe("");
+    expect(obj.requestId).not.toBe("");
+  });
+});
