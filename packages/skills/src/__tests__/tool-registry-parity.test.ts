@@ -64,6 +64,14 @@ describe("platform-tool registry parity", () => {
       "list_resources",
       "mcp_login",
       "mcp_manage",
+      // Phase 109 (DIAL-02): the opt-in, default-OFF dialectic tool. Registered as a
+      // CONDITIONAL descriptor (gated on ctx.dialecticEnabled === true, fed from
+      // agentConfig.dialectic.enabled). The parity set pins it exactly as the other
+      // feature-gated conditionals (browser / unified_context / background_tasks) —
+      // its presence in the registry's single-source-of-truth set is intentional, and
+      // the daemon filters on `conditional` BEFORE build so it is ABSENT from the built
+      // tool set when the knob is off (default-OFF byte-identity, the cost gate).
+      "memory_ask",
       "memory_get",
       "memory_manage",
       "memory_search",
@@ -103,5 +111,58 @@ describe("platform-tool registry parity", () => {
     }));
     const json = JSON.stringify(descriptors, null, 2);
     await expect(json).toMatchFileSnapshot(SNAPSHOT_PATH);
+  });
+
+  // DIAL-02 default-OFF byte-identity — the opt-in cost gate. The daemon builds the
+  // live tool set by FILTERING descriptors on `conditional(ctx)` BEFORE invoking
+  // `build` (registry.ts JSDoc + setup-tools). So with `dialecticEnabled` absent/false
+  // the memory_ask tool is NOT in the built set (no behavior change, no query-time LLM
+  // surface); with `dialecticEnabled: true` it IS present, constructed by its `build`.
+  describe("memory_ask conditional opt-in gate (DIAL-02)", () => {
+    const askDescriptor = REGISTRY.find((d) => d.name === "memory_ask");
+
+    /** Mirror the daemon's filter-then-build: keep only descriptors whose `conditional`
+     *  (when present) passes for ctx, then construct each via `build`. */
+    function buildLiveToolSet(ctx: never): string[] {
+      return REGISTRY.filter((d) => (d.conditional ? d.conditional(ctx) : true))
+        .map((d) => d.build(ctx)?.name)
+        .filter((n): n is string => typeof n === "string");
+    }
+
+    it("is registered as a CONDITIONAL descriptor (not unconditional)", () => {
+      expect(askDescriptor, "memory_ask must be in the registry").toBeDefined();
+      expect(askDescriptor!.category).toBe("memory");
+      expect(typeof askDescriptor!.conditional, "memory_ask must carry a conditional gate").toBe(
+        "function",
+      );
+    });
+
+    it("with dialecticEnabled absent/false: memory_ask is ABSENT from the built tool set", () => {
+      const offCtx = { agentId: "test-agent", rpcCall: async () => ({}) } as never;
+      const falseCtx = {
+        agentId: "test-agent",
+        rpcCall: async () => ({}),
+        dialecticEnabled: false,
+      } as never;
+      expect(buildLiveToolSet(offCtx)).not.toContain("memory_ask");
+      expect(buildLiveToolSet(falseCtx)).not.toContain("memory_ask");
+      // The conditional predicate itself returns false for the off cases.
+      expect(askDescriptor!.conditional!(offCtx)).toBe(false);
+      expect(askDescriptor!.conditional!(falseCtx)).toBe(false);
+    });
+
+    it("with dialecticEnabled: true: memory_ask IS present and builds with the correct name + params", () => {
+      const onCtx = {
+        agentId: "test-agent",
+        rpcCall: async () => ({}),
+        dialecticEnabled: true,
+      } as never;
+      expect(buildLiveToolSet(onCtx)).toContain("memory_ask");
+      expect(askDescriptor!.conditional!(onCtx)).toBe(true);
+      const tool = askDescriptor!.build(onCtx);
+      expect(tool?.name).toBe("memory_ask");
+      // The tool declares a `question` parameter (the dialectic question).
+      expect(JSON.stringify(tool?.parameters)).toContain("question");
+    });
   });
 });
