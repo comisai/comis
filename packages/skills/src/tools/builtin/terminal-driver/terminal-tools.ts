@@ -230,7 +230,7 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
             allowId,
             durationMs: failedAt - start,
             hint: "worker spawn failed",
-            errorKind: "dependency",
+            errorKind: "dependency" as const,
             step: "create",
             err,
           },
@@ -243,6 +243,9 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
           errorKind: "dependency",
           timestamp: failedAt,
         });
+        // @allow-throw: re-propagate the original spawn error to the AgentTool
+        // execution boundary after recording OPS-07 observability; the SDK catches
+        // it and marks the tool result isError:true (same boundary as tool-helpers.ts).
         throw err;
       }
 

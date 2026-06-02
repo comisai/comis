@@ -65,7 +65,10 @@ import {
   type FileStateTracker,
   type ProcessRegistry,
   type MediaPersistenceService,
+  type TerminalSessionRegistry,
 } from "@comis/skills/tools";
+// Terminal-driver (v2.11) wiring extracted to setup-terminal-tools.ts (file-size cap).
+import { wireTerminalTools } from "./setup-terminal-tools.js";
 
 // Descriptor registry on the `./platform-tools` subpath. Replaces the
 // prior inline 38-call enumeration of `createXTool(agentRpc, ...)`
@@ -243,6 +246,9 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
   /** Per-agent ProcessRegistry instances for background process lifecycle management. */
   const processRegistries = new Map<string, ProcessRegistry>();
+
+  /** Per-agent TerminalSessionRegistry instances (v2.11); closure-local, lazily built. */
+  const terminalRegistries = new Map<string, TerminalSessionRegistry>();
 
   /** Agents we've already logged the no-sandbox WARN for. Per-agent assembly
    * runs on every session/heartbeat/cron tick; without this guard the WARN
@@ -602,6 +608,11 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
 
       // Apply patch tool -- always included, gated by tool policy
       tools.push(createApplyPatchTool(workspaceDirs.get(agentId) ?? defaultWorkspaceDir, effectiveSharedPaths, skillsLogger));
+
+      // Terminal driver (v2.11, Phase 119 P0): construct the per-agent
+      // crash-isolated registry + push all nine never-export tools (the
+      // empty allow-set fail-closes every create until config is threaded in).
+      wireTerminalTools(tools, terminalRegistries, agentId, { dataDir, skillsLogger, eventBus });
 
       return tools;
     };

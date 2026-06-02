@@ -51,6 +51,33 @@ export { createExecTool } from "./builtin/exec-tool/index.js";
 export { createProcessTool } from "./builtin/process-tool.js";
 export { createProcessRegistry } from "./builtin/process-registry.js";
 export type { ProcessRegistry } from "./builtin/process-registry.js";
+
+// Built-in tools -- Interactive terminal driver (v2.11). The nine never-export
+// tool factories + the daemon-side registry + the allowlist/IPC types the
+// daemon wiring (setup-tools.ts, the composition root) consumes.
+export {
+  createTerminalSessionCreateTool,
+  createTerminalSessionReadTool,
+  createTerminalSessionListTool,
+  createTerminalSessionKillTool,
+  createTerminalSessionSendTextTool,
+  createTerminalSessionSendKeyTool,
+  createTerminalSessionWaitTool,
+  createTerminalSessionStatusTool,
+  createTerminalSessionResizeTool,
+  createTerminalSessionRegistry,
+  buildProductionSpawnWorker,
+  matchAllowEntry,
+  buildDirectSpawn,
+  type TerminalToolDeps,
+  type TerminalEventBus,
+  type TerminalSessionRegistry,
+  type TerminalSessionRegistryDeps,
+  type FakeWorkerChild,
+  type AllowEntryLike,
+  type AllowMatch,
+  type SessionListing,
+} from "./builtin/terminal-driver/index.js";
 export type { InstallDetourDecision, DetourOverlap } from "./builtin/install-detour.js";
 export { parseInstallDetour } from "./builtin/install-detour.js";
 
