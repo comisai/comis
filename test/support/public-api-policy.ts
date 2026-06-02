@@ -965,6 +965,17 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "resolveCodexStableSubject",
       "RewrittenOAuthError",
       "FileExtractionErrorKind",
+      // (Phase 112, FORGET-02 / Track C) MemoryLifecyclePort + MemoryLifecycleScope +
+      // MemoryTier + LifecycleSweepReport are SCAFFOLD-DORMANT ahead-of-consumer
+      // planned-orphans tracked here by plan 112-02 (REMOVE @ 112-03/04). The sole
+      // @comis/memory lifecycle adapter (112-03) and the daemon __MEMORY_LIFECYCLE__
+      // cron wiring (112-04) name-import them from @comis/core in non-test src; until
+      // those land the public-export-consumers walker sees no consumer. Mirrors the
+      // TunedAlphaStore 111-01→111-02 posture immediately below.
+      "MemoryLifecyclePort",
+      "MemoryLifecycleScope",
+      "MemoryTier",
+      "LifecycleSweepReport",
       // (Phase 111, LEARN-03 / Track H2) TunedAlphaStore + TunedAlphaScope +
       // TunedAlphaVector were tracked here as ahead-of-consumer planned-orphans by
       // plan 111-01 (REMOVE @ 111-02). REMOVED: the sole SQLite adapter
