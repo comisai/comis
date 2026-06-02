@@ -52,7 +52,7 @@ describe("Config Schema Validation", () => {
       // Snapshot-style guard: bump this count when a new top-level section is
       // added so the change surfaces in code review. Count reflects all scalars
       // plus all object sections currently in AppConfigSchema.shape.
-      expect(allKeys).toHaveLength(41);
+      expect(allKeys).toHaveLength(42);
     });
 
     it("empty config {} produces valid defaults for all sections", () => {
@@ -65,9 +65,17 @@ describe("Config Schema Validation", () => {
       expect(result.value.logLevel).toBe("info");
       expect(result.value.dataDir).toBe("");
 
-      // Object sections should all exist and be objects
+      // Object sections should all exist and be objects.
+      // `executor` is intentionally optional (no default): the credential
+      // broker is an opt-in security feature, absent unless configured — a
+      // daemon with no `executor:` block is a valid state, and consumers read
+      // it via `config.executor?.broker`. So it is excluded here alongside the
+      // scalar keys.
       const objectKeys = allKeys.filter(
-        (k) => !["tenantId", "logLevel", "dataDir", "agentDir"].includes(k),
+        (k) =>
+          !["tenantId", "logLevel", "dataDir", "agentDir", "executor"].includes(
+            k,
+          ),
       );
       for (const key of objectKeys) {
         const section = (result.value as Record<string, unknown>)[key];

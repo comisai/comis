@@ -465,7 +465,19 @@ describe("recall-trace redaction (end-to-end, OBS-02)", () => {
         minScore: 0,
         includeTrustLevels: ["system", "learned"],
         rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
-        scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 },
+        scoring: {
+          recencyAlpha: 0.2,
+          temporalAlpha: 0.2,
+          proofAlpha: 0.1,
+          trustAlpha: 0.1,
+          // FEED-03 + FORGET-01 added two more required ScoringAlphas. Production
+          // config defaults both to 0.1; omitting them here left usefulnessAlpha
+          // undefined, so `1 + undefined*(…)` = NaN propagated into the breakdown's
+          // `usefulness`/`final`, which JSON-serialize as `null` and fail the
+          // RecallScoreBreakdownSchema's z.number() (real callers always supply all six).
+          usefulnessAlpha: 0.1,
+          forgetAlpha: 0.1,
+        },
       },
     );
 
@@ -578,7 +590,19 @@ describe("memory.recall_trace read-back via the REAL production recorder (WR-01)
         minScore: 0,
         includeTrustLevels: ["system", "learned"],
         rerank: { enabled: false, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
-        scoring: { recencyAlpha: 0.2, temporalAlpha: 0.2, proofAlpha: 0.1, trustAlpha: 0.1 },
+        scoring: {
+          recencyAlpha: 0.2,
+          temporalAlpha: 0.2,
+          proofAlpha: 0.1,
+          trustAlpha: 0.1,
+          // FEED-03 + FORGET-01 added two more required ScoringAlphas. Production
+          // config defaults both to 0.1; omitting them here left usefulnessAlpha
+          // undefined, so `1 + undefined*(…)` = NaN propagated into the breakdown's
+          // `usefulness`/`final`, which JSON-serialize as `null` and fail the
+          // RecallScoreBreakdownSchema's z.number() (real callers always supply all six).
+          usefulnessAlpha: 0.1,
+          forgetAlpha: 0.1,
+        },
       },
     );
     const result = await recall.recall("quarterly plan", scope, scope.agentId as string);
