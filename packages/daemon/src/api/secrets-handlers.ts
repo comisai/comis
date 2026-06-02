@@ -411,6 +411,10 @@ export function createSecretsHandlers(
       }
 
       // Emit secret:changed event — metadata only, never the value (residency — T-03-09).
+      // Note: for rotation writes (!isNew), secretManager.get() still returns the OLD
+      // value until the daemon restarts (SIGUSR2 was scheduled above). Phase 6/P4b
+      // will make rotation live-apply too. Subscribers must not read get() for the
+      // new value in response to this event on the rotation path.
       deps.container.eventBus.emit("secret:changed", {
         name,
         action: "upserted" as const,
