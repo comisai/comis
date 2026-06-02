@@ -643,6 +643,37 @@ describe("assembleTools — recall-store passthrough to prompt assembly (KG-01/0
       }),
     );
   });
+
+  it("forwards deps.tunedAlphaStore into assembleExecutionPrompt.deps so the learned-alpha apply overlay reaches prompt-assembly (LEARN-03 / CR-01 + LR-01 regression guard)", async () => {
+    // RED on pre-patch code: ToolAssemblyDeps DID carry tunedAlphaStore (and the
+    // daemon→BootContext→createPiExecutor chain forwards it after the 111-05 fix),
+    // but the PromptAssemblyParams.deps enumeration in assembleTools DROPPED it —
+    // it forwarded usefulnessStore/userRepresentationStore/relationshipStore but
+    // omitted tunedAlphaStore. So the prompt-assembly apply site (prompt-assembly.ts
+    // gated read `if (onlineTuningEnabled && deps.tunedAlphaStore)`) always saw
+    // deps.tunedAlphaStore === undefined → tunedVector stayed undefined →
+    // buildScoringAlphas returned the static config alphas → the learned alphas
+    // NEVER applied on the live recall path even with rag.onlineTuning.enabled AND
+    // a populated tuned_alpha table (LEARN-03 a silent no-op). This is the SAME
+    // field-plumbing hazard the tripleStore/causalStore/temporalStore/embeddingStore
+    // forwards above guard against — and it is the final unguarded hop (LR-01) in the
+    // ToolAssemblyDeps → PromptAssemblyParams.deps enumeration. The two upstream hops
+    // are guarded by daemon-tuned-alpha-bootcontext.test.ts and
+    // setup-agents-tuned-alpha-wiring.test.ts; this closes the seam that let CR-01
+    // reach review.
+    const tunedAlphaStore = {
+      upsert: vi.fn(),
+      read: vi.fn(),
+    } as unknown as import("@comis/core").TunedAlphaStore;
+    await assembleTools(makeParams({
+      deps: makeDeps({ tunedAlphaStore }),
+    }));
+    expect(mocks.assembleExecutionPromptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deps: expect.objectContaining({ tunedAlphaStore }),
+      }),
+    );
+  });
 });
 
 describe("assembleTools — capability-index render result + deferred-context passthrough", () => {
