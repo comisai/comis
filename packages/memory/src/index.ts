@@ -131,6 +131,16 @@ export type { MemoryConsolidationStoreDeps } from "./sqlite-memory-consolidation
 export { createSqliteMemoryUsefulnessStore } from "./sqlite-memory-usefulness-store.js";
 export type { MemoryUsefulnessStoreDeps } from "./sqlite-memory-usefulness-store.js";
 
+// Tuned-alpha store (sole TunedAlphaStore impl; Phase 111, Track H2 — LEARN-03).
+// Owns the idempotent per-(tenant, agent) tuned-alpha-vector upsert + the scoped
+// read (undefined when absent → the apply-site default-OFF no-op). The daemon
+// (composition root) constructs it on the memory adapter's db handle; the
+// TunedAlphaStore port TYPE lives in @comis/core (the agent↛memory cut — the
+// offline bandit job + the recall apply overlay consume the type only). The table
+// has NO trust-weight column (the structural trust-freeze belt #3).
+export { createSqliteTunedAlphaStore } from "./sqlite-tuned-alpha-store.js";
+export type { MemoryTunedAlphaStoreDeps } from "./sqlite-tuned-alpha-store.js";
+
 // Embedding cache (LRU content-hash cache decorator)
 export { createCachedEmbeddingPort } from "./embedding-cache-lru.js";
 export type { EmbeddingCacheOptions, EmbeddingCacheStats } from "./embedding-cache-lru.js";
