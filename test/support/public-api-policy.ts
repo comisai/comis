@@ -966,16 +966,13 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RewrittenOAuthError",
       "FileExtractionErrorKind",
       // (Phase 112, FORGET-02 / Track C) MemoryLifecyclePort + MemoryLifecycleScope +
-      // MemoryTier + LifecycleSweepReport are SCAFFOLD-DORMANT ahead-of-consumer
-      // planned-orphans tracked here by plan 112-02 (REMOVE @ 112-03/04). The sole
-      // @comis/memory lifecycle adapter (112-03) and the daemon __MEMORY_LIFECYCLE__
-      // cron wiring (112-04) name-import them from @comis/core in non-test src; until
-      // those land the public-export-consumers walker sees no consumer. Mirrors the
-      // TunedAlphaStore 111-01→111-02 posture immediately below.
-      "MemoryLifecyclePort",
-      "MemoryLifecycleScope",
-      "MemoryTier",
-      "LifecycleSweepReport",
+      // MemoryTier + LifecycleSweepReport were tracked here as SCAFFOLD-DORMANT
+      // ahead-of-consumer planned-orphans by plan 112-02 (REMOVE @ 112-03). REMOVED:
+      // the sole @comis/memory lifecycle adapter `createSqliteMemoryLifecycleStore`
+      // (packages/memory/src/sqlite-memory-lifecycle-store.ts, 112-03) now name-imports
+      // all four from @comis/core BY TYPE in non-test src — they have a real
+      // cross-package consumer, so they are no longer orphans (the daemon cron in 112-04
+      // adds a second). Mirrors the TunedAlphaStore 111-01→111-02 shrink below.
       // (Phase 111, LEARN-03 / Track H2) TunedAlphaStore + TunedAlphaScope +
       // TunedAlphaVector were tracked here as ahead-of-consumer planned-orphans by
       // plan 111-01 (REMOVE @ 111-02). REMOVED: the sole SQLite adapter
@@ -2108,6 +2105,24 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // MemoryRelationshipStoreDeps / RelationshipRowSchema above).
       "MemoryTunedAlphaStoreDeps",
       "TunedAlphaRowSchema",
+      // Memory-lifecycle store (Phase 112-03, Track C — FORGET-02).
+      // createSqliteMemoryLifecycleStore is the SOLE MemoryLifecyclePort adapter (the
+      // (tenant, agent)-scoped DORMANT sweep over the `memories` table + its additive
+      // marker columns — it computes strengths/tiers but evicts/demotes NOTHING). It is
+      // an ahead-of-consumer factory-orphan: the daemon composition root CONSTRUCTS it on
+      // the shared db handle + registers the default-OFF __MEMORY_LIFECYCLE__ cron in Plan
+      // 112-04 (and the keyless forget.bench in 112-05 drives it). SHRINK @ 112-04 — the
+      // factory-orphan shrink, mirror createSqliteTunedAlphaStore @ 111-04 above
+      // (allowlist-shrink enforces shrink-only). MemoryLifecycleStoreDeps +
+      // MemoryLifecyclePolicy are the constructor-deps/policy SHAPE types (referenced via
+      // inline objects only); MemoryLifecycleRowSchema is the row schema consumed by
+      // createRowMapper inside the adapter (an intra-file value reference, not a cross-file
+      // import) — all three PERMANENT baseline orphans (mirror MemoryTunedAlphaStoreDeps /
+      // TunedAlphaRowSchema above).
+      "createSqliteMemoryLifecycleStore",
+      "MemoryLifecycleStoreDeps",
+      "MemoryLifecyclePolicy",
+      "MemoryLifecycleRowSchema",
       // Scoped embedding-read store (Phase 102-03/05, IQ-01). createSqliteMemoryEmbeddingStore
       // is the sole MemoryEmbeddingStore adapter — the (tenant, agent)-scoped LEFT JOIN
       // vec_memories bulk read that hydrates the MMR diversity re-rank. Its daemon

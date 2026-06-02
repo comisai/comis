@@ -2,32 +2,20 @@
 /**
  * Zod schemas for memory-package SQLite row types — one schema per row interface,
  * used by `createRowMapper(schema)` in `row-mapper.ts` to replace untyped-row casts
- * at every SQLite call site.
+ * at every SQLite call site. Schemas live HERE (consumer-side `memory/`), NOT in
+ * `@comis/core/ports/*`, to preserve core's zero-runtime-Zod-dependency boundary
+ * (its port files stay type-only — a `import { z }` there widens the public surface).
  *
- * Schemas live HERE (consumer-side `memory/`), NOT in `@comis/core/ports/*`, to
- * preserve core's zero-runtime-Zod-dependency boundary (its port files stay
- * type-only — adding `import { z }` there would widen the public dependency surface).
+ * Sectional layout: (1) memory-package-local public rows paired 1:1 with the
+ * `./types.js` interfaces (each pair gets an `expectTypeOf` drift guard in
+ * `row-schemas.test.ts`); (2) context-store rows (`Ctx*Row` from @comis/core); (3)
+ * session-store DTOs; (4) file-internal snake_case row shapes (the SSOT consumers
+ * retarget to via `z.infer<typeof XxxRowSchema>`).
  *
- * ## Sectional layout
- *
- * 1. **Memory-package-local public rows** — paired 1:1 with the `./types.js`
- *    interfaces; each pair gets an `expectTypeOf` assertion in `row-schemas.test.ts`
- *    to prevent silent schema drift.
- * 2. **Context-store rows** — paired with the `Ctx*Row` interfaces from
- *    `@comis/core/ports/context-store-types`.
- * 3. **Session-store DTOs** — SessionData / SessionListEntry / SessionDetailedEntry
- *    from `@comis/core/ports/session-store-types`.
- * 4. **Internal DB-row schemas** — file-internal snake_case row shapes (no `export`
- *    source interface); these become the single source of truth consumers retarget
- *    to via `z.infer<typeof XxxRowSchema>`.
- *
- * ## Conventions
- *
- * - Every schema is `z.strictObject(...)` — rejects unknown extra columns.
- * - JSON-encoded TEXT columns are `z.string()` (parsing happens downstream).
- * - SQLite booleans are `INTEGER` (0/1) → `z.number().int()`.
- * - Buffer (BLOB) columns use `z.instanceof(Buffer)`.
- * - Nullable columns use `z.X.nullable()` (`X | null` — SQLite NULL ≠ undefined).
+ * Conventions: every schema is `z.strictObject(...)` (rejects extra columns);
+ * JSON-encoded TEXT → `z.string()` (parsed downstream); SQLite bool INTEGER 0/1 →
+ * `z.number().int()`; BLOB → `z.instanceof(Buffer)`; nullable → `z.X.nullable()`
+ * (`X | null` — SQLite NULL ≠ undefined).
  *
  * @module
  */
@@ -82,13 +70,11 @@ export const MemoryRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the `memory_entities` table (Phase 83, ENT-05).
- *
- * `canonical_key` is DB-row-ONLY (OQ-2): it is the normalized dedup/index key
- * (TS lower+NFKD+strip-marks — see entity-resolver.ts) and is intentionally
- * NOT a field on the strict `MemoryEntity` domain type in @comis/core, which
- * carries only the display `canonicalName`. The key is an implementation
- * detail of the resolver + UNIQUE index, not part of the domain contract.
+ * Schema for the `memory_entities` table (Phase 83, ENT-05). `canonical_key` is
+ * DB-row-ONLY (OQ-2): the normalized dedup/index key (TS lower+NFKD+strip-marks, see
+ * entity-resolver.ts), intentionally NOT a field on the strict `MemoryEntity` domain
+ * type in @comis/core (which carries only the display `canonicalName`) — an
+ * implementation detail of the resolver + UNIQUE index, not the domain contract.
  */
 export const MemoryEntityRowSchema = z.strictObject({
   id: z.string(),
@@ -107,16 +93,12 @@ export const MemoryEntityRowSchema = z.strictObject({
 
 /**
  * Schema for the `readUsefulness` projection (Phase 93, FEED-02; per-intent in
- * Phase 110, LEARN-01). The scoped
- * `SELECT memory_id, intent, used_count, ignored_count, last_useful_at FROM
- * memory_usefulness WHERE tenant_id=? AND agent_id=? AND intent IN (?, '') AND
- * memory_id IN (...)` read. `tenant_id`/`agent_id` are NOT projected — the WHERE
- * already pins them (mirrors `EntityListRowSchema`'s drop of `canonical_key`).
- * `intent` IS projected (the per-intent vs global-`''` bucket the adapter
- * resolves per id); it is NON-nullable (the column is NOT NULL DEFAULT '' — the
- * global bucket is `''`, never NULL). `last_useful_at` is nullable (NULL until
- * the memory's first "used" attribution). Parsed via `createRowMapper` in the
- * adapter — never `as Row[]`.
+ * Phase 110, LEARN-01). The scoped `SELECT memory_id, intent, used_count,
+ * ignored_count, last_useful_at FROM memory_usefulness WHERE tenant_id=? AND
+ * agent_id=? AND intent IN (?, '') AND memory_id IN (...)` read; tenant_id/agent_id
+ * NOT projected (the WHERE pins them). `intent` IS projected (the per-intent vs
+ * global-`''` bucket), NON-nullable (NOT NULL DEFAULT '' — global is `''`, never
+ * NULL); `last_useful_at` nullable (NULL until first "used"). Via `createRowMapper`.
  */
 export const MemoryUsefulnessRowSchema = z.strictObject({
   memory_id: z.string(),
@@ -126,6 +108,35 @@ export const MemoryUsefulnessRowSchema = z.strictObject({
   ignored_count: z.number(),
   /** Epoch ms of the last "used" attribution; NULL until first use. */
   last_useful_at: z.number().nullable(),
+});
+
+/**
+ * Schema for the lifecycle-sweep candidate-scan projection (Phase 112, FORGET-02).
+ * The scoped `SELECT id, memory_type, occurred_at, created_at, proof_count,
+ * lifecycle_demoted_at, evicted_at, strength FROM memories WHERE tenant_id=? AND
+ * agent_id=?` read the DORMANT sweep uses to compute each candidate's decayed
+ * strength + hysteresis-banded tier; tenant_id/agent_id NOT projected (the WHERE
+ * pins them). The three markers + occurred_at + proof_count are `.nullable()` (NULL
+ * = not demoted / not evicted / no strength yet / event-time unknown / raw);
+ * `memory_type` is NOT NULL (DEFAULT 'semantic'), drives the per-type β. Via
+ * `createRowMapper`. SCAFFOLD-DORMANT: the sweep READS these markers but writes NONE.
+ */
+export const MemoryLifecycleRowSchema = z.strictObject({
+  id: z.string(),
+  /** NOT NULL DEFAULT 'semantic' — drives the per-type decay shape β. */
+  memory_type: z.string(),
+  /** Event time (epoch ms); NULL when unknown — falls back to created_at. */
+  occurred_at: z.number().nullable(),
+  /** Record time (epoch ms). */
+  created_at: z.number(),
+  /** Evidence count; NULL = raw, >=1 = observation — an importance signal. */
+  proof_count: z.number().nullable(),
+  /** Non-destructive demote marker (epoch ms); NULL = not demoted (DORMANT). */
+  lifecycle_demoted_at: z.number().nullable(),
+  /** Non-destructive evict marker (epoch ms); NULL = not evicted (DORMANT). */
+  evicted_at: z.number().nullable(),
+  /** Computed strength side-column (REAL 0..1); NULL = not yet computed. */
+  strength: z.number().nullable(),
 });
 
 /**
@@ -144,11 +155,9 @@ export const EntityLaneRowSchema = z.strictObject({
 /**
  * Schema for the causal one-hop edge-lookup projection (Phase 96, EXTRACT-03;
  * RESEARCH Pattern 3). The scoped UNION over `memory_causal_edges` returns, per
- * counterpart memory, the linked memory id (the cause/effect counterpart of a
- * seed, EITHER direction) and the edge `confidence`. `tenant_id`/`agent_id` are
- * NOT projected — the WHERE already pins them (mirrors `EntityLaneRowSchema`'s
- * minimal projection). Parsed via `createRowMapper` in the adapter — never
- * `as Row[]`.
+ * counterpart memory, the linked memory id (the cause/effect counterpart of a seed,
+ * EITHER direction) + the edge `confidence`; tenant_id/agent_id NOT projected (the
+ * WHERE pins them). Parsed via `createRowMapper` — never `as Row[]`.
  */
 export const CausalLaneRowSchema = z.strictObject({
   linked: z.string(), // cause/effect counterpart memory id of a seed (hydrate)
@@ -157,15 +166,13 @@ export const CausalLaneRowSchema = z.strictObject({
 
 /**
  * Schema for the `memory_triples` table (Phase 100, KG-01). The segregated
- * bi-temporal knowledge-graph row: an S/P/O assertion with the FOUR bi-temporal
- * timestamps (`t_valid_start`/`t_valid_end` valid-time, `t_ingested`/`expired_at`
- * txn-time) + the occurred range (`t_occurred`/`t_occurred_end`) + the Comis
- * `trust` ladder + optional `source_memory_id` provenance + `confidence`.
- * `tenant_id`/`agent_id` ARE projected (the adapter maps a full row back to the
- * camelCase `TripleInput` for `asOf`). The end-stamps + occurred range +
- * provenance + confidence are `.nullable()` (a current-truth row has
- * `t_valid_end`/`expired_at` NULL); `trust` is `z.enum(...)` matching the DDL
- * CHECK. Parsed via `createRowMapper` in the adapter — never `as Row[]`.
+ * bi-temporal KG row: an S/P/O assertion with the FOUR bi-temporal timestamps
+ * (`t_valid_start`/`t_valid_end` valid-time, `t_ingested`/`expired_at` txn-time) +
+ * the occurred range + the `trust` ladder + optional `source_memory_id` + `confidence`.
+ * tenant_id/agent_id ARE projected (the adapter maps a full row back to `TripleInput`
+ * for `asOf`). End-stamps + occurred range + provenance + confidence are `.nullable()`
+ * (a current-truth row has `t_valid_end`/`expired_at` NULL); `trust` is `z.enum(...)`
+ * matching the DDL CHECK. Parsed via `createRowMapper` — never `as Row[]`.
  */
 // Per-field semantics (trust ladder, 4 bi-temporal stamps, occurred range, provenance, confidence; nullable = NULL on disk) are in the JSDoc above.
 export const MemoryTripleRowSchema = z.strictObject({
@@ -186,10 +193,10 @@ export const MemoryTripleRowSchema = z.strictObject({
   confidence: z.number().nullable(),
 });
 
-// Schema for a `user_representation` row projection (Phase 107, USER-01). The
-// scoped read projects the 7 columns below (NOT tenant_id/agent_id/user_id — the
-// WHERE pins them); trust/entry_type z.enum match the DDL CHECKs ('external'
-// absent); source_memory_id/updated_at nullable. Parsed via createRowMapper.
+// Schema for a `user_representation` row projection (Phase 107, USER-01). The scoped
+// read projects the 7 columns below (NOT tenant_id/agent_id/user_id — the WHERE pins
+// them); trust/entry_type z.enum match the DDL CHECKs ('external' absent);
+// source_memory_id/updated_at nullable. Parsed via createRowMapper.
 export const UserRepresentationRowSchema = z.strictObject({
   id: z.string(),
   entry_type: z.enum(["identity", "preference", "relationship", "instruction"]),
@@ -200,10 +207,10 @@ export const UserRepresentationRowSchema = z.strictObject({
   updated_at: z.number().nullable().optional(),
 });
 
-// Schema for a `relationship` row projection (Phase 108, SOCIAL-02). The scoped
-// read projects the 8 columns below (NOT tenant_id/agent_id/channel_id — the WHERE
-// pins them); the directional (subject_user_id, about_user_id) pair is ROW DATA;
-// trust z.enum matches the DDL CHECK ('external' absent). Parsed via createRowMapper.
+// Schema for a `relationship` row projection (Phase 108, SOCIAL-02). The scoped read
+// projects 8 columns (NOT tenant_id/agent_id/channel_id — the WHERE pins them); the
+// directional (subject_user_id, about_user_id) pair is ROW DATA; trust z.enum matches
+// the DDL CHECK ('external' absent). Parsed via createRowMapper.
 export const RelationshipRowSchema = z.strictObject({
   id: z.string(),
   subject_user_id: z.string(),
@@ -216,10 +223,9 @@ export const RelationshipRowSchema = z.strictObject({
 });
 
 // Schema for a `tuned_alpha` row projection (Phase 111, LEARN-03). The scoped read
-// projects these 5 columns (NOT tenant_id/agent_id — the WHERE pins them): the 4
-// REAL tunable boost alphas + updated_at. NO fifth (trust-weight) column (the
-// structural trust-freeze belt #3). The adapter maps snake_case -> camelCase
-// `TunedAlphaVector`. Parsed via createRowMapper.
+// projects 5 columns (NOT tenant_id/agent_id — the WHERE pins them): the 4 REAL
+// tunable boost alphas + updated_at. NO fifth (trust-weight) column (the structural
+// trust-freeze belt #3). Maps snake_case -> camelCase `TunedAlphaVector`. Via createRowMapper.
 export const TunedAlphaRowSchema = z.strictObject({
   recency_alpha: z.number(),
   temporal_alpha: z.number(),
@@ -229,11 +235,11 @@ export const TunedAlphaRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the graph-spread recursive-CTE node projection (Phase 100, KG-04).
- * The bounded `WITH RECURSIVE walk(node, depth)` over current-truth subject→object
- * edges returns, per reached node, the node string + its hop `depth`
- * (`SELECT DISTINCT node, depth FROM walk WHERE depth > 0`); tenant_id/agent_id NOT
- * projected (the recursive WHERE pins them). Parsed via `createRowMapper`.
+ * Schema for the graph-spread recursive-CTE node projection (Phase 100, KG-04). The
+ * bounded `WITH RECURSIVE walk(node, depth)` over current-truth subject→object edges
+ * returns, per reached node, the node string + its hop `depth` (`SELECT DISTINCT
+ * node, depth FROM walk WHERE depth > 0`); tenant_id/agent_id NOT projected (the
+ * recursive WHERE pins them). Parsed via `createRowMapper`.
  */
 export const SpreadNodeRowSchema = z.strictObject({
   node: z.string(), // a reached node (a triple `object`) — drives hydrate + dedup
@@ -243,11 +249,10 @@ export const SpreadNodeRowSchema = z.strictObject({
 /**
  * Schema for the `listEntities` diagnostic projection (Phase 86, OBS-06). The
  * scoped `SELECT id, canonical_name, mention_count, first_seen, last_seen FROM
- * memory_entities WHERE tenant_id=? AND agent_id=? ORDER BY mention_count DESC`
- * read — a STRICT SUBSET of the columns: it omits `canonical_key` (DB-internal
- * dedup key — OQ-2, never operator-facing) and the `tenant_id`/`agent_id` scope
- * columns (the WHERE pins them). The adapter maps this snake_case row to the
- * camelCase `EntityRow` domain shape (`@comis/core`) — parsed via `createRowMapper`.
+ * memory_entities WHERE tenant_id=? AND agent_id=? ORDER BY mention_count DESC` read
+ * — a STRICT SUBSET: omits `canonical_key` (DB-internal dedup key, OQ-2) + the
+ * tenant_id/agent_id scope columns (the WHERE pins them). The adapter maps it to the
+ * camelCase `EntityRow` domain shape (@comis/core) — via `createRowMapper`.
  */
 export const EntityListRowSchema = z.strictObject({
   id: z.string(),
@@ -632,12 +637,11 @@ export const DeliveryStatsDbRowSchema = z.strictObject({
 });
 
 /**
- * Schema for `system_prompt_reports` rows.
- * SSOT for the file-internal `SystemPromptReportDbRow` interface in
- * observability-store-types.ts. The full report JSON is stored in
- * `report_json` (post-sanitizeForPersistence); this on-disk schema
- * validates only the column shape, not the JSON contents (those flow
- * through JSON.parse(row.report_json) at read time).
+ * Schema for `system_prompt_reports` rows. SSOT for the file-internal
+ * `SystemPromptReportDbRow` interface in observability-store-types.ts. The full
+ * report JSON lives in `report_json` (post-sanitizeForPersistence); this on-disk
+ * schema validates only the column shape, not the JSON contents (those flow through
+ * JSON.parse(row.report_json) at read time).
  */
 export const SystemPromptReportDbRowSchema = z.strictObject({
   agent_id: z.string(),
@@ -781,18 +785,12 @@ export const BatchCacheRowSchema = z.strictObject({
 // 5. Common projection shapes (frequently encountered)
 // =====================================================================
 
-/**
- * Schema for single-column id projections (`SELECT id FROM ...`).
- * Replaces `Array<{ id: string }>` casts at call sites.
- */
+/** Schema for single-column id projections (`SELECT id FROM ...`); replaces `Array<{ id: string }>` casts. */
 export const IdProjectionRowSchema = z.strictObject({
   id: z.string(),
 });
 
-/**
- * Schema for `SELECT COUNT(*) as count FROM ...` results.
- * Replaces `{ count: number }` casts at countRows sites.
- */
+/** Schema for `SELECT COUNT(*) as count FROM ...` results; replaces `{ count: number }` casts. */
 export const CountProjectionRowSchema = z.strictObject({
   count: z.number(),
 });

@@ -25,36 +25,31 @@ export function isVecAvailable(): boolean {
 }
 
 /**
- * Additively ensure the `memories` table carries every column the current
- * code expects, adding any that are absent. This is the package's
- * forward-only, additive column-add path (design §4.1): SQLite has no
- * `ADD COLUMN IF NOT EXISTS`, so each add is guarded by a
- * `PRAGMA table_info(memories)` presence check. Safe to run on every boot,
- * including a live `~/.comis` DB created before a column existed — existing
- * rows get the column with a NULL value (a nullable add is O(1); no table
- * rewrite, no backfill).
+ * Additively ensure the `memories` table carries every column the current code
+ * expects, adding any absent. The package's forward-only, additive column-add path
+ * (design §4.1): SQLite has no `ADD COLUMN IF NOT EXISTS`, so each add is guarded by a
+ * `PRAGMA table_info(memories)` presence check. Safe on every boot, including a live
+ * `~/.comis` DB created before a column existed — existing rows get the column NULL (a
+ * nullable add is O(1); no rewrite, no backfill).
+ * Added columns (each documented at its add-site below): `occurred_at` (TEMP-01),
+ * the Phase-84 observation set `proof_count`/`source_ids`/`consolidated_at`/
+ * `confidence`/`history` (CONS-01..08), the Phase-101 typed-observation pair
+ * `observation_kind`/`pattern_type` (REASON-01), and the Phase-112 lifecycle markers
+ * `lifecycle_demoted_at`/`evicted_at`/`strength` (FORGET-02 — nullable SIDE-columns,
+ * NO PK change). All nullable (NULL = the pre-feature default), NO CHECK (the enums
+ * are the Zod domain type's job).
  *
- * The added columns (each documented at its add-site below): `occurred_at`
- * (TEMP-01), the Phase-84 observation set `proof_count`/`source_ids`/
- * `consolidated_at`/`confidence`/`history` (CONS-01..08), and the Phase-101
- * typed-observation pair `observation_kind`/`pattern_type` (REASON-01). All are
- * nullable (NULL = the pre-feature default) and carry NO CHECK — the enums are
- * the Zod domain type's job.
- *
- * @param db - An open better-sqlite3 Database instance whose `memories`
- *   table already exists (created by `initSchema`'s `CREATE TABLE IF NOT EXISTS`).
+ * @param db - An open better-sqlite3 Database whose `memories` table already exists.
  */
 export function ensureMemoryColumns(db: Database.Database): void {
-  // Object-literal cast (matches the `as { v: string } | undefined` style at
-  // the vec_version() probe below); the untyped-sqlite rule targets `as Foo[]`
-  // (a \w+ named type) and does NOT match an object-literal cast.
+  // Object-literal cast (matches the `as { v: string } | undefined` style at the
+  // vec_version() probe below); the untyped-sqlite rule targets `as Foo[]` (a \w+
+  // named type) and does NOT match an object-literal cast.
   const cols = new Set(
     (db.prepare(`PRAGMA table_info(memories)`).all() as { name: string }[]).map((r) => r.name),
   );
-  if (!cols.has("occurred_at")) {
-    // Nullable add → O(1), no table rewrite, no destructive rewrite (TEMP-01).
-    db.exec(`ALTER TABLE memories ADD COLUMN occurred_at INTEGER`);
-  }
+  // Nullable add → O(1), no table rewrite, no destructive rewrite (TEMP-01).
+  if (!cols.has("occurred_at")) db.exec(`ALTER TABLE memories ADD COLUMN occurred_at INTEGER`);
   // Observation columns (P84). All nullable → O(1) ADD, no rewrite, no backfill
   // (existing rows get NULL = "raw, never consolidated"). Forward-only.
   if (!cols.has("proof_count")) db.exec(`ALTER TABLE memories ADD COLUMN proof_count INTEGER`);
@@ -62,48 +57,54 @@ export function ensureMemoryColumns(db: Database.Database): void {
   if (!cols.has("consolidated_at")) db.exec(`ALTER TABLE memories ADD COLUMN consolidated_at INTEGER`);
   if (!cols.has("confidence")) db.exec(`ALTER TABLE memories ADD COLUMN confidence REAL`);
   if (!cols.has("history")) db.exec(`ALTER TABLE memories ADD COLUMN history TEXT`);
-  // Typed-observation columns (P101/REASON-01). Both nullable → O(1) ADD, no
-  // rewrite, no backfill (existing rows get NULL: observation_kind NULL = "merge"
-  // on read, the forward-only default). Forward-only. NO CHECK — the enum is
-  // enforced in the MemoryEntry Zod domain type + the lenient LLM parser (101-04),
-  // following the occurred_at/proof_count no-CHECK ALTER precedent.
+  // Typed-observation columns (P101/REASON-01). Both nullable → O(1) ADD, no rewrite,
+  // no backfill (existing rows get NULL: observation_kind NULL = "merge" on read, the
+  // forward-only default). NO CHECK — the enum is enforced in the MemoryEntry Zod type
+  // + the lenient LLM parser (101-04), per the occurred_at/proof_count no-CHECK precedent.
   if (!cols.has("observation_kind")) db.exec(`ALTER TABLE memories ADD COLUMN observation_kind TEXT`);
   if (!cols.has("pattern_type")) db.exec(`ALTER TABLE memories ADD COLUMN pattern_type TEXT`);
+  // Lifecycle marker columns (P112/FORGET-02). Nullable → O(1) ADD, no rewrite/backfill
+  // (existing rows get NULL = "not demoted / not evicted / no strength yet" = byte-
+  // identity for a pre-112 DB). Forward-only, NO CHECK, NO PK CHANGE: nullable SIDE-
+  // columns on the `id`-keyed table, never an identity key (the 110 PK-widening lesson
+  // :150-218 — a side-column over a rebuild). The sweep (112-03) is SCAFFOLD-DORMANT: it
+  // computes strength/tiers but writes NONE of these markers (the deferred live policy
+  // sets them NON-DESTRUCTIVELY, a marker never a DELETE — the `consolidated_at` :62).
+  if (!cols.has("lifecycle_demoted_at")) db.exec(`ALTER TABLE memories ADD COLUMN lifecycle_demoted_at INTEGER`);
+  if (!cols.has("evicted_at")) db.exec(`ALTER TABLE memories ADD COLUMN evicted_at INTEGER`);
+  if (!cols.has("strength")) db.exec(`ALTER TABLE memories ADD COLUMN strength REAL`);
 }
 
 /**
  * Idempotently create the entity-association junction tables (Phase 83):
- * `memory_entities` (one row per resolved entity, scoped to a tenant+agent)
- * and `memory_entity_links` (the many-to-many memory<->entity edge). Mirrors
- * `ensureMemoryColumns`'s forward-only, additive contract — all DDL is
- * `CREATE … IF NOT EXISTS`, so it is safe to run on every boot including a
- * live `~/.comis` DB created before the feature existed (no backfill: existing
- * memories simply have no links until re-extracted).
+ * `memory_entities` (one row per resolved entity, scoped to tenant+agent) and
+ * `memory_entity_links` (the many-to-many memory<->entity edge). Mirrors
+ * `ensureMemoryColumns`'s forward-only, additive contract — all DDL is `CREATE … IF
+ * NOT EXISTS`, safe on every boot including a live `~/.comis` DB created before the
+ * feature existed (no backfill: existing memories have no links until re-extracted).
  *
  * ## The UNIQUE index keys on `canonical_key`, NOT a SQL lower() expression
  *
  * RESEARCH Pitfall 3: SQLite's built-in `lower()` is ASCII-only (it leaves
- * `İSTANBUL`/`CAFÉ`/`ПРИВЕТ` unchanged), so the original §4.2 spec's UNIQUE
- * index over a SQL `lower(...)` expression of the display name would NOT dedup
- * Turkish/CJK/Cyrillic case-variants → duplicate entities (ENT-05 break).
- * Instead the resolver computes a locale-independent `canonical_key` in
- * TypeScript (`normalizeEntityKey` in entity-resolver.ts: lower+NFKD+strip-
- * marks) and we UNIQUE-index THAT stored column.
+ * `İSTANBUL`/`CAFÉ`/`ПРИВЕТ` unchanged), so the original §4.2 spec's UNIQUE index
+ * over a SQL `lower(...)` of the display name would NOT dedup Turkish/CJK/Cyrillic
+ * case-variants → duplicate entities (ENT-05 break). Instead the resolver computes a
+ * locale-independent `canonical_key` in TypeScript (`normalizeEntityKey` in
+ * entity-resolver.ts: lower+NFKD+strip-marks) and we UNIQUE-index THAT stored column.
  *
- * The index keys on `(tenant_id, agent_id, canonical_key)` so two agents or
- * tenants NEVER collapse to one entity row even with an identical name — the
- * resolver-side half of the ENT-03 isolation boundary.
+ * The index keys on `(tenant_id, agent_id, canonical_key)` so two agents or tenants
+ * NEVER collapse to one entity row even with an identical name — the resolver-side
+ * half of the ENT-03 isolation boundary.
  *
  * `ON DELETE CASCADE` on `memory_entity_links.memory_id → memories(id)` is the
  * ENTIRE link-maintenance story (ENT-04 — no orphan-sweep job). It fires
- * automatically because `openSqliteDatabase` already sets
- * `PRAGMA foreign_keys = ON` (sqlite-adapter-base.ts:52) — no pragma is set
- * here. NB: the parent `memory_entities` row is intentionally NOT cascaded by a
- * memory delete (entities are per-concept and may be re-linked; RESEARCH
- * Pitfall 7), so a stale `mention_count` is by-design, not an orphan bug.
+ * automatically because `openSqliteDatabase` already sets `PRAGMA foreign_keys = ON`
+ * (sqlite-adapter-base.ts:52). NB: the parent `memory_entities` row is intentionally
+ * NOT cascaded by a memory delete (entities are per-concept and may be re-linked;
+ * RESEARCH Pitfall 7), so a stale `mention_count` is by-design, not an orphan bug.
  *
- * @param db - An open better-sqlite3 Database whose `memories` table already
- *   exists (the FK target). Call AFTER the base `memories` CREATE.
+ * @param db - An open better-sqlite3 Database whose `memories` table exists (the FK
+ *   target). Call AFTER the base `memories` CREATE.
  */
 export function ensureEntityTables(db: Database.Database): void {
   db.exec(`
@@ -602,11 +603,10 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
 
   // --- Observation partial indexes (Phase 84; design §4.1) ---
   // Created AFTER ensureMemoryColumns (the indexed columns must exist first).
-  // `idx_memories_unconsol` serves the candidate scan (WHERE consolidated_at IS
-  // NULL, the CONS-04 state predicate); `idx_memories_observations` serves the
-  // observation lookup (WHERE proof_count IS NOT NULL — the column-flag). The
-  // design's third "live" index (the exact-dup-retirement filter) is OMITTED —
-  // exact-dup retirement and its column are deferred to a later phase.
+  // `idx_memories_unconsol` serves the candidate scan (WHERE consolidated_at IS NULL,
+  // CONS-04); `idx_memories_observations` serves the observation lookup (WHERE
+  // proof_count IS NOT NULL). The design's third "live" index (exact-dup-retirement)
+  // is OMITTED — that filter + its column are deferred to a later phase.
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_memories_unconsol
       ON memories(agent_id, created_at) WHERE consolidated_at IS NULL;

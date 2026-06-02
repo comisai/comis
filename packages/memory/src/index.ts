@@ -141,6 +141,18 @@ export type { MemoryUsefulnessStoreDeps } from "./sqlite-memory-usefulness-store
 export { createSqliteTunedAlphaStore } from "./sqlite-tuned-alpha-store.js";
 export type { MemoryTunedAlphaStoreDeps } from "./sqlite-tuned-alpha-store.js";
 
+// Memory-lifecycle sweep store (sole MemoryLifecyclePort impl; Phase 112, Track C
+// — FORGET-02). Owns the (tenant, agent)-scoped candidate scan over the `memories`
+// table + its additive NON-DESTRUCTIVE marker columns (lifecycle_demoted_at /
+// evicted_at / strength). SCAFFOLD-DORMANT per OD4: it computes strengths/tiers but
+// evicts/demotes/promotes NOTHING (report all-0, no DELETE, no marker UPDATE) — the
+// live eviction policy is the deferred operator/v2.10 step. The daemon (composition
+// root, Plan 112-04) constructs it on the memory adapter's db handle + registers the
+// default-OFF __MEMORY_LIFECYCLE__ cron; the MemoryLifecyclePort TYPE lives in
+// @comis/core (the agent↛memory cut — the agent never imports this adapter).
+export { createSqliteMemoryLifecycleStore } from "./sqlite-memory-lifecycle-store.js";
+export type { MemoryLifecycleStoreDeps, MemoryLifecyclePolicy } from "./sqlite-memory-lifecycle-store.js";
+
 // Embedding cache (LRU content-hash cache decorator)
 export { createCachedEmbeddingPort } from "./embedding-cache-lru.js";
 export type { EmbeddingCacheOptions, EmbeddingCacheStats } from "./embedding-cache-lru.js";
