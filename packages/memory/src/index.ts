@@ -147,6 +147,9 @@ export { createOAuthProfileStoreEncrypted } from "./oauth-profile-store-encrypte
 export { setupSecrets } from "./setup-secrets.js";
 export type { SecretsBootResult } from "./setup-secrets.js";
 
+// Offline secrets write helpers (CLI daemon-free bootstrap path)
+export { offlineSecretSet, offlineSecretsList } from "./offline-secrets-write.js";
+
 // Named graph store (server-side pipeline persistence)
 export { createNamedGraphStore } from "./named-graph-store.js";
 export type { NamedGraphStore, NamedGraphEntry, NamedGraphSummary } from "./named-graph-store.js";

@@ -38,7 +38,9 @@ import {
 } from "@comis/core";
 import type { AuditFinding } from "@comis/core";
 import { withClient, callTyped } from "../client/rpc-client.js";
-import { requireDaemonOrExit } from "../util/daemon-required.js";
+import { requireDaemonOrExit, DAEMON_PROBE_TIMEOUT_MS } from "../util/daemon-required.js";
+import { isDaemonRunning } from "../sync-tooling/daemon-guard.js";
+import { offlineSecretSet, offlineSecretsList } from "../util/offline-secrets-store.js";
 import { success, error, info, warn, json } from "../output/format.js";
 import { renderTable } from "../output/table.js";
 import { formatRelativeTime } from "./sessions.js";
@@ -205,7 +207,7 @@ export function registerSecretsCommand(program: Command): void {
   secrets
     .command("set <name>")
     .description(
-      "Encrypt and store a secret. Requires the comis daemon to be running.",
+      "Encrypt and store a secret. Uses daemon RPC when running; falls back to direct store when daemon is offline.",
     )
     .option("--value <value>", "Secret value (alternative to interactive prompt)")
     .option("--stdin", "Read value from stdin pipe")
@@ -215,23 +217,41 @@ export function registerSecretsCommand(program: Command): void {
         name: string,
         options: { value?: string; stdin?: boolean; provider?: string },
       ) => {
-        await requireDaemonOrExit();
         try {
           const value = await resolveSecretValue(options);
           const provider = options.provider ?? detectProvider(name);
+          const daemonUp = await isDaemonRunning(DAEMON_PROBE_TIMEOUT_MS);
 
-          const result = await withClient(async (client) => {
-            return await callTyped(client, SecretsSetContract, {
+          if (daemonUp) {
+            const result = await withClient(async (client) => {
+              return await callTyped(client, SecretsSetContract, {
+                name,
+                value,
+                ...(provider !== undefined ? { provider } : {}),
+              });
+            });
+
+            if (result.restarting) {
+              success(`Secret '${name}' stored — daemon restart scheduled (existing key rotated)`);
+            } else {
+              success(`Secret '${name}' stored and live-applied (no restart required)`);
+            }
+          } else {
+            // Daemon-free fallback: write directly to the encrypted SQLite store
+            const dataDir = safePath(os.homedir(), ".comis");
+            const envFilePath = safePath(dataDir, ".env");
+            const result = offlineSecretSet({
               name,
               value,
               ...(provider !== undefined ? { provider } : {}),
+              dataDir,
+              envFilePath,
             });
-          });
-
-          if (result.restarting) {
-            success(`Secret '${name}' stored — daemon restart scheduled (existing key rotated)`);
-          } else {
-            success(`Secret '${name}' stored and live-applied (no restart required)`);
+            if (!result.ok) {
+              error(result.error.message);
+              process.exit(1);
+            }
+            success(`Secret '${name}' stored (offline — daemon was not running)`);
           }
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
@@ -289,17 +309,30 @@ export function registerSecretsCommand(program: Command): void {
   secrets
     .command("list")
     .description(
-      "List stored secrets (metadata only, no values). Requires the comis daemon to be running.",
+      "List stored secrets (metadata only, no values). Uses daemon RPC when running; falls back to direct store when daemon is offline.",
     )
     .option("--format <format>", "Output format (table|json)", "table")
     .action(async (options: { format: string }) => {
-      await requireDaemonOrExit();
       try {
-        const result = await withClient(async (client) => {
-          return await callTyped(client, SecretsListContract, {});
-        });
+        const daemonUp = await isDaemonRunning(DAEMON_PROBE_TIMEOUT_MS);
+        let rows: Array<{ name: string; provider?: string | null; createdAt: number }>;
 
-        const rows = result.secrets;
+        if (daemonUp) {
+          const result = await withClient(async (client) => {
+            return await callTyped(client, SecretsListContract, {});
+          });
+          rows = result.secrets;
+        } else {
+          const dataDir = safePath(os.homedir(), ".comis");
+          const envFilePath = safePath(dataDir, ".env");
+          const result = offlineSecretsList({ dataDir, envFilePath });
+          if (!result.ok) {
+            error(result.error.message);
+            process.exit(1);
+            return;
+          }
+          rows = result.value;
+        }
 
         if (options.format === "json") {
           json(rows);
@@ -367,14 +400,13 @@ export function registerSecretsCommand(program: Command): void {
   secrets
     .command("import")
     .description(
-      "Import secrets from a .env file. Requires the comis daemon to be running.",
+      "Import secrets from a .env file. Uses daemon RPC when running; falls back to direct store when daemon is offline.",
     )
     .option("--file <path>", "Source .env file path (default: ~/.comis/.env)")
     .action(async (options: { file?: string }) => {
       const sourcePath =
         options.file ?? safePath(os.homedir() + "/.comis", ".env");
 
-      await requireDaemonOrExit();
       try {
         // Load source file into a fresh record
         const envRecord: Record<string, string | undefined> = {};
@@ -383,11 +415,16 @@ export function registerSecretsCommand(program: Command): void {
         if (loadResult === -1) {
           error(`File not found: ${sourcePath}`);
           process.exit(1);
+          return;
         }
 
+        const daemonUp = await isDaemonRunning(DAEMON_PROBE_TIMEOUT_MS);
         let imported = 0;
         let skipped = 0;
         let failed = 0;
+
+        const dataDir = safePath(os.homedir(), ".comis");
+        const envFilePath = safePath(dataDir, ".env");
 
         for (const [key, value] of Object.entries(envRecord)) {
           if (value === undefined) continue;
@@ -399,20 +436,37 @@ export function registerSecretsCommand(program: Command): void {
           }
 
           const provider = detectProvider(key);
-          try {
-            await withClient(async (client) => {
-              return await callTyped(client, SecretsSetContract, {
-                name: key,
-                value,
-                ...(provider !== undefined ? { provider } : {}),
+          if (daemonUp) {
+            try {
+              await withClient(async (client) => {
+                return await callTyped(client, SecretsSetContract, {
+                  name: key,
+                  value,
+                  ...(provider !== undefined ? { provider } : {}),
+                });
               });
+              imported++;
+              success(`Imported: ${key}`);
+            } catch (e) {
+              failed++;
+              const msg = e instanceof Error ? e.message : String(e);
+              error(`Failed: ${key} -- ${msg}`);
+            }
+          } else {
+            const result = offlineSecretSet({
+              name: key,
+              value,
+              ...(provider !== undefined ? { provider } : {}),
+              dataDir,
+              envFilePath,
             });
-            imported++;
-            success(`Imported: ${key}`);
-          } catch (e) {
-            failed++;
-            const msg = e instanceof Error ? e.message : String(e);
-            error(`Failed: ${key} -- ${msg}`);
+            if (!result.ok) {
+              failed++;
+              error(`Failed: ${key} -- ${result.error.message}`);
+            } else {
+              imported++;
+              success(`Imported: ${key}`);
+            }
           }
         }
 
