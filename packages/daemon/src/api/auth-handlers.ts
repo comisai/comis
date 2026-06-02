@@ -16,9 +16,11 @@
  * "active profile" concept (see
  * packages/core/src/ports/oauth-credential-store.ts lines 46-52).
  *
- * NOTE: there is intentionally NO `auth.login` daemon RPC method either.
- * Daemon-assisted OAuth login is out of scope (would require its own
- * threat-model amendment).
+ * `auth.set` (AuthSetContract, scopes:["admin"]) is the daemon-assisted
+ * OAuth-login RPC, authorized by the §8.1 threat-model amendment in
+ * DESIGN-credential-storage-modes.md. The CLI runs the OAuth browser/device
+ * flow locally, then delegates persistence to this handler so the CLI never
+ * imports @comis/memory or opens secrets.db.
  *
  * Reviewers: this file returns OAuth-token-bearing data structurally (the
  * un-projected `OAuthProfile[]` lives in handler closure scope between the
@@ -58,6 +60,8 @@
 import {
   AuthListContract,
   AuthLogoutContract,
+  AuthSetContract,
+  redactEmailForLog,
   stripInternalFields,
   systemGetEnv,
   systemNowMs,
@@ -118,13 +122,13 @@ function redactProfileForRpc(p: OAuthProfile): RedactedOAuthProfile {
 // ---------------------------------------------------------------------------
 
 /**
- * Create the 2 admin-scoped encrypted-OAuth-profile RPC handlers.
+ * Create the 3 admin-scoped encrypted-OAuth-profile RPC handlers.
  *
  * @param deps Injected dependencies (OAuthCredentialStorePort, AppContainer,
  *   ComisLogger). When `oauthCredentialStore` is undefined the handlers
  *   degrade gracefully: `auth.list` returns an empty array; `auth.logout`
- *   rejects with a config-pointer error.
- * @returns Handler map: `auth.list`, `auth.logout`.
+ *   and `auth.set` reject with a config-pointer error.
+ * @returns Handler map: `auth.list`, `auth.logout`, `auth.set`.
  */
 export function createAuthHandlers(
   deps: AuthHandlerDeps,
@@ -310,6 +314,117 @@ export function createAuthHandlers(
       const result = { profileId, deleted: delResult.value };
       if (systemGetEnv("NODE_ENV") !== "production") {
         AuthLogoutContract.response.parse(result);
+      }
+      return result;
+    },
+
+    /**
+     * auth.set -- persist a completed OAuthProfile received from the CLI after
+     * the OAuth browser/device flow. Admin only. The CLI never opens secrets.db
+     * or reads SECRETS_MASTER_KEY — it delegates the write to this handler.
+     *
+     * Response is token-free: `{ profileId, stored: true }`. Tokens live only
+     * inside the encrypted store from this point forward.
+     */
+    [AuthSetContract.method]: async (rawParams) => {
+      const startMs = systemNowMs();
+      // 1. Admin gate — read BEFORE stripInternalFields (dispatcher injects _trustLevel).
+      const trustLevel = rawParams._trustLevel as string | undefined;
+      if (trustLevel !== "admin") {
+        throw new Error("Admin access required for auth.set");
+      }
+
+      // 2. Guard: store must exist (encrypted mode requires daemon-owned store;
+      //    env mode rejects login at CLI level before reaching here).
+      if (!deps.oauthCredentialStore) {
+        throw new Error(
+          "Encrypted OAuth store not configured. Daemon must be running with " +
+            "security.storage: encrypted and SECRETS_MASTER_KEY set, " +
+            "or set security.storage: file in config.yaml.",
+        );
+      }
+
+      // 3. Strip dispatcher internals, then contract-parse (type narrowing +
+      //    version:1 guard). The parse cannot fail by construction if the CLI
+      //    used callTyped(AuthSetContract, ...) correctly.
+      const userParams = stripInternalFields(rawParams);
+      const params = AuthSetContract.request.parse(userParams);
+
+      // 4. Build OAuthProfile (version pinned to 1 by contract literal guard).
+      const profile: OAuthProfile = {
+        provider: params.provider,
+        profileId: params.profileId,
+        access: params.access,
+        refresh: params.refresh,
+        expires: params.expires,
+        accountId: params.accountId,
+        email: params.email,
+        displayName: params.displayName,
+        version: 1,
+      };
+
+      // 5. Write through port.
+      const writeResult = await deps.oauthCredentialStore.set(
+        params.profileId,
+        profile,
+      );
+      if (!writeResult.ok) {
+        // Map SQLITE_BUSY to an actionable retryable error hint.
+        const isBusy =
+          writeResult.error.message.includes("database is locked") ||
+          writeResult.error.message.includes("SQLITE_BUSY");
+        const hint = isBusy
+          ? "secrets.db is temporarily locked; wait a moment and retry the login command"
+          : "Check secrets.db integrity and SECRETS_MASTER_KEY availability";
+        deps.logger.error(
+          {
+            method: "auth.set",
+            profileId: params.profileId,
+            provider: params.provider,
+            durationMs: systemNowMs() - startMs,
+            outcome: "failure",
+            err: writeResult.error,
+            hint,
+            errorKind: "config" as const,
+          },
+          "OAuth profile write failed",
+        );
+        throw new Error(`Failed to persist OAuth profile: ${hint}`);
+      }
+
+      // 6. Audit + log — ONLY provider/profileId/redacted-email.
+      //    NEVER access, refresh, or accountId (residency requirement).
+      deps.container.eventBus.emit("audit:event", {
+        timestamp: systemNowMs(),
+        agentId: "system",
+        tenantId: deps.container.config.tenantId ?? "default",
+        actionType: "auth.set",
+        classification: "write",
+        outcome: "success",
+        metadata: {
+          provider: params.provider,
+          profileId: params.profileId,
+        },
+      });
+      deps.logger.info(
+        {
+          method: "auth.set",
+          provider: params.provider,
+          profileId: params.profileId,
+          identity:
+            redactEmailForLog(params.email) ??
+            `id-${params.accountId ?? "<unknown>"}`,
+          durationMs: systemNowMs() - startMs,
+          outcome: "success",
+        },
+        "OAuth profile stored via daemon RPC",
+      );
+
+      // 7. Token-free response; dev-mode residency canary strips any
+      //    accidental token additions (Zod closed schema is defense-in-depth).
+      const result = { profileId: params.profileId, stored: true as const };
+      if (systemGetEnv("NODE_ENV") !== "production") {
+        AuthSetContract.response.parse(result);
       }
       return result;
     },
