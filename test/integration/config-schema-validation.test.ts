@@ -65,9 +65,14 @@ describe("Config Schema Validation", () => {
       expect(result.value.logLevel).toBe("info");
       expect(result.value.dataDir).toBe("");
 
-      // Object sections should all exist and be objects
+      // Object sections should all exist and be objects.
+      // `executor` is the one opt-in section: ExecutorConfigSchema.optional() with
+      // no default (credential-broker config, INTEG-02/WIRE-02 — schema.ts:135). It is
+      // legitimately `undefined` when absent from config, so unlike every other section
+      // it has no default object to assert here. The scalars are excluded for the
+      // separate "not an object section" reason.
       const objectKeys = allKeys.filter(
-        (k) => !["tenantId", "logLevel", "dataDir", "agentDir"].includes(k),
+        (k) => !["tenantId", "logLevel", "dataDir", "agentDir", "executor"].includes(k),
       );
       for (const key of objectKeys) {
         const section = (result.value as Record<string, unknown>)[key];
