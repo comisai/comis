@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from "vitest";
+import { ok } from "@comis/shared";
+import type { MemorySearchResult, ComisLogger, ClockPort } from "@comis/core";
+import {
+  createDialecticSeam,
+  type DialecticSeamDeps,
+  type DialecticParsed,
+  type MemoryRecall,
+} from "@comis/agent";
 import { createMemoryHandlers } from "./memory-handlers.js";
 import type { MemoryHandlerDeps } from "./memory-handlers.js";
 
@@ -1026,5 +1034,293 @@ describe("createMemoryHandlers - OBS-06 diagnostics", () => {
 
       expect(result.records).toHaveLength(1);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// memory.ask — the dialectic (Phase 109 — DIAL-01/02/03)
+//
+// The keystone handler: it runs the FULL createMemoryRecall (NOT memoryApi.search
+// — the documented trust-filter/redaction trap), abstains in CODE on empty recall
+// WITHOUT calling the seam, orders trust-first, validates citations ⊆ recalled ids,
+// and surfaces the citation→sourceId chain. Counts/ids-only logging.
+// ---------------------------------------------------------------------------
+
+type AskResult = { answer: string; citations: string[]; abstained: boolean };
+
+const noopLogger: ComisLogger = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  fatal: () => {},
+  trace: () => {},
+  child: () => noopLogger,
+} as unknown as ComisLogger;
+
+const fixedClock: ClockPort = { now: () => 1_700_000_000_000 } as unknown as ClockPort;
+
+/** A MemorySearchResult fixture (only the fields the handler reads). */
+function memResult(
+  id: string,
+  content: string,
+  trustLevel: "system" | "learned" | "external",
+  sourceIds: string[] = [],
+): MemorySearchResult {
+  return {
+    entry: {
+      id,
+      tenantId: "default",
+      agentId: "default",
+      userId: "user_a",
+      content,
+      trustLevel,
+      source: { who: "agent" },
+      tags: [],
+      createdAt: 1_700_000_000_000,
+      sourceIds,
+    } as unknown as MemorySearchResult["entry"],
+    score: 0.5,
+  };
+}
+
+/** A buildDialecticRecall factory returning a MemoryRecall whose recall() yields `results`.
+ *  Records the (agentId, query, sessionKey) it was invoked with. */
+function makeRecall(results: MemorySearchResult[]): {
+  build: (agentId: string) => MemoryRecall;
+  buildCalls: string[];
+  recallCalls: Array<{ query: string; sessionKey: string; agentId?: string }>;
+} {
+  const buildCalls: string[] = [];
+  const recallCalls: Array<{ query: string; sessionKey: string; agentId?: string }> = [];
+  const build = (agentId: string): MemoryRecall => {
+    buildCalls.push(agentId);
+    return {
+      async recall(query, sessionKey, recallAgentId) {
+        recallCalls.push({ query, sessionKey: sessionKey as unknown as string, agentId: recallAgentId });
+        return ok(results);
+      },
+    };
+  };
+  return { build, buildCalls, recallCalls };
+}
+
+/** A dialecticSeam spy resolving to `parsed`; captures the groundingText it received. */
+function makeSeam(parsed: DialecticParsed): {
+  seam: (q: string, g: string) => Promise<DialecticParsed>;
+  spy: ReturnType<typeof vi.fn>;
+  grounding: () => string | undefined;
+} {
+  const spy = vi.fn(async (_q: string, _g: string) => parsed);
+  return {
+    seam: spy as unknown as (q: string, g: string) => Promise<DialecticParsed>,
+    spy,
+    grounding: () => spy.mock.calls[0]?.[1] as string | undefined,
+  };
+}
+
+describe("createMemoryHandlers - memory.ask (dialectic)", () => {
+  it("Test 1: abstains WITHOUT calling the seam on empty recall (Pitfall 5)", async () => {
+    const recall = makeRecall([]); // empty recall
+    const seam = makeSeam({ abstain: false, answer: "should-not-be-used", citedIds: ["x"] });
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    const result = (await handlers["memory.ask"]!({
+      question: "what is x",
+      _agentId: "agent-1",
+      _callerSessionKey: "sess-1",
+    })) as AskResult;
+
+    expect(result).toEqual({ answer: "", citations: [], abstained: true });
+    // The seam is NEVER called when recall is empty (saves the LLM call).
+    expect(seam.spy).not.toHaveBeenCalled();
+  });
+
+  it("Test 2: grounded answer with real-id citations (citations ⊆ recalled ids)", async () => {
+    const recall = makeRecall([
+      memResult("id-a", "UTC is the timezone", "learned", ["src-1"]),
+      memResult("id-b", "another fact", "learned", ["src-2"]),
+    ]);
+    const seam = makeSeam({ abstain: false, answer: "UTC", citedIds: ["id-a"] });
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    const result = (await handlers["memory.ask"]!({
+      question: "what timezone",
+      _agentId: "agent-1",
+      _callerSessionKey: "sess-1",
+    })) as AskResult;
+
+    expect(result).toEqual({ answer: "UTC", citations: ["id-a"], abstained: false });
+    expect(seam.spy).toHaveBeenCalledTimes(1);
+    // The handler ran the injected recall factory (not memoryApi.search).
+    expect(recall.buildCalls).toEqual(["agent-1"]);
+    expect(recall.recallCalls[0]?.query).toBe("what timezone");
+  });
+
+  it("Test 3: a bogus citation id is dropped (citations validated ⊆ recalled ids)", async () => {
+    const recall = makeRecall([memResult("id-a", "UTC is the timezone", "learned")]);
+    const seam = makeSeam({ abstain: false, answer: "UTC", citedIds: ["id-a", "id-BOGUS"] });
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    const result = (await handlers["memory.ask"]!({
+      question: "q",
+      _agentId: "agent-1",
+      _callerSessionKey: "sess-1",
+    })) as AskResult;
+
+    expect(result.citations).toEqual(["id-a"]); // id-BOGUS dropped
+    expect(result.abstained).toBe(false);
+  });
+
+  it("Test 4: trust-first — the grounding presents the system claim BEFORE the external claim", async () => {
+    // A system current-truth ("UTC") contradicts an external claim ("PST"). orderByTrust
+    // must put the system claim first in the grounding the seam RECEIVES.
+    const recall = makeRecall([
+      memResult("id-ext", "PST-EXTERNAL-CLAIM", "external"),
+      memResult("id-sys", "UTC-SYSTEM-CLAIM", "system"),
+    ]);
+    const seam = makeSeam({ abstain: false, answer: "UTC", citedIds: ["id-sys"] });
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+      // external must be allowed into the grounding for this contradiction test —
+      // (the recall stub already returns it; the handler does not re-filter trust).
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    await handlers["memory.ask"]!({
+      question: "timezone?",
+      _agentId: "agent-1",
+      _callerSessionKey: "sess-1",
+    });
+
+    const grounding = seam.grounding() ?? "";
+    const sysAt = grounding.indexOf("UTC-SYSTEM-CLAIM");
+    const extAt = grounding.indexOf("PST-EXTERNAL-CLAIM");
+    expect(sysAt).toBeGreaterThanOrEqual(0);
+    expect(extAt).toBeGreaterThanOrEqual(0);
+    // The higher-trust (system) claim appears BEFORE the external claim — trust-first.
+    expect(sysAt).toBeLessThan(extAt);
+  });
+
+  it("Test 5: uses createMemoryRecall (the injected factory), NOT deps.memoryApi.search", async () => {
+    const recall = makeRecall([memResult("id-a", "fact", "learned")]);
+    const seam = makeSeam({ abstain: false, answer: "a", citedIds: ["id-a"] });
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+    });
+    const searchSpy = deps.memoryApi.search as ReturnType<typeof vi.fn>;
+    const handlers = createMemoryHandlers(deps);
+
+    await handlers["memory.ask"]!({
+      question: "q",
+      _agentId: "agent-1",
+      _callerSessionKey: "sess-1",
+    });
+
+    // The trap: memory.search_files uses memoryApi.search (un-trust-filtered). memory.ask
+    // MUST run the full createMemoryRecall via the injected factory instead.
+    expect(searchSpy).not.toHaveBeenCalled();
+    expect(recall.buildCalls).toEqual(["agent-1"]);
+  });
+
+  it("Test 6: seam absent ⇒ graceful abstain (no key / not wired), never throws", async () => {
+    const recall = makeRecall([memResult("id-a", "fact", "learned")]);
+    // dialecticSeam undefined — not wired.
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    const result = (await handlers["memory.ask"]!({
+      question: "q",
+      _agentId: "agent-1",
+      _callerSessionKey: "sess-1",
+    })) as AskResult;
+
+    expect(result).toEqual({ answer: "", citations: [], abstained: true });
+  });
+
+  it("Test 6b: a REAL createDialecticSeam with an unresolvable model degrades to abstain", async () => {
+    // Build the genuine Plan-02 seam (not a stub) with a model that cannot resolve, so the
+    // seam degrades non-fatally to { abstain: true } and the handler returns the sentinel.
+    // This exercises the injected-seam contract end-to-end (createDialecticSeam shape).
+    const seamDeps: DialecticSeamDeps = {
+      provider: "",
+      modelId: "",
+      apiKey: "",
+      maxOutputTokens: 256,
+      clock: fixedClock,
+      logger: noopLogger,
+      agentId: "agent-1",
+    };
+    const realSeam = createDialecticSeam(seamDeps);
+    const recall = makeRecall([memResult("id-a", "fact", "learned")]);
+    const deps = makeDeps({
+      logger: noopLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: realSeam,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    const result = (await handlers["memory.ask"]!({
+      question: "q",
+      _agentId: "agent-1",
+      _callerSessionKey: "sess-1",
+    })) as AskResult;
+
+    expect(result.abstained).toBe(true);
+    expect(result.citations).toEqual([]);
+  });
+
+  it("Test 7: counts/ids-only logging — never the question, recalled content, or answer text", async () => {
+    const logged: unknown[] = [];
+    const capturingLogger = {
+      debug: (o: unknown) => logged.push(o),
+      info: (o: unknown) => logged.push(o),
+      warn: (o: unknown) => logged.push(o),
+      error: (o: unknown) => logged.push(o),
+      fatal: (o: unknown) => logged.push(o),
+      trace: (o: unknown) => logged.push(o),
+      child: () => capturingLogger,
+    } as unknown as ComisLogger;
+    const recall = makeRecall([memResult("id-a", "SECRET-MEMORY-CONTENT", "learned")]);
+    const seam = makeSeam({ abstain: false, answer: "SECRET-ANSWER-TEXT", citedIds: ["id-a"] });
+    const deps = makeDeps({
+      logger: capturingLogger,
+      buildDialecticRecall: recall.build,
+      dialecticSeam: seam.seam,
+    });
+    const handlers = createMemoryHandlers(deps);
+
+    await handlers["memory.ask"]!({
+      question: "SECRET-QUESTION-TEXT",
+      _agentId: "agent-1",
+      _callerSessionKey: "sess-1",
+    });
+
+    const serialized = JSON.stringify(logged);
+    expect(serialized).not.toContain("SECRET-QUESTION-TEXT");
+    expect(serialized).not.toContain("SECRET-MEMORY-CONTENT");
+    expect(serialized).not.toContain("SECRET-ANSWER-TEXT");
   });
 });

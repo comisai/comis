@@ -169,6 +169,24 @@ export interface MemoryApiDeps {
    *  `resolveRecallTraceFilePath`. Optional — mirrors ObservabilityApiDeps.dataDir;
    *  defaults to ~/.comis at handler-construction time when omitted. */
   dataDir?: string;
+  // Dialectic deps (Phase 109 / DIAL-01/02 — the memory.ask handler).
+  /** The INJECTED query-time dialectic synthesis seam (Plan 02's `createDialecticSeam`
+   *  output; Plan 04 builds + injects it from a cheap resolved model + key). The
+   *  `memory.ask` handler calls it ONLY on the non-empty-recall path (empty recall ⇒
+   *  abstain in CODE without the seam call). Optional so existing handler tests construct
+   *  deps without it; the handler abstains gracefully when absent (no key / not wired). */
+  dialecticSeam?: (
+    question: string,
+    groundingText: string,
+  ) => Promise<import("@comis/agent").DialecticParsed>;
+  /** A per-agent recall factory returning the FULL `createMemoryRecall` orchestrator built
+   *  with the daemon's store set + the agent's RagConfig (Plan 04 supplies it). The
+   *  `memory.ask` handler runs THIS over the question — NOT `deps.memoryApi.search` (which
+   *  bypasses the trust filter + redaction). Injecting the builder keeps the 8-store deps
+   *  off this slice and matches the "build createMemoryRecall inside the handler" guidance.
+   *  Optional so existing handler tests construct deps without it; the handler abstains when
+   *  absent. */
+  buildDialecticRecall?: (agentId: string) => import("@comis/agent").MemoryRecall;
 }
 
 /**
