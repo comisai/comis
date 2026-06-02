@@ -4,23 +4,36 @@ description: "Every Comis memory capability and the exact config option that ena
 icon: "sliders"
 ---
 
-**What this page is.** The complete, copy-pasteable reference for turning on Comis's
-agent-memory capabilities. Every capability below is **default-OFF / opt-in**: when its
-knob is absent, recall behaves byte-for-byte as if the capability did not exist (the
-default-sensible / byte-identity-when-absent invariant). The one default-ON piece is
-recall itself (`rag.enabled`).
+**What this page is.** The complete reference for Comis's agent-memory capabilities and the
+exact config option for each. **As of v1 the memory features are ON by default (opt-out)** —
+a fresh install runs them and you edit config to turn them off. Two capabilities deliberately
+stay OFF: **`socialModeling`** (gated on a privacy-review sign-off — it models third parties)
+and **`memoryLifecycle`** (a dormant eviction scaffold). The trust boundary
+(`rag.scoring.trustAlpha`, `rag.includeTrustLevels`) is **frozen** — not a tunable capability.
+
+<Warning>
+  The LLM **build/ask** features (review, consolidation, reasoning, user-representation,
+  usefulness-judge, online-tuning, and `memory_ask`) spend **your own** LLM/API budget. They
+  are on by default in v1, and the daemon prints a first-run notice listing what's active.
+  **One line turns all of them off:** `memory.costFeatures.enabled: false`.
+</Warning>
 
 **Where the config lives.** Capabilities are configured **per agent** under
-`agents.<agentId>.` in `~/.comis/config.yaml`. The shared **memory engine** (the store +
-embeddings + reranker) is the top-level `memory:` block.
+`agents.<agentId>.` in `~/.comis/config.yaml`. The shared **memory engine** (store +
+embeddings + reranker + the cost kill switch) is the top-level `memory:` block. The config
+below is the **effective default** — set any `enabled: false` to opt a feature out.
 
 <Note>
-  Enabling a knob is necessary but not always sufficient — several capabilities also need
+  On by default is necessary but not always sufficient — several capabilities also need
   *built derived state* (a populated graph, learned weights, scored usefulness) before they
   change recall. See [Dependencies & gotchas](#dependencies--gotchas) below.
 </Note>
 
-## Everything-on config
+## Default config (v1 — opt-out)
+
+This is the **effective default** a fresh install runs. To opt out, set the relevant
+`enabled: false` (or flip the master `memory.costFeatures.enabled: false` to silence all
+LLM-cost features at once).
 
 ```yaml
 # ─────────────────────────────────────────────────────────────────────────
@@ -37,6 +50,8 @@ memory:
   rerankerThreads: 4
   compaction: { enabled: true, threshold: 1000, targetSize: 500 }
   retention: { maxAgeDays: 0 }      # 0 = keep forever
+  costFeatures:
+    enabled: true                   # MASTER KILL SWITCH — set false to disable ALL LLM cost features at once
 
 agents:
   my-agent:
@@ -183,8 +198,10 @@ agents:
    surface in the memory stack. Everything else in recall is LLM-free.
 4. **Trust is frozen, not a tunable capability.** `rag.scoring.trustAlpha` and
    `rag.includeTrustLevels` are the trust hard-boundary; leave them at the shipped values.
-5. **Measure before you rely on a lift.** These ship default-OFF on purpose. Enable the ones
-   your use case needs and measure the effect in your own domain — Comis's own honest,
+5. **On by default in v1 — watch your spend.** The LLM build/ask features are opt-out for v1
+   so operators get the full memory stack from day one; they spend your own budget. Your
+   controls are the first-run notice and the master switch `memory.costFeatures.enabled: false`
+   (or per-feature `enabled: false`). Measure the effect in your own domain — Comis's honest,
    reproducible methodology and the latest costed results are on the
    [Memory benchmarks](/agents/memory-benchmarks) page.
 
