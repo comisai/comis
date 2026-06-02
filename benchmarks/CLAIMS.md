@@ -12,9 +12,13 @@ resolves on disk (no orphan claim).
 
 - **No "beats X" / superiority claim ships** until the number is (1) measured under the
   disclosed protocol, (2) survives a cross-judge spread, and (3) the competitor was re-run
-  under that same protocol. That competitor number **does not exist yet** — the Phase-104
-  head-to-head is the honestly-deferred, operator-costed re-run. Every competitor comparison is
-  framed as **"reproduce via the gate,"** never a fabricated cell.
+  under that same protocol. **The Phase-114 head-to-head now satisfies all three** (mem0
+  `2.0.4` re-run by us, cross-judge spread 0.0, best-effort N=8) — and the **outcome was a TIE**:
+  Comis 87.5% == mem0 87.5%, statistically indistinguishable at N=8. So "beats" **still never
+  ships** — not because the number is missing, but because there is **no superiority result to
+  claim**. The published framing is **"competitive-with mem0 / at-$0-on-device,"** never "beats."
+  Every competitor comparison still also points at **"reproduce/extend via the gate,"** never a
+  fabricated cell. (Source: `benchmarks/results/2026-06-02-phase114-prove2/head-to-head-report.json`.)
 - **Conflict of interest is disclosed:** Comis authored this benchmark. Vendor-reported
   competitor numbers are **non-comparable** across protocols; competitors are invited to
   reproduce on their own harness. (Source: `benchmarks/results/2026-06-01-phase104-prove/head-to-head-report.json` → `coi`.)
@@ -87,6 +91,25 @@ the gate-safe phrasing the published surfaces copy verbatim.
 | **Principled ranking decay of stale memories** (eviction dormant / default-OFF) — old + unused rank lower (old/unused factor **0.553** < fresh **0.995**; gap 0.441); decay RANKS, never GATES; byte-identical at neutral; dormant footprint 5→5 | FORGET (Track C) / Phase 112 | ✅ | mechanical, keyless, $0 | `benchmarks/results/2026-06-01-phase112-forget/claim2-deterministic-decay-report.json` | L, M, B |
 | **Consolidated v2.9 keyless re-prove** — the four keyless modes re-pass on the climbed system ($0, no env); the six capabilities consolidated; the costed comparison recorded as deferred | PROVE (Track J) / Phase 113 | ✅ | mechanical, keyless, $0 | `benchmarks/results/2026-06-01-phase113-reprove/` (`GATE-REPORT.md` · `run-provenance.json` · `README.md`) | L, M, B |
 
+### v2.10 competitor head-to-head (the costed, cross-judged re-run — finally measured)
+
+The v2.10 milestone runs the operator-costed competitor head-to-head that v2.9 honestly
+deferred. These are `accuracy, cross-judged` numbers (the second real end-to-end QA-accuracy
+set after the Phase-98 baseline), **competitors re-run by us under one protocol** (answer
+`claude-sonnet-4-6` + judges gpt-4o **and** claude, cross-judge spread **0.0 on every cell**),
+best-effort **N=8** LongMemEval. **Binding constraint #8 holds: Comis TIED mem0 — the framing
+is "competitive-with mem0 / at-$0-on-device," NEVER "beats."** At N=8 the two are statistically
+indistinguishable on accuracy (a 1-question gap is 12.5 pt); the differentiator is cost /
+latency / locality, not a quality edge.
+
+| Published claim | Track / Phase | Shipped? | Kind | Manifest / evidence | Surfaces |
+|-----------------|---------------|----------|------|---------------------|----------|
+| **Competitive with mem0**: Comis as-shipped recall **87.5%** (7/8) and mem0 (`mem0ai 2.0.4`, re-run by us) **87.5%** (7/8) score the same; cross-judge spread **0.0** (both judges agreed); statistically indistinguishable at N=8 — competitive-with, never "beats" | PROVE2 / Phase 114 | ✅ | accuracy, cross-judged | `benchmarks/results/2026-06-02-phase114-prove2/head-to-head-report.json` (comis + mem0 each `judge1.overall` 87.5, `correct` 7/8, `crossJudge.overallSpread` 0) | R, L, M |
+| **Both beat the letta-fs full-dump control by +37.5 pt** (Comis/mem0 87.5% vs control **50.0%**, 4/8) — the bench discriminates (ranked/extracted memory ≫ naive full-context dump) | PROVE2 / Phase 114 | ✅ | accuracy, cross-judged | `benchmarks/results/2026-06-02-phase114-prove2/head-to-head-report.json` (control `judge1.overall` 50, `vsBaseline.deltaPts` -37.5) | L, M |
+| **The differentiator is locality, not quality**: Comis recall is **LLM-free at $0 on-device** (local embed + rerank); mem0 spent paid OpenAI fact-extraction (~53 min ingest / 8 items). Equal answer quality, very different production economics | PROVE2 / Phase 114 | ✅ | accuracy, cross-judged | `benchmarks/results/2026-06-02-phase114-prove2/GATE-REPORT.md` (§3 cost/latency + LLM-free note) · `benchmarks/results/2026-06-02-phase114-prove2/head-to-head-report.json` | R, L, M |
+| **Per-capability QA-lift, measure-first**: Comis baseline **98.0% / 94.0%** cross-judged (spread 4.0, survives) on a 50-item mix; **no recall-config capability showed measured QA-lift** (intent-reweight + forget byte-identical to baseline 50/50, +0.0 pt) → Phase 115 flips nothing by default | PROVE2 / Phase 114 | ✅ | accuracy, cross-judged | `benchmarks/results/2026-06-02-phase114-prove2/capability-lift-report.json` (baseline `judge1.overall` 98 / `judge2.overall` 94; intent-reweight + forget `vsBaseline.deltaPts` 0, `identicalToBaselineCount` 50) | L, M |
+| **Honest scope**: N=8 / N=50 are best-effort operator-costed samples, not the definitive scale; Zep / Hindsight / Mnemosyne were skip-with-disclosure (not wired this run — never a fabricated cell) | PROVE2 / Phase 114 | ✅ | accuracy, cross-judged | `benchmarks/results/2026-06-02-phase114-prove2/run-provenance.json` (`headToHead.competitorsSkippedWithDisclosure`; `headToHead.status` best-effort N=8) | M, B |
+
 ---
 
 ## CUT CLAIMS (DEFERRED / NOT SHIPPED — must NEVER appear in any published surface)
@@ -100,7 +123,7 @@ marketing token even though the capability landed, so the published prose uses t
 
 | Cut claim | Track / Phase | Shipped? | Kind | Reason cut | Surfaces |
 |-----------|---------------|----------|------|------------|----------|
-| "**beats** mem0 / Zep / Hindsight / Mnemosyne" / any "beats X" / "outperforms" / "#1" / "best agent memory" headline | PROVE / Phase 104 | ❌ DEFERRED | — | Operator-costed re-run not done (binding constraint #8); the competitor number does not exist. Frame as "reproduce via the gate." | NONE |
+| "**beats** mem0 / Zep / Hindsight / Mnemosyne" / any "beats X" / "outperforms" / "#1" / "best agent memory" headline | PROVE2 / Phase 114 | ❌ NO SUPERIORITY RESULT | — | The costed head-to-head ran (Phase 114, PUBLISHED above) — and Comis **TIED** mem0 (87.5% == 87.5%, indistinguishable at N=8). So "beats" stays CUT: there is no superiority outcome to claim (binding constraint #8). Frame as "competitive-with" + "reproduce/extend via the gate." | NONE |
 | Any "**the only** agent memory" / "**no other** agent memory does this" comparative | — | ❌ NOT SHIPPED | — | Unverified competitor claim — the *capability* may be shipped, the *comparison* is not. Cut the comparative. | NONE |
 | "per-type **forgetting**" / "per-type **decay**" / "usefulness-aware **eviction**" / memory **lifecycle** / **FadeMem** | FORGET (Track C) / Phase 112 | ⚠️ capability SHIPS; this *token* CUT | — | The *capability* ships as **principled ranking decay** (Phase 112, PUBLISHED above). The overclaiming token + the costed QA-accuracy-impact lift stay CUT/deferred; live eviction ships dormant/default-OFF. | NONE |
 | "recall **weights adapt** over time" / "bounded **online tuning**" | Track H2 / Phase 111 | ⚠️ capability SHIPS; this *token* CUT | — | The *capability* ships as **learning-to-rank, trust frozen** (Phase 111, PUBLISHED above — the +0.1 recall-score lift / flat rank). The "weights adapt as fact" framing + the costed QA-lift stay CUT/deferred. | NONE |
