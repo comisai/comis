@@ -23,7 +23,7 @@ import {
   type LifecycleReactor,
   type ChannelRegistry,
 } from "@comis/channels";
-import { buildReadOnlyChannelRegistry } from "./setup-channels-registry-builder.js";
+import { buildReadOnlyChannelRegistry, buildChannelCredentialMap } from "./setup-channels-registry-builder.js";
 import { buildActivityRenderers, type ActivityRendererFactory } from "./setup-channels-activity-renderers.js";
 import { resolveActivityKillSwitchSlice } from "./activity-kill-switch.js";
 import { createChannelManager, processInboundMessage, type ChannelManager } from "@comis/orchestrator";
@@ -107,6 +107,8 @@ export interface ChannelManagerBuildDeps {
   cronExecutionTrackers?: Map<string, { record(entry: ExecutionLogEntry): Promise<void> }>;
   /** DI seam for /export-trajectory. Absent → command falls through to generic slash handling. */
   exportSessionBundle?: (sessionId: string) => Promise<{ bundlePath: string }>;
+  /** REQ-13 (WR-04): Override for the credential→channelType map. Absent → auto-built from config. */
+  channelCredentialMap?: Map<string, string>;
 }
 
 /**
@@ -244,7 +246,8 @@ export async function buildAndStartChannelManager(
 
     // Read-only ChannelRegistry over channelPlugins (lifecycle owned by setup-channels-adapters).
     const channelRegistry: ChannelRegistry = buildReadOnlyChannelRegistry(channelPlugins);
-
+    // REQ-13 (WR-04): credential→channelType map; auto-built from enabled channels or overridden by caller.
+    const channelCredentialMap = deps.channelCredentialMap ?? buildChannelCredentialMap(container.config.channels);
     channelManager = createChannelManager({
       eventBus: container.eventBus,
       messageRouter,
@@ -540,6 +543,7 @@ export async function buildAndStartChannelManager(
         };
       },
       exportSessionBundle: deps.exportSessionBundle,
+      channelCredentialMap, // REQ-13 (WR-04): activates targeted adapter reconnect on rotation
     });
 
     await channelManager.startAll();
@@ -583,12 +587,7 @@ export async function buildAndStartChannelManager(
         channelsLogger.debug({ channelType }, "Lifecycle reactor created");
       }
 
-      if (lifecycleReactors.length > 0) {
-        channelsLogger.info(
-          { reactorCount: lifecycleReactors.length },
-          "Lifecycle reactors initialized",
-        );
-      }
+      if (lifecycleReactors.length > 0) channelsLogger.info({ reactorCount: lifecycleReactors.length }, "Lifecycle reactors initialized");
     }
   }
 

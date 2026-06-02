@@ -23,6 +23,23 @@ import type { ChannelPluginPort } from "@comis/core";
 import type { ChannelRegistry } from "@comis/channels";
 import { err } from "@comis/shared";
 
+/**
+ * REQ-13 (WR-04): Map each enabled channel's secret env-var name → channelType
+ * for use with the createChannelManager targeted-reconnect subscription.
+ */
+export function buildChannelCredentialMap(channels: unknown): Map<string, string> {
+  const ch = channels as Record<string, { enabled?: boolean }> | null | undefined;
+  const m = new Map<string, string>();
+  if (!ch) return m;
+  if (ch.telegram?.enabled) m.set("TELEGRAM_BOT_TOKEN", "telegram");
+  if (ch.discord?.enabled) m.set("DISCORD_BOT_TOKEN", "discord");
+  if (ch.slack?.enabled) { m.set("SLACK_BOT_TOKEN", "slack"); m.set("SLACK_APP_TOKEN", "slack"); }
+  if (ch.line?.enabled) { m.set("LINE_CHANNEL_ACCESS_TOKEN", "line"); m.set("LINE_CHANNEL_SECRET", "line"); }
+  if (ch.irc?.enabled) m.set("IRC_NICKSERV_PASSWORD", "irc");
+  if (ch.email?.enabled) { m.set("EMAIL_PASSWORD", "email"); m.set("EMAIL_REFRESH_TOKEN", "email"); }
+  return m;
+}
+
 export function buildReadOnlyChannelRegistry(
   channelPlugins: Map<string, ChannelPluginPort>,
 ): ChannelRegistry {
