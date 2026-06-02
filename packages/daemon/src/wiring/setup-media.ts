@@ -46,6 +46,20 @@ export interface MediaResult {
   ttsAdapter?: TTSPort;
   /** Vision provider registry keyed by provider name (optional). */
   visionRegistry?: Map<string, VisionProvider>;
+  /**
+   * REQ-13 (WR-05): Stable holder for the vision registry. When visionRegistry
+   * is undefined at boot (no vision API keys) and materialises later via a
+   * secret:changed rotation, the .value field is updated in place so all
+   * downstream consumers holding this reference see the new registry without
+   * needing to re-read the boot snapshot.
+   *
+   * Use `visionRegistryHolder.value` in contexts that must observe the
+   * first-materialisation transition (e.g. RPC dispatch deps assembled once at
+   * boot that are used across the daemon lifetime). The plain `visionRegistry`
+   * field is a point-in-time snapshot of the boot value and may be stale after
+   * the first rotation when it was initially undefined.
+   */
+  visionRegistryHolder: { value: Map<string, VisionProvider> | undefined };
   /** Link understanding pipeline runner. */
   linkRunner: LinkRunner;
   /** FFmpeg/ffprobe detection result from startup. */
@@ -203,27 +217,51 @@ export async function setupMedia(deps: {
   skillsLogger.debug({ maxBytes: infraConfig.maxRemoteFetchBytes }, "SSRF-guarded fetcher initialized");
 
   // 6.6.8.pre5. STT provider — factory selects from config
+  // REQ-13 (WR-03): use a lazy-delegation wrapper so that each transcribe() call
+  // re-invokes createSTTProviderFactory at invocation time, reading the current
+  // secretManager value. This makes a rotated STT API key take effect on the
+  // LIVE path without a daemon restart.
   let transcriber: TranscriptionPort | undefined;
   const sttResult = createSTTProvider(mediaConfig.transcription, container.secretManager);
   if (sttResult.ok) {
-    // Build fallback chain if configured
-    const fallbackProviders: TranscriptionPort[] = [];
+    // Build the lazy factory for the primary provider
+    const sttFactory = createSTTProviderFactory(mediaConfig.transcription, container.secretManager);
+
+    // Build fallback factories if configured
+    const fallbackFactories: Array<() => ReturnType<typeof createSTTProvider>> = [];
     for (const fbProvider of mediaConfig.transcription.fallbackProviders) {
       const fbConfig = { ...mediaConfig.transcription, provider: fbProvider };
       const fbResult = createSTTProvider(fbConfig, container.secretManager);
-      if (fbResult.ok) fallbackProviders.push(fbResult.value);
+      if (fbResult.ok) {
+        fallbackFactories.push(createSTTProviderFactory(fbConfig, container.secretManager));
+      }
     }
-    if (fallbackProviders.length > 0) {
-      transcriber = createFallbackTranscription(
-        [sttResult.value, ...fallbackProviders],
-        skillsLogger,
-      );
+    const hasFallback = fallbackFactories.length > 0;
+
+    // Lazy-delegation wrapper: delegates transcribe() to a fresh provider on
+    // each call so a rotated key is observed without a daemon restart (REQ-13).
+    transcriber = {
+      transcribe: async (audio, options) => {
+        const primaryResult = sttFactory();
+        if (!primaryResult.ok) return primaryResult;
+        if (!hasFallback) {
+          return primaryResult.value.transcribe(audio, options);
+        }
+        const chain: TranscriptionPort[] = [primaryResult.value];
+        for (const fbFactory of fallbackFactories) {
+          const fbResult = fbFactory();
+          if (fbResult.ok) chain.push(fbResult.value);
+        }
+        return createFallbackTranscription(chain, skillsLogger).transcribe(audio, options);
+      },
+    };
+
+    if (hasFallback) {
       skillsLogger.info({
         provider: mediaConfig.transcription.provider,
-        fallbackCount: fallbackProviders.length,
+        fallbackCount: fallbackFactories.length,
       }, "STT service initialized with fallback chain");
     } else {
-      transcriber = sttResult.value;
       skillsLogger.info({ provider: mediaConfig.transcription.provider }, "STT service initialized");
     }
   } else {
@@ -235,10 +273,23 @@ export async function setupMedia(deps: {
   }
 
   // 6.6.8. TTS adapter — factory selects provider from config
+  // REQ-13 (WR-03): use a lazy-delegation wrapper so that each synthesize() call
+  // re-invokes createTTSProviderFactory at invocation time, reading the current
+  // secretManager value. This makes a rotated TTS API key take effect on the
+  // LIVE path without a daemon restart.
   let ttsAdapter: TTSPort | undefined;
   const ttsResult = createTTSProvider(mediaConfig.tts, container.secretManager);
   if (ttsResult.ok) {
-    ttsAdapter = ttsResult.value;
+    const ttsFactory = createTTSProviderFactory(mediaConfig.tts, container.secretManager);
+    // Lazy-delegation wrapper: delegates synthesize() to a fresh provider on
+    // each call so a rotated key is observed without a daemon restart (REQ-13).
+    ttsAdapter = {
+      synthesize: async (text, options) => {
+        const result = ttsFactory();
+        if (!result.ok) return result;
+        return result.value.synthesize(text, options);
+      },
+    };
     skillsLogger.debug({ provider: mediaConfig.tts.provider }, "TTS service initialized");
   } else {
     skillsLogger.warn({ err: ttsResult.error.message, hint: "Configure TTS provider in integrations.media.tts section", errorKind: "config" as const }, "TTS service not configured");
@@ -248,6 +299,11 @@ export async function setupMedia(deps: {
   // Service creation decoupled from vision.enabled flag:
   // Registry always created when API keys are valid so on-demand tools
   // (describe_image, describe_video) can use it even when auto-preprocessing is off.
+  //
+  // REQ-13 (WR-05): The registry is wrapped in a stable holder object so that
+  // when it materialises from undefined at first rotation, all downstream
+  // consumers holding visionRegistryHolder (rather than the point-in-time
+  // visionRegistry snapshot) observe the new registry via .value.
   let visionRegistry: Map<string, VisionProvider> | undefined;
   {
     const registry = createVisionProviderRegistry({
@@ -265,10 +321,19 @@ export async function setupMedia(deps: {
     }
   }
 
+  // Stable holder — carries the current registry reference so the
+  // first-materialisation path (undefined → Map) is visible to all consumers
+  // that hold this holder rather than the point-in-time snapshot (WR-05).
+  const visionRegistryHolder: { value: Map<string, VisionProvider> | undefined } = {
+    value: visionRegistry,
+  };
+
   // REQ-13: Rebuild vision registry on credential rotation so rotated vision API
   // keys are observed without a daemon restart. The subscription rebuilds the Map
   // in place so all downstream consumers holding a reference to visionRegistry
-  // see the new providers on their next invocation.
+  // see the new providers on their next invocation. When the registry was absent
+  // at boot (undefined), the holder is also updated so late-bound consumers
+  // holding visionRegistryHolder see the first-materialisation transition (WR-05).
   const VISION_KEYS = new Set(["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"]);
   container.eventBus.on("secret:changed", ({ name }) => {
     if (!VISION_KEYS.has(name)) return;
@@ -282,12 +347,17 @@ export async function setupMedia(deps: {
       for (const [k, v] of updated) {
         visionRegistry.set(k, v);
       }
+      // holder.value already points at visionRegistry (same reference) — no-op update.
     } else if (updated.size > 0) {
       // Registry was absent at boot (no keys then); materialise it now.
       visionRegistry = updated;
+      // WR-05: update the holder so late-bound consumers holding visionRegistryHolder
+      // observe the first-materialisation transition (the point-in-time snapshot
+      // remains undefined; only the holder is updated).
+      visionRegistryHolder.value = updated;
     }
     skillsLogger.info(
-      { name, providers: visionRegistry ? [...visionRegistry.keys()] : [], step: "credential-rotation-vision" },
+      { name, providers: visionRegistryHolder.value ? [...visionRegistryHolder.value.keys()] : [], step: "credential-rotation-vision" },
       "Vision provider registry rebuilt after credential rotation",
     );
   });
@@ -351,7 +421,7 @@ export async function setupMedia(deps: {
   }
 
   return {
-    ttsAdapter, visionRegistry, linkRunner,
+    ttsAdapter, visionRegistry, visionRegistryHolder, linkRunner,
     ffmpegCapabilities, mediaTempManager, mediaSemaphore, audioConverter,
     transcriber, ssrfFetcher, fileExtractor,
   };
