@@ -34,21 +34,12 @@ export function isVecAvailable(): boolean {
  * rows get the column with a NULL value (a nullable add is O(1); no table
  * rewrite, no backfill).
  *
- * Currently adds:
- * - `occurred_at INTEGER` (TEMP-01): event time, distinct from `created_at`
- *   (record time). NULL when the event time is unknown.
- * - `proof_count INTEGER` (P84/CONS-01): evidence count. NULL = raw memory;
- *   >=1 marks the row as an observation (the column-flag data model — design
- *   §4.1; the `memory_type` CHECK is intentionally NOT touched).
- * - `source_ids TEXT` (P84/CONS-01): JSON array of contributing source ids.
- * - `consolidated_at INTEGER` (P84/CONS-04): set when a raw memory is folded
- *   into an observation; the state predicate for candidate selection.
- * - `confidence REAL` (P84/CONS-08): observation confidence 0..1.
- * - `history TEXT` (P84/CONS-05): JSON audit array of prior contents.
- * - `observation_kind TEXT` (P101/REASON-01): reasoning-observation kind
- *   ({merge,deductive,inductive}); NULL = "merge" (the default for pre-101 rows).
- * - `pattern_type TEXT` (P101/REASON-01): inductive pattern class; NULL unless
- *   observationKind="inductive". No CHECK — the enum is the Zod domain type's job.
+ * The added columns (each documented at its add-site below): `occurred_at`
+ * (TEMP-01), the Phase-84 observation set `proof_count`/`source_ids`/
+ * `consolidated_at`/`confidence`/`history` (CONS-01..08), and the Phase-101
+ * typed-observation pair `observation_kind`/`pattern_type` (REASON-01). All are
+ * nullable (NULL = the pre-feature default) and carry NO CHECK — the enums are
+ * the Zod domain type's job.
  *
  * @param db - An open better-sqlite3 Database instance whose `memories`
  *   table already exists (created by `initSchema`'s `CREATE TABLE IF NOT EXISTS`).
@@ -139,53 +130,41 @@ export function ensureEntityTables(db: Database.Database): void {
 }
 
 /**
- * Idempotently create the recall-utility usefulness table (Phase 93, FEED-02):
- * `memory_usefulness` — one row per (tenant, agent, memory) carrying the durable
- * used/ignored counts + last-useful-at that the recall-utility feedback loop
- * learns from (the leapfrog Hindsight structurally cannot follow — its
- * `access_count` is dead schema; HINDSIGHT_VS_COMIS.md #7). Mirrors
- * `ensureEntityTables`'s forward-only, additive contract — the DDL is
- * `CREATE TABLE IF NOT EXISTS`, so it is safe to run on every boot including a
- * live `~/.comis` DB created before the feature existed (no backfill: existing
- * memories simply have no usefulness row until first recalled).
+ * Idempotently create the recall-utility usefulness table (Phase 93, FEED-02;
+ * per-intent in Phase 110, LEARN-01): `memory_usefulness` — one row per
+ * (tenant, agent, memory, intent) carrying the durable used/ignored counts +
+ * last-useful-at the recall-utility feedback loop learns from (the leapfrog
+ * Hindsight cannot follow — `access_count` is dead schema; HINDSIGHT_VS_COMIS.md
+ * #7). Forward-only, additive, idempotent (`CREATE TABLE IF NOT EXISTS` +
+ * guarded ALTER + `CREATE … INDEX IF NOT EXISTS`) — safe on every boot incl. a
+ * live `~/.comis` DB predating the feature (no backfill).
  *
- * ## The PRIMARY KEY is the isolation boundary AND the upsert key (T-93-01)
+ * ## PRIMARY KEY = isolation boundary + the per-intent upsert key (T-93-01)
  *
- * Comis runs many agents in one DB. On a FRESH DB the
- * `PRIMARY KEY (tenant_id, agent_id, memory_id, intent)` (widened in Phase 110,
- * LEARN-01) is both the `ON CONFLICT` target for the adapter's idempotent
- * per-intent upsert and the load-bearing isolation scope — two agents/tenants
- * NEVER share a row even for the same `memory_id`, and the adapter additionally
- * filters every read/write on `(tenant_id, agent_id)` (belt-and-braces). `intent`
- * is an ADDITIONAL key, never a relaxation of the (tenant, agent) isolation
- * filter.
- *
- * `ON DELETE CASCADE` on `memory_usefulness.memory_id → memories(id)` is the
- * ENTIRE row-maintenance story (no orphan-sweep job): a memory delete drops its
- * usefulness row automatically. It fires because `openSqliteDatabase` already
- * sets `PRAGMA foreign_keys = ON` (sqlite-adapter-base.ts) — no pragma is set
+ * A FRESH DB's `PRIMARY KEY (tenant_id, agent_id, memory_id, intent)` is both the
+ * adapter's `ON CONFLICT` target and the load-bearing isolation scope — two
+ * agents/tenants NEVER share a row even for the same `memory_id`, and the adapter
+ * additionally filters every read/write on `(tenant_id, agent_id)`
+ * (belt-and-braces). `intent` is an ADDITIONAL key, never a relaxation of that
+ * filter. `ON DELETE CASCADE` on `memory_id → memories(id)` is the ENTIRE
+ * row-maintenance story (no orphan-sweep): it fires via the
+ * `PRAGMA foreign_keys = ON` already set by `openSqliteDatabase` — no pragma set
  * here.
  *
- * ## The intent bucket — forward-only, additive, no backfill (Phase 110, LEARN-01)
+ * ## The intent bucket (Phase 110, LEARN-01): forward-only, no backfill
  *
- * `intent TEXT NOT NULL DEFAULT ''` partitions the usefulness signal per
- * query-intent (the global bucket = `''`, the byte-identical v2.8 path). Two
- * paths, the `ensureMemoryColumns` precedent:
- * - FRESH DB: the `CREATE TABLE` carries the column + the 4-col PK above.
- * - EXISTING (pre-110) DB: a guarded `PRAGMA table_info(memory_usefulness)`
- *   check + `ALTER TABLE … ADD COLUMN intent TEXT NOT NULL DEFAULT ''`. SQLite
- *   permits a NOT NULL column ADD WITH a constant default, so existing rows get
- *   `''` (the global bucket) by construction — NO backfill, NO row rewrite, NO
- *   corruption (the PK-widening-on-existing-DB safety — RESEARCH Pitfall 3). The
- *   pre-110 PK STAYS 3-col (SQLite has no `ALTER ADD PRIMARY KEY`).
- *
- * Because the existing-DB PK stays 3-col, the adapter's 4-col
- * `ON CONFLICT(tenant_id, agent_id, memory_id, intent)` target would have no
- * backing constraint on a pre-110 DB. The idempotent `idx_usefulness_intent`
- * UNIQUE index (created on BOTH paths below) supplies that target: it is
- * satisfied on a pre-110 DB because existing rows are all `intent=''` and were
- * already unique on the 3-col PK, and it lets the per-intent upsert resolve
- * identically on fresh (PK) and existing (the unique index) databases.
+ * `intent TEXT NOT NULL DEFAULT ''` partitions the signal per query-intent (the
+ * global bucket = `''`, the byte-identical v2.8 path). FRESH DBs get the column +
+ * the 4-col PK in the `CREATE TABLE`; an EXISTING (pre-110) DB gets a guarded
+ * `PRAGMA table_info` check + `ALTER … ADD COLUMN intent TEXT NOT NULL DEFAULT ''`
+ * (the `ensureMemoryColumns` precedent — a NOT NULL ADD WITH a constant default
+ * lands existing rows in `''` by construction: NO backfill, NO rewrite, NO
+ * corruption — the PK-widening-on-existing-DB safety, RESEARCH Pitfall 3). The
+ * pre-110 PK STAYS 3-col (SQLite has no `ALTER ADD PRIMARY KEY`), so the adapter's
+ * 4-col `ON CONFLICT` has no PK to resolve against there — the idempotent
+ * `idx_usefulness_intent` UNIQUE index (created on BOTH paths) supplies it
+ * (satisfied because pre-110 rows are all `intent=''`, already unique on the old
+ * PK), letting the per-intent upsert resolve identically on fresh + existing DBs.
  *
  * @param db - An open better-sqlite3 Database whose `memories` table already
  *   exists (the FK target). Call AFTER `ensureEntityTables` in `initSchema`.
@@ -206,8 +185,8 @@ export function ensureUsefulnessTable(db: Database.Database): void {
   `);
   // EXISTING (pre-110) DB: guarded additive column-add (the ensureMemoryColumns
   // precedent at :56-81 — the object-literal cast is the sanctioned PRAGMA idiom,
-  // NOT a `as Foo[]` named-type cast). A NOT NULL column ADD WITH a constant
-  // default lands existing rows in the global ('') bucket, no backfill.
+  // NOT a `as Foo[]` named-type cast). NOT NULL ADD WITH a constant default lands
+  // existing rows in the global ('') bucket, no backfill.
   const cols = new Set(
     (db.prepare(`PRAGMA table_info(memory_usefulness)`).all() as { name: string }[]).map(
       (r) => r.name,
@@ -218,9 +197,8 @@ export function ensureUsefulnessTable(db: Database.Database): void {
   }
   // The 4-col conflict target for the adapter's per-intent upsert. Idempotent +
   // additive; on a pre-110 DB (3-col PK) it is the ONLY backing constraint the
-  // 4-col ON CONFLICT can resolve against (it is satisfied because existing rows
-  // are all intent='' and were unique on the old PK). On a fresh DB it is
-  // redundant with the 4-col PK but harmless.
+  // 4-col ON CONFLICT resolves against (satisfied — pre-110 rows are all
+  // intent=''). On a fresh DB it is redundant with the PK but harmless.
   db.exec(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_usefulness_intent ON memory_usefulness(tenant_id, agent_id, memory_id, intent)`,
   );
@@ -592,52 +570,18 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   // --- Context store tables (DAG schema) ---
   initContextSchema(db);
 
-  // --- Additive memory columns (forward-only; design §4.1) ---
-  // The base CREATE TABLE above intentionally omits occurred_at; it is added
-  // here so the SAME path serves both a fresh DB and a live DB that predates
-  // the column (idempotent via the PRAGMA guard).
-  ensureMemoryColumns(db);
-
-  // --- Entity-association junction tables (Phase 83) ---
-  // Created right after the `memories` table (the FK target) exists, so the
-  // ON DELETE CASCADE on memory_entity_links.memory_id is valid. Idempotent.
-  ensureEntityTables(db);
-
-  // --- Recall-utility usefulness table (Phase 93, FEED-02) ---
-  // Created AFTER ensureEntityTables so the `memories` FK target already exists;
-  // its ON DELETE CASCADE fires via the PRAGMA foreign_keys=ON set by
-  // openSqliteDatabase. Brand-new additive table — no ALTER on memories.
-  ensureUsefulnessTable(db);
-
-  // --- Causal-edge table (Phase 96, EXTRACT-03) ---
-  // Created AFTER ensureUsefulnessTable so the `memories` FK target already
-  // exists; BOTH memory FKs' ON DELETE CASCADE fire via the PRAGMA
-  // foreign_keys=ON set by openSqliteDatabase. Brand-new additive table — no
-  // ALTER on memories.
-  ensureCausalTables(db);
-
-  // --- Bi-temporal knowledge-graph triple table (Phase 100, KG-01) ---
-  // Created AFTER ensureCausalTables so the `memories` FK target already exists;
-  // the source_memory_id FK's ON DELETE CASCADE fires via the PRAGMA
-  // foreign_keys=ON set by openSqliteDatabase. Brand-new additive table — no
-  // ALTER on memories.
-  ensureTripleTable(db);
-
-  // --- Per-user representation table (Phase 107, Track E1 — USER-01) ---
-  // Created AFTER ensureTripleTable so the `memories` FK target already exists;
-  // the source_memory_id FK's ON DELETE CASCADE fires via the PRAGMA
-  // foreign_keys=ON set by openSqliteDatabase. Brand-new additive table — no
-  // ALTER on memories. The high-trust CHECK (no 'external') is the DB-layer floor.
-  ensureUserRepresentationTable(db);
-
-  // --- Directional relationship table (Phase 108, Track E2 — SOCIAL-02) ---
-  // Created AFTER ensureUserRepresentationTable so the `memories` FK target already
-  // exists; the source_memory_id FK's ON DELETE CASCADE fires via the PRAGMA
-  // foreign_keys=ON set by openSqliteDatabase. Brand-new additive table — no ALTER
-  // on memories. Scope is (tenant_id, agent_id, channel_id) — channel_id is the NEW
-  // privacy axis (SOCIAL-02); the high-trust CHECK (no 'external') is the DB-layer
-  // floor; the (subject_user_id, about_user_id) directional pair is ROW DATA.
-  ensureRelationshipTable(db);
+  // The calls below run in dependency order AFTER the `memories` table (the FK
+  // target) exists; each is idempotent, and every `ON DELETE CASCADE` fires via
+  // the `PRAGMA foreign_keys = ON` already set by `openSqliteDatabase`. Per-table
+  // contracts (schema shape, isolation scope, trust floor) live in each
+  // function's JSDoc.
+  ensureMemoryColumns(db); // additive memory columns (forward-only; design §4.1)
+  ensureEntityTables(db); // entity junction tables (Phase 83)
+  ensureUsefulnessTable(db); // recall-utility usefulness + intent bucket (P93/P110)
+  ensureCausalTables(db); // causal-edge table (Phase 96, EXTRACT-03)
+  ensureTripleTable(db); // bi-temporal KG triples (Phase 100, KG-01)
+  ensureUserRepresentationTable(db); // per-user representation (Phase 107, USER-01)
+  ensureRelationshipTable(db); // directional relationships (Phase 108, SOCIAL-02)
 
   // --- Observation partial indexes (Phase 84; design §4.1) ---
   // Created AFTER ensureMemoryColumns (the indexed columns must exist first).
