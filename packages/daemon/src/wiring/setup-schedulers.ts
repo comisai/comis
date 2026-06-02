@@ -452,6 +452,38 @@ export async function setupSchedulers(deps: {
         schedulerLogger.info({ agentId, schedule: memoryUsefulnessJudgeConfig.schedule ?? "0 7 * * *" }, "Registered memory usefulness judge cron job");
       }
     }
+
+    // -- Online-tuning bandit cron job (Phase 111, LEARN-03 — Track H2) --
+    // OPT-IN, OFF by default. Unlike the usefulness judge this bandit is DETERMINISTIC +
+    // KEYLESS (no LLM call, no API key — the sentinel dispatch makes NO model resolution),
+    // so enabling it is a behavior opt-in, not a cost opt-in. Registered ONLY when the
+    // operator sets memoryOnlineTuning.enabled; a default agent registers NO job →
+    // byte-identical with the config absent. Default schedule 0 8 * * * runs AFTER the
+    // judge's 0 7 so the FEED signal it reads is fully settled. Job options mirror the
+    // judge/reasoning/userrep job 1:1 (isolated / next-heartbeat / no forward-to-main / fresh).
+    const memoryOnlineTuningConfig = agentConfig.memoryOnlineTuning;
+    if (memoryOnlineTuningConfig?.enabled) {
+      const memOnlineTuningJobId = `memory-online-tuning-${agentId}`;
+      const existingJobs = scheduler.getJobs();
+      const alreadyRegistered = existingJobs.some((j) => j.id === memOnlineTuningJobId);
+      if (!alreadyRegistered) {
+        await scheduler.addJob({
+          id: memOnlineTuningJobId,
+          name: "Memory online tuning",
+          agentId,
+          schedule: { kind: "cron", expr: memoryOnlineTuningConfig.schedule ?? "0 8 * * *" },
+          payload: { kind: "system_event", text: "__ONLINE_TUNING__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: memoryOnlineTuningConfig.schedule ?? "0 8 * * *" }, "Registered memory online tuning cron job");
+      }
+    }
   }
 
   /** Resolve the CronScheduler for a given agent ID. Throws descriptive error if not found. */

@@ -152,6 +152,10 @@ const mockCreateSqliteRelationshipStore = vi.hoisted(() => vi.fn(() => ({
   upsert: vi.fn(async () => ({ ok: true, value: undefined })),
   read: vi.fn(async () => ({ ok: true, value: [] })),
 })));
+const mockCreateSqliteTunedAlphaStore = vi.hoisted(() => vi.fn(() => ({
+  upsert: vi.fn(async () => ({ ok: true, value: undefined })),
+  read: vi.fn(async () => ({ ok: true, value: undefined })),
+})));
 
 vi.mock("@comis/memory", () => ({
   SqliteMemoryAdapter: mockSqliteMemoryAdapter,
@@ -174,6 +178,7 @@ vi.mock("@comis/memory", () => ({
   createSqliteMemoryEmbeddingStore: mockCreateSqliteMemoryEmbeddingStore,
   createSqliteUserRepresentationStore: mockCreateSqliteUserRepresentationStore,
   createSqliteRelationshipStore: mockCreateSqliteRelationshipStore,
+  createSqliteTunedAlphaStore: mockCreateSqliteTunedAlphaStore,
 }));
 
 const mockSafePath = vi.hoisted(() => vi.fn((...parts: string[]) => parts.join("/")));
@@ -1100,6 +1105,27 @@ describe("setupMemory", () => {
       expect.objectContaining({ db: mockDb }),
     );
     expect(result.usefulnessStore).toBeDefined();
+  });
+
+  it("builds the tuned-alpha store on the SAME shared db handle and returns it (Phase 111, LEARN-03)", async () => {
+    const container = createMinimalContainer(); // all-default config (online tuning OFF)
+    const setupMemory = await getSetupMemory();
+
+    const result = await setupMemory({
+      container,
+      memoryLogger: createMockLogger() as any,
+      clock: testClock,
+    });
+
+    // Built UNCONDITIONALLY (no model/IO cost; it stays dormant until BOTH the recall-side
+    // gate rag.onlineTuning.enabled AND the bandit cron memoryOnlineTuning.enabled are on).
+    expect(mockCreateSqliteTunedAlphaStore).toHaveBeenCalledOnce();
+    // The SOLE adapter must share the memory adapter's db handle — NOT a second Database — so
+    // the (tenant, agent) scope is consistent with the memory rows / FEED signal it tunes over.
+    expect(mockCreateSqliteTunedAlphaStore).toHaveBeenCalledWith(
+      expect.objectContaining({ db: mockDb }),
+    );
+    expect(result.tunedAlphaStore).toBeDefined();
   });
 
   it("builds the temporal-spread store on the SAME shared db handle and returns it (Phase 95, LANES-02)", async () => {

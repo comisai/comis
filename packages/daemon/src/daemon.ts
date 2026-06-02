@@ -652,7 +652,7 @@ function buildChannelManagerDeps(deps: {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, linkRunner, ssrfFetcher, transcriber,
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore, fileExtractor,
-    workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, embeddingQueue,
+    workspaceDirs, defaultWorkspaceDir, memoryAdapter, memoryApi, entityStore, causalStore, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, usefulnessStore, embeddingQueue,
     activeRunRegistry, sessionResolver, rpcCall,
     continuationTracker, approvalGate, interactiveCallbackWiring,
     piSessionAdapters, costTrackers, deliveryQueue, executionTrackers,
@@ -724,10 +724,10 @@ function buildChannelManagerDeps(deps: {
     // Forwarded into registerCronEventListeners -> runMemoryConsolidation (the opt-in
     // __MEMORY_CONSOLIDATION__ cron path). The executor recall path does NOT receive it.
     consolidationStore,
-    // P101·REASON-02 tripleStore + P107·USER-03/04 userRepresentationStore + P108·SOCIAL-01/02
-    // relationshipStore + memoryApi ride the SAME cron-deps chain → the __MEMORY_REASONING__ /
-    // __USER_REPRESENTATION__ / __SOCIAL_MODELING__ sentinels (deductive upsertTriple + per-user profile + per-channel directional edge, source-scoped via inspect).
-    tripleStore, userRepresentationStore, relationshipStore, memoryApi,
+    // P101·REASON-02 tripleStore + P107 userRepresentationStore + P108 relationshipStore + P111·LEARN-03
+    // tunedAlphaStore/usefulnessStore + memoryApi ride the SAME cron-deps chain → the __MEMORY_REASONING__ /
+    // __USER_REPRESENTATION__ / __SOCIAL_MODELING__ / __ONLINE_TUNING__ sentinels (the last is the KEYLESS bandit over the FEED signal).
+    tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, usefulnessStore, memoryApi,
     tenantId: container.config.tenantId,
     embeddingQueue, queueConfig: container.config.queue,
     onSuspiciousContent,

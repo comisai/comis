@@ -244,23 +244,21 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RelationshipCandidate",
       "RelationshipBuildOutput",
       "RelationshipSeamDeps",
-      // Offline tuned-alpha bandit (Phase 111, Track H2 — LEARN-03). runOnlineTuning is a
-      // transient ahead-of-consumer planned-orphan tracked here by 111-04 Task 1 (the job +
-      // its @comis/agent re-export) — its consumer, the daemon __ONLINE_TUNING__ cron-sentinel
-      // dispatch (setup-channels-memory-crons.ts), lands in 111-04 Task 3 of THIS plan, at
-      // which point this entry SHRINKS out (the interface-first cross-task seam posture; the
-      // 107-05 / 108-05 builder-shrink precedent — allowlist-shrink enforces shrink-only). The
-      // Deps/Config/Stats/Result SHAPE types + the Baseline/FeedEntry read-shapes are referenced
-      // via inline objects only (the dispatch constructs them structurally) — baseline orphans
-      // (mirror MemoryUserRepresentationDeps). The PURE computeTunedAlphas + buildScoringAlphas
-      // are agent-INTERNAL (no public barrel export → no orphan churn, the 111-01/03 posture).
-      "runOnlineTuning",
+      // Offline tuned-alpha bandit (Phase 111, Track H2 — LEARN-03). SHRUNK @ 111-04 Task 3:
+      // runOnlineTuning is now CONSUMED by the daemon __ONLINE_TUNING__ cron-sentinel dispatch
+      // (setup-channels-memory-crons.ts), so it was REMOVED from this list (the interface-first
+      // cross-task seam shrink — the 107-05 / 108-05 builder-shrink precedent; allowlist-shrink
+      // enforces shrink-only). The Deps/Config/Stats/Result SHAPE types + the Baseline read-shape
+      // are referenced via inline objects only (the dispatch constructs them structurally) —
+      // baseline orphans (mirror MemoryUserRepresentationDeps). OnlineTuningFeedEntry IS imported
+      // by the dispatch (the readUsefulness seam's Map value type) so it is NOT an orphan. The
+      // PURE computeTunedAlphas + buildScoringAlphas are agent-INTERNAL (no public barrel export
+      // → no orphan churn, the 111-01/03 posture).
       "MemoryOnlineTuningDeps",
       "MemoryOnlineTuningConfig",
       "MemoryOnlineTuningStats",
       "MemoryOnlineTuningResult",
       "OnlineTuningBaselineAlphas",
-      "OnlineTuningFeedEntry",
       // (Phase 109 DIAL-04: the createDialecticSeam / DialecticSeamDeps / DialecticParsed
       //  ahead-of-consumer orphans were REMOVED here — Plan 04's setup-dialectic.ts now
       //  NAME-imports all three in non-test daemon wiring [the seam factory build + the

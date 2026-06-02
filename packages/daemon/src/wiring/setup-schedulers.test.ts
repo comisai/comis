@@ -824,6 +824,84 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // __ONLINE_TUNING__ cron registration (Phase 111, LEARN-03 — Track H2). OFF by
+  // default. Registered ONLY when the operator sets memoryOnlineTuning.enabled; a
+  // default agent registers NO job → byte-identical with the config absent. Default
+  // 0 8 * * * runs AFTER the judge's 0 7 so the FEED signal is fully settled. The
+  // sentinel dispatch is KEYLESS (no model/key) — the registration mirrors the judge.
+  // -------------------------------------------------------------------------
+
+  it("registers NO __ONLINE_TUNING__ cron for a default (tuning-off) agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // memoryOnlineTuning undefined => default OFF (the opt-in gate — byte-identical).
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const tuningAdds = addJob.mock.calls.filter(
+      (c) => (c[0] as any)?.payload?.text === "__ONLINE_TUNING__",
+    );
+    expect(tuningAdds.length).toBe(0);
+  });
+
+  it("registers the __ONLINE_TUNING__ cron (default 0 8 * * *) for an enabled agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryOnlineTuning: { enabled: true },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const tuningAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__ONLINE_TUNING__");
+    expect(tuningAdd).toBeDefined();
+    expect(tuningAdd.id).toBe("memory-online-tuning-agent-1");
+    expect(tuningAdd.name).toBe("Memory online tuning");
+    // Default schedule runs AFTER the judge's 0 7 so the FEED signal is fully settled.
+    expect(tuningAdd.schedule).toEqual({ kind: "cron", expr: "0 8 * * *" });
+    expect(tuningAdd.sessionTarget).toBe("isolated");
+    expect(tuningAdd.sessionStrategy).toBe("fresh");
+    expect(tuningAdd.payload).toEqual({ kind: "system_event", text: "__ONLINE_TUNING__" });
+  });
+
+  it("honors a custom online-tuning schedule when the operator overrides it", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryOnlineTuning: { enabled: true, schedule: "30 9 * * 0" },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const tuningAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__ONLINE_TUNING__");
+    expect(tuningAdd?.schedule).toEqual({ kind: "cron", expr: "30 9 * * 0" });
+  });
+
+  // -------------------------------------------------------------------------
   // 13.5. sessionStrategy and maxHistoryTurns propagated in event emission
   // -------------------------------------------------------------------------
 

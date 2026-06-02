@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry } from "@comis/agent";
@@ -93,6 +93,17 @@ export interface CronEventListenerDeps {
    *  no-op (Pitfall 6). Absent => the relationship sentinel cannot run, but the cron is off-by-default
    *  AND sign-off-gated so a default-config agent never reaches it. */
   relationshipStore?: RelationshipStore;
+  /** Tuned-alpha store (Phase 111, LEARN-03) — the __ONLINE_TUNING__ bandit sentinel's
+   *  per-(tenant, agent) tuned-4-alpha-vector upsert write path. Built in setup-memory on the
+   *  shared db handle; injected as the port TYPE (agent↛memory cut). Threaded the full daemon →
+   *  registry → credentials chain — a missing thread would make the bandit a silent no-op
+   *  (the field-plumbing lesson). Absent => the bandit sentinel cannot run, but the cron is
+   *  off-by-default so a default-config agent never reaches it. */
+  tunedAlphaStore?: TunedAlphaStore;
+  /** Recall-utility usefulness READ surface (Phase 93, FEED-02 / Phase 111 LEARN-03) — the
+   *  __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over it (`readUsefulness`).
+   *  Built in setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). */
+  usefulnessStore?: MemoryUsefulnessStore;
   /** Per-user representation read surface (Phase 107, USER-04) — the __USER_REPRESENTATION__
    *  sentinel scopes the per-(tenant, agent, user) high-trust source read over `inspect`.
    *  Built in setup-memory; daemon-side (the agent imports no memory package). The SAME `inspect`
@@ -226,6 +237,8 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       tripleStore: deps.tripleStore,
       userRepresentationStore: deps.userRepresentationStore,
       relationshipStore: deps.relationshipStore,
+      tunedAlphaStore: deps.tunedAlphaStore,
+      usefulnessStore: deps.usefulnessStore,
       memoryApi: deps.memoryApi,
     });
     if (handledMemoryCron) return;

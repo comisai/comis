@@ -21,11 +21,11 @@
  * @module
  */
 
-import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore } from "@comis/core";
+import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore } from "@comis/core";
 import { parseFormattedSessionKey } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
-import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, runRelationshipBuild, createRelationshipSeam, type UserRepresentationSourceMemory, type RelationshipSourceMemory } from "@comis/agent";
+import { resolveOperationModel, resolveProviderFamily, runMemoryConsolidation, runMemoryReasoning, createReasoningSeam, runUserRepresentationBuild, createUserRepresentationSeam, runRelationshipBuild, createRelationshipSeam, runOnlineTuning, type UserRepresentationSourceMemory, type RelationshipSourceMemory, type OnlineTuningFeedEntry } from "@comis/agent";
 
 /** The minimal `scheduler:job_result` payload shape the sentinel handlers read. */
 interface MemoryCronPayload {
@@ -53,11 +53,20 @@ export interface MemoryCronContext {
    *  directional-edge upsert write path the __SOCIAL_MODELING__ sentinel drives. The agent
    *  receives the port TYPE only (the agent↛memory cut). */
   relationshipStore?: RelationshipStore;
+  /** Injected from setup-memory (Phase 111, LEARN-03): the tuned-alpha upsert write path
+   *  the __ONLINE_TUNING__ bandit sentinel drives. The agent receives the port TYPE only
+   *  (the agent↛memory cut). */
+  tunedAlphaStore?: TunedAlphaStore;
+  /** Injected from setup-memory (Phase 93, FEED-02 / Phase 111 LEARN-03): the accrued
+   *  per-memory usefulness READ surface the __ONLINE_TUNING__ sentinel scopes the bandit's
+   *  FEED signal over (`readUsefulness(ids, scope)`). The agent receives the port TYPE only. */
+  usefulnessStore?: MemoryUsefulnessStore;
   /** Injected from setup-memory (USER-04): the read surface the __USER_REPRESENTATION__
    *  sentinel scopes the per-(tenant, agent, user) high-trust source read over (the
    *  concrete `readSources` seam runUserRepresentationBuild injects — kept daemon-side so
    *  the agent imports no memory package). The SAME `inspect` surface backs the
-   *  __SOCIAL_MODELING__ sentinel (grouped by resolved channelId in Task 2). */
+   *  __SOCIAL_MODELING__ sentinel (grouped by resolved channelId in Task 2) AND the
+   *  __ONLINE_TUNING__ sentinel (the bounded candidate-id set the bandit scores). */
   memoryApi?: MemoryApi;
 }
 
@@ -72,7 +81,7 @@ export async function handleMemoryCronSentinel(
   payload: MemoryCronPayload,
   ctx: MemoryCronContext,
 ): Promise<boolean> {
-  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, memoryApi } = ctx;
+  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, usefulnessStore, memoryApi } = ctx;
 
   // -- Memory consolidation sentinel intercept (Phase 84, CONS-07) --
   if (resultText === "__MEMORY_CONSOLIDATION__") {
@@ -345,6 +354,85 @@ export async function handleMemoryCronSentinel(
     }
 
     payload.onComplete?.({ status: anyError ? "error" : "ok", error: anyError ? "One or more per-user representation builds failed" : undefined });
+    return true;
+  }
+
+  // -- Online-tuning bandit sentinel intercept (Phase 111, LEARN-03 — Track H2) --
+  // The OFFLINE tuned-alpha bandit. UNLIKE the consolidation/reasoning/user-rep/social
+  // sentinels above, it is DETERMINISTIC + KEYLESS: there is NO resolveOperationModel, NO
+  // providerEntry, NO apiKey, NO build() seam (the deletion vs the LLM crons — T-111-11). It
+  // reads the accrued FEED signal for a bounded recent candidate-id set, runs the pure clamped
+  // computeTunedAlphas step (inside runOnlineTuning), and upserts a four-alpha vector. The job
+  // is non-fatal + counts-only; trust is never tuned (config-sourced at the apply site, 111-03).
+  if (resultText === "__ONLINE_TUNING__") {
+    const { agentId } = payload;
+    if (!agentId) {
+      logger.warn({ hint: "Online tuning job fired without agentId", errorKind: "config" as const }, "Skipping online tuning -- no agentId");
+      payload.onComplete?.({ status: "error", error: "No agentId for online tuning" });
+      return true;
+    }
+
+    const agentConfig = agents[agentId];
+    const cfg = agentConfig?.memoryOnlineTuning;
+    if (!cfg?.enabled) {
+      // The opt-in gate: a disabled (or default-config) agent does NOTHING — short-circuit ok
+      // so the scheduler records a clean run (mirror the reasoning/user-rep gate). Byte-identical.
+      logger.debug({ agentId }, "Online tuning disabled for agent, skipping");
+      payload.onComplete?.({ status: "ok" });
+      return true;
+    }
+
+    // The write store + the FEED read surface MUST both be present (injected from setup-memory).
+    // Absent => cannot run the bandit — surface a clean error rather than silently no-op.
+    if (!tunedAlphaStore || !usefulnessStore) {
+      logger.warn({ agentId, hint: "tunedAlphaStore/usefulnessStore not injected -- cannot run the bandit", errorKind: "config" as const }, "Skipping online tuning -- tuned-alpha/usefulness surface not wired");
+      payload.onComplete?.({ status: "error", error: "tuned-alpha/usefulness surface not wired" });
+      return true;
+    }
+
+    // NO cheap-model resolution, NO provider entry, NO secret/key lookup, NO offline build
+    // seam here — the bandit is deterministic + keyless (the binding constraint). It costs
+    // nothing in LLM spend (the deletion vs the LLM-backed sentinels above).
+
+    const tuningTenantId = tenantId ?? container.config.tenantId ?? "default";
+    const tuningLogger = logger.child({ agentId, submodule: "online-tuning" });
+    // The static rag.scoring baseline (the four non-trust alphas) the bandit starts from when no
+    // tuned row exists yet. NEVER the trust weight (the OD2 ship-gate — trust stays config-sourced).
+    const scoring = agentConfig?.rag?.scoring;
+    const configScoring = {
+      recencyAlpha: scoring?.recencyAlpha ?? 0.2,
+      temporalAlpha: scoring?.temporalAlpha ?? 0.2,
+      proofAlpha: scoring?.proofAlpha ?? 0.1,
+      usefulnessAlpha: scoring?.usefulnessAlpha ?? 0.1,
+    };
+
+    // The injected FEED-read seam scoped to (tenant, agent) over a bounded recent candidate-id set
+    // (the daemon's existing memory read surface; maxSourceMemories bounds it). A read failure is
+    // non-fatal in the job — the bandit keeps the ranker's current weights.
+    const maxSourceMemories = cfg.maxSourceMemories ?? 200;
+    const readUsefulness = async (): Promise<Awaited<ReturnType<typeof usefulnessStore.readUsefulness>>> => {
+      const ids = memoryApi
+        ? memoryApi.inspect({ tenantId: tuningTenantId, agentId, limit: maxSourceMemories }).map((r) => r.id)
+        : [];
+      // readUsefulness returns Map<id, {usedCount, ignoredCount, lastUsefulAt?}>; OnlineTuningFeedEntry
+      // is the counts-only subset the job aggregates (structurally compatible).
+      return usefulnessStore.readUsefulness(ids, { tenantId: tuningTenantId, agentId });
+    };
+
+    const result = await runOnlineTuning({
+      agentId,
+      tenantId: tuningTenantId,
+      config: { enabled: cfg.enabled, maxSourceMemories },
+      // Injected from setup-memory (the composition-root join) — the port TYPE only.
+      tunedAlphaStore,
+      readUsefulness: readUsefulness as () => Promise<import("@comis/shared").Result<Map<string, OnlineTuningFeedEntry>, Error>>,
+      configScoring,
+      clock,
+      logger: tuningLogger,
+      eventBus: container.eventBus,
+    });
+
+    payload.onComplete?.({ status: result.ok ? "ok" : "error", error: result.ok ? undefined : result.error?.message });
     return true;
   }
 
