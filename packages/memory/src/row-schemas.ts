@@ -14,38 +14,31 @@
  *
  * ## Sectional layout
  *
- * 1. **Memory-package-local public rows** — paired 1:1 with the
- *    interfaces exported from `./types.js`. Each pair gets a
- *    `expectTypeOf<z.infer<typeof XSchema>>().toEqualTypeOf<X>()`
- *    assertion in `row-schemas.test.ts` to prevent silent schema drift.
- *
- * 2. **Context-store rows** — schemas paired with `Ctx*Row` interfaces
- *    re-exported from `@comis/core/ports/context-store-types`.
- *
- * 3. **Session-store DTOs** — schemas paired with the SessionData /
- *    SessionListEntry / SessionDetailedEntry shapes from
- *    `@comis/core/ports/session-store-types`.
- *
- * 4. **Internal DB-row schemas** — schemas matching file-internal
- *    snake_case DB row shapes used by observability-store,
- *    oauth-profile-store-encrypted, delivery-mirror-adapter,
- *    delivery-queue-adapter, embedding-cache-sqlite. The source
- *    interfaces are file-internal (no `export`); these schemas become
- *    the single-source-of-truth that consumers retarget to
- *    (via `z.infer<typeof XxxRowSchema>`).
+ * 1. **Memory-package-local public rows** — paired 1:1 with the interfaces
+ *    exported from `./types.js`; each pair gets a
+ *    `expectTypeOf<z.infer<typeof XSchema>>().toEqualTypeOf<X>()` assertion in
+ *    `row-schemas.test.ts` to prevent silent schema drift.
+ * 2. **Context-store rows** — paired with the `Ctx*Row` interfaces re-exported
+ *    from `@comis/core/ports/context-store-types`.
+ * 3. **Session-store DTOs** — paired with the SessionData / SessionListEntry /
+ *    SessionDetailedEntry shapes from `@comis/core/ports/session-store-types`.
+ * 4. **Internal DB-row schemas** — file-internal snake_case DB row shapes
+ *    (observability-store, oauth-profile-store-encrypted, delivery-mirror /
+ *    delivery-queue adapters, embedding-cache-sqlite). The source interfaces are
+ *    file-internal (no `export`); these schemas become the single-source-of-
+ *    truth that consumers retarget to (via `z.infer<typeof XxxRowSchema>`).
  *
  * ## Conventions
  *
- * - Every schema is `z.strictObject(...)` — rejects unknown extra columns
- *   (defense-in-depth against schema drift).
- * - JSON-encoded TEXT columns are typed as `z.string()` here (the
- *   row-level shape). Parsing happens downstream in the consumer.
- * - SQLite stores booleans as `INTEGER` (0/1). Schemas use
- *   `z.number().int()` for those columns; the consumer coerces to boolean.
- * - Buffer columns (BLOB) use `z.instanceof(Buffer)` — better-sqlite3
- *   returns Node.js Buffer for BLOB columns.
- * - Nullable columns use `z.X.nullable()` (yields `X | null` — matches
- *   SQLite's NULL distinction from undefined).
+ * - Every schema is `z.strictObject(...)` — rejects unknown extra columns.
+ * - JSON-encoded TEXT columns are `z.string()` (the row-level shape); parsing
+ *   happens downstream in the consumer.
+ * - SQLite booleans are `INTEGER` (0/1) → `z.number().int()`; the consumer
+ *   coerces to boolean.
+ * - Buffer columns (BLOB) use `z.instanceof(Buffer)` (better-sqlite3 returns a
+ *   Node.js Buffer).
+ * - Nullable columns use `z.X.nullable()` (yields `X | null` — SQLite's NULL is
+ *   distinct from undefined).
  *
  * @module
  */
@@ -124,16 +117,22 @@ export const MemoryEntityRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the `readUsefulness` projection (Phase 93, FEED-02). The scoped
- * `SELECT memory_id, used_count, ignored_count, last_useful_at FROM
- * memory_usefulness WHERE tenant_id=? AND agent_id=? AND memory_id IN (...)`
- * read. `tenant_id`/`agent_id` are NOT projected — the WHERE already pins them
- * (mirrors `EntityListRowSchema`'s drop of `canonical_key`). `last_useful_at` is
- * nullable (NULL until the memory's first "used" attribution). Parsed via
- * `createRowMapper` in the adapter — never `as Row[]`.
+ * Schema for the `readUsefulness` projection (Phase 93, FEED-02; per-intent in
+ * Phase 110, LEARN-01). The scoped
+ * `SELECT memory_id, intent, used_count, ignored_count, last_useful_at FROM
+ * memory_usefulness WHERE tenant_id=? AND agent_id=? AND intent IN (?, '') AND
+ * memory_id IN (...)` read. `tenant_id`/`agent_id` are NOT projected — the WHERE
+ * already pins them (mirrors `EntityListRowSchema`'s drop of `canonical_key`).
+ * `intent` IS projected (the per-intent vs global-`''` bucket the adapter
+ * resolves per id); it is NON-nullable (the column is NOT NULL DEFAULT '' — the
+ * global bucket is `''`, never NULL). `last_useful_at` is nullable (NULL until
+ * the memory's first "used" attribution). Parsed via `createRowMapper` in the
+ * adapter — never `as Row[]`.
  */
 export const MemoryUsefulnessRowSchema = z.strictObject({
   memory_id: z.string(),
+  /** Per-intent bucket; '' = the global bucket (NOT NULL DEFAULT ''). */
+  intent: z.string(),
   used_count: z.number(),
   ignored_count: z.number(),
   /** Epoch ms of the last "used" attribution; NULL until first use. */
