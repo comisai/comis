@@ -123,15 +123,49 @@ describe("flattenMessageContent", () => {
 });
 
 describe("mapMessageRole", () => {
-  it("maps SDK roles to DAG roles", () => {
+  // ctx_messages.role enforces CHECK (role IN ('system','user','assistant',
+  // 'tool')) — see context-schema.ts. mapMessageRole MUST only ever return one
+  // of those four; any other value makes store.insertMessage throw SqliteError
+  // the instant the DAG ingestion hook mirrors the message, which escapes the
+  // tool-result emission path and cascades into consecutive empty model turns
+  // → a "didn't produce a response" silent failure. Observed in production on
+  // an MCP tool result (2026-06-02): toolResult mapped to "tool_result" and
+  // blew up the turn.
+  const SCHEMA_ALLOWED = new Set(["system", "user", "assistant", "tool"]);
+
+  it("maps SDK roles onto the four schema-allowed roles", () => {
+    expect(mapMessageRole({ role: "system" } as AgentMessage)).toBe("system");
     expect(mapMessageRole({ role: "user" } as AgentMessage)).toBe("user");
     expect(mapMessageRole({ role: "assistant" } as AgentMessage)).toBe("assistant");
-    expect(mapMessageRole({ role: "toolResult" } as AgentMessage)).toBe("tool_result");
-    expect(mapMessageRole({ role: "tool_use" } as AgentMessage)).toBe("tool_use");
+    expect(mapMessageRole({ role: "tool" } as AgentMessage)).toBe("tool");
+    // The SDK's tool-result role collapses onto the canonical "tool" role
+    // (consumers match role === "tool"); it must NOT become "tool_result".
+    expect(mapMessageRole({ role: "toolResult" } as AgentMessage)).toBe("tool");
+    // A tool *call* is part of the assistant's turn.
+    expect(mapMessageRole({ role: "tool_use" } as AgentMessage)).toBe("assistant");
   });
 
-  it("passes through unknown roles", () => {
-    expect(mapMessageRole({ role: "custom" } as AgentMessage)).toBe("custom");
+  it("never emits a role the ctx_messages CHECK constraint would reject", () => {
+    for (const role of [
+      "system",
+      "user",
+      "assistant",
+      "tool",
+      "toolResult",
+      "tool_use",
+      "developer",
+      "custom",
+      "",
+    ]) {
+      expect(SCHEMA_ALLOWED.has(mapMessageRole({ role } as AgentMessage))).toBe(
+        true,
+      );
+    }
+  });
+
+  it("defaults unknown roles to a safe in-schema value, never raw passthrough", () => {
+    // Pre-fix this returned "custom" verbatim, violating the CHECK constraint.
+    expect(mapMessageRole({ role: "custom" } as AgentMessage)).toBe("assistant");
   });
 });
 
