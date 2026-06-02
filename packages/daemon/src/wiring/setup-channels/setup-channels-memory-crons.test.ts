@@ -55,6 +55,9 @@ function makeCtx(overrides: {
   apiKey?: string | undefined;
   /** Rows the injected memoryApi.inspect returns (the __SOCIAL_MODELING__ source set). */
   inspectRows?: Array<{ id: string; userId: string; content: string; trustLevel: string; source?: { sessionKey?: string | null } }>;
+  /** The injected DORMANT lifecycle store (the __MEMORY_LIFECYCLE__ sentinel). When absent
+   *  a default spy returning the all-0 dormant report is used so the on-path can assert it. */
+  memoryLifecycleStore?: { runLifecycleSweep: ReturnType<typeof vi.fn> };
 } = {}): MemoryCronContext {
   const logger = {
     info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(),
@@ -85,6 +88,10 @@ function makeCtx(overrides: {
     tripleStore: { upsertTriple: vi.fn(), currentTruth: vi.fn() } as any,
     relationshipStore: { upsert: vi.fn(), read: vi.fn() } as any,
     memoryApi: memoryApi as any,
+    memoryLifecycleStore: (overrides.memoryLifecycleStore ?? {
+      // The DORMANT default: scanned some rows, mutated NONE (the 112-03 scaffold).
+      runLifecycleSweep: vi.fn(async () => ({ ok: true as const, value: { scanned: 3, promoted: 0, demoted: 0, evicted: 0 } })),
+    }) as any,
   };
 }
 
@@ -263,5 +270,82 @@ describe("handleMemoryCronSentinel __SOCIAL_MODELING__ (Phase 108)", () => {
     expect(mockCreateRelationshipSeam).not.toHaveBeenCalled();
     expect(mockRunRelationshipBuild).not.toHaveBeenCalled();
     expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No API key for anthropic" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// __MEMORY_LIFECYCLE__ sentinel (Phase 112, FORGET-02 — Track C — the DORMANT
+// lifecycle sweep). UNLIKE the consolidation/reasoning/user-rep/social sentinels
+// it is KEYLESS (no resolveOperationModel, no secretManager, no build() seam —
+// like the __ONLINE_TUNING__ bandit). It re-checks memoryLifecycle.enabled
+// (defence-in-depth) and short-circuits ok when off; when on it invokes
+// runLifecycleSweep — which is DORMANT (evicts/demotes/promotes 0 rows, 112-03).
+// ---------------------------------------------------------------------------
+describe("handleMemoryCronSentinel __MEMORY_LIFECYCLE__ (Phase 112)", () => {
+  it("short-circuits ok and runs NOTHING when memoryLifecycle is disabled (the opt-in gate)", async () => {
+    const sweep = vi.fn(async () => ({ ok: true as const, value: { scanned: 0, promoted: 0, demoted: 0, evicted: 0 } }));
+    const ctx = makeCtx({ agents: { "agent-1": { name: "Agent 1" } }, memoryLifecycleStore: { runLifecycleSweep: sweep } });
+    const onComplete = vi.fn();
+    const handled = await handleMemoryCronSentinel("__MEMORY_LIFECYCLE__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled).toBe(true);
+    // Defence-in-depth re-check: a now-disabled agent's stale persisted job runs NOTHING.
+    expect(sweep).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok" });
+  });
+
+  it("invokes the DORMANT runLifecycleSweep scoped to (tenant, agent) with the injected clock when enabled — and the report mutates 0 rows", async () => {
+    const sweep = vi.fn(async () => ({ ok: true as const, value: { scanned: 5, promoted: 0, demoted: 0, evicted: 0 } }));
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", memoryLifecycle: { enabled: true } } },
+      memoryLifecycleStore: { runLifecycleSweep: sweep },
+    });
+    const onComplete = vi.fn();
+    const handled = await handleMemoryCronSentinel("__MEMORY_LIFECYCLE__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled).toBe(true);
+    expect(sweep).toHaveBeenCalledOnce();
+    // Scoped per (tenant, agent); the age axis uses the INJECTED clock.now (1_000), never Date.now.
+    const scope = sweep.mock.calls[0][0] as { tenantId: string; agentId: string; now: number };
+    expect(scope.tenantId).toBe("tenant-a");
+    expect(scope.agentId).toBe("agent-1");
+    expect(scope.now).toBe(1_000);
+    // The Pitfall-3 on-path DORMANT proof: even when enabled the sweep mutates 0 rows.
+    const report = await sweep.mock.results[0].value;
+    expect(report.value).toEqual({ scanned: 5, promoted: 0, demoted: 0, evicted: 0 });
+    expect(onComplete).toHaveBeenCalledWith({ status: "ok", error: undefined });
+  });
+
+  it("is KEYLESS — the lifecycle branch resolves NO model and reads NO secret", async () => {
+    const sweep = vi.fn(async () => ({ ok: true as const, value: { scanned: 1, promoted: 0, demoted: 0, evicted: 0 } }));
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", provider: "anthropic", memoryLifecycle: { enabled: true } } },
+      memoryLifecycleStore: { runLifecycleSweep: sweep },
+    });
+    const onComplete = vi.fn();
+    await handleMemoryCronSentinel("__MEMORY_LIFECYCLE__", { agentId: "agent-1", onComplete }, ctx);
+    expect(sweep).toHaveBeenCalledOnce();
+    // The deletion vs the LLM sentinels — NO model resolution, NO secret read.
+    expect(mockResolveOperationModel).not.toHaveBeenCalled();
+    expect((ctx.container as any).secretManager.get).not.toHaveBeenCalled();
+  });
+
+  it("reports a non-fatal error (onComplete error) when the sweep fails — no throw", async () => {
+    const sweep = vi.fn(async () => ({ ok: false as const, error: new Error("sweep boom") }));
+    const ctx = makeCtx({
+      agents: { "agent-1": { name: "Agent 1", memoryLifecycle: { enabled: true } } },
+      memoryLifecycleStore: { runLifecycleSweep: sweep },
+    });
+    const onComplete = vi.fn();
+    const handled = await handleMemoryCronSentinel("__MEMORY_LIFECYCLE__", { agentId: "agent-1", onComplete }, ctx);
+    expect(handled).toBe(true);
+    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "sweep boom" });
+  });
+
+  it("warns + errors when the lifecycle sentinel fires without an agentId", async () => {
+    const sweep = vi.fn();
+    const ctx = makeCtx({ memoryLifecycleStore: { runLifecycleSweep: sweep } });
+    const onComplete = vi.fn();
+    await handleMemoryCronSentinel("__MEMORY_LIFECYCLE__", { agentId: undefined, onComplete }, ctx);
+    expect(sweep).not.toHaveBeenCalled();
+    expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No agentId for memory lifecycle" });
   });
 });
