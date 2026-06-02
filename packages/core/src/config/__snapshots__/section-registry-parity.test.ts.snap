@@ -793,6 +793,59 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "immutable": true,
+    "path": "agents.memoryLifecycle",
+    "type": "object"
+  },
+  {
+    "default": 1000,
+    "immutable": true,
+    "path": "agents.memoryLifecycle.durableCap",
+    "type": "integer"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.memoryLifecycle.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": 500,
+    "immutable": true,
+    "path": "agents.memoryLifecycle.ephemeralCap",
+    "type": "integer"
+  },
+  {
+    "default": 0.05,
+    "immutable": true,
+    "path": "agents.memoryLifecycle.epsilonPrune",
+    "type": "number"
+  },
+  {
+    "default": 90,
+    "immutable": true,
+    "path": "agents.memoryLifecycle.maxDormantDays",
+    "type": "integer"
+  },
+  {
+    "default": "0 9 * * *",
+    "immutable": true,
+    "path": "agents.memoryLifecycle.schedule",
+    "type": "string"
+  },
+  {
+    "default": 0.3,
+    "immutable": true,
+    "path": "agents.memoryLifecycle.thetaDemote",
+    "type": "number"
+  },
+  {
+    "default": 0.7,
+    "immutable": true,
+    "path": "agents.memoryLifecycle.thetaPromote",
+    "type": "number"
+  },
+  {
+    "immutable": true,
     "path": "agents.memoryOnlineTuning",
     "type": "object"
   },
@@ -1253,6 +1306,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
       "feedback": {
         "enabled": false
       },
+      "forget": {
+        "enabled": false
+      },
       "includeTrustLevels": [
         "system",
         "learned"
@@ -1302,6 +1358,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
         "timeoutMs": 800
       },
       "scoring": {
+        "forgetAlpha": 0.1,
         "proofAlpha": 0.1,
         "recencyAlpha": 0.2,
         "temporalAlpha": 0.2,
@@ -1366,6 +1423,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "default": false,
     "immutable": true,
     "path": "agents.rag.feedback.enabled",
+    "type": "boolean"
+  },
+  {
+    "default": {
+      "enabled": false
+    },
+    "immutable": true,
+    "path": "agents.rag.forget",
+    "type": "object"
+  },
+  {
+    "default": false,
+    "immutable": true,
+    "path": "agents.rag.forget.enabled",
     "type": "boolean"
   },
   {
@@ -1635,6 +1706,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   },
   {
     "default": {
+      "forgetAlpha": 0.1,
       "proofAlpha": 0.1,
       "recencyAlpha": 0.2,
       "temporalAlpha": 0.2,
@@ -1644,6 +1716,12 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "immutable": true,
     "path": "agents.rag.scoring",
     "type": "object"
+  },
+  {
+    "default": 0.1,
+    "immutable": true,
+    "path": "agents.rag.scoring.forgetAlpha",
+    "type": "number"
   },
   {
     "default": 0.1,
@@ -7360,6 +7438,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
           "feedback": {
             "enabled": false
           },
+          "forget": {
+            "enabled": false
+          },
           "includeTrustLevels": [
             "system",
             "learned"
@@ -7409,6 +7490,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
             "timeoutMs": 800
           },
           "scoring": {
+            "forgetAlpha": 0.1,
             "proofAlpha": 0.1,
             "recencyAlpha": 0.2,
             "temporalAlpha": 0.2,
@@ -15071,6 +15153,66 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       ],
       "type": "object"
     },
+    "memoryLifecycle": {
+      "additionalProperties": false,
+      "properties": {
+        "durableCap": {
+          "default": 1000,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "ephemeralCap": {
+          "default": 500,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "epsilonPrune": {
+          "default": 0.05,
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "maxDormantDays": {
+          "default": 90,
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer"
+        },
+        "schedule": {
+          "default": "0 9 * * *",
+          "type": "string"
+        },
+        "thetaDemote": {
+          "default": 0.3,
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "thetaPromote": {
+          "default": 0.7,
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "enabled",
+        "schedule",
+        "thetaPromote",
+        "thetaDemote",
+        "durableCap",
+        "ephemeralCap",
+        "epsilonPrune",
+        "maxDormantDays"
+      ],
+      "type": "object"
+    },
     "memoryOnlineTuning": {
       "additionalProperties": false,
       "properties": {
@@ -15619,6 +15761,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "feedback": {
           "enabled": false
         },
+        "forget": {
+          "enabled": false
+        },
         "includeTrustLevels": [
           "system",
           "learned"
@@ -15668,6 +15813,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "timeoutMs": 800
         },
         "scoring": {
+          "forgetAlpha": 0.1,
           "proofAlpha": 0.1,
           "recencyAlpha": 0.2,
           "temporalAlpha": 0.2,
@@ -15720,6 +15866,22 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "object"
         },
         "feedback": {
+          "additionalProperties": false,
+          "default": {
+            "enabled": false
+          },
+          "properties": {
+            "enabled": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled"
+          ],
+          "type": "object"
+        },
+        "forget": {
           "additionalProperties": false,
           "default": {
             "enabled": false
@@ -16042,6 +16204,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "scoring": {
           "additionalProperties": false,
           "default": {
+            "forgetAlpha": 0.1,
             "proofAlpha": 0.1,
             "recencyAlpha": 0.2,
             "temporalAlpha": 0.2,
@@ -16049,6 +16212,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "usefulnessAlpha": 0.1
           },
           "properties": {
+            "forgetAlpha": {
+              "default": 0.1,
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
             "proofAlpha": {
               "default": 0.1,
               "maximum": 1,
@@ -16085,7 +16254,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
             "temporalAlpha",
             "proofAlpha",
             "trustAlpha",
-            "usefulnessAlpha"
+            "usefulnessAlpha",
+            "forgetAlpha"
           ],
           "type": "object"
         }
@@ -16103,6 +16273,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
         "feedback",
         "onlineTuning",
         "mmr",
+        "forget",
         "queryUnderstanding"
       ],
       "type": "object"
@@ -24602,6 +24773,66 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             ],
             "type": "object"
           },
+          "memoryLifecycle": {
+            "additionalProperties": false,
+            "properties": {
+              "durableCap": {
+                "default": 1000,
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "enabled": {
+                "default": false,
+                "type": "boolean"
+              },
+              "ephemeralCap": {
+                "default": 500,
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "epsilonPrune": {
+                "default": 0.05,
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "maxDormantDays": {
+                "default": 90,
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              },
+              "schedule": {
+                "default": "0 9 * * *",
+                "type": "string"
+              },
+              "thetaDemote": {
+                "default": 0.3,
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "thetaPromote": {
+                "default": 0.7,
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "enabled",
+              "schedule",
+              "thetaPromote",
+              "thetaDemote",
+              "durableCap",
+              "ephemeralCap",
+              "epsilonPrune",
+              "maxDormantDays"
+            ],
+            "type": "object"
+          },
           "memoryOnlineTuning": {
             "additionalProperties": false,
             "properties": {
@@ -25150,6 +25381,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "feedback": {
                 "enabled": false
               },
+              "forget": {
+                "enabled": false
+              },
               "includeTrustLevels": [
                 "system",
                 "learned"
@@ -25199,6 +25433,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "timeoutMs": 800
               },
               "scoring": {
+                "forgetAlpha": 0.1,
                 "proofAlpha": 0.1,
                 "recencyAlpha": 0.2,
                 "temporalAlpha": 0.2,
@@ -25251,6 +25486,22 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "object"
               },
               "feedback": {
+                "additionalProperties": false,
+                "default": {
+                  "enabled": false
+                },
+                "properties": {
+                  "enabled": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ],
+                "type": "object"
+              },
+              "forget": {
                 "additionalProperties": false,
                 "default": {
                   "enabled": false
@@ -25573,6 +25824,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "scoring": {
                 "additionalProperties": false,
                 "default": {
+                  "forgetAlpha": 0.1,
                   "proofAlpha": 0.1,
                   "recencyAlpha": 0.2,
                   "temporalAlpha": 0.2,
@@ -25580,6 +25832,12 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "usefulnessAlpha": 0.1
                 },
                 "properties": {
+                  "forgetAlpha": {
+                    "default": 0.1,
+                    "maximum": 1,
+                    "minimum": 0,
+                    "type": "number"
+                  },
                   "proofAlpha": {
                     "default": 0.1,
                     "maximum": 1,
@@ -25616,7 +25874,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                   "temporalAlpha",
                   "proofAlpha",
                   "trustAlpha",
-                  "usefulnessAlpha"
+                  "usefulnessAlpha",
+                  "forgetAlpha"
                 ],
                 "type": "object"
               }
@@ -25634,6 +25893,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "feedback",
               "onlineTuning",
               "mmr",
+              "forget",
               "queryUnderstanding"
             ],
             "type": "object"
@@ -26937,6 +27197,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "feedback": {
               "enabled": false
             },
+            "forget": {
+              "enabled": false
+            },
             "includeTrustLevels": [
               "system",
               "learned"
@@ -26986,6 +27249,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "timeoutMs": 800
             },
             "scoring": {
+              "forgetAlpha": 0.1,
               "proofAlpha": 0.1,
               "recencyAlpha": 0.2,
               "temporalAlpha": 0.2,

@@ -62,6 +62,10 @@ export type { MemoryUsefulnessJudgeConfig } from "./schema-memory-usefulness-jud
 export { MemoryOnlineTuningConfigSchema } from "./schema-memory-online-tuning.js";
 export type { MemoryOnlineTuningConfig } from "./schema-memory-online-tuning.js";
 
+// SCAFFOLD-DORMANT memory-lifecycle sweep schema (Phase 112 — FORGET-02, Track C; default-OFF, KEYLESS cron; OD4)
+export { MemoryLifecycleConfigSchema } from "./schema-memory-lifecycle.js";
+export type { MemoryLifecycleConfig } from "./schema-memory-lifecycle.js";
+
 // Dialectic schema (Phase 109 — DIAL-02): the memory_ask opt-in cost gate
 export { DialecticConfigSchema } from "./schema-dialectic.js";
 export type { DialecticConfig } from "./schema-dialectic.js";

@@ -29,6 +29,7 @@ import { SocialModelingConfigSchema } from "../schema-social-modeling.js";
 import { DialecticConfigSchema } from "../schema-dialectic.js";
 import { MemoryUsefulnessJudgeConfigSchema } from "../schema-memory-usefulness-judge.js";
 import { MemoryOnlineTuningConfigSchema } from "../schema-memory-online-tuning.js";
+import { MemoryLifecycleConfigSchema } from "../schema-memory-lifecycle.js";
 import { validateProfileId } from "../../security/profile-id.js";
 
 // Sibling-leaf imports (one-directional dependency graph).
@@ -379,6 +380,8 @@ export const PerAgentConfigSchema = AgentConfigSchema.extend({
   memoryUsefulnessJudge: MemoryUsefulnessJudgeConfigSchema.optional(),
   /** Offline tuned-alpha bandit cron (Phase 111, LEARN-03; off by default — an OFFLINE, DETERMINISTIC, KEYLESS cron, never the recall path) */
   memoryOnlineTuning: MemoryOnlineTuningConfigSchema.optional(),
+  /** SCAFFOLD-DORMANT memory-lifecycle sweep cron (Phase 112, FORGET-02; off by default — a KEYLESS cron that evicts/demotes NOTHING until the deferred live policy lands, OD4) */
+  memoryLifecycle: MemoryLifecycleConfigSchema.optional(),
   /**
    * Per-provider OAuth profile preferences (provider -> profileId map).
    * When set, the OAuthTokenManager resolves the named profile for that
