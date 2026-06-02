@@ -13,7 +13,7 @@
  * @module
  */
 
-import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
+import type { AppContainer, Attachment, ChannelPort, ChannelPluginPort, ExecutionPlanPort, NormalizedMessage, SessionKey, TranscriptionPort, TTSPort, ImageAnalysisPort, FileExtractionPort, FileExtractionConfig, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, QueueConfig, DeliveryService, WrapExternalContentOptions, ClockPort, TimerPort, ActivityStreamPort } from "@comis/core";
 import { createDeliveryService, createNoOpDeliveryQueue } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry, BackgroundSessionResolver } from "@comis/agent";
@@ -225,6 +225,12 @@ export interface ChannelsDeps {
    *  Threaded the full daemon → registry → credentials chain — a missing thread silently disables
    *  the bandit write (the field-plumbing lesson). Absent => off-by-default, never reached. */
   tunedAlphaStore?: TunedAlphaStore;
+  /** Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C) — forwarded to the cron path so
+   *  the opt-in KEYLESS __MEMORY_LIFECYCLE__ sentinel runs the DORMANT runLifecycleSweep. Built in
+   *  setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). Threaded
+   *  the full daemon → registry → credentials chain — a missing thread silently disables the sweep
+   *  (the field-plumbing lesson). Absent => off-by-default, never reached. */
+  memoryLifecycleStore?: MemoryLifecyclePort;
   /** Recall-utility usefulness READ surface (Phase 93 / Phase 111) — forwarded to the cron path so
    *  the __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over it. Built in setup-memory
    *  on the shared db handle; injected as the port TYPE (agent↛memory cut). */
@@ -381,6 +387,7 @@ export async function setupChannels(deps: ChannelsDeps): Promise<ChannelsResult>
     userRepresentationStore: deps.userRepresentationStore,
     relationshipStore: deps.relationshipStore,
     tunedAlphaStore: deps.tunedAlphaStore,
+    memoryLifecycleStore: deps.memoryLifecycleStore,
     usefulnessStore: deps.usefulnessStore,
     memoryApi: deps.memoryApi,
     tenantId: deps.tenantId,

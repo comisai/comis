@@ -2105,21 +2105,20 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // MemoryRelationshipStoreDeps / RelationshipRowSchema above).
       "MemoryTunedAlphaStoreDeps",
       "TunedAlphaRowSchema",
-      // Memory-lifecycle store (Phase 112-03, Track C — FORGET-02).
+      // Memory-lifecycle store (Phase 112-03/04, Track C — FORGET-02).
       // createSqliteMemoryLifecycleStore is the SOLE MemoryLifecyclePort adapter (the
       // (tenant, agent)-scoped DORMANT sweep over the `memories` table + its additive
-      // marker columns — it computes strengths/tiers but evicts/demotes NOTHING). It is
-      // an ahead-of-consumer factory-orphan: the daemon composition root CONSTRUCTS it on
-      // the shared db handle + registers the default-OFF __MEMORY_LIFECYCLE__ cron in Plan
-      // 112-04 (and the keyless forget.bench in 112-05 drives it). SHRINK @ 112-04 — the
-      // factory-orphan shrink, mirror createSqliteTunedAlphaStore @ 111-04 above
-      // (allowlist-shrink enforces shrink-only). MemoryLifecycleStoreDeps +
-      // MemoryLifecyclePolicy are the constructor-deps/policy SHAPE types (referenced via
-      // inline objects only); MemoryLifecycleRowSchema is the row schema consumed by
-      // createRowMapper inside the adapter (an intra-file value reference, not a cross-file
-      // import) — all three PERMANENT baseline orphans (mirror MemoryTunedAlphaStoreDeps /
-      // TunedAlphaRowSchema above).
-      "createSqliteMemoryLifecycleStore",
+      // marker columns — it computes strengths/tiers but evicts/demotes NOTHING). It was
+      // an ahead-of-consumer factory-orphan; SHRUNK @ 112-04 — the daemon composition root
+      // (setup-memory.ts) now CONSTRUCTS it on the shared db handle + the default-OFF KEYLESS
+      // __MEMORY_LIFECYCLE__ cron sentinel (setup-channels) drives it, so it is no longer an
+      // orphan (the factory-orphan shrink, mirror createSqliteTunedAlphaStore @ 111-04 above;
+      // allowlist-shrink enforces shrink-only). MemoryLifecycleStoreDeps + MemoryLifecyclePolicy
+      // are the constructor-deps/policy SHAPE types (referenced via inline objects only — the
+      // daemon calls the factory with an inline `{ db, logger }`); MemoryLifecycleRowSchema is
+      // the row schema consumed by createRowMapper inside the adapter (an intra-file value
+      // reference, not a cross-file import) — all three PERMANENT baseline orphans (mirror
+      // MemoryTunedAlphaStoreDeps / TunedAlphaRowSchema above).
       "MemoryLifecycleStoreDeps",
       "MemoryLifecyclePolicy",
       "MemoryLifecycleRowSchema",

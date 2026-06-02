@@ -1,27 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The two LLM-backed memory-cron sentinel handlers — `__MEMORY_CONSOLIDATION__`
- * (Phase 84, CONS-07) and `__MEMORY_REASONING__` (Phase 101, REASON-02/03) —
- * extracted from setup-channels-credentials.ts to keep that leaf under the 600L
- * setup-channels cap.
+ * The memory-cron sentinel handlers — extracted from setup-channels-credentials.ts
+ * to keep that leaf under the 600L setup-channels cap. The LLM-backed sentinels
+ * (__MEMORY_CONSOLIDATION__ P84, __MEMORY_REASONING__ P101, __USER_REPRESENTATION__
+ * P107, __SOCIAL_MODELING__ P108) resolve a cheap "cron" model + an API key (by NAME,
+ * never logged); the KEYLESS sentinels (__ONLINE_TUNING__ P111, __MEMORY_LIFECYCLE__
+ * P112) resolve NO model + NO key.
  *
- * Both mirror the review branch 1:1: the cron is registered ONLY for an
- * operator-enabled agent (setup-schedulers), but each sentinel ALSO re-checks
- * cfg.enabled and short-circuits ok when off (defence-in-depth — a stale persisted
- * job must not run for a now-disabled agent). The cheap "cron" operation model +
- * the API key (resolved by NAME, never logged by value) are resolved identically.
- *
- * The reasoning sentinel injects BOTH segregated stores — `consolidationStore` (the
- * inductive applyConsolidation write) AND `tripleStore` (the deductive trust-first
- * upsertTriple write, the field-plumbing chain completed daemon → registry →
- * credentials) — plus the OFFLINE reason() seam built from the cheap cron model via
- * `createReasoningSeam` (the specialist prompts stay agent-internal). The agent
- * receives the stores as port TYPES only (the agent↛memory cut).
+ * All mirror the review branch: the cron registers ONLY for an operator-enabled agent
+ * (setup-schedulers), but each sentinel ALSO re-checks cfg.enabled + short-circuits ok
+ * when off (defence-in-depth — a stale persisted job must not run for a now-disabled
+ * agent). Each injects its segregated store(s) as port TYPES only (the agent↛memory cut)
+ * + (the LLM ones) the OFFLINE seam built from the cheap model (prompts stay agent-internal).
  *
  * @module
  */
 
-import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore } from "@comis/core";
+import type { AppContainer, ClockPort, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort } from "@comis/core";
 import { parseFormattedSessionKey } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { MemoryApi } from "@comis/memory";
@@ -42,31 +37,28 @@ export interface MemoryCronContext {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- container.config.agents PerAgentConfig map (erased at the dispatch boundary)
   agents: Record<string, any>;
   tenantId?: string;
-  /** Injected from setup-memory (CONS-07): the inductive applyConsolidation write. */
+  // All stores below are injected from setup-memory on the shared db; the agent
+  // receives the port TYPE only (the agent↛memory cut). Each backs the named sentinel.
+  /** CONS-07: the inductive applyConsolidation write (__MEMORY_CONSOLIDATION__). */
   consolidationStore?: MemoryConsolidationStore;
-  /** Injected from setup-memory (REASON-02): the deductive trust-first upsertTriple write. */
+  /** REASON-02: the deductive trust-first upsertTriple write (__MEMORY_REASONING__). */
   tripleStore?: TripleStorePort;
-  /** Injected from setup-memory (USER-03): the per-user profile upsert write path
-   *  (the __USER_REPRESENTATION__ sentinel). The agent receives the port TYPE only. */
+  /** USER-03: the per-user profile upsert write (__USER_REPRESENTATION__). */
   userRepresentationStore?: UserRepresentationStore;
-  /** Injected from setup-memory (Phase 108, SOCIAL-01/02): the per-(tenant, agent, channel)
-   *  directional-edge upsert write path the __SOCIAL_MODELING__ sentinel drives. The agent
-   *  receives the port TYPE only (the agent↛memory cut). */
+  /** SOCIAL-01/02: the per-(tenant, agent, channel) directional-edge upsert (__SOCIAL_MODELING__). */
   relationshipStore?: RelationshipStore;
-  /** Injected from setup-memory (Phase 111, LEARN-03): the tuned-alpha upsert write path
-   *  the __ONLINE_TUNING__ bandit sentinel drives. The agent receives the port TYPE only
-   *  (the agent↛memory cut). */
+  /** LEARN-03: the tuned-alpha upsert write the KEYLESS bandit drives (__ONLINE_TUNING__). */
   tunedAlphaStore?: TunedAlphaStore;
-  /** Injected from setup-memory (Phase 93, FEED-02 / Phase 111 LEARN-03): the accrued
-   *  per-memory usefulness READ surface the __ONLINE_TUNING__ sentinel scopes the bandit's
-   *  FEED signal over (`readUsefulness(ids, scope)`). The agent receives the port TYPE only. */
+  /** FEED-02 / LEARN-03: the accrued per-memory usefulness READ surface (`readUsefulness`)
+   *  the __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over. */
   usefulnessStore?: MemoryUsefulnessStore;
-  /** Injected from setup-memory (USER-04): the read surface the __USER_REPRESENTATION__
-   *  sentinel scopes the per-(tenant, agent, user) high-trust source read over (the
-   *  concrete `readSources` seam runUserRepresentationBuild injects — kept daemon-side so
-   *  the agent imports no memory package). The SAME `inspect` surface backs the
-   *  __SOCIAL_MODELING__ sentinel (grouped by resolved channelId in Task 2) AND the
-   *  __ONLINE_TUNING__ sentinel (the bounded candidate-id set the bandit scores). */
+  /** FORGET-02 (Track C): the DORMANT lifecycle sweep the KEYLESS __MEMORY_LIFECYCLE__
+   *  sentinel drives (`runLifecycleSweep(scope)`, per (tenant, agent) + injected `now`).
+   *  DORMANT — even when enabled the sweep evicts/demotes 0 rows (live policy deferred, OD4). */
+  memoryLifecycleStore?: MemoryLifecyclePort;
+  /** USER-04: the `inspect` read surface the __USER_REPRESENTATION__ / __SOCIAL_MODELING__
+   *  (grouped by channelId) / __ONLINE_TUNING__ (the bounded candidate-id set) sentinels
+   *  scope their per-(tenant, agent[, user/channel]) high-trust source reads over. */
   memoryApi?: MemoryApi;
 }
 
@@ -81,7 +73,7 @@ export async function handleMemoryCronSentinel(
   payload: MemoryCronPayload,
   ctx: MemoryCronContext,
 ): Promise<boolean> {
-  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, usefulnessStore, memoryApi } = ctx;
+  const { container, logger, clock, agents, tenantId, consolidationStore, tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, usefulnessStore, memoryLifecycleStore, memoryApi } = ctx;
 
   // -- Memory consolidation sentinel intercept (Phase 84, CONS-07) --
   if (resultText === "__MEMORY_CONSOLIDATION__") {
@@ -95,15 +87,14 @@ export async function handleMemoryCronSentinel(
     const agentConfig = agents[agentId];
     const consolidationConfig = agentConfig?.memoryConsolidation;
     if (!consolidationConfig?.enabled) {
-      // The opt-in cost gate (CONS-07): a disabled (or default-config) agent does
-      // NO LLM work — short-circuit ok so the scheduler records a clean run.
+      // The opt-in cost gate (CONS-07): a disabled agent does NO LLM work (clean ok run).
       logger.debug({ agentId }, "Memory consolidation disabled for agent, skipping");
       payload.onComplete?.({ status: "ok" });
       return true;
     }
 
-    // Resolve the cheap model for consolidation via the "cron" operation type
-    // (IDENTICAL to the review block) — never the agent's primary model.
+    // Resolve the cheap "cron" model (never the agent's primary) + the API key (by NAME,
+    // never by value — T-84-20; Pino also auto-redacts).
     const resolved = resolveOperationModel({
       operationType: "cron",
       agentProvider: agentConfig.provider ?? "anthropic",
@@ -112,8 +103,6 @@ export async function handleMemoryCronSentinel(
       providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
     });
 
-    // Resolve the API key for the provider. The no-key branch logs only the
-    // env-var NAME + a hint — never the value (T-84-20; Pino also auto-redacts).
     const providerEntry = container.config.providers?.entries?.[resolved.provider];
     const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
     const apiKey = container.secretManager.get(apiKeyName) ?? "";
@@ -127,8 +116,7 @@ export async function handleMemoryCronSentinel(
       agentId,
       tenantId: tenantId ?? container.config.tenantId ?? "default",
       config: consolidationConfig,
-      // Injected from setup-memory (the composition-root join). The agent receives
-      // the port TYPE only — no agent→memory edge (T-84-21).
+      // Injected from setup-memory — the port TYPE only, no agent→memory edge (T-84-21).
       consolidationStore: consolidationStore!,
       eventBus: container.eventBus,
       provider: resolved.provider,
@@ -159,15 +147,14 @@ export async function handleMemoryCronSentinel(
     const agentConfig = agents[agentId];
     const reasoningConfig = agentConfig?.memoryReasoning;
     if (!reasoningConfig?.enabled) {
-      // The opt-in cost gate (T-101-06-02): a disabled (or default-config) agent
-      // does NO LLM work — short-circuit ok so the scheduler records a clean run.
+      // The opt-in cost gate (T-101-06-02): a disabled agent does NO LLM work (clean ok run).
       logger.debug({ agentId }, "Memory reasoning disabled for agent, skipping");
       payload.onComplete?.({ status: "ok" });
       return true;
     }
 
-    // Resolve the cheap model for reasoning via the "cron" operation type
-    // (IDENTICAL to the consolidation block) — never the agent's primary model.
+    // Resolve the cheap "cron" model (never the agent's primary) + the API key (by NAME,
+    // never by value — T-101-06-03; Pino also auto-redacts).
     const resolved = resolveOperationModel({
       operationType: "cron",
       agentProvider: agentConfig.provider ?? "anthropic",
@@ -176,8 +163,6 @@ export async function handleMemoryCronSentinel(
       providerFamily: resolveProviderFamily(agentConfig.provider ?? "anthropic"),
     });
 
-    // Resolve the API key for the provider. The no-key branch logs only the
-    // env-var NAME + a hint — never the value (T-101-06-03; Pino also auto-redacts).
     const providerEntry = container.config.providers?.entries?.[resolved.provider];
     const apiKeyName = providerEntry?.apiKeyName || `${resolved.provider.toUpperCase()}_API_KEY`;
     const apiKey = container.secretManager.get(apiKeyName) ?? "";
@@ -192,17 +177,14 @@ export async function handleMemoryCronSentinel(
       agentId,
       tenantId: tenantId ?? container.config.tenantId ?? "default",
       config: reasoningConfig,
-      // BOTH stores injected from setup-memory (the composition-root join). The
-      // agent receives the port TYPES only — no agent→memory edge (T-101-06-01).
+      // BOTH stores injected from setup-memory — the port TYPES only (T-101-06-01).
       consolidationStore: consolidationStore!,   // inductive applyConsolidation
       tripleStore: tripleStore!,                 // deductive trust-first upsertTriple
       eventBus: container.eventBus,
       clock,
       logger: reasoningLogger,
-      // The OFFLINE reasoning seam — a cheap-model completeSimple over the
-      // DEDUCTIVE/INDUCTIVE prompts + the lenient parsers, built in @comis/agent so
-      // the prompt strings never cross the package boundary. Bounded by
-      // maxReasoningTokens; non-fatal (a thrown/malformed call → empty arrays).
+      // The OFFLINE reasoning seam — a cheap-model completeSimple over the DEDUCTIVE/INDUCTIVE
+      // prompts (agent-internal), bounded by maxReasoningTokens; non-fatal (malformed → empty).
       reason: createReasoningSeam({
         provider: resolved.provider,
         modelId: resolved.modelId,
@@ -222,13 +204,11 @@ export async function handleMemoryCronSentinel(
   }
 
   // -- Per-user representation sentinel intercept (Phase 107, USER-03/04 — Track E1) --
-  // Mirrors the reasoning branch above 1:1: the opt-in cost gate (re-check enabled), the cheap
-  // "cron" model + key (resolved by NAME, never logged), then the OFFLINE build() seam
-  // (createUserRepresentationSeam keeps USER_REPRESENTATION_PROMPT agent-internal). The cron
-  // fires per (tenant, agent); it builds a profile for EACH distinct user the agent has
-  // high-trust memories for — runUserRepresentationBuild is invoked once per userId, scoped to
-  // (tenant, agent, user), with a readSources seam that yields ONLY that user's high-trust
-  // sources (the anti-poisoning external-exclude + the redaction firewall live in the job).
+  // Mirrors the reasoning branch (opt-in cost gate + cheap "cron" model/key + the OFFLINE
+  // build() seam, prompts agent-internal). Fires per (tenant, agent); builds a profile for
+  // EACH distinct high-trust user via runUserRepresentationBuild once per userId, scoped to
+  // (tenant, agent, user) with a readSources seam yielding ONLY that user's high-trust sources
+  // (the anti-poisoning external-exclude + the redaction firewall live in the job).
   if (resultText === "__USER_REPRESENTATION__") {
     const { agentId } = payload;
     if (!agentId) {
@@ -276,18 +256,12 @@ export async function handleMemoryCronSentinel(
     const reprTenantId = tenantId ?? container.config.tenantId ?? "default";
     const reprLogger = logger.child({ agentId, submodule: "user-representation" });
 
-    // Read the agent's HIGH-TRUST source memories (system + learned) once, then group by user.
-    // InspectFilters has no userId axis, so the read is per-(tenant, agent) and the grouping is
-    // done here; each user's slice becomes that user's readSources seam (the anti-poisoning
-    // external-exclude is the job's, but inspecting only system|learned is a first belt).
-    //
-    // MR-01: `inspect` orders `created_at DESC` and applies `limit` BEFORE grouping, so a
-    // trust level with > SOURCE_READ_LIMIT rows is SILENTLY truncated to the newest window
-    // across ALL users (a chatty user can crowd out a quieter one; older identity/preference
-    // facts never reach the builder). We cannot page here without an offset axis on
-    // InspectFilters, so at minimum we make the truncation OBSERVABLE: when a read returns
-    // exactly the cap, emit a counts-only WARN with a hint so an operator can diagnose a thin
-    // profile (per AGENTS.md §2.7 observability discipline — no SILENT truncation).
+    // Read the agent's HIGH-TRUST sources (system + learned) once, group by user here
+    // (InspectFilters has no userId axis); each user's slice becomes that user's readSources seam.
+    // MR-01: `inspect` orders created_at DESC + applies `limit` BEFORE grouping, so a trust level
+    // with > SOURCE_READ_LIMIT rows is SILENTLY truncated to the newest window across ALL users
+    // (a chatty user crowds out a quieter one). No offset axis to page, so we make the truncation
+    // OBSERVABLE: a read returning exactly the cap emits a counts-only WARN (§2.7 — no silent drop).
     const SOURCE_READ_LIMIT = 1000;
     const sourcesByUser = new Map<string, UserRepresentationSourceMemory[]>();
     for (const trustLevel of ["system", "learned"] as const) {
@@ -332,15 +306,12 @@ export async function handleMemoryCronSentinel(
         config: {
           enabled: userReprConfig.enabled,
           maxEntriesPerRun: userReprConfig.maxEntriesPerRun,
-          // MR-02 per-build INPUT bounds (forwarded so an operator's knobs reach the
-          // job; the job also defaults them when absent).
+          // MR-02 per-build INPUT bounds (forwarded; the job also defaults them when absent).
           maxSourceMemories: userReprConfig.maxSourceMemories,
           maxSourceChars: userReprConfig.maxSourceChars,
         },
-        // Injected from setup-memory (the composition-root join) — the port TYPE only.
-        userRepresentationStore,
-        // The scoped read seam: this user's already-fetched high-trust sources (the job
-        // runs its own external-exclude + redaction firewall over them).
+        userRepresentationStore, // injected from setup-memory — the port TYPE only.
+        // The scoped read seam: this user's high-trust sources (the job runs external-exclude + redaction).
         readSources: () => Promise.resolve({ ok: true as const, value: sources }),
         clock,
         logger: reprLogger,
@@ -436,13 +407,59 @@ export async function handleMemoryCronSentinel(
     return true;
   }
 
+  // -- Memory lifecycle sentinel intercept (Phase 112, FORGET-02 — Track C) --
+  // The DORMANT lifecycle sweep. Like the __ONLINE_TUNING__ bandit (NOT the LLM crons) it is
+  // KEYLESS: NO resolveOperationModel, NO providerEntry, NO apiKey, NO build() seam (T-112-12).
+  // It re-checks memoryLifecycle.enabled (defence-in-depth) + short-circuits ok when off; when
+  // on it invokes runLifecycleSweep per (tenant, agent) with the INJECTED clock.now (never
+  // Date.now). DORMANT: even when on it evicts/demotes/promotes 0 rows (live policy deferred —
+  // OD4 / Pitfall 3). Non-fatal + counts-only (the report numbers — NEVER a body/query, §2.7).
+  if (resultText === "__MEMORY_LIFECYCLE__") {
+    const { agentId } = payload;
+    if (!agentId) {
+      logger.warn({ hint: "Memory lifecycle job fired without agentId", errorKind: "config" as const }, "Skipping memory lifecycle -- no agentId");
+      payload.onComplete?.({ status: "error", error: "No agentId for memory lifecycle" });
+      return true;
+    }
+
+    const agentConfig = agents[agentId];
+    const cfg = agentConfig?.memoryLifecycle;
+    if (!cfg?.enabled) {
+      // The opt-in gate (defence-in-depth re-check): a disabled agent does NOTHING (clean ok run).
+      logger.debug({ agentId }, "Memory lifecycle disabled for agent, skipping");
+      payload.onComplete?.({ status: "ok" });
+      return true;
+    }
+
+    // The DORMANT sweep store MUST be present (injected from setup-memory). Absent => clean error.
+    if (!memoryLifecycleStore) {
+      logger.warn({ agentId, hint: "memoryLifecycleStore not injected -- cannot run the lifecycle sweep", errorKind: "config" as const }, "Skipping memory lifecycle -- lifecycle store not wired");
+      payload.onComplete?.({ status: "error", error: "memory lifecycle store not wired" });
+      return true;
+    }
+
+    // KEYLESS: no model, no provider entry, no secret/key, no build seam — deterministic + $0.
+    const lifecycleTenantId = tenantId ?? container.config.tenantId ?? "default";
+    const lifecycleResult = await memoryLifecycleStore.runLifecycleSweep({ tenantId: lifecycleTenantId, agentId, now: clock.now() });
+
+    if (!lifecycleResult.ok) {
+      logger.error({ agentId, err: lifecycleResult.error, hint: "Memory lifecycle sweep failed -- will retry next cycle", errorKind: "internal" as const }, "Memory lifecycle sweep error");
+    } else {
+      // Counts ONLY — the DORMANT report (promoted/demoted/evicted always 0 in the 112-03 scaffold). §2.7.
+      const r = lifecycleResult.value;
+      logger.child({ agentId, submodule: "memory-lifecycle" }).debug({ agentId, scanned: r.scanned, promoted: r.promoted, demoted: r.demoted, evicted: r.evicted }, "Memory lifecycle sweep complete (DORMANT)");
+    }
+    payload.onComplete?.({ status: lifecycleResult.ok ? "ok" : "error", error: lifecycleResult.ok ? undefined : lifecycleResult.error?.message });
+    return true;
+  }
+
   // -- Social modeling sentinel intercept (Phase 108, SOCIAL-01/02/03) --
-  // The offline DIRECTIONAL relationship builder. It fires per (tenant, agent); it groups the
-  // agent's high-trust sources by RESOLVED channelId (the SOCIAL-02 per-channel privacy boundary)
-  // and invokes runRelationshipBuild ONCE per channel, scoped to (tenant, agent, channel), with a
-  // readSources seam yielding that channel's multi-user sources (sender attribution preserved). The
-  // anti-poisoning external-exclude + the redaction firewall live in the job. The gate is STRICTER
-  // than the representation cron: it requires BOTH enabled AND a recorded privacy-review sign-off.
+  // The offline DIRECTIONAL relationship builder. Fires per (tenant, agent); groups high-trust
+  // sources by RESOLVED channelId (the SOCIAL-02 per-channel privacy boundary) + invokes
+  // runRelationshipBuild ONCE per channel, scoped to (tenant, agent, channel), with a readSources
+  // seam yielding that channel's multi-user sources (sender attribution preserved; the job runs the
+  // external-exclude + redaction firewall). The gate is STRICTER than the rep cron: BOTH enabled
+  // AND a recorded privacy-review sign-off.
   if (resultText === "__SOCIAL_MODELING__") {
     const { agentId } = payload;
     if (!agentId) {
@@ -491,14 +508,11 @@ export async function handleMemoryCronSentinel(
     const relTenantId = tenantId ?? container.config.tenantId ?? "default";
     const relLogger = logger.child({ agentId, submodule: "social-modeling" });
 
-    // Read the agent's HIGH-TRUST source memories (system + learned) once, then group by the
-    // RESOLVED channelId (the SOCIAL-02 write-side boundary). InspectFilters has no channel axis,
-    // so the read is per-(tenant, agent) and the grouping is done here (mirror the per-user grouping
-    // in the representation cron). channelId is recovered from each source's session key via
-    // parseFormattedSessionKey; a source whose channelId CANNOT be resolved (NULL session key —
-    // system/non-conversation memories) is SKIPPED + counted (Pitfall 1: NEVER bucket undefined —
-    // that would collapse cross-channel sources into one leak bucket). entry.userId is the SPEAKER
-    // (the subject candidate; sender attribution is preserved into the build seam, RQ3).
+    // Read HIGH-TRUST sources once, group by RESOLVED channelId (the SOCIAL-02 write boundary)
+    // here (no channel axis on InspectFilters). channelId is recovered per source via
+    // parseFormattedSessionKey; an unresolvable one (NULL session key — system memories) is
+    // SKIPPED + counted (Pitfall 1: NEVER bucket undefined — that collapses cross-channel sources
+    // into one leak bucket). entry.userId is the SPEAKER (sender attribution preserved, RQ3).
     const SOURCE_READ_LIMIT = 1000;
     const sourcesByChannel = new Map<string, RelationshipSourceMemory[]>();
     let skippedNoChannel = 0;
@@ -559,15 +573,12 @@ export async function handleMemoryCronSentinel(
         config: {
           enabled: cfg.enabled,
           maxEntriesPerRun: cfg.maxEntriesPerRun,
-          // MR-02 per-build INPUT bounds (forwarded so an operator's knobs reach the job; the job
-          // also defaults them when absent).
+          // MR-02 per-build INPUT bounds (forwarded; the job also defaults them when absent).
           maxSourceMemories: cfg.maxSourceMemories,
           maxSourceChars: cfg.maxSourceChars,
         },
-        // Injected from setup-memory (the composition-root join) — the port TYPE only.
-        relationshipStore,
-        // The scoped read seam: this channel's already-fetched high-trust sources (the job runs its
-        // own external-exclude + redaction firewall over them).
+        relationshipStore, // injected from setup-memory — the port TYPE only.
+        // The scoped read seam: this channel's high-trust sources (the job runs external-exclude + redaction).
         readSources: () => Promise.resolve({ ok: true as const, value: sources }),
         clock,
         logger: relLogger,

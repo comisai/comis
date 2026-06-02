@@ -427,6 +427,12 @@ export interface BootContext {
    *  injected as the port TYPE (agent↛memory cut). Dormant until BOTH the recall-side gate
    *  (`rag.onlineTuning.enabled`) AND the bandit cron (`memoryOnlineTuning.enabled`) are on. */
   tunedAlphaStore: Awaited<ReturnType<typeof setupMemory>>["tunedAlphaStore"];
+  /** Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C) — threaded into the cron
+   *  path ONLY (the KEYLESS __MEMORY_LIFECYCLE__ sentinel → the DORMANT runLifecycleSweep). NOT
+   *  the executor recall path (RQ8: daemon-cron-side, no 3-hop forwarding). Built in setup-memory
+   *  on the shared db; injected as the port TYPE (agent↛memory cut). Dormant — even when the cron
+   *  (`memoryLifecycle.enabled`, default OFF) is on the sweep evicts/demotes 0 rows. */
+  memoryLifecycleStore: Awaited<ReturnType<typeof setupMemory>>["memoryLifecycleStore"];
   /** Consolidation store (Phase 84, CONS-07) — threaded into the cron path ONLY (the
    *  registerCronEventListeners → runMemoryConsolidation sentinel). NOT the executor recall
    *  path. Built in setup-memory on the shared db; injected as the port TYPE (agent↛memory cut). */

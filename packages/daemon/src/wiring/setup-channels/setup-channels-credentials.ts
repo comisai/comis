@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
+import type { Attachment, AppContainer, ChannelPort, ClockPort, MemoryPort, MemoryEntityStore, MemoryCausalStore, MemoryConsolidationStore, TripleStorePort, UserRepresentationStore, RelationshipStore, TunedAlphaStore, MemoryUsefulnessStore, MemoryLifecyclePort, NormalizedMessage, SessionKey, TranscriptionPort, DeliveryService } from "@comis/core";
 import { formatSessionKey, runWithContext, createDeliveryOrigin, systemNowMs } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
 import type { AgentExecutor, createSessionLifecycle, ActiveRunRegistry } from "@comis/agent";
@@ -100,6 +100,13 @@ export interface CronEventListenerDeps {
    *  (the field-plumbing lesson). Absent => the bandit sentinel cannot run, but the cron is
    *  off-by-default so a default-config agent never reaches it. */
   tunedAlphaStore?: TunedAlphaStore;
+  /** Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C) — the KEYLESS
+   *  __MEMORY_LIFECYCLE__ sentinel's per-(tenant, agent) DORMANT runLifecycleSweep. Built in
+   *  setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). Threaded
+   *  the full daemon → registry → credentials chain — a missing thread would make the sweep a
+   *  silent no-op (the field-plumbing lesson). Absent => the lifecycle sentinel cannot run, but the
+   *  cron is off-by-default so a default-config agent never reaches it. */
+  memoryLifecycleStore?: MemoryLifecyclePort;
   /** Recall-utility usefulness READ surface (Phase 93, FEED-02 / Phase 111 LEARN-03) — the
    *  __ONLINE_TUNING__ sentinel scopes the bandit's FEED signal over it (`readUsefulness`).
    *  Built in setup-memory on the shared db handle; injected as the port TYPE (agent↛memory cut). */
@@ -238,6 +245,7 @@ export function registerCronEventListeners(deps: CronEventListenerDeps): void {
       userRepresentationStore: deps.userRepresentationStore,
       relationshipStore: deps.relationshipStore,
       tunedAlphaStore: deps.tunedAlphaStore,
+      memoryLifecycleStore: deps.memoryLifecycleStore,
       usefulnessStore: deps.usefulnessStore,
       memoryApi: deps.memoryApi,
     });

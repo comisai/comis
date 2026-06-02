@@ -36,6 +36,7 @@ import {
   createSqliteUserRepresentationStore,
   createSqliteRelationshipStore,
   createSqliteTunedAlphaStore,
+  createSqliteMemoryLifecycleStore,
   type MemoryApi,
 } from "@comis/memory";
 import {
@@ -189,6 +190,17 @@ export interface MemoryResult {
    *  into the recall read path (setup-agents-* -> createPiExecutor -> prompt-assembly) AND the
    *  __ONLINE_TUNING__ cron (setup-channels) — the agent receives the port TYPE only. */
   tunedAlphaStore: import("@comis/core").TunedAlphaStore;
+  /** Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C). The SOLE adapter for the
+   *  segregated `MemoryLifecyclePort` port — built UNCONDITIONALLY on the SAME shared `db`
+   *  handle as the memory adapter (so the sweep scans the SAME `memories` rows + the additive
+   *  NON-DESTRUCTIVE marker columns under one (tenant, agent)-scoped, FK-enabled connection;
+   *  a sweep on a DIFFERENT handle would scan an empty/foreign table). No model/IO cost to
+   *  building it, so it is always present; it stays DORMANT (evicts/demotes 0 rows even when
+   *  enabled — 112-03) and the cron registers ONLY when `memoryLifecycle.enabled` (default OFF,
+   *  KEYLESS). Threaded into the KEYLESS __MEMORY_LIFECYCLE__ cron (setup-channels) — NOT the
+   *  recall executor (RQ8: the lifecycle port is daemon-cron-side, no 3-hop forwarding). The
+   *  agent receives the port TYPE only (the agent↛memory cut). */
+  memoryLifecycleStore: import("@comis/core").MemoryLifecyclePort;
   /** Live in-process recall-counter wiring (Phase 86, OBS-07). The single
    *  `wireRecallCounters(container.eventBus)` subscriber is stood up HERE — the
    *  memory composition site that already holds the event bus — so there is ONE
@@ -545,6 +557,21 @@ export async function setupMemory(deps: {
   // cron (setup-channels) — the agent receives the port TYPE only (the agent↛memory cut).
   const tunedAlphaStore = createSqliteTunedAlphaStore({ db, logger: memoryLogger });
 
+  // 6.5.2d-ter. Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C). Built on the
+  // SAME shared `db` handle the memory adapter owns — NOT a second Database — so the sweep
+  // scans the SAME `memories` rows + the additive NON-DESTRUCTIVE marker columns
+  // (lifecycle_demoted_at / evicted_at / strength) under one (tenant, agent)-scoped, FK-enabled
+  // connection (a sweep on a DIFFERENT handle would scan an empty/foreign table). Always
+  // constructed (no model/IO cost, like the tuned-alpha store); it stays DORMANT — even when
+  // the KEYLESS __MEMORY_LIFECYCLE__ cron (`agents.<id>.memoryLifecycle.enabled`, default OFF)
+  // is on, the sweep evicts/demotes/promotes 0 rows (the live policy is the deferred
+  // operator/v2.10 step — OD4). This is the composition-root join: the daemon builds the
+  // @comis/memory adapter here and threads the port TYPE into the __MEMORY_LIFECYCLE__ cron
+  // sentinel (setup-channels) — NOT createPiExecutor (RQ8: the lifecycle port is daemon-cron-
+  // side, no 3-hop store-forwarding through the recall executor). The agent receives the port
+  // TYPE only (the agent↛memory cut).
+  const memoryLifecycleStore = createSqliteMemoryLifecycleStore({ db, logger: memoryLogger });
+
   // 6.5.2e. Recall-counter composition (Phase 86, OBS-07). Stand up the SINGLE
   // in-process recall-counter registry and subscribe it to the `memory:*` bus
   // events HERE — the memory composition site already holds `container.eventBus`,
@@ -713,6 +740,7 @@ export async function setupMemory(deps: {
     consolidationStore,
     usefulnessStore,
     tunedAlphaStore,
+    memoryLifecycleStore,
     recallCounters,
     maintenanceTick,
   };
