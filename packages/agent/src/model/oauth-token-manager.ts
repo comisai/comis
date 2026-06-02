@@ -167,6 +167,13 @@ export interface OAuthTokenManager {
    * No-op when watchPath was undefined at construction. Idempotent.
    */
   dispose(): Promise<void>;
+  /**
+   * Invalidate the in-memory profile cache so the next getApiKey() call
+   * re-fetches from the credential store. Used by the encrypted-mode event
+   * subscription in setup-agents-oauth.ts to apply cross-process auth.set
+   * writes (CLI `comis auth login`) without a daemon restart.
+   */
+  invalidate(): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -1438,6 +1445,10 @@ export function createOAuthTokenManager(deps: OAuthTokenManagerDeps): OAuthToken
       if (inflightReload) {
         await inflightReload;
       }
+    },
+
+    invalidate(): void {
+      cache.clear();
     },
   };
 }

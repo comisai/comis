@@ -2165,10 +2165,22 @@ describe("refresh_token_reused detection", () => {
 
 describe("Phase 6 Wave 0: OAuthTokenManager.invalidate() RED test (not yet implemented)", () => {
   let eventBus: TypedEventBus;
+  let fetchShim: { restore: () => void };
 
   beforeEach(() => {
     vi.clearAllMocks();
     eventBus = new TypedEventBus();
+    mockWithLock.mockImplementation(async (_path: string, fn: () => Promise<unknown>) =>
+      _ok(await fn()),
+    );
+    // The openai-codex bypass routes through globalThis.fetch (not pi-ai's
+    // getOAuthApiKey). Install the shim so the bypass reads the
+    // mockGetOAuthApiKey result instead of making a real network call.
+    fetchShim = installCodexBypassFetchShim();
+  });
+
+  afterEach(() => {
+    fetchShim.restore();
   });
 
   // Phase 6 Wave 0: invalidate() RED test

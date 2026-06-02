@@ -108,6 +108,17 @@ export function wireAuthProvider(args: WireAuthProviderArgs): AuthProvider {
     },
   });
 
+  // Encrypted-mode cache-invalidation subscription: auth:profile_added fires
+  // from auth-handlers.ts auth.set after a CLI `comis auth login` writes a
+  // new OAuth profile via daemon RPC. The file-mode chokidar watcher already
+  // handles this for file mode (no change to that path). Encrypted mode has
+  // no watcher (watchPath: undefined above), so we subscribe here instead.
+  if (oauthStorageMode === "encrypted") {
+    container.eventBus.on("auth:profile_added", () => {
+      authProvider.oauth?.invalidate();
+    });
+  }
+
   agentLogger.debug(
     {
       agentId,

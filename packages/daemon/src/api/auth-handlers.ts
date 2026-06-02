@@ -424,7 +424,21 @@ export function createAuthHandlers(
         "OAuth profile stored via daemon RPC",
       );
 
-      // 7. Token-free response; dev-mode residency canary strips any
+      // 7. Emit auth:profile_added so in-process subscribers (e.g., the
+      //    encrypted-mode OAuthTokenManager cache invalidation wired in
+      //    setup-agents-oauth.ts) can react without a daemon restart.
+      //    The file-mode watcher emits this event via chokidar; encrypted
+      //    mode has no watcher — this RPC handler is the only writer, so
+      //    the emission lives here. Payload is metadata-only (no tokens).
+      deps.container.eventBus.emit("auth:profile_added", {
+        provider: params.provider,
+        profileId: params.profileId,
+        identity: redactEmailForLog(params.email) ?? "<email-unavailable>",
+        source: "external" as const,
+        timestamp: systemNowMs(),
+      });
+
+      // 8. Token-free response; dev-mode residency canary strips any
       //    accidental token additions (Zod closed schema is defense-in-depth).
       const result = { profileId: params.profileId, stored: true as const };
       if (systemGetEnv("NODE_ENV") !== "production") {
