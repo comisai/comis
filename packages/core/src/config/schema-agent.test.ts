@@ -713,6 +713,29 @@ describe("RagConfigSchema.scoring", () => {
     }
   });
 
+  it("defaults the FadeMem decay weight forgetAlpha to 0.1 next to the other alphas (FORGET-01)", () => {
+    // The FORGET-01 decay magnitude knob — the SINGLE canonical `rag.scoring.forgetAlpha`,
+    // alongside the other alphas (NOT a knob on `rag.forget`, which carries only the on/off
+    // toggle — the single-knob invariant). Bounded small (same magnitude as trust/proof) so a
+    // stale memory's decay RANKS but cannot overturn trust-first (Pitfall 2). Neutral (factor
+    // 1.0) whenever forget is OFF or at event-age 0.
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.scoring.forgetAlpha).toBe(0.1);
+    }
+  });
+
+  it("rejects a forgetAlpha above 1 (out of [0,1])", () => {
+    const result = RagConfigSchema.safeParse({ scoring: { forgetAlpha: 1.5 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a negative forgetAlpha (out of [0,1])", () => {
+    const result = RagConfigSchema.safeParse({ scoring: { forgetAlpha: -0.1 } });
+    expect(result.success).toBe(false);
+  });
+
   it("rejects a usefulnessAlpha above 1 (out of [0,1])", () => {
     const result = RagConfigSchema.safeParse({ scoring: { usefulnessAlpha: 1.5 } });
     expect(result.success).toBe(false);
@@ -1118,6 +1141,58 @@ describe("RagConfigSchema.mmr", () => {
     if (result.success) {
       expect(result.data.mmr.enabled).toBe(true);
       expect(result.data.mmr.lambda).toBe(0.7);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RagConfigSchema.forget (Phase-112/FORGET-01: the recall-side gate for the
+// FadeMem per-type decay factor, default-OFF; OFF ⇒ forgetFactor exactly 1.0,
+// byte-identical recall; the neutral-importance byte-identity holds even when ON)
+// ---------------------------------------------------------------------------
+
+describe("RagConfigSchema.forget", () => {
+  it("defaults the FadeMem decay gate OFF (byte-identical to before this plan when absent)", () => {
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Default-OFF: no agent gets the FadeMem decay factor without an explicit opt-in (a wrong
+      // default ships dormant — no surprise ranking change on upgrade). OFF ⇒ forgetFactor forced
+      // to EXACTLY 1.0 in score.ts, byte-identical recall (the safety gate, way #1).
+      expect(result.data.forget.enabled).toBe(false);
+    }
+  });
+
+  it("accepts an explicit forget opt-in (enabled:true)", () => {
+    const result = RagConfigSchema.safeParse({ forget: { enabled: true } });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.forget.enabled).toBe(true);
+    }
+  });
+
+  it("rejects an unknown key inside forget (strictObject — the single-knob invariant; a smuggled forgetAlpha is REJECTED here)", () => {
+    // forget carries ONLY the on/off toggle. The magnitude lives at rag.scoring.forgetAlpha
+    // (one canonical knob, no drift) — a stray field on `rag.forget` is rejected at parse.
+    const result = RagConfigSchema.safeParse({ forget: { enabled: false, forgetAlpha: 0.5 } });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a non-boolean enabled (z.boolean())", () => {
+    const result = RagConfigSchema.safeParse({ forget: { enabled: "yes" } });
+    expect(result.success).toBe(false);
+  });
+
+  it("parses an existing config that omits forget and fills it OFF (the additive guard)", () => {
+    // The top-level `.default()` fills `forget` when absent, so an existing config.yaml that
+    // predates Phase 112 parses byte-identically (the decay gate default-OFF).
+    const result = RagConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.forget.enabled).toBe(false);
+      // and the pre-existing alphas + knobs are unchanged (the schema-cascade regression guard).
+      expect(result.data.scoring.recencyAlpha).toBe(0.2);
+      expect(result.data.mmr.enabled).toBe(false);
     }
   });
 });
