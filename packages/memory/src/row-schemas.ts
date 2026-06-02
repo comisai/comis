@@ -1,44 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Zod schemas for memory-package SQLite row types.
+ * Zod schemas for memory-package SQLite row types — one schema per row interface,
+ * used by `createRowMapper(schema)` in `row-mapper.ts` to replace untyped-row casts
+ * at every SQLite call site.
  *
- * One schema per row interface. Used by `createRowMapper(schema)` in
- * `row-mapper.ts` to replace `db.prepare(...).all() as Foo[]` casts at
- * every SQLite call site.
- *
- * Schemas live HERE (consumer-side `memory/`) and NOT in
- * `@comis/core/ports/*` to preserve core's zero-runtime-Zod-dependency
- * boundary. Core's port files remain type-only — adding
- * `import { z } from "zod"` there would widen the public dependency
- * surface.
+ * Schemas live HERE (consumer-side `memory/`), NOT in `@comis/core/ports/*`, to
+ * preserve core's zero-runtime-Zod-dependency boundary (its port files stay
+ * type-only — adding `import { z }` there would widen the public dependency surface).
  *
  * ## Sectional layout
  *
- * 1. **Memory-package-local public rows** — paired 1:1 with the interfaces
- *    exported from `./types.js`; each pair gets a
- *    `expectTypeOf<z.infer<typeof XSchema>>().toEqualTypeOf<X>()` assertion in
- *    `row-schemas.test.ts` to prevent silent schema drift.
- * 2. **Context-store rows** — paired with the `Ctx*Row` interfaces re-exported
- *    from `@comis/core/ports/context-store-types`.
- * 3. **Session-store DTOs** — paired with the SessionData / SessionListEntry /
- *    SessionDetailedEntry shapes from `@comis/core/ports/session-store-types`.
- * 4. **Internal DB-row schemas** — file-internal snake_case DB row shapes
- *    (observability-store, oauth-profile-store-encrypted, delivery-mirror /
- *    delivery-queue adapters, embedding-cache-sqlite). The source interfaces are
- *    file-internal (no `export`); these schemas become the single-source-of-
- *    truth that consumers retarget to (via `z.infer<typeof XxxRowSchema>`).
+ * 1. **Memory-package-local public rows** — paired 1:1 with the `./types.js`
+ *    interfaces; each pair gets an `expectTypeOf` assertion in `row-schemas.test.ts`
+ *    to prevent silent schema drift.
+ * 2. **Context-store rows** — paired with the `Ctx*Row` interfaces from
+ *    `@comis/core/ports/context-store-types`.
+ * 3. **Session-store DTOs** — SessionData / SessionListEntry / SessionDetailedEntry
+ *    from `@comis/core/ports/session-store-types`.
+ * 4. **Internal DB-row schemas** — file-internal snake_case row shapes (no `export`
+ *    source interface); these become the single source of truth consumers retarget
+ *    to via `z.infer<typeof XxxRowSchema>`.
  *
  * ## Conventions
  *
  * - Every schema is `z.strictObject(...)` — rejects unknown extra columns.
- * - JSON-encoded TEXT columns are `z.string()` (the row-level shape); parsing
- *   happens downstream in the consumer.
- * - SQLite booleans are `INTEGER` (0/1) → `z.number().int()`; the consumer
- *   coerces to boolean.
- * - Buffer columns (BLOB) use `z.instanceof(Buffer)` (better-sqlite3 returns a
- *   Node.js Buffer).
- * - Nullable columns use `z.X.nullable()` (yields `X | null` — SQLite's NULL is
- *   distinct from undefined).
+ * - JSON-encoded TEXT columns are `z.string()` (parsing happens downstream).
+ * - SQLite booleans are `INTEGER` (0/1) → `z.number().int()`.
+ * - Buffer (BLOB) columns use `z.instanceof(Buffer)`.
+ * - Nullable columns use `z.X.nullable()` (`X | null` — SQLite NULL ≠ undefined).
  *
  * @module
  */
@@ -227,12 +216,10 @@ export const RelationshipRowSchema = z.strictObject({
 });
 
 // Schema for a `tuned_alpha` row projection (Phase 111, LEARN-03). The scoped read
-// projects the 5 columns below (NOT tenant_id/agent_id — the WHERE pins them): the
-// 4 REAL tunable boost alphas (recency/temporal/proof/usefulness) + updated_at.
-// There is deliberately NO fifth (trust-weight) column — the persisted state cannot
-// carry a tunable trust weight (the structural trust-freeze belt #3). Parsed via
-// createRowMapper. The adapter maps the snake_case row to the camelCase
-// `TunedAlphaVector` (recency_alpha -> recencyAlpha, …).
+// projects these 5 columns (NOT tenant_id/agent_id — the WHERE pins them): the 4
+// REAL tunable boost alphas + updated_at. NO fifth (trust-weight) column (the
+// structural trust-freeze belt #3). The adapter maps snake_case -> camelCase
+// `TunedAlphaVector`. Parsed via createRowMapper.
 export const TunedAlphaRowSchema = z.strictObject({
   recency_alpha: z.number(),
   temporal_alpha: z.number(),

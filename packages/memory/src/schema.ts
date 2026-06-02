@@ -334,44 +334,25 @@ export function ensureTripleTable(db: Database.Database): void {
 
 /**
  * Create the segregated per-user-representation table (Phase 107, Track E1 —
- * USER-01). Forward-only additive, idempotent (`CREATE TABLE/INDEX IF NOT
- * EXISTS`), safe on every boot — the same path serves a fresh DB and a live DB
- * that predates the table (existing `~/.comis` DBs gain the empty table with no
- * backfill; mirrors `ensureCausalTables` / `ensureTripleTable`). NEVER wipes the
- * live DB.
+ * USER-01). Forward-only additive, idempotent, safe on every boot (a fresh DB and
+ * a pre-table live `~/.comis` DB both gain the empty table with no backfill; NEVER
+ * wipes). One row = one durable, PREFIX-TYPED, HIGH-TRUST fact about a single user,
+ * scoped to one (tenant, agent, user); PK is the per-row `id`; `created_at` is the
+ * injected clock. The sole adapter is `createSqliteUserRepresentationStore`.
  *
- * ## Schema shape (the contract the other Phase-107 plans build on)
+ * The high-trust floor at the DB layer (T-107-02-02): the `trust` CHECK admits only
+ * `system`/`learned` — `'external'` is DELIBERATELY OMITTED, so an external claim
+ * can NEVER enter the profile (layer 1 of the 3-layer anti-poisoning defense; the
+ * adapter's write-time reject is layer 3, the port-type floor is 107-01).
+ * `entry_type`'s own CHECK pins the four prefix-types — the DISTINCT vocabulary
+ * from `memory_type` (T-107-02-03). Isolation (T-107-02-01, EXTENDED with
+ * `user_id`): every row carries `tenant_id`+`agent_id`+`user_id`,
+ * `idx_user_repr_scope` leads with all three, and the adapter filters every
+ * statement on them. The `source_memory_id -> memories(id)` `ON DELETE CASCADE`
+ * fires via the `PRAGMA foreign_keys = ON` set by `openSqliteDatabase`.
  *
- * One row = one durable, PREFIX-TYPED, HIGH-TRUST fact about a single user,
- * scoped to one (tenant, agent, user) — Honcho's "representation" read, built by
- * the offline LLM job (Plan 107-03) and injected LLM-free into the prompt (Plan
- * 107-04). The PRIMARY KEY is the per-row `id`. `created_at` is the injected
- * clock; `updated_at` stamps a later upsert.
- *
- * ## The high-trust floor at the DB layer (T-107-02-02)
- *
- * The `trust` column CHECK admits only the high-trust floor (`system`/`learned`)
- * — `'external'` is DELIBERATELY OMITTED (mirror the `memory_triples` trust CHECK
- * at ensureTripleTable, but DROP the external tier). An
- * `external`-trust claim can NEVER ENTER the profile at the DB
- * layer — it is rejected, never stored at a reduced weight. This is layer 1 of
- * the 3-layer anti-poisoning defense (the adapter's write-time reject is layer 3;
- * the port-type floor is 107-01). `entry_type` is constrained by its own CHECK to
- * the four prefix-types (`identity`/`preference`/`relationship`/`instruction`) —
- * the DISTINCT vocabulary from `memory_type` (T-107-02-03).
- *
- * ## Isolation (T-107-02-01, the §5.2 invariant, extended with `user_id`)
- *
- * Every row carries `tenant_id` + `agent_id` + `user_id`, and `idx_user_repr_scope`
- * leads with all three — the adapter (sqlite-user-representation-store.ts) filters
- * every statement on `(tenant_id, agent_id, user_id)`. The
- * `source_memory_id -> memories(id)` `ON DELETE CASCADE` fires via the
- * `PRAGMA foreign_keys = ON` already set by `openSqliteDatabase` (no pragma is set
- * here) — deleting a source memory drops its derived representation entries.
- *
- * @param db - An open better-sqlite3 Database whose `memories` table already
- *   exists (the FK target). Call AFTER `ensureTripleTable` in `initSchema` so the
- *   `memories` FK target exists.
+ * @param db - An open better-sqlite3 Database whose `memories` table already exists
+ *   (the FK target). Call AFTER `ensureTripleTable` in `initSchema`.
  */
 export function ensureUserRepresentationTable(db: Database.Database): void {
   db.exec(`
@@ -395,35 +376,25 @@ export function ensureUserRepresentationTable(db: Database.Database): void {
 
 /**
  * Create the `relationship` table — the sole storage for directional, multi-party
- * relationship modeling (Phase 108, Track E2 — SOCIAL-02). Additive, forward-only;
- * idempotent (`IF NOT EXISTS`). Owns the durable, DIRECTIONAL, HIGH-TRUST edge
- * `subjectUser`'s representation OF `aboutUser`, scoped to one (tenant, agent,
- * channel). The sole SQL adapter is `createSqliteRelationshipStore`
- * (sqlite-relationship-store.ts).
+ * relationship modeling (Phase 108, Track E2 — SOCIAL-02). Additive, forward-only,
+ * idempotent. One row = the durable, DIRECTIONAL, HIGH-TRUST edge `subjectUser`'s
+ * representation OF `aboutUser`, scoped to one (tenant, agent, channel). Sole
+ * adapter: `createSqliteRelationshipStore`.
  *
- * ## The high-trust floor at the DB layer (T-108-05, layer 1 of the 3-layer
- *    anti-poisoning defense)
+ * The high-trust floor at the DB layer (T-108-05): `CHECK(trust IN
+ * ('system','learned'))` — `'external'` STRUCTURALLY ABSENT, so external content
+ * can NEVER enter a relationship (defense-in-depth with the adapter write-boundary
+ * reject (layer 3) + the port-type floor (layer 2, 108-01)). Isolation (SOCIAL-02,
+ * EXTENDED with `channel_id`, the NEW privacy axis): every row carries
+ * `tenant_id`+`agent_id`+`channel_id`, `idx_relationship_scope` leads with all
+ * three, the adapter filters every statement on them; the directional
+ * `(subject_user_id, about_user_id)` pair is ROW DATA, NOT a security filter (A→B
+ * is DISTINCT from B→A, never symmetrized). The `source_memory_id -> memories(id)`
+ * `ON DELETE CASCADE` fires via the `PRAGMA foreign_keys = ON` set by
+ * `openSqliteDatabase`.
  *
- * `trust TEXT NOT NULL CHECK(trust IN ('system','learned'))` — `'external'` is
- * STRUCTURALLY ABSENT from the CHECK, so external-trust content can NEVER enter a
- * relationship at the DB layer. Defense-in-depth with the adapter's write-boundary
- * reject (layer 3) and the port-type floor (`RelationshipTrust`, layer 2 — 108-01).
- *
- * ## Isolation (SOCIAL-02, the §5.2 invariant, EXTENDED with `channel_id` — the
- *    NEW privacy axis)
- *
- * Every row carries `tenant_id` + `agent_id` + `channel_id`, and
- * `idx_relationship_scope` leads with all three — the adapter filters every
- * statement on `(tenant_id, agent_id, channel_id)`. The directional
- * `(subject_user_id, about_user_id)` pair is ROW DATA inside that scope, NOT part
- * of the security filter; A→B is a DISTINCT row from B→A (never symmetrized). The
- * `source_memory_id -> memories(id)` `ON DELETE CASCADE` fires via the
- * `PRAGMA foreign_keys = ON` already set by `openSqliteDatabase` (no pragma is set
- * here) — deleting a source memory drops its derived relationship edges.
- *
- * @param db - An open better-sqlite3 Database whose `memories` table already
- *   exists (the FK target). Call AFTER `ensureUserRepresentationTable` in
- *   `initSchema` so the `memories` FK target exists.
+ * @param db - An open better-sqlite3 Database whose `memories` table already exists
+ *   (the FK target). Call AFTER `ensureUserRepresentationTable` in `initSchema`.
  */
 export function ensureRelationshipTable(db: Database.Database): void {
   db.exec(`
@@ -448,42 +419,16 @@ export function ensureRelationshipTable(db: Database.Database): void {
 
 /**
  * Create the `tuned_alpha` table — the sole storage for the per-(tenant, agent)
- * LEARNED ranking weights (Phase 111, Track H2 — LEARN-03). Additive, forward-only;
- * idempotent (`IF NOT EXISTS`); safe on a live `~/.comis` DB (NO backfill — an
- * absent `(tenant, agent)` row reads back as `undefined`, which the recall apply
- * site (111-03) treats as the default-OFF byte-identity no-op, falling back to the
- * static `rag.scoring` config alphas). The sole SQL adapter is
- * `createSqliteTunedAlphaStore` (sqlite-tuned-alpha-store.ts) — the daemon owns the
- * `db` handle and runs all SQL; the agent consumes the `TunedAlphaStore` port TYPE
- * only (the agent↛memory build cut).
- *
- * ## The trust freeze at the schema layer (the OD2 ship-gate, structural belt #3)
- *
- * The table has columns for ONLY the 4 tunable boost alphas
- * (recency/temporal/proof/usefulness) + `updated_at`. There is NO fifth
- * (trust-weight) column — the persisted state STRUCTURALLY CANNOT carry a tunable
- * trust weight, so the bandit can never move it (REQUIREMENTS "Out of Scope: a
- * bandit that can move the trust weight"). Trust stays config-sourced at the apply
- * site (111-03). This is the third trust-freeze belt — re-stated at the schema
- * layer alongside the port type (belt #1, 111-01) and the math step (belt #2,
- * computeTunedAlphas). The literal field name is deliberately never written here
- * (the grep-0 belt, asserted in sqlite-tuned-alpha-store.test.ts).
- *
- * ## Isolation (LEARN-03, the §5.2 invariant) — the PK IS the boundary
- *
- * The `PRIMARY KEY (tenant_id, agent_id)` IS the isolation boundary: exactly one
- * tuned vector per scope, and the adapter filters every statement on
- * `(tenant_id, agent_id)` — a vector written under one (tenant, agent) can NEVER be
- * read under another scope. Multi-tenant + per-agent isolation is a load-bearing
- * SECURITY scope, not a nicety (RED-proven in the adapter test).
- *
- * Unlike the user_representation / relationship tables, there is NO FK to
- * `memories` — a tuned vector is per-(tenant, agent) CONFIG state, not per-memory
- * provenance, so no `ON DELETE CASCADE` applies.
- *
- * @param db - An open better-sqlite3 Database. Has no FK target, so it can be
- *   created at any point; call AFTER `ensureRelationshipTable` in `initSchema`
- *   (the table-creation order).
+ * LEARNED ranking weights (Phase 111, Track H2 — LEARN-03). Additive, forward-only,
+ * idempotent; safe on a live DB with NO backfill (an absent `(tenant, agent)` row
+ * reads back `undefined` — the recall apply site's (111-03) default-OFF no-op).
+ * Sole adapter: `createSqliteTunedAlphaStore`. Belt #3 (the OD2 ship-gate, schema
+ * layer): columns for ONLY the 4 tunable boost alphas + `updated_at` — NO fifth
+ * (trust-weight) column, so the bandit can never move that weight (it stays
+ * config-sourced at the apply site); the `trust_alpha` name is deliberately never
+ * written (grep-0, asserted in the adapter test). `PRIMARY KEY (tenant_id,
+ * agent_id)` IS the isolation boundary (RED-proven); NO FK to `memories` (per-scope
+ * CONFIG state, not per-memory provenance). Call AFTER `ensureRelationshipTable`.
  */
 export function ensureTunedAlphaTable(db: Database.Database): void {
   db.exec(`

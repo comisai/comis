@@ -950,19 +950,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "resolveCodexStableSubject",
       "RewrittenOAuthError",
       "FileExtractionErrorKind",
-      // TunedAlphaStore + its scope/vector types (Phase 111, LEARN-03 / Track H2)
-      // are surfaced on @comis/core's public barrel by the interface-first plan
-      // 111-01 (the type-only seam plans 111-02..05 implement against), AHEAD of
-      // their consumers: the sole SQLite adapter (111-02), the deterministic
-      // overlay + offline bandit job (111-03/04), and the daemon wiring all land
-      // in later waves of this phase. Tracked here as ahead-of-consumer
-      // planned-orphan policy entries — the documented interface-first
-      // cross-wave seam posture (mirror SessionStorePort / ContextStorePort
-      // above; the 109-01 precedent). REMOVE @ 111-02 (the adapter is the first
-      // real cross-package consumer of TunedAlphaStore + TunedAlphaVector).
-      "TunedAlphaStore",
-      "TunedAlphaScope",
-      "TunedAlphaVector",
+      // (Phase 111, LEARN-03 / Track H2) TunedAlphaStore + TunedAlphaScope +
+      // TunedAlphaVector were tracked here as ahead-of-consumer planned-orphans by
+      // plan 111-01 (REMOVE @ 111-02). REMOVED: the sole SQLite adapter
+      // `createSqliteTunedAlphaStore` (packages/memory/src/sqlite-tuned-alpha-store.ts,
+      // 111-02) now name-imports all three from @comis/core in non-test src — they
+      // have a real cross-package consumer, so they are no longer orphans.
       // RagConfig: surface-only export. The createRagRetriever factory in
       // packages/agent/src/rag/rag-retriever.ts was deleted; the canonical
       // post-deletion consumer is
@@ -2075,6 +2068,22 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       // MemoryUserRepresentationStoreDeps / UserRepresentationRowSchema above).
       "MemoryRelationshipStoreDeps",
       "RelationshipRowSchema",
+      // Tuned-alpha store (Phase 111-02, Track H2 — LEARN-03). createSqliteTunedAlphaStore
+      // is the SOLE TunedAlphaStore adapter (the per-(tenant, agent) tuned-4-alpha-vector
+      // upsert + scoped read; undefined-on-absent). Surfaced on the public barrel AHEAD of
+      // its consumers: the daemon composition-root constructs it on the shared db handle in
+      // setup-memory (Plan 111-05) and the recall apply overlay reads it (Plan 111-03) — both
+      // land in later waves of this phase. Tracked as a transient factory-orphan here (mirror
+      // createSqliteTripleStore @ 100-05 / the user-representation + relationship adapters);
+      // REMOVE @ 111-05 (when the daemon consumer lands, the factory-orphan dance SHRINKS on
+      // schedule, enforced by allowlist-shrink.test.ts). MemoryTunedAlphaStoreDeps is the
+      // constructor-deps SHAPE type (referenced via inline objects only); TunedAlphaRowSchema
+      // is the row schema consumed by createRowMapper inside the adapter (an intra-file value
+      // reference, not a cross-file import) — both PERMANENT baseline orphans (mirror
+      // MemoryRelationshipStoreDeps / RelationshipRowSchema above).
+      "createSqliteTunedAlphaStore",
+      "MemoryTunedAlphaStoreDeps",
+      "TunedAlphaRowSchema",
       // Scoped embedding-read store (Phase 102-03/05, IQ-01). createSqliteMemoryEmbeddingStore
       // is the sole MemoryEmbeddingStore adapter — the (tenant, agent)-scoped LEFT JOIN
       // vec_memories bulk read that hydrates the MMR diversity re-rank. Its daemon
