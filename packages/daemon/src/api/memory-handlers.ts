@@ -48,6 +48,7 @@ import {
   stripInternalFields,
   systemGetEnv,
   systemNowMs,
+  tryGetContext,
   wrapExternalContent,
 } from "@comis/core";
 import type { SessionKey } from "@comis/core";
@@ -256,6 +257,38 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       // DIAL-03: the citation→recalled-id→sourceId reasoning-tree chain (counts/
       // ids-ONLY) for the recall-trace observability surface. Empty on abstain.
       const chains = citationChains(grounding, result.abstained ? [] : result.citations);
+
+      // LEARN-02 (H3): the dialectic's VALIDATED citations (⊆ recalled ids — definitively
+      // used) are HIGH-signal "used" attribution. Emit on the SAME event the FEED subscriber
+      // already consumes (wireMemoryUsefulness → recordUsage) — NO new event, NO new
+      // subscriber. usedIds = the citations; ignoredIds = recalled ∖ citations. Guarded on
+      // !result.abstained so an abstained (no grounded answer) turn never attributes a "used"
+      // (Pitfall 4); the emit is fire-and-forget by the bus contract and the subscriber is
+      // already non-fatal, so a FEED-write failure can NEVER break the answer. ids/counts
+      // ONLY — never the question, recalled content, or answer (AGENTS.md §2.7).
+      //
+      // `intent` is OMITTED here (Pitfall 2): classifyIntent is NOT exported from @comis/agent
+      // — importing it would force a public-export-consumer + a daemon→agent-internal edge, and
+      // the handler does not re-classify. Omitting it makes the subscriber record the GLOBAL
+      // bucket; the per-intent write rides the turn-end emit (Plan 110-03, in-package).
+      if (!result.abstained && deps.eventBus !== undefined) {
+        const recalledIds = grounding.map((r) => r.entry.id);
+        const usedSet = new Set(result.citations);
+        const ignoredIds = recalledIds.filter((id) => !usedSet.has(id));
+        deps.eventBus.emit("memory:recall_used", {
+          agentId,
+          // traceId is REQUIRED on the event — prefer the AsyncLocalStorage request
+          // trace, fall back to the caller's formatted session key, then "" (mirrors
+          // the turn-end emit in executor-post-execution.ts).
+          traceId: tryGetContext()?.traceId ?? callerSessionKey ?? "",
+          ...(callerSessionKey !== undefined ? { sessionKey: callerSessionKey } : {}),
+          usedIds: result.citations,
+          ignoredIds,
+          usedCount: result.citations.length,
+          ignoredCount: ignoredIds.length,
+          timestamp: systemNowMs(),
+        });
+      }
 
       deps.logger?.info(
         {
