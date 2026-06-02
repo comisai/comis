@@ -1593,6 +1593,21 @@ async function bootFoundation(
     );
   }
 
+  // WR-03: Assert pre-read storageMode === post-bootstrap security.storage (D17 invariant).
+  // security.storage is a boot-critical, runtime-immutable switch that must be a literal
+  // value — ${VAR} substitution is not supported for this field, because preReadStorageMode
+  // (raw YAML scan, no variable expansion) gates key-material writes (REQ-17) before
+  // bootstrap resolves the substitution. A mismatch means ${VAR} was used and the two
+  // values disagree — fail boot loudly rather than silently misrouting credential storage.
+  if (container.config.security.storage !== storageMode) {
+    throw new Error(
+      `[CONFIG_ERROR] security.storage resolved to '${container.config.security.storage}' ` +
+      `after config substitution, but pre-read value was '${storageMode}'. ` +
+      "security.storage must be a literal value (encrypted|file|env); " +
+      "${VAR} references are not supported for this field.",
+    );
+  }
+
   // P0 boot: file/env storage mode INFO log (logger now available).
   // No WARN needed — the legacy opt-out path now fails at the boot gate above.
   // If we reach here with storageMode !== "encrypted", it is a valid P0 mode.
