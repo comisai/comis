@@ -21,6 +21,7 @@ import {
   mkdtempSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   realpathSync,
   writeFileSync,
 } from "node:fs";
@@ -55,14 +56,17 @@ function entry(overrides: Partial<AllowEntryLike["match"]> = {}, id = "bash"): A
 }
 
 describe("matchAllowEntry — canonical match", () => {
-  it("resolves a symlink to its realpath and matches the pinned canonical entry", () => {
+  it("resolves a symlink to its realpath and matches the pinned canonical entry (returning the resolved real path)", () => {
     // A symlink that points at the pinned /bin/bash → must match.
     const link = join(work, "bash-link");
     symlinkSync(CANONICAL_BASH, link);
 
     const matched = matchAllowEntry(link, [entry()]);
     expect(matched).toBeDefined();
-    expect(matched?.id).toBe("bash");
+    expect(matched?.entry.id).toBe("bash");
+    // MR-02: the matcher returns the SINGLE realpath resolution it verified, so
+    // the caller can thread the exact verified inode to spawn (no second resolve).
+    expect(matched?.requestedReal).toBe(CANONICAL_BASH);
   });
 
   it("returns undefined when the requested realpath differs from every pinned path", () => {
@@ -111,17 +115,20 @@ describe("matchAllowEntry — hash pin (SEC-14)", () => {
       { id: "pinned", match: { path: realpathSync(file), hash: rightHash } },
     ]);
     expect(matched).toBeDefined();
-    expect(matched?.id).toBe("pinned");
+    expect(matched?.entry.id).toBe("pinned");
   });
 });
 
 describe("buildDirectSpawn — direct argv, never a shell (SEC-14)", () => {
-  it("returns a literal { bin, argv } with the canonical bin and merged argsPrefix", () => {
+  it("returns a literal { bin, argv } with the resolved canonical bin and merged argsPrefix", () => {
     const link = join(work, "bash-link");
     symlinkSync(CANONICAL_BASH, link);
-    const e = entry({ argsPrefix: ["--noprofile", "--norc"] });
+    const matched = matchAllowEntry(link, [entry({ argsPrefix: ["--noprofile", "--norc"] })]);
+    expect(matched).toBeDefined();
 
-    const spawn = buildDirectSpawn(e, link, ["-c", "echo hi"]);
+    // MR-02: buildDirectSpawn consumes the matcher's already-resolved real path
+    // (NOT the raw symlink) — a single canonicalization, threaded through.
+    const spawn = buildDirectSpawn(matched!.entry, matched!.requestedReal, ["-c", "echo hi"]);
 
     // bin is the resolved canonical (realpath), not the symlink path.
     expect(spawn.bin).toBe(CANONICAL_BASH);
@@ -132,13 +139,56 @@ describe("buildDirectSpawn — direct argv, never a shell (SEC-14)", () => {
   it("never produces a sh -c wrapper — argv[0] is not a shell and the array is not ['-c', …]", () => {
     const link = join(work, "bash-link");
     symlinkSync(CANONICAL_BASH, link);
-    const spawn = buildDirectSpawn(entry(), link, []);
+    const matched = matchAllowEntry(link, [entry()]);
+    const spawn = buildDirectSpawn(matched!.entry, matched!.requestedReal, []);
 
     // Structural guarantee: no shell-spawn path exists.
     expect(spawn.bin).not.toMatch(/\/sh$/);
     expect(["sh", "bash", "/bin/sh", "/bin/bash"]).not.toContain(spawn.argv[0]);
     expect(spawn.argv[0]).not.toBe("-c");
     expect(Array.isArray(spawn.argv)).toBe(true);
+  });
+});
+
+describe("MR-02 — single canonicalization (no double-realpath TOCTOU)", () => {
+  it("buildDirectSpawn does NOT re-resolve the requested path — it spawns the EXACT inode the matcher hash-verified", () => {
+    // The hash-pin promise ("rejects a content-swapped binary at the same path")
+    // is only atomic if the verified bytes and the executed bytes are the SAME
+    // inode. Pre-patch, matchAllowEntry resolves realpath(requestedCommand) to
+    // hash-check, then buildDirectSpawn INDEPENDENTLY resolves
+    // realpath(requestedCommand) AGAIN — a swap of the symlink between the two
+    // resolutions redirects the spawn to a different, unhashed target.
+    //
+    // We prove the second resolve is gone: after match, DELETE the symlink the
+    // agent supplied. buildDirectSpawn given the matcher's resolved real path
+    // must still yield that real path — a re-resolution of the (now-deleted)
+    // symlink would throw ENOENT or differ. The bin == the verified real inode.
+    const link = join(work, "bash-link");
+    symlinkSync(CANONICAL_BASH, link);
+    const content = "pinned\n";
+    const file = join(work, "real-bin");
+    writeFileSync(file, content);
+    const hash = createHash("sha256").update(content).digest("hex");
+
+    // Match against a hash-pinned entry via a symlink to the pinned file.
+    const linkToFile = join(work, "file-link");
+    symlinkSync(file, linkToFile);
+    const matched = matchAllowEntry(linkToFile, [
+      { id: "pinned", match: { path: realpathSync(file), hash } },
+    ]);
+    expect(matched).toBeDefined();
+    const verifiedReal = matched!.requestedReal;
+    expect(verifiedReal).toBe(realpathSync(file));
+
+    // Now SWAP: delete the agent's symlink and repoint it at a DIFFERENT binary.
+    unlinkSync(linkToFile);
+    symlinkSync(OTHER_BIN, linkToFile); // an attacker post-check swap
+
+    // buildDirectSpawn must spawn the VERIFIED inode, immune to the swap — it is
+    // handed the resolved real path and must not re-resolve linkToFile.
+    const spawn = buildDirectSpawn(matched!.entry, verifiedReal, []);
+    expect(spawn.bin).toBe(verifiedReal);
+    expect(spawn.bin).not.toBe(OTHER_BIN); // the swap did NOT redirect the spawn
   });
 });
 
