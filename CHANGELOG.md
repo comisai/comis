@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Sandbox: hardcoded Claude Code CLI credential binds removed — behavior break
+
+#### Breaking Changes
+
+- **Both OS-level sandbox providers (`bwrap` on Linux, `sandbox-exec` on macOS) no
+  longer bind the Claude Code CLI credential paths** `~/.claude.json`, `~/.claude`,
+  and `~/.local/share/claude` into the sandbox. The sandbox is no longer coupled to
+  one specific driven CLI.
+- **Impact:** a `claude -p` (or any tool) spawned inside the sandbox can no longer
+  read its auth/config from those paths and will hang / produce empty output. If you
+  rely on driving the Claude Code CLI inside the exec sandbox, run it outside the
+  sandbox or supply its credentials by another mechanism.
+- The `secureCredentialHome` broker flag (EGRESS-02) is retained but narrowed: it now
+  only skips the generic `~/.local/share` RW bind in broker-only mode; it no longer
+  gates the (now-removed) `~/.claude*` binds.
+
 ### Credential storage config migration — breaking changes (v1.5)
 
 #### Breaking Changes

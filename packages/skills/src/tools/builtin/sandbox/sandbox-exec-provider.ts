@@ -45,14 +45,7 @@ function buildSbplProfile(opts: SandboxOptions): string {
     safePath(home, "Projects"),
     safePath(home, ".local"),
     safePath(home, ".nvm"),     // nvm Node.js — npm/npx cli.js lives here
-    safePath(home, ".claude"),  // claude CLI config, settings, hooks, skills
   ].filter((p) => existsSync(p)).map(resolvePath);
-
-  // claude CLI stores auth/config at ~/.claude.json (a file at HOME root,
-  // not inside ~/.claude/ directory). Without read access, `claude -p` hangs
-  // indefinitely producing zero output.
-  const claudeJsonPath = safePath(home, ".claude.json");
-  const claudeJsonLiteral = existsSync(claudeJsonPath) ? resolvePath(claudeJsonPath) : null;
 
   const readPaths = [
     "/usr",
@@ -73,19 +66,9 @@ function buildSbplProfile(opts: SandboxOptions): string {
     ...opts.readOnlyPaths.map(resolvePath),
   ];
 
-  // claude CLI directories that need write access:
-  // ~/.claude/ — history, cache, session state, plans
-  // ~/.local/share/claude/ — version data (already under ~/.local read path,
-  //   but needs write for updates; covered by ~/.local in homeReadPaths for reads)
-  const claudeWritePaths = [
-    safePath(home, ".claude"),
-    safePath(home, ".local", "share", "claude"),
-  ].filter((p) => existsSync(p)).map(resolvePath);
-
   const writePaths = [
     resolvePath(opts.workspacePath),
     ...opts.sharedPaths.map(resolvePath),
-    ...claudeWritePaths,
     "/private/tmp",
     "/private/var/folders",
   ];
@@ -121,7 +104,7 @@ function buildSbplProfile(opts: SandboxOptions): string {
     '(allow file-write-data (literal "/dev/null"))',
     '(allow file-write-data (literal "/dev/dtracehelper"))',
     "",
-    ";; PTY/TTY device access (required for interactive tools: script, unbuffer, claude CLI)",
+    ";; PTY/TTY device access (required for interactive tools: script, unbuffer, interactive REPLs)",
     ";; posix_openpt/grantpt need write on /dev/ptmx; slave needs write on /dev/ttysNNN",
     '(allow file-write* (literal "/dev/ptmx"))',
     '(allow file-write* (regex #"^/dev/ttys[0-9]+$"))',
@@ -130,8 +113,6 @@ function buildSbplProfile(opts: SandboxOptions): string {
     "",
     ";; Read access",
     ...readPaths.map((p) => `(allow file-read* (subpath ${sbplQuote(p)}))`),
-    // claude CLI auth file at HOME root (literal, not subpath)
-    ...(claudeJsonLiteral ? [`(allow file-read* (literal ${sbplQuote(claudeJsonLiteral)}))`, `(allow file-write* (literal ${sbplQuote(claudeJsonLiteral)}))`] : []),
     "",
     ";; Write access",
     ...writePaths.map((p) => `(allow file-write* (subpath ${sbplQuote(p)}))`),
