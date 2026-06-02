@@ -51,7 +51,7 @@ import {
   wrapExternalContent,
 } from "@comis/core";
 import type { SessionKey } from "@comis/core";
-import { assembleSynthesis, citationChains, orderByTrust } from "@comis/agent";
+import { assembleSynthesis, citationChains, orderByTrust, sanitizeToolOutput } from "@comis/agent";
 import { resolveRecallTraceFilePath } from "@comis/observability";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
@@ -122,14 +122,19 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
     //
     // It runs the FULL createMemoryRecall (the injected `buildDialecticRecall`
     // factory) for the question — NEVER `deps.memoryApi.search`, which bypasses
-    // the trust filter + redaction (the documented trap). On empty/insufficient
-    // recall it abstains in CODE WITHOUT calling the seam (Pitfall 5 — saves the
-    // LLM call). Otherwise it orders the grounding trust-first (orderByTrust),
-    // wraps non-system content in the redaction firewall, calls the ONE injected
-    // query-time seam, and assembles the response (assembleSynthesis: abstain-in-
-    // code + citations VALIDATED ⊆ recalled ids). DIAL-03: the citation→sourceId
-    // chain is computed (counts/ids-only) for the recall-trace. Logging is
-    // counts/ids-ONLY — NEVER the question, the recalled content, or the answer.
+    // the TRUST FILTER (the documented trap). createMemoryRecall trust-FILTERS but
+    // returns RAW `entry.content` — redaction/sanitization is NOT recall's job; it
+    // is THIS handler's responsibility (mirroring rag-retriever, which applies it at
+    // prompt-assembly time, never inside recall). On empty/insufficient recall it
+    // abstains in CODE WITHOUT calling the seam (Pitfall 5 — saves the LLM call).
+    // Otherwise it orders the grounding trust-first (orderByTrust), then applies the
+    // SAME neutralization rag-retriever uses (sanitizeToolOutput + wrapExternalContent)
+    // to the recalled content before the seam sees it, clamps the grounding to the
+    // per-agent dialectic.maxRecall DoS bound, calls the ONE injected query-time seam,
+    // and assembles the response (assembleSynthesis: abstain-in-code + citations
+    // VALIDATED ⊆ recalled ids). DIAL-03: the citation→sourceId chain is computed
+    // (counts/ids-only) for the recall-trace. Logging is counts/ids-ONLY — NEVER the
+    // question, the recalled content, or the answer.
     // -----------------------------------------------------------------------
     [MemoryAskContract.method]: async (rawParams) => {
       const askStart = systemNowMs();
@@ -155,9 +160,9 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         return ABSTAIN_SENTINEL;
       }
 
-      // Run the FULL createMemoryRecall (trust-filtered + redaction-aware) — NOT
-      // memoryApi.search. The factory builds a per-agent orchestrator with the
-      // daemon's store set + the agent's RagConfig (Plan 04 supplies it).
+      // Run the FULL createMemoryRecall (trust-FILTERED; content is RAW — this handler
+      // sanitizes + wraps it below, NOT recall) — NOT memoryApi.search. The factory builds
+      // a per-agent orchestrator with the daemon's store set + the agent's RagConfig.
       const recall = deps.buildDialecticRecall(agentId);
       const recalled = await recall.recall(
         question,
@@ -185,17 +190,41 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       const cap = params.limit ?? DIALECTIC_DEFAULT_MAX_RECALL;
       const grounding = ordered.slice(0, cap);
 
-      // Build the grounding text from the ordered survivors: each line is the
-      // recalled id + its content, with NON-system content passed through the
-      // redaction firewall (wrapExternalContent) — the dialectic answers ONLY
-      // from trust-filtered + redacted output (DIAL-02). System content is
-      // already trusted (mirrors rag-retriever's skip-system rule).
+      // Build the grounding text from the ordered survivors. createMemoryRecall returns
+      // trust-FILTERED but RAW `entry.content` — redaction is the PROMPT-ASSEMBLY step's job,
+      // NOT recall's (rag-retriever.ts applies it downstream; recall never does). So this
+      // handler MUST apply the SAME two-layer neutralization rag-retriever.ts:57-70 runs, in
+      // the SAME order, before the ONE query-time LLM (the seam) sees it (CR-01):
+      //   (1) sanitizeToolOutput — NFKC-normalize + strip zero-width/tag-block bypass chars,
+      //       then redact the INSTRUCTION_PATTERNS set ([SYSTEM]/[INST]/"ignore previous
+      //       instructions"/role markers/…) to [REDACTED]. Applied to ALL trust levels
+      //       (incl. system, matching the retriever's sanitize-before-system-skip), so an
+      //       indirect prompt-injection in a hostile external/learned memory is neutralized
+      //       on this surface — no weaker than every other place recalled content reaches an
+      //       LLM in the codebase.
+      //   (2) wrapExternalContent — delimiter-fence NON-system content (random
+      //       <<<UNTRUSTED_…>>> markers + the EXTERNAL_CONTENT_WARNING security notice via
+      //       includeWarning:true) and surface suspicious-pattern telemetry
+      //       (onSuspiciousContent). System content is already trusted ⇒ skip the wrap (the
+      //       retriever's skip-system rule), but it is STILL sanitized in (1).
+      // CR-06: the `[id]` fence sits OUTSIDE the wrapped region, so a forged `[<other-id>]`
+      // smuggled in a memory's CONTENT lands INSIDE the warned <<<UNTRUSTED_…>>> fence — the
+      // model is explicitly told that region is untrusted data, and the final `citations`
+      // array is independently validated ⊆ recalled ids in code (assembleSynthesis), so a
+      // smuggled label can neither forge a citation nor masquerade as a trusted id line.
       const groundingText = grounding
         .map((r) => {
+          const sanitized = sanitizeToolOutput(r.entry.content);
           const safe =
             r.entry.trustLevel === "system"
-              ? r.entry.content
-              : wrapExternalContent(r.entry.content, { source: "api", includeWarning: false });
+              ? sanitized
+              : wrapExternalContent(sanitized, {
+                  source: "api",
+                  includeWarning: true,
+                  ...(deps.onSuspiciousContent !== undefined
+                    ? { onSuspiciousContent: deps.onSuspiciousContent }
+                    : {}),
+                });
           return `[${r.entry.id}] ${safe}`;
         })
         .join("\n");
