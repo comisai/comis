@@ -174,6 +174,16 @@ export async function setupMcp(deps: McpDeps): Promise<McpResult> {
   type OAuthDepsArg = { oauthDeps?: { createTokenStore: () => TokenStore; resolveDiscovery: typeof resolveDiscovery } };
   let oauthDepsArg: OAuthDepsArg = {};
 
+  // WR-02: guard against partial encrypted config — exactly one of secretsDb/secretsCrypto
+  // provided is a wiring defect; it silently disables MCP OAuth with no diagnostic.
+  if ((deps.secretsDb !== undefined) !== (deps.secretsCrypto !== undefined)) {
+    throw new Error(
+      "setup-mcp: secretsDb and secretsCrypto must both be present or both absent. " +
+      `Got secretsDb=${deps.secretsDb !== undefined}, secretsCrypto=${deps.secretsCrypto !== undefined}. ` +
+      "This is a wiring defect — both are required for encrypted MCP token storage.",
+    );
+  }
+
   if (deps.secretsDb !== undefined && deps.secretsCrypto !== undefined) {
     // Encrypted mode: full AES-256-GCM TokenStore on mcp_credentials table.
     // Zero disk files written; no chokidar watch; client_secret stays in the encrypted blob.
