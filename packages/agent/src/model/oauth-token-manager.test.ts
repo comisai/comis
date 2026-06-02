@@ -2151,6 +2151,16 @@ describe("refresh_token_reused detection", () => {
 // This test MUST fail RED because invalidate() does NOT exist on the
 // OAuthTokenManager interface or the object returned by createOAuthTokenManager.
 // Plan 06-03 will add the invalidate() method.
+//
+// OQ-2 RESOLVED (from 06-RESEARCH.md, confirmed reading oauth-token-manager.ts):
+//   (a) Cache: `const cache = new Map<string, OAuthProfile>()` at line ~506 —
+//       factory-closure variable, not a class field. Implementation is `cache.clear()`.
+//   (b) Interface: `OAuthTokenManager` is an exported named interface at line ~142.
+//       `invalidate(): void` must be added as a required method.
+//   (c) auth.set handler (auth-handlers.ts): does NOT emit auth:profile_added —
+//       it only emits audit:event. Plan 06-03 must add the auth:profile_added
+//       emission to auth.set (after successful write) so that the encrypted-mode
+//       subscription in setup-agents-oauth.ts can fire tokenManager.invalidate().
 // =============================================================================
 
 describe("Phase 6 Wave 0: OAuthTokenManager.invalidate() RED test (not yet implemented)", () => {
