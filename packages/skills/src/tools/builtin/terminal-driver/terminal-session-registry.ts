@@ -34,7 +34,13 @@
 import { spawn as childSpawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
-import { systemNowMs, systemEnvSnapshot } from "@comis/core";
+import {
+  systemNowMs,
+  systemEnvSnapshot,
+  systemSetTimeout,
+  systemClearTimeout,
+  type SystemTimeoutHandle,
+} from "@comis/core";
 
 import {
   encodeFrame,
@@ -72,6 +78,24 @@ export interface FakeWorkerChild {
   kill(signal?: string): void;
 }
 
+/** Details handed to `onSpawnFailed` when the worker reports a failed backend spawn (HR-03). */
+export interface SpawnFailureInfo {
+  /** The session whose backend spawn failed in the worker. */
+  sessionId: string;
+  /** The worker-reported error message (e.g. `spawn ENOENT`), if any. */
+  error?: string;
+}
+
+/**
+ * Default reply timeout (MR-01): a `request()` (read/kill round-trip) that gets
+ * no correlated reply within this window settles to a typed timeout rather than
+ * hanging the caller forever + leaking the pending resolver. A wedged-but-alive
+ * worker emits no `close`/`error`, so without this bound nothing ever unparks
+ * the waiter. 30s is generous for a screen read; the daemon can override via
+ * `requestTimeoutMs` (config-derived, e.g. `worker.stuckMs`).
+ */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
 /** Registry dependencies — all injectable for unit tests; production defaults provided. */
 export interface TerminalSessionRegistryDeps {
   /**
@@ -84,6 +108,30 @@ export interface TerminalSessionRegistryDeps {
   logger: RegistryLogger;
   /** Clock port. Default: `systemNowMs` from `@comis/core`. */
   nowMs?: () => number;
+  /**
+   * Reply timeout for `request()` round-trips in ms (MR-01). Default
+   * {@link DEFAULT_REQUEST_TIMEOUT_MS}. The daemon threads a config-derived value
+   * (e.g. `worker.stuckMs`) so a wedged worker degrades `read` instead of hanging.
+   */
+  requestTimeoutMs?: number;
+  /**
+   * Called when the worker reports a failed backend spawn via an `ok:false`
+   * create reply (HR-03 / OPS-07). The daemon wiring binds this to emit
+   * `terminal:spawn_failed`. The session is already flipped to `lost` by the
+   * registry before this fires. Injected (not a value-imported event bus) so the
+   * registry stays infra-decoupled.
+   */
+  onSpawnFailed?: (info: SpawnFailureInfo) => void;
+  /**
+   * Schedule a one-shot timer for the MR-01 reply timeout. Default:
+   * `systemSetTimeout` from `@comis/core` (the sanctioned timer indirection — no
+   * raw `setTimeout` global). Returns an opaque handle for `clearTimer`. The
+   * production default `.unref()`s the handle so a pending timeout never holds
+   * the event loop open on shutdown.
+   */
+  setTimer?: (cb: () => void, ms: number) => unknown;
+  /** Cancel a `setTimer` handle (default: `systemClearTimeout`). */
+  clearTimer?: (handle: unknown) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,19 +268,57 @@ export function createTerminalSessionRegistry(
 
   const nowMs = deps.nowMs ?? systemNowMs;
   const { logger } = deps;
+  const requestTimeoutMs = deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  // MR-01: the sanctioned timer indirection (no raw setTimeout global). The
+  // production default `.unref()`s the handle so a pending reply timeout never
+  // holds the event loop open on shutdown.
+  const setTimer =
+    deps.setTimer ??
+    ((cb: () => void, ms: number): SystemTimeoutHandle => {
+      const h = systemSetTimeout(cb, ms);
+      h.unref();
+      return h;
+    });
+  const clearTimer =
+    deps.clearTimer ?? ((handle: unknown) => systemClearTimeout(handle as SystemTimeoutHandle));
 
-  /** Clear the worker handle and flush its pending waiters (on crash / close). */
+  /**
+   * Split a `${sessionId}:${requestId}` pending key back into its parts. Both
+   * halves are UUIDs (no embedded `:`), so the FIRST `:` is the unambiguous
+   * separator — used to reconstruct waiter identity on flush (LR-02).
+   */
+  function splitPendingKey(key: string): { sessionId: string; requestId: string } {
+    const idx = key.indexOf(":");
+    return idx === -1
+      ? { sessionId: key, requestId: "" }
+      : { sessionId: key.slice(0, idx), requestId: key.slice(idx + 1) };
+  }
+
+  /**
+   * Clear the worker handle and flush its pending waiters (on crash / close).
+   *
+   * LR-02: each synthetic termination reply carries the waiter's REAL
+   * `(sessionId,requestId)` reconstructed from its pending key — NOT blanked
+   * empty strings — so an identity-keyed caller cannot mis-handle the reply. A
+   * per-waiter DEBUG records the flush (the §2.7-observable state transition).
+   */
   function clearWorker(): void {
     worker = undefined;
-    // Reject every in-flight reply waiter — the worker is gone.
     for (const [key, resolve] of pending) {
       pending.delete(key);
-      resolve({
-        sessionId: "",
-        requestId: "",
-        ok: false,
-        error: "worker terminated",
-      });
+      const { sessionId, requestId } = splitPendingKey(key);
+      logger.debug(
+        { sessionId, requestId, hint: "flushing pending waiter; worker terminated", errorKind: "dependency" as const },
+        "terminal worker waiter flushed",
+      );
+      resolve({ sessionId, requestId, ok: false, error: "worker terminated" });
+    }
+  }
+
+  /** Flip every still-`running` session of the current worker to `lost`. */
+  function markRunningSessionsLost(): void {
+    for (const handle of sessions.values()) {
+      if (handle.status === "running") handle.status = "lost";
     }
   }
 
@@ -249,11 +335,32 @@ export function createTerminalSessionRegistry(
     worker = child;
 
     // Decode reply frames off the worker's stdout and correlate them to waiters.
+    //
+    // HR-02 (OPS-01 guarantee): the decode/correlate is wrapped in try/catch so a
+    // malformed reply frame NEVER throws out of this 'data' listener. A throw on a
+    // stream listener becomes an `uncaughtException` that takes the DAEMON down —
+    // the precise opposite of "a crash restarts the WORKER, never the daemon".
+    // The throw sources are `JSON.parse` on non-JSON body bytes (stray
+    // console.log / deprecation warning on fd1, partial write, post-desync
+    // garbage) and the HR-01 `FrameTooLargeError` on a corrupt length prefix. On
+    // any decode failure we treat the worker as corrupt: WARN errorKind:'protocol',
+    // flip its running sessions to `lost`, and clear the handle so the next
+    // `create` re-spawns — never reaching `uncaughtException`.
     const decoder = createFrameDecoder();
     child.stdout?.on("data", (chunk: Buffer) => {
-      for (const frame of decoder.push(chunk)) {
-        correlate(pending, frame as TerminalReplyFrame);
+      let frames: TerminalReplyFrame[];
+      try {
+        frames = decoder.push(chunk) as TerminalReplyFrame[];
+      } catch (err) {
+        logger.warn(
+          { err, hint: "corrupt worker frame on stdout; dropping worker", errorKind: "protocol" as const },
+          "terminal worker frame decode failed",
+        );
+        markRunningSessionsLost();
+        clearWorker();
+        return;
       }
+      for (const frame of frames) correlate(pending, frame);
     });
 
     // OPS-01: a worker error flips its sessions to `lost` and clears the handle.
@@ -262,9 +369,7 @@ export function createTerminalSessionRegistry(
         { err, hint: "terminal worker error; sessions lost, worker will re-spawn", errorKind: "dependency" as const },
         "terminal worker error",
       );
-      for (const handle of sessions.values()) {
-        if (handle.status === "running") handle.status = "lost";
-      }
+      markRunningSessionsLost();
       clearWorker();
     });
 
@@ -319,7 +424,19 @@ export function createTerminalSessionRegistry(
     child.stdin?.write(encodeFrame(buildRequestFrame(sessionId, method, params)));
   }
 
-  /** Send a request frame to the worker and await its correlated reply. */
+  /**
+   * Send a request frame to the worker and await its correlated reply, BOUNDED by
+   * a reply timeout (MR-01).
+   *
+   * A worker that is alive but wedged (node-pty read loop stuck, the driven CLI
+   * blocking the worker's single-threaded frame loop, a lost reply with no stream
+   * close) emits no `close`/`error`, so nothing else ever unparks the waiter —
+   * pre-MR-01 the `await` hung the whole turn and the resolver leaked. On timeout
+   * we delete the pending key and resolve a typed `ok:false` timeout reply, so
+   * `read` degrades to the not-alive minimal view instead of hanging. The timer
+   * is the sanctioned `setTimer` indirection (no raw `setTimeout` global) and the
+   * production default is `.unref()`d so it never holds the loop open.
+   */
   function request(
     sessionId: string,
     method: string,
@@ -327,28 +444,30 @@ export function createTerminalSessionRegistry(
   ): Promise<TerminalReplyFrame> {
     const child = ensureWorker();
     const frame = buildRequestFrame(sessionId, method, params);
+    const key = `${sessionId}:${frame.requestId}`;
     return new Promise<TerminalReplyFrame>((resolve) => {
-      pending.set(`${sessionId}:${frame.requestId}`, resolve);
+      const timer = setTimer(() => {
+        // Expired with no reply — drop the waiter and settle a typed timeout.
+        if (pending.delete(key)) {
+          logger.warn(
+            { sessionId, method, durationMs: requestTimeoutMs, hint: "worker reply timed out; degrading request", errorKind: "timeout" as const },
+            "terminal worker reply timeout",
+          );
+          resolve({ sessionId, requestId: frame.requestId, ok: false, error: "worker timeout" });
+        }
+      }, requestTimeoutMs);
+      // Wrap the resolver so a correlated reply cancels the pending timeout.
+      pending.set(key, (f) => {
+        clearTimer(timer);
+        resolve(f);
+      });
       child.stdin?.write(encodeFrame(frame));
     });
   }
 
   async function create(req: CreateRequest): Promise<CreateResult> {
-    ensureWorker();
+    const child = ensureWorker();
     const sessionId = generateSessionId();
-
-    // M-1: forward the daemon-canonical {bin,argv} to the worker VERBATIM. The
-    // registry does NOT re-canonicalize — buildDirectSpawn (119-02) is the SOLE
-    // canonicalization site; argsPrefix is preserved end-to-end. The create
-    // frame is FIRED (fire-and-register): the worker spawns the backend
-    // asynchronously; the rendered view is fetched later via `read`.
-    send(sessionId, "create", {
-      sessionId,
-      bin: req.bin,
-      argv: req.argv,
-      cols: req.cols,
-      rows: req.rows,
-    });
 
     const handle: SessionHandle = {
       sessionId,
@@ -360,6 +479,43 @@ export function createTerminalSessionRegistry(
       lastActivity: nowMs(),
     };
     sessions.set(sessionId, handle);
+
+    // M-1: forward the daemon-canonical {bin,argv} to the worker VERBATIM. The
+    // registry does NOT re-canonicalize — buildDirectSpawn (119-02) is the SOLE
+    // canonicalization site; argsPrefix is preserved end-to-end.
+    //
+    // The create frame is fired WITHOUT blocking the turn (the worker spawns the
+    // backend asynchronously; the rendered view is fetched later via `read`), but
+    // — unlike a bare fire-and-forget — we register an ASYNC create-reply waiter
+    // (HR-03). If the worker's backend spawn fails (bad bin ENOENT, forkpty
+    // failure, resource limits), `handleCreate` throws and the worker replies
+    // `ok:false`; that reply now flips the session to `lost` (so `list`/`read`
+    // agree `alive:false`) and fires the OPS-07 `onSpawnFailed` hook. Without this
+    // the failure was silently dropped and the handle stayed `running`/`alive:true`
+    // forever despite a dead child. The turn is NOT held — the waiter resolves
+    // out-of-band; the tool call still returns immediately (non-blocking contract).
+    const createFrame = buildRequestFrame(sessionId, "create", {
+      sessionId,
+      bin: req.bin,
+      argv: req.argv,
+      cols: req.cols,
+      rows: req.rows,
+    });
+    pending.set(`${sessionId}:${createFrame.requestId}`, (reply) => {
+      if (reply.ok) return; // backend spawned — leave the session running.
+      const h = sessions.get(sessionId);
+      if (h !== undefined && h.status === "running") {
+        h.status = "lost";
+        h.lastActivity = nowMs();
+      }
+      logger.warn(
+        { sessionId, allowId: req.allowId, command: req.bin, error: reply.error, hint: "worker backend spawn failed; session lost", errorKind: "dependency" as const },
+        "terminal worker backend spawn failed",
+      );
+      deps.onSpawnFailed?.({ sessionId, error: reply.error });
+    });
+    child.stdin?.write(encodeFrame(createFrame));
+
     logger.info(
       { sessionId, allowId: req.allowId, command: req.bin },
       "terminal session registered",
