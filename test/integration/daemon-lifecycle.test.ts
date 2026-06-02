@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { startTestDaemon, type TestDaemonHandle } from "../support/daemon-harness.js";
 import {
@@ -22,8 +24,19 @@ describe("Daemon Lifecycle", () => {
   let handle: TestDaemonHandle;
   const logCapture = createLogCapture();
   let shutdownTriggered = false;
+  let tempDataDir: string;
+  let originalDataDir: string | undefined;
 
   beforeAll(async () => {
+    // Isolate the data dir to a fresh temp so the Phase 7 REQ-09 boot
+    // mismatch-warn does not fire on stranded file-side credentials left in the
+    // shared ~/.comis by dev usage or other tests (this config uses
+    // `dataDir: ""` → ~/.comis). A clean empty dir has no inactive-backend
+    // creds → no WARN → a genuinely clean startup, which is exactly what the
+    // "all startup logs are debug or info level" test asserts.
+    originalDataDir = process.env["COMIS_DATA_DIR"];
+    tempDataDir = mkdtempSync(resolve(tmpdir(), "comis-daemon-lifecycle-"));
+    process.env["COMIS_DATA_DIR"] = tempDataDir;
     handle = await startTestDaemon({
       configPath: DAEMON_LIFECYCLE_CONFIG_PATH,
       logStream: logCapture.stream,
@@ -46,6 +59,17 @@ describe("Daemon Lifecycle", () => {
         handle.daemon.shutdownHandle.dispose();
         delete process.env["COMIS_CONFIG_PATHS"];
       }
+    }
+    // Restore COMIS_DATA_DIR and remove the isolated temp dir.
+    if (originalDataDir === undefined) {
+      delete process.env["COMIS_DATA_DIR"];
+    } else {
+      process.env["COMIS_DATA_DIR"] = originalDataDir;
+    }
+    try {
+      rmSync(tempDataDir, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
     }
   }, 30_000);
 
