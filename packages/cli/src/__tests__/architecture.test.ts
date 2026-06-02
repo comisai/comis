@@ -218,7 +218,7 @@ describe("daemon-required help-text patterns", () => {
 describe("auth help-text patterns", () => {
   const AUTH_FILE = resolve(SRC_ROOT, "commands/auth.ts");
   const AUTH_ENCRYPTED_PATTERN = /Requires the comis daemon to be running when security\.storage is 'encrypted'\./;
-  const AUTH_LOGIN_PATTERN = /Runs locally for file-backed storage\. Daemon-assisted login for encrypted storage is not yet supported\./;
+  const AUTH_LOGIN_PATTERN = /File mode stores locally\. Encrypted mode routes through the daemon \(auth\.set RPC\)\./;
 
   it("auth list description contains the conditional daemon-required precondition string", () => {
     const contents = readFileSync(AUTH_FILE, "utf8");
@@ -241,12 +241,12 @@ describe("auth help-text patterns", () => {
     expect(sec).toMatch(AUTH_ENCRYPTED_PATTERN);
   });
 
-  it("auth login description names the file-backed local + encrypted-not-supported contract", () => {
+  it("auth login description names the file-backed local + encrypted-daemon-assisted contract", () => {
     const contents = readFileSync(AUTH_FILE, "utf8");
     const sec = extractSubcommandDescription(contents, "login");
     expect(
       sec,
-      "auth login must declare file-backed-local + encrypted-not-supported",
+      "auth login must declare file-backed-local + encrypted-daemon-assisted (auth.set RPC)",
     ).toMatch(AUTH_LOGIN_PATTERN);
   });
 });
