@@ -45,10 +45,10 @@ import {
   createTerminalSessionWaitTool,
   createTerminalSessionStatusTool,
   createTerminalSessionResizeTool,
-  detectSandboxProvider,
   type TerminalSessionRegistry,
   type TerminalEventBus,
   type AllowEntryLike,
+  type SandboxProvider,
 } from "@comis/skills/tools";
 import { systemNowMs } from "@comis/core";
 
@@ -60,6 +60,15 @@ export interface TerminalWiringDeps {
   readonly skillsLogger: ComisLogger;
   /** The daemon's typed event bus (structurally compatible with `TerminalEventBus`). */
   readonly eventBus: TerminalEventBus;
+  /**
+   * The daemon's once-detected sandbox provider (MR-03). Detected ONCE at daemon
+   * startup (the same value the exec path threads via `sandboxCfg.sandbox`) and
+   * reused here — so the create gate's SEC-16 fail-closed branch reads the cached
+   * provider instead of re-running the blocking `detectSandboxProvider()`
+   * (`spawnSync("bwrap")` smoke test) on every create. `undefined` ⇒ no sandbox
+   * runtime ⇒ create fail-closes (the fail-closed posture is unchanged).
+   */
+  readonly sandboxProvider: SandboxProvider | undefined;
 }
 
 /**
@@ -94,6 +103,19 @@ function getOrCreateTerminalRegistry(
       spawnWorker: buildProductionSpawnWorker(resolveWorkerJsPath(deps.dataDir), deps.dataDir),
       logger: deps.skillsLogger,
       nowMs: systemNowMs,
+      // HR-03 / OPS-07: turn a worker backend-spawn failure (an `ok:false` create
+      // reply, which the registry uses to flip the session to `lost`) into the
+      // `terminal:spawn_failed` bus event. The registry already logged the WARN +
+      // flipped the handle; this closes the observability loop on the bus.
+      onSpawnFailed: ({ sessionId, error }) => {
+        deps.eventBus.emit("terminal:spawn_failed", {
+          sessionId,
+          agentId,
+          hint: error ?? "worker backend spawn failed",
+          errorKind: "dependency",
+          timestamp: systemNowMs(),
+        });
+      },
     });
     registries.set(agentId, registry);
   }
@@ -105,9 +127,10 @@ function getOrCreateTerminalRegistry(
  * the agent's tool array — the single entry point the composition root calls.
  *
  * The four implemented tools (create/read/list/kill) share the injected registry
- * + the (currently empty) operator allow-set + the fail-closed
- * `detectSandboxProvider` + the real logger/bus; the five stubs reject
- * `not_implemented`. Mirrors how exec/process/apply-patch join the same array.
+ * + the (currently empty) operator allow-set + the daemon's once-detected cached
+ * `sandboxProvider` (fail-closed when `undefined`) + the real logger/bus; the
+ * five stubs reject `not_implemented`. Mirrors how exec/process/apply-patch join
+ * the same array.
  */
 export function wireTerminalTools(
   tools: AgentToolArray,
@@ -124,7 +147,12 @@ export function wireTerminalTools(
   const sharedDeps = {
     registry,
     allowEntries,
-    detectProvider: () => detectSandboxProvider(deps.skillsLogger),
+    // MR-03: reuse the daemon's once-detected cached provider — do NOT re-run the
+    // blocking `detectSandboxProvider()` (`spawnSync("bwrap")`) on every create.
+    // This mirrors how `setup-tools.ts` feeds `sandboxCfg.sandbox = sandboxProvider`
+    // to the exec path. Fail-closed is intact: `undefined` ⇒ the create gate's
+    // SEC-16 branch rejects (never an unsandboxed spawn).
+    detectProvider: () => deps.sandboxProvider,
     logger: deps.skillsLogger,
     eventBus: deps.eventBus,
     nowMs: systemNowMs,

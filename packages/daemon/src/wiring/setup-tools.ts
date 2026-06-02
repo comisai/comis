@@ -612,7 +612,7 @@ export function setupTools(deps: ToolsDeps): ToolsResult {
       // Terminal driver (v2.11, Phase 119 P0): construct the per-agent
       // crash-isolated registry + push all nine never-export tools (the
       // empty allow-set fail-closes every create until config is threaded in).
-      wireTerminalTools(tools, terminalRegistries, agentId, { dataDir, skillsLogger, eventBus });
+      wireTerminalTools(tools, terminalRegistries, agentId, { dataDir, skillsLogger, eventBus, sandboxProvider });
 
       return tools;
     };

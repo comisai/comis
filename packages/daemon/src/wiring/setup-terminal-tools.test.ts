@@ -25,6 +25,9 @@ function makeDeps() {
     dataDir: "/tmp/comis-terminal-wiring-test",
     skillsLogger: createMockLogger(),
     eventBus: { emit: () => true },
+    // MR-03: the daemon's once-detected cached provider (a present sentinel here;
+    // the empty allow-set still fail-closes every create before it is consulted).
+    sandboxProvider: {} as never,
   };
 }
 
