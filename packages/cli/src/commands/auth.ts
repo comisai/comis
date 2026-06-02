@@ -189,21 +189,15 @@ async function loadStorageMode(): Promise<CredentialStorageMode> {
   const configPath =
     envPaths?.split(":")[0] ?? safePath(homedir(), ".comis", "config.yaml");
 
-  // Load ~/.comis/.env before validating so ${VAR} refs in config are
-  // resolved consistently with the daemon (which calls loadEnvFile before
-  // bootstrap). loadEnvFile is a no-op (returns -1) when the file is absent.
+  // Load ~/.comis/.env before validating — resolves ${VAR} refs before
+  // schema validation (consistent with daemon's loadLayered({getSecret})).
   // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
   const dataDir = process.env.COMIS_DATA_DIR ?? safePath(homedir(), ".comis");
   loadEnvFile(safePath(dataDir, ".env"));
-
-  const loadResult = loadConfigFile(configPath, {
-    // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-    getSecret: (k) => process.env[k],
-  });
+  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
+  const loadResult = loadConfigFile(configPath, { getSecret: (k) => process.env[k] });
   if (!loadResult.ok) {
-    // No config file -> default to file storage (matches
-    // openOAuthStoreFromConfig's fallback path).
-    return "file";
+    return "file"; // no config file → default to file storage
   }
   const validateResult = validateConfig(loadResult.value);
   if (!validateResult.ok) {
@@ -229,17 +223,12 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
   const configPath =
     envPaths?.split(":")[0] ?? safePath(homedir(), ".comis", "config.yaml");
 
-  // Load ~/.comis/.env before validating so ${VAR} refs in config are
-  // resolved consistently with the daemon. loadEnvFile is a no-op when absent.
+  // Load .env before validating — resolves ${VAR} refs (same as loadStorageMode).
   loadEnvFile(safePath(dataDir, ".env"));
-
-  const loadResult = loadConfigFile(configPath, {
-    // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
-    getSecret: (k) => process.env[k],
-  });
+  // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
+  const loadResult = loadConfigFile(configPath, { getSecret: (k) => process.env[k] });
   if (!loadResult.ok) {
-    // No config file → default to file storage (the file adapter creates
-    // ~/.comis/auth-profiles.json on first set).
+    // No config file → default to file storage.
     return selectOAuthCredentialStore({ storage: "file", dataDir: safePath(homedir(), ".comis"), fileLock });
   }
 
