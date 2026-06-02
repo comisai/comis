@@ -16,7 +16,7 @@
 import type { SecretMetadata } from "@comis/core";
 import { loadEnvFile } from "@comis/core";
 import type { Result } from "@comis/shared";
-import { ok, err } from "@comis/shared";
+import { err } from "@comis/shared";
 import { setupSecrets } from "./setup-secrets.js";
 import { createSqliteSecretStore } from "./sqlite-secret-store.js";
 

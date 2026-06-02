@@ -87,8 +87,10 @@ type WorkspacePackage = (typeof WORKSPACE_PACKAGES)[number];
  * NOTE on cli: TARGET_GRAPH.cli does NOT include "agent" because cli's
  * tsconfig.json does not reference ../agent. cli/package.json no longer
  * depends on @comis/agent either; the previous runtime substring imports
- * were retargeted to @comis/core. The @comis/memory edge was closed when
- * the secrets + auth subcommands migrated to daemon RPC.
+ * were retargeted to @comis/core. The @comis/memory edge was temporarily
+ * closed after secrets + auth moved to daemon RPC, and is re-opened for
+ * the offline secrets bootstrap path (L11 re-open, one bounded adapter site:
+ * `util/offline-secrets-store.ts`).
  *
  * NOTE on agent vs skills: packages/agent does NOT import @comis/skills
  * (only structural-typing comments reference it). agent's TARGET_GRAPH is
@@ -139,11 +141,13 @@ const TARGET_GRAPH: Record<WorkspacePackage, ReadonlySet<string>> = {
   // gateway: no agent OAuth-helpers back-edge — OAuth helpers live in
   // @comis/core.
   gateway: new Set(["shared", "core"]),
-  // cli: depends on shared, core, and observability — CLI's config-write
-  // hook in sync-tooling needs the config-audit JSONL append helpers.
-  // Other historical deps (@comis/infra, @comis/agent, @comis/memory)
-  // remain absent — those flows moved to daemon RPC.
-  cli: new Set(["shared", "core", "observability"]),
+  // cli: depends on shared, core, observability, and memory.
+  // config-write hook in sync-tooling needs the config-audit JSONL append
+  // helpers (observability). The @comis/memory edge is re-opened for the
+  // offline secrets bootstrap path (daemon-free first-time setup, L11 re-open):
+  // `util/offline-secrets-store.ts` is the single allowed import site; all
+  // other CLI memory access still routes through daemon RPC.
+  cli: new Set(["shared", "core", "observability", "memory"]),
   daemon: new Set([
     "shared",
     "core",
