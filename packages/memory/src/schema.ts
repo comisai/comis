@@ -151,11 +151,14 @@ export function ensureEntityTables(db: Database.Database): void {
  *
  * ## The PRIMARY KEY is the isolation boundary AND the upsert key (T-93-01)
  *
- * Comis runs many agents in one DB. `PRIMARY KEY (tenant_id, agent_id,
- * memory_id)` is both the `ON CONFLICT` target for the adapter's idempotent
- * upsert and the load-bearing isolation scope — two agents/tenants NEVER share
- * a row even for the same `memory_id`, and the adapter additionally filters
- * every read/write on all three columns (belt-and-braces).
+ * Comis runs many agents in one DB. On a FRESH DB the
+ * `PRIMARY KEY (tenant_id, agent_id, memory_id, intent)` (widened in Phase 110,
+ * LEARN-01) is both the `ON CONFLICT` target for the adapter's idempotent
+ * per-intent upsert and the load-bearing isolation scope — two agents/tenants
+ * NEVER share a row even for the same `memory_id`, and the adapter additionally
+ * filters every read/write on `(tenant_id, agent_id)` (belt-and-braces). `intent`
+ * is an ADDITIONAL key, never a relaxation of the (tenant, agent) isolation
+ * filter.
  *
  * `ON DELETE CASCADE` on `memory_usefulness.memory_id → memories(id)` is the
  * ENTIRE row-maintenance story (no orphan-sweep job): a memory delete drops its
@@ -163,21 +166,64 @@ export function ensureEntityTables(db: Database.Database): void {
  * sets `PRAGMA foreign_keys = ON` (sqlite-adapter-base.ts) — no pragma is set
  * here.
  *
+ * ## The intent bucket — forward-only, additive, no backfill (Phase 110, LEARN-01)
+ *
+ * `intent TEXT NOT NULL DEFAULT ''` partitions the usefulness signal per
+ * query-intent (the global bucket = `''`, the byte-identical v2.8 path). Two
+ * paths, the `ensureMemoryColumns` precedent:
+ * - FRESH DB: the `CREATE TABLE` carries the column + the 4-col PK above.
+ * - EXISTING (pre-110) DB: a guarded `PRAGMA table_info(memory_usefulness)`
+ *   check + `ALTER TABLE … ADD COLUMN intent TEXT NOT NULL DEFAULT ''`. SQLite
+ *   permits a NOT NULL column ADD WITH a constant default, so existing rows get
+ *   `''` (the global bucket) by construction — NO backfill, NO row rewrite, NO
+ *   corruption (the PK-widening-on-existing-DB safety — RESEARCH Pitfall 3). The
+ *   pre-110 PK STAYS 3-col (SQLite has no `ALTER ADD PRIMARY KEY`).
+ *
+ * Because the existing-DB PK stays 3-col, the adapter's 4-col
+ * `ON CONFLICT(tenant_id, agent_id, memory_id, intent)` target would have no
+ * backing constraint on a pre-110 DB. The idempotent `idx_usefulness_intent`
+ * UNIQUE index (created on BOTH paths below) supplies that target: it is
+ * satisfied on a pre-110 DB because existing rows are all `intent=''` and were
+ * already unique on the 3-col PK, and it lets the per-intent upsert resolve
+ * identically on fresh (PK) and existing (the unique index) databases.
+ *
  * @param db - An open better-sqlite3 Database whose `memories` table already
  *   exists (the FK target). Call AFTER `ensureEntityTables` in `initSchema`.
  */
 export function ensureUsefulnessTable(db: Database.Database): void {
+  // FRESH DB: the 4-col PK + the intent column (the global bucket = '').
   db.exec(`
     CREATE TABLE IF NOT EXISTS memory_usefulness (
       tenant_id      TEXT NOT NULL,
       agent_id       TEXT NOT NULL,
       memory_id      TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+      intent         TEXT NOT NULL DEFAULT '',
       used_count     INTEGER NOT NULL DEFAULT 0,
       ignored_count  INTEGER NOT NULL DEFAULT 0,
       last_useful_at INTEGER,
-      PRIMARY KEY (tenant_id, agent_id, memory_id)
+      PRIMARY KEY (tenant_id, agent_id, memory_id, intent)
     );
   `);
+  // EXISTING (pre-110) DB: guarded additive column-add (the ensureMemoryColumns
+  // precedent at :56-81 — the object-literal cast is the sanctioned PRAGMA idiom,
+  // NOT a `as Foo[]` named-type cast). A NOT NULL column ADD WITH a constant
+  // default lands existing rows in the global ('') bucket, no backfill.
+  const cols = new Set(
+    (db.prepare(`PRAGMA table_info(memory_usefulness)`).all() as { name: string }[]).map(
+      (r) => r.name,
+    ),
+  );
+  if (!cols.has("intent")) {
+    db.exec(`ALTER TABLE memory_usefulness ADD COLUMN intent TEXT NOT NULL DEFAULT ''`);
+  }
+  // The 4-col conflict target for the adapter's per-intent upsert. Idempotent +
+  // additive; on a pre-110 DB (3-col PK) it is the ONLY backing constraint the
+  // 4-col ON CONFLICT can resolve against (it is satisfied because existing rows
+  // are all intent='' and were unique on the old PK). On a fresh DB it is
+  // redundant with the 4-col PK but harmless.
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_usefulness_intent ON memory_usefulness(tenant_id, agent_id, memory_id, intent)`,
+  );
 }
 
 /**
