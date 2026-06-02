@@ -69,6 +69,7 @@ import { createMemorySearchTool } from "./tools/memory-search-tool.js";
 import { createMemoryGetTool } from "./tools/memory-get-tool.js";
 import { createMemoryStoreTool } from "./tools/memory-store-tool.js";
 import { createMemoryManageTool } from "./tools/memory-manage-tool.js";
+import { createMemoryAskTool } from "./tools/memory-ask-tool.js";
 import { createSessionStatusTool } from "./tools/session-status-tool.js";
 import { createSessionsListTool } from "./tools/sessions-list-tool.js";
 import { createSessionsHistoryTool } from "./tools/sessions-history-tool.js";
@@ -155,6 +156,10 @@ export interface PlatformToolBuildContext {
   readonly contextEngineVersion?: string;
   /** `browser` tool's conditional predicate. */
   readonly builtinToolsBrowserEnabled?: boolean;
+  /** `memory_ask` (the dialectic) tool's conditional predicate (DIAL-02). Fed from
+   *  `agentConfig.dialectic.enabled === true` at setup-tools; default-OFF (absent ⇒ the
+   *  tool is filtered out before build — the query-time-LLM cost gate). */
+  readonly dialecticEnabled?: boolean;
   /** agents-manage callbacks — passed unconditionally via build context. */
   readonly onConfigMutationStart?: () => void;
   readonly onConfigMutationEnd?: () => void;
@@ -403,6 +408,20 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
     },
 
     // ---- memory ----
+    {
+      // The dialectic (Phase 109 — DIAL-01/02/03): a grounded, cited NL answer over
+      // the agent's LLM-free recall pipeline. The ONE query-time LLM surface, OPT-IN
+      // and default-OFF. The `conditional` gate registers it ONLY when the per-agent
+      // `dialectic.enabled` knob is true (fed to `ctx.dialecticEnabled` at setup-tools);
+      // an absent/off knob ⇒ the daemon filters it out BEFORE build (the cost gate, the
+      // default-OFF byte-identity). `build` always constructs the tool (the schema is
+      // static — the parity snapshot captures it regardless of the gate), exactly like
+      // `browser` / `unified_context` / `background_tasks`.
+      name: "memory_ask",
+      category: "memory",
+      conditional: (ctx) => ctx.dialecticEnabled === true,
+      build: (ctx) => createMemoryAskTool(ctx.rpcCall as never),
+    },
     {
       name: "memory_get",
       category: "memory",

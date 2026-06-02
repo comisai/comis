@@ -2315,6 +2315,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createMemorySearchTool",
       "createMemoryGetTool",
       "createMemoryStoreTool",
+      // The dialectic tool (Phase 109 — DIAL-02). Barrel-exported from ./platform-tools
+      // alongside its sibling memory tools; consumed by the registry's memory_ask
+      // conditional descriptor via the same-package ./tools import (invisible to the
+      // public-export-consumers walker, which scans the public barrel), so it is a
+      // baseline orphan exactly like createMemorySearchTool/createMemoryManageTool.
+      "createMemoryAskTool",
       "createSessionStatusTool",
       "createSessionsListTool",
       "createSessionsHistoryTool",

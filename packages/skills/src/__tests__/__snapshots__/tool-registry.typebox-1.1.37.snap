@@ -1679,6 +1679,27 @@
     "conditional": false
   },
   {
+    "name": "memory_ask",
+    "category": "memory",
+    "schema": {
+      "properties": {
+        "limit": {
+          "description": "Max memories to ground the answer over",
+          "type": "number"
+        },
+        "question": {
+          "description": "The question to answer from the agent's memory",
+          "type": "string"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "type": "object"
+    },
+    "conditional": true
+  },
+  {
     "name": "memory_get",
     "category": "memory",
     "schema": {
