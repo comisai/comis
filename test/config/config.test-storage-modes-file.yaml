@@ -1,23 +1,21 @@
-# Comis Test Configuration -- Auth-State Matrix, encrypted storage
+# Comis Test Configuration -- Storage-Modes Integration Suite, file storage
 #
-# Dedicated config for test/integration/auth-state-matrix.test.ts (encrypted rows).
-# Configures `security.storage: encrypted` so the CLI's auth list/logout/status
-# subcommands take the daemon-RPC path. The matrix test verifies:
-#   - (encrypted, up)   -> CLI succeeds via auth.list / auth.logout RPC.
-#   - (encrypted, down) -> CLI exits 4 + REMEDIATION_MESSAGE.
+# Dedicated config for test/integration/credential-storage-modes.test.ts
+# (file-mode describe block).
 #
-# Uses port 8563 to avoid conflicts with other test suites.
+# Uses security.storage: file (unified key, NOT the removed oauth.storage).
+# No SECRETS_MASTER_KEY required — file mode uses plaintext JSON files.
 #
-# SECRETS_MASTER_KEY (required for encrypted OAuth credential store) is
-# supplied at runtime by the test (NOT this file).
+# Uses port 8801 to avoid conflicts with other test suites:
+#   8800 = config.test-storage-modes-encrypted (pair config)
 
-tenantId: "auth-encrypted-test"
+tenantId: "storage-modes-file-test"
 logLevel: "debug"
 dataDir: "" # Resolves to ~/.comis at runtime
 
 agents:
   default:
-    name: "AuthEncryptedTestAgent"
+    name: "StorageModesFileTestAgent"
     model: default
     thinkingLevel: "off"
     provider: default
@@ -41,10 +39,10 @@ agents:
 gateway:
   enabled: true
   host: "127.0.0.1"
-  port: 8563
+  port: 8801
   tokens:
     - id: "admin-token"
-      secret: "admin-secret-key-for-auth-encrypted-test"
+      secret: "admin-secret-key-for-storage-modes-file-test"
       scopes: ["rpc", "ws", "admin"]
   rateLimit:
     windowMs: 60000
@@ -66,10 +64,10 @@ scheduler:
     criticalBypass: true
 
 memory:
-  dbPath: "test-memory-auth-encrypted.db"
+  dbPath: "test-memory-storage-modes-file.db"
 
 security:
-  storage: encrypted
+  storage: file
   agentToAgent:
     enabled: true
 

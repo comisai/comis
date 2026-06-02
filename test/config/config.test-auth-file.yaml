@@ -1,7 +1,7 @@
 # Comis Test Configuration -- Auth-State Matrix, file storage
 #
 # Dedicated config for test/integration/auth-state-matrix.test.ts (file rows).
-# Configures `oauth.storage: file` so the CLI's auth list/logout/status
+# Configures `security.storage: file` so the CLI's auth list/logout/status
 # subcommands take the CLI-local path (no daemon RPC needed). The matrix
 # test still boots the daemon for the (file, up) rows -- the daemon
 # presence is irrelevant for file storage but the matrix coverage requires
@@ -50,9 +50,6 @@ gateway:
   maxBatchSize: 50
   wsHeartbeatMs: 30000
 
-oauth:
-  storage: "file"
-
 scheduler:
   cron:
     enabled: true
@@ -70,6 +67,7 @@ memory:
   dbPath: "test-memory-auth-file.db"
 
 security:
+  storage: file
   agentToAgent:
     enabled: true
 

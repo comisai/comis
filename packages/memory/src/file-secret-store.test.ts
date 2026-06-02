@@ -292,6 +292,38 @@ describe("createFileSecretStore", () => {
     expect(listResult.ok && listResult.value).toHaveLength(0);
   });
 
+  it("list on a store with multiple entries never includes plaintext values (REQ-10 file-store residency, multi-entry)", () => {
+    // REQ-10: file-store residency invariant must hold when the store contains
+    // many entries. Each item in list() must have name+metadata but NOT value.
+    const store = createFileSecretStore({ dataDir });
+    const stored: Record<string, string> = {
+      MULTI_KEY_A: "plaintext-value-for-A",
+      MULTI_KEY_B: "plaintext-value-for-B",
+      MULTI_KEY_C: "plaintext-value-for-C",
+    };
+
+    for (const [name, value] of Object.entries(stored)) {
+      store.set(name, value);
+    }
+
+    const listResult = store.list();
+    expect(listResult.ok).toBe(true);
+    if (!listResult.ok) return;
+
+    expect(listResult.value).toHaveLength(3);
+
+    for (const item of listResult.value) {
+      // Each item must NOT have a "value" property
+      expect(Object.keys(item)).not.toContain("value");
+      expect(item).toHaveProperty("name");
+      // The serialized entry must not contain any of the stored plaintext values
+      const itemJson = JSON.stringify(item);
+      for (const v of Object.values(stored)) {
+        expect(itemJson).not.toContain(v);
+      }
+    }
+  });
+
   it("loadSecretsFile returns err when secrets.json contains invalid JSON (non-parseable content)", () => {
     fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     const secretsPath = path.join(dataDir, "secrets.json");

@@ -1,23 +1,26 @@
-# Comis Test Configuration -- Auth-State Matrix, encrypted storage
+# Comis Test Configuration -- Storage-Modes Integration Suite, encrypted storage
 #
-# Dedicated config for test/integration/auth-state-matrix.test.ts (encrypted rows).
-# Configures `security.storage: encrypted` so the CLI's auth list/logout/status
-# subcommands take the daemon-RPC path. The matrix test verifies:
-#   - (encrypted, up)   -> CLI succeeds via auth.list / auth.logout RPC.
-#   - (encrypted, down) -> CLI exits 4 + REMEDIATION_MESSAGE.
+# Dedicated config for test/integration/credential-storage-modes.test.ts
+# (encrypted-mode describe block).
 #
-# Uses port 8563 to avoid conflicts with other test suites.
+# Uses security.storage: encrypted (unified key, NOT the removed oauth.storage).
+# SECRETS_MASTER_KEY is supplied at runtime by the test via process.env — NOT in
+# this file. The test sets process.env.SECRETS_MASTER_KEY = randomBytes(32).toString("hex")
+# in beforeAll and cleans up in afterAll.
 #
-# SECRETS_MASTER_KEY (required for encrypted OAuth credential store) is
-# supplied at runtime by the test (NOT this file).
+# Uses port 8800 to avoid conflicts with other test suites:
+#   8560 = secrets-lifecycle
+#   8561 = secret-rpc-residency
+#   8562 = auth-file-test
+#   8563 = auth-encrypted-test
 
-tenantId: "auth-encrypted-test"
+tenantId: "storage-modes-encrypted-test"
 logLevel: "debug"
 dataDir: "" # Resolves to ~/.comis at runtime
 
 agents:
   default:
-    name: "AuthEncryptedTestAgent"
+    name: "StorageModesEncryptedTestAgent"
     model: default
     thinkingLevel: "off"
     provider: default
@@ -41,10 +44,10 @@ agents:
 gateway:
   enabled: true
   host: "127.0.0.1"
-  port: 8563
+  port: 8800
   tokens:
     - id: "admin-token"
-      secret: "admin-secret-key-for-auth-encrypted-test"
+      secret: "admin-secret-key-for-storage-modes-encrypted-test"
       scopes: ["rpc", "ws", "admin"]
   rateLimit:
     windowMs: 60000
@@ -66,7 +69,7 @@ scheduler:
     criticalBypass: true
 
 memory:
-  dbPath: "test-memory-auth-encrypted.db"
+  dbPath: "test-memory-storage-modes-encrypted.db"
 
 security:
   storage: encrypted

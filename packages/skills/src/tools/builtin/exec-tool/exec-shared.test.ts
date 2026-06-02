@@ -315,3 +315,40 @@ describe("W-1 / REQ-18 — resolveSecretRefs: platformSecretNames refused, norma
     }
   });
 });
+
+// ── §5.5 Path A (REQ-19): resolveSecretRefs places real value; platform secret blocked ──
+
+describe("§5.5 Path A (REQ-19) — resolveSecretRefs in sandbox exec path", () => {
+  it("resolveSecretRefs places real value in sandbox env for user-task secret (exec-shared.ts:204)", () => {
+    // REQ-19 §5.5 Path A: the exec sandbox must receive the REAL value for
+    // user-controlled secrets (non-platform-managed names). This test verifies
+    // the exec-shared.ts:204 secretManager.get(name) path works end-to-end.
+    const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle({});
+    mutableHandle.upsert("EXAMPLE_API_KEY", "my-real-value");
+    const platformSecretNames: ReadonlySet<string> = new Set();
+
+    const result = resolveSecretRefs(["EXAMPLE_API_KEY"], secretManager, platformSecretNames);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.env["EXAMPLE_API_KEY"]).toBe("my-real-value");
+    }
+  });
+
+  it("resolveSecretRefs blocks a platform-managed secret name (exec-shared.ts:193)", () => {
+    // REQ-19 §5.5 Path A: platform-managed secrets (e.g., ANTHROPIC_API_KEY)
+    // MUST be refused — the exec sandbox must never receive them. This prevents
+    // agents from exfiltrating daemon credentials through secretRefs.
+    const { secretManager } = createSecretManagerWithMutableHandle({
+      ANTHROPIC_API_KEY: "sk-real-platform-key",
+    });
+    const platformSecretNames: ReadonlySet<string> = new Set(["ANTHROPIC_API_KEY"]);
+
+    const result = resolveSecretRefs(["ANTHROPIC_API_KEY"], secretManager, platformSecretNames);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("platform-managed");
+    }
+  });
+});
