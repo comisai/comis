@@ -77,6 +77,52 @@ describe("computeTunedAlphas — pure clamped deterministic update (LEARN-03)", 
     });
   });
 
+  it("CLAMP is TOTAL: a NaN gradient keeps EVERY output finite and in [0,1] (no degenerate ranker)", () => {
+    // RED on the pre-patch `Math.min(1, Math.max(0, x))` clamp: Math.max(0, NaN)
+    // === NaN and Math.min(1, NaN) === NaN, so a NaN gradient propagates a NaN
+    // alpha. A NaN alpha collapses the recall score (base * (1 + NaN*…) → NaN) and
+    // makes sorting ill-defined — violating the module/port JSDoc invariant that
+    // "every output is clamped to [0,1]". The clamp must coerce a non-finite input
+    // to a safe in-range floor so the invariant holds UNCONDITIONALLY, not just
+    // under the finite ±1e9 the existing tests cover.
+    const out = computeTunedAlphas(midVector(), uniformSignal(NaN));
+    for (const [k, v] of Object.entries(out)) {
+      expect(Number.isFinite(v), `${k} must be finite under a NaN gradient`).toBe(true);
+      expect(v, `${k} must be ≥ 0 under a NaN gradient (clamp)`).toBeGreaterThanOrEqual(0);
+      expect(v, `${k} must be ≤ 1 under a NaN gradient (clamp)`).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("CLAMP is TOTAL: a +Infinity gradient keeps EVERY output finite and in [0,1]", () => {
+    // +Infinity already clamped to 1 by the pre-patch min/max, but assert the
+    // total-clamp contract explicitly so the chosen non-finite handling is pinned.
+    const out = computeTunedAlphas(midVector(), uniformSignal(Number.POSITIVE_INFINITY));
+    for (const [k, v] of Object.entries(out)) {
+      expect(Number.isFinite(v), `${k} must be finite under a +Infinity gradient`).toBe(true);
+      expect(v, `${k} must be in [0,1]`).toBeGreaterThanOrEqual(0);
+      expect(v, `${k} must be in [0,1]`).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("CLAMP is TOTAL: a NaN in the CURRENT vector cannot leak a NaN alpha into the output", () => {
+    // The other non-finite ingress: a NaN reaching `cur` (a future relaxed schema
+    // or a direct unit consumer). `cur.recencyAlpha + STEP*0` is NaN on the
+    // pre-patch clamp → a NaN output. The total clamp neutralizes it to an in-range
+    // value, keeping the ranker well-defined.
+    const cur: TunedAlphaVector = {
+      recencyAlpha: NaN,
+      temporalAlpha: 0.5,
+      proofAlpha: 0.5,
+      usefulnessAlpha: 0.5,
+    };
+    const out = computeTunedAlphas(cur, uniformSignal(0));
+    for (const [k, v] of Object.entries(out)) {
+      expect(Number.isFinite(v), `${k} must be finite even when cur carries a NaN`).toBe(true);
+      expect(v, `${k} must be in [0,1]`).toBeGreaterThanOrEqual(0);
+      expect(v, `${k} must be in [0,1]`).toBeLessThanOrEqual(1);
+    }
+  });
+
   it("CLAMP holds at the boundary: a +grad on an already-1.0 alpha stays 1.0 (not >1)", () => {
     const cur: TunedAlphaVector = {
       recencyAlpha: 1,
