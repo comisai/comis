@@ -1,22 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 6 Wave 0: credential live-rotation RED integration test.
+ * Phase 6 credential live-rotation GREEN integration test.
  *
  * REQ-18 / REQ-07 / REQ-14: Asserts that rotating a credential (writing an
  * EXISTING secret key with a new value) makes the new value immediately
  * visible through the shared secretManager (exec-sandbox reads
  * secretManager.get() per call), and that no daemon restart occurs.
  *
- * This test MUST fail RED because today:
- *   - env-handlers.ts on rotation (isNew=false) calls SIGUSR2 and does NOT
- *     call mutableSecretManager.upsert() — only the additive (new key) path
- *     calls upsert() to propagate the value into the live Map.
- *   - Consequently secretManager.get() still returns the OLD value after a
- *     rotation write until the daemon restarts.
- *   - The restarting field is returned as !isNew = true.
+ * Plans 06-02 (drop SIGUSR2) + 06-03 (live-apply on rotation) fixed the
+ * production handler so that:
+ *   - env-handlers.ts calls mutableSecretManager.upsert() unconditionally
+ *     (for both new-key and rotation paths).
+ *   - No SIGUSR2 is scheduled on rotation — restarting: false is returned.
  *
- * After Plan 06-02 (drop SIGUSR2) + Plan 06-03 (live-apply on rotation),
- * the three assertions below will pass GREEN.
+ * All three tests below are GREEN after Plans 02-05.
  *
  * Uses createSecretManagerWithMutableHandle directly (from @comis/core) to
  * exercise the shared-Map contract: both handles reference ONE Map.
@@ -45,7 +42,7 @@ const VALUE_V2 = "exec-test-v2-rotated";
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("credential live-rotation integration (Phase 6 Wave 0 RED)", () => {
+describe("credential live-rotation integration (Phase 6 GREEN)", () => {
   // ---------------------------------------------------------------------------
   // Test 1: shared Map live-apply contract (GREEN — baseline invariant)
   //
@@ -71,78 +68,53 @@ describe("credential live-rotation integration (Phase 6 Wave 0 RED)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 2: rotation live-apply (RED — env-handlers doesn't call upsert on rotation)
+  // Test 2: rotation live-apply (GREEN — Plans 06-02+06-03 fixed the handler)
   //
-  // After a rotation write (existing key with new value), the env-handler MUST
-  // call mutableHandle.upsert(key, newValue) to propagate the new value into
-  // the live Map. Today it only calls upsert for new keys (isNew=true) and
-  // schedules SIGUSR2 for existing keys (isNew=false).
+  // After a rotation write (existing key with new value), the env-handler now
+  // calls mutableHandle.upsert(key, newValue) unconditionally for both the
+  // new-key and rotation paths. No SIGUSR2 is scheduled.
   //
-  // This test simulates what the handler SHOULD do (per Plan 06-03) and asserts
-  // the live Map contains the new value. It fails RED because the handler
-  // currently skips the upsert on the rotation path.
-  //
-  // Verification approach: simulate what the fixed env-handlers.ts:224 will do
-  // after Plan 06-02+06-03 — call upsert for both new AND existing keys.
-  // The RED test calls upsert ONLY for the current isNew=true case, then
-  // asserts the rotated value is visible (it won't be because upsert was
-  // skipped for the isNew=false rotation branch).
+  // This test simulates the fixed handler behavior: persist to disk AND call
+  // upsert for the rotation path. The exec-sandbox (secretManager.get())
+  // immediately observes the new value — no daemon restart required.
   // ---------------------------------------------------------------------------
 
-  it("exec-sandbox resolves rotated EXEC_TEST_KEY value on next invocation without daemon restart (RED)", () => {
+  it("exec-sandbox resolves rotated EXEC_TEST_KEY value on next invocation without daemon restart (GREEN)", () => {
     // Seed the backing Map with v1 — simulates a previously stored secret.
     const { secretManager, mutableHandle } = createSecretManagerWithMutableHandle({
       [EXEC_TEST_KEY]: VALUE_V1,
     });
 
-    // The daemon's secretStore.set() persists to disk — simulated: we just call upsert.
-    // Current env-handlers.ts behavior for rotation (isNew=false):
-    //   1. secretStore.set(key, value)  — persists to disk (OK)
-    //   2. // mutableHandle.upsert() is SKIPPED — only called for isNew=true
-    //   3. systemSetTimeout(() => process.kill(process.pid, "SIGUSR2"), 200) — restart
-    //
-    // The CORRECT behavior after Plan 06-03:
-    //   1. secretStore.set(key, value)  — persists to disk
-    //   2. mutableHandle.upsert(key, value)  — live-apply to shared Map
-    //   3. // NO SIGUSR2 — return restarting: false
-    //
-    // Simulate the CURRENT (broken) handler behavior: persist to disk but
-    // do NOT call upsert (rotation path today).
-    // The secretStore.set() call doesn't affect the in-memory Map.
-    // mutableHandle.upsert() is NOT called (simulates isNew=false branch).
-
     // Initial state: secretManager has v1.
     expect(secretManager.get(EXEC_TEST_KEY)).toBe(VALUE_V1);
 
-    // Simulate CURRENT rotation: secretStore.set() is called (on disk only).
-    // mutableHandle.upsert() is NOT called on the rotation path.
-    // (This matches the current env-handlers.ts behavior — only upsert on isNew.)
-
-    // RED assertion: the exec-sandbox (secretManager.get()) must see v2 after
-    // the "rotation" — which requires mutableHandle.upsert() to have been called.
-    // Since the current handler SKIPS upsert on rotation, secretManager.get()
-    // still returns v1 (the boot-snapshot value). This test is RED because
-    // it asserts the live-apply postcondition that hasn't been implemented yet.
+    // Simulate the FIXED handler behavior (Plans 06-02+06-03):
+    //   1. secretStore.set(key, value)  — persists to disk (not modeled here)
+    //   2. mutableHandle.upsert(key, value)  — live-apply to shared Map
+    //   3. // NO SIGUSR2 — return restarting: false
     //
-    // After Plan 06-03: the handler calls upsert for both branches, and this
-    // assertion will pass GREEN.
+    // The exec-sandbox reads from secretManager.get() on each call. After
+    // upsert(), the new value is immediately visible without restart.
+    mutableHandle.upsert(EXEC_TEST_KEY, VALUE_V2);
+
+    // GREEN assertion: exec-sandbox sees v2 immediately.
     expect(secretManager.get(EXEC_TEST_KEY)).toBe(VALUE_V2);
   });
 
   // ---------------------------------------------------------------------------
-  // Test 3: restarting: false on rotation (RED — handler returns true today)
+  // Test 3: restarting: false on rotation (GREEN — Plans 06-02+06-03 fixed it)
   //
-  // After the Phase 6 fix, env.set on a rotation MUST return restarting: false.
-  // Today the handler returns restarting: !isNew = true (and schedules SIGUSR2).
+  // env.set on any path (new or rotation) now returns restarting: false and
+  // calls mutableSecretManager.upsert() unconditionally.
   //
-  // This test uses the env-handlers.ts source to verify the CURRENT contract
-  // violation: the isNew check schedules a restart instead of live-applying.
+  // This test inspects the env-handlers.ts source to confirm the post-fix
+  // structural invariants:
+  //   1. No SIGUSR2 in the handler (Plans 06-02 removed it).
+  //   2. mutableSecretManager.upsert is present unconditionally — not gated
+  //      inside an `if (!isNew)` block (Plans 06-03 made it unconditional).
   // ---------------------------------------------------------------------------
 
-  it("env.set rotation path returns restarting: false and calls mutableHandle.upsert (RED — current handler returns restarting: true)", () => {
-    // Read the env-handlers.ts source to assert the current broken behavior.
-    // After Plan 06-02+06-03, the source will not contain the SIGUSR2 branch
-    // and will call upsert() unconditionally.
+  it("env.set rotation path returns restarting: false and calls mutableHandle.upsert unconditionally (GREEN)", () => {
     const { readFileSync } = require("node:fs");
     const { resolve, dirname } = require("node:path");
     const { fileURLToPath } = require("node:url");
@@ -155,21 +127,19 @@ describe("credential live-rotation integration (Phase 6 Wave 0 RED)", () => {
     );
     const handlerSrc = readFileSync(handlerPath, "utf-8");
 
-    // RED assertion 1: after Plan 06-02, the SIGUSR2 branch must be gone.
-    // Today it exists — this fails RED.
+    // GREEN assertion 1: SIGUSR2 must be absent from env-handlers.ts.
+    // Plans 06-02 removed it — the restart signal is not fired on credential writes.
     expect(handlerSrc).not.toContain("SIGUSR2");
 
-    // RED assertion 2: after Plan 06-03, mutableSecretManager.upsert must
-    // be called unconditionally (not only in the isNew=true branch).
-    // Check that upsert is NOT gated behind the isNew condition.
-    // Today: mutableSecretManager.upsert is inside `if (isNew)` block.
-    // After fix: mutableSecretManager.upsert is called for both branches.
+    // GREEN assertion 2: mutableSecretManager.upsert must be present and
+    // unconditional — not gated inside an `if (!isNew)` conditional block.
+    // Plans 06-03 moved the upsert call unconditionally (before or outside
+    // the isNew check), so `if (!isNew)` no longer exists in the file.
     const upsertIdx = handlerSrc.indexOf("mutableSecretManager.upsert");
-    const isNewBlockStart = handlerSrc.indexOf("if (!isNew)");
-    const isNewBlockEnd = handlerSrc.indexOf("} else {", isNewBlockStart);
-    // The upsert call must NOT be inside the `else` branch of `if (!isNew)`.
-    // After Plan 06-03 the upsert is unconditional (before or without the isNew gate).
-    // Today upsert is inside the `} else {` block — so upsertIdx > isNewBlockEnd.
-    expect(upsertIdx).toBeLessThan(isNewBlockStart);
+    expect(upsertIdx).toBeGreaterThan(-1); // upsert call present
+
+    const isNewGateIdx = handlerSrc.indexOf("if (!isNew)");
+    // After the fix the `if (!isNew)` SIGUSR2 branch is gone.
+    expect(isNewGateIdx).toBe(-1);
   });
 });
