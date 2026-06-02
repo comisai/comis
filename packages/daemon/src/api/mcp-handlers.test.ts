@@ -3004,6 +3004,120 @@ describe("MCP RPC Handlers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // mcp.connect / mcp.test — mutableSecretManager live-apply (WR-01)
+  //
+  // When a static-secret header is extracted, the mutableSecretManager.upsert
+  // must be called so secretManager.get() returns the value without a restart.
+  // The test uses a real shared-Map pair to prove end-to-end visibility.
+  // -------------------------------------------------------------------------
+
+  describe("mcp.connect header credential — mutableSecretManager live-apply (WR-01)", () => {
+    const STATIC_SECRET_WR01 = "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    it("mcp.connect: mutableSecretManager.upsert is called after secretStore.set for a static-secret header", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("myserver", [])));
+      const secretStore = {
+        set: vi.fn().mockReturnValue({ ok: true }),
+        get: vi.fn(),
+        has: vi.fn(),
+        list: vi.fn(),
+        delete: vi.fn(),
+      };
+      const upsert = vi.fn();
+      const mutableSecretManager = { upsert, remove: vi.fn().mockReturnValue(false) };
+
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretStore: secretStore as any,
+        mutableSecretManager: mutableSecretManager as any,
+      });
+
+      await handlers["mcp.connect"]({
+        server_name: "myserver",
+        transport: "http",
+        url: "https://api.example.com/mcp",
+        headers: { "X-Api-Key": STATIC_SECRET_WR01 },
+      });
+
+      expect(secretStore.set).toHaveBeenCalledWith("MCP_MYSERVER__X_API_KEY", STATIC_SECRET_WR01);
+      // WR-01: mutableSecretManager.upsert must fire so the value is live
+      // without a daemon restart (additive no-restart guarantee — REQ-13).
+      expect(upsert).toHaveBeenCalledOnce();
+      expect(upsert).toHaveBeenCalledWith("MCP_MYSERVER__X_API_KEY", STATIC_SECRET_WR01);
+    });
+
+    it("mcp.connect: extracted MCP header secret is visible via secretManager.get() without restart", async () => {
+      (manager.connect as any).mockResolvedValue(ok(makeConnection("myserver", [])));
+      const secretStore = {
+        set: vi.fn().mockReturnValue({ ok: true }),
+        get: vi.fn(),
+        has: vi.fn(),
+        list: vi.fn(),
+        delete: vi.fn(),
+      };
+      // Build a real shared-Map pair to prove end-to-end visibility
+      const backingMap = new Map<string, string>();
+      const mutableSecretManager = {
+        upsert: (key: string, value: string) => { backingMap.set(key, value); },
+        remove: (key: string) => backingMap.delete(key),
+      };
+      const secretManager = { get: (key: string) => backingMap.get(key), has: (key: string) => backingMap.has(key), require: (key: string) => { const v = backingMap.get(key); if (!v) throw new Error(key); return v; }, keys: () => [...backingMap.keys()] };
+
+      const handlers = createMcpHandlers({
+        mcpClientManager: manager,
+        logger: makeLogger(),
+        secretStore: secretStore as any,
+        mutableSecretManager: mutableSecretManager as any,
+        secretManager: secretManager as any,
+      });
+
+      await handlers["mcp.connect"]({
+        server_name: "myserver",
+        transport: "http",
+        url: "https://api.example.com/mcp",
+        headers: { "X-Api-Key": STATIC_SECRET_WR01 },
+      });
+
+      // The extracted secret must be live-visible via secretManager.get() immediately
+      expect(secretManager.get("MCP_MYSERVER__X_API_KEY")).toBe(STATIC_SECRET_WR01);
+    });
+
+    it("mcp.test: mutableSecretManager.upsert is called after secretStore.set for a static-secret header", async () => {
+      mockTempConnect.mockResolvedValueOnce(ok(makeConnection("__test__myserver", [])));
+      mockTempDisconnectAll.mockResolvedValue(undefined);
+      const secretStore = {
+        set: vi.fn().mockReturnValue({ ok: true }),
+        get: vi.fn(),
+        has: vi.fn(),
+        list: vi.fn(),
+        delete: vi.fn(),
+      };
+      const upsert = vi.fn();
+      const mutableSecretManager = { upsert, remove: vi.fn().mockReturnValue(false) };
+
+      const handlers = createMcpHandlers({
+        mcpClientManager: createMockManager(),
+        logger: makeLogger(),
+        secretStore: secretStore as any,
+        mutableSecretManager: mutableSecretManager as any,
+      });
+
+      await handlers["mcp.test"]({
+        name: "myserver",
+        transport: "http",
+        url: "https://api.example.com/mcp",
+        headers: { "X-Api-Key": STATIC_SECRET_WR01 },
+      });
+
+      expect(secretStore.set).toHaveBeenCalledWith("MCP_MYSERVER__X_API_KEY", STATIC_SECRET_WR01);
+      // WR-01: mutableSecretManager.upsert must fire in mcp.test too.
+      expect(upsert).toHaveBeenCalledOnce();
+      expect(upsert).toHaveBeenCalledWith("MCP_MYSERVER__X_API_KEY", STATIC_SECRET_WR01);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // mcp.test headers credential firewall
   //
   // Mirror of the mcp.connect tests above. The headers scan must also be
