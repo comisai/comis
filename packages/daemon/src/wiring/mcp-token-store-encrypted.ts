@@ -105,9 +105,16 @@ export function createMcpTokenStoreEncrypted(
 
   // Prepared statements — compiled once at construction time.
   const upsertStmt = db.prepare(`
-    INSERT OR REPLACE INTO mcp_credentials
+    INSERT INTO mcp_credentials
       (server, artifact, ciphertext, iv, auth_tag, salt, expires_at, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(server, artifact) DO UPDATE SET
+      ciphertext = excluded.ciphertext,
+      iv         = excluded.iv,
+      auth_tag   = excluded.auth_tag,
+      salt       = excluded.salt,
+      expires_at = excluded.expires_at,
+      updated_at = excluded.updated_at
   `);
 
   const getStmt = db.prepare(
@@ -136,7 +143,7 @@ export function createMcpTokenStoreEncrypted(
   function getDecryptedRow(
     server: string,
     artifact: "tokens" | "client" | "discovery",
-  ): string | undefined {
+  ): { plaintext: string; expiresAt: number | null } | undefined {
     const raw = getStmt.get(server, artifact);
     const parsed = mcpCredMapper.parseOptionalRow(raw);
     if (!parsed.ok) {
@@ -153,7 +160,7 @@ export function createMcpTokenStoreEncrypted(
     };
     const decResult = crypto.decrypt(encrypted);
     if (!decResult.ok) throw decResult.error;
-    return decResult.value;
+    return { plaintext: decResult.value, expiresAt: row.expires_at };
   }
 
   // ---- TokenStore implementation ----------------------------------------
@@ -161,15 +168,14 @@ export function createMcpTokenStoreEncrypted(
   return {
     async tokens(server: string): Promise<OAuthTokens | undefined> {
       assertServerName(server);
-      const jsonStr = getDecryptedRow(server, "tokens");
-      if (jsonStr === undefined) return undefined;
+      const meta = getDecryptedRow(server, "tokens");
+      if (meta === undefined) return undefined;
 
-      const raw = JSON.parse(jsonStr) as OAuthTokens & { expires_in?: number };
-      const row = getStmt.get(server, "tokens") as { expires_at: number | null } | undefined;
+      const raw = JSON.parse(meta.plaintext) as OAuthTokens & { expires_in?: number };
 
       let expiresIn: number | undefined;
-      if (row?.expires_at !== null && row?.expires_at !== undefined) {
-        expiresIn = Math.max(0, Math.floor((row.expires_at - systemNowMs()) / 1000));
+      if (meta.expiresAt !== null) {
+        expiresIn = Math.max(0, Math.floor((meta.expiresAt - systemNowMs()) / 1000));
       }
 
       const result: OAuthTokens = {
@@ -194,9 +200,9 @@ export function createMcpTokenStoreEncrypted(
       server: string,
     ): Promise<OAuthClientInformationFull | undefined> {
       assertServerName(server);
-      const jsonStr = getDecryptedRow(server, "client");
-      if (jsonStr === undefined) return undefined;
-      return JSON.parse(jsonStr) as OAuthClientInformationFull;
+      const meta = getDecryptedRow(server, "client");
+      if (meta === undefined) return undefined;
+      return JSON.parse(meta.plaintext) as OAuthClientInformationFull;
     },
 
     async saveClientInformation(
@@ -211,9 +217,9 @@ export function createMcpTokenStoreEncrypted(
 
     async discoveryState(server: string): Promise<OAuthDiscoveryState | undefined> {
       assertServerName(server);
-      const jsonStr = getDecryptedRow(server, "discovery");
-      if (jsonStr === undefined) return undefined;
-      return JSON.parse(jsonStr) as OAuthDiscoveryState;
+      const meta = getDecryptedRow(server, "discovery");
+      if (meta === undefined) return undefined;
+      return JSON.parse(meta.plaintext) as OAuthDiscoveryState;
     },
 
     async saveDiscoveryState(
