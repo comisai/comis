@@ -18,6 +18,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import {
   startTestDaemon,
   makeAuthHeaders,
@@ -53,9 +55,17 @@ describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
   let ws: WebSocket;
   let logCapture: ReturnType<typeof createLogCapture>;
   let msgId = 100;
+  let tempDataDir: string;
+  let originalDataDir: string | undefined;
 
   beforeAll(async () => {
     logCapture = createLogCapture();
+    // Isolate the data dir so the Phase 7 REQ-09 boot mismatch-warn does not fire on
+    // stranded file-side credentials left in the shared ~/.comis by dev usage or other
+    // tests — this suite asserts the daemon logs contain no unexpected warnings.
+    originalDataDir = process.env["COMIS_DATA_DIR"];
+    tempDataDir = mkdtempSync(resolve(tmpdir(), "comis-v13-structural-"));
+    process.env["COMIS_DATA_DIR"] = tempDataDir;
     handle = await startTestDaemon({
       configPath: CONFIG_PATH,
       logStream: logCapture.stream,
@@ -77,6 +87,16 @@ describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
           throw err;
         }
       }
+    }
+    if (originalDataDir === undefined) {
+      delete process.env["COMIS_DATA_DIR"];
+    } else {
+      process.env["COMIS_DATA_DIR"] = originalDataDir;
+    }
+    try {
+      rmSync(tempDataDir, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup
     }
   }, 30_000);
 
