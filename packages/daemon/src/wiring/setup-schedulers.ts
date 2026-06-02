@@ -484,6 +484,41 @@ export async function setupSchedulers(deps: {
         schedulerLogger.info({ agentId, schedule: memoryOnlineTuningConfig.schedule ?? "0 8 * * *" }, "Registered memory online tuning cron job");
       }
     }
+
+    // -- Memory lifecycle cron job (Phase 112, FORGET-02 — Track C) --
+    // OPT-IN, OFF by default. Like the online-tuning bandit (NOT the LLM crons) this
+    // sweep is DETERMINISTIC + KEYLESS (no LLM call, no API key — the sentinel dispatch
+    // makes NO model resolution), so enabling it is a behavior opt-in, not a cost opt-in.
+    // Registered ONLY when the operator sets memoryLifecycle.enabled; a default agent
+    // registers NO job → byte-identical with the config absent. Default schedule 0 9 * * *
+    // runs AFTER online-tuning's 0 8 so the FEED + tuned alphas it reads have settled. Job
+    // options mirror the online-tuning job 1:1 (isolated / next-heartbeat / no forward-to-main
+    // / fresh). The __MEMORY_LIFECYCLE__ sentinel (setup-channels-memory-crons → the DORMANT
+    // runLifecycleSweep) re-checks the knob; even when on, the SCAFFOLD evicts/demotes NOTHING
+    // (the live policy is the deferred operator/v2.10 step — OD4).
+    const memoryLifecycleConfig = agentConfig.memoryLifecycle;
+    if (memoryLifecycleConfig?.enabled) {
+      const memLifecycleJobId = `memory-lifecycle-${agentId}`;
+      const existingJobs = scheduler.getJobs();
+      const alreadyRegistered = existingJobs.some((j) => j.id === memLifecycleJobId);
+      if (!alreadyRegistered) {
+        await scheduler.addJob({
+          id: memLifecycleJobId,
+          name: "Memory lifecycle",
+          agentId,
+          schedule: { kind: "cron", expr: memoryLifecycleConfig.schedule ?? "0 9 * * *" },
+          payload: { kind: "system_event", text: "__MEMORY_LIFECYCLE__" },
+          sessionTarget: "isolated",
+          wakeMode: "next-heartbeat",
+          forwardToMain: false,
+          sessionStrategy: "fresh",
+          consecutiveErrors: 0,
+          enabled: true,
+          createdAtMs: systemNowMs(),
+        });
+        schedulerLogger.info({ agentId, schedule: memoryLifecycleConfig.schedule ?? "0 9 * * *" }, "Registered memory lifecycle cron job");
+      }
+    }
   }
 
   /** Resolve the CronScheduler for a given agent ID. Throws descriptive error if not found. */
