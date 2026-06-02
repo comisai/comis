@@ -41,10 +41,12 @@ export async function loadWizardStorageMode(): Promise<
   if (!validated.ok) {
     return "file";
   }
-  return (validated.value.security?.storage ?? "file") as
-    | "file"
-    | "encrypted"
-    | "env";
+  // IN-01: security.storage is always present on a valid config
+  // (SecurityConfigSchema gives it .default("encrypted") and AppConfigSchema
+  // gives security itself .default(...)). The ?. and ?? "file" fallbacks
+  // are unreachable, and the `as` cast is redundant (type is already
+  // CredentialStorageMode = "file" | "encrypted" | "env").
+  return validated.value.security.storage;
 }
 
 /**
