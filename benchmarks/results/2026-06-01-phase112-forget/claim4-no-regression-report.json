@@ -1,0 +1,9 @@
+{
+  "harnessVersion": "phase-112-05-v1",
+  "claim": "zero-category-regression",
+  "baselineRef": "benchmarks/results/2026-06-01-phase106-baser/",
+  "baselineOrderLength": 4,
+  "forgetOffOrderLength": 4,
+  "noRegression": true,
+  "pass": true
+}

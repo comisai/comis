@@ -1,0 +1,9 @@
+{
+  "harnessVersion": "phase-112-05-v1",
+  "claim": "deterministic-decay-effect",
+  "oldEphemeralForgetFactor": 0.5534545198841266,
+  "freshDurableForgetFactor": 0.9945726783223208,
+  "decayedBelow": true,
+  "forgetFactorGap": 0.44111815843819413,
+  "pass": true
+}

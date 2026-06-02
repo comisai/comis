@@ -1,0 +1,16 @@
+{
+  "harnessVersion": "phase-112-05-v1",
+  "claim": "footprint-unchanged-when-dormant",
+  "rowCountBefore": 5,
+  "rowCountAfter": 5,
+  "evictedMarkerCount": 0,
+  "demotedMarkerCount": 0,
+  "sweepReport": {
+    "scanned": 5,
+    "promoted": 0,
+    "demoted": 0,
+    "evicted": 0
+  },
+  "footprintUnchanged": true,
+  "pass": true
+}
