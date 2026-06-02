@@ -38,6 +38,11 @@ export type {
   UserRepresentationInput,
 } from "./user-representation-store.js";
 export type {
+  TunedAlphaStore,
+  TunedAlphaScope,
+  TunedAlphaVector,
+} from "./tuned-alpha-store.js";
+export type {
   RelationshipStore,
   RelationshipScope,
   RelationshipTrust,

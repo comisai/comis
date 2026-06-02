@@ -950,6 +950,19 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "resolveCodexStableSubject",
       "RewrittenOAuthError",
       "FileExtractionErrorKind",
+      // TunedAlphaStore + its scope/vector types (Phase 111, LEARN-03 / Track H2)
+      // are surfaced on @comis/core's public barrel by the interface-first plan
+      // 111-01 (the type-only seam plans 111-02..05 implement against), AHEAD of
+      // their consumers: the sole SQLite adapter (111-02), the deterministic
+      // overlay + offline bandit job (111-03/04), and the daemon wiring all land
+      // in later waves of this phase. Tracked here as ahead-of-consumer
+      // planned-orphan policy entries — the documented interface-first
+      // cross-wave seam posture (mirror SessionStorePort / ContextStorePort
+      // above; the 109-01 precedent). REMOVE @ 111-02 (the adapter is the first
+      // real cross-package consumer of TunedAlphaStore + TunedAlphaVector).
+      "TunedAlphaStore",
+      "TunedAlphaScope",
+      "TunedAlphaVector",
       // RagConfig: surface-only export. The createRagRetriever factory in
       // packages/agent/src/rag/rag-retriever.ts was deleted; the canonical
       // post-deletion consumer is
