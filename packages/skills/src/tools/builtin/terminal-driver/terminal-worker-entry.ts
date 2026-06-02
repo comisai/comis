@@ -273,7 +273,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     } catch (err) {
       // TR-08: node-pty unavailable → the pipe backend, reported as degraded.
       logger.warn(
-        { err, hint: "node-pty unavailable; pipe fallback", errorKind: "dependency" },
+        { err, hint: "node-pty unavailable; pipe fallback", errorKind: "dependency" as const },
         "terminal worker degraded",
       );
       state.backend = "degraded";
@@ -348,7 +348,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       return { sessionId: frame.sessionId, requestId: frame.requestId, ok: true, result };
     } catch (err) {
       logger.error(
-        { err, hint: "worker frame dispatch failed", errorKind: "worker", method: frame.method },
+        { err, hint: "worker frame dispatch failed", errorKind: "internal" as const, method: frame.method },
         "terminal worker frame error",
       );
       return {

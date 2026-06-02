@@ -259,7 +259,7 @@ export function createTerminalSessionRegistry(
     // OPS-01: a worker error flips its sessions to `lost` and clears the handle.
     child.on("error", (err) => {
       logger.warn(
-        { err, hint: "terminal worker error; sessions lost, worker will re-spawn", errorKind: "dependency" },
+        { err, hint: "terminal worker error; sessions lost, worker will re-spawn", errorKind: "dependency" as const },
         "terminal worker error",
       );
       for (const handle of sessions.values()) {
@@ -272,7 +272,7 @@ export function createTerminalSessionRegistry(
     child.on("close", (code) => {
       const exitCode = typeof code === "number" ? code : null;
       logger.info(
-        { exitCode, hint: "terminal worker closed; sessions exited, worker will re-spawn", errorKind: "dependency" },
+        { exitCode, hint: "terminal worker closed; sessions exited, worker will re-spawn", errorKind: "dependency" as const },
         "terminal worker closed",
       );
       for (const handle of sessions.values()) {

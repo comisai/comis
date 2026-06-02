@@ -438,6 +438,12 @@ importers:
       '@whiskeysockets/baileys':
         specifier: 7.0.0-rc.9
         version: 7.0.0-rc.9(sharp@0.34.5)
+      '@xterm/addon-serialize':
+        specifier: 0.14.0
+        version: 0.14.0
+      '@xterm/headless':
+        specifier: 6.0.0
+        version: 6.0.0
       better-sqlite3:
         specifier: 12.9.0
         version: 12.9.0
