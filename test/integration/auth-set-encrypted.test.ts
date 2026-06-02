@@ -232,6 +232,28 @@ describe("auth.set encrypted mode integration", () => {
     ).rejects.toThrow(/locked|retry/i);
   });
 
+  it("WR-02: auth.set with null email — accountId must NOT appear in log output (identity field uses '<email-unavailable>')", async () => {
+    // When email is absent, the handler previously interpolated accountId
+    // into the identity field: `id-${params.accountId}`. This embeds a
+    // potentially identifying value in logs and contradicts the
+    // "ONLY provider/profileId/redacted-email" residency comment.
+    // After the fix, the identity must be "<email-unavailable>", NOT
+    // contain ACCOUNT_SENTINEL.
+    const store = createInMemoryOAuthStore();
+    const { handlers, loggerSpy } = makeDeps(store);
+
+    const nullEmailParams = {
+      ...VALID_PROFILE_PARAMS,
+      email: undefined as unknown as string, // no email from provider
+    };
+
+    await handlers[AuthSetContract.method]!({ ...nullEmailParams });
+
+    const logSerialized = loggerCallsAsString(loggerSpy);
+    // accountId MUST NOT appear in any log call when email is null
+    expect(logSerialized).not.toContain(ACCOUNT_SENTINEL);
+  });
+
   it("architecture smoke: AuthSetContract importable as string method key with no @comis/memory dependency pulled in", () => {
     // AuthSetContract must be importable from @comis/core without touching
     // @comis/memory. The import at the top of this file is the implicit proof;

@@ -224,9 +224,16 @@ describe("CREDENTIAL_KEYS contract", () => {
     expect(CREDENTIAL_KEYS.has("private_key")).toBe(true);
     expect(CREDENTIAL_KEYS.has("client_secret")).toBe(true);
     expect(CREDENTIAL_KEYS.has("auth")).toBe(true);
-    // Minimum size invariant — set must be at least 26 entries to
-    // cover the three lanes (bare + snake_case + camelCase).
-    expect(CREDENTIAL_KEYS.size).toBeGreaterThanOrEqual(26);
+    // CR-01: bare OAuth token field names used by auth.set RPC contract.
+    // These MUST be in CREDENTIAL_KEYS so that any dispatcher error log
+    // that includes params (which carries {access, refresh}) is redacted
+    // by the Pino sanitizer and by sanitizeDiagnosticPayload.
+    expect(CREDENTIAL_KEYS.has("access")).toBe(true);
+    expect(CREDENTIAL_KEYS.has("refresh")).toBe(true);
+    // Minimum size invariant — set must be at least 28 entries to
+    // cover the three lanes (bare + snake_case + camelCase) plus the two
+    // CR-01 bare OAuth names.
+    expect(CREDENTIAL_KEYS.size).toBeGreaterThanOrEqual(28);
   });
 
   it("isCredentialFieldName allowlist mitigates `key` false-positives", () => {
@@ -272,5 +279,44 @@ describe("CREDENTIAL_KEYS contract", () => {
       eventKey: "evt.user.create",
       normal: "ok",
     });
+  });
+
+  // CR-01: bare OAuth field names used by auth.set RPC contract must be
+  // redacted by sanitizeDiagnosticPayload. These names were absent from
+  // CREDENTIAL_KEYS, meaning a dispatcher error log carrying
+  // { access: "<bearer>", refresh: "<token>" } in params would not be
+  // sanitized. This test must FAIL before the fix and PASS after.
+  it("CR-01: drops bare 'access' and 'refresh' OAuth token fields (auth.set params leak vector)", () => {
+    const input = {
+      method: "auth.set",
+      params: {
+        provider: "openai-codex",
+        profileId: "openai-codex:user@example.com",
+        access: "tok-bearer-SENTINEL",
+        refresh: "tok-refresh-SENTINEL",
+        accountId: "acct-SENTINEL",
+        version: 1,
+      },
+    };
+    const result = sanitizeDiagnosticPayload(input) as Record<string, unknown>;
+    const params = result["params"] as Record<string, unknown>;
+    // access and refresh must be absent from the sanitized params
+    expect(params).not.toHaveProperty("access");
+    expect(params).not.toHaveProperty("refresh");
+    // non-credential fields must be preserved
+    expect(params["method"]).toBeUndefined(); // method is a top-level field
+    expect(result["method"]).toBe("auth.set");
+    expect(params["provider"]).toBe("openai-codex");
+    expect(params["version"]).toBe(1);
+  });
+
+  it("CR-01: isCredentialFieldName returns true for bare 'access' and 'refresh'", () => {
+    expect(isCredentialFieldName("access")).toBe(true);
+    expect(isCredentialFieldName("refresh")).toBe(true);
+    // Case-insensitive coverage (Pino paths are case-sensitive — the Set
+    // needs exact-case "access"/"refresh"; the sanitizer needs
+    // isCredentialFieldName to catch any casing variant).
+    expect(isCredentialFieldName("Access")).toBe(true);
+    expect(isCredentialFieldName("REFRESH")).toBe(true);
   });
 });
