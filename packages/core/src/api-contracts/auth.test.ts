@@ -16,8 +16,8 @@ import {
 } from "./auth.js";
 
 describe("auth-domain contracts", () => {
-  it("AUTH_CONTRACTS has exactly 2 entries (the 2 methods in auth-handlers.ts)", () => {
-    expect(AUTH_CONTRACTS.length).toBe(2);
+  it("AUTH_CONTRACTS has exactly 3 entries (auth.list, auth.logout, auth.set)", () => {
+    expect(AUTH_CONTRACTS.length).toBe(3);
   });
 
   it("auth.list: method name is correct", () => {

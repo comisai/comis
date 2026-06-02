@@ -1,6 +1,6 @@
 {
-  "totalMinified": 112478,
-  "totalGzipped": 10442,
+  "totalMinified": 113183,
+  "totalGzipped": 10522,
   "budget": {
     "minified": 120000,
     "gzipped": 38912
@@ -23,6 +23,7 @@
     "audio.transcribe": 336,
     "auth.list": 578,
     "auth.logout": 399,
+    "auth.set": 740,
     "browser.act": 363,
     "browser.close": 328,
     "browser.console": 429,

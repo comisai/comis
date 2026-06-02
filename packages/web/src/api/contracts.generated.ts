@@ -860,6 +860,76 @@ export const CONTRACTS: Readonly<Record<string, ContractMeta>> = {
       "admin"
     ]
   },
+  "auth.set": {
+    "request": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "access": {
+          "type": "string",
+          "minLength": 1
+        },
+        "refresh": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expires": {
+          "type": "number"
+        },
+        "accountId": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        }
+      },
+      "required": [
+        "provider",
+        "profileId",
+        "access",
+        "refresh",
+        "expires",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "response": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "profileId": {
+          "type": "string"
+        },
+        "stored": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "profileId",
+        "stored"
+      ],
+      "additionalProperties": false
+    },
+    "scopes": [
+      "admin"
+    ]
+  },
   "browser.act": {
     "request": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
