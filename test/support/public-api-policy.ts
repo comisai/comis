@@ -952,6 +952,14 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "OutputGuardFinding",
       "OutputGuardResult",
       "createSecretManager",
+      // Phase 3 (P4a) shared-Map refactor. createSecretManagerWithMutableHandle
+      // is the daemon composition root factory (setup-secret-manager.ts + daemon.ts);
+      // it returns { secretManager, mutableHandle } over ONE backing Map.
+      // MutableSecretManager is the write-authority interface (upsert/remove);
+      // held only by the daemon composition root, never placed on AppContainer.
+      // Both are consumed by @comis/daemon — no in-repo consumer outside daemon.
+      "createSecretManagerWithMutableHandle",
+      "MutableSecretManager",
       "requiresConfirmation",
       "ActionClassification",
       "AuditEventSchema",
