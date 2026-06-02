@@ -115,7 +115,6 @@ import {
   createNamedGraphStore,
   createContextStore,
   createObservabilityStore,
-  createOAuthProfileStoreEncrypted,
   selectSecretStore,
 } from "@comis/memory";
 import { createGatewayServer } from "@comis/gateway";
@@ -1941,47 +1940,26 @@ async function bootAgents(
     logger: skillsLogger,
   });
 
-  // Hoist oauthCredentialStore construction to BEFORE
-  // setupMcp so MCP OAuth tokens are routed through the unified
-  // OAuthCredentialStorePort (not the disk-default fallback).
-  //
-  // All dependencies are available here from `foundation`:
-  //   - container.config.security.storage, dataDir  → already in scope
-  //   - secretsCrypto, secretsDb                    → from foundation (line ~1713)
-  //   - createFileLock()                            → pure factory, no deps
-  //
-  // The same store instance is later consumed by setupAgents (threaded into
-  // singleAgentDeps.oauthCredentialStore) and the RPC dispatcher. This is
-  // safe: setupAgents in setup-agents-registry.ts already guards against
-  // double-construction — it constructs its own if not provided. However,
-  // since we declare it here, we pass it through so both sites share one
-  // instance (no duplicate SQLite handles for the encrypted-mode store).
-  let encryptedStoreForMcp: import("@comis/core").OAuthCredentialStorePort | undefined;
-  if (container.config.security.storage === "encrypted") {
-    if (!secretsCrypto || !secretsDb) {
-      throw new Error(
-        "OAuth storage mode is 'encrypted' but secretsDb/secretsCrypto were not initialized. " +
-          "Hint: set SECRETS_MASTER_KEY env var (and restart the daemon) so the encrypted " +
-          "secrets store boots, or change security.storage to 'file' in your config.yaml to use the " +
-          "plaintext file backend.",
-      );
-    }
-    encryptedStoreForMcp = createOAuthProfileStoreEncrypted(secretsDb, secretsCrypto);
-  }
-  const oauthCredentialStoreForceMcp = selectOAuthCredentialStore({
-    storage: container.config.security.storage,
-    dataDir: container.config.dataDir && container.config.dataDir.length > 0
-      ? container.config.dataDir
-      : dataDir,
-    fileLock: createFileLock(),
-    encryptedStore: encryptedStoreForMcp,
-  });
+  // In Encrypted mode, MCP tokens route through the mcp_credentials table via
+  // createMcpTokenStoreEncrypted (threaded as secretsDb/secretsCrypto below).
+  // In File mode, oauthCredentialStoreForceMcp provides the portBackedStore seam.
+  const oauthCredentialStoreForceMcp =
+    container.config.security.storage !== "encrypted"
+      ? selectOAuthCredentialStore({
+          storage: container.config.security.storage,
+          dataDir: container.config.dataDir && container.config.dataDir.length > 0
+            ? container.config.dataDir
+            : dataDir,
+          fileLock: createFileLock(),
+          encryptedStore: undefined,
+        })
+      : undefined;
 
   // Construct daemon-global MCP manager BEFORE setupAgents (ordering constraint
   // -- per-agent ToolCapabilityPort adapters close over mcpClientManager).
-  // oauthCredentialStore + dataDir are threaded in so MCP OAuth tokens
-  // go through the unified OAuthCredentialStorePort (not the disk default).
-  // Inlined setupMcpManager — pure in-memory state holder construction.
+  // In Encrypted mode, secretsDb/secretsCrypto route MCP tokens through
+  // mcp_credentials (AES-256-GCM). In File mode, oauthCredentialStore+dataDir
+  // construct the chokidar portBackedStore seam inside setup-mcp.ts.
   const { mcpClientManager } = await setupMcp({
     servers: container.config.integrations.mcp.servers,
     logger: skillsLogger,
@@ -1997,7 +1975,10 @@ async function bootAgents(
     globalKeepaliveIntervalMs: container.config.integrations.mcp.keepaliveIntervalMs,
     circuitBreakerThreshold: container.config.integrations.mcp.circuitBreakerThreshold,
     circuitBreakerCooldownMs: container.config.integrations.mcp.circuitBreakerCooldownMs,
-    // Route MCP OAuth tokens through the unified credential port.
+    // Encrypted mode: route MCP tokens through mcp_credentials table (AES-256-GCM).
+    secretsDb,
+    secretsCrypto,
+    // File mode: portBackedStore seam (oauthCredentialStore + dataDir).
     oauthCredentialStore: oauthCredentialStoreForceMcp,
     dataDir: container.config.dataDir && container.config.dataDir.length > 0
       ? container.config.dataDir
