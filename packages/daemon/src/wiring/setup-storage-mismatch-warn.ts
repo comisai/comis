@@ -194,9 +194,10 @@ function probeFileSide(logger: ComisLogger, dataDir: string): void {
   if (existsSync(secretsJsonPath)) {
     try {
       const raw = JSON.parse(readFileSync(secretsJsonPath, "utf-8")) as {
-        entries?: Record<string, unknown>;
+        schemaVersion?: number;
+        secrets?: Record<string, unknown>;
       };
-      const count = Object.keys(raw.entries ?? {}).length;
+      const count = Object.keys(raw.secrets ?? {}).length;
       if (count > 0) {
         logger.warn(
           {

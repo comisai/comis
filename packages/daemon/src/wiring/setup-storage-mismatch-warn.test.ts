@@ -29,9 +29,7 @@ vi.mock("node:fs", async (importOriginal) => {
 
 import * as mockFs from "node:fs";
 
-// @ts-expect-error — RED: implementation not yet written; will fail at runtime import
 import type { StorageMismatchDeps } from "./setup-storage-mismatch-warn.js";
-// @ts-expect-error — RED: implementation not yet written; will fail at runtime import
 import { checkStorageModeConsistency } from "./setup-storage-mismatch-warn.js";
 import type { ComisLogger } from "@comis/infra";
 
@@ -130,7 +128,7 @@ describe("checkStorageModeConsistency", () => {
         return String(p).endsWith("secrets.json");
       });
       vi.mocked(mockFs.readFileSync as (...args: unknown[]) => unknown).mockReturnValue(
-        JSON.stringify({ version: 1, entries: { MY_KEY: { value: "secret" } } }),
+        JSON.stringify({ schemaVersion: 1, secrets: { MY_KEY: { value: "secret", createdAt: 1000, updatedAt: 1000 } } }),
       );
 
       const deps: StorageMismatchDeps = {
@@ -154,7 +152,7 @@ describe("checkStorageModeConsistency", () => {
         return String(p).endsWith("secrets.json");
       });
       vi.mocked(mockFs.readFileSync as (...args: unknown[]) => unknown).mockReturnValue(
-        JSON.stringify({ version: 1, entries: {} }),
+        JSON.stringify({ schemaVersion: 1, secrets: {} }),
       );
 
       const deps: StorageMismatchDeps = {
