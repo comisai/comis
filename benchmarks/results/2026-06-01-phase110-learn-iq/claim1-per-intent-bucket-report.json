@@ -1,0 +1,9 @@
+{
+  "harnessVersion": "phase-110-06-v1",
+  "claim": "per-intent-bucket-drives-order",
+  "mRankForUsedForIntentQuery": 1,
+  "mRankForOtherIntentQuery": 2,
+  "perIntentRankLift": 1,
+  "perIntentReorders": true,
+  "pass": true
+}

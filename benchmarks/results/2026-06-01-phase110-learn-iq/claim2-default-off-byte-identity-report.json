@@ -1,0 +1,9 @@
+{
+  "harnessVersion": "phase-110-06-v1",
+  "claim": "default-off-byte-identity",
+  "noStoreOrderLength": 3,
+  "shippingOrderLength": 3,
+  "defaultOffByteIdentical": true,
+  "readUsefulnessCalls": 0,
+  "pass": true
+}

@@ -1,0 +1,9 @@
+{
+  "harnessVersion": "phase-110-06-v1",
+  "claim": "tenant-agent-intent-isolation",
+  "inScopePresent": true,
+  "foreignTenantPresent": false,
+  "foreignAgentPresent": false,
+  "isolationHolds": true,
+  "pass": true
+}
