@@ -5,10 +5,11 @@
  * Four subcommands with storage-mode-branching:
  *
  * - `comis auth login`   — interactive OAuth login (browser + manual paste).
- *                          Runs locally for file-backed storage; encrypted
- *                          storage fails fast (daemon-assisted login is not
- *                          yet supported). Accepts `--profile <id>` to
- *                          override the storage key.
+ *                          File mode stores credentials locally via the file
+ *                          adapter. Encrypted mode runs the OAuth flow
+ *                          locally then delegates persistence to the daemon
+ *                          via `auth.set` RPC (no CLI memory import).
+ *                          Accepts `--profile <id>` to override the storage key.
  * - `comis auth list`    — list stored profiles. File-mode reads the local
  *                          file store; encrypted-mode calls daemon RPC
  *                          `auth.list` (token-stripped projection).
@@ -27,9 +28,11 @@
  * Storage-mode branching: every store-backed subcommand reads
  * `config.security.storage` via `loadStorageMode()` and either routes
  * through `withClient` (after `requireDaemonOrExit`) or uses the existing
- * `openOAuthStoreFromConfig` helper unchanged. The helper itself fails fast
- * on encrypted storage (defense-in-depth) — encrypted mode never reaches
- * `selectOAuthCredentialStore` from this file.
+ * `openOAuthStoreFromConfig` helper unchanged. For `auth login`, encrypted
+ * mode runs the OAuth flow locally then delegates persistence to the daemon
+ * via `callTyped(AuthSetContract, profile)` so the CLI never touches
+ * secrets.db. `openOAuthStoreFromConfig` still fails fast on encrypted
+ * storage as a defense-in-depth guard for other code paths.
  *
  * Only `--provider openai-codex` is supported for `auth login` today. Other
  * providers ship later. The `--provider` filter on `list` / `status` is
@@ -67,11 +70,11 @@ import {
   createConsoleLogger,
   type OAuthError,
 } from "@comis/core";
-// auth.list / auth.logout RPC calls go through
+// auth.list / auth.logout / auth.set RPC calls go through
 // `callTyped(client, <Contract>, params)` so the typed RPC surface
 // validates this file. The contracts mirror `auth-handlers.ts` —
 // see `packages/core/src/api-contracts/auth.ts`.
-import { AuthListContract, AuthLogoutContract } from "@comis/core";
+import { AuthListContract, AuthLogoutContract, AuthSetContract } from "@comis/core";
 import { error, info, success } from "../output/format.js";
 import { renderTable } from "../output/table.js";
 import { formatRelativeExpiry } from "../output/relative-time.js";
@@ -183,7 +186,7 @@ async function loadStorageMode(): Promise<CredentialStorageMode> {
   // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
   const envPaths = process.env.COMIS_CONFIG_PATHS;
   const configPath =
-    envPaths?.split(",")[0] ?? safePath(homedir(), ".comis", "config.yaml");
+    envPaths?.split(":")[0] ?? safePath(homedir(), ".comis", "config.yaml");
   const loadResult = loadConfigFile(configPath);
   if (!loadResult.ok) {
     // No config file -> default to file storage (matches
@@ -211,7 +214,7 @@ function openOAuthStoreFromConfig(): OAuthCredentialStorePort {
   // eslint-disable-next-line no-restricted-syntax -- CLI bootstrap before SecretManager
   const envPaths = process.env.COMIS_CONFIG_PATHS;
   const configPath =
-    envPaths?.split(",")[0] ?? safePath(homedir(), ".comis", "config.yaml");
+    envPaths?.split(":")[0] ?? safePath(homedir(), ".comis", "config.yaml");
 
   const loadResult = loadConfigFile(configPath);
   if (!loadResult.ok) {
@@ -317,7 +320,7 @@ export function registerAuthCommand(program: Command): void {
   auth
     .command("login")
     .description(
-      "Log in to an OAuth-enabled provider. Runs locally for file-backed storage. Daemon-assisted login for encrypted storage is not yet supported.",
+      "Log in to an OAuth-enabled provider. File mode stores locally. Encrypted mode routes through the daemon (auth.set RPC).",
     )
     .requiredOption(
       "--provider <id>",
@@ -382,6 +385,86 @@ export function registerAuthCommand(program: Command): void {
           process.exit(2);
         }
 
+        // Resolve storage mode FIRST — branches to encrypted RPC, env reject,
+        // or file (falls through to the existing store.set path below).
+        const storage = await loadStorageMode();
+
+        // ----- Env branch: reject immediately (env is read-only) ------------
+        if (storage === "env") {
+          error(
+            "OAuth login is not supported in 'env' storage mode (read-only). " +
+              "Set security.storage to 'file' or 'encrypted' in config.yaml to enable login.",
+          );
+          process.exit(1);
+        }
+
+        // ----- Encrypted branch: daemon-assisted RPC ------------------------
+        if (storage === "encrypted") {
+          // Require a running daemon BEFORE starting the OAuth flow.
+          await requireDaemonOrExit();
+          const isRemote = isRemoteEnvironment({
+            env: process.env,
+            force: opts.remote ? "remote" : opts.local ? "local" : undefined,
+          });
+          const prompter = createClackAdapter();
+          const result = await loginOpenAICodexOAuth({
+            prompter,
+            isRemote,
+            openUrl: open,
+            logger,
+            method,
+          });
+          if (!result.ok) {
+            error(result.error.message);
+            if (result.error.hint) info(result.error.hint);
+            process.exit(1);
+          }
+          const v = result.value;
+          const finalProfileId = opts.profile ?? v.profileId;
+          try {
+            const rpcResult = await withClient((client) =>
+              callTyped(client, AuthSetContract, {
+                provider: PROVIDER_OPENAI_CODEX,
+                profileId: finalProfileId,
+                access: v.access,
+                refresh: v.refresh,
+                expires: v.expires,
+                accountId: v.accountId,
+                email: v.email,
+                displayName: v.displayName,
+                version: 1,
+              }),
+            );
+            logger.info(
+              {
+                provider: PROVIDER_OPENAI_CODEX,
+                profileId: rpcResult.profileId,
+                identity:
+                  redactEmailForLog(v.email) ?? `id-${v.accountId ?? "<unknown>"}`,
+                action: "login",
+                submodule: "auth-cli",
+              },
+              "OAuth profile stored via daemon RPC",
+            );
+            success(
+              `Logged in as ${v.email ?? v.displayName ?? v.profileId} (profile: ${finalProfileId})`,
+            );
+            info(
+              "Note: stored; restart/reload may be required before the running daemon uses it.",
+            );
+          } catch (rpcErr) {
+            if (isOAuthError(rpcErr)) {
+              exitOnOAuthError(rpcErr);
+            }
+            const msg =
+              rpcErr instanceof Error ? rpcErr.message : String(rpcErr);
+            error(`Failed to store OAuth profile: ${msg}`);
+            process.exit(1);
+          }
+          return;
+        }
+
+        // ----- File branch: existing CLI-local store.set path ---------------
         try {
           const store = openOAuthStoreFromConfig();
           const isRemote = isRemoteEnvironment({

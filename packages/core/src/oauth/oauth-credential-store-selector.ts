@@ -95,6 +95,18 @@ export function selectOAuthCredentialStore(
     return encryptedStore;
   }
 
+  // WR-01: env mode has no writable OAuth credential store. The CLI rejects
+  // OAuth login before reaching this point; the daemon should never attempt
+  // to write OAuth profiles in env mode. Fail fast rather than silently
+  // falling through to the file adapter (which would write credentials to
+  // a file that is never read in env mode).
+  if (storage === "env") {
+    throw new Error(
+      "OAuth credential store is read-only in 'env' storage mode. " +
+        "Set security.storage to 'file' or 'encrypted' in config.yaml to enable OAuth login.",
+    );
+  }
+
   // Default: plaintext file-backed adapter at ${dataDir}/auth-profiles.json.
   return fileFactory({ dataDir, fileLock });
 }
