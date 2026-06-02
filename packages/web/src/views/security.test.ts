@@ -234,16 +234,19 @@ describe("IcSecurityView", () => {
   it("error state on all RPC failures with retry button", async () => {
     const rpc = createSecurityMockRpcClient(() => Promise.reject(new Error("RPC failed")));
     const el = await createElement({ rpcClient: rpc });
+    // Flush the rejected promise through _loadData's try/catch
     await flush(el);
 
-    // Security uses Promise.allSettled but catches at top-level
+    // _loadData catches the config.read rejection and sets _loadState = "error"
+    expect(priv(el)._loadState).toBe("error");
+
+    // Error state renders .error-message
     const errorMsg = el.shadowRoot?.querySelector(".error-message");
-    // Even with allSettled, if all fail the top-level try-catch sets error
-    // The view transitions to loaded state with empty data when allSettled succeeds
-    // but only errors out on unhandled exception. Check load state.
-    const loadState = priv(el)._loadState;
-    // allSettled doesn't reject, so loadState should be "loaded" even when all calls fail
-    expect(loadState === "loaded" || loadState === "error").toBe(true);
+    expect(errorMsg).toBeTruthy();
+
+    // Error state renders .retry-btn
+    const retryBtn = el.shadowRoot?.querySelector(".retry-btn");
+    expect(retryBtn).toBeTruthy();
   });
 
   // --- Audit tab tests ---
