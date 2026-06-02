@@ -79,6 +79,8 @@ function makeDeps(args: {
   key?: string | undefined;
   logger?: any;
   providers?: Record<string, { apiKeyName?: string }>;
+  /** The master cost-feature kill switch (v1 opt-out posture). Defaults to true (on). */
+  costFeaturesEnabled?: boolean;
 }) {
   // CR-04: the wiring resolves PER-AGENT. Tests may pass a single `agentConfig`
   // (keyed under "default") or a full `agentsConfig` map + `defaultAgentId`.
@@ -96,6 +98,8 @@ function makeDeps(args: {
     clock: { now: () => 1_700_000_000_000 } as any,
     timers: { setTimeout: vi.fn(), clearTimeout: vi.fn() } as any,
     logger: args.logger ?? makeLogger(),
+    // Default the master kill switch ON (v1 opt-out posture) so existing tests are unaffected.
+    costFeaturesEnabled: args.costFeaturesEnabled ?? true,
   };
 }
 
@@ -208,6 +212,50 @@ describe("buildDialecticWiring (Phase 109 — the dialectic seam + recall builde
     // Each agent's OWN maxRecall — not the resolving/default agent's.
     expect(wiring.dialecticMaxRecall!("default")).toBe(10);
     expect(wiring.dialecticMaxRecall!("agent-b")).toBe(3);
+  });
+
+  it("Test 6 (kill switch): costFeaturesEnabled:false force-disables memory_ask wiring even when an agent has dialectic.enabled", () => {
+    // The master cost-feature kill switch (v1 opt-out posture, increment 1): when the
+    // operator sets memory.costFeatures.enabled:false, the dialectic (memory_ask) is the
+    // ONE query-time LLM tool and is a cost-bearing feature — so the wiring must return the
+    // dead {} (no seam, no recall builder ⇒ the handler abstains, the tool is not exposed)
+    // EVEN THOUGH the agent's own dialectic.enabled is true. The cost switch wins over the
+    // per-agent opt-in.
+    const deps = makeDeps({
+      agentConfig: makeAgentConfig({ dialectic: { enabled: true, maxOutputTokens: 1024, maxRecall: 10 } } as any),
+      key: "test-key-value",
+      costFeaturesEnabled: false,
+    });
+    const wiring = buildDialecticWiring(deps);
+    expect(wiring.dialecticSeam, "no seam when the cost kill switch is off").toBeUndefined();
+    expect(wiring.buildDialecticRecall, "no recall builder when the cost kill switch is off").toBeUndefined();
+    expect(wiring.dialecticMaxRecall, "no maxRecall resolver when the cost kill switch is off").toBeUndefined();
+  });
+
+  it("Test 6b (kill switch): costFeaturesEnabled:false also force-disables a NON-default agent's enabled dialectic", () => {
+    const deps = makeDeps({
+      defaultAgentId: "default",
+      agentsConfig: {
+        default: makeAgentConfig({ dialectic: { enabled: false, maxOutputTokens: 1024, maxRecall: 10 } } as any),
+        "agent-b": makeAgentConfig({ name: "agent-b", dialectic: { enabled: true, maxOutputTokens: 512, maxRecall: 7 } } as any),
+      },
+      key: "k",
+      costFeaturesEnabled: false,
+    });
+    const wiring = buildDialecticWiring(deps);
+    expect(wiring.dialecticSeam).toBeUndefined();
+    expect(wiring.buildDialecticRecall).toBeUndefined();
+  });
+
+  it("Test 6c (kill switch on — the default): an enabled agent is UNAFFECTED (byte-identical to pre-switch)", () => {
+    const deps = makeDeps({
+      agentConfig: makeAgentConfig({ dialectic: { enabled: true, maxOutputTokens: 1024, maxRecall: 10 } } as any),
+      key: "test-key-value",
+      costFeaturesEnabled: true,
+    });
+    const wiring = buildDialecticWiring(deps);
+    expect(wiring.dialecticSeam, "seam live when the kill switch is on").toBeDefined();
+    expect(wiring.buildDialecticRecall, "recall builder live when the kill switch is on").toBeDefined();
   });
 
   it("Test 5c (CR-04): buildDialecticRecall re-reads the CALLING agent's RagConfig (not the default's)", () => {

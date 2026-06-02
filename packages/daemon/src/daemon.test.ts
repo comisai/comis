@@ -43,6 +43,9 @@ function createMockContainer(gatewayOverrides?: Partial<GatewayConfig>): AppCont
         embeddingDimensions: 1536,
         compaction: { enabled: false, threshold: 1000, targetSize: 500 },
         retention: { maxAgeDays: 0 },
+        // Master cost-feature kill switch (schema default true). Present here because the real
+        // bootstrap always defaults it; the daemon's first-run notice + dialectic wiring read it.
+        costFeatures: { enabled: true },
       },
       embedding: {
         enabled: false,

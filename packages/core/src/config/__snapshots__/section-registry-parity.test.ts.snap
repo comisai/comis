@@ -6147,6 +6147,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("memor
     "type": "integer"
   },
   {
+    "default": {
+      "enabled": true
+    },
+    "immutable": false,
+    "path": "memory.costFeatures",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "memory.costFeatures.enabled",
+    "type": "boolean"
+  },
+  {
     "default": "memory.db",
     "immutable": false,
     "path": "memory.dbPath",
@@ -11785,6 +11799,9 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "targetSize": 500,
         "threshold": 1000
       },
+      "costFeatures": {
+        "enabled": true
+      },
       "dbPath": "memory.db",
       "embeddingDimensions": 1536,
       "embeddingModel": "text-embedding-3-small",
@@ -11828,6 +11845,20 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": false,
     "path": "memory.compaction.threshold",
     "type": "integer"
+  },
+  {
+    "default": {
+      "enabled": true
+    },
+    "immutable": false,
+    "path": "memory.costFeatures",
+    "type": "object"
+  },
+  {
+    "default": true,
+    "immutable": false,
+    "path": "memory.costFeatures.enabled",
+    "type": "boolean"
   },
   {
     "default": "memory.db",
@@ -22015,6 +22046,22 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("mem
       ],
       "type": "object"
     },
+    "costFeatures": {
+      "additionalProperties": false,
+      "default": {
+        "enabled": true
+      },
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object"
+    },
     "dbPath": {
       "default": "memory.db",
       "type": "string"
@@ -22087,7 +22134,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("mem
     "rerankerModel",
     "rerankerModelsDir",
     "rerankerGpu",
-    "rerankerThreads"
+    "rerankerThreads",
+    "costFeatures"
   ],
   "type": "object"
 }"
@@ -32863,6 +32911,9 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "targetSize": 500,
           "threshold": 1000
         },
+        "costFeatures": {
+          "enabled": true
+        },
         "dbPath": "memory.db",
         "embeddingDimensions": 1536,
         "embeddingModel": "text-embedding-3-small",
@@ -32905,6 +32956,22 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "enabled",
             "threshold",
             "targetSize"
+          ],
+          "type": "object"
+        },
+        "costFeatures": {
+          "additionalProperties": false,
+          "default": {
+            "enabled": true
+          },
+          "properties": {
+            "enabled": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "enabled"
           ],
           "type": "object"
         },
@@ -32980,7 +33047,8 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "rerankerModel",
         "rerankerModelsDir",
         "rerankerGpu",
-        "rerankerThreads"
+        "rerankerThreads",
+        "costFeatures"
       ],
       "type": "object"
     },

@@ -88,6 +88,8 @@ function makeDeps(args: {
   return {
     defaultAgentId: "default",
     agentsConfig: { default: args.agentConfig },
+    // Master cost-feature kill switch ON (the default) so the dialectic wiring is live.
+    costFeaturesEnabled: true,
     secretManager: { get: vi.fn(() => "k"), has: vi.fn(() => true) } as any,
     providers: {},
     tenantId: args.tenantId ?? "tenant-a",

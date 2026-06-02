@@ -87,3 +87,43 @@ describe("MemoryConfigSchema reranker fields", () => {
     expect(result.success).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// costFeatures master kill switch (v1 opt-out posture — increment 1)
+//
+// A single top-level gate that, when `false`, force-disables ALL LLM
+// cost-bearing memory features (the crons + the dialectic tool) regardless of
+// their per-agent config. Default TRUE because the v1 posture is opt-OUT, so a
+// bare config is byte-identical (the gate is on but gates nothing until a
+// per-agent feature is enabled). ADDITIVE — no existing default is flipped.
+// ---------------------------------------------------------------------------
+
+describe("MemoryConfigSchema costFeatures kill switch", () => {
+  it("defaults costFeatures.enabled to true (the v1 opt-out posture — operator disables)", () => {
+    const result = MemoryConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.costFeatures).toEqual({ enabled: true });
+    }
+  });
+
+  it("accepts costFeatures.enabled: false (the operator escape hatch)", () => {
+    const result = MemoryConfigSchema.safeParse({ costFeatures: { enabled: false } });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.costFeatures.enabled).toBe(false);
+    }
+  });
+
+  it("rejects a non-boolean costFeatures.enabled", () => {
+    expect(
+      MemoryConfigSchema.safeParse({ costFeatures: { enabled: "nope" } }).success,
+    ).toBe(false);
+  });
+
+  it("rejects an unknown key inside costFeatures (strictObject)", () => {
+    expect(
+      MemoryConfigSchema.safeParse({ costFeatures: { enabled: true, bogus: 1 } }).success,
+    ).toBe(false);
+  });
+});

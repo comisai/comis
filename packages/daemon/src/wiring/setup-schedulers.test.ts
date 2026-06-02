@@ -981,6 +981,119 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // 13.4z. memory.costFeatures master kill switch (v1 opt-out posture — increment 1)
+  //
+  // A single top-level gate. When `memory.costFeatures.enabled === false`, EVERY
+  // LLM cost-bearing memory CRON is force-disabled at the registration site —
+  // even for an agent whose per-agent feature is explicitly enabled. The gated
+  // set is: memoryReview, memoryConsolidation, memoryReasoning,
+  // memoryUserRepresentation, memoryUsefulnessJudge, memoryOnlineTuning. The
+  // $0 keyless memoryLifecycle sweep and the privacy-gated socialModeling cron
+  // are NOT gated by this switch (lifecycle is keyless; social has its OWN
+  // privacy sign-off gate). When the switch is on (the default) registration is
+  // unchanged → byte-identical.
+  // -------------------------------------------------------------------------
+
+  /** A fully-enabled agent: every cost cron + lifecycle on; social on AND signed off. */
+  function allFeaturesOnAgent() {
+    return {
+      name: "Agent 1",
+      skills: { builtinTools: { browser: false } },
+      session: { resetPolicy: { mode: "none" } },
+      scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+      memoryReview: { enabled: true },
+      memoryConsolidation: { enabled: true },
+      memoryReasoning: { enabled: true },
+      memoryUserRepresentation: { enabled: true },
+      memoryUsefulnessJudge: { enabled: true },
+      memoryOnlineTuning: { enabled: true },
+      memoryLifecycle: { enabled: true },
+      socialModeling: { enabled: true, privacyReviewSignedOffBy: "operator@example.com" },
+    };
+  }
+
+  /** A deps object whose container carries an explicit memory.costFeatures.enabled. */
+  function depsWithCostSwitch(agents: Record<string, any>, costFeaturesEnabled: boolean) {
+    const deps = createMinimalDeps({ agents });
+    (deps.container as any).config.memory = { costFeatures: { enabled: costFeaturesEnabled } };
+    return deps;
+  }
+
+  const COST_CRON_SENTINELS = [
+    "__MEMORY_REVIEW__",
+    "__MEMORY_CONSOLIDATION__",
+    "__MEMORY_REASONING__",
+    "__USER_REPRESENTATION__",
+    "__USEFULNESS_JUDGE__",
+    "__ONLINE_TUNING__",
+  ] as const;
+
+  it("force-disables EVERY cost-bearing memory cron when memory.costFeatures.enabled is false (even per-agent-enabled)", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(depsWithCostSwitch({ "agent-1": allFeaturesOnAgent() }, false));
+
+    const addedSentinels = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    for (const sentinel of COST_CRON_SENTINELS) {
+      expect(addedSentinels, `${sentinel} must NOT be registered when the kill switch is off`).not.toContain(sentinel);
+    }
+  });
+
+  it("leaves the $0 lifecycle sweep and the privacy-gated social cron UNAFFECTED by the cost kill switch", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(depsWithCostSwitch({ "agent-1": allFeaturesOnAgent() }, false));
+
+    const addedSentinels = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    // The keyless lifecycle sweep is NOT a cost feature → still registered.
+    expect(addedSentinels).toContain("__MEMORY_LIFECYCLE__");
+    // socialModeling has its OWN privacy gate (independent of the cost switch) → still registered.
+    expect(addedSentinels).toContain("__SOCIAL_MODELING__");
+  });
+
+  it("registers ALL cost-bearing memory crons when the kill switch is on (the default — byte-identical)", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(depsWithCostSwitch({ "agent-1": allFeaturesOnAgent() }, true));
+
+    const addedSentinels = addJob.mock.calls.map((c) => (c[0] as any)?.payload?.text);
+    for (const sentinel of COST_CRON_SENTINELS) {
+      expect(addedSentinels, `${sentinel} must be registered when the kill switch is on`).toContain(sentinel);
+    }
+  });
+
+  // The first-run cost-disclosure notice is invoked from inside setupSchedulers (the cron-wiring
+  // seam) — a forward-presence belt that it actually fires. The REAL notice helper runs (it is
+  // not mocked), so a WARN naming the off-switch lands on schedulerLogger.warn.
+
+  it("emits the first-run cost-disclosure WARN when the kill switch is on and a cost feature is active", async () => {
+    withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    const deps = depsWithCostSwitch({ "agent-1": { ...allFeaturesOnAgent() } }, true);
+    await setupSchedulers(deps);
+
+    const disclosureWarn = (deps.schedulerLogger.warn as any).mock.calls.find(
+      (c: any[]) => JSON.stringify(c).includes("memory.costFeatures.enabled: false"),
+    );
+    expect(disclosureWarn, "a cost-disclosure WARN naming the off-switch was emitted").toBeDefined();
+  });
+
+  it("emits NO cost-disclosure WARN for a default (no cost feature active) agent", async () => {
+    withRegistrableScheduler();
+    const setupSchedulers = await getSetupSchedulers();
+    const deps = depsWithCostSwitch(
+      { "agent-1": { name: "Agent 1", skills: { builtinTools: { browser: false } }, session: { resetPolicy: { mode: "none" } }, scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } } } },
+      true,
+    );
+    await setupSchedulers(deps);
+
+    const disclosureWarn = (deps.schedulerLogger.warn as any).mock.calls.find(
+      (c: any[]) => JSON.stringify(c).includes("memory.costFeatures.enabled: false"),
+    );
+    expect(disclosureWarn, "no cost-disclosure WARN when nothing is active").toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
   // 13.5. sessionStrategy and maxHistoryTurns propagated in event emission
   // -------------------------------------------------------------------------
 

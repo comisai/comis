@@ -90,6 +90,13 @@ export interface DialecticWiringDeps {
    *  model/operationModels + rag). The wiring enables when ANY agent opts in and resolves the
    *  seam/recall/maxRecall per invoking agent from THIS map. */
   agentsConfig: Record<string, PerAgentConfig>;
+  /** The master cost-feature kill switch (`memory.costFeatures.enabled`, v1 opt-out posture).
+   *  The dialectic (`memory_ask`) is the ONE query-time LLM tool in the memory stack — a
+   *  cost-bearing feature — so when this is `false` the wiring returns the dead `{}` (no seam,
+   *  no recall builder, no maxRecall ⇒ the handler abstains, the tool is never exposed) EVEN
+   *  for an agent whose own `dialectic.enabled` is true. The cost switch wins over the per-agent
+   *  opt-in. Default `true` (the schema default) ⇒ byte-identical to the pre-switch behavior. */
+  costFeaturesEnabled: boolean;
   /** Resolves the provider apiKey VALUE by NAME (never logged). */
   secretManager: { get: (name: string) => string | undefined };
   /** Provider entries (for apiKeyName lookup) — `container.config.providers?.entries`. */
@@ -147,6 +154,10 @@ export interface DialecticBootSlice {
       /** The configured tenant — the (tenant, agent) scope for the LEARN-03 tuned-alpha read on
        *  the dialectic recall path (the SAME field daemon.ts reads for the handler's tenantId). */
       tenantId: string;
+      /** The master cost-feature kill switch (`memory.costFeatures.enabled`). Threaded into the
+       *  dialectic wiring so the query-time `memory_ask` tool is force-disabled when the operator
+       *  turns all cost features off. */
+      memory: { costFeatures: { enabled: boolean } };
     };
     eventBus?: TypedEventBus;
   };
@@ -178,6 +189,9 @@ export function dialecticWiringDepsFromBoot(c: DialecticBootSlice): DialecticWir
   return {
     defaultAgentId: c.defaultAgentId,
     agentsConfig: c.agentsConfig,
+    // The master cost-feature kill switch — the dialectic (memory_ask) is a cost feature, so a
+    // `false` here force-disables it regardless of any agent's per-agent dialectic.enabled.
+    costFeaturesEnabled: c.container.config.memory.costFeatures.enabled,
     secretManager: c.container.secretManager,
     providers: c.container.config.providers?.entries ?? {},
     stores: {
@@ -214,10 +228,20 @@ const DIALECTIC_DEFAULT_MAX_RECALL = 10;
  * for the seam, RagConfig for recall, maxRecall for the DoS bound), memoizing the seam per agent.
  */
 export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring {
-  const { defaultAgentId, agentsConfig, secretManager, providers, stores, tenantId, clock, timers, eventBus, logger } = deps;
+  const { defaultAgentId, agentsConfig, costFeaturesEnabled, secretManager, providers, stores, tenantId, clock, timers, eventBus, logger } = deps;
 
-  // The cost gate: enable when ANY agent opts in (CR-04 — a non-default opt-in must not be dead).
-  // No agent enabled ⇒ no seam/recall/maxRecall ⇒ the handler abstains (no query-time-LLM wired).
+  // The master cost-feature kill switch (v1 opt-out posture). The dialectic (memory_ask) is the
+  // ONE query-time LLM tool — a cost-bearing feature — so when the operator turns all cost
+  // features off this returns the dead `{}` (no seam, no recall builder, no maxRecall ⇒ the
+  // handler abstains, the tool is never exposed) EVEN when an agent's own dialectic.enabled is
+  // true. The kill switch wins over the per-agent opt-in. Checked BEFORE the per-agent gate so a
+  // single false short-circuits the whole wiring.
+  if (!costFeaturesEnabled) {
+    return {};
+  }
+
+  // The per-agent cost gate: enable when ANY agent opts in (CR-04 — a non-default opt-in must not
+  // be dead). No agent enabled ⇒ no seam/recall/maxRecall ⇒ the handler abstains (no query-time-LLM wired).
   const anyEnabled = Object.values(agentsConfig).some((a) => a?.dialectic?.enabled === true);
   if (!anyEnabled) {
     return {};
