@@ -902,6 +902,85 @@ describe("setupSchedulers", () => {
   });
 
   // -------------------------------------------------------------------------
+  // __MEMORY_LIFECYCLE__ cron registration (Phase 112, FORGET-02 — Track C). OFF
+  // by default. Registered ONLY when the operator sets memoryLifecycle.enabled; a
+  // default agent registers NO job → byte-identical with the config absent. Default
+  // 0 9 * * * runs AFTER online-tuning's 0 8. Like the bandit (NOT the LLM crons)
+  // the sentinel dispatch is KEYLESS (no model/key) — the registration mirrors the
+  // online-tuning block. Even when enabled the sweep is DORMANT (evicts/demotes 0).
+  // -------------------------------------------------------------------------
+
+  it("registers NO __MEMORY_LIFECYCLE__ cron for a default (lifecycle-off) agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        // memoryLifecycle undefined => default OFF (the opt-in gate — byte-identical).
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const lifecycleAdds = addJob.mock.calls.filter(
+      (c) => (c[0] as any)?.payload?.text === "__MEMORY_LIFECYCLE__",
+    );
+    expect(lifecycleAdds.length).toBe(0);
+  });
+
+  it("registers the __MEMORY_LIFECYCLE__ cron (default 0 9 * * *) for an enabled agent", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryLifecycle: { enabled: true },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const lifecycleAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__MEMORY_LIFECYCLE__");
+    expect(lifecycleAdd).toBeDefined();
+    expect(lifecycleAdd.id).toBe("memory-lifecycle-agent-1");
+    expect(lifecycleAdd.name).toBe("Memory lifecycle");
+    // Default schedule runs AFTER online-tuning's 0 8.
+    expect(lifecycleAdd.schedule).toEqual({ kind: "cron", expr: "0 9 * * *" });
+    expect(lifecycleAdd.sessionTarget).toBe("isolated");
+    expect(lifecycleAdd.sessionStrategy).toBe("fresh");
+    expect(lifecycleAdd.payload).toEqual({ kind: "system_event", text: "__MEMORY_LIFECYCLE__" });
+  });
+
+  it("honors a custom memory-lifecycle schedule when the operator overrides it", async () => {
+    const { addJob } = withRegistrableScheduler();
+    const agents = {
+      "agent-1": {
+        name: "Agent 1",
+        skills: { builtinTools: { browser: false } },
+        session: { resetPolicy: { mode: "none" } },
+        scheduler: { cron: { enabled: true, maxConcurrentRuns: 2, maxJobs: 10 } },
+        memoryLifecycle: { enabled: true, schedule: "15 4 * * 1" },
+      },
+    };
+
+    const setupSchedulers = await getSetupSchedulers();
+    await setupSchedulers(createMinimalDeps({ agents }));
+
+    const lifecycleAdd = addJob.mock.calls
+      .map((c) => c[0] as any)
+      .find((j) => j?.payload?.text === "__MEMORY_LIFECYCLE__");
+    expect(lifecycleAdd?.schedule).toEqual({ kind: "cron", expr: "15 4 * * 1" });
+  });
+
+  // -------------------------------------------------------------------------
   // 13.5. sessionStrategy and maxHistoryTurns propagated in event emission
   // -------------------------------------------------------------------------
 
