@@ -119,23 +119,18 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
 
     // -----------------------------------------------------------------------
     // memory.ask — the dialectic (Phase 109 — DIAL-01/02/03). The KEYSTONE: a
-    // grounded, cited NL answer over the agent's LLM-free recall pipeline.
-    //
-    // It runs the FULL createMemoryRecall (the injected `buildDialecticRecall`
-    // factory) for the question — NEVER `deps.memoryApi.search`, which bypasses
-    // the TRUST FILTER (the documented trap). createMemoryRecall trust-FILTERS but
-    // returns RAW `entry.content` — redaction/sanitization is NOT recall's job; it
-    // is THIS handler's responsibility (mirroring rag-retriever, which applies it at
-    // prompt-assembly time, never inside recall). On empty/insufficient recall it
-    // abstains in CODE WITHOUT calling the seam (Pitfall 5 — saves the LLM call).
-    // Otherwise it orders the grounding trust-first (orderByTrust), then applies the
-    // SAME neutralization rag-retriever uses (sanitizeToolOutput + wrapExternalContent)
-    // to the recalled content before the seam sees it, clamps the grounding to the
-    // per-agent dialectic.maxRecall DoS bound, calls the ONE injected query-time seam,
-    // and assembles the response (assembleSynthesis: abstain-in-code + citations
-    // VALIDATED ⊆ recalled ids). DIAL-03: the citation→sourceId chain is computed
-    // (counts/ids-only) for the recall-trace. Logging is counts/ids-ONLY — NEVER the
-    // question, the recalled content, or the answer.
+    // grounded, cited NL answer over the agent's LLM-free recall pipeline. Runs the
+    // FULL createMemoryRecall (the injected `buildDialecticRecall`) — NEVER
+    // `deps.memoryApi.search`, which bypasses the TRUST FILTER (the documented trap).
+    // Recall trust-FILTERS but returns RAW `entry.content`; redaction/sanitization is
+    // THIS handler's job (mirroring rag-retriever, never inside recall). Empty recall
+    // ⇒ abstain in CODE WITHOUT the seam (Pitfall 5). Else: order trust-first
+    // (orderByTrust) → the SAME neutralization rag-retriever uses (sanitizeToolOutput
+    // + wrapExternalContent) → clamp to the per-agent dialectic.maxRecall DoS bound →
+    // the ONE injected query-time seam → assembleSynthesis (abstain-in-code + citations
+    // VALIDATED ⊆ recalled ids). DIAL-03: the citation→sourceId chain (counts/ids-only)
+    // for the recall-trace. Logging is counts/ids-ONLY — never the question, the
+    // recalled content, or the answer.
     // -----------------------------------------------------------------------
     [MemoryAskContract.method]: async (rawParams) => {
       const askStart = systemNowMs();
