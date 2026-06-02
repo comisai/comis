@@ -265,6 +265,33 @@ export async function setupMedia(deps: {
     }
   }
 
+  // REQ-13: Rebuild vision registry on credential rotation so rotated vision API
+  // keys are observed without a daemon restart. The subscription rebuilds the Map
+  // in place so all downstream consumers holding a reference to visionRegistry
+  // see the new providers on their next invocation.
+  const VISION_KEYS = new Set(["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"]);
+  container.eventBus.on("secret:changed", ({ name }) => {
+    if (!VISION_KEYS.has(name)) return;
+    const updated = createVisionProviderRegistry({
+      secretManager: container.secretManager,
+      config: mediaConfig.vision,
+    });
+    if (visionRegistry) {
+      // Rebuild in place: existing consumers holding a Map reference see the new providers.
+      visionRegistry.clear();
+      for (const [k, v] of updated) {
+        visionRegistry.set(k, v);
+      }
+    } else if (updated.size > 0) {
+      // Registry was absent at boot (no keys then); materialise it now.
+      visionRegistry = updated;
+    }
+    skillsLogger.info(
+      { name, providers: visionRegistry ? [...visionRegistry.keys()] : [], step: "credential-rotation-vision" },
+      "Vision provider registry rebuilt after credential rotation",
+    );
+  });
+
   // 6.6.8.2. Link understanding runner — detect, fetch, format pipeline
   const linkRunner: LinkRunner = createLinkRunner({
     config: mediaConfig.linkUnderstanding,
