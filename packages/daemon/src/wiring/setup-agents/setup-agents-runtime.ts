@@ -90,14 +90,7 @@ export async function setupSingleAgent(
 
   const { container, memoryAdapter, agentLogger, resolvedAgentDir } = deps;
 
-  // Resolve "default" model/provider to global defaults.
-  // Resolution sources, in priority order:
-  //   1. Per-agent explicit value (agentConfig.model / .provider)
-  //   2. modelsConfig.defaultModel / .defaultProvider (YAML models.* section)
-  //   3. Pi-ai catalog: most-populated native provider (heuristic), mid-tier
-  //      cost model from resolveOperationDefaults
-  // Surfaces resolution source at INFO once per agent so operators can see
-  // which model got picked without having to read the resolver source.
+  // Resolve "default" model/provider: per-agent config → YAML models.* → pi-ai catalog heuristic.
   const modelsConfig = container.config.models;
   const resolved = resolveAgentModel(agentConfig, modelsConfig);
   // Phase 92 (RERANK-01/CR-01): EFFECTIVE rag.rerank.enabled — explicit wins, unset auto-ons
@@ -156,11 +149,7 @@ export async function setupSingleAgent(
     );
   }
 
-  // Resolve contextEngine.compactionModel if it was left at the empty-string
-  // schema default. The resolved value is informational — actual compaction
-  // routing flows through resolveOperationModel(operationType: "compaction")
-  // at execute-time. Logging at INFO once per agent at startup gives
-  // operators a visible record of which model would back background ops.
+  // Resolve compactionModel default (informational; actual routing is per-execute via resolveOperationModel).
   const ceCompactionRaw = effectiveConfig.contextEngine?.compactionModel ?? "";
   if (ceCompactionRaw.length === 0) {
     const resolvedCompaction = resolveCompactionModel(ceCompactionRaw, resolved.provider);
@@ -177,11 +166,8 @@ export async function setupSingleAgent(
     }
   }
 
-  // Each agent gets a dedicated workspace folder:
-  //   default agent -> ~/.comis/workspace
-  //   named agents  -> ~/.comis/workspace-{agentId}
-  // ensureWorkspace bootstraps personality .md files (SOUL.md, IDENTITY.md, USER.md,
-  // AGENTS.md, TOOLS.md, HEARTBEAT.md, BOOTSTRAP.md) -- write-if-missing semantics.
+  // Per-agent workspace (default → ~/.comis/workspace, named → ~/.comis/workspace-{id}).
+  // ensureWorkspace bootstraps personality .md files (write-if-missing).
   const dir = resolveWorkspaceDir(effectiveConfig, agentId);
   await ensureWorkspace({ dir });
 
@@ -211,7 +197,7 @@ export async function setupSingleAgent(
     customProviderEntries,
   });
 
-  // Phase 6 (REQ-13): hot-swap provider API keys on secret rotation without restart
+  // REQ-13: hot-swap provider API keys on secret rotation (no restart).
   container.eventBus.on("secret:changed", ({ name, action }) => {
     const entry = Object.entries(DEFAULT_PROVIDER_KEYS).find(([, k]) => k === name);
     if (!entry) return;
@@ -220,9 +206,8 @@ export async function setupSingleAgent(
       const newKey = container.secretManager.get(name);
       if (newKey) piAuthStorage.setRuntimeApiKey(provider, newKey);
     } else if (action === "removed") {
-      piAuthStorage.removeRuntimeApiKey(provider); // OQ-1 resolved: dedicated remove API (auth-storage.d.ts:67)
+      piAuthStorage.removeRuntimeApiKey(provider);
     }
-    // NEVER log name or value (residency invariant — REQ-10)
   });
 
   // FIRST daemon-side OAuth wiring — see setup-agents-oauth.ts for the full
@@ -233,10 +218,7 @@ export async function setupSingleAgent(
       ? container.config.dataDir
       : safePath(homedir(), ".comis");
 
-  // Use the daemon-level OAuthCredentialStore handle that setupAgents()
-  // constructed once and threaded through SingleAgentDeps. Same store
-  // reference is also exposed on AgentsResult so daemon.ts can plumb it into
-  // RpcDispatchDeps for the agents.update oauthProfiles existence check.
+  // Daemon-level OAuthCredentialStore (constructed once in setupAgents; also on AgentsResult for daemon.ts).
   const oauthCredentialStore = deps.oauthCredentialStore;
 
   const authProvider = wireAuthProvider({

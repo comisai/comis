@@ -341,10 +341,6 @@ export function createSecretsHandlers(
       const description = params.description;
       const expiresAt = params.expiresAt;
 
-      // Additive restart rule (P4a): check BEFORE store write so the pre-write
-      // Map state accurately reflects whether this name is truly new.
-      const isNew = !deps.container.secretManager.has(name);
-
       // SecretStorePort is always wired (REQ-04); env-mode set() returns err.
       // The value parameter is the plaintext. It flows directly into the
       // store's set() call below and is NEVER assigned to any other binding,

@@ -1533,9 +1533,9 @@ describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () 
   });
 
   // -------------------------------------------------------------------------
-  // 03-04-4: env.set EXISTING_KEY → restarting:true (rotation interim)
+  // 03-04-4: env.set EXISTING_KEY → restarting:false, NO SIGUSR2 (Plans 06-02+06-03)
   // -------------------------------------------------------------------------
-  it("03-04-4: env.set on an existing key returns restarting:true (rotation, SIGUSR2 scheduled)", async () => {
+  it("03-04-4: env.set on an existing key returns restarting:false with no SIGUSR2 (live-rotation, no restart)", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-env-exist-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;
@@ -1556,7 +1556,7 @@ describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () 
       const instance = await main(overrides);
       instances.push(instance);
 
-      // Intercept SIGUSR2 so the test process doesn't actually restart
+      // Intercept SIGUSR2 to detect any unexpected restart signal
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       killSpy = vi.spyOn(process, "kill" as any).mockImplementation((() => true) as never);
 
@@ -1565,26 +1565,27 @@ describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () 
         { key: "EXISTING_KEY_03_04", value: "v2", _trustLevel: "admin" },
       ) as { set: boolean; key: string; restarting: boolean };
 
-      // Advance past the 200ms timeout so the spy captures the SIGUSR2 call
+      // Wait past any potential timer (Plans 06-02 removed the SIGUSR2 timer)
       await new Promise((r) => setTimeout(r, 250));
 
       expect(setResult.set).toBe(true);
-      expect(setResult.restarting).toBe(true);
+      // Plans 06-02+06-03: rotation now live-applies without restart
+      expect(setResult.restarting).toBe(false);
 
-      // SIGUSR2 must have been scheduled (rotation restart)
+      // SIGUSR2 must NOT have been called (no restart on rotation)
       const sigusr2Calls = (killSpy.mock.calls as unknown[][]).filter(
         (args) => args[0] === process.pid && args[1] === "SIGUSR2",
       );
-      expect(sigusr2Calls.length).toBeGreaterThanOrEqual(1);
+      expect(sigusr2Calls.length).toBe(0);
     } finally {
       rmSync(freshDataDir, { recursive: true, force: true });
     }
   });
 
   // -------------------------------------------------------------------------
-  // 03-04-5: secrets.delete EXISTING → restarting:true, deleted:true
+  // 03-04-5: secrets.delete EXISTING → restarting:false, deleted:true, NO SIGUSR2 (Plans 06-02)
   // -------------------------------------------------------------------------
-  it("03-04-5: secrets.delete on an existing key returns restarting:true and deleted:true (deletion, SIGUSR2 scheduled)", async () => {
+  it("03-04-5: secrets.delete on an existing key returns restarting:false and deleted:true (live-delete, no restart)", async () => {
     const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-0304-sec-del-"));
     try {
       process.env["COMIS_DATA_DIR"] = freshDataDir;
@@ -1603,14 +1604,13 @@ describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () 
       );
 
       // Now the key is in the store; secretManager.has() uses the mock.
-      // We need to make has() return true for DELETE_TARGET_03_04.
-      // Override the mock for this call only by updating the spy.
+      // Override the mock to indicate the key exists before delete.
       const container = (instance as unknown as { container: AppContainer }).container;
       (container.secretManager as { has: ReturnType<typeof vi.fn> }).has = vi.fn().mockImplementation(
         (k: string) => k === "DELETE_TARGET_03_04",
       );
 
-      // Intercept SIGUSR2 so the test process doesn't actually restart
+      // Intercept SIGUSR2 to detect any unexpected restart signal
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       killSpy = vi.spyOn(process, "kill" as any).mockImplementation((() => true) as never);
 
@@ -1622,12 +1622,14 @@ describe("03-04 — additive no-restart integration (REQ-07/REQ-13/REQ-18)", () 
       await new Promise((r) => setTimeout(r, 250));
 
       expect(delResult.deleted).toBe(true);
-      expect(delResult.restarting).toBe(true);
+      // Plans 06-02: deletion now live-applies without restart
+      expect(delResult.restarting).toBe(false);
 
+      // SIGUSR2 must NOT have been called (no restart on delete)
       const sigusr2Calls = (killSpy.mock.calls as unknown[][]).filter(
         (args) => args[0] === process.pid && args[1] === "SIGUSR2",
       );
-      expect(sigusr2Calls.length).toBeGreaterThanOrEqual(1);
+      expect(sigusr2Calls.length).toBe(0);
     } finally {
       rmSync(freshDataDir, { recursive: true, force: true });
     }

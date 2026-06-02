@@ -326,7 +326,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
         await adapter.start();
         deps.logger.info(
           {
-            module: "channel-manager",
+            submodule: "credential-rotation-reconnect",
             step: "credential-rotation-reconnect",
             channelType,
             credentialName: name,
@@ -336,7 +336,7 @@ export function createChannelManager(deps: ChannelManagerDeps): ChannelManager {
       } catch (err) {
         deps.logger.warn(
           {
-            module: "channel-manager",
+            submodule: "credential-rotation-reconnect",
             err: err instanceof Error ? err : new Error(String(err)),
             channelType,
             credentialName: name,

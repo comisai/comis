@@ -187,10 +187,6 @@ export function createEnvHandlers(deps: EnvHandlerDeps): Record<string, RpcHandl
       EnvSetContract.request.parse(userParams);
 
       try {
-        // Additive restart rule (P4a): check BEFORE store write so the pre-write
-        // Map state accurately reflects whether this name is truly new.
-        const isNew = !deps.container.secretManager.has(key);
-
         // Write to storage backend. SecretStorePort is always wired (REQ-04).
         // Env-mode adapter's set() returns err with an actionable message.
         const setResult = deps.secretStore.set(key, value);

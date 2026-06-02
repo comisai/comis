@@ -2142,6 +2142,15 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "createFileSecretStore",
       "selectSecretStore",
       "SelectedSecretStore",
+      // SQLite-backed SecretStore (Phase 06, REQ-05). createSqliteSecretStore is the AES-256-GCM
+      // encrypted secret store adapter. The production daemon wires it via selectSecretStore
+      // (via the encrypted path in bootstrapSecretsAndEnv); selectSecretStore is the caller.
+      // Directly consumed by integration tests (secret-rotation-fail-closed.test.ts) for
+      // canary-mismatch + rotation fail-closed verification. SqliteSecretStoreHandle is the
+      // extended type (SecretStorePort + db field). Baseline orphans tracked here — the
+      // daemon's existing selectSecretStore call is the sole production consumer of the factory.
+      "createSqliteSecretStore",
+      "SqliteSecretStoreHandle",
     ])],
     // @comis/scheduler: baseline orphans tracked here.
     ["@comis/scheduler", new Set<string>([
