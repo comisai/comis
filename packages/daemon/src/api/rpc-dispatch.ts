@@ -407,17 +407,21 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       // need a separate grep — the offending input is on the same log line.
       const classified = classifyRpcError(err);
       // CR-01 defense-in-depth: auth.set params carry bare `access` and
-      // `refresh` OAuth token fields at the RPC boundary. Redact them
+      // `refresh` OAuth token fields at the RPC boundary. Strip them
       // before logging so a transient failure (SQLITE_BUSY, admin-gate
       // rejection) does not write raw bearer tokens to the daemon log.
       // This is defense-in-depth — Part A (CREDENTIAL_KEYS) is the
       // primary, cross-cutting fix; this per-method projection is the
       // second layer that survives any future sanitizer bypass or new
       // credential-bearing field in the auth.set contract.
-      const safeParams: Record<string, unknown> =
-        method === "auth.set"
-          ? { ...params, access: "[REDACTED]", refresh: "[REDACTED]", accountId: "[REDACTED]" }
-          : params;
+      // Omit rather than replace: the operator sees method + err; the
+      // token value itself is never diagnostic for a write-failure path.
+      let safeParams: Record<string, unknown> = params;
+      if (method === "auth.set") {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars -- intentional destructuring to omit credential fields
+        const { access: _a, refresh: _r, accountId: _id, ...rest } = params;
+        safeParams = rest;
+      }
       deps.logger[classified.level](
         {
           method,
