@@ -249,7 +249,11 @@ describe("BwrapProvider", () => {
       expect(args).toContain("/home/testuser/.gitconfig");
     });
 
-    it("includes claude CLI paths as ro-bind and rw-bind when they exist", () => {
+    it("omits hardcoded claude CLI credential paths even when they exist on disk", () => {
+      // Worst case: all three claude credential paths exist on disk. The
+      // hardcoded claude binds were removed from the provider, so none may
+      // appear as a bwrap bind target (neither --ro-bind nor --bind), in any
+      // position, regardless of secureCredentialHome.
       vi.mocked(os.homedir).mockReturnValue("/home/testuser");
       vi.mocked(existsSync).mockImplementation((p) => {
         const existing = [
@@ -263,24 +267,9 @@ describe("BwrapProvider", () => {
       const provider = createAvailableProvider();
       const args = provider.buildArgs(makeOpts());
 
-      // ~/.claude.json should be ro-bound (read-only config/auth)
-      const hasRoBind = (target: string) => {
-        for (let i = 0; i < args.length - 2; i++) {
-          if (args[i] === "--ro-bind" && args[i + 1] === target) return true;
-        }
-        return false;
-      };
-      expect(hasRoBind("/home/testuser/.claude.json")).toBe(true);
-
-      // ~/.claude/ and ~/.local/share/claude/ should be rw-bound
-      const hasBind = (target: string) => {
-        for (let i = 0; i < args.length - 2; i++) {
-          if (args[i] === "--bind" && args[i + 1] === target) return true;
-        }
-        return false;
-      };
-      expect(hasBind("/home/testuser/.claude")).toBe(true);
-      expect(hasBind("/home/testuser/.local/share/claude")).toBe(true);
+      expect(args).not.toContain("/home/testuser/.claude.json");
+      expect(args).not.toContain("/home/testuser/.claude");
+      expect(args).not.toContain("/home/testuser/.local/share/claude");
     });
 
     // -- Dev tool RW paths (XDG paths aligned with systemd ReadWritePaths) --
