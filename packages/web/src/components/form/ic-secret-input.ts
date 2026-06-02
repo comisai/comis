@@ -149,7 +149,7 @@ export class IcSecretInput extends LitElement {
         </div>
         <span class="hint">${
           this.storageMode === "env"
-            ? "Format: env:VAR_NAME (file: refs not available in env mode)"
+            ? "Format: env:VAR_NAME or file:/path/to/secret (env mode: store secrets in environment variables)"
             : "Format: env:VAR_NAME or file:/path/to/secret"
         }</span>
       </div>

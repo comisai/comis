@@ -73,12 +73,18 @@ describe("IcSecretInput", () => {
     expect(hint!.textContent).toContain("file:/path");
   });
 
-  it("env storageMode shows env:-only hint (no file: framing)", async () => {
+  it("env storageMode shows env: and file: hint with env-mode framing (file: refs work in all modes)", async () => {
     const el = await createElement({ storageMode: "env" });
     const hint = el.shadowRoot?.querySelector(".hint");
+    // env: refs are always shown
     expect(hint!.textContent).toContain("env:VAR_NAME");
-    expect(hint!.textContent).not.toContain("file:/path/to/secret");
-    expect(hint!.textContent).toContain("env mode");  // the explanatory suffix
+    // file: refs work in all modes including env (resolveFileRef reads from disk,
+    // independent of the credential storage backend) — the hint must show file: too
+    expect(hint!.textContent).toContain("file:/path/to/secret");
+    // explanatory suffix explains what env mode means (no writable store)
+    expect(hint!.textContent).toContain("env mode");
+    // must NOT contain the old false claim
+    expect(hint!.textContent).not.toContain("file: refs not available");
   });
 
   it("file storageMode shows both env: and file: hint framing", async () => {
