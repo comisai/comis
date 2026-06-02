@@ -312,3 +312,64 @@ describe("daemon boot gate — writeMasterKeyIfAbsent call gate (REQ-17)", () =>
     expect(writeMasterKeySpy.mock.calls[0]![0]).toBe(tmpDir);
   });
 });
+
+// ---------------------------------------------------------------------------
+// WR-03: storageMode vs container.config.security.storage divergence gate
+// ---------------------------------------------------------------------------
+
+describe("daemon boot gate — storageMode vs post-bootstrap security.storage divergence (WR-03)", () => {
+  const originalEnv = process.env;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    tmpDir = mkdtempSync(pathResolve(tmpdir(), "comis-wr03-test-"));
+    process.env["COMIS_DATA_DIR"] = tmpDir;
+    process.env["COMIS_CONFIG_PATHS"] = pathResolve(tmpDir, "config.yaml");
+    delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
+    delete process.env["SECRETS_MASTER_KEY"];
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it("boot fails with [CONFIG_ERROR] when pre-read storageMode='encrypted' but post-bootstrap security.storage='file' (${VAR} mismatch scenario)", async () => {
+    // Simulate: preReadStorageMode() returns "encrypted" (raw YAML scan, cannot expand ${VAR})
+    // but the bootstrapped config resolves security.storage to "file" (post-substitution).
+    // This is the ${COMIS_STORAGE_MODE}="file" → pre-read defaults to "encrypted" divergence.
+    //
+    // Provide a fake SECRETS_MASTER_KEY so selectSecretStore("encrypted") succeeds
+    // and we reach the post-bootstrap divergence check.
+    process.env["SECRETS_MASTER_KEY"] = "a".repeat(64); // 64 hex chars = 32 bytes
+
+    const container = createMockContainer();
+    // Stage-2 scrub reads container.platformSecretNames — provide empty set.
+    (container as Record<string, unknown>)["platformSecretNames"] = new Set<string>();
+    // Override security.storage in the mock container to "file" (diverges from "encrypted" pre-read)
+    (container.config as Record<string, unknown>)["security"] = {
+      ...((container.config as Record<string, unknown>)["security"] as Record<string, unknown>),
+      storage: "file",
+    };
+
+    const overrides: import("./daemon.js").DaemonOverrides = {
+      preReadStorageMode: vi.fn().mockReturnValue("encrypted"),
+      writeMasterKeyIfAbsent: vi.fn().mockReturnValue({ written: false, path: "/tmp/test/.env", keyHex: undefined }),
+      bootstrap: vi.fn().mockReturnValue({ ok: true, value: container }),
+      setupSecrets: vi.fn().mockReturnValue({ ok: true, value: null }),
+      createTracingLogger: vi.fn().mockReturnValue(createMockLogger()),
+      createLogLevelManager: vi.fn().mockReturnValue(createMockLogLevelManager()),
+      createTokenTracker: vi.fn().mockReturnValue(createMockTokenTracker()),
+      createProcessMonitor: vi.fn().mockReturnValue(createMockProcessMonitor()),
+      createGatewayServer: vi.fn().mockReturnValue(undefined),
+      setupMedia: vi.fn().mockResolvedValue({
+        transcriber: null, ttsRunner: null, imageGenProvider: null, imageAnalyzer: null,
+        mediaInfra: null, linkUnderstandingEngine: null, mediaPersistence: null, documentExtractor: null,
+      }),
+      exit: vi.fn(),
+    };
+
+    await expect(main(overrides)).rejects.toThrow(/\[CONFIG_ERROR\].*security\.storage/);
+  });
+});
