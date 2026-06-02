@@ -43,6 +43,12 @@ export type {
   TunedAlphaVector,
 } from "./tuned-alpha-store.js";
 export type {
+  MemoryLifecyclePort,
+  MemoryLifecycleScope,
+  MemoryTier,
+  LifecycleSweepReport,
+} from "./memory-lifecycle.js";
+export type {
   RelationshipStore,
   RelationshipScope,
   RelationshipTrust,
