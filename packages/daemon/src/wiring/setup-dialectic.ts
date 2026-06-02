@@ -30,6 +30,7 @@ import {
   createMemoryRecall,
   type MemoryRecall,
   type DialecticParsed,
+  type DialecticSeamDeps,
 } from "@comis/agent";
 import type {
   PerAgentConfig,
@@ -200,7 +201,7 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
   }
 
   // The ONE query-time synthesis seam (bounded by dialectic.maxOutputTokens — the cost axis).
-  const dialecticSeam = createDialecticSeam({
+  const seamDeps: DialecticSeamDeps = {
     provider: resolved.provider,
     modelId: resolved.modelId,
     apiKey,
@@ -208,7 +209,8 @@ export function buildDialecticWiring(deps: DialecticWiringDeps): DialecticWiring
     clock,
     logger,
     agentId: deps.agentId,
-  });
+  };
+  const dialecticSeam = createDialecticSeam(seamDeps);
 
   // The per-agent recall factory: the FULL createMemoryRecall (trust-filtered + redaction-
   // aware), reconstructing the A1 deps + config exactly as prompt-assembly's executor read

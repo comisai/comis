@@ -244,20 +244,12 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RelationshipCandidate",
       "RelationshipBuildOutput",
       "RelationshipSeamDeps",
-      // Query-time dialectic synthesis SEAM FACTORY + its types (Phase 109, DIAL-01).
-      // Plan 03's daemon memory.ask handler consumes the PURE synthesis VALUE helpers
-      // (orderByTrust/assembleSynthesis/citationChains — now real consumers, not
-      // orphaned) and the INJECTED seam at runtime, but NOT the factory itself: the
-      // factory is built + injected by Plan 04's daemon wiring. The public-export
-      // consumer scan EXCLUDES *.test.ts (the handler test that builds a real seam
-      // does not count) AND counts only NAMED imports (the handler's deps type uses
-      // the inline `import("@comis/agent").DialecticParsed` form, which the scan does
-      // not register). So the three seam exports stay ahead-of-consumer until Plan 04
-      // names them in non-test daemon wiring. REMOVE @ 109-04 (mirror
-      // createUserRepresentationSeam @ 107-04 → consumed @ 107-05).
-      "createDialecticSeam",
-      "DialecticSeamDeps",
-      "DialecticParsed",
+      // (Phase 109 DIAL-04: the createDialecticSeam / DialecticSeamDeps / DialecticParsed
+      //  ahead-of-consumer orphans were REMOVED here — Plan 04's setup-dialectic.ts now
+      //  NAME-imports all three in non-test daemon wiring [the seam factory build + the
+      //  DialecticSeamDeps annotation + the DialecticParsed return type], so the
+      //  public-export-consumers walker sees real consumers. Mirrors createUserRepresentationSeam
+      //  @ 107-04 → consumed @ 107-05.)
       "formatMemorySection",
       "CommandQueueDeps",
       "QueueStats",
