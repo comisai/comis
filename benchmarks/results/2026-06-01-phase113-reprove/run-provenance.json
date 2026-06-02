@@ -1,0 +1,130 @@
+{
+  "gate": "PROVER-01 (Phase 113 keyless re-prove + consolidated v2.9 re-prove manifest; Track J) — re-run the four keyless gates on the CLIMBED v2.9 system at $0 and consolidate the seven committed v2.9 manifests (phase106-baser + phase107..112) into ONE capstone re-prove view",
+  "date": "2026-06-01",
+  "branch": "feature/v2.9-understanding-learning-moat",
+  "systemUnderTest": "the climbed v2.9 memory recall pipeline end-to-end (the v2.8 lanes + the six v2.9 capabilities — per-user profile (E1), per-channel relationship model (E2, dormant), the grounded cited ask-your-memory tool (G+D3), per-intent usefulness reorder (H1+H3), bounded learning-to-rank with trust FROZEN (H2), and principled ranking decay of stale memories (C) — all DEFAULT-OFF, driven over the LIVE recall hot path at $0)",
+  "keyless": true,
+  "verdict": "MEASURED-keyless + costed-DEFERRED",
+  "models": {
+    "answer": { "provider": "anthropic", "modelId": "claude-sonnet-4-6" },
+    "judges": [
+      { "provider": "openai", "modelId": "gpt-4o-2024-11-20" },
+      { "provider": "openai", "modelId": "gpt-4.1" }
+    ],
+    "note": "The model block records the INTENDED costed-pass configuration ONLY (the same answerer + cross-MODEL judge pair as the 2026-06-01-phase106-baser baseline) for the DEFERRED costed cross-judge competitor head-to-head + per-capability QA-lift. This re-prove run took NO costed measurement: the four keyless modes call NO model — gate / head-to-head route to head-to-head.bench.test.ts (an injected deterministic verdict stub + a competitor presence probe that defaults to () => false + the pure letta-fs control over a fresh tmp dir), and suite recall-learning / suite redaction run the LLM-free learning-lift-harness / redaction-harness. scripts/bench-memory.env was NOT sourced and NOT created. cross-PROVIDER judging with claude-opus-4-8 is the costed re-run; an answerer must never be its own provider's judge (BUG-004: opus-as-judge only when the answer lane is non-Anthropic).",
+    "crossProviderNote": "BUG-004 carried from phase106-baser: an answerer must never be its own provider's judge. cross-PROVIDER judging (claude-opus-4-8 as judge) is reserved for the costed re-run and only when the answer lane is non-Anthropic. This keyless re-prove judges nothing — it has no judge on its path."
+  },
+  "measurementsTaken": [
+    {
+      "name": "keyless re-prove — gate (append-only never-overwrite ledger MECHANISM)",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "mode": "SKIP_BUILD=1 bash scripts/bench-memory.sh gate",
+      "harness": "packages/agent/src/memory/benchmark/head-to-head.bench.test.ts (gate mode)",
+      "result": "exit 0 — 7/7 PASS. The append-only never-overwrite ledger MECHANISM is PROVEN over a fresh tmp dir: a 2nd write to the same dated path is REFUSED and the prior bytes stay byte-identical; a different-date row coexists; the keyless run writes NO dated row to benchmarks/results/history/. Re-confirmed on the CLIMBED v2.9 system. Mechanical, keyless, $0 — NOT a QA-accuracy lift.",
+      "evidence": "this run (env-free; the same MECHANISM proven keyless in phase106-baser/keyless-run-log.md §1a)"
+    },
+    {
+      "name": "keyless re-prove — head-to-head (the whole proving machine)",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "mode": "SKIP_BUILD=1 bash scripts/bench-memory.sh head-to-head",
+      "harness": "packages/agent/src/memory/benchmark/head-to-head.bench.test.ts",
+      "result": "exit 0 — 7/7 PASS. The cross-judge spread fold over INJECTED deterministic verdicts survives 3/4 categories (single-session-preference 30-vs-45 = 15pt flagged UNSTABLE) + significance never-NaN; the ablation off=byte-identity holds for the v2.8 factors (a mistyped knob leaf would diverge); the skip-with-disclosure competitor adapters carry NO numeric field; the letta-fs control ran (isControl); and a real Comis recall cell with the lanes ON returned ranked results. INJECTED verdicts prove the FOLD — NOT a measured cross-judged number. Mechanical, keyless, $0 — NOT a QA-accuracy lift.",
+      "evidence": "this run (env-free; the same fold proven keyless in phase106-baser/keyless-run-log.md §1b)"
+    },
+    {
+      "name": "keyless re-prove — suite recall-learning (FEED-loop gold-rank lift)",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "mode": "SKIP_BUILD=1 bash scripts/bench-memory.sh suite recall-learning",
+      "harness": "packages/agent/src/memory/benchmark/learning-lift-harness.bench.test.ts",
+      "result": "exit 0 — 5/5 PASS. The FEED-loop gold-rank lift harness is GREEN on the climbed system: the gold doc's rankLift = firstRank - lastRank stays in the positive/non-regressing direction as the FEED usefulness signal accrues across episodes, the bandit-driven gold-SCORE climb is MEASURED-POSITIVE (the Set C number; see measurementsConsolidated phase111), the trust-frozen / clamp / default-OFF byte-identity safety claims hold. Mechanical, keyless, $0 — NOT a QA-accuracy lift.",
+      "evidence": "this run (env-free; the +0.1 gold-SCORE lift / FLAT rank quoted from phase111-learn-rank/claim1-bandit-rank-lift-report.json)"
+    },
+    {
+      "name": "keyless re-prove — suite redaction (leak-rate ON <= OFF)",
+      "kind": "KEYLESS, deterministic, no API cost",
+      "mode": "SKIP_BUILD=1 bash scripts/bench-memory.sh suite redaction",
+      "harness": "packages/agent/src/memory/benchmark/redaction-harness.bench.test.ts",
+      "result": "exit 0 — 2/2 PASS. The privacy firewall holds on the climbed system: scoreOn.leakRate <= scoreOff.leakRate (the write-time validator + recall-time scrubber never increase the leak-rate). Deterministic string check, no LLM. Mechanical, keyless, $0 — NOT a QA-accuracy lift.",
+      "evidence": "this run (env-free; the same ON<=OFF invariant proven keyless in phase106-baser/keyless-run-log.md §2b)"
+    }
+  ],
+  "measurementsConsolidated": [
+    {
+      "manifest": "benchmarks/results/2026-06-01-phase106-baser/",
+      "capability": "BASER — the re-stated v2.8 cross-judged baseline (Set A source) + the 107-113 reorder/gate + the four open-decision resolutions",
+      "keyless": true,
+      "verdict": "PARTIAL",
+      "label": "re-stated, NOT re-measured (Set A) + mechanical, keyless, $0 — not a QA-accuracy lift (Set B re-confirmation)"
+    },
+    {
+      "manifest": "benchmarks/results/2026-06-01-phase107-user/",
+      "capability": "USER — per-user profile (Track E1)",
+      "keyless": true,
+      "verdict": "PARTIAL",
+      "claims": "prefix-typing round-trips 4/4 (identity/preference/relationship/instruction); external-trust upsert REJECTED at the write boundary; secret-shaped candidate BLOCKED by the redaction firewall (never down-stored); (tenant,agent,user) 3-way isolation (cross-tenant/agent/user = 0); default-OFF byte-identity (no rows -> null block); LLM-free read+format (0 build()/model calls)",
+      "label": "mechanical, keyless, $0 — not a QA-accuracy lift"
+    },
+    {
+      "manifest": "benchmarks/results/2026-06-01-phase108-social/",
+      "capability": "SOCIAL — per-channel relationship model, dormant (Track E2)",
+      "keyless": true,
+      "verdict": "PARTIAL",
+      "claims": "directional A->B != B->A as TWO distinct edges (never symmetrized); (tenant,agent,channel) isolation (cross-channel/tenant/agent = 0); external REJECTED + redaction-clean; the SOCIAL-03 sign-off gate (knob on but no recorded sign-off => read+format gate CLOSED => 0 reads + null block; ships DEFAULT-OFF, NOT self-enabled); default-OFF byte-identity",
+      "label": "mechanical, keyless, $0 — not a QA-accuracy lift"
+    },
+    {
+      "manifest": "benchmarks/results/2026-06-01-phase109-dialectic/",
+      "capability": "DIALECTIC — the grounded cited ask-your-memory tool (Tracks G + D3)",
+      "keyless": true,
+      "verdict": "PARTIAL",
+      "claims": "opt-in / default-OFF (tool ABSENT unless enabled); recall stays LLM-free (createMemoryRecall = 0 model calls); citations are real recalled ids (a bogus id is DROPPED); mandatory abstention (empty/irrelevant recall => abstained, the synthesis seam NOT called); trust-first contradiction (a system current-truth ordered BEFORE a contradicting external claim); sourceIds in the recall-trace (ids-only provenance chain)",
+      "label": "mechanical, keyless, $0 — not a QA-accuracy lift"
+    },
+    {
+      "manifest": "benchmarks/results/2026-06-01-phase110-learn-iq/",
+      "capability": "LEARN-IQ — per-intent usefulness reorder + citation accrual (Tracks H1 + H3)",
+      "keyless": true,
+      "verdict": "PARTIAL",
+      "claims": "per-intent bucket reorders recall (perIntentRankLift = 1: a used-for-intent-X memory ranks higher for an X-query than a Y-query); default-OFF byte-identity + readUsefulness spy = 0; citation->FEED accrual (cited used-count 0 -> 1; cited used-rate 1.0 > other 0.0); (tenant,agent,intent) isolation",
+      "label": "mechanical, keyless, $0 — not a QA-accuracy lift"
+    },
+    {
+      "manifest": "benchmarks/results/2026-06-01-phase111-learn-rank/",
+      "capability": "LEARN-RANK — bounded learning-to-rank, trust FROZEN (Track H2) — THE measured learning signal (Set C)",
+      "keyless": true,
+      "verdict": "MEASURED (keyless learning-lift) + trust-frozen / clamp / default-OFF-byte-identity PROVEN; costed cross-judge QA comparison DEFERRED",
+      "claims": "Set C (claim1): over 5 episodes the LLM-free bandit climbs the tuned usefulness weight 0.125 -> 0.225 and raises the gold memory's boosted recall SCORE monotonically [1, 1.0625, 1.075, 1.0875, 1.1] -> goldScoreLift = +0.1 (MEASURED-POSITIVE); the gold's rank POSITION is MEASURED-FLAT (rankLift = 0) on the keyless FTS-only 1/rank lane. Safety: trust-frozen under tuning (trustAlpha = [0.1 x5]; external still dropped); the clamp holds (+-1e9 -> all alphas in [0,1]); default-OFF byte-identity.",
+      "label": "mechanical, keyless, $0 — the +0.1 is a recall-SCORE lift, NOT a QA-accuracy lift"
+    },
+    {
+      "manifest": "benchmarks/results/2026-06-01-phase112-forget/",
+      "capability": "FORGET — principled ranking decay of stale memories, eviction dormant (Track C)",
+      "keyless": true,
+      "verdict": "MEASURED (the 4 keyless claims); the LIVE eviction/demotion enablement is DORMANT/deferred (OD4); any costed QA-accuracy impact of the decay is DEFERRED",
+      "claims": "byte-identity at neutral importance (dt=0 factor=1.0; ranks identical OFF/ON/absent); deterministic decay effect (old 90-day ephemeral forget-factor 0.5534545198841266 < fresh 1-day durable 0.9945726783223208; gap 0.44111815843819413; the decay RANKS, never GATES); footprint unchanged when dormant (rowCount 5 -> 5; evicted 0 / demoted 0); zero category regression",
+      "label": "mechanical, keyless, $0 — not a QA-accuracy lift"
+    }
+  ],
+  "deferredToOperator": [
+    {
+      "name": "the cross-system competitor head-to-head (mem0 / zep / hindsight / mnemosyne)",
+      "why": "Each competitor adapter is a skip-with-disclosure skeleton: mem0/zep need an external package + a hosted credential; hindsight/mnemosyne are sibling clones the operator builds. NONE is a Comis dependency (the exact-pin + bundling supply-chain invariant). The keyless CI always hits the skip branch (that IS the wiring proof). A real competitor cell needs the operator's installs + credentials + LLM judge spend; a vendor self-reported number is non-comparable across protocols (the COI). It is NOT measured here and must never be published as fact.",
+      "reproductionCommand": "populate the git-ignored scripts/bench-memory.env (the variable NAMES COMIS_BENCH_ANSWER_* + COMIS_BENCH_JUDGE_* -- NO values recorded here) + install the competitor systems (mem0: MEM0_API_KEY + the mem0ai package; zep: ZEP_API_KEY + the @getzep/zep-js SDK; hindsight: clone + build ../hindsight; mnemosyne: clone + build ../mnemosyne), then run scripts/bench-memory.sh gate (the costed pass appends the real dated row to benchmarks/results/history/<date>-<commit>.json with the raw transcripts).",
+      "baselineToDiffAgainst": "benchmarks/results/2026-05-31-j1-baseline/ (overall 71.1/73.3, recall@5 0.845, temporal 45/40, control 52.6/36.3)"
+    },
+    {
+      "name": "the per-capability costed QA-accuracy lift (USER / SOCIAL / DIALECTIC / LEARN-IQ / LEARN-RANK / FORGET)",
+      "why": "Each phase 107-112 measured its capability's MECHANISM keyless at $0 and DEFERRED its costed per-capability QA-accuracy lift to the operator (the v2.9-wide keyless-first discipline). A QA-accuracy comparison needs a real answer model + >=2 independent LLM judges (cross-judge) over real answers -> real spend + keys. The keyless benches drive RANK / structural invariants, NOT QA accuracy, so a fresh accuracy number here would be fabricated. Per-track: USER -> LongMemEval preference-recall lift; SOCIAL -> multi-party grounded-Q&A lift; DIALECTIC -> answer-faithfulness / grounding lift; LEARN-IQ -> rank-over-episodes accuracy lift; LEARN-RANK -> costed cross-judge QA of tuned-vs-static ranker; FORGET -> QA-accuracy impact of decay-on-vs-off.",
+      "reproductionCommand": "populate scripts/bench-memory.env (answer + 2 judge providers), enable the relevant capability knob (default-OFF), and run the costed QA harness packages/agent/src/memory/benchmark/qa-judge-harness.bench.test.ts with the capability on-vs-off; record per-category accuracy + zero-regression + N + significance + cost + latency, and release the raw answer + judge transcripts.",
+      "baselineToDiffAgainst": "benchmarks/results/2026-06-01-phase106-baser/ (the v2.9 baseline the recall hot path must not move when the capability is off)"
+    }
+  ],
+  "coi": {
+    "authoredBy": "Comis",
+    "disclosure": "Comis authored this benchmark suite and proving machine. Vendor-reported competitor numbers are NON-COMPARABLE across protocols and harnesses; competitors are invited to reproduce on their own harness. No competitor number, no cross-judged delta, and no comparative-ranking framing appears anywhere in this manifest (binding constraint #8). The letta-fs filesystem-tool baseline is recorded ONLY as a labelled control, never as Comis's score.",
+    "ossLicense": "Apache-2.0 harness — the proving harness (head-to-head.bench.test.ts) and every keyless v2.9 harness (learning-lift-harness / redaction-harness) carry an SPDX-License-Identifier: Apache-2.0 header so the protocol is independently reproducible at $0.",
+    "rawTranscriptRelease": "On the operator-costed re-run, the raw answer + judge transcripts are released alongside the dated row under benchmarks/results/history/<date>-<commit>.json (one immutable dated row per release) so any number is auditable end-to-end."
+  },
+  "baselineRef": "benchmarks/results/2026-05-31-j1-baseline/",
+  "honestyProtocol": "Every number in this consolidated manifest traces to a committed manifest, read back from disk before quoting: Set A (overall 71.1/73.3, recall@5 0.845, per-category, cost/latency) is RE-STATED from benchmarks/results/2026-05-31-j1-baseline/ (corroborated by benchmarks/results/2026-06-01-phase104-prove/) — a prior costed cross-judge run, NOT re-measured this phase; the keyless re-prove (the four modes above) re-confirms STRUCTURAL invariants only (the append-only ledger, the 3/4 fold, off=byte-identity, positive rankLift direction, leak-rate ON<=OFF) and produces NO QA-accuracy number; the v2.9 keyless deltas (Set B) are consolidated from the seven committed v2.9 manifests and each labelled 'mechanical, keyless, $0 — not a QA-accuracy lift'; the ONE measured learning signal (Set C) is recorded with its ACTUAL measured sign (gold-SCORE lift +0.1 MEASURED-POSITIVE; gold RANK-position MEASURED-FLAT = 0), never rounded into '+0.1% accuracy'. The costed competitor head-to-head + the per-capability QA-accuracy lift are explicitly DEFERRED to the operator (deferredToOperator[]), never a guessed delta. Open harness (Apache-2.0) + judge/reader/prompt disclosure + cross-judge >= 2 (on the costed pass) + re-run competitors yourself + raw outputs + N/significance + cost+latency + COI disclosure. A post-run credential-shape sweep over this manifest dir is clean: it carries pure numbers + booleans + prose, no credential field names or secret-key / bearer-token shapes. This re-prove ships DEFAULT-OFF; scripts/bench-memory.env was NOT sourced or created."
+}
