@@ -1,0 +1,49 @@
+{
+  "phase": 114,
+  "milestone": "v2.10",
+  "requirements": ["PROVE2-01", "PROVE2-02"],
+  "date": "2026-06-02",
+  "keyless": false,
+  "verdict": "MEASURED (costed, cross-judged); capability-lift COMPLETE, competitor head-to-head PARTIAL",
+  "harness": "packages/agent/src/memory/benchmark/prove2-qa-lift.bench.test.ts",
+  "harnessVersion": "phase-114-prove2-v1",
+  "protocol": {
+    "answer": { "provider": "anthropic", "modelId": "claude-sonnet-4-6", "temperature": 0 },
+    "judge1": { "provider": "openai", "modelId": "gpt-4o-2024-11-20", "temperature": 0, "role": "reference (headline)" },
+    "judge2": { "provider": "anthropic", "modelId": "claude-sonnet-4-6", "temperature": 0, "role": "cross-judge (COI: shares answer provider)" },
+    "embedding": { "provider": "local", "modelId": "nomic-embed-text-v1.5" },
+    "reranker": { "provider": "local", "modelId": "bge-reranker-v2-m3" },
+    "crossJudgeSurvivalTolerancePts": 5.0,
+    "datasets": ["LongMemEval (operator full set)", "LoCoMo"],
+    "perItemIsolation": true
+  },
+  "capabilityLift": {
+    "report": "capability-lift-report.json",
+    "questionCount": 50,
+    "costUsd": 2.71,
+    "baselineOverall": { "judge1": 98.0, "judge2": 94.0, "spreadPts": 4.0, "survives": true },
+    "measured": [
+      { "capability": "intent-reweight (LEARN-IQ)", "deltaPts": 0.0, "pValue": 1.0, "recallByteIdenticalToBaseline": "50/50", "note": "no measured lift" },
+      { "capability": "forget (FadeMem decay)", "deltaPts": 0.0, "pValue": 1.0, "recallByteIdenticalToBaseline": "50/50", "note": "no measured lift" }
+    ],
+    "deferred": [
+      { "capability": "graphspread (KG)", "reason": "needs a built tripleStore the verbatim-ingest protocol does not build" },
+      { "capability": "USER / SOCIAL / REASON / DIALECTIC", "reason": "write-path/tool features; no recall-config toggle on verbatim docs" },
+      { "capability": "LEARN-RANK (online tuning)", "reason": "needs a learned tuned-alpha store the protocol does not build" }
+    ],
+    "caveats": [
+      "near-ceiling saturation (98%/94%) leaves no measurable per-capability headroom with this answer model",
+      "true per-capability lift needs a harder bench or an enrichment-aware harness (v2.11 follow-on); v2.9 keyless mechanical proofs stand"
+    ]
+  },
+  "headToHead": {
+    "status": "PARTIAL — in progress",
+    "report": "head-to-head-report.json (appended on completion)",
+    "competitorsReRunByUs": ["mem0 (mem0ai 2.0.4)", "letta-fs-control"],
+    "competitorsSkippedWithDisclosure": ["zep (not installed)", "hindsight (cloned, not wired this run)", "mnemosyne (cloned, not wired this run)"],
+    "mem0Runner": "scripts/prove/mem0-runner.py"
+  },
+  "activationDecision": "No v2.9 capability meets the measured-lift-with-no-regression bar on this bench. Phase 115 builds the activation framework (ACT-01) but flips nothing by default (ACT-02 byte-identity preserved); SOCIAL stays behind privacyReviewSignedOffBy (ACT-03); trustAlpha frozen.",
+  "coi": "Operator-funded keys; judge2 shares the answer provider (self-preference COI disclosed); headline relies on judge1 (gpt-4o reference) + the cross-judge spread.",
+  "bindingConstraint8": "no 'beats X' superiority claim before measured + cross-judged + competitor-re-run"
+}
