@@ -358,15 +358,88 @@ competitor head-to-head are **not measured** here -- they are the operator-coste
 re-run consolidated in
 [`2026-06-01-phase113-reprove`](https://github.com/comisai/comis/tree/main/benchmarks/results/2026-06-01-phase113-reprove).
 
+## The v2.10 competitive head-to-head (the costed re-run, finally measured)
+
+The operator-costed competitor head-to-head that the section below frames as
+"reproduce via the gate" **has now been run.** This is the v2.10 result, and it is
+an **accuracy, cross-judged** number -- the second real end-to-end QA-accuracy set
+after the Phase-98 baseline, kept clearly separate from the mechanical $0 deltas
+above. Every cell is read back from the committed manifest
+[`benchmarks/results/2026-06-02-phase114-prove2/`](https://github.com/comisai/comis/tree/main/benchmarks/results/2026-06-02-phase114-prove2)
+(`head-to-head-report.json`, `GATE-REPORT.md`, `run-provenance.json`).
+
+The protocol matches the credibility contract: the **competitor is re-run by us**
+under one protocol (same answer model + the same two judges), scored by **two
+independent judges**, and a number stands only if it survives the cross-judge
+spread. The answer model is `claude-sonnet-4-6` (temp 0); the judges are
+`gpt-4o-2024-11-20` (the LongMemEval reference, the headline) and `claude-sonnet-4-6`
+(the cross-judge). Cost and latency are recorded; COI is disclosed.
+
+<Note>
+  **No superiority claim -- Comis TIED mem0.** Comis and mem0 score **identically**
+  (both 7/8). At this best-effort **N=8** the two are **statistically
+  indistinguishable** on accuracy -- a one-question difference is 12.5 points. The
+  honest framing is **"competitive-with mem0 / at-$0-on-device,"** never a superiority
+  claim (binding constraint #8). The differentiator is **cost / latency / locality**,
+  not a quality edge.
+</Note>
+
+**Head-to-head (N=8 LongMemEval, cross-judged, spread 0.0 on every cell)** --
+each row read from
+[`head-to-head-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-02-phase114-prove2/head-to-head-report.json):
+
+| System | Judge 1 (gpt-4o) | Judge 2 (claude) | Spread \|1-2\| | vs control | Note |
+|--------|------------------|------------------|----------------|------------|------|
+| **Comis** (as-shipped recall) | **87.5%** (7/8) | 87.5% | 0.0 (survives) | **+37.5 pt** | LLM-free recall, **$0 on-device** |
+| **mem0** (`mem0ai 2.0.4`, re-run by us) | **87.5%** (7/8) | 87.5% | 0.0 (survives) | +37.5 pt | paid LLM fact-extraction at ingest (~53 min / 8 items) |
+| letta-fs control (full-haystack dump) | 50.0% (4/8) | 50.0% | 0.0 (survives) | — | the honesty anchor |
+
+How to read this honestly:
+
+- **Comis is competitive with mem0, not ahead of it.** Both answer 7/8; the
+  cross-judge spread is 0.0 (the two judges agreed perfectly). At N=8 this is a tie,
+  not a win.
+- **Both clear the full-dump control by +37.5 pt** -- so the bench is
+  **discriminating** (ranked recall / extracted memory scores far above a naive
+  full-context dump). This is the proof the comparison is meaningful, not a saturated
+  bench where everything scores the same.
+- **The real difference is the production economics.** Comis recall is **LLM-free and
+  runs on-device at $0** (local embed + rerank); mem0 spent real OpenAI
+  fact-extraction across ~53 minutes of ingest for the same 8 items. Equal answer
+  quality, very different cost -- the "competitive-with / at-$0-on-device" axis.
+
+**Per-capability QA-lift (N=50 mix, cross-judged; measure-first)** --
+[`capability-lift-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-02-phase114-prove2/capability-lift-report.json):
+Comis's as-shipped recall scores **98.0% (gpt-4o) / 94.0% (claude)** (cross-judge
+spread 4.0, survives) on a 50-item LongMemEval+LoCoMo mix. The two recall-config
+v2.9 capabilities (intent-reweight, forget) produce recall **byte-identical to
+baseline on all 50 questions** -> **+0.0 pt** measured QA-lift (p=1.000). This is the
+measure-first outcome: **no recall-config capability showed a measured QA-lift**, so
+the activation phase that follows flips nothing by default.
+
+<Note>
+  **Honest scope.** N=8 and N=50 are **best-effort operator-costed samples** (real API
+  spend on the operator's funded keys this run), **not** the definitive scale -- the
+  committed harness + `mem0-runner.py` + `prove2-sample.json` reproduce and extend
+  them. Zep, Hindsight, and Mnemosyne were **skip-with-disclosure** (not wired to the
+  protocol this run) -- never a fabricated cell; the discriminated-union competitor
+  adapters make a fabricated competitor number structurally impossible. The earlier
+  "reproduce via the gate" framing below remains the path to **extend** this run to a
+  larger N or more competitors.
+</Note>
+
 ## What is measured at $0 vs the operator-costed head-to-head
 
 Two things are measured **at $0** (keyless): the v2.8 mechanical gate deltas above,
-and the proving-machine mechanism. **What is not yet measured** is the competitor
-head-to-head -- the "Comis vs another memory system" accuracy comparison. That is
-the honestly-deferred, **operator-costed** re-run: it needs answer + judge model
-credentials and the competitor systems installed, none of which is a Comis
-dependency. There is **no fabricated competitor cell** anywhere on this page
-(mirroring the Phase-104 `fabricatedNumber: false` discipline). Run it yourself:
+and the proving-machine mechanism. The competitor head-to-head -- the "Comis vs
+another memory system" accuracy comparison -- is the **operator-costed** re-run, and
+[its first measured result is the v2.10 head-to-head above](#the-v2-10-competitive-head-to-head-the-costed-re-run-finally-measured)
+(best-effort N=8, cross-judged). To **extend** it -- a larger N, or the
+skip-with-disclosure competitors (Zep / Hindsight / Mnemosyne) -- you run it
+yourself: it needs answer + judge model credentials and the competitor systems
+installed, none of which is a Comis dependency. There is **no fabricated competitor
+cell** anywhere on this page (mirroring the `fabricatedNumber: false` discipline).
+Run it yourself:
 
 ```bash title="Operator-costed head-to-head (reproduce it yourself)"
 # 1. Populate the git-ignored operator env (NEVER committed):
@@ -384,8 +457,10 @@ cp scripts/bench-memory.env.example scripts/bench-memory.env
 scripts/bench-memory.sh gate
 ```
 
-Until that costed re-run is done and cross-judged, the competitor comparison stays
-**"reproduce via the gate,"** never a headline.
+The costed re-run is now done and cross-judged (the v2.10 head-to-head above), and
+its honest outcome is **"competitive-with mem0 / at-$0-on-device"** -- a tie, never a
+superiority headline. The gate command above stays the path to **extend** it to a
+larger N or more competitors.
 
 ## Reproducible report
 
@@ -443,13 +518,16 @@ both using the invalid-excluded denominator. Comis's recall@k number is a
 different measurement (retrieval only, no generation, no judge) and is not
 comparable to Hindsight's scoreboard.
 
-Comis now has a published QA-accuracy number -- the
+Comis now has published QA-accuracy numbers -- the
 [cross-judged baseline](#the-cross-judged-baseline-the-measured-accuracy) above
-(overall 71.1 / 73.3) -- but this page still states **no comparative result**.
-A fair side-by-side requires the other system re-run under this exact protocol
-(same datasets, same `correct / (total - invalid)` denominator, the same two-judge
-spread), and that operator-costed re-run is
-[deferred](#what-is-measured-at-0-vs-the-operator-costed-head-to-head).
+(overall 71.1 / 73.3) and the
+[v2.10 head-to-head](#the-v2-10-competitive-head-to-head-the-costed-re-run-finally-measured)
+(competitive-with mem0 at N=8) -- but this page still states **no comparative result
+against Hindsight**: Hindsight was skip-with-disclosure in that run, not re-run under
+this protocol. A fair side-by-side requires the other system re-run under this exact
+protocol (same datasets, same `correct / (total - invalid)` denominator, the same
+two-judge spread) -- exactly what was done for mem0 and is the path to
+[extend](#what-is-measured-at-0-vs-the-operator-costed-head-to-head) to Hindsight.
 Vendor-reported figures graded by a different judge are non-comparable. What this
 page documents is the methodology that makes the comparison fair when you run it,
 and the recorded report configuration so the run conditions are known on both
