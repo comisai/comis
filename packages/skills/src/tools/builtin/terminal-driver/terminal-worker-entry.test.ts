@@ -1994,3 +1994,118 @@ describe("createTerminalWorker — 121-03 settle gated on !hasContentBelowFold (
     expect(r.isComplete).toBe(true);
   });
 });
+
+// ===========================================================================
+// Wave 2 (124-05): the worker drives classifyFrame on each SETTLED frame and
+// emits an attention TerminalEventFrame on fd3 via the injected writeFd3 — the
+// no-poll mechanism's worker half (TR-11). EDGE-triggered: a settled+parked frame
+// emits terminal:input_needed; a never-parked working stream emits nothing. The
+// injected fd3-writer captures the frames so the wiring is provable on macOS.
+// ===========================================================================
+
+import { decodeFrames, type TerminalEventFrame } from "./terminal-ipc.js";
+
+/** A capturing fake fd3-writer + a decoder over everything written. */
+function makeFd3Capture(): {
+  writeFd3: (b: Buffer) => void;
+  frames: () => TerminalEventFrame[];
+} {
+  const buffers: Buffer[] = [];
+  return {
+    writeFd3: (b: Buffer) => buffers.push(b),
+    frames: () =>
+      buffers.length === 0 ? [] : (decodeFrames(Buffer.concat(buffers)) as TerminalEventFrame[]),
+  };
+}
+
+describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (no poll)", () => {
+  it("driving a session to a settled, cursor-parked prompt emits exactly one terminal:input_needed frame on fd3", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const fd3 = makeFd3Capture();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: rec.spawn }),
+        setTimer: sched.setTimer,
+        clearTimer: sched.clearTimer,
+        writeFd3: fd3.writeFd3, // 124-05: the injected fd3 push-channel writer
+      }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    // Render a real parked prompt: a boot line + a trailing prompt with NO newline,
+    // so the @xterm cursor lands on the prompt line (the last non-blank row) — parked.
+    rec.emit("boot output line\n");
+    rec.emit("Do you trust this? (y/n) ");
+
+    // A `wait` settle resolves idle on the now-quiet, parked frame; the worker runs
+    // classifyFrame on the settled snapshot and the emitter fires the transition.
+    const p = worker.handle(waitFrame({ forIdleMs: 50 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushEmulator(); // let the @xterm parse land so the snapshot reflects the prompt
+    sched.advance(50);
+    await p;
+    await flushEmulator();
+
+    const frames = fd3.frames();
+    expect(frames).toHaveLength(1);
+    expect(frames[0].sessionId).toBe("s1");
+    expect(frames[0].event).toBe("terminal:input_needed");
+    expect(frames[0].payload).toMatchObject({ state: "awaiting-input" });
+    // Redaction-safe: no screen/text on the wire.
+    expect(frames[0].payload).not.toHaveProperty("screen");
+  });
+
+  it("a settled working stream that never parks (cursor mid-screen, content below) emits NO input_needed frame", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const fd3 = makeFd3Capture();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: rec.spawn }),
+        setTimer: sched.setTimer,
+        clearTimer: sched.clearTimer,
+        writeFd3: fd3.writeFd3,
+      }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    // A generation-style frame: the cursor is moved UP to mid-screen (CUP) with content
+    // still rendered BELOW it — the thinking-pause shape the classifier reads as working.
+    rec.emit("line one of generated output\n");
+    rec.emit("line two\nline three\nline four\n");
+    rec.emit("\x1b[2;1H"); // move cursor to row 2 col 1 — above the rendered tail (not parked)
+
+    const p = worker.handle(waitFrame({ forIdleMs: 50 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushEmulator();
+    sched.advance(50);
+    await p;
+    await flushEmulator();
+
+    const inputNeeded = fd3.frames().filter((f) => f.event === "terminal:input_needed");
+    expect(inputNeeded).toHaveLength(0);
+  });
+
+  it("a worker with NO writeFd3 injected still settles normally (the emit is best-effort, never required)", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      // No writeFd3 — the worker must not crash; the settle still resolves.
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    rec.emit("ready> ");
+
+    const p = worker.handle(waitFrame({ forIdleMs: 50 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushEmulator();
+    sched.advance(50);
+    const reply = await p;
+    expect(reply.ok).toBe(true);
+    expect((reply.result as { reason: string }).reason).toBe("idle");
+  });
+});
