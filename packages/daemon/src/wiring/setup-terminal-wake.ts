@@ -137,7 +137,7 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
   };
 
   const dispatcher: TerminalWakeDispatcher = createTerminalWakeDispatcher({
-    eventBus: makeWakeAdapterBus(deps.eventBus),
+    eventBus: makeWakeAdapterBus(deps.eventBus, log),
     isSessionActive,
     wakeOneTurn,
     escalate,
@@ -197,21 +197,37 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
  *
  * The translating handler is wrapped 1:1 so `off` removes exactly the wrapper `on` added —
  * a per-(handler) WeakMap pairs the FSM's handler with our wrapper (no module-global state).
+ *
+ * WR-03: this is the one inbound seam that previously trusted the bus payload's shape
+ * blindly. Every other untrusted-boundary reader in this phase is defensively coded, so
+ * this one VALIDATES the structural fields the FSM keys on (`sessionId`/`agentId`) BEFORE
+ * the cast and DROPS a malformed frame with a WARN — never keying FSM state on
+ * `"undefined:undefined"` or masking a future-emit-site bug as a silently-dropped wake.
  */
-function makeWakeAdapterBus(bus: TypedEventBus): WakeDispatcherBus {
+function makeWakeAdapterBus(bus: TypedEventBus, log: ComisLogger): WakeDispatcherBus {
   const wrappers = new WeakMap<(data: TerminalInputNeededWake) => void, (data: unknown) => void>();
   return {
     on(_event: "terminal:input_needed", handler: (data: TerminalInputNeededWake) => void): void {
       const wrapped = (data: unknown): void => {
-        const ev = data as { sessionId: string; agentId: string; state: "awaiting-input" | "stuck"; reason: string };
+        const ev = data as Partial<{ sessionId: string; agentId: string; state: "awaiting-input" | "stuck"; reason: string }>;
+        // WR-03: validate the shape before trusting it. A frame missing the structural
+        // correlation keys is dropped (defense-in-depth) — not forwarded with garbage.
+        if (typeof ev.sessionId !== "string" || typeof ev.agentId !== "string") {
+          log.warn(
+            { hint: "malformed terminal:input_needed payload (missing sessionId/agentId); wake dropped", errorKind: "validation" as const, step: "wake_adapter_dropped" },
+            "terminal wake adapter dropped a malformed frame",
+          );
+          return;
+        }
+        const reason = typeof ev.reason === "string" ? ev.reason : "input_needed";
         handler({
           sessionId: ev.sessionId,
           // The redaction-safe core event omits requestId; correlate by (sessionId, reason)
           // so duplicate re-publishes of one frame coalesce, a fresh prompt re-wakes.
-          requestId: `${ev.sessionId}:${ev.reason}`,
+          requestId: `${ev.sessionId}:${reason}`,
           owner: { agentId: ev.agentId, sessionKey: "" },
-          state: ev.state,
-          reason: ev.reason,
+          state: ev.state === "stuck" ? "stuck" : "awaiting-input",
+          reason,
         });
       };
       wrappers.set(handler, wrapped);

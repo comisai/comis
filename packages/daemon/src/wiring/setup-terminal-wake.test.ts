@@ -230,6 +230,31 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     expect(built.registry.status).not.toHaveBeenCalled();
   });
 
+  it("WR-03: a malformed terminal:input_needed (missing sessionId/agentId) is dropped at the adapter with a WARN, no turn", async () => {
+    built = build(dataDir, { screen: "Press enter to continue" });
+    // A re-publish missing the structural fields the FSM keys on — a future emit site,
+    // a test double, or a refactor. The adapter must VALIDATE before the blind cast and
+    // drop it (defense-in-depth), never key FSM state on "undefined:undefined".
+    built.bus.emit("terminal:input_needed", { state: "awaiting-input", reason: "x", timestamp: 1 });
+    await flush();
+
+    // No woken turn — the malformed frame never reached the §4.4 driver.
+    expect(built.registry.status).not.toHaveBeenCalled();
+    // The drop is audited at the adapter with a malformed-shape hint (§2.7).
+    const warn = built.logger.warn.mock.calls.find(
+      (c) => typeof (c[0] as { hint?: string })?.hint === "string" && (c[0] as { hint: string }).hint.includes("malformed"),
+    );
+    expect(warn, "a malformed wake frame must WARN with a 'malformed' hint").toBeDefined();
+    expect((warn![0] as { errorKind?: string }).errorKind).toBe("validation");
+  });
+
+  it("WR-03: a well-formed terminal:input_needed still drives a turn (the guard does not reject valid frames)", async () => {
+    built = build(dataDir, { screen: "Press enter to continue" });
+    built.bus.emit("terminal:input_needed", { sessionId: "s-ok", agentId: "a", state: "awaiting-input", reason: "settled_cursor_parked", timestamp: 1 });
+    await flush();
+    expect(built.registry.status).toHaveBeenCalledTimes(1);
+  });
+
   it("shutdown() unsubscribes + drains: after shutdown a fresh input_needed wakes no turn", async () => {
     built = build(dataDir, { screen: "Press enter to continue" });
     await built.handle.shutdown();
