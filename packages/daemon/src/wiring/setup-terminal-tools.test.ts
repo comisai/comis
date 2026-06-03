@@ -9,6 +9,13 @@
  * (SEC-01). Imports the real `@comis/skills/tools` factories (resolved from the
  * built `dist`).
  *
+ * After Phase 120 the four interaction tools (send_text/send_key/wait/resize) are
+ * IMPLEMENTED factories the wiring constructs with `sharedDeps` (they receive the
+ * per-agent registry), so they no longer reject `not_implemented` — they delegate
+ * to the registry (which, with no live session, degrades to a resolved gone-shape,
+ * never a throw). `status` is the LONE remaining stub that still rejects
+ * `not_implemented`.
+ *
  * @module
  */
 
@@ -79,13 +86,50 @@ describe("wireTerminalTools — daemon composition root", () => {
     ).rejects.toThrow(/\[permission_denied\]/);
   });
 
-  it("the stub tools reject not_implemented", async () => {
+  it("the four interaction tools are IMPLEMENTED (delegate to the registry; do NOT reject not_implemented)", async () => {
     const tools: ToolLike[] = [];
     const registries = new Map<string, TerminalSessionRegistry>();
     wireTerminalTools(tools as never, registries, "agent-a", makeDeps());
 
-    const stub = tools.find((t) => t.name === "terminal_session_send_text");
-    expect(stub).toBeDefined();
-    await expect(stub!.execute("call-1", { sessionId: "s", text: "x" })).rejects.toThrow(/\[not_implemented\]/);
+    // The four interaction tools now reach the injected registry. With no live
+    // session the registry degrades to a resolved gone-shape (the 120-03
+    // degrade-not-hang posture) — they RESOLVE, they do NOT throw not_implemented.
+    // (Pre-GREEN the wiring passed no-arg stubs, so this asserts the sharedDeps
+    // injection: a no-arg factory would have no registry to delegate to.)
+    const interaction = ["terminal_session_send_text", "terminal_session_send_key", "terminal_session_resize", "terminal_session_wait"];
+    for (const name of interaction) {
+      const tool = tools.find((t) => t.name === name);
+      expect(tool, `${name} should be wired`).toBeDefined();
+      await expect(
+        tool!.execute("call-1", { sessionId: "no-such-session", text: "x", keys: ["C-c"], cols: 80, rows: 24 }),
+        `${name} should delegate to the registry, not reject not_implemented`,
+      ).resolves.toBeDefined();
+    }
+  });
+
+  it("send_text delegates to the per-agent registry and resolves the degraded {screen,cursor} for an absent session", async () => {
+    const tools: ToolLike[] = [];
+    const registries = new Map<string, TerminalSessionRegistry>();
+    wireTerminalTools(tools as never, registries, "agent-a", makeDeps());
+
+    const sendText = tools.find((t) => t.name === "terminal_session_send_text");
+    const result = (await sendText!.execute("call-1", { sessionId: "no-such-session", text: "hi" })) as {
+      details: { screen: string; cursor: { x: number; y: number } };
+    };
+    // The registry's degrade-on-absent-session shape (no worker spawned; empty
+    // allow-set) — a resolved {screen,cursor}, proving the sharedDeps registry
+    // was injected (a no-arg stub factory could not produce this).
+    expect(result.details).toHaveProperty("screen");
+    expect(result.details).toHaveProperty("cursor");
+  });
+
+  it("status is the LONE remaining stub — it still rejects not_implemented (Phase 124)", async () => {
+    const tools: ToolLike[] = [];
+    const registries = new Map<string, TerminalSessionRegistry>();
+    wireTerminalTools(tools as never, registries, "agent-a", makeDeps());
+
+    const status = tools.find((t) => t.name === "terminal_session_status");
+    expect(status).toBeDefined();
+    await expect(status!.execute("call-1", { sessionId: "s" })).rejects.toThrow(/\[not_implemented\]/);
   });
 });
