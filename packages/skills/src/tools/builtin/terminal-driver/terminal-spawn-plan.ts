@@ -207,6 +207,9 @@ export async function buildSpawnPlan(
     systemRoPaths: input.systemRoPaths,
     dedicatedUid: bwrapUid,
     relaySocketPath,
+    // listed-hosts: the relay-init runs INSIDE the jail, so its script must be
+    // --ro-bound in (node can't load a host path that isn't bound) — SEC-07.
+    relayInitScriptPath: relay?.relayInitScriptPath,
   });
 
   // scopeArgs = [bwrapPath, ...args, "--"]. The child (and, for listed-hosts, the
