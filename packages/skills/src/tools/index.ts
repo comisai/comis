@@ -71,6 +71,7 @@ export {
   buildDirectSpawn,
   type TerminalToolDeps,
   type TerminalEventBus,
+  type TerminalEvictedEvent,
   type TerminalSessionRegistry,
   type TerminalSessionRegistryDeps,
   type FakeWorkerChild,
@@ -78,6 +79,11 @@ export {
   type AllowMatch,
   type TerminalScope,
   type SessionListing,
+  // P4 OPS-03/06: the per-session caps surface (the daemon wires caps.forget to onCapForget)
+  // + the reaper eviction payload (the daemon's onEvict hook param) + the typed reason.
+  type SessionCaps,
+  type ReaperEvictInfo,
+  type EvictReason,
 } from "./builtin/terminal-driver/index.js";
 export type { InstallDetourDecision, DetourOverlap } from "./builtin/install-detour.js";
 export { parseInstallDetour } from "./builtin/install-detour.js";

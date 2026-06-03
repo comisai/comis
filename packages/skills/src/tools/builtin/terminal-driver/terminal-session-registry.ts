@@ -13,13 +13,15 @@
  * affected sessions to `lost`/`exited`, CLEAR the worker handle, and the next
  * `create` re-spawns lazily — a crash restarts the WORKER, never the daemon.
  *
- * FACTORY (`createTerminalSessionRegistry(deps)`) closing over a LOCAL session
- * map + worker handle — NO module-global mutable state (the no-module-global
- * architecture rule). `deps` injects `{ spawnWorker, logger, nowMs }`.
- *
- * M-1: `create` forwards buildDirectSpawn's daemon-canonical `{bin,argv}` (119-02,
- * the SOLE canonicalization site) to the worker VERBATIM — no re-canonicalization.
+ * FACTORY (`createTerminalSessionRegistry(deps)`) closing over a LOCAL session map
+ * + worker handle — NO module-global mutable state. `create` forwards buildDirectSpawn's
+ * daemon-canonical `{bin,argv}` VERBATIM (M-1, 119-02 the SOLE canonicalization site).
  * No `@comis/infra` value-import (the daemon passes the real logger).
+ *
+ * P4 (TR-06/OPS-06): when the daemon threads the reaper caps + `TimerPort` + eviction
+ * hooks, the registry composes a `terminal-reaper.ts` sweep (idle + wall-clock) + a
+ * per-create overflow check; `evict` is the single audited eviction site (drop +
+ * cleanup + `onCapForget` + `onEvict` + a WARN) the sweep and Plan 05 both drive.
  *
  * @module
  */
@@ -46,6 +48,7 @@ import type { ReadOptions, SnapshotDiff } from "./terminal-render.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
 import { allocateSessionWorkspace, cleanupSessionWorkspace, resolveCreateWorkspace } from "./terminal-workspace.js";
 import { sameOwner, type SessionOwner } from "./terminal-session-owner.js";
+import { wireRegistryReaper, type EvictReason, type ReaperCaps } from "./terminal-reaper.js";
 
 export type { SessionOwner } from "./terminal-session-owner.js";
 
@@ -93,16 +96,15 @@ export interface SpawnFailureInfo {
 }
 
 /**
- * Default reply timeout (MR-01): a `request()` (read/kill round-trip) with no
- * correlated reply in this window settles to a typed timeout instead of hanging
- * the caller + leaking the resolver (a wedged-but-alive worker emits no
- * close/error). 30s is generous for a screen read; the daemon overrides via
+ * Default reply timeout (MR-01): a `request()` with no correlated reply in this
+ * window settles to a typed timeout instead of hanging + leaking the resolver (a
+ * wedged-but-alive worker emits no close/error). The daemon overrides via
  * `requestTimeoutMs` (config-derived, e.g. `worker.stuckMs`).
  */
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 
-/** Registry dependencies — all injectable for unit tests; production defaults provided. */
-export interface TerminalSessionRegistryDeps {
+/** Registry dependencies — all injectable for unit tests; production defaults provided. Extends {@link ReaperCaps}: the daemon threads the P4 reaper caps + eviction hooks flat (see `wireRegistryReaper`). */
+export interface TerminalSessionRegistryDeps extends ReaperCaps {
   /**
    * Spawn the supervised worker child. Default (production):
    * `child_process.spawn(process.execPath, [...workerPermissionArgs, workerJs],
@@ -113,26 +115,11 @@ export interface TerminalSessionRegistryDeps {
   logger: RegistryLogger;
   /** Clock port. Default: `systemNowMs` from `@comis/core`. */
   nowMs?: () => number;
-  /**
-   * Reply timeout for `request()` round-trips in ms (MR-01). Default
-   * {@link DEFAULT_REQUEST_TIMEOUT_MS}. The daemon threads a config-derived value
-   * (e.g. `worker.stuckMs`) so a wedged worker degrades `read` instead of hanging.
-   */
+  /** Reply timeout for `request()` round-trips in ms (MR-01). Default {@link DEFAULT_REQUEST_TIMEOUT_MS}; the daemon threads a config-derived value (e.g. `worker.stuckMs`) so a wedged worker degrades `read` instead of hanging. */
   requestTimeoutMs?: number;
-  /**
-   * Called when the worker reports a failed backend spawn via an `ok:false`
-   * create reply (HR-03 / OPS-07). The daemon wiring binds this to emit
-   * `terminal:spawn_failed`. The session is already flipped to `lost` by the
-   * registry before this fires. Injected (not a value-imported event bus) so the
-   * registry stays infra-decoupled.
-   */
+  /** Called when the worker reports a failed backend spawn via an `ok:false` create reply (HR-03/OPS-07); the daemon binds this to emit `terminal:spawn_failed`. The session is already `lost` before this fires. Injected (not a value-imported bus) so the registry stays infra-decoupled. */
   onSpawnFailed?: (info: SpawnFailureInfo) => void;
-  /**
-   * Schedule a one-shot timer for the MR-01 reply timeout. Default:
-   * `systemSetTimeout` from `@comis/core` (the sanctioned timer indirection — no raw
-   * `setTimeout` global); returns an opaque handle for `clearTimer`. The production
-   * default `.unref()`s it so a pending timeout never holds the loop open on shutdown.
-   */
+  /** Schedule a one-shot timer for the MR-01 reply timeout. Default `systemSetTimeout` from `@comis/core` (the sanctioned indirection — no raw `setTimeout` global); the production default `.unref()`s it so a pending timeout never holds the loop open. */
   setTimer?: (cb: () => void, ms: number) => unknown;
   /** Cancel a `setTimer` handle (default: `systemClearTimeout`). */
   clearTimer?: (handle: unknown) => void;
@@ -161,6 +148,8 @@ export interface SessionHandle {
   cols: number;
   rows: number;
   lastActivity: number;
+  /** Session start epoch ms (stamped at `create`) — the reaper's wall-clock-age signal (OPS-06). */
+  startedAt: number;
   exitCode?: number;
   /** The registry-allocated per-session jail workspace dir (gap 2), removed best-effort on kill so the throwaway dir does not leak. Set ONLY when the registry allocated it (a caller-supplied workspace is the caller's to clean). */
   workspace?: string;
@@ -206,19 +195,11 @@ export interface TerminalView {
   rows: number;
   alt: boolean;
   alive: boolean;
-  /**
-   * The per-read screen-diff vs the prior read (TR-14, Plan 03). ADDITIVE: the
-   * worker includes it when an emulator snapshot exists; the not-found / degraded
-   * early returns omit it. Rides `reply.result` through `read` to the tool layer.
-   */
+  /** The per-read screen-diff vs the prior read (TR-14, Plan 03). ADDITIVE: present when an emulator snapshot exists; the not-found/degraded early returns omit it. */
   diff?: SnapshotDiff;
 }
 
-/**
- * The post-action snapshot subset returned by `sendText`/`sendKey` (spec §5) —
- * `{screen,cursor}`, a strict subset of {@link TerminalView}. The full grid +
- * real cursor land in P2/121; P1 forwards whatever the worker renders.
- */
+/** The post-action snapshot subset returned by `sendText`/`sendKey` (spec §5) — `{screen,cursor}`, a strict subset of {@link TerminalView}. */
 export interface SendResult {
   screen: string;
   cursor: { x: number; y: number };
@@ -276,6 +257,8 @@ export interface TerminalSessionRegistry {
   list(owner: SessionOwner): SessionListing[];
   /** Terminate a session — a no-op if it is absent OR not owned by `owner` (TR-13). */
   kill(sessionId: string, owner: SessionOwner): Promise<void>;
+  /** Evict with an audited reason (TR-06/OPS-06) — owner-checked, then the single drop + cleanup + onCapForget + onEvict + WARN site the reaper sweep and Plan 05's max_interactions both drive. */
+  evict(sessionId: string, owner: SessionOwner, reason: EvictReason): Promise<void>;
   size(): number;
   cleanup(): Promise<void>;
 }
@@ -326,9 +309,9 @@ export function createTerminalSessionRegistry(
   const allocateWorkspace = deps.allocateWorkspace ?? ((id: string) => allocateSessionWorkspace(id).workspace);
 
   /**
-   * Split a `${sessionId}:${requestId}` pending key into its parts. Both halves are
-   * UUIDs (no embedded `:`), so the FIRST `:` is the unambiguous separator — used to
-   * reconstruct waiter identity on flush (LR-02).
+   * Split a `${sessionId}:${requestId}` pending key. Both halves are UUIDs (no
+   * embedded `:`), so the FIRST `:` is the separator — reconstructs waiter identity
+   * on flush (LR-02).
    */
   function splitPendingKey(key: string): { sessionId: string; requestId: string } {
     const idx = key.indexOf(":");
@@ -338,11 +321,10 @@ export function createTerminalSessionRegistry(
   }
 
   /**
-   * Clear the worker handle and flush its pending waiters (on crash / close).
-   * LR-02: each synthetic termination reply carries the waiter's REAL
-   * `(sessionId,requestId)` reconstructed from its pending key (NOT blanked empty
-   * strings) so an identity-keyed caller cannot mis-handle it; a per-waiter DEBUG
-   * records the flush (the §2.7-observable state transition).
+   * Clear the worker handle and flush its pending waiters (on crash / close). LR-02:
+   * each synthetic termination reply carries the waiter's REAL `(sessionId,requestId)`
+   * from its pending key (not blanked) so an identity-keyed caller cannot mis-handle
+   * it; a per-waiter DEBUG records the flush (the §2.7-observable transition).
    */
   function clearWorker(): void {
     worker = undefined;
@@ -378,16 +360,15 @@ export function createTerminalSessionRegistry(
 
     // Decode reply frames off the worker's stdout and correlate them to waiters.
     //
-    // HR-02 (OPS-01 guarantee): the decode/correlate is wrapped in try/catch so a
-    // malformed reply frame NEVER throws out of this 'data' listener. A throw on a
+    // HR-02 (OPS-01 guarantee): decode/correlate is wrapped in try/catch so a
+    // malformed reply frame NEVER throws out of this 'data' listener (a throw on a
     // stream listener becomes an `uncaughtException` that takes the DAEMON down —
-    // the precise opposite of "a crash restarts the WORKER, never the daemon".
-    // The throw sources are `JSON.parse` on non-JSON body bytes (stray
-    // console.log / deprecation warning on fd1, partial write, post-desync
-    // garbage) and the HR-01 `FrameTooLargeError` on a corrupt length prefix. On
-    // any decode failure we treat the worker as corrupt: WARN errorKind:'protocol',
-    // flip its running sessions to `lost`, and clear the handle so the next
-    // `create` re-spawns — never reaching `uncaughtException`.
+    // the opposite of "a crash restarts the WORKER, never the daemon"). Throw
+    // sources: `JSON.parse` on non-JSON body bytes (stray console.log / partial
+    // write / post-desync garbage) + the HR-01 `FrameTooLargeError` on a corrupt
+    // length prefix. On any decode failure we treat the worker as corrupt: WARN,
+    // flip its running sessions to `lost`, clear the handle so the next `create`
+    // re-spawns — never reaching `uncaughtException`.
     const decoder = createFrameDecoder();
     child.stdout?.on("data", (chunk: Buffer) => {
       let frames: TerminalReplyFrame[];
@@ -473,16 +454,12 @@ export function createTerminalSessionRegistry(
 
   /**
    * Send a request frame to the worker and await its correlated reply, BOUNDED by
-   * a reply timeout (MR-01).
-   *
-   * A worker that is alive but wedged (node-pty read loop stuck, the driven CLI
-   * blocking the worker's single-threaded frame loop, a lost reply with no stream
-   * close) emits no `close`/`error`, so nothing else ever unparks the waiter —
-   * pre-MR-01 the `await` hung the whole turn and the resolver leaked. On timeout
-   * we delete the pending key and resolve a typed `ok:false` timeout reply, so
-   * `read` degrades to the not-alive minimal view instead of hanging. The timer
-   * is the sanctioned `setTimer` indirection (no raw `setTimeout` global) and the
-   * production default is `.unref()`d so it never holds the loop open.
+   * a reply timeout (MR-01). A wedged-but-alive worker (node-pty read loop stuck,
+   * driven CLI blocking the frame loop, a lost reply with no stream close) emits no
+   * `close`/`error` — pre-MR-01 the `await` hung the whole turn + leaked the
+   * resolver. On timeout we delete the pending key and resolve a typed `ok:false`
+   * reply so `read` degrades to the not-alive view instead of hanging. The timer is
+   * the sanctioned `setTimer` indirection (no raw global), `.unref()`d in production.
    */
   function request(
     sessionId: string,
@@ -521,6 +498,7 @@ export function createTerminalSessionRegistry(
     // caller override is theirs) so kill rm's exactly what the registry owns.
     const { workspace, cwd, ownedWorkspace } = resolveCreateWorkspace(req, allocateWorkspace, sessionId);
 
+    const createdAt = nowMs(); // single clock read — lastActivity + startedAt (the reaper's wall-clock signal).
     const handle: SessionHandle = {
       sessionId,
       allowId: req.allowId,
@@ -528,7 +506,8 @@ export function createTerminalSessionRegistry(
       status: "running",
       cols: req.cols,
       rows: req.rows,
-      lastActivity: nowMs(),
+      lastActivity: createdAt,
+      startedAt: createdAt,
       workspace: ownedWorkspace,
       // TR-13: stamp the origin (owner-scoped list/read/get/kill/send*). The owner
       // rides the HANDLE only — NEVER the worker frame (the worker is owner-agnostic).
@@ -536,13 +515,11 @@ export function createTerminalSessionRegistry(
     };
     sessions.set(sessionId, handle);
 
-    // M-1: forward the daemon-canonical {bin,argv} VERBATIM (buildDirectSpawn,
-    // 119-02, the SOLE canonicalization site; argsPrefix preserved end-to-end). The
-    // create frame is fired WITHOUT blocking the turn, but we register an ASYNC
-    // create-reply waiter (HR-03): a failed worker backend spawn replies `ok:false`,
-    // flipping the session to `lost` (so list/read agree `alive:false`) + firing the
-    // OPS-07 `onSpawnFailed` hook (else the failure is silently dropped, the handle
-    // stuck `running`). The turn is NOT held — the waiter resolves out-of-band.
+    // M-1: forward the daemon-canonical {bin,argv} VERBATIM (buildDirectSpawn, 119-02,
+    // the SOLE canonicalization site; argsPrefix preserved end-to-end). Fired WITHOUT
+    // blocking the turn, but we register an ASYNC create-reply waiter (HR-03): a failed
+    // backend spawn replies `ok:false` → flip the session to `lost` (list/read agree
+    // alive:false) + fire the OPS-07 `onSpawnFailed` hook. The waiter resolves out-of-band.
     const createFrame = buildRequestFrame(sessionId, "create", {
       sessionId,
       bin: req.bin,
@@ -580,6 +557,9 @@ export function createTerminalSessionRegistry(
       { sessionId, allowId: req.allowId, command: req.bin },
       "terminal session registered",
     );
+    // TR-06: an over-cap create evicts the idlest down to maxSessions (reason
+    // max_sessions). Runs AFTER sessions.set so the new session is in the snapshot.
+    reaper?.checkOverflow();
     return { sessionId, allowId: req.allowId, cols: req.cols, rows: req.rows };
   }
 
@@ -779,11 +759,26 @@ export function createTerminalSessionRegistry(
     evictInternal(handle);
   }
 
+  // P4 (TR-06/OPS-06): compose the reaper + its single audited eviction site (the
+  // wiring closes over `sessions` + `evictInternal` — the reused drop+cleanup site).
+  const { reaper, evict: evictForReaper } = wireRegistryReaper({ sessions, nowMs, evictInternal, logger, caps: deps });
+  reaper?.start(); // arm the periodic sweep iff the reaper is composed.
+
+  async function evict(sessionId: string, owner: SessionOwner, reason: EvictReason): Promise<void> {
+    // TR-13: owner-scoped like kill (no-op on absent/cross-owner); the single eviction
+    // entry Plan 05 reuses for max_interactions (cap-forget runs on that path too).
+    if (ownedHandle(sessionId, owner) === undefined) return;
+    evictForReaper(sessionId, reason);
+  }
+
   function size(): number {
     return sessions.size;
   }
 
   async function cleanup(): Promise<void> {
+    // RESEARCH: stop the reaper FIRST so the sweep interval never outlives the
+    // registry (no leaked interval firing post-teardown).
+    reaper?.stop();
     // Owner-AGNOSTIC: tears down the WHOLE per-agent registry, dropping every
     // session regardless of owner (the per-agent worker is shared across owners).
     for (const handle of Array.from(sessions.values())) {
@@ -795,5 +790,5 @@ export function createTerminalSessionRegistry(
     }
   }
 
-  return { create, read, sendText, sendKey, resize, wait, get, list, kill, size, cleanup };
+  return { create, read, sendText, sendKey, resize, wait, get, list, kill, evict, size, cleanup };
 }

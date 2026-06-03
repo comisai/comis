@@ -27,6 +27,7 @@ export {
   type TerminalEventBus,
   type TerminalStateEvent,
   type TerminalSpawnFailedEvent,
+  type TerminalEvictedEvent,
 } from "./terminal-tools.js";
 
 // The lone remaining stub tool (registered, never-export, rejects not_implemented → Phase 124).
@@ -74,6 +75,7 @@ export {
   type ReaperDeps,
   type ReaperSession,
   type EvictReason,
+  type ReaperEvictInfo,
 } from "./terminal-reaper.js";
 
 // The length-prefixed IPC framer's max-frame guard (HR-01) — the registry's

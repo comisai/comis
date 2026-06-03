@@ -24,18 +24,16 @@
  *     infra/observability, SEC-07). The daemon (composition root) constructs the
  *     concrete `TimerPort` (`createSystemTimers`) + the `nowMs` clock and injects
  *     them; tests inject a fake clock/timer.
- *   - CLOSURE-local state only: a single `handle` for the sweep interval — NO
- *     module-global mutable state. Two `createTerminalReaper` instances are
- *     independent.
- *   - NO raw `setInterval`/`setTimeout`/`Date.now`/`new Date()` global — time is
- *     read only via the injected `nowMs`, and the sweep uses the injected
- *     `timers.setInterval(...).unref()` (the unref so the sweep never holds the
- *     event loop open on SIGTERM). Ring bytes are enforced in the WORKER (P0
- *     `ringBytes`), NOT here — the reaper bounds session count + idle + lifetime.
+ *   - CLOSURE-local state only: a single sweep-interval `handle` — NO module-global
+ *     mutable state. Two `createTerminalReaper` instances are independent.
+ *   - NO raw `setInterval`/`setTimeout`/`Date.now`/`new Date()` global — time is read
+ *     only via the injected `nowMs`, and the sweep uses the injected
+ *     `timers.setInterval(...).unref()` (so it never holds the loop open on SIGTERM).
+ *     Ring bytes are enforced in the WORKER (P0 `ringBytes`), NOT here — the reaper
+ *     bounds session count + idle + lifetime.
  *
  * Analog: packages/agent/src/background/background-task-manager.ts (injected
- * `ClockPort`/`TimerPort` + closure-local state + the `setInterval(...).unref()`
- * cap pattern).
+ * `ClockPort`/`TimerPort` + closure-local state + the `setInterval(...).unref()` cap).
  *
  * @module
  */
@@ -44,20 +42,17 @@ import type { TimerPort, TimerHandle } from "@comis/core";
 
 /**
  * The audited eviction reason — the full four-value union (123-01
- * `terminal:session_evicted`). This plan emits `idle`/`wall_clock` (the sweep)
- * and `max_sessions` (the create-overflow check); Plan 05 emits `max_interactions`
- * on the SAME `onEvict` path (the interaction budget spent at the send_* tool
- * layer). `max_requests` is NOT here — it REJECTS the call (the session survives).
+ * `terminal:session_evicted`). This plan emits `idle`/`wall_clock` (the sweep) +
+ * `max_sessions` (the create-overflow check); Plan 05 emits `max_interactions` on
+ * the SAME `onEvict` path. `max_requests` is NOT here — it REJECTS (session survives).
  */
 export type EvictReason = "idle" | "max_sessions" | "wall_clock" | "max_interactions";
 
 /** A session snapshot row the reaper reads — the idle + wall-clock signals. */
 export interface ReaperSession {
   sessionId: string;
-  /** Last activity epoch ms (the idle-TTL + overflow-idlest signal). */
-  lastActivity: number;
-  /** Session start epoch ms (the wall-clock-age signal). */
-  startedAtMs: number;
+  lastActivity: number; // last activity epoch ms (the idle-TTL + overflow-idlest signal).
+  startedAtMs: number; // session start epoch ms (the wall-clock-age signal).
 }
 
 /** Injected reaper dependencies — all supplied by the registry/daemon (or tests). */
@@ -142,4 +137,113 @@ export function createTerminalReaper(deps: ReaperDeps): TerminalReaper {
   }
 
   return { start, stop, checkOverflow };
+}
+
+// ---------------------------------------------------------------------------
+// Registry composition (the SINGLE audited eviction site + the wired reaper)
+// ---------------------------------------------------------------------------
+
+/** Eviction-relevant payload the reaper emits to the registry's `onEvict` hook. */
+export interface ReaperEvictInfo {
+  sessionId: string;
+  reason: EvictReason;
+  /** The session's wall-clock age at eviction (`nowMs() - startedAtMs`), in ms. */
+  durationMs: number;
+}
+
+/** The reaper-relevant subset of a registry session handle (the wiring reads these). */
+export interface ReaperSessionHandle {
+  sessionId: string;
+  lastActivity: number;
+  startedAt: number;
+}
+
+/**
+ * The reaper caps + eviction hooks — the registry deps EXTEND this so the daemon
+ * threads them flat (worker.{maxSessions,idleTtlMs} + entry limits.wallClockMs +
+ * createSystemTimers + the eviction emit/log + caps.forget). All optional: when
+ * `timers` + `maxSessions` are both provided the registry composes the reaper;
+ * otherwise the reaper is undefined (no sweep — unit tests that don't exercise it).
+ */
+export interface ReaperCaps {
+  maxSessions?: number; // worker.maxSessions — over-cap creates evict the idlest (max_sessions).
+  idleTtlMs?: number; // worker.idleTtlMs — idle-longer sessions reaped (idle). 0 ⇒ disabled.
+  wallClockMs?: number; // entry limits.wallClockMs — older sessions reaped (wall_clock). 0 ⇒ disabled.
+  sweepIntervalMs?: number; // sweep cadence ms (default 30_000).
+  timers?: TimerPort; // injected TimerPort (daemon: createSystemTimers); type-only @comis/core. Absent ⇒ no reaper.
+  onEvict?: (info: ReaperEvictInfo) => void; // daemon emits terminal:session_evicted + _state(lost) + a WARN.
+  onCapForget?: (sessionId: string) => void; // daemon wires caps.forget — T-123-17 (no cap-map leak on the reap path).
+}
+
+/**
+ * The minimal registry primitives the reaper wiring needs — so the registry's OWN
+ * diff is tiny (it does NOT inline the snapshot/drop closures + cap-defaulting + the
+ * eviction site). Generic over the handle type `H` so the registry passes its own
+ * `SessionHandle` map + `evictInternal` verbatim (a `SessionHandle` IS a `ReaperSessionHandle`).
+ */
+export interface RegistryReaperWiring<H extends ReaperSessionHandle> {
+  /** The registry's live session map (the wiring derives the snapshot + lookup + drop from it). */
+  sessions: Map<string, H>;
+  /** The registry's injected `nowMs`. */
+  nowMs: () => number;
+  /** The registry's single drop + kill-frame + workspace-cleanup step (reused, never re-implemented). */
+  evictInternal: (handle: H) => void;
+  /** The registry's structural logger (the audited WARN; NOT `@comis/infra`). */
+  logger: { warn(obj: Record<string, unknown>, msg: string): void };
+  /** The reaper caps + hooks from the registry deps (all optional). */
+  caps: ReaperCaps;
+}
+
+/**
+ * Compose the registry's reaper + its SINGLE audited eviction site from the live
+ * `sessions` map + primitives (cap defaults: sweep 30_000ms, undefined caps ⇒ 0).
+ * Returns `evict(sessionId, reason)` — the ONE place a reaped session is dropped: it
+ * reuses the registry's `evictInternal` (the kill drop + `cleanupSessionWorkspace`,
+ * never duplicated), FORGETS the per-session cap state via `onCapForget` (no
+ * SessionCaps Map leak on the reap path — T-123-17), emits the audited reason via
+ * `onEvict`, and logs a WARN (`hint` + `errorKind: "resource"`, §2.7). Plan 05's
+ * `max_interactions` reuses this exact `evict`. The reaper is undefined when
+ * `timers`/`maxSessions` are not both provided — `checkOverflow`/`stop` then no-op.
+ */
+export function wireRegistryReaper<H extends ReaperSessionHandle>(w: RegistryReaperWiring<H>): {
+  reaper: TerminalReaper | undefined;
+  evict: (sessionId: string, reason: EvictReason) => void;
+} {
+  const idleTtlMs = w.caps.idleTtlMs ?? 0;
+  const wallClockMs = w.caps.wallClockMs ?? 0;
+  const maxSessions = w.caps.maxSessions ?? 0;
+
+  function evict(sessionId: string, reason: EvictReason): void {
+    const handle = w.sessions.get(sessionId);
+    if (handle === undefined) return; // already gone — idempotent.
+    const durationMs = w.nowMs() - handle.startedAt;
+    w.evictInternal(handle); // reuse the kill drop + workspace cleanup (single site).
+    w.caps.onCapForget?.(sessionId); // forget the cap state on EVERY eviction (no map leak).
+    w.caps.onEvict?.({ sessionId, reason, durationMs });
+    w.logger.warn(
+      { sessionId, reason, durationMs, hint: "session evicted by reaper", errorKind: "resource" as const },
+      "terminal session evicted",
+    );
+  }
+
+  const reaper =
+    w.caps.timers !== undefined && maxSessions > 0
+      ? createTerminalReaper({
+          nowMs: w.nowMs,
+          timers: w.caps.timers,
+          idleTtlMs,
+          wallClockMs,
+          maxSessions,
+          sweepIntervalMs: w.caps.sweepIntervalMs ?? 30_000,
+          listSessions: () =>
+            Array.from(w.sessions.values()).map((s) => ({
+              sessionId: s.sessionId,
+              lastActivity: s.lastActivity,
+              startedAtMs: s.startedAt,
+            })),
+          onEvict: (sessionId, reason) => evict(sessionId, reason),
+        })
+      : undefined;
+
+  return { reaper, evict };
 }

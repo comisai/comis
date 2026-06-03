@@ -54,15 +54,18 @@ import {
   createTerminalSessionResizeTool,
   type TerminalSessionRegistry,
   type TerminalEventBus,
+  type ReaperEvictInfo,
   type AllowEntryLike,
   type TerminalScope,
   type SandboxProvider,
+  type SessionCaps,
 } from "@comis/skills/tools";
 import {
   systemNowMs,
   type TerminalAllowEntry,
   type ApprovalGate,
   type EgressControlPort,
+  type TimerPort,
 } from "@comis/core";
 
 /** Dependencies the terminal-driver wiring needs from the composition root. */
@@ -107,6 +110,27 @@ export interface TerminalWiringDeps {
    * EXPLICIT here per the W1 plan-checker — do not leave bwrapPath implicit.
    */
   readonly bwrapPath?: string;
+  /**
+   * P4 reaper caps (TR-06/OPS-06) — the closed `worker.{maxSessions,idleTtlMs,
+   * stuckMs}` (schema-skills.ts) + the per-entry `limits.wallClockMs` (default 0
+   * while the allow-set is empty). Threaded into the per-agent registry's reaper so
+   * the session footprint is bounded (max-sessions overflow on create, idle-TTL +
+   * wall-clock-age on the sweep). Optional: absent ⇒ no reaper (the pre-P4 posture).
+   */
+  readonly workerCaps?: { maxSessions: number; idleTtlMs: number; wallClockMs: number; stuckMs: number };
+  /**
+   * The injected `TimerPort` (the daemon constructs `createSystemTimers()` at the
+   * composition root) driving the reaper sweep. Type-only from `@comis/core`; the
+   * registry/reaper take it as a port (worker ↛ infra). Absent ⇒ no reaper sweep.
+   */
+  readonly timers?: TimerPort;
+  /**
+   * The shared per-agent {@link SessionCaps} instance (Plan 02/05). Threaded so the
+   * registry's `onCapForget` is wired to `caps.forget` — the per-session cap state is
+   * dropped on EVERY eviction (idle/wall_clock/max_sessions/max_interactions), not
+   * only the tool kill path (T-123-17, no SessionCaps Map leak on the reap path).
+   */
+  readonly caps?: SessionCaps;
 }
 
 /**
@@ -152,6 +176,35 @@ function resolveWorkerJsPath(dataDir: string): string {
 }
 
 /**
+ * Build the daemon-side reaper eviction hooks for one agent (TR-06/OPS-06) —
+ * mirrors the `onSpawnFailed` template. `onEvict` closes the observability loop on
+ * EVERY reaped session: it emits `terminal:session_evicted` (the audited reason) +
+ * `terminal:session_state` (state→`lost`, the lifecycle transition) + a WARN
+ * (`hint` + `errorKind: "resource"`, §2.7) — so a reap is reconstructable from
+ * logs+events alone. `onCapForget` is wired to the shared `caps.forget` so the
+ * per-session cap state is dropped on the reap path (T-123-17, no SessionCaps Map
+ * leak). Exported so the audit wiring is unit-testable in isolation (Test D).
+ */
+export function buildTerminalReaperHooks(
+  agentId: string,
+  deps: TerminalWiringDeps,
+): { onEvict: (info: ReaperEvictInfo) => void; onCapForget: (sessionId: string) => void } {
+  return {
+    onEvict: ({ sessionId, reason, durationMs }) => {
+      const timestamp = systemNowMs();
+      deps.eventBus.emit("terminal:session_evicted", { sessionId, agentId, reason, durationMs, timestamp });
+      deps.eventBus.emit("terminal:session_state", { sessionId, agentId, state: "lost", durationMs, timestamp });
+      deps.skillsLogger.warn(
+        { sessionId, agentId, reason, durationMs, hint: "terminal session evicted by reaper", errorKind: "resource" },
+        "terminal session evicted",
+      );
+    },
+    // T-123-17: drop the per-session cap state on EVERY eviction (not only the tool kill).
+    onCapForget: (sessionId) => deps.caps?.forget(sessionId),
+  };
+}
+
+/**
  * Get (or lazily create) the per-agent `TerminalSessionRegistry`. The map lives
  * in the `setupTools` closure (passed in) — no module-global state. The registry
  * is constructed with the 118-proven `--permission` worker-spawn posture
@@ -164,6 +217,7 @@ function getOrCreateTerminalRegistry(
 ): TerminalSessionRegistry {
   let registry = registries.get(agentId);
   if (!registry) {
+    const reaperHooks = buildTerminalReaperHooks(agentId, deps);
     registry = createTerminalSessionRegistry({
       spawnWorker: buildProductionSpawnWorker(resolveWorkerJsPath(deps.dataDir), deps.dataDir),
       logger: deps.skillsLogger,
@@ -187,6 +241,16 @@ function getOrCreateTerminalRegistry(
           timestamp: systemNowMs(),
         });
       },
+      // P4 (TR-06/OPS-06): the reaper caps + TimerPort + the audited eviction hooks.
+      // worker.{maxSessions,idleTtlMs} + the entry limits.wallClockMs (0 while the
+      // allow-set is empty) bound the per-agent session footprint; onCapForget wires
+      // caps.forget so the cap-state map is dropped on EVERY reap path (T-123-17).
+      maxSessions: deps.workerCaps?.maxSessions,
+      idleTtlMs: deps.workerCaps?.idleTtlMs,
+      wallClockMs: deps.workerCaps?.wallClockMs,
+      timers: deps.timers,
+      onEvict: reaperHooks.onEvict,
+      onCapForget: reaperHooks.onCapForget,
     });
     registries.set(agentId, registry);
   }

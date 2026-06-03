@@ -92,15 +92,26 @@ export interface TerminalSpawnFailedEvent {
   timestamp: number;
 }
 
+/** The reaper/cap-trip eviction payload (mirrors core `TerminalEvents["terminal:session_evicted"]`, OPS-06). */
+export interface TerminalEvictedEvent {
+  sessionId: string;
+  agentId: string;
+  reason: "idle" | "max_sessions" | "wall_clock" | "max_interactions";
+  durationMs: number;
+  timestamp: number;
+}
+
 /**
- * A structural event-bus surface scoped to the two P0 terminal events. The
- * daemon passes its `TypedEventBus` (structurally compatible); tests pass a
- * capturing fake. Kept structural so the skills layer never value-imports the
- * concrete bus class.
+ * A structural event-bus surface scoped to the terminal events the skills layer
+ * emits. The daemon passes its `TypedEventBus` (structurally compatible); tests
+ * pass a capturing fake. Kept structural so the skills layer never value-imports
+ * the concrete bus class.
  */
 export interface TerminalEventBus {
   emit(event: "terminal:session_state", payload: TerminalStateEvent): unknown;
   emit(event: "terminal:spawn_failed", payload: TerminalSpawnFailedEvent): unknown;
+  // P4 OPS-06: the reaper/cap-trip eviction audit event (123-01 declared the typed payload).
+  emit(event: "terminal:session_evicted", payload: TerminalEvictedEvent): unknown;
 }
 
 /** Dependencies shared by all four implemented tools. */
