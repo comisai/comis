@@ -155,3 +155,56 @@ describe("TerminalDriverConfigSchema -- closed allow-set (OPS-02)", () => {
     expect(withEntryDefaults.allow[0]!.hardening).toBe("none");
   });
 });
+
+/**
+ * OPS-05: the operator-dialable cgroup/`TasksMax` ceiling on the CLOSED `worker`
+ * strictObject. The tmux backend (124-08) makes a worker's named sessions outlive
+ * the worker; N concurrent memory-hungry sessions share one cgroup, so an operator
+ * must be able to bound the concurrent-session subprocess footprint vs the systemd
+ * `TasksMax` (T-124-22). The field is OPTIONAL — absent ⇒ bounded by `maxSessions`
+ * alone — and the addition MUST NOT loosen the strictObject (an unknown worker key
+ * still rejects). The whole `worker` block is the only P5 schema change: every other
+ * attention field (autoAnswer/hintPatterns/backend/stuckMs/maxConcurrentAttentionTurns/
+ * maxInteractions) is already declared.
+ */
+describe("TerminalDriverConfigSchema -- worker.tasksMax cgroup ceiling (OPS-05)", () => {
+  // The minimal-but-valid base config the three tasksMax tests vary.
+  const baseCfg = {
+    enabled: true,
+    worker: {
+      maxSessions: 8,
+      idleTtlMs: 900_000,
+      ringBytes: 262_144,
+      stuckMs: 30_000,
+      maxConcurrentAttentionTurns: 2,
+    },
+    defaults: { cols: 120, rows: 40, scrollback: 1000 },
+    redactSecrets: true,
+    audit: { enabled: true },
+  };
+
+  it("accepts an operator-set worker.tasksMax ceiling (parses + round-trips the value)", () => {
+    const parsed = TerminalDriverConfigSchema.parse({
+      ...baseCfg,
+      worker: { ...baseCfg.worker, tasksMax: 200 },
+    });
+    expect(parsed.worker.tasksMax).toBe(200);
+  });
+
+  it("parses with worker.tasksMax ABSENT (optional — no extra ceiling beyond maxSessions)", () => {
+    const parsed = TerminalDriverConfigSchema.parse(baseCfg);
+    expect(parsed.worker.tasksMax).toBeUndefined();
+  });
+
+  it("still REJECTS an unknown worker key (the tasksMax addition does not loosen the strictObject)", () => {
+    const result = TerminalDriverConfigSchema.safeParse({
+      ...baseCfg,
+      worker: { ...baseCfg.worker, bogusWorkerKnob: 1 },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      // The unrecognized key is reported under the worker path (strictObject closed).
+      expect(result.error.issues.some((i) => i.path.includes("worker"))).toBe(true);
+    }
+  });
+});
