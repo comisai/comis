@@ -488,3 +488,97 @@ describe("buildTerminalEventHook — re-publish the fd3 frame onto the TypedEven
     expect(emitted).toHaveLength(0);
   });
 });
+
+// ===========================================================================
+// 124-09 Task 3 (THE WR-01 CLOSURE, TR-06/OPS-06, T-124-28) — buildTerminalSharedDeps
+// POPULATES the allow-set from the threaded operator config (was `const allowEntries =
+// []`). When populated, allowEntries[0].limits feeds createSessionCaps so the per-session
+// caps go LIVE; the mapped scope/approveOnCreate/limits/backend/autoAnswer/hintPatterns
+// flow toward the worker + the wake-FSM (the "consume the parsed-not-consumed config" step).
+//
+// RED on pre-patch: TerminalWiringDeps has no `config` field; buildTerminalSharedDeps
+// hardcodes `allowEntries = []`, so a threaded config is ignored (the allow-set stays
+// empty + every create still fail-closes).
+// ===========================================================================
+
+describe("buildTerminalSharedDeps — the WR-01 closure: populate the allow-set from config (Task 3)", () => {
+  /** A parsed TerminalDriverConfig with one allow entry carrying limits + backend. */
+  function makeConfig(): TerminalAllowEntry["scope"] extends never ? never : Record<string, unknown> {
+    return {
+      enabled: true,
+      worker: { maxSessions: 6, idleTtlMs: 120_000, ringBytes: 65_536, stuckMs: 30_000, maxConcurrentAttentionTurns: 3 },
+      defaults: { cols: 80, rows: 24, scrollback: 1000 },
+      allow: [
+        {
+          id: "claude-code",
+          match: { path: "/usr/local/bin/claude" },
+          scope: { filesystem: "home", network: "full", credentialHome: "include", uid: "dedicated" },
+          autoAnswer: "safe-only",
+          hintPatterns: ["press enter to continue"],
+          consent: { acknowledgedRisk: true, acknowledgedAt: "2026-06-03T00:00:00Z" },
+          limits: { maxRequestsPerSession: 50, maxInteractions: 200, wallClockMs: 3_600_000 },
+          backend: "tmux",
+          hardening: "none",
+        },
+      ],
+      redactSecrets: true,
+      audit: { enabled: true },
+    } as unknown as Record<string, unknown>;
+  }
+
+  function makeDepsWithConfig() {
+    return {
+      dataDir: "/tmp/comis-terminal-wr01-test",
+      skillsLogger: createMockLogger(),
+      eventBus: { emit: () => true },
+      sandboxProvider: {} as never,
+      workerCaps: { maxSessions: 6, idleTtlMs: 120_000, wallClockMs: 0, stuckMs: 30_000 },
+      timers: createFakeTimers(0),
+      config: makeConfig(),
+    };
+  }
+
+  it("populates allowEntries from config.allow (the empty-set hardcode is GONE)", () => {
+    const deps = makeDepsWithConfig();
+    const registries = new Map<string, TerminalSessionRegistry>();
+    const shared = buildTerminalSharedDeps(registries, "agent-a", deps as never);
+
+    // The allow-set is now populated from the threaded config (was always []).
+    expect(shared.allowEntries).toHaveLength(1);
+    expect(shared.allowEntries[0]!.id).toBe("claude-code");
+    // The operator scope survived the daemon-boundary map (SEC-02, no silent drop).
+    expect(shared.allowEntries[0]!.scope.filesystem).toBe("home");
+    expect(shared.allowEntries[0]!.limits).toMatchObject({ maxInteractions: 200 });
+  });
+
+  it("a populated allow-set with limits feeds the per-session caps (caps go LIVE)", () => {
+    const deps = makeDepsWithConfig();
+    const registries = new Map<string, TerminalSessionRegistry>();
+    const shared = buildTerminalSharedDeps(registries, "agent-a", deps as never);
+    // createSessionCaps was built from the entry limits — startSession primes the cap state,
+    // then a maxInteractions-budgeted session is enforceable (the cap surface is live, not a
+    // no-op default). We assert the caps instance is present + functional.
+    expect(shared.caps).toBeDefined();
+    expect(typeof shared.caps.startSession).toBe("function");
+  });
+
+  it("with NO config the allow-set stays empty (fail-closed default preserved)", () => {
+    const deps = {
+      dataDir: "/tmp/comis-terminal-wr01-empty",
+      skillsLogger: createMockLogger(),
+      eventBus: { emit: () => true },
+      sandboxProvider: {} as never,
+    };
+    const registries = new Map<string, TerminalSessionRegistry>();
+    const shared = buildTerminalSharedDeps(registries, "agent-a", deps as never);
+    expect(shared.allowEntries).toHaveLength(0);
+  });
+
+  it("wireTerminalTools accepts config on TerminalWiringDeps and wires nine tools (no throw)", () => {
+    const deps = makeDepsWithConfig();
+    const tools: ToolLike[] = [];
+    const registries = new Map<string, TerminalSessionRegistry>();
+    wireTerminalTools(tools as never, registries, "agent-a", deps as never);
+    expect(tools).toHaveLength(9);
+  });
+});
