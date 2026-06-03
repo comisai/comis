@@ -38,7 +38,7 @@ Each node in the graph runs an agent with a specific task. Nodes can depend on o
 
 All domain logic lives in `@comis/core`. Port interfaces define boundaries -- what the system needs. Adapter packages implement those boundaries -- how it's done. The composition root in `core/src/bootstrap.ts` wires everything together at startup, returning an `AppContainer` with the fully configured event bus, plugin registry, and hook runner.
 
-Every function returns `Result<T, E>` -- no thrown exceptions. This pattern is enforced by ESLint and used across all 13 packages. Core utilities like `ok()`, `err()`, `tryCatch()`, and `fromPromise()` from `@comis/shared` make error handling explicit, typed, and composable.
+Every function returns `Result<T, E>` -- no thrown exceptions. This pattern is enforced by ESLint and used across all 15 packages. Core utilities like `ok()`, `err()`, `tryCatch()`, and `fromPromise()` from `@comis/shared` make error handling explicit, typed, and composable.
 
 ```typescript
 import { ok, err, type Result } from "@comis/shared";
@@ -49,7 +49,7 @@ async function fetchData(id: string): Promise<Result<Data, Error>> {
 }
 ```
 
-The codebase spans 13 packages, ~1185 source files, and ~944 test files. There are 19 port interfaces, typed events across 4 domain subsystems, and lifecycle hooks for plugin integration.
+The codebase spans 15 packages, ~1185 source files, and ~944 test files. There are 19 port interfaces, typed events across 5 domain subsystems, and lifecycle hooks for plugin integration.
 
 ## Key Patterns
 
@@ -77,7 +77,7 @@ pnpm test             # Run all unit tests
 pnpm lint:security    # ESLint with security rules
 ```
 
-The primary validation command before any commit is `pnpm build && pnpm test && pnpm lint:security`.
+The primary validation command before any commit is `pnpm validate` (expands to `pnpm docs:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage`).
 
 ## Getting Started
 
@@ -86,10 +86,10 @@ The primary validation command before any commit is `pnpm build && pnpm test && 
     Hexagonal pattern, ports, adapters, and the composition root
   </Card>
   <Card title="Packages" icon="cubes" href="/developer-guide/packages">
-    All 13 packages with roles and dependency graph
+    All 15 packages with roles and dependency graph
   </Card>
   <Card title="Event Bus" icon="tower-broadcast" href="/developer-guide/event-bus">
-    Typed events across 4 domain subsystems (Messaging, Agent, Channel, Infra)
+    Typed events across 5 domain subsystems (Messaging, Agent, Channel, Infra, Terminal)
   </Card>
   <Card title="Custom Adapters" icon="plug" href="/developer-guide/custom-adapters">
     Step-by-step channel adapter tutorial
