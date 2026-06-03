@@ -5,17 +5,19 @@
  * P0/OPS-07 emits a state-transition event and a spawn-failure event. P4
  * (Phase 123, SEC-10/OPS-06) makes the keystroke + eviction audit surface LIVE
  * with two more: `terminal:keystroke` (every send_text/send_key) and
- * `terminal:session_evicted` (the reaper / cap-trip signal). Every payload
- * carries `sessionId` + `agentId` + `timestamp` so a transition is
- * reconstructable from the bus alone (AGENTS.md §2.7).
+ * `terminal:session_evicted` (the reaper / cap-trip signal). P5 (Phase 124,
+ * TR-11/OPS-04/SEC-11/SEC-12) adds the attention + audit set: `terminal:input_needed`
+ * (the agent-wake signal), `terminal:stuck` (settled, no progress), `terminal:escalated`
+ * (an auto-answer escalation / hop-limit / loop audit), and `terminal:auto_answered`
+ * (a safe-pattern answer was sent). Every payload carries `sessionId` + `agentId` +
+ * `timestamp` so a transition is reconstructable from the bus alone (AGENTS.md §2.7).
  *
- * Counts / ids / a redaction-safe `hint` or typed `reason` ONLY — NEVER
- * keystrokes, screen contents, or command text. The keystroke event carries a
- * redaction-safe SUMMARY (a redaction count + post-redaction byte length); the
- * REDACTED payload itself rides the structured LOG, never the bus.
- *
- * The richer `terminal:input_needed` / `terminal:stuck` attention set is P5
- * (Phase 124) and is intentionally NOT declared here — no speculative payloads.
+ * Counts / ids / a redaction-safe `hint`, typed `reason`, or typed `state` ONLY
+ * — NEVER keystrokes, screen contents, or command text. The keystroke event
+ * carries a redaction-safe SUMMARY (a redaction count + post-redaction byte
+ * length); `terminal:auto_answered` carries the matched-pattern INDEX + a
+ * keystroke COUNT, never the keystroke. The REDACTED detail itself rides the
+ * structured LOG, never the bus.
  */
 export interface TerminalEvents {
   /** Terminal session transitioned lifecycle state (created → running → exited|lost). */
@@ -87,6 +89,75 @@ export interface TerminalEvents {
     agentId: string;
     reason: "idle" | "max_sessions" | "wall_clock" | "max_interactions";
     durationMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * Attention wake (TR-11): the classifier settled the grid to a state that
+   * needs the agent — the cursor is parked at a plausible input position
+   * (`awaiting-input`) or the session is `stuck`. The dispatcher (124-07) turns
+   * this into AT MOST ONE woken turn per unanswered frame. Carries a typed
+   * `state` + a SHORT STRUCTURAL `reason` tag (e.g. `"settled_cursor_parked"`)
+   * — NEVER screen text. The screen contents that drove the classification ride
+   * the structured LOG, never the bus.
+   */
+  "terminal:input_needed": {
+    sessionId: string;
+    agentId: string;
+    state: "awaiting-input" | "stuck";
+    /** A short structural classification tag (e.g. "settled_cursor_parked") — NEVER screen text. */
+    reason: string;
+    timestamp: number;
+  };
+
+  /**
+   * Stuck signal (OPS-04): the session settled with no affordance and made no
+   * progress for longer than the operator `stuckMs`. A DURATION signal, not
+   * content — `noProgressMs` is the elapsed no-progress window, nothing about
+   * what is (or is not) on screen.
+   */
+  "terminal:stuck": {
+    sessionId: string;
+    agentId: string;
+    /** Elapsed no-progress window in ms (settled, no affordance) — a duration, not content. */
+    noProgressMs: number;
+    timestamp: number;
+  };
+
+  /**
+   * Escalation audit (SEC-11/SEC-12): the auto-answer policy or a guard escalated
+   * to a human instead of acting — a destructive/approval/auth-login prompt, a
+   * detected loop, the dispatcher hop limit, a stuck session, or a frame that
+   * matched no safe pattern. Carries a typed closed `reason` ONLY (the audited
+   * WHY); the prompt that triggered it rides the structured LOG, never the bus.
+   */
+  "terminal:escalated": {
+    sessionId: string;
+    agentId: string;
+    reason:
+      | "destructive"
+      | "approval"
+      | "auth_login"
+      | "loop_detected"
+      | "hop_limit"
+      | "stuck"
+      | "no_safe_match";
+    timestamp: number;
+  };
+
+  /**
+   * Auto-answer audit (SEC-12): a safe-pattern answer was sent. Carries the
+   * matched operator-pattern INDEX + the count of keystrokes sent — NEVER the
+   * keystroke itself (mirrors `terminal:keystroke`'s redaction-safe summary). The
+   * redacted keystroke detail rides the structured LOG, never the bus.
+   */
+  "terminal:auto_answered": {
+    sessionId: string;
+    agentId: string;
+    /** Index of the matched operator safe-pattern (hintPatterns) — an id, not the prompt. */
+    matchedPatternIndex: number;
+    /** Count of keystrokes the canned answer sent — a size signal, not the content. */
+    keystrokeCount: number;
     timestamp: number;
   };
 }

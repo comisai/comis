@@ -411,8 +411,9 @@ describe("TerminalEvents — P5 attention + audit set (TR-11/OPS-04/SEC-11/SEC-1
     const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
     const match = src.match(/"terminal:escalated":\s*\{[\s\S]*?\n\s*\};/);
     expect(match, "terminal:escalated event block must exist").toBeTruthy();
+    // Tolerant of the prettier multiline union form (optional leading `|`).
     expect(match![0], "reason union exactly the seven escalation reasons").toMatch(
-      /reason:\s*"destructive"\s*\|\s*"approval"\s*\|\s*"auth_login"\s*\|\s*"loop_detected"\s*\|\s*"hop_limit"\s*\|\s*"stuck"\s*\|\s*"no_safe_match"/,
+      /reason:\s*\|?\s*"destructive"\s*\|\s*"approval"\s*\|\s*"auth_login"\s*\|\s*"loop_detected"\s*\|\s*"hop_limit"\s*\|\s*"stuck"\s*\|\s*"no_safe_match"/,
     );
   });
 
