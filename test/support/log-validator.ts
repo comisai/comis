@@ -116,6 +116,19 @@ const KNOWN_ACCEPTABLE: LogPattern[] = [
   // operator notice that hot-reload is unsupported on encrypted SQLite WAL
   // — informational, fires whenever a test config omits the oauth block.
   { level: "warn", msg: /OAuth hot-reload disabled in encrypted-store mode/ },
+
+  // memory.costFeatures.enabled defaults to true (v2.9/v2.10 opt-out posture per
+  // schema-memory.ts). When any cost-bearing memory feature is active, the daemon
+  // emits ONE prominent startup WARN naming the budget impact (setup-memory-cost-
+  // notice.ts) — an intentional operator notice that fires on every default-config
+  // test daemon, not a regression.
+  { level: "warn", msg: /LLM cost-bearing memory features are ACTIVE/ },
+
+  // Benign control-plane guard: channel-manager.injectMessage warns + skips when a
+  // heartbeat/continuation injection targets a channel type with no registered
+  // adapter (non-deterministic at startup — races adapter registration; also fires
+  // for channels a test config does not wire). "continuation skipped", not data loss.
+  { level: "warn", msg: /Cannot inject message: adapter not found/ },
 ];
 
 // ---------------------------------------------------------------------------

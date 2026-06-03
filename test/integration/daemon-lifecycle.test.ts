@@ -152,6 +152,15 @@ describe("Daemon Lifecycle", () => {
         // hot-reload is unsupported on encrypted SQLite WAL — fires
         // whenever the test config omits the oauth block).
         if (msg.includes("OAuth hot-reload disabled in encrypted-store mode")) return false;
+        // Exclude the cost-bearing memory features notice (memory.costFeatures.enabled
+        // defaults to true — v2.9/v2.10 opt-out posture; the daemon emits one startup
+        // WARN naming the budget impact). Intentional operator notice, not a regression.
+        if (msg.includes("cost-bearing memory features are ACTIVE")) return false;
+        // Exclude the benign control-plane guard that fires non-deterministically
+        // when a heartbeat/continuation injection races channel-adapter registration
+        // at startup (channel-manager.injectMessage warns + skips when no adapter is
+        // registered for the channel type — "continuation skipped", not data loss).
+        if (msg.includes("Cannot inject message: adapter not found")) return false;
         return true;
       });
 
