@@ -37,6 +37,7 @@
 
 import { homedir } from "node:os";
 import { existsSync } from "node:fs";
+import { resolve as resolvePath, sep as pathSep } from "node:path";
 
 import { safePath, type EgressControlPort, type EgressMaterialization } from "@comis/core";
 
@@ -146,6 +147,79 @@ export class JailUnavailableError extends Error {
 }
 
 /**
+ * Raised when the resolved `cwd` (the jail `--chdir` target) is NOT contained by any
+ * path the scope binds into the jail — a typed, operator-actionable fail-closed at the
+ * composition seam (§4.8), instead of an opaque `bwrap: Can't chdir` spawn crash. `cwd`
+ * is an agent-supplied, prompt-injectable input governed by the OPERATOR scope, so a
+ * mismatch must fail CLEAN + EARLY (before any bwrap spawn). NOT a sandbox escape (bwrap
+ * already contains chdir within its mount namespace) — a fail-clean/observability rule.
+ */
+export class CwdOutsideScopeError extends Error {
+  readonly errorKind = "permission_denied" as const;
+  constructor(cwd: string) {
+    super(
+      `cwd ${cwd} is outside the paths bound by this scope: the --chdir target must sit ` +
+        `within the session workspace or a path the scope.filesystem binds`,
+    );
+    this.name = "CwdOutsideScopeError";
+  }
+}
+
+/**
+ * The absolute paths a {@link TerminalScope} binds into the jail that a `cwd` may sit
+ * under: the always-bound `workspace`, plus whatever `scope.filesystem` adds
+ * (`listed-paths` → `scope.paths`; `home` → `home`; `workspace` → nothing extra). For
+ * `filesystem: full` the whole host fs is bound, so ANY cwd is in-bounds (returns
+ * `undefined` to signal "no containment check"). Pure — no fs.
+ */
+function scopeCwdBases(scope: TerminalScope, workspace: string, home: string): string[] | undefined {
+  if (scope.filesystem === "full") return undefined; // everything bound — any cwd ok
+  const bases = [workspace]; // the workspace is ALWAYS bound RW
+  switch (scope.filesystem) {
+    case "workspace":
+      break; // workspace-only
+    case "listed-paths":
+      bases.push(...(scope.paths ?? []));
+      break;
+    case "home":
+      bases.push(home);
+      break;
+    default: {
+      const _exhaustive: never = scope.filesystem;
+      throw new Error(`Unhandled filesystem scope: ${String(_exhaustive)}`);
+    }
+  }
+  return bases;
+}
+
+/**
+ * Lexical containment check: is `cwd` within `base`? Resolves both (collapsing `..`),
+ * then `cwd === base || cwd.startsWith(base + sep)` — the sep boundary defeats a
+ * prefix-spoof sibling (`/ws-evil` is NOT under `/ws`). Pure + fs-free (the live chdir
+ * proof is the VPS scope matrix); mirrors `safePath`'s prefix logic without its fs
+ * symlink walk, because this composer runs against not-yet-existing jail paths.
+ */
+function isCwdWithinBase(cwd: string, base: string): boolean {
+  const rc = resolvePath(cwd);
+  const rb = resolvePath(base);
+  return rc === rb || rc.startsWith(rb.endsWith(pathSep) ? rb : rb + pathSep);
+}
+
+/**
+ * Fail-closed (typed) when `cwd` is not contained by the scope's bound paths. `full`
+ * binds everything → no check. Throws {@link CwdOutsideScopeError} (errorKind
+ * `permission_denied`, message names `cwd`) so the worker maps it to an `ok:false`
+ * create reply (the registry flips the session `lost`) — never an opaque chdir crash.
+ */
+function assertCwdWithinScope(cwd: string, scope: TerminalScope, workspace: string, home: string): void {
+  const bases = scopeCwdBases(scope, workspace, home);
+  if (bases === undefined) return; // filesystem:full — any cwd is in-bounds
+  if (!bases.some((b) => isCwdWithinBase(cwd, b))) {
+    throw new CwdOutsideScopeError(cwd);
+  }
+}
+
+/**
  * Compose the bwrap-wrapping spawn for one session.
  *
  * For `network: listed-hosts` this AWAITS `egressControl.materialize(hosts)` (the
@@ -154,6 +228,8 @@ export class JailUnavailableError extends Error {
  *
  * @throws JailUnavailableError when `bwrapPath` is undefined (SEC-16 — never an
  * unjailed fallback) or when `network: listed-hosts` has no injected egress port.
+ * @throws CwdOutsideScopeError when the resolved `cwd` is not contained by the scope's
+ * bound paths (fail-clean before any spawn — §4.8), instead of an opaque chdir crash.
  */
 export async function buildSpawnPlan(
   input: SpawnPlanInput,
@@ -169,6 +245,10 @@ export async function buildSpawnPlan(
     composers.buildEgressRelayLaunch ?? defaultBuildEgressRelayLaunch;
 
   const { scope } = input;
+  // §4.8 fail-closed: the agent-supplied cwd (the jail --chdir target) MUST sit within a
+  // path the scope binds — reject typed + EARLY (before any egress socket / spawn), not
+  // as an opaque `bwrap: Can't chdir`. filesystem:full binds everything → no check.
+  assertCwdWithinScope(input.cwd, scope, input.workspace, input.home);
   const dedicatedUid = scope.uid === "dedicated" ? DEDICATED_UID : undefined;
 
   // listed-hosts: stand up the egress relay + bind its socket + add the proxy env.

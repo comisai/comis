@@ -460,13 +460,18 @@ describe.skipIf(!linuxBwrap)(
           CLAUDE_CODE_ENTRYPOINT: "cli",
           SAFE_KEEPER: "keep-me", // a benign var must survive the scrub
         };
+        // cwd MUST be in-bounds for the scope (filesystem:workspace binds only the
+        // workspace) — buildSpawnPlan now fail-closes a cwd outside the scope's binds
+        // (CwdOutsideScopeError). This cell tests env-scrub, not cwd, so use the bound
+        // workspace as the --chdir target (home is NOT bound at filesystem:workspace).
+        const envWorkspace = makeWorkspace();
         const plan = await buildSpawnPlan(
           {
             scope,
             bin: "/bin/bash",
             argv: ["-c", "env"],
-            workspace: makeWorkspace(),
-            cwd: home,
+            workspace: envWorkspace,
+            cwd: envWorkspace,
             home,
             dataDir: join(home, ".comis"),
             systemRoPaths: resolvedSystemRoPaths(),
@@ -554,6 +559,11 @@ describe.skipIf(!linuxBwrap)(
             credentialHome: "exclude",
             uid: "dedicated",
           };
+          // cwd MUST be in-bounds (filesystem:workspace binds only the workspace) —
+          // buildSpawnPlan now fail-closes a cwd outside the scope binds. A single
+          // stable workspace doubles as the --chdir target across the 3 planCurl calls
+          // (home is NOT bound at filesystem:workspace; this cell tests egress, not cwd).
+          const egressWorkspace = makeWorkspace();
 
           /**
            * Build the FULL production spawn plan for a jailed `curl <url>` (the SAME
@@ -569,8 +579,8 @@ describe.skipIf(!linuxBwrap)(
                 scope,
                 bin: "curl",
                 argv: ["--silent", "--show-error", "--max-time", "8", "-o", "/dev/null", "-w", "%{http_code}", ...extra, url],
-                workspace: makeWorkspace(),
-                cwd: home,
+                workspace: egressWorkspace,
+                cwd: egressWorkspace,
                 home,
                 dataDir: join(home, ".comis"),
                 systemRoPaths: resolvedSystemRoPaths(),
