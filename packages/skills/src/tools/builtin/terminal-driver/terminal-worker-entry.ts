@@ -42,7 +42,7 @@ import {
   type SystemTimeoutHandle,
   type EgressControlPort,
 } from "@comis/core";
-import { isFsyncDisabledByPermissionModel } from "@comis/shared";
+import { isFsyncDisabledByPermissionModel, suppressError } from "@comis/shared";
 
 import type { TerminalScope } from "./allowlist-matcher.js";
 import {
@@ -432,9 +432,14 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       // seam as the settle path; the edge-triggered emitter dedups a concurrent
       // settle-resolved observe of the same exit. Fire-and-forget; never throws.
       state.observeExit = () => {
-        void observeSettledFrame({ state, emitter, settled: true, nowMs, stuckMs }).catch(() => {
-          /* best-effort: an emit failure must never break the exit path */
-        });
+        // Best-effort: an emit failure must never break the exit path. `observeSettledFrame`
+        // is documented total, but suppressError (not a bare empty catch — the banned form)
+        // guards the void-promise and routes any rejection through the structural logger.
+        suppressError(
+          observeSettledFrame({ state, emitter, settled: true, nowMs, stuckMs }),
+          "terminal exit-wake fd3 emit",
+          (m) => logger.debug({ submodule: "exit-wake", sessionId, errorKind: "internal" }, m),
+        );
       };
     }
 
