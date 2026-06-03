@@ -74,7 +74,12 @@ describe("buildEgressRelayLaunch — in-jail relay-as-init launcher builder (SEC
   it("points at a relay-init script that actually exists on disk (the launcher target is real)", () => {
     // The exported script URL must resolve to a real file — the bug was a launcher
     // that referenced a not-yet-built binary, leaving listed-hosts egress dead.
-    expect(existsSync(fileURLToPath(RELAY_INIT_SCRIPT_URL))).toBe(true);
+    // Under vitest `import.meta.url` is the `.ts` source (the sibling `.js` lives in
+    // dist), so accept EITHER the compiled `.js` (production / `files:["dist"]`) or
+    // its `.ts` source (what tsc emits the `.js` from) — both prove the target is real.
+    const jsPath = fileURLToPath(RELAY_INIT_SCRIPT_URL);
+    const tsPath = jsPath.replace(/\.js$/, ".ts");
+    expect(existsSync(jsPath) || existsSync(tsPath)).toBe(true);
   });
 
   it("the socketPath round-trips so the caller can bind-mount it (buildScopeArgs relaySocketPath)", () => {

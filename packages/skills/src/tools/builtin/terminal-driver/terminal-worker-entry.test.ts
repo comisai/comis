@@ -821,6 +821,61 @@ describe("createTerminalWorker — 122-06 listed-hosts egress materialization (S
     expect(recordedEnv?.["HTTPS_PROXY"]).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
   });
 
+  it("inserts the RUNNABLE relay-init between bwrap's `--` and the child, and lets the init own the uid drop (no bwrap --uid)", async () => {
+    // 122-fix: for listed-hosts the relay-init (a real node subprocess) runs as
+    // userns-root to bring `lo` up, THEN drops to the net-new uid before exec'ing
+    // the child. So (a) the composed argv carries `node <relay-init> --socket …
+    // --port … --setgid 65534 --setuid 65534 --` AFTER bwrap's `--` and BEFORE the
+    // child, and (b) bwrap itself must NOT pre-drop via `--uid` (that would strip
+    // CAP_NET_ADMIN and break the loopback-up).
+    const fake = makeFakeBackend();
+    const egress = makeFakeEgressControl("/tmp/e.sock");
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: fake.spawn }),
+        bwrapPath: "/usr/bin/bwrap",
+        egressControl: egress.egressControl,
+      }),
+    );
+
+    await worker.handle(
+      createFrame({
+        sessionId: "s1",
+        bin: "/bin/curl",
+        argv: ["https://api.example.com"],
+        cols: 80,
+        rows: 24,
+        scope: {
+          filesystem: "workspace",
+          network: "listed-hosts",
+          hosts: ["api.example.com"],
+          credentialHome: "exclude",
+          uid: "dedicated",
+        },
+        workspace: "/work/a",
+        cwd: "/work/a",
+      }),
+    );
+
+    const argv = fake.lastSpawn()?.argv ?? [];
+    const sep = argv.indexOf("--");
+    expect(sep).toBeGreaterThanOrEqual(0);
+    const afterSeparator = argv.slice(sep + 1);
+    // The relay-init is the FIRST thing after `--` (arg0 = node runtime).
+    expect(afterSeparator[0]).toBe(process.execPath);
+    expect(afterSeparator[1]).toMatch(/egress-relay-init\.js$/);
+    // It carries the bridge coordinates + the uid drop, then its own `--`, then the child.
+    expect(afterSeparator).toContain("--socket");
+    expect(afterSeparator).toContain("/tmp/e.sock");
+    expect(afterSeparator).toContain("--setuid");
+    expect(afterSeparator).toContain("65534");
+    const innerSep = afterSeparator.indexOf("--");
+    expect(innerSep).toBeGreaterThanOrEqual(0);
+    expect(afterSeparator.slice(innerSep + 1)).toEqual(["/bin/curl", "https://api.example.com"]);
+    // bwrap itself does NOT pre-drop the uid for listed-hosts (the init does).
+    expect(argv.slice(0, sep)).not.toContain("--uid");
+  });
+
   it("does NOT materialize for network:none (deny-all)", async () => {
     const fake = makeFakeBackend();
     const egress = makeFakeEgressControl();

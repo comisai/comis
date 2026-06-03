@@ -37,17 +37,22 @@
  * @module
  */
 
+import { fileURLToPath } from "node:url";
+
 import type { EgressControlPort } from "@comis/core";
 
 /**
- * The in-jail init binary that performs the relay-as-init sequence. It runs as the
- * jail's PID-1 / userns-root, so it must resolve to a path bound INTO the jail
- * (the `/usr` ro-bind). The worker (122-06) supplies/builds the actual init
- * program (a small node or shell shim) + the dedicated uid; this builder names the
- * contract the worker invokes. Kept as a sentinel constant so the worker and this
- * builder agree on the wrapper's entry point.
+ * The on-disk relay-as-init script ({@link ./egress-relay-init.ts}, compiled to
+ * `egress-relay-init.js` in `dist`). It is spawned as a subprocess inside the bwrap
+ * jail as the userns-root PID-1 init: bring `lo` up -> TCP->unix relay on
+ * `127.0.0.1:<port>` -> drop to the net-new uid -> exec the child. Resolved from
+ * THIS module's URL so it travels with the package (`files: ["dist"]`), works under
+ * the `/usr` ro-bind from the daemon install, and needs no separate asset-copy step
+ * (tsc emits it alongside this builder). This replaced the 122-05 sentinel name
+ * (`comis-egress-relay-init`) which pointed at a binary that was never built — the
+ * SEC-07 listed-hosts egress gap this fix closes.
  */
-export const RELAY_INIT_BIN = "comis-egress-relay-init" as const;
+export const RELAY_INIT_SCRIPT_URL = new URL("./egress-relay-init.js", import.meta.url);
 
 /** Input to {@link buildEgressRelayLaunch}. */
 export interface EgressRelayLaunchInput {
@@ -64,6 +69,13 @@ export interface EgressRelayLaunchInput {
    * netns is isolated — no host collision possible).
    */
   relayPort: number;
+  /**
+   * The net-new uid/gid the relay-init drops to BEFORE exec'ing the child. For
+   * `listed-hosts` the init (not bwrap's `--uid`) owns the uid drop, because it must
+   * run as userns-root to bring `lo` up first (118 §3 composition). Absent ⇒ no
+   * drop (the init exec's the child with whatever uid the jail already holds).
+   */
+  dedicatedUid?: { uid: number; gid: number };
 }
 
 /** The pieces the worker needs to spawn the child under the egress relay. */
@@ -92,19 +104,27 @@ export interface EgressRelayLaunch {
  */
 export function buildEgressRelayLaunch(input: EgressRelayLaunchInput): EgressRelayLaunch {
   const proxyUrl = `http://127.0.0.1:${input.relayPort}`;
+  // The runnable in-jail launch: `node <relay-init script> --socket <sock>
+  // --port <port> [--setgid <g> --setuid <u>] --`. Run as a subprocess (arg0 =
+  // process.execPath) so it works under the jail's `/usr` ro-bind; the trailing
+  // `--` separates the init's flags from the child argv the worker appends after.
+  const relayArgv: string[] = [
+    process.execPath,
+    fileURLToPath(RELAY_INIT_SCRIPT_URL),
+    "--socket",
+    input.socketPath,
+    "--port",
+    String(input.relayPort),
+  ];
+  if (input.dedicatedUid !== undefined) {
+    // gid before uid so the init can setgid while still root (a uid drop first
+    // would forbid the later setgid); the init enforces the same order.
+    relayArgv.push("--setgid", String(input.dedicatedUid.gid));
+    relayArgv.push("--setuid", String(input.dedicatedUid.uid));
+  }
+  relayArgv.push("--");
   return {
-    // The wrapper carries the two coordinates it bridges between: the loopback
-    // port (where the child's HTTPS_PROXY points) and the bind-mounted unix socket
-    // (where the host allowlist proxy listens). The trailing `--` separates the
-    // wrapper's own flags from the child argv the worker appends.
-    relayArgv: [
-      RELAY_INIT_BIN,
-      "--socket",
-      input.socketPath,
-      "--port",
-      String(input.relayPort),
-      "--",
-    ],
+    relayArgv,
     proxyEnv: {
       HTTPS_PROXY: proxyUrl,
       HTTP_PROXY: proxyUrl,

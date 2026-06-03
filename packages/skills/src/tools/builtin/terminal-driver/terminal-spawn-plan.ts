@@ -185,8 +185,17 @@ export async function buildSpawnPlan(
     relay = buildEgressRelayLaunch({
       socketPath: egress.socketPath,
       relayPort: RELAY_LOOPBACK_PORT,
+      // The relay-init owns the uid drop for listed-hosts (it must run as
+      // userns-root to bring `lo` up first), so hand it the net-new uid.
+      dedicatedUid,
     });
   }
+
+  // For listed-hosts the relay-init (above) performs the uid drop AFTER bringing
+  // `lo` up as userns-root, so the bwrap jail itself must NOT pre-drop via `--uid`
+  // (that would strip CAP_NET_ADMIN and break the loopback-up). For every other
+  // network mode bwrap drops the uid directly (no relay in the path).
+  const bwrapUid = scope.network === "listed-hosts" ? undefined : dedicatedUid;
 
   const scopeArgs = buildScopeArgs({
     scope,
@@ -196,7 +205,7 @@ export async function buildSpawnPlan(
     home: input.home,
     dataDir: input.dataDir,
     systemRoPaths: input.systemRoPaths,
-    dedicatedUid,
+    dedicatedUid: bwrapUid,
     relaySocketPath,
   });
 
