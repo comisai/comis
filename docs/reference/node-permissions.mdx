@@ -166,9 +166,7 @@ security:
     requireForDestructive: true
     requireForSensitive: false
     autoApprove: []
-  secrets:                        # Encrypted secrets store
-    enabled: false
-    dbPath: "secrets.db"
+  storage: encrypted              # Secrets store backend: encrypted (default) | file | env
 ```
 
 The full `SecurityConfigSchema` is defined in `packages/core/src/config/schema-security.ts` and parsed via Zod with defaults for all fields.

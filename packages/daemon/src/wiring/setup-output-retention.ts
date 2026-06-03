@@ -18,9 +18,6 @@
  *   (security/daemon): file deletion is destructive — operator can
  *   disable via `enabled: false` config.
  *
- * Test contract: `validateOutputRetentionConfig({ classes:
- * [{classId, retentionMs}] })` returns `{ ok, value | error }`.
- *
  * @module setup-output-retention
  */
 
@@ -28,7 +25,7 @@ import { readdirSync, statSync, unlinkSync } from "node:fs";
 import type { OutputRetentionConfig, RetentionClass } from "@comis/core";
 import { safePath, systemNowMs, systemSetInterval, systemClearInterval } from "@comis/core";
 import type { ComisLogger } from "@comis/infra";
-import { ok, err, suppressError, type Result } from "@comis/shared";
+import { suppressError } from "@comis/shared";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -53,84 +50,6 @@ export interface SetupOutputRetentionHandle {
   shutdown(): void;
   /** Manual trigger for tests; runs one full pass synchronously. */
   runOnePass(): Promise<{ deleted: number; bytesFreed: number }>;
-}
-
-/**
- * Legacy array-of-objects shape preserved as the input to
- * `validateOutputRetentionConfig`. The housekeeper itself uses the
- * schema-derived `OutputRetentionConfig` (Record-of-classes shape); this
- * validator acts as the test's binding gate that retentionMs <= 0 is
- * rejected.
- */
-export interface RetentionClassConfigInput {
-  classId: string;
-  retentionMs: number;
-}
-
-export interface ValidatedRetentionConfig {
-  classes: RetentionClassConfigInput[];
-}
-
-// ---------------------------------------------------------------------------
-// Validator (test contract gate)
-// ---------------------------------------------------------------------------
-
-/**
- * Validate an output-retention config supplied as the legacy
- * `{ classes: [{classId, retentionMs}] }` shape. Returns a Result-shaped
- * `{ ok: true, value }` on success, `{ ok: false, error }` on failure.
- *
- * Validator contract:
- *   - retentionMs = -1   → rejected
- *   - retentionMs = 0    → rejected
- *   - retentionMs = 1    → accepted
- *
- * Production wiring uses the Zod schema in
- * @comis/core/config/schema-output-retention.ts directly; this
- * validator is a thin compatibility surface for the test contract.
- */
-export function validateOutputRetentionConfig(
-  config: unknown,
-): Result<ValidatedRetentionConfig, Error> {
-  if (typeof config !== "object" || config === null) {
-    return err(new Error("output retention config must be an object"));
-  }
-  const obj = config as { classes?: unknown };
-  if (!Array.isArray(obj.classes)) {
-    return err(new Error("output retention config: 'classes' must be an array"));
-  }
-  const out: RetentionClassConfigInput[] = [];
-  for (let i = 0; i < obj.classes.length; i++) {
-    const entry = obj.classes[i];
-    if (typeof entry !== "object" || entry === null) {
-      return err(
-        new Error(`output retention config: classes[${i}] must be an object`),
-      );
-    }
-    const e = entry as { classId?: unknown; retentionMs?: unknown };
-    if (typeof e.classId !== "string" || e.classId.length === 0) {
-      return err(
-        new Error(
-          `output retention config: classes[${i}].classId must be a non-empty string`,
-        ),
-      );
-    }
-    if (
-      typeof e.retentionMs !== "number" ||
-      !Number.isInteger(e.retentionMs) ||
-      e.retentionMs <= 0
-    ) {
-      return err(
-        new Error(
-          `output retention config: classes[${i}].retentionMs must be a positive integer (got ${String(
-            e.retentionMs,
-          )})`,
-        ),
-      );
-    }
-    out.push({ classId: e.classId, retentionMs: e.retentionMs });
-  }
-  return ok({ classes: out });
 }
 
 // ---------------------------------------------------------------------------

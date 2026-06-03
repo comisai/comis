@@ -113,7 +113,7 @@ describe("Config Rejection (DAEMON-03)", () => {
     if (result.ok) {
       // Verify defaults were applied
       expect(result.value.tenantId).toBe("default");
-      expect(result.value.logLevel).toBe("info");
+      expect(result.value.logLevel).toBe("debug");
       expect(result.value.gateway).toBeDefined();
     }
   });

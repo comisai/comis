@@ -200,7 +200,7 @@ describe("bootstrap", () => {
       containers.push(result.value);
       const cfg = result.value.config;
       expect(cfg.tenantId).toBe("default");
-      expect(cfg.logLevel).toBe("info");
+      expect(cfg.logLevel).toBe("debug");
       expect(cfg.dataDir).toBe(path.join(os.homedir(), ".comis"));
       expect(cfg.agents.default.name).toBe("Comis");
       expect(cfg.agents.default.maxSteps).toBe(150);

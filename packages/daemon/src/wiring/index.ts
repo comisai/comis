@@ -48,7 +48,6 @@ export type {
 } from "./setup-background-completion-runner.js";
 export {
   setupOutputRetention,
-  validateOutputRetentionConfig,
 } from "./setup-output-retention.js";
 export type {
   SetupOutputRetentionDeps,

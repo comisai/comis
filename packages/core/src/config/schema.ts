@@ -46,7 +46,7 @@ export const AppConfigSchema = z.strictObject({
     /** Tenant identifier for SaaS multi-tenancy */
     tenantId: z.string().default("default"),
     /** Global log level */
-    logLevel: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
+    logLevel: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("debug"),
     /** Base data directory for all persistent storage (default: ~/.comis) */
     dataDir: z.string().default(""),
     /** SDK agent directory for persistent settings (default: ~/.pi/agent) */

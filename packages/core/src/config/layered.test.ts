@@ -111,7 +111,7 @@ describe("config/layered", () => {
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value.tenantId).toBe("default");
-        expect(result.value.logLevel).toBe("info");
+        expect(result.value.logLevel).toBe("debug");
       }
     });
 

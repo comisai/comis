@@ -96,7 +96,6 @@ import {
   BackgroundTasksConfigSchema,
   writeMasterKeyIfAbsent,
   preReadStorageMode,
-  systemGetEnv,
   systemNowMs,
   selectOAuthCredentialStore,
   createFileLock,
@@ -1299,7 +1298,7 @@ function emitStartupBanner(deps: {
     channels: Array.from(adaptersByType.keys()),
     port: gwConfig.enabled ? gwConfig.port : undefined, instanceId,
     startupDurationMs: Date.now() - startupStartMs, configPaths, dbPath: db.name,
-    logLevel: container.config.logLevel ?? "info", nodeVersion: process.versions.node,
+    logLevel: container.config.logLevel ?? "debug", nodeVersion: process.versions.node,
     manifest,
   }, "Comis daemon started");
   // Docker-only: surface restart-policy requirement immediately after the
@@ -1368,27 +1367,11 @@ async function bootFoundation(
 
   // P0 boot gate: REQ-17 — ensure file/env first boot creates no key material.
   //
-  // Step 1 (pre-loadEnvFile): Detect the removed legacy env var and fail with a
-  // migration error. This var was removed in v1.5 — use security.storage: env instead.
-  if (systemGetEnv("COMIS_DISABLE_ENCRYPTED_SECRETS")) { // MIGRATION_ERROR gate: detect removed legacy env var
-    throw new Error("[MIGRATION_ERROR] COMIS_DISABLE_ENCRYPTED_SECRETS is no longer supported. Set security.storage: env in your config.yaml and remove the env var. See the migration guide in the changelog."); // MIGRATION-GATE
-  }
-
-  // Step 2: Pre-read security.storage from YAML (layered, last-wins). Returns
-  // "encrypted"|"file"|"env"|"legacy". NEVER writes key material before this check.
+  // Step 1: Pre-read security.storage from YAML (layered, last-wins). Returns
+  // "encrypted"|"file"|"env". NEVER writes key material before this check.
   const storageMode = _preReadStorageMode(requestedConfigPaths);
 
-  // Step 3: If legacy keys detected in YAML, fail before any key material is written.
-  if (storageMode === "legacy") {
-    throw new Error(
-      "[MIGRATION_ERROR] Legacy config keys detected in your config.yaml. " +
-        "[MIGRATION] Legacy credential-storage keys were removed in v1.5. " +
-        "Replace with: security.storage: encrypted|file|env (default: encrypted). " +
-        "See the migration guide in the changelog.",
-    );
-  }
-
-  // Step 4: Write master key ONLY when storageMode is "encrypted" (REQ-17).
+  // Step 2: Write master key ONLY when storageMode is "encrypted" (REQ-17).
   // file/env modes create NO key material on first boot.
   if (storageMode === "encrypted") {
     _writeMasterKeyIfAbsent(dataDir);
@@ -1397,13 +1380,6 @@ async function bootFoundation(
   }
 
   loadEnvFile(envPath);
-
-  // Step 5 (post-loadEnvFile): Re-check for removed legacy env var (MIGRATION_ERROR gate)
-  // that may have been loaded from ~/.comis/.env. Fail with migration error if present.
-  // eslint-disable-next-line no-restricted-syntax -- must re-read process.env after loadEnvFile
-  if (process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"]) { // MIGRATION_ERROR gate: detect legacy env var in .env
-    throw new Error("[MIGRATION_ERROR] COMIS_DISABLE_ENCRYPTED_SECRETS found in .env file. This env var is no longer supported. Set security.storage: env in your config.yaml and remove the env var from ~/.comis/.env. See the migration guide in the changelog."); // MIGRATION-GATE
-  }
 
   // 0.5. Select secret store by mode, merge with env, scrub process.env.
   const permissionCorrections = hardenDataDirPermissions(dataDir);

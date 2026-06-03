@@ -5,7 +5,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
   {
     "default": {
       "channels": {},
-      "defaultChannelEnabled": false,
+      "defaultChannelEnabled": true,
       "emergencyDisabled": false,
       "onSuccess": "delete",
       "theme": "default",
@@ -22,7 +22,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("agent
     "type": "object"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "agents.activity.defaultChannelEnabled",
     "type": "boolean"
@@ -6833,7 +6833,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
       "subAgentMaxSteps": 50,
       "subAgentMcpTools": "inherit",
       "subAgentRetentionMs": 3600000,
-      "subAgentSessionPersistence": false,
+      "subAgentSessionPersistence": true,
       "subAgentToolGroups": [
         "coding"
       ],
@@ -6916,7 +6916,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
     "type": "integer"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "security.agentToAgent.subAgentSessionPersistence",
     "type": "boolean"
@@ -7114,12 +7114,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata("secur
     "immutable": true,
     "path": "security.permission.enableNodePermissions",
     "type": "boolean"
-  },
-  {
-    "default": {},
-    "immutable": true,
-    "path": "security.secrets",
-    "type": "object"
   },
   {
     "default": "encrypted",
@@ -7409,7 +7403,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "default": {
         "activity": {
           "channels": {},
-          "defaultChannelEnabled": false,
+          "defaultChannelEnabled": true,
           "emergencyDisabled": false,
           "onSuccess": "delete",
           "theme": "default",
@@ -11897,7 +11891,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "integer"
   },
   {
-    "default": "info",
+    "default": "debug",
     "immutable": false,
     "path": "logLevel",
     "type": "string"
@@ -13092,7 +13086,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "subAgentMaxSteps": 50,
         "subAgentMcpTools": "inherit",
         "subAgentRetentionMs": 3600000,
-        "subAgentSessionPersistence": false,
+        "subAgentSessionPersistence": true,
         "subAgentToolGroups": [
           "coding"
         ],
@@ -13126,7 +13120,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
         "allowedNetHosts": [],
         "enableNodePermissions": false
       },
-      "secrets": {},
       "storage": "encrypted",
       "writeSecretGuard": "warn"
     },
@@ -13170,7 +13163,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
       "subAgentMaxSteps": 50,
       "subAgentMcpTools": "inherit",
       "subAgentRetentionMs": 3600000,
-      "subAgentSessionPersistence": false,
+      "subAgentSessionPersistence": true,
       "subAgentToolGroups": [
         "coding"
       ],
@@ -13253,7 +13246,7 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "type": "integer"
   },
   {
-    "default": false,
+    "default": true,
     "immutable": true,
     "path": "security.agentToAgent.subAgentSessionPersistence",
     "type": "boolean"
@@ -13451,12 +13444,6 @@ exports[`section-registry parity > field-metadata view > getFieldMetadata() â€” 
     "immutable": true,
     "path": "security.permission.enableNodePermissions",
     "type": "boolean"
-  },
-  {
-    "default": {},
-    "immutable": true,
-    "path": "security.secrets",
-    "type": "object"
   },
   {
     "default": "encrypted",
@@ -14246,7 +14233,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
       "additionalProperties": false,
       "default": {
         "channels": {},
-        "defaultChannelEnabled": false,
+        "defaultChannelEnabled": true,
         "emergencyDisabled": false,
         "onSuccess": "delete",
         "theme": "default",
@@ -14274,7 +14261,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("age
           "type": "object"
         },
         "defaultChannelEnabled": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "emergencyDisabled": {
@@ -23178,7 +23165,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
         "subAgentMaxSteps": 50,
         "subAgentMcpTools": "inherit",
         "subAgentRetentionMs": 3600000,
-        "subAgentSessionPersistence": false,
+        "subAgentSessionPersistence": true,
         "subAgentToolGroups": [
           "coding"
         ],
@@ -23260,7 +23247,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
           "type": "integer"
         },
         "subAgentSessionPersistence": {
-          "default": false,
+          "default": true,
           "type": "boolean"
         },
         "subAgentToolGroups": {
@@ -23501,12 +23488,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
       ],
       "type": "object"
     },
-    "secrets": {
-      "additionalProperties": false,
-      "default": {},
-      "properties": {},
-      "type": "object"
-    },
     "storage": {
       "default": "encrypted",
       "enum": [
@@ -23532,7 +23513,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema("sec
     "permission",
     "actionConfirmation",
     "agentToAgent",
-    "secrets",
     "storage"
   ],
   "type": "object"
@@ -23939,7 +23919,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "additionalProperties": false,
             "default": {
               "channels": {},
-              "defaultChannelEnabled": false,
+              "defaultChannelEnabled": true,
               "emergencyDisabled": false,
               "onSuccess": "delete",
               "theme": "default",
@@ -23967,7 +23947,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
                 "type": "object"
               },
               "defaultChannelEnabled": {
-                "default": false,
+                "default": true,
                 "type": "boolean"
               },
               "emergencyDisabled": {
@@ -27350,7 +27330,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "default": {
           "activity": {
             "channels": {},
-            "defaultChannelEnabled": false,
+            "defaultChannelEnabled": true,
             "emergencyDisabled": false,
             "onSuccess": "delete",
             "theme": "default",
@@ -33181,7 +33161,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
       "type": "object"
     },
     "logLevel": {
-      "default": "info",
+      "default": "debug",
       "enum": [
         "trace",
         "debug",
@@ -34929,7 +34909,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "subAgentMaxSteps": 50,
           "subAgentMcpTools": "inherit",
           "subAgentRetentionMs": 3600000,
-          "subAgentSessionPersistence": false,
+          "subAgentSessionPersistence": true,
           "subAgentToolGroups": [
             "coding"
           ],
@@ -34963,7 +34943,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           "allowedNetHosts": [],
           "enableNodePermissions": false
         },
-        "secrets": {},
         "storage": "encrypted",
         "writeSecretGuard": "warn"
       },
@@ -35008,7 +34987,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
             "subAgentMaxSteps": 50,
             "subAgentMcpTools": "inherit",
             "subAgentRetentionMs": 3600000,
-            "subAgentSessionPersistence": false,
+            "subAgentSessionPersistence": true,
             "subAgentToolGroups": [
               "coding"
             ],
@@ -35090,7 +35069,7 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
               "type": "integer"
             },
             "subAgentSessionPersistence": {
-              "default": false,
+              "default": true,
               "type": "boolean"
             },
             "subAgentToolGroups": {
@@ -35331,12 +35310,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
           ],
           "type": "object"
         },
-        "secrets": {
-          "additionalProperties": false,
-          "default": {},
-          "properties": {},
-          "type": "object"
-        },
         "storage": {
           "default": "encrypted",
           "enum": [
@@ -35362,7 +35335,6 @@ exports[`section-registry parity > schema-serializer view > getConfigSchema() â€
         "permission",
         "actionConfirmation",
         "agentToAgent",
-        "secrets",
         "storage"
       ],
       "type": "object"

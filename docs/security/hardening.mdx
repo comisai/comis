@@ -122,11 +122,10 @@ These items strengthen your security posture significantly. They are important f
 
     ```yaml title="~/.comis/config.yaml"
     security:
-      secrets:
-        enabled: true
+      storage: encrypted
     ```
 
-    The encrypted store uses AES-256-GCM encryption at rest, protecting your secrets even if someone gains access to the data directory.
+    The encrypted store uses AES-256-GCM encryption at rest, protecting your secrets even if someone gains access to the data directory. This is the default backend.
 
     See [Secrets](/security/secrets) for the step-by-step setup procedure, including master key generation and importing existing secrets.
 

@@ -140,8 +140,7 @@ export type ConfigErrorCode =
   | "INCLUDE_ERROR"
   | "CIRCULAR_INCLUDE"
   | "ENV_VAR_ERROR"
-  | "BACKUP_ERROR"
-  | "MIGRATION_ERROR";
+  | "BACKUP_ERROR";
 
 /**
  * Structured error for configuration operations.

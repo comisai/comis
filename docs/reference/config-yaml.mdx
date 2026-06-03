@@ -258,7 +258,7 @@ Multi-agent configuration map. Each key is an agent ID, and the value is a `PerA
 **Multi-account example** -- two agents, two ChatGPT accounts:
 
 ```yaml title="~/.comis/config.yaml"
-oauth:
+security:
   storage: file
 
 agents:
@@ -1242,13 +1242,6 @@ Controls how sub-agent sessions receive context, condense results, and manage th
 | `resultTagPrefix` | `string` | `"Subagent Result"` | Tag prefix used in narrative casting (1-100 characters). Appears as `[{prefix}: {label}]`. |
 | `parentSummaryMaxTokens` | `number` | `1000` | Token limit for the parent context summary when `includeParentHistory` is `"summary"` (100-10,000). |
 
-**Secrets (security.secrets)**
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `enabled` | `boolean` | `false` | Enable encrypted secrets store |
-| `dbPath` | `string` | `"secrets.db"` | Path to secrets database relative to dataDir |
-
 **Storage Mode (security.storage)**
 
 | Key | Type | Default | Description |
@@ -1275,16 +1268,9 @@ for read-only deployments where credentials are injected via environment variabl
 
 <Warning>
 `security.storage` is **runtime-immutable** — changing it requires editing `config.yaml`
-and restarting the daemon. The config schema is `z.strictObject`, so a mismatch between
-the old v1.4 config shape and the new v1.5 layout fails boot with a precise migration error.
-**Back up `~/.comis/config.yaml` before editing.**
+and restarting the daemon. The config schema is `z.strictObject`, so unknown keys are
+rejected at boot. **Back up `~/.comis/config.yaml` before editing.**
 </Warning>
-
-<Info>
-**Migration from v1.4:** The legacy top-level `oauth:` block, `security.secrets.enabled`,
-and `COMIS_DISABLE_ENCRYPTED_SECRETS` keys were removed in v1.5. Replace with
-`security: storage: encrypted|file|env`. See the [v1.5 Changelog](#) for the migration guide.
-</Info>
 
 <Info>
 **Mode mismatch detection:** If you switch modes while credentials remain in the inactive

@@ -19,10 +19,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, statSync, utimesSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  setupOutputRetention,
-  validateOutputRetentionConfig,
-} from "./setup-output-retention.js";
+import { setupOutputRetention } from "./setup-output-retention.js";
 import type { OutputRetentionConfig } from "@comis/core";
 
 // Minimal logger shim. Per AGENTS §2.4 we never import @comis/infra at runtime
@@ -242,56 +239,5 @@ describe("housekeeper: per-class retention behavior", () => {
     });
     handle.shutdown();
     handle.shutdown(); // second call should not throw
-  });
-});
-
-describe("validator: validateOutputRetentionConfig", () => {
-  it("accepts retentionMs >= 1", () => {
-    const r = validateOutputRetentionConfig({
-      classes: [{ classId: "attachment", retentionMs: 1 }],
-    });
-    expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.value.classes).toEqual([{ classId: "attachment", retentionMs: 1 }]);
-    }
-  });
-
-  it("rejects retentionMs = 0", () => {
-    const r = validateOutputRetentionConfig({
-      classes: [{ classId: "attachment", retentionMs: 0 }],
-    });
-    expect(r.ok).toBe(false);
-  });
-
-  it("rejects retentionMs = -1", () => {
-    const r = validateOutputRetentionConfig({
-      classes: [{ classId: "attachment", retentionMs: -1 }],
-    });
-    expect(r.ok).toBe(false);
-  });
-
-  it("rejects fractional retentionMs", () => {
-    const r = validateOutputRetentionConfig({
-      classes: [{ classId: "attachment", retentionMs: 1.5 }],
-    });
-    expect(r.ok).toBe(false);
-  });
-
-  it("rejects empty classId", () => {
-    const r = validateOutputRetentionConfig({
-      classes: [{ classId: "", retentionMs: 1000 }],
-    });
-    expect(r.ok).toBe(false);
-  });
-
-  it("rejects non-array classes", () => {
-    const r = validateOutputRetentionConfig({ classes: { foo: "bar" } });
-    expect(r.ok).toBe(false);
-  });
-
-  it("rejects non-object input", () => {
-    expect(validateOutputRetentionConfig(null).ok).toBe(false);
-    expect(validateOutputRetentionConfig(42).ok).toBe(false);
-    expect(validateOutputRetentionConfig("config").ok).toBe(false);
   });
 });

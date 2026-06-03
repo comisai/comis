@@ -1226,7 +1226,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "WebhookMappingConfigSchema",
       "WebhookMappingMatchSchema",
       "AgentSecretsConfigSchema",
-      "SecretsConfigSchema",
       "DocumentationConfigSchema",
       "DocumentationLinkSchema",
       "ImageGenerationConfigSchema",
@@ -1316,7 +1315,6 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "SendAction",
       "WebhooksConfig",
       "AgentSecretsConfig",
-      "SecretsConfig",
       "ConfigError",
       "ConfigErrorCode",
       "HistoryEntry",
@@ -1817,17 +1815,10 @@ export const PUBLIC_API_POLICY: ReadonlyMap<string, ReadonlySet<string>> =
       "RelationshipTrust",
       "RelationshipEntry",
       "RelationshipInput",
-      // v1.5 credential-storage config foundation (Phase 1, Plans 03/04).
-      // checkLegacyConfigKeys detects removed legacy config keys (oauth.storage /
-      // security.secrets.enabled) before Zod parse; consumed internally by
-      // loader.ts but exported for embedders that call validateConfig and want to
-      // surface migration errors via the same guard. StorageModePreRead is the
-      // return type of preReadStorageMode (daemon-boot pre-read); the daemon
-      // imports preReadStorageMode (which has an in-repo consumer) but does not
-      // import the return type name directly. Both symbols are part of the
-      // documented migration-guard API surface and shrink when a real cross-package
-      // consumer materializes.
-      "checkLegacyConfigKeys",
+      // StorageModePreRead is the return type of preReadStorageMode (daemon-boot
+      // pre-read); the daemon imports preReadStorageMode (which has an in-repo
+      // consumer) but does not import the return type name directly, so it is an
+      // orphan export that shrinks when a real cross-package consumer materializes.
       "StorageModePreRead",
     ])],
     // @comis/daemon: baseline orphans tracked here. All four

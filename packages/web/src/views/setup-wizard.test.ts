@@ -239,7 +239,7 @@ describe("Step 1 - Basics", () => {
     const d = priv(el)._wizardData;
     expect(d.tenantId).toBe("default");
     expect(d.dataDir).toBe("~/.comis");
-    expect(d.logLevel).toBe("info");
+    expect(d.logLevel).toBe("debug");
     expect(d.gatewayHost).toBe("127.0.0.1");
     expect(d.gatewayPort).toBe(4766);
   });

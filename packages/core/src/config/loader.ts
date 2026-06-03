@@ -9,7 +9,6 @@ import { AppConfigSchema } from "./schema.js";
 import type { IncludeResolverDeps } from "./include-resolver.js";
 import { resolveIncludes } from "./include-resolver.js";
 import { substituteEnvVars } from "./env-substitution.js";
-import { checkLegacyConfigKeys } from "./migration-guard.js";
 
 /**
  * Options for enhanced config file loading with $include and ${VAR} support.
@@ -134,13 +133,6 @@ export function loadConfigFile(
  * and returns a fully typed AppConfig or a ConfigError with validation details.
  */
 export function validateConfig(raw: Record<string, unknown>): Result<AppConfig, ConfigError> {
-  // REQ-02: detect legacy keys BEFORE AppConfigSchema.safeParse fires.
-  // z.strictObject rejects unknown top-level keys immediately during safeParse,
-  // swallowing legacy keys with a cryptic "unrecognized_keys: oauth" error.
-  // The migration guard runs first on the raw object to emit a named MIGRATION_ERROR.
-  const migrationCheck = checkLegacyConfigKeys(raw);
-  if (!migrationCheck.ok) return migrationCheck;
-
   const result = AppConfigSchema.safeParse(raw);
 
   if (result.success) {

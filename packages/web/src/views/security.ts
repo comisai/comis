@@ -35,9 +35,6 @@ interface SecurityConfig {
     subAgentToolGroups?: string[];
     subAgentMcpTools?: string;
   };
-  secrets?: {
-    dbPath?: string;
-  };
   approvalRules?: {
     defaultMode: string;
     timeoutMs: number;
@@ -595,7 +592,6 @@ export class IcSecurityView extends LitElement {
   // --- Secrets tab (kept in coordinator -- small, tightly coupled) ---
 
   private _renderSecretsTab() {
-    const secrets = this._securityConfig.secrets ?? {};
     // security.storage is runtime-immutable (D17) — mode change requires
     // a config.yaml edit + daemon restart. Display as read-only; no write
     // control offered here.
@@ -610,7 +606,7 @@ export class IcSecurityView extends LitElement {
           </div>
           <div class="tls-row">
             <span class="tls-label">DB Path</span>
-            <span class="tls-value">${secrets.dbPath ?? "secrets.db"}</span>
+            <span class="tls-value">&lt;dataDir&gt;/secrets.db</span>
           </div>
         </div>
         <div style="margin-top: var(--ic-space-sm); font-size: 0.85em; color: var(--ic-color-text-secondary, #666);">

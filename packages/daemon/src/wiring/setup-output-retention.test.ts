@@ -21,9 +21,6 @@ interface OutputRetentionModule {
     classes: RetentionClassConfig[];
     logger: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
   }) => { shutdown: () => void };
-  validateOutputRetentionConfig?: (config: unknown) =>
-    | { ok: true; value: { classes: RetentionClassConfig[] } }
-    | { ok: false; error: Error };
 }
 
 async function loadOutputRetention(): Promise<OutputRetentionModule | undefined> {
@@ -54,26 +51,5 @@ describe("output retention housekeeper", () => {
     // Synthetic: total dir size after housekeeper run is less than before.
     // The factory shape is contract-tested here.
     expect(typeof mod.setupOutputRetention).toBe("function");
-  });
-
-  it("config schema rejects retentionMs <= 0; accepts retentionMs >= 1", async () => {
-    const mod = await loadOutputRetention();
-    expect(mod).toBeDefined();
-    if (!mod || typeof mod.validateOutputRetentionConfig !== "function") return;
-    // Negative: retentionMs = -1 rejected.
-    const negative = mod.validateOutputRetentionConfig({
-      classes: [{ classId: "attachment", retentionMs: -1 }],
-    });
-    expect(negative.ok).toBe(false);
-    // Zero: retentionMs = 0 rejected (no retention is a misconfig).
-    const zero = mod.validateOutputRetentionConfig({
-      classes: [{ classId: "attachment", retentionMs: 0 }],
-    });
-    expect(zero.ok).toBe(false);
-    // Positive: retentionMs = 1 accepted.
-    const positive = mod.validateOutputRetentionConfig({
-      classes: [{ classId: "attachment", retentionMs: 1 }],
-    });
-    expect(positive.ok).toBe(true);
   });
 });

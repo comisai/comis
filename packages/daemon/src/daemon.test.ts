@@ -869,7 +869,6 @@ describe("opt-out and same-boot init", () => {
   });
 
   afterEach(async () => {
-    delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
     while (instances.length > 0) {
       const inst = instances.shift()!;
       try {
@@ -886,32 +885,6 @@ describe("opt-out and same-boot init", () => {
     process.env = originalEnv;
   });
 
-  it("fails boot with MIGRATION_ERROR when COMIS_DISABLE_ENCRYPTED_SECRETS=1 (P0: legacy env var removed)", async () => {
-    // P0: COMIS_DISABLE_ENCRYPTED_SECRETS is no longer supported — daemon boot
-    // must throw a migration error instead of continuing with opt-out behavior.
-    process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"] = "1";
-    const { overrides } = buildOverrides();
-
-    await expect(main(overrides)).rejects.toThrow(/MIGRATION_ERROR.*COMIS_DISABLE_ENCRYPTED_SECRETS/);
-  });
-
-  // P0: COMIS_DISABLE_ENCRYPTED_SECRETS is no longer supported — daemon boot
-  // must throw a migration error, even when SECRETS_MASTER_KEY already exists.
-  it("fails boot with MIGRATION_ERROR when COMIS_DISABLE_ENCRYPTED_SECRETS=1 even with existing SECRETS_MASTER_KEY", async () => {
-    const { randomBytes: cryptoRandomBytes } = await import("node:crypto");
-    const existingKeyHex = cryptoRandomBytes(32).toString("hex");
-
-    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-cr02-test-"));
-    process.env["COMIS_DATA_DIR"] = freshDataDir;
-    process.env["SECRETS_MASTER_KEY"] = existingKeyHex;
-    process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"] = "1";
-
-    const { overrides } = buildOverrides();
-    await expect(main(overrides)).rejects.toThrow(/MIGRATION_ERROR.*COMIS_DISABLE_ENCRYPTED_SECRETS/);
-
-    rmSync(freshDataDir, { recursive: true, force: true });
-  });
-
   it("calls writeMasterKeyIfAbsent on first boot with a fresh data directory (encrypted mode)", async () => {
     // Fresh tmpdir — no .env file present; use a subdirectory so writeMasterKeyIfAbsent
     // writes there rather than the shared sandbox COMIS_DATA_DIR.
@@ -921,8 +894,6 @@ describe("opt-out and same-boot init", () => {
     process.env["COMIS_DATA_DIR"] = freshDataDir;
     process.env["COMIS_CONFIG_PATHS"] = nodePath.join(freshDataDir, "config.yaml");
     process.env["SECRETS_MASTER_KEY"] = keyHex;
-    // Ensure opt-out is NOT set so writeMasterKeyIfAbsent is called
-    delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
     const { overrides } = buildOverrides(undefined, "encrypted");
     const mockWriteMasterKeyIfAbsent = vi.fn().mockReturnValue({ written: true, keyHex });
     overrides.writeMasterKeyIfAbsent = mockWriteMasterKeyIfAbsent;
@@ -934,38 +905,6 @@ describe("opt-out and same-boot init", () => {
     expect(mockWriteMasterKeyIfAbsent).toHaveBeenCalledWith(freshDataDir);
 
     delete process.env["SECRETS_MASTER_KEY"];
-    rmSync(freshDataDir, { recursive: true, force: true });
-  });
-
-  // P0: security.secrets.enabled is a legacy key removed in v1.5.
-  // The daemon must throw a migration error when the YAML contains this key,
-  // ensuring no key material is created before the error is emitted (REQ-17).
-  it("fails boot with MIGRATION_ERROR when YAML sets security.secrets.enabled=false (legacy key removed in v1.5)", async () => {
-    const freshDataDir = mkdtempSync(resolve(tmpdir(), "comis-cfg-opt-out-test-"));
-    const configPath = nodePath.resolve(freshDataDir, "config.yaml");
-    fs.writeFileSync(
-      configPath,
-      "security:\n  secrets:\n    enabled: false\n",
-      { mode: 0o600 },
-    );
-
-    process.env["COMIS_DATA_DIR"] = freshDataDir;
-    process.env["COMIS_CONFIG_PATHS"] = configPath;
-    delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
-    delete process.env["SECRETS_MASTER_KEY"];
-
-    const { overrides } = buildOverrides();
-    // Use the real preReadStorageMode so the legacy-key detection fires.
-    delete overrides.preReadStorageMode;
-    await expect(main(overrides)).rejects.toThrow(/MIGRATION_ERROR/);
-
-    // writeMasterKeyIfAbsent must NOT have run — no SECRETS_MASTER_KEY in .env
-    const envFilePath = nodePath.resolve(freshDataDir, ".env");
-    if (fs.existsSync(envFilePath)) {
-      const contents = fs.readFileSync(envFilePath, "utf-8");
-      expect(contents).not.toMatch(/^SECRETS_MASTER_KEY=/m);
-    }
-
     rmSync(freshDataDir, { recursive: true, force: true });
   });
 });

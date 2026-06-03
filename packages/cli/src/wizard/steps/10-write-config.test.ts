@@ -225,6 +225,21 @@ describe("writeConfigStep", () => {
     expect(prompter.select).not.toHaveBeenCalled();
   });
 
+  it("writes logLevel: debug as the default into config.yaml", async () => {
+    const prompter = createMockPrompter();
+
+    await writeConfigStep.execute(populatedState(), prompter);
+
+    const writeCalls = vi.mocked(writeFileSync).mock.calls;
+    const configWriteCall = writeCalls.find(
+      ([path]) => typeof path === "string" && path.includes(".tmp"),
+    );
+    expect(configWriteCall).toBeDefined();
+
+    const configContent = JSON.parse(configWriteCall![1] as string);
+    expect(configContent.logLevel).toBe("debug");
+  });
+
   it("step returns state unchanged", async () => {
     const state = populatedState();
     const prompter = createMockPrompter();

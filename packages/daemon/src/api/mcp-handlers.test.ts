@@ -2965,7 +2965,7 @@ describe("MCP RPC Handlers", () => {
       const handlers = createMcpHandlers({
         mcpClientManager: manager,
         logger: makeLogger(),
-        // secretStore intentionally absent — simulates COMIS_DISABLE_ENCRYPTED_SECRETS=1
+        // secretStore intentionally absent — simulates a daemon with no secret store wired
       });
       await expect(
         handlers["mcp.connect"]({

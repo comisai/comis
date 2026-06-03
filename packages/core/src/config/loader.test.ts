@@ -225,7 +225,7 @@ integrations:
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value.tenantId).toBe("default");
-        expect(result.value.logLevel).toBe("info");
+        expect(result.value.logLevel).toBe("debug");
         expect(result.value.dataDir).toBe("");
         expect(result.value.agents.default.name).toBe("Comis");
         expect(result.value.agents.default.model).toBe("default");
@@ -246,7 +246,7 @@ integrations:
         expect(result.value.agents.default.name).toBe("MyBot");
         // Defaults still applied
         expect(result.value.agents.default.model).toBe("default");
-        expect(result.value.logLevel).toBe("info");
+        expect(result.value.logLevel).toBe("debug");
       }
     });
 
