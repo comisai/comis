@@ -57,6 +57,8 @@ import type { TerminalReplyFrame, TerminalRequestFrame } from "./terminal-ipc.js
 import { encodeKeyChord } from "./terminal-key-grammar.js";
 import { sanitizeTraceId, WORKER_TRUST_LEVEL } from "./terminal-worker-context.js";
 import { attachBackend } from "./terminal-worker-backend-attach.js";
+import { createAttentionEmitter } from "./terminal-attention-emitter.js";
+import { observeSettledFrame } from "./terminal-worker-classify.js";
 // The worker's structural contracts the entry BODY references (deps/defaults/closures)
 // type-imported from the neutral leaf terminal-worker-types.ts (124-01 cycle break).
 // FakePtyLike is no longer referenced in the body (its consumers PtyModuleLike +
@@ -90,6 +92,14 @@ import {
  * emulator memory to `(rows + 1000) × cols` cells.
  */
 const SCROLLBACK_DEFAULT = 1000;
+
+/**
+ * The default operator stuck threshold (OPS-04) the classifier compares to a session's
+ * no-progress window when `deps.stuckMs` is omitted. A settled, no-affordance frame that
+ * has shown no progress for longer than this is classified `stuck`. The daemon threads the
+ * config `worker.stuckMs`; this is the safety-net default.
+ */
+const STUCK_DEFAULT_MS = 30_000;
 
 // ---------------------------------------------------------------------------
 // Injected dependency contracts
@@ -134,6 +144,20 @@ export interface TerminalWorkerDeps {
   clearTimer?: (handle: unknown) => void;
   /** Construct a per-session @xterm emulator (P2/121). Default: `createSessionEmulator`. Injectable so a test can assert the wiring (mirrors loadPty/spawnPipe). */
   createEmulator?: (opts: { cols: number; rows: number; scrollback: number }) => SessionEmulator;
+  /**
+   * Write a length-prefixed frame to fd3 — the no-poll attention push channel (124-05,
+   * TR-11). Production wraps `fs.writeSync(3, b)` (the worker spawns with fd3 reserved,
+   * `terminal-worker-launch.ts`); tests inject a capturing fake. ABSENT ⇒ the attention
+   * emit is a no-op (the worker still settles normally — the emit is best-effort, never
+   * required for correctness). The fd3 frame carries a redaction-safe summary ONLY.
+   */
+  writeFd3?: (b: Buffer) => void;
+  /**
+   * The operator stuck threshold in ms (`worker.stuckMs`, OPS-04) the classifier compares
+   * to a session's no-progress window. Default {@link STUCK_DEFAULT_MS}; the daemon threads
+   * the config value. Stuck is by PROGRESS, never elapsed session wall-clock.
+   */
+  stuckMs?: number;
   // -- 122-06 scope-jail composition (injected; heavy logic is terminal-spawn-plan.ts) --
   /** Scope->bwrap argv composer (122-03). Default: the module export. */
   buildScopeArgs?: typeof defaultBuildScopeArgs;
@@ -292,6 +316,11 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   // The per-session @xterm emulator factory (P2/121). Default: the real pure-JS
   // wrapper; a test injects a recording emulator to assert the wiring.
   const createEmulator = deps.createEmulator ?? createSessionEmulator;
+  // 124-05: the no-poll attention plumbing. `writeFd3` is the push-channel sink (a
+  // production worker wraps `fs.writeSync(3, …)`; absent ⇒ the emit is a no-op). `stuckMs`
+  // is the operator stuck threshold (OPS-04) the classifier compares no-progress against.
+  const { writeFd3 } = deps;
+  const stuckMs = deps.stuckMs ?? STUCK_DEFAULT_MS;
   // 122-06: the scope-jail composers, threaded into planSpawnFromCreateFrame at the
   // spawn seam. bwrapPath/egressControl have NO default — the daemon injects them.
   const spawnComposers: SpawnPlanComposers = {
@@ -322,7 +351,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
    * heart of every act-then-return-SETTLED handler + the explicit `wait`. `params`
    * passes through to {@link runSettle}.
    */
-  function settleSession(state: SessionState, params: SettleParams): Promise<SettleResult> {
+  async function settleSession(state: SessionState, params: SettleParams): Promise<SettleResult> {
     const settleDeps: SettleDeps = {
       setTimer,
       clearTimer,
@@ -341,7 +370,24 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       // forces one (exit/text/timeout unaffected).
       isSettleable: () => !(state.emu?.hasContentBelowFold() ?? false),
     };
-    return runSettle(settleDeps, params);
+    const result = await runSettle(settleDeps, params);
+
+    // 124-05 (TR-11, the no-poll mechanism): after the settle resolves, classify the
+    // settled frame and hand the verdict to the per-session emitter — which writes a fd3
+    // attention frame ONLY on a state TRANSITION. EDGE-triggered (driven by the settle the
+    // worker already runs), NEVER a poll. `settled` is true unless the settle timed out
+    // (output still in flight ⇒ the classifier reads `working`). Best-effort: skipped when
+    // no emitter is wired (no `writeFd3`); a classify/emit failure must not break the settle.
+    if (state.emitter !== undefined) {
+      await observeSettledFrame({
+        state,
+        emitter: state.emitter,
+        settled: result.reason !== "timeout",
+        nowMs,
+        stuckMs,
+      });
+    }
+    return result;
   }
 
   /**
@@ -389,6 +435,15 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     // (so the first chunk is rendered). Built for BOTH backends; 121-04 threads the
     // scrollback from the create frame (DEFAULT_SCROLLBACK / config, never agent input).
     state.emu = createEmulator({ cols, rows, scrollback });
+
+    // 124-05 (TR-11): a per-session transition-only attention emitter over the injected
+    // fd3 push channel. Built only when `writeFd3` is wired (the production worker; tests
+    // inject a fake). The worker hands each SETTLED frame's classification to
+    // `emitter.observe` (in settleSession) — which writes a fd3 frame ONLY on a state
+    // transition. No emitter (no writeFd3) ⇒ the classify-and-emit step is skipped.
+    if (writeFd3 !== undefined) {
+      state.emitter = createAttentionEmitter({ sessionId, writeFd3 });
+    }
 
     // Register the session SYNCHRONOUSLY (before the async spawn-plan await) so a
     // read/resize/wait frame arriving mid-composition finds it; the backend attaches

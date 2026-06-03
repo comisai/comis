@@ -29,6 +29,7 @@ import type { EgressMaterialization } from "@comis/core";
 
 import type { EmulatorSnapshot, SessionEmulator } from "./terminal-render.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
+import type { AttentionEmitter } from "./terminal-attention-emitter.js";
 
 /** Structural logger — the minimal `{info,debug,warn,error}` surface; NOT `@comis/infra`'s `getLogger` (the worker never value-imports infra); the daemon injects the real logger. */
 export interface WorkerLogger {
@@ -90,6 +91,12 @@ export interface SessionState {
   writeFlush?: Promise<void>;
   /** Previous read's emulator snapshot (TR-14): `handleRead` diffs the new one against this (per-session screen-diff) then stores it. */
   lastSnapshot?: EmulatorSnapshot;
+  /** The per-session attention emitter (124-05): the worker hands each settled frame's `Classification` to `emitter.observe`, which writes a fd3 `TerminalEventFrame` on a state TRANSITION only (TR-11, no poll). Absent when the worker was built with no `writeFd3` (the emit is best-effort). */
+  emitter?: AttentionEmitter;
+  /** Previously-CLASSIFIED emulator snapshot (124-05): the attention diff anchor, kept SEPARATE from {@link lastSnapshot} (read's diff) so the two never fight over one field. */
+  lastClassifiedSnapshot?: EmulatorSnapshot;
+  /** Epoch ms of the last observed PROGRESS (classified screen changed) — the OPS-04 stuck-by-progress signal; `noProgressMs = nowMs - lastProgressMs`. Stamped by the classify glue against the worker's injected clock. */
+  lastProgressMs?: number;
   /** Settle ring-grow subscribers (`SettleDeps.onRingChange`), closure-local; `appendRing` notifies these. */
   ringListeners: Set<() => void>;
   /** Settle exit subscribers (onExit half); the pipe close/error + live pty exit notify these. */
