@@ -42,6 +42,12 @@
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import {
+  wrapExternalContent,
+  scrubSecretsFromText,
+  tryGetContext,
+  type ApprovalGate,
+} from "@comis/core";
 
 import { jsonResult, throwToolError } from "../../../platform-tools/tool-helpers.js";
 import { matchAllowEntry, buildDirectSpawn, type AllowEntryLike } from "./allowlist-matcher.js";
@@ -369,15 +375,20 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
       const scrollback = readInt(params, "scrollback", 0);
       const includeAltBuffer = readBool(params, "includeAltBuffer") ?? true;
       const view: TerminalView = await deps.registry.read(sessionId, { format, scrollback, includeAltBuffer });
+      // SEC-15 (§3.6): the driven CLI's screen is a PROMPT-INJECTION vector — it can
+      // render attacker-controlled text (a file/web the CLI read) and echo secrets.
+      // REDACT secret-shaped values FIRST (so a leaked token never reaches the agent
+      // or the wrap), THEN wrap as untrusted external content (random delimiter +
+      // injection warning + marker-sanitization) so a hijacked agent sees framed,
+      // un-actionable text — never a bare injection payload. Only `screen` is
+      // transformed; cursor/cols/rows/alt/alive/diff pass through unchanged.
+      const { text: redacted, redactions } = scrubSecretsFromText(view.screen);
+      const wrappedScreen = wrapExternalContent(redacted, { source: "unknown" });
       deps.logger.debug(
-        { toolName: "terminal_session_read", sessionId, format, scrollback, step: "read" },
+        { toolName: "terminal_session_read", sessionId, format, scrollback, redactions, step: "read" },
         "terminal session read",
       );
-      // SEC-15 (P3): wrap read output as untrusted external content (a driven CLI
-      // can render attacker-controlled text). The wrapExternalContent seam lands
-      // in Phase 122; P0 returns the view bare (the `diff` rides on the view) and
-      // keeps this seam explicit.
-      return jsonResult(view);
+      return jsonResult({ ...view, screen: wrappedScreen });
     },
   };
 }

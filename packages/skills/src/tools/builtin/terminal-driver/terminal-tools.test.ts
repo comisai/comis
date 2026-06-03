@@ -428,7 +428,10 @@ describe("terminal-tools — read / list / kill delegation", () => {
 
     const result = await tool.execute("call-1", { sessionId: "sess-1" });
     const view = result.details as TerminalView;
-    expect(view.screen).toBe("grid-text");
+    // SEC-15: `screen` is now redacted + wrapped as untrusted external content
+    // (no secret here, so the original text survives INSIDE the delimiter).
+    expect(view.screen).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/);
+    expect(view.screen).toContain("grid-text");
     expect(view.cursor).toEqual({ x: 3, y: 5 });
     expect(view.cols).toBe(80);
     expect(view.rows).toBe(24);
