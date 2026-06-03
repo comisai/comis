@@ -147,11 +147,25 @@ const SCRIPTED_DIALOG =
   "read -p 'Which option? (1/2) ' b; echo \"OPTION_1_OK[$b]\"; " +
   "read -p 'Proceed with the plan? (y/n) ' c; echo \"PLAN_DONE[$c]\";";
 
-/** The ordered scripted steps the live loop drives (gsd-dialog-script.md table). */
-const DIALOG_STEPS: ReadonlyArray<{ awaitText: string; answerKey: string; resultMarker: string }> = [
-  { awaitText: "Trust the files", answerKey: "y", resultMarker: "TRUST_OK" },
-  { awaitText: "Which option", answerKey: "1", resultMarker: "OPTION_1_OK" },
-  { awaitText: "Proceed with the plan", answerKey: "y", resultMarker: "PLAN_DONE" },
+/**
+ * The ordered scripted steps the live loop drives (gsd-dialog-script.md table).
+ *
+ * `expectDecision` is the decideAutoAnswer(safe-only) verdict the live screen must
+ * produce: steps 1–2 match an operator hint pattern (no structural cue) → `answer`;
+ * step 3's "Proceed with the plan?" carries the structural "proceed with" APPROVAL cue,
+ * so the SEC-12 escalate-always gate WINS over the matching hint pattern
+ * (terminal-auto-answer.ts decision order) — the woken turn escalates and the AGENT
+ * (played by this test) sends the answer. Both arms drive the dialog BY KEYSTROKE.
+ */
+const DIALOG_STEPS: ReadonlyArray<{
+  awaitText: string;
+  answerKey: string;
+  resultMarker: string;
+  expectDecision: "answer" | "escalate-approval";
+}> = [
+  { awaitText: "Trust the files", answerKey: "y", resultMarker: "TRUST_OK", expectDecision: "answer" },
+  { awaitText: "Which option", answerKey: "1", resultMarker: "OPTION_1_OK", expectDecision: "answer" },
+  { awaitText: "Proceed with the plan", answerKey: "y", resultMarker: "PLAN_DONE", expectDecision: "escalate-approval" },
 ];
 
 /**
@@ -269,7 +283,7 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
       const inputNeededEvents: TerminalEventFrame[] = [];
       const registry = createTerminalSessionRegistry({
         spawnWorker: makeBridgedPtyWorkerChild((f) => {
-          if (f.event === "input_needed") inputNeededEvents.push(f);
+          if (f.event === "terminal:input_needed") inputNeededEvents.push(f);
         }),
         logger: noopLogger,
         nowMs: () => Date.now(),
@@ -310,33 +324,45 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
       // worker pushes the transition), then run the woken-turn answer (decideAutoAnswer →
       // sendKey) + the loop-guard, then confirm the result marker rendered (the dialog advanced).
       for (let step = 0; step < DIALOG_STEPS.length; step++) {
-        const { awaitText, answerKey, resultMarker } = DIALOG_STEPS[step]!;
+        const { awaitText, answerKey, resultMarker, expectDecision } = DIALOG_STEPS[step]!;
 
-        // Settle to awaiting-input: a real PTY + dialog is timing-bound, so retry generously.
-        // The fd3 input_needed firing (collected above) is the no-poll signal; the status
-        // read corroborates the classifier state.
+        // The no-poll mechanism (TR-11): issue a bounded `wait` — that drives the worker's
+        // settle, which on the working→awaiting-input transition PUSHES a fd3
+        // `terminal:input_needed` frame (collected above). The agent is woken by that pushed
+        // event; it never spin-polls. The `wait` (NOT a sleep) is the no-poll driver; a real PTY
+        // + dialog is timing-bound, so retry the bounded wait generously.
         let reachedAwaiting = false;
-        for (let attempt = 0; attempt < 200 && !reachedAwaiting; attempt++) {
+        for (let attempt = 0; attempt < 30 && !reachedAwaiting; attempt++) {
+          await registry.wait(sessionId, owner, { forIdleMs: 150, timeoutMs: 4000 });
           const view = await registry.read(sessionId, owner);
           const status = await registry.status(sessionId, owner);
           if (view.screen.includes(awaitText) && status.state === "awaiting-input") {
             reachedAwaiting = true;
             break;
           }
-          await new Promise((r) => setTimeout(r, 25));
         }
         expect(reachedAwaiting).toBe(true); // the classifier reached awaiting-input for this prompt
 
-        // The no-poll proof: by now the worker has pushed at least `step+1` input_needed
-        // frames on fd3 (one per prompt transition) — the agent is woken by the event, not by
-        // a spin. (Flaky-tolerant lower bound: ≥1, since coalescing/timing can vary.)
+        // The no-poll proof: the wait-driven settle PUSHED ≥1 `terminal:input_needed` frame on
+        // fd3 — the agent is woken by the pushed event, not by a spin. (Flaky-tolerant lower
+        // bound: ≥1, since coalescing/timing can vary across the woken turns.)
         expect(inputNeededEvents.length).toBeGreaterThanOrEqual(1);
 
-        // The woken-turn answer: the SAME safe-only policy the daemon driver runs. A prompt
-        // matching an operator hint pattern → its canned keystroke; everything else escalates.
+        // The woken-turn policy: the SAME safe-only decideAutoAnswer the daemon driver runs.
+        // Steps 1–2 match an operator hint pattern (no structural cue) → answer. Step 3
+        // ("Proceed with the plan?") carries the structural "proceed with" APPROVAL cue, so
+        // the SEC-12 escalate-always gate WINS over the matching hint pattern — the woken
+        // turn escalates, and the AGENT (this test, playing the agent role the production
+        // escalation hands the prompt to) decides + sends the answer keystroke itself.
         const screen = (await registry.read(sessionId, owner)).screen;
         const decision = decideAutoAnswer("safe-only", screen, hintPatterns);
-        expect(decision.action).toBe("answer"); // the scripted prompt IS a safe match
+        if (expectDecision === "answer") {
+          expect(decision.action).toBe("answer"); // the scripted prompt IS a safe match
+        } else {
+          // SEC-12 LIVE: the approval prompt structurally escalates even though the
+          // operator hint pattern "Proceed with the plan" matches the same screen.
+          expect(decision).toEqual({ action: "escalate", reason: "approval" });
+        }
 
         // The loop-guard composes (a re-rendered prompt would escalate via `repeat`; a fresh
         // prompt advances). Each scripted step is a DISTINCT prompt → no repeat detected.

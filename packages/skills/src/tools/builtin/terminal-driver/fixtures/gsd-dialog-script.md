@@ -52,16 +52,26 @@ on Max and runs it long; this E2E pins the loop fast + deterministically.
 The stand-in is a `bash -c` program that emits three sequential `read` prompts,
 echoing a marker after each answer, then exits. Each row is one woken turn.
 
-| # | Prompt the driven program parks on | awaiting-input signal | Answer sent (keystroke) | Post-answer signal |
-|---|------------------------------------|-----------------------|-------------------------|--------------------|
-| 1 | `Trust the files in this folder? (y/n)` | classifier `awaiting-input`, cursor parked after the `(y/n)` | `y` + Enter | the program echoes `TRUST_OK` and parks on prompt 2 |
-| 2 | `Which option? (1/2)` (an AskUserQuestion-like choice) | `awaiting-input`, cursor parked after the `(1/2)` | `1` + Enter | echoes `OPTION_1_OK` and parks on prompt 3 |
-| 3 | `Proceed with the plan? (y/n)` | `awaiting-input`, cursor parked after the `(y/n)` | `y` + Enter | echoes `PLAN_DONE` then the program EXITS (the dialog COMPLETES) |
+| # | Prompt the driven program parks on | awaiting-input signal | `decideAutoAnswer` (safe-only) verdict | Answer sent (keystroke) | Post-answer signal |
+|---|------------------------------------|-----------------------|----------------------------------------|-------------------------|--------------------|
+| 1 | `Trust the files in this folder? (y/n)` | classifier `awaiting-input`, cursor parked after the `(y/n)` | `answer` (operator hint `Trust the files`) | `y` + Enter | the program echoes `TRUST_OK` and parks on prompt 2 |
+| 2 | `Which option? (1/2)` (an AskUserQuestion-like choice) | `awaiting-input`, cursor parked after the `(1/2)` | `answer` (operator hint `Which option`) | `1` + Enter | echoes `OPTION_1_OK` and parks on prompt 3 |
+| 3 | `Proceed with the plan? (y/n)` | `awaiting-input`, cursor parked after the `(y/n)` | **`escalate(approval)`** — the structural `proceed with` APPROVAL cue (SEC-12) WINS over the matching hint pattern | `y` + Enter, sent by the **woken AGENT** (the escalation consumer) | echoes `PLAN_DONE` then the program EXITS (the dialog COMPLETES) |
+
+**Step 3 is the SEC-12 escalate-always gate, live.** `terminal-auto-answer.ts`
+checks the structural auth/destructive/approval cues BEFORE the operator
+safe-pattern match, so a prompt containing `proceed with` escalates even though
+the operator hint `Proceed with the plan` matches the same screen — auto-answer
+never guesses an approval. In production the escalation raises
+`terminal:escalated` and the AGENT decides + sends the keystroke; the live test
+plays that agent role deterministically (it sends the scripted `y` + Enter after
+asserting the escalate verdict).
 
 **Completion** = every prompt answered and the program exits cleanly after
 `PLAN_DONE` (the classifier reaches `exited`). The test asserts each step's
 awaiting-input is reached (NO poll — the fd3 `terminal:input_needed` fires), the
-matching keystroke is sent + audited, and the sequence completes.
+step's `decideAutoAnswer` verdict matches the table, the keystroke is sent +
+audited, and the sequence completes.
 
 ## The bash stand-in program
 

@@ -228,9 +228,12 @@ describe("createMediaPersistenceService", () => {
 
   describe("error handling", () => {
     it("returns err for write failures without throwing", async () => {
-      // Use a non-writable path to trigger failure
+      // Use a non-writable path to trigger failure. The dir component rides UNDER
+      // /dev/null so mkdir fails ENOTDIR for ANY uid — a bare "/nonexistent/…" root
+      // path is CREATABLE when the suite runs as root (observed on the VPS soak host:
+      // the mkdir succeeded and this test went red expecting a failure).
       const badService = createMediaPersistenceService({
-        workspaceDir: "/nonexistent/deeply/nested/path/that/cannot/exist",
+        workspaceDir: "/dev/null/deeply/nested/path/that/cannot/exist",
         logger: mockLogger(),
       });
 
