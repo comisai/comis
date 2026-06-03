@@ -99,4 +99,62 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
       `sanity: findForbiddenImports must walk every packages/*/src tree; got ${checkedFiles} (expected >= 500 — current HEAD has ~1,290 source .ts files; largest single package is ~225)`,
     ).toBeGreaterThanOrEqual(500);
   });
+
+  // ---------------------------------------------------------------------------
+  // Phase 122 P3 (SEC-07): a NAMED, focused regression guard for the three
+  // terminal scope/egress files. The global rule above already covers them (they
+  // live under packages/skills/src/), but the EgressControlPort design has a
+  // BINDING constraint — the worker-side egress code depends on the PORT TYPE in
+  // @comis/core and NEVER value-imports @comis/infra. Naming the files makes that
+  // constraint self-documenting and turns a future infra-import regression into a
+  // targeted, legible failure (not a needle in the 1,290-file global haystack).
+  // ---------------------------------------------------------------------------
+  it("terminal scope/egress files (scope-args, env-scrub, egress-relay) value-import zero @comis/infra (SEC-07 boundary)", () => {
+    const TERMINAL_EGRESS_DIR = resolve(
+      PACKAGES_ROOT,
+      "skills/src/tools/builtin/terminal-driver",
+    );
+    const NAMED_FILES = [
+      "terminal-scope-args.ts",
+      "terminal-env-scrub.ts",
+      "terminal-egress-relay.ts",
+    ] as const;
+
+    const { violations, checkedFiles } = findForbiddenImports({
+      rootDir: TERMINAL_EGRESS_DIR,
+      forbiddenPackage: "@comis/infra",
+      excludeFileSuffixes: [".test.ts"],
+      valueImportsOnly: true,
+    });
+
+    // Scope the assertion to exactly the three named files (the directory holds
+    // ~20 terminal-driver modules; this guard is about the egress boundary).
+    const namedViolations = violations.filter((v) =>
+      NAMED_FILES.some((f) => v.file.endsWith(`/${f}`)),
+    );
+
+    expect(
+      namedViolations,
+      formatViolations({
+        description:
+          "The terminal scope/egress files (terminal-scope-args.ts, terminal-env-scrub.ts, terminal-egress-relay.ts) MUST NOT value-import @comis/infra — they depend only on the EgressControlPort type in @comis/core + node builtins (SEC-07 trust boundary; worker ↛ infra).",
+        violations: namedViolations.map((v) => ({
+          file: v.file,
+          line: v.line,
+          column: v.column,
+          snippet: v.snippet,
+        })),
+        suggestedFix:
+          'Import the EgressControlPort as a TYPE from "@comis/core" and use node `net`/`fs` builtins; the concrete proxy impl is wired by the daemon (composition root) and injected via the port. Never value-import @comis/infra from a worker-side file.',
+        designRef: "SEC-07 / 122-RESEARCH EgressControlPort placement decision",
+      }),
+    ).toEqual([]);
+
+    // Sanity: the walker actually descended into the terminal-driver dir (catch a
+    // path typo that would silently pass with zero files checked).
+    expect(
+      checkedFiles,
+      `sanity: the terminal-driver directory must contain source files; got ${checkedFiles}`,
+    ).toBeGreaterThan(0);
+  });
 });
