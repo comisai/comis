@@ -38,6 +38,7 @@ import {
   createTerminalSessionRegistry,
   type FakeWorkerChild,
 } from "./terminal-session-registry.js";
+import { createSessionCaps } from "./terminal-caps.js";
 import { createTerminalWorker } from "./terminal-worker-entry.js";
 import { encodeFrame, createFrameDecoder, type TerminalRequestFrame } from "./terminal-ipc.js";
 import type { AllowEntryLike } from "./allowlist-matcher.js";
@@ -156,6 +157,9 @@ function toolDeps(registry: ReturnType<typeof createTerminalSessionRegistry>, en
     eventBus: { emit: () => true },
     nowMs: () => Date.now(),
     agentId: "agent-roundtrip",
+    // 123-05: no-limit caps (these round-trips assert the create/read/kill path, not the
+    // caps; a pass-through caps keeps every send audited but never rejected/evicted).
+    caps: createSessionCaps(undefined, () => Date.now()),
   };
 }
 

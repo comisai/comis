@@ -52,6 +52,7 @@ import {
   createTerminalSessionWaitTool,
   createTerminalSessionStatusTool,
   createTerminalSessionResizeTool,
+  createSessionCaps,
   type TerminalSessionRegistry,
   type TerminalEventBus,
   type ReaperEvictInfo,
@@ -157,6 +158,10 @@ export function mapAllowEntry(entry: TerminalAllowEntry): AllowEntryLike {
     // SEC-06: carry the operator's approveOnCreate consent flag verbatim (a sibling
     // of scope) so the create tool can gate on it — never dropped at the boundary.
     approveOnCreate: entry.approveOnCreate,
+    // OPS-03/OPS-06: carry the operator's per-entry usage caps verbatim (a sibling of
+    // scope/approveOnCreate) so the daemon builds the per-agent SessionCaps from them —
+    // never dropped at the boundary (the silent-no-op/security regression class).
+    limits: entry.limits,
   };
 }
 
@@ -214,10 +219,13 @@ function getOrCreateTerminalRegistry(
   registries: Map<string, TerminalSessionRegistry>,
   agentId: string,
   deps: TerminalWiringDeps,
+  caps: SessionCaps,
 ): TerminalSessionRegistry {
   let registry = registries.get(agentId);
   if (!registry) {
-    const reaperHooks = buildTerminalReaperHooks(agentId, deps);
+    // Thread the SHARED per-agent caps instance into the reaper hooks so onCapForget
+    // forgets the SAME cap-state map the tool deps consume (one instance for both).
+    const reaperHooks = buildTerminalReaperHooks(agentId, { ...deps, caps });
     registry = createTerminalSessionRegistry({
       spawnWorker: buildProductionSpawnWorker(resolveWorkerJsPath(deps.dataDir), deps.dataDir),
       logger: deps.skillsLogger,
@@ -323,13 +331,25 @@ export function buildTerminalSharedDeps(
   agentId: string,
   deps: TerminalWiringDeps,
 ) {
-  const registry = getOrCreateTerminalRegistry(registries, agentId, deps);
-
   // SEC-01 trust source: the operator allow-set. Empty until the config is
   // threaded into PerAgentConfig (a later step) — so every create fail-closes.
   // When that lands it becomes `config.allow.map(mapAllowEntry)`, so the per-entry
   // scope (SEC-02) rides along via the single mapping site above (no silent drop).
   const allowEntries: AllowEntryLike[] = [];
+
+  // OPS-03/OPS-06: construct ONE shared per-agent SessionCaps instance, fed into BOTH
+  // the tool deps (consume*/startSession/forget) AND the registry onCapForget
+  // (caps.forget) so eviction forgets the same cap-state map (T-123-17, no leak; no
+  // double-forget). Prefer a composition-root-supplied instance (deps.caps) if present;
+  // otherwise construct from the matched single-entry limits (single-entry-per-agent is
+  // the forcing use case). The allow-set is EMPTY today, so the limits are undefined (no
+  // caps tripped) — when the allow-set is populated, the per-entry limits feed
+  // createSessionCaps and the operator's maxRequestsPerSession/maxInteractions/wallClockMs
+  // become live with zero further wiring change.
+  const entryLimits = allowEntries[0]?.limits;
+  const caps: SessionCaps = deps.caps ?? createSessionCaps(entryLimits, systemNowMs);
+
+  const registry = getOrCreateTerminalRegistry(registries, agentId, deps, caps);
 
   return {
     registry,
@@ -359,6 +379,9 @@ export function buildTerminalSharedDeps(
     // through the seam so the worker composer has it.
     egressControl: deps.egressControl,
     bwrapPath: deps.bwrapPath,
+    // OPS-03/OPS-06: the shared per-agent caps the eight tools consume (the SAME
+    // instance the registry onCapForget forgets — one source for consume + forget).
+    caps,
   };
 }
 

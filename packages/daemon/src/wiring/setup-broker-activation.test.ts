@@ -117,6 +117,14 @@ vi.mock("@comis/skills/tools", () => ({
   createTerminalSessionWaitTool: vi.fn(() => ({ name: "terminal_session_wait", execute: vi.fn() })),
   createTerminalSessionStatusTool: vi.fn(() => ({ name: "terminal_session_status", execute: vi.fn() })),
   createTerminalSessionResizeTool: vi.fn(() => ({ name: "terminal_session_resize", execute: vi.fn() })),
+  // P4 OPS-03/06: the per-session caps factory the terminal wiring constructs ONCE per agent.
+  createSessionCaps: vi.fn(() => ({
+    startSession: vi.fn(),
+    consumeRequest: vi.fn(() => undefined),
+    consumeInteraction: vi.fn(() => undefined),
+    checkWallClock: vi.fn(() => undefined),
+    forget: vi.fn(),
+  })),
 }));
 
 vi.mock("@comis/skills/platform-tools", () => ({

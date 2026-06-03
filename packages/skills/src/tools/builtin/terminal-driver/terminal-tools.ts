@@ -51,6 +51,8 @@ import {
 
 import { jsonResult, throwToolError } from "../../../platform-tools/tool-helpers.js";
 import { matchAllowEntry, buildDirectSpawn, type AllowEntryLike } from "./allowlist-matcher.js";
+import type { SessionCaps } from "./terminal-caps.js";
+import { enforceSendCaps, auditKeystroke } from "./terminal-send-guards.js";
 import type { SandboxProvider } from "../sandbox/types.js";
 import {
   DEFAULT_SCROLLBACK,
@@ -102,6 +104,23 @@ export interface TerminalEvictedEvent {
 }
 
 /**
+ * The SEC-10 keystroke-audit event payload (mirrors core
+ * `TerminalEvents["terminal:keystroke"]`, 123-01). REDACTION-SAFE BY CONSTRUCTION:
+ * it carries the counts/ids (`redactions`, `byteLength`) ONLY — there is NO
+ * `text`/`keys`/`payload` field, so an emit site cannot leak a keystroke on the bus
+ * even by mistake (T-123-13). The scrubSecretsFromText-REDACTED payload rides the
+ * structured LOG only; the bus event is the redaction-safe summary.
+ */
+export interface TerminalKeystrokeEvent {
+  sessionId: string;
+  agentId: string;
+  kind: "text" | "key";
+  redactions: number;
+  byteLength: number;
+  timestamp: number;
+}
+
+/**
  * A structural event-bus surface scoped to the terminal events the skills layer
  * emits. The daemon passes its `TypedEventBus` (structurally compatible); tests
  * pass a capturing fake. Kept structural so the skills layer never value-imports
@@ -112,6 +131,8 @@ export interface TerminalEventBus {
   emit(event: "terminal:spawn_failed", payload: TerminalSpawnFailedEvent): unknown;
   // P4 OPS-06: the reaper/cap-trip eviction audit event (123-01 declared the typed payload).
   emit(event: "terminal:session_evicted", payload: TerminalEvictedEvent): unknown;
+  // P4 SEC-10: the per-send keystroke audit event (123-01 declared the typed payload).
+  emit(event: "terminal:keystroke", payload: TerminalKeystrokeEvent): unknown;
 }
 
 /** Dependencies shared by all four implemented tools. */
@@ -134,6 +155,16 @@ export interface TerminalToolDeps {
   readonly nowMs: () => number;
   /** The owning agent id — stamped onto every emitted event. */
   readonly agentId: string;
+  /**
+   * The per-session usage caps (OPS-03/OPS-06; Plan 02). A SHARED per-agent instance
+   * the daemon constructs from the matched entry's `limits` AND also threads into the
+   * registry's `onCapForget` (Plan 04) so eviction forgets the SAME cap-state map.
+   * `create` calls `startSession`; each `send_*` calls `consumeRequest` (REJECT on
+   * breach — session survives) + `consumeInteraction` / `checkWallClock` (EVICT via
+   * `registry.evict` on breach); the explicit kill tool calls `forget`. The evict
+   * branches do NOT call `forget` (the registry onCapForget owns that — no double-forget).
+   */
+  readonly caps: SessionCaps;
   /**
    * The operator approval gate (SEC-06). Injected by the daemon (the existing
    * `ApprovalGate` from setup-tools). Consulted ONLY when the matched entry sets
@@ -437,6 +468,10 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         durationMs: doneAt - start,
         timestamp: doneAt,
       });
+      // OPS-06: anchor the session's wall-clock start + request/interaction counters so
+      // the per-send caps (consumeRequest/consumeInteraction/checkWallClock) measure
+      // from create. Idempotent — a re-call never re-anchors the wall clock.
+      deps.caps.startSession(result.sessionId);
 
       return jsonResult(result);
     },
@@ -543,6 +578,10 @@ export function createTerminalSessionKillTool(deps: TerminalToolDeps): AgentTool
       const handle = deps.registry.get(sessionId, owner);
       const exitCode = handle?.exitCode;
       await deps.registry.kill(sessionId, owner);
+      // OPS-06: the EXPLICIT kill forgets the per-session cap state directly (KEEP this —
+      // it complements the reap-path onCapForget so EVERY end-of-life forgets the cap
+      // state; the kill tool is the agent's intentional terminate, not an evict).
+      deps.caps.forget(sessionId);
       deps.logger.info({ toolName: "terminal_session_kill", sessionId, step: "kill" }, "terminal session killed");
       return jsonResult(exitCode === undefined ? { ok: true } : { ok: true, exitCode });
     },
@@ -588,6 +627,13 @@ export function createTerminalSessionSendTextTool(deps: TerminalToolDeps): Agent
       const text = readString(params, "text") ?? "";
       const submit = readBool(params, "submit");
       const bracketedPaste = readBool(params, "bracketedPaste");
+      // OPS-03/OPS-06: enforce the per-session caps BEFORE the registry forward — a
+      // maxRequestsPerSession breach REJECTS (session survives); a maxInteractions /
+      // wallClockMs breach EVICTS via registry.evict then rejects (throws on any breach).
+      await enforceSendCaps(deps, sessionId, owner, "terminal_session_send_text");
+      // SEC-10: audit EVERY keystroke — the scrubSecretsFromText-redacted payload to the
+      // LOG, a redaction-safe summary to the bus (never the raw text).
+      auditKeystroke(deps, sessionId, "terminal_session_send_text", "text", text);
       const start = deps.nowMs();
       const out: SendResult = await deps.registry.sendText(sessionId, owner, { text, submit, bracketedPaste });
       deps.logger.info(
@@ -622,6 +668,11 @@ export function createTerminalSessionSendKeyTool(deps: TerminalToolDeps): AgentT
       // abort ends the call, NOT the session (TR-10) — never registry.kill here.
       if (signal?.aborted) return jsonResult(ABORTED_SEND);
       const keys = readStringArray(params, "keys");
+      // OPS-03/OPS-06: same EVICT-vs-REJECT cap check as send_text (throws on any breach).
+      await enforceSendCaps(deps, sessionId, owner, "terminal_session_send_key");
+      // SEC-10: audit EVERY send. Keys are generally non-secret key chords, but EVERY
+      // send is audited — join + scrub for consistency (a redacted key string to the LOG).
+      auditKeystroke(deps, sessionId, "terminal_session_send_key", "key", keys.join(" "));
       const start = deps.nowMs();
       const out: SendResult = await deps.registry.sendKey(sessionId, owner, { keys });
       deps.logger.info(

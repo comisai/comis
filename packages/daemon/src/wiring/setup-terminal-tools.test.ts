@@ -207,11 +207,11 @@ describe("mapAllowEntry — config scope is preserved onto AllowEntryLike (SEC-0
 
   it("is the single mapping site: the mapped entry feeds matchAllowEntry's AllowEntryLike shape unchanged", () => {
     // Structural proof the mapping yields the exact AllowEntryLike contract the
-    // skills matcher consumes ({id, match, scope, approveOnCreate}) — so a later
-    // config-plumbing step can do allowEntries = config.allow.map(mapAllowEntry)
-    // and scope + the SEC-06 consent flag flow.
+    // skills matcher consumes ({id, match, scope, approveOnCreate, limits}) — so a
+    // later config-plumbing step can do allowEntries = config.allow.map(mapAllowEntry)
+    // and scope + the SEC-06 consent flag + the OPS-03/06 caps flow.
     const mapped = mapAllowEntry(configEntry(LEAST_PRIVILEGE));
-    expect(Object.keys(mapped).sort()).toEqual(["approveOnCreate", "id", "match", "scope"]);
+    expect(Object.keys(mapped).sort()).toEqual(["approveOnCreate", "id", "limits", "match", "scope"]);
   });
 
   it("SEC-06: copies approveOnCreate so the consent flag survives the daemon boundary (NOT dropped)", () => {

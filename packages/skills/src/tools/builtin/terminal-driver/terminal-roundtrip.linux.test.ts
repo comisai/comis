@@ -30,6 +30,7 @@ import {
   createTerminalSessionRegistry,
   type FakeWorkerChild,
 } from "./terminal-session-registry.js";
+import { createSessionCaps } from "./terminal-caps.js";
 import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
 import { encodeFrame, createFrameDecoder, type TerminalRequestFrame } from "./terminal-ipc.js";
 import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
@@ -115,6 +116,8 @@ function toolDeps(registry: ReturnType<typeof createTerminalSessionRegistry>, en
     eventBus: { emit: () => true },
     nowMs: () => Date.now(),
     agentId: "agent-roundtrip-linux",
+    // 123-05: no-limit caps (the live create→read→kill round-trip does not exercise the caps).
+    caps: createSessionCaps(undefined, () => Date.now()),
   };
 }
 

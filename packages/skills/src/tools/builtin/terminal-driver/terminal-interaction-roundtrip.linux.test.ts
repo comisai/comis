@@ -39,6 +39,7 @@ import {
   type FakeWorkerChild,
   type WaitResult,
 } from "./terminal-session-registry.js";
+import { createSessionCaps } from "./terminal-caps.js";
 import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
 import { encodeFrame, createFrameDecoder, type TerminalRequestFrame } from "./terminal-ipc.js";
 import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
@@ -132,6 +133,8 @@ function toolDeps(registry: ReturnType<typeof createTerminalSessionRegistry>, en
     eventBus: { emit: () => true },
     nowMs: () => Date.now(),
     agentId: "agent-interaction-linux",
+    // 123-05: no-limit caps (the live round-trip asserts interaction bytes, not the caps).
+    caps: createSessionCaps(undefined, () => Date.now()),
   };
 }
 

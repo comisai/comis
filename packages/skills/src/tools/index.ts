@@ -69,6 +69,10 @@ export {
   buildProductionSpawnWorker,
   matchAllowEntry,
   buildDirectSpawn,
+  // P4 OPS-03/06: the per-session caps factory — the daemon constructs ONE shared
+  // instance per agent (from the matched entry's limits) feeding both the tool deps
+  // (consume*) and the registry onCapForget (caps.forget).
+  createSessionCaps,
   type TerminalToolDeps,
   type TerminalEventBus,
   type TerminalEvictedEvent,

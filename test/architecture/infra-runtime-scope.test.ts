@@ -109,7 +109,7 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
   // constraint self-documenting and turns a future infra-import regression into a
   // targeted, legible failure (not a needle in the 1,290-file global haystack).
   // ---------------------------------------------------------------------------
-  it("terminal scope/egress + caps + reaper files (scope-args, env-scrub, egress-relay, spawn-plan, terminal-caps, terminal-reaper) value-import zero @comis/infra (SEC-07 boundary)", () => {
+  it("terminal scope/egress + caps + reaper + send-guard files (scope-args, env-scrub, egress-relay, spawn-plan, terminal-caps, terminal-reaper, terminal-send-guards) value-import zero @comis/infra (SEC-07 boundary)", () => {
     const TERMINAL_EGRESS_DIR = resolve(
       PACKAGES_ROOT,
       "skills/src/tools/builtin/terminal-driver",
@@ -131,6 +131,10 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
       // P4 TR-06/OPS-06: the reaper — injected-timer sweep (idle + wall-clock) + overflow;
       // TYPE-ONLY TimerPort/TimerHandle from @comis/core + injected nowMs, never @comis/infra.
       "terminal-reaper.ts",
+      // P4 SEC-10/OPS-03/06: the send-path guards (keystroke audit + cap enforcement) —
+      // value-import only @comis/core's scrubSecretsFromText + the local tool-helpers
+      // (throwToolError) + TYPE-ONLY the tool/registry shapes, never @comis/infra/observability.
+      "terminal-send-guards.ts",
     ] as const;
 
     const { violations, checkedFiles } = findForbiddenImports({
@@ -150,7 +154,7 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
       namedViolations,
       formatViolations({
         description:
-          "The terminal scope/egress + caps + reaper files (terminal-scope-args.ts, terminal-env-scrub.ts, terminal-egress-relay.ts, terminal-spawn-plan.ts, egress-relay-init.ts, terminal-caps.ts, terminal-reaper.ts) MUST NOT value-import @comis/infra — they depend only on @comis/core types (the EgressControlPort; the structural limits shape + injected nowMs for terminal-caps; the TimerPort/TimerHandle + injected nowMs for terminal-reaper) + node builtins (SEC-07 trust boundary; worker ↛ infra).",
+          "The terminal scope/egress + caps + reaper + send-guard files (terminal-scope-args.ts, terminal-env-scrub.ts, terminal-egress-relay.ts, terminal-spawn-plan.ts, egress-relay-init.ts, terminal-caps.ts, terminal-reaper.ts, terminal-send-guards.ts) MUST NOT value-import @comis/infra — they depend only on @comis/core (types + scrubSecretsFromText) + the local tool-helpers + node builtins (SEC-07 trust boundary; worker ↛ infra/observability).",
         violations: namedViolations.map((v) => ({
           file: v.file,
           line: v.line,

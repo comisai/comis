@@ -57,6 +57,7 @@ import {
   type WaitResult,
 } from "./terminal-session-registry.js";
 import { createTerminalWorker } from "./terminal-worker-entry.js";
+import { createSessionCaps } from "./terminal-caps.js";
 import { encodeFrame, createFrameDecoder, type TerminalRequestFrame } from "./terminal-ipc.js";
 import type { AllowEntryLike } from "./allowlist-matcher.js";
 
@@ -188,6 +189,8 @@ function toolDeps(registry: ReturnType<typeof createTerminalSessionRegistry>, en
     eventBus: { emit: () => true },
     nowMs: () => Date.now(),
     agentId: "agent-interaction",
+    // 123-05: no-limit caps (these round-trips assert the interaction path, not the caps).
+    caps: createSessionCaps(undefined, () => Date.now()),
   };
 }
 

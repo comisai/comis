@@ -88,6 +88,22 @@ export interface AllowEntryLike {
    * the current create path (no approval prompt). A sibling of {@link scope}.
    */
   approveOnCreate?: boolean;
+  /**
+   * The per-entry usage caps (OPS-03/OPS-06) — a STRUCTURAL mirror of the closed
+   * config `limits` (`TerminalAllowEntrySchema.limits`, schema-skills.ts), a sibling
+   * of {@link scope}/{@link approveOnCreate}. Operator config only — carried verbatim
+   * by `mapAllowEntry` (never dropped at the daemon boundary) so the daemon can build
+   * the per-agent `SessionCaps` from these values: `maxRequestsPerSession` (REJECT on
+   * breach; session survives), `maxInteractions` + `wallClockMs` (EVICT on breach),
+   * `maxSessions` (the reaper's overflow cap). All optional; absent → no cap. The
+   * matcher itself stays a pure `node:fs`/`node:crypto` primitive — no zod import.
+   */
+  limits?: {
+    maxSessions?: number;
+    maxRequestsPerSession?: number;
+    wallClockMs?: number;
+    maxInteractions?: number;
+  };
 }
 
 /**
