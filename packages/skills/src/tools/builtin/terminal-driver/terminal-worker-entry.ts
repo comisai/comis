@@ -121,6 +121,15 @@ export interface WorkerFsPort {
 }
 
 /** Worker dependencies — all injectable for unit tests; production defaults provided. */
+// @optional-field-count: 14 optional fields — TerminalWorkerDeps is the worker's
+// dependency-injection contract: EVERY optional is a genuinely-conditional injectable
+// port (loadPty/spawnPipe/nowMs/envSnapshot/fs/setTimer/clearTimer/createEmulator/
+// buildScopeArgs/scrubChildEnv/buildEgressRelayLaunch/egressControl/writeFd3/stuckMs) that
+// carries a production default in the factory and is overridden ONLY by a test or the daemon
+// composition root. Tightening any to required would force every call site (and every unit
+// test) to fabricate a value for a port it does not exercise. This is the "(a) genuinely
+// conditional" classification, not a cluster-split candidate — the contract is cohesive
+// (one worker, one deps bag). 124-05 added writeFd3 + stuckMs (the no-poll attention ports).
 export interface TerminalWorkerDeps {
   /** Load node-pty. Default: a guarded `createRequire` load in a try — NEVER a top-level static import (crashes module load on a no-prebuild host); a throw → the pipe backend (TR-08). */
   loadPty: () => PtyModuleLike;
