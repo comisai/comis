@@ -23,6 +23,7 @@
 
 import { describe, it, expect } from "vitest";
 import { realpathSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 import {
   createTerminalSessionCreateTool,
@@ -40,13 +41,30 @@ import {
 } from "./terminal-session-registry.js";
 import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
 import { encodeFrame, createFrameDecoder, type TerminalRequestFrame } from "./terminal-ipc.js";
-import type { AllowEntryLike } from "./allowlist-matcher.js";
+import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
 
 function isLinux(): boolean {
   return process.platform === "linux";
 }
 
 const noopLogger = { debug() {}, info() {}, warn() {}, error() {} };
+
+/**
+ * 122-06: the registry threads the daemon-resolved bwrapPath onto the create frame
+ * (the SEC-16 seam); the worker ALWAYS jails (no unjailed path), so create
+ * fail-closes without it. Resolved once like `BwrapProvider.available()`.
+ */
+function resolveBwrapPath(): string {
+  return execFileSync("which", ["bwrap"], { encoding: "utf8" }).trim();
+}
+
+/** The operator scope on the allow entry (SEC-02/03) — `cat` runs fine in a workspace jail. */
+const WORKSPACE_SCOPE: TerminalScope = {
+  filesystem: "workspace",
+  network: "none",
+  credentialHome: "exclude",
+  uid: "dedicated",
+};
 
 /** Resolve `/bin/cat` (or its realpath) on the host. */
 function catPath(): string {
@@ -119,8 +137,10 @@ describe.skipIf(!isLinux())("TR-03/04/05 (Linux) — live-PTY interaction round-
       spawnWorker: makeBridgedPtyWorkerChild,
       logger: noopLogger,
       nowMs: () => Date.now(),
+      // 122-06: threaded onto the create frame so the worker jails `cat`.
+      bwrapPath: resolveBwrapPath(),
     });
-    const entry: AllowEntryLike = { id: "cat", match: { path: cat } };
+    const entry: AllowEntryLike = { id: "cat", match: { path: cat }, scope: WORKSPACE_SCOPE };
 
     const createTool = createTerminalSessionCreateTool(toolDeps(registry, entry));
     const readTool = createTerminalSessionReadTool(toolDeps(registry, entry));

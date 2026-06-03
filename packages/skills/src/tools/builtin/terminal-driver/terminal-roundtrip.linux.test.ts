@@ -17,6 +17,7 @@
 
 import { describe, it, expect } from "vitest";
 import { realpathSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 import {
   createTerminalSessionCreateTool,
@@ -31,13 +32,34 @@ import {
 } from "./terminal-session-registry.js";
 import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
 import { encodeFrame, createFrameDecoder, type TerminalRequestFrame } from "./terminal-ipc.js";
-import type { AllowEntryLike } from "./allowlist-matcher.js";
+import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
 
 function isLinux(): boolean {
   return process.platform === "linux";
 }
 
 const noopLogger = { debug() {}, info() {}, warn() {}, error() {} };
+
+/**
+ * 122-06: the registry threads the daemon-resolved bwrapPath onto the create frame
+ * (the SEC-16 seam). The worker now ALWAYS jails (bwrap [scope args] -- bin argv),
+ * so without a bwrapPath create fails closed. Resolved once like `BwrapProvider`.
+ */
+function resolveBwrapPath(): string {
+  return execFileSync("which", ["bwrap"], { encoding: "utf8" }).trim();
+}
+
+/**
+ * The operator-declared sandbox scope on the allow entry (SEC-02/03) — sourced
+ * EXCLUSIVELY from the matched entry (the create tool has no scope param). bash runs
+ * fine in this workspace jail; the create tool threads it onto the frame for 122-06.
+ */
+const WORKSPACE_SCOPE: TerminalScope = {
+  filesystem: "workspace",
+  network: "none",
+  credentialHome: "exclude",
+  uid: "dedicated",
+};
 
 function realShell(): string {
   for (const candidate of ["/bin/bash", "/usr/bin/bash", "/bin/sh"]) {
@@ -103,10 +125,15 @@ describe.skipIf(!isLinux())("TR-01 (Linux) — live PTY create→read→kill rou
       spawnWorker: makeBridgedPtyWorkerChild,
       logger: noopLogger,
       nowMs: () => Date.now(),
+      // 122-06: the registry threads this onto the create frame so the worker jails
+      // bash (without it the worker fail-closes — no unjailed spawn).
+      bwrapPath: resolveBwrapPath(),
     });
     const entry: AllowEntryLike = {
       id: "bash",
       match: { path: shell, argsPrefix: ["--norc", "--noprofile", "-c", "echo TR01_LINUX_OK; sleep 0.3"] },
+      // SEC-02/03: the operator scope rides the frame to 122-06's jail composer.
+      scope: WORKSPACE_SCOPE,
     };
 
     const createTool = createTerminalSessionCreateTool(toolDeps(registry, entry));
@@ -125,8 +152,14 @@ describe.skipIf(!isLinux())("TR-01 (Linux) — live PTY create→read→kill rou
       if (screen.includes("TR01_LINUX_OK")) break;
       await new Promise((r) => setTimeout(r, 25));
     }
-    // On a live PTY the marker renders onto the grid.
-    expect(screen).toContain("TR01_LINUX_OK");
+    // On a live PTY the marker renders onto the grid. This read goes through the
+    // TOOL layer, so SEC-15 (§3.6) applies: the screen is REDACTED then wrapped as
+    // untrusted external content. Assert BOTH halves — the wrap IS present (the
+    // injection-defense framing is not bypassed) AND the marker survives INSIDE it
+    // (the live PTY genuinely rendered it). We do NOT weaken SEC-15.
+    expect(screen).toMatch(/<<<UNTRUSTED_[a-f0-9]+>>>/); // the wrap start marker
+    expect(screen).toMatch(/<<<END_UNTRUSTED_[a-f0-9]+>>>/); // the wrap end marker
+    expect(screen).toContain("TR01_LINUX_OK"); // the marker, framed within the wrap
 
     const before = (await listTool.execute("list-call", {})).details as Array<{ sessionId: string }>;
     expect(before.map((r) => r.sessionId)).toContain(sessionId);
