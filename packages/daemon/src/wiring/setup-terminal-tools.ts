@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Daemon-side wiring for the interactive terminal driver (v2.11, Phase 119 P0).
+ * Daemon-side wiring for the interactive terminal driver (v2.11, Phase 119 P0 +
+ * Phase 120 P1 interaction).
  *
  * The daemon is the composition root — the only package that may value-import
  * `@comis/infra` — so it constructs the per-agent `TerminalSessionRegistry`
  * (injecting the real logger + the production worker-spawn posture) and pushes
- * the nine terminal tools (four implemented + five stubs) into the agent tool
- * set. All nine are registered `mcpExportPolicy:"never-export"` (119-01), so they
- * stay inside Comis's trust boundary and never reach MCP.
+ * the nine terminal tools (eight implemented + one stub [`status`]) into the agent
+ * tool set. The eight implemented tools (create/read/list/kill + the four
+ * interaction tools send_text/send_key/wait/resize) all share one `sharedDeps`
+ * (the injected registry + allow-set + provider + logger/bus/clock); `status` is
+ * the lone no-arg stub (Phase 124). All nine are registered
+ * `mcpExportPolicy:"never-export"` (119-01), so they stay inside Comis's trust
+ * boundary and never reach MCP.
  *
  * Extracted from `setup-tools.ts` to keep that file under the 800-line
  * architecture cap. State (the per-agent registry map) lives in the `setupTools`
@@ -126,11 +131,13 @@ function getOrCreateTerminalRegistry(
  * Construct the per-agent registry + push all nine terminal-driver tools onto
  * the agent's tool array — the single entry point the composition root calls.
  *
- * The four implemented tools (create/read/list/kill) share the injected registry
- * + the (currently empty) operator allow-set + the daemon's once-detected cached
- * `sandboxProvider` (fail-closed when `undefined`) + the real logger/bus; the
- * five stubs reject `not_implemented`. Mirrors how exec/process/apply-patch join
- * the same array.
+ * The eight implemented tools (create/read/list/kill + send_text/send_key/wait/
+ * resize) share the injected registry + the (currently empty) operator allow-set
+ * + the daemon's once-detected cached `sandboxProvider` (fail-closed when
+ * `undefined`) + the real logger/bus; `status` is the lone stub that rejects
+ * `not_implemented`. The four interaction tools delegate to the registry's
+ * forwarding methods (120-03) — they do not re-gate the allowlist (the session was
+ * gated at create). Mirrors how exec/process/apply-patch join the same array.
  */
 export function wireTerminalTools(
   tools: AgentToolArray,
@@ -164,10 +171,10 @@ export function wireTerminalTools(
     createTerminalSessionReadTool(sharedDeps),
     createTerminalSessionListTool(sharedDeps),
     createTerminalSessionKillTool(sharedDeps),
-    createTerminalSessionSendTextTool(),
-    createTerminalSessionSendKeyTool(),
-    createTerminalSessionWaitTool(),
+    createTerminalSessionSendTextTool(sharedDeps),
+    createTerminalSessionSendKeyTool(sharedDeps),
+    createTerminalSessionWaitTool(sharedDeps),
     createTerminalSessionStatusTool(),
-    createTerminalSessionResizeTool(),
+    createTerminalSessionResizeTool(sharedDeps),
   );
 }
