@@ -29,9 +29,15 @@
  *      summary (`redactions` + `byteLength`; never the payload). The raw payload NEVER
  *      reaches a log or the bus.
  *
+ * The guards take a NARROW structural `SendGuardDeps` (the exact subset of
+ * `TerminalToolDeps` they use), defined HERE rather than importing `TerminalToolDeps`
+ * from `terminal-tools.ts` — that inverts the dependency so there is NO
+ * `terminal-tools ↔ terminal-send-guards` import cycle (madge counts type-only edges).
+ * `TerminalToolDeps` is a structural superset, so the tools pass `deps` verbatim.
+ *
  * Architecture: this is daemon-side `@comis/skills` code — it value-imports only
  * `@comis/core` (`scrubSecretsFromText`) + the local `tool-helpers` (`throwToolError`)
- * and TYPE-ONLY the tool/registry shapes; NEVER `@comis/infra`/`@comis/observability`.
+ * and TYPE-ONLY the leaf registry/caps shapes; NEVER `@comis/infra`/`@comis/observability`.
  *
  * @module
  */
@@ -39,8 +45,36 @@
 import { scrubSecretsFromText } from "@comis/core";
 
 import { throwToolError } from "../../../platform-tools/tool-helpers.js";
-import type { TerminalToolDeps } from "./terminal-tools.js";
-import type { SessionOwner } from "./terminal-session-registry.js";
+import type { SessionCaps } from "./terminal-caps.js";
+import type { SessionOwner, TerminalSessionRegistry } from "./terminal-session-registry.js";
+import type { EvictReason } from "./terminal-reaper.js";
+
+/** The redaction-safe keystroke-audit event payload (mirrors core `terminal:keystroke`). */
+interface KeystrokeAuditEvent {
+  sessionId: string;
+  agentId: string;
+  kind: "text" | "key";
+  redactions: number;
+  byteLength: number;
+  timestamp: number;
+}
+
+/**
+ * The NARROW deps the send guards use — a structural subset of `TerminalToolDeps`
+ * (defined here, NOT imported, to keep the dependency one-directional / cycle-free).
+ * The registry surface is narrowed to just `evict` (the only method the guards drive).
+ */
+export interface SendGuardDeps {
+  readonly caps: SessionCaps;
+  readonly registry: Pick<TerminalSessionRegistry, "evict">;
+  readonly logger: {
+    debug(obj: Record<string, unknown>, msg: string): void;
+    warn(obj: Record<string, unknown>, msg: string): void;
+  };
+  readonly eventBus: { emit(event: "terminal:keystroke", payload: KeystrokeAuditEvent): unknown };
+  readonly agentId: string;
+  readonly nowMs: () => number;
+}
 
 /**
  * Enforce the per-session caps BEFORE forwarding a `send_*` to the registry — throws
@@ -49,7 +83,7 @@ import type { SessionOwner } from "./terminal-session-registry.js";
  * `step: "cap_breach"` (§2.7).
  */
 export async function enforceSendCaps(
-  deps: TerminalToolDeps,
+  deps: SendGuardDeps,
   sessionId: string,
   owner: SessionOwner,
   toolName: string,
@@ -73,7 +107,7 @@ export async function enforceSendCaps(
     );
     // EVICT (not just reject) — the interaction budget is spent. The registry path drops
     // + cleans + emits + onCapForget; do NOT also call caps.forget here (no double-forget).
-    await deps.registry.evict(sessionId, owner, "max_interactions");
+    await deps.registry.evict(sessionId, owner, "max_interactions" satisfies EvictReason);
     throwToolError("permission_denied", "cap exceeded: max_interactions", {
       hint: "this session spent its interaction budget (operator limits.maxInteractions) and was evicted",
     });
@@ -85,7 +119,7 @@ export async function enforceSendCaps(
       { toolName, sessionId, errorKind: "resource" as const, step: "cap_breach", hint: "wall-clock budget exceeded — evicting" },
       "terminal session wall-clock budget exceeded",
     );
-    await deps.registry.evict(sessionId, owner, "wall_clock");
+    await deps.registry.evict(sessionId, owner, "wall_clock" satisfies EvictReason);
     throwToolError("permission_denied", "cap exceeded: wall_clock", {
       hint: "this session exceeded its wall-clock budget (operator limits.wallClockMs) and was evicted",
     });
@@ -98,7 +132,7 @@ export async function enforceSendCaps(
  * redaction-safe summary (EVENT).
  */
 export function auditKeystroke(
-  deps: TerminalToolDeps,
+  deps: SendGuardDeps,
   sessionId: string,
   toolName: string,
   kind: "text" | "key",
