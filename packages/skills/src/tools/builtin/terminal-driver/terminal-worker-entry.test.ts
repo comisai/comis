@@ -2109,3 +2109,100 @@ describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (
     expect((reply.result as { reason: string }).reason).toBe("idle");
   });
 });
+
+// ===========================================================================
+// 124-06 Task 1 — the worker `status` frame: the classifier stays SINGLE-HOMED
+// in the worker. A `status` request builds a ClassifierFrame from the current
+// emulator snapshot (+ the diff vs the previously-classified frame + the
+// per-session progress clock), runs classifyFrame, and replies the spec §5
+// perception subset {state, cursorParked, screenDiffEmpty, interactions, exitCode?}.
+// RED on pre-patch: there is NO `status` dispatch case → dispatch replies the
+// `unknown method: status` ok:false (the default branch), so `reply.ok` is false
+// and `result` is undefined.
+// ===========================================================================
+
+/** A `status` request frame for the default session id. */
+function statusFrame(): TerminalRequestFrame {
+  return {
+    sessionId: "s1",
+    requestId: "rq-status",
+    traceId: TRACE_ID,
+    method: "status" as TerminalRequestFrame["method"],
+    params: { sessionId: "s1" },
+  };
+}
+
+describe("createTerminalWorker — 124-06 status frame (classifier single-homed in the worker)", () => {
+  it("a settled, cursor-parked prompt → status replies state:'awaiting-input', cursorParked:true, screenDiffEmpty:true", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    // The same parked-prompt shape the fd3 attention suite uses: a boot line + a
+    // trailing prompt with NO newline, so the @xterm cursor lands on the prompt line.
+    rec.emit("boot output line\n");
+    rec.emit("Do you trust this? (y/n) ");
+    await flushEmulator(); // let the @xterm parse land so the snapshot reflects the prompt
+
+    const reply = await worker.handle(statusFrame());
+    expect(reply.ok).toBe(true);
+    const view = reply.result as {
+      state: string;
+      cursorParked: boolean;
+      screenDiffEmpty: boolean;
+      interactions: number;
+    };
+    expect(view.state).toBe("awaiting-input");
+    expect(view.cursorParked).toBe(true);
+    expect(view.screenDiffEmpty).toBe(true);
+    // Redaction-safe: the status reply carries NO raw screen text (structural only).
+    expect(reply.result).not.toHaveProperty("screen");
+    expect(typeof view.interactions).toBe("number");
+  });
+
+  it("an exited session → status reports state:'exited' and the exit code", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    rec.emit("done\n");
+    rec.emitExit({ exitCode: 7 }); // the live pty child exits with code 7
+    await flushEmulator();
+
+    const reply = await worker.handle(statusFrame());
+    expect(reply.ok).toBe(true);
+    const view = reply.result as { state: string; exitCode?: number };
+    expect(view.state).toBe("exited");
+    expect(view.exitCode).toBe(7);
+  });
+
+  it("interactions counts the session's send/read/wait/resize interactions", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    rec.emit("ready> ");
+    await flushEmulator();
+
+    const before = (await worker.handle(statusFrame())).result as { interactions: number };
+
+    // One send_key interaction (a single keystroke).
+    await worker.handle({
+      sessionId: "s1",
+      requestId: "rq-key",
+      traceId: TRACE_ID,
+      method: "send_key",
+      params: { sessionId: "s1", keys: ["Enter"] },
+    });
+
+    const after = (await worker.handle(statusFrame())).result as { interactions: number };
+    expect(after.interactions).toBe(before.interactions + 1);
+  });
+});

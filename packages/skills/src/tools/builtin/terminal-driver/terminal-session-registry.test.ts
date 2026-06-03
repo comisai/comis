@@ -1280,6 +1280,85 @@ describe("createTerminalSessionRegistry — TR-13 two subagents are mutually inv
   });
 });
 
+// ===========================================================================
+// 124-06 Task 1 — registry.status(sessionId, owner) is owner-scoped (TR-13 /
+// T-124-15): a cross-owner / killed session returns the not-found minimal view,
+// never another owner's real classifier state. The owner's status round-trips a
+// `status` frame to the worker and composes the perception with handle.lastActivity.
+// RED on pre-patch: `registry.status` does not exist (TypeError) — the interface +
+// impl land in GREEN.
+// ===========================================================================
+
+/** A fake worker that answers a `status` frame with the spec §5 perception subset. */
+function makeStatusWorker() {
+  return makeFakeWorker((frame) =>
+    frame.method === "status"
+      ? {
+          sessionId: frame.sessionId,
+          requestId: frame.requestId,
+          ok: true,
+          result: {
+            state: "awaiting-input",
+            cursorParked: true,
+            screenDiffEmpty: true,
+            interactions: 3,
+          },
+        }
+      : { sessionId: frame.sessionId, requestId: frame.requestId, ok: true },
+  );
+}
+
+describe("createTerminalSessionRegistry — 124-06 status is owner-scoped (T-124-15)", () => {
+  const sub1 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-1" };
+  const sub2 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-2" };
+
+  it("the owner's status round-trips the `status` frame and returns the classifier state + lastActivity", async () => {
+    const fake = makeStatusWorker();
+    const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const s = await reg.create(bashReq, sub1);
+    const view = await reg.status(s.sessionId, sub1);
+
+    expect(view.state).toBe("awaiting-input");
+    expect(view.cursorParked).toBe(true);
+    expect(view.screenDiffEmpty).toBe(true);
+    expect(view.interactions).toBe(3);
+    expect(typeof view.lastActivity).toBe("number");
+    // The worker received a `status` frame (the classifier stays single-homed there).
+    expect(fake.requestFrames.some((f) => f.method === "status")).toBe(true);
+  });
+
+  it("a cross-owner status returns the not-found minimal view — NEVER the other owner's classifier state (T-124-15)", async () => {
+    const fake = makeStatusWorker();
+    const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const s2 = await reg.create(bashReq, sub2);
+
+    // sub1 probes sub2's sessionId → owner mismatch is treated EXACTLY as not-found.
+    const crossView = await reg.status(s2.sessionId, sub1);
+    expect(crossView.state).not.toBe("awaiting-input"); // never the real state
+    expect(crossView.cursorParked).toBe(false);
+    // No `status` frame was sent for the cross-owner probe (degrades WITHOUT a round-trip).
+    expect(fake.requestFrames.some((f) => f.method === "status")).toBe(false);
+
+    // The legitimate owner still sees its real state.
+    const ownView = await reg.status(s2.sessionId, sub2);
+    expect(ownView.state).toBe("awaiting-input");
+  });
+
+  it("a killed/absent session → status returns the not-found minimal view (alive-equivalent exited)", async () => {
+    const fake = makeStatusWorker();
+    const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const s = await reg.create(bashReq, sub1);
+    await reg.kill(s.sessionId, sub1);
+
+    const view = await reg.status(s.sessionId, sub1);
+    expect(view.state).not.toBe("awaiting-input");
+    expect(view.cursorParked).toBe(false);
+  });
+});
+
 describe("createTerminalSessionRegistry — TR-13 kill cannot cross owners (T-123-07)", () => {
   const sub1 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-1" };
   const sub2 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-2" };
