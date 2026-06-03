@@ -22,9 +22,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { realpathSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 import {
@@ -81,35 +79,21 @@ function catPath(): string {
 }
 
 /**
- * A real throwaway workspace dir — always --bind RW into the jail (the session cwd).
- * 122-06: the worker spawns `cat` INSIDE the bwrap workspace jail with `--chdir <cwd>`
- * + `--uid 65534` (nobody). The create TOOL threads only `scope` (not workspace/cwd —
- * that daemon plumbing lands later), so `planSpawnFromCreateFrame` would otherwise
- * default the jail workspace+cwd to the daemon HOME — a dir nobody cannot use as the
- * working directory, so the jailed `cat` fails to spawn (session → lost, wait never
- * completes). The PASSING siblings (terminal-worker-entry / terminal-render-live /
- * terminal-scope-matrix .linux) all hand the worker a real mkdtemp workspace; this
- * bridge mirrors them by injecting one onto the create frame (the daemon→worker seam),
- * leaving the tool→registry path — and the SEC-15-wrapped tool-layer read — untouched.
- */
-function makeWorkspace(): string {
-  return mkdtempSync(join(tmpdir(), "interaction-roundtrip-ws-"));
-}
-
-/**
  * The in-process bridge wiring the REAL node-pty loader (`defaultLoadPty`) + REAL
  * timers so the worker drives a live PTY via forkpty on the VPS. The OS pipe is
  * still bridged in-process here; the FULL separate-process posture is exercised by
  * the daemon wiring + the VPS smoke at a higher tier.
  *
- * The bridge ALSO injects the session's real `workspace`/`cwd` onto the `create`
- * frame (122-06): the create tool threads `scope` but not workspace/cwd, so the
- * worker would otherwise jail `cat` with `--chdir <HOME>` under uid 65534 and the
- * spawn fails. This is the daemon→worker pipe seam — exactly where the daemon will
- * supply the workspace in production — so the tool→registry path stays unchanged and
- * the tool-layer read is still SEC-15-wrapped.
+ * gap 2 (now CLOSED): the worker spawns `cat` INSIDE the bwrap workspace jail with
+ * `--chdir <cwd>` + `--uid 65534` (nobody), so it needs a real per-session workspace
+ * the jail can --bind RW + --chdir into. The REGISTRY now allocates that workspace and
+ * threads it onto the create frame (terminal-workspace.ts), so this bridge is a plain
+ * frame pass-through — it injects NOTHING. That makes this test exercise the PRODUCTION
+ * allocation path live on the VPS (previously the bridge hand-injected a mkdtemp dir to
+ * work around the missing allocation; that workaround is gone). The tool→registry path
+ * and the SEC-15-wrapped tool-layer read are unchanged.
  */
-function makeBridgedPtyWorkerChild(workspace: string): FakeWorkerChild {
+function makeBridgedPtyWorkerChild(): FakeWorkerChild {
   const worker = createTerminalWorker({ loadPty: defaultLoadPty, logger: noopLogger });
   const decoder = createFrameDecoder();
   let onStdout: ((chunk: Buffer) => void) | undefined;
@@ -119,13 +103,8 @@ function makeBridgedPtyWorkerChild(workspace: string): FakeWorkerChild {
       write(chunk: Buffer): boolean {
         for (const frame of decoder.push(chunk)) {
           const req = frame as TerminalRequestFrame;
-          // Inject the jail workspace/cwd onto the create frame (the daemon→worker
-          // seam) so the worker's buildSpawnPlan binds a real RW workspace + chdirs
-          // into it — mirroring the passing worker-direct .linux siblings. Other
-          // methods pass through untouched.
-          if (req.method === "create") {
-            req.params = { ...req.params, workspace, cwd: workspace };
-          }
+          // Plain pass-through — the registry already allocated + threaded the
+          // per-session jail workspace/cwd onto the create frame (gap 2).
           void worker.handle(req).then((reply) => onStdout?.(encodeFrame(reply)));
         }
         return true;
@@ -166,12 +145,12 @@ function toolDeps(registry: ReturnType<typeof createTerminalSessionRegistry>, en
 describe.skipIf(!isLinux())("TR-03/04/05 (Linux) — live-PTY interaction round-trip through the tools", () => {
   it("send_text(submit) echoes, wait forText observes it, then send_key C-d exits (submit->settle->observe + control key)", async () => {
     const cat = catPath();
-    // A real RW workspace the worker --binds + --chdirs into (the session cwd) — the
-    // jailed `cat` cannot run with the default HOME cwd under uid 65534. The bridge
-    // injects it onto the create frame (the daemon→worker seam).
-    const workspace = makeWorkspace();
+    // gap 2: the REGISTRY allocates the per-session jail workspace + threads it onto
+    // the create frame (the worker --binds it RW + --chdirs in), so the jailed `cat`
+    // runs under uid 65534 without the unusable HOME cwd. No test-injected workspace —
+    // this exercises the production allocation path live.
     const registry = createTerminalSessionRegistry({
-      spawnWorker: () => makeBridgedPtyWorkerChild(workspace),
+      spawnWorker: () => makeBridgedPtyWorkerChild(),
       logger: noopLogger,
       nowMs: () => Date.now(),
       // 122-06: threaded onto the create frame so the worker jails `cat`.
