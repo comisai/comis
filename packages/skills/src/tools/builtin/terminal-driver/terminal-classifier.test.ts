@@ -1,0 +1,240 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Unit tests for the pure state classifier (spec §4.3, the #1 milestone de-risk).
+ *
+ * RED-first: `terminal-classifier.ts` does not exist when this file is first
+ * committed — the import fails, every case is RED. The production module turns
+ * them GREEN.
+ *
+ * `classifyFrame(frame, history)` labels a SETTLED frame
+ * `working | awaiting-input | exited | stuck` deterministically. The LOAD-BEARING
+ * distinction (spec §4.3 risk table, severity HIGH): a thinking/tool-use pause has
+ * the cursor NOT parked at a prompt (claude renders generation mid-screen), so it
+ * is read as `working`, NEVER as `awaiting-input` — a false `awaiting-input` would
+ * wake a turn that sends a spurious keystroke. The classifier is PURE (no clock, no
+ * module-global state) so the fixture corpus (Task 3) pins it deterministically.
+ *
+ * @module
+ */
+
+import { describe, it, expect } from "vitest";
+
+import {
+  classifyFrame,
+  isCursorParked,
+  type ClassifierFrame,
+  type FrameHistory,
+} from "./terminal-classifier.js";
+import type { EmulatorSnapshot } from "./terminal-render.js";
+
+// ---------------------------------------------------------------------------
+// Snapshot/frame builders — a small canonical grid the predicate reads.
+// ---------------------------------------------------------------------------
+
+const COLS = 80;
+const ROWS = 24;
+
+/**
+ * Build an EmulatorSnapshot from a list of screen lines + an explicit cursor.
+ * Lines shorter than the grid are left as-is (the predicate splits on "\n", the
+ * real render path right-pads, but the parked logic keys on content + cursor).
+ */
+function snap(
+  lines: string[],
+  cursor: { x: number; y: number },
+  over: Partial<EmulatorSnapshot> = {},
+): EmulatorSnapshot {
+  return {
+    screen: lines.join("\n"),
+    cursor,
+    cols: COLS,
+    rows: ROWS,
+    alt: false,
+    ...over,
+  };
+}
+
+/** A full ROWS-high blank grid (every line empty) with the given prompt drawn near the bottom. */
+function promptGrid(promptLine: string, promptRow: number, cursorX: number): EmulatorSnapshot {
+  const lines = Array.from({ length: ROWS }, (_, i) => (i === promptRow ? promptLine : ""));
+  return snap(lines, { x: cursorX, y: promptRow });
+}
+
+function frame(over: Partial<ClassifierFrame> = {}): ClassifierFrame {
+  return {
+    alive: true,
+    settled: true,
+    diffEmpty: true,
+    snapshot: snap(["$ "], { x: 2, y: 0 }),
+    ...over,
+  };
+}
+
+const noStuck: FrameHistory = { noProgressMs: 0, stuckMs: 5_000 };
+
+// ---------------------------------------------------------------------------
+// classifyFrame — the §4.3 decision tree
+// ---------------------------------------------------------------------------
+
+describe("classifyFrame — exited (PTY exit, highest priority)", () => {
+  it("a not-alive frame is exited regardless of settle/diff/cursor", () => {
+    const c = classifyFrame(frame({ alive: false }), noStuck);
+    expect(c.state).toBe("exited");
+    expect(c.confidence).toBe("high");
+    expect(c.reason).toBe("pty_exit");
+  });
+
+  it("exited wins even when the cursor would otherwise look parked", () => {
+    const f = frame({ alive: false, settled: true, diffEmpty: true });
+    expect(classifyFrame(f, noStuck).state).toBe("exited");
+  });
+});
+
+describe("classifyFrame — working (unsettled output)", () => {
+  it("an unsettled frame is working (output still flowing), never awaiting-input", () => {
+    const c = classifyFrame(frame({ settled: false, diffEmpty: false }), noStuck);
+    expect(c.state).toBe("working");
+    expect(c.reason).toBe("unsettled_output");
+  });
+
+  it("unsettled is working even if the diff happens to be empty this instant", () => {
+    // settled is the gate — a not-yet-settled frame is working regardless of diff.
+    expect(classifyFrame(frame({ settled: false, diffEmpty: true }), noStuck).state).toBe(
+      "working",
+    );
+  });
+});
+
+describe("classifyFrame — awaiting-input (settled + diff∅ + cursor parked)", () => {
+  it("settled + diffEmpty + cursor parked at a plausible prompt → awaiting-input (high)", () => {
+    // A shell prompt on the last non-blank row, cursor just after it.
+    const snapshot = promptGrid("$ ", 0, 2);
+    const c = classifyFrame(frame({ settled: true, diffEmpty: true, snapshot }), noStuck);
+    expect(c.state).toBe("awaiting-input");
+    expect(c.confidence).toBe("high");
+    expect(c.reason).toBe("settled_cursor_parked");
+  });
+
+  it("a trust-dialog-style prompt parked at the bottom is awaiting-input", () => {
+    const lines = [
+      "Do you trust the files in this folder?",
+      "",
+      "❯ 1. Yes, proceed",
+      "  2. No, exit",
+      "",
+    ];
+    // Cursor parked on the affordance line near the bottom of content.
+    const snapshot = snap(lines, { x: 2, y: 2 });
+    expect(classifyFrame(frame({ snapshot }), noStuck).state).toBe("awaiting-input");
+  });
+});
+
+describe("classifyFrame — THE #1 DE-RISK: a thinking/tool-use pause is working, NEVER awaiting-input", () => {
+  it("settled + diffEmpty + cursor NOT parked (mid-screen generation region) → working", () => {
+    // claude renders generation mid-screen: there is content BELOW the cursor row,
+    // so the cursor is NOT at the last non-blank row — it is not parked at a prompt.
+    const lines = [
+      "● Thinking about the request…",
+      "  Let me analyze the codebase structure", // cursor sits here, on row 1...
+      "",
+      "  …and here is content rendered BELOW the cursor", // ...but content is below (row 3)
+      "  more generated output",
+    ];
+    const snapshot = snap(lines, { x: 4, y: 1 }); // cursor mid-screen, above later content
+    const c = classifyFrame(frame({ settled: true, diffEmpty: true, snapshot }), noStuck);
+    // LOAD-BEARING: this MUST be working, NOT awaiting-input. A false awaiting-input
+    // here wakes a turn that fires a spurious keystroke into a generating CLI.
+    expect(c.state).toBe("working");
+    expect(c.state).not.toBe("awaiting-input");
+    expect(c.reason).toBe("settled_cursor_unparked");
+  });
+
+  it("a momentary quiet during generation (cursor above the rendered tail) stays working", () => {
+    const lines = ["assistant: here is a long answer that is", "still being generated below", "the cursor position", "and continues"];
+    const snapshot = snap(lines, { x: 10, y: 0 }); // cursor on the FIRST line, content below
+    expect(classifyFrame(frame({ settled: true, diffEmpty: true, snapshot }), noStuck).state).toBe(
+      "working",
+    );
+  });
+});
+
+describe("classifyFrame — stuck (settled, no affordance, no progress > stuckMs)", () => {
+  it("settled + cursor not parked + noProgressMs > stuckMs → stuck", () => {
+    // No prompt affordance (cursor mid-screen above content) AND no progress for
+    // longer than the stuck window → stuck (by PROGRESS, OPS-04), not awaiting-input.
+    const lines = ["frozen output line", "", "trailing content below the cursor"];
+    const snapshot = snap(lines, { x: 5, y: 0 });
+    const history: FrameHistory = { noProgressMs: 30_000, stuckMs: 5_000 };
+    const c = classifyFrame(frame({ settled: true, diffEmpty: true, snapshot }), history);
+    expect(c.state).toBe("stuck");
+    expect(c.reason).toBe("no_progress");
+  });
+
+  it("a PARKED cursor takes precedence over stuck (a real prompt is awaiting-input, not stuck)", () => {
+    // Even with no progress, if the cursor is genuinely parked at a prompt it is
+    // awaiting-input (the human/agent simply hasn't answered yet), not stuck.
+    const snapshot = promptGrid("$ ", 0, 2);
+    const history: FrameHistory = { noProgressMs: 30_000, stuckMs: 5_000 };
+    expect(classifyFrame(frame({ snapshot }), history).state).toBe("awaiting-input");
+  });
+});
+
+describe("classifyFrame — never throws (typed result, pure)", () => {
+  it("returns a typed Classification for a degenerate empty-screen frame", () => {
+    const snapshot = snap([""], { x: 0, y: 0 });
+    const c = classifyFrame(frame({ snapshot }), noStuck);
+    expect(["working", "awaiting-input", "exited", "stuck"]).toContain(c.state);
+    expect(["high", "medium"]).toContain(c.confidence);
+    expect(typeof c.reason).toBe("string");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isCursorParked — the load-bearing predicate (unit-tested directly, Task 6)
+// ---------------------------------------------------------------------------
+
+describe("isCursorParked — parked at/near the last non-blank prompt row", () => {
+  it("parked: cursor at the last non-blank row, just after the prompt text", () => {
+    const screen = ["$ "].concat(Array.from({ length: ROWS - 1 }, () => "")).join("\n");
+    expect(isCursorParked({ x: 2, y: 0 }, screen, COLS, ROWS)).toBe(true);
+  });
+
+  it("parked: cursor on the last non-blank row (a multi-line prompt block at the bottom)", () => {
+    const lines = ["", "", "Continue? (y/n) "];
+    const screen = lines.join("\n");
+    expect(isCursorParked({ x: 16, y: 2 }, screen, COLS, ROWS)).toBe(true);
+  });
+
+  it("NOT parked: cursor mid-screen ABOVE content still rendered below it (the thinking-pause shape)", () => {
+    const lines = ["line above", "CURSOR HERE row 1", "", "content rendered on row 3 below the cursor"];
+    const screen = lines.join("\n");
+    expect(isCursorParked({ x: 4, y: 1 }, screen, COLS, ROWS)).toBe(false);
+  });
+
+  it("NOT parked: cursor on the first row while output continues below", () => {
+    const lines = ["generating…", "more", "and more output below the cursor row"];
+    const screen = lines.join("\n");
+    expect(isCursorParked({ x: 6, y: 0 }, screen, COLS, ROWS)).toBe(false);
+  });
+
+  it("an empty screen is not parked (no prompt affordance to park at)", () => {
+    const screen = Array.from({ length: ROWS }, () => "").join("\n");
+    expect(isCursorParked({ x: 0, y: 0 }, screen, COLS, ROWS)).toBe(false);
+  });
+
+  it("optional hintPatterns reinforce parked when the cursor line matches a known-prompt cue", () => {
+    // hintPatterns are OPERATOR-configured cues, never agent/screen-derived. A line
+    // matching one at the cursor row is a positive parked signal.
+    const lines = ["", "", "Overwrite existing file? (y/n) "];
+    const screen = lines.join("\n");
+    expect(isCursorParked({ x: 30, y: 2 }, screen, COLS, ROWS, ["(y/n)", "❯"])).toBe(true);
+  });
+
+  it("hintPatterns do NOT force parked when the cursor is mid-screen above content (structure wins)", () => {
+    // A prompt-injecting CLI could render a fake "(y/n)" mid-screen; the structural
+    // cursor-position gate must still refuse to park when content is below the cursor.
+    const lines = ["fake (y/n) banner on row 0", "real generation", "still rendering below"];
+    const screen = lines.join("\n");
+    expect(isCursorParked({ x: 5, y: 0 }, screen, COLS, ROWS, ["(y/n)"])).toBe(false);
+  });
+});
