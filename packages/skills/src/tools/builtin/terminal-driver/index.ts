@@ -65,6 +65,17 @@ export {
   type CapBreach,
 } from "./terminal-caps.js";
 
+// P4 TR-06/OPS-06: the injected-timer reaper (idle-TTL + wall-clock sweep + max-sessions
+// overflow). The registry composes it (Plan 04); Plan 05 reuses EvictReason on the same
+// onEvict path for max_interactions. TYPE-ONLY TimerPort + injected clock — never @comis/infra.
+export {
+  createTerminalReaper,
+  type TerminalReaper,
+  type ReaperDeps,
+  type ReaperSession,
+  type EvictReason,
+} from "./terminal-reaper.js";
+
 // The length-prefixed IPC framer's max-frame guard (HR-01) — the registry's
 // stdout handler branches on FrameTooLargeError to drop a corrupt worker.
 export {
