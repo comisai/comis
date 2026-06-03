@@ -133,3 +133,14 @@ export {
   type AutoAnswerMode,
   type AutoAnswerDecision,
 } from "./terminal-auto-answer.js";
+
+// P5 124-04 (spec §4.6, SEC-11): the normalized region-scoped loop guard. The woken
+// turn (124-09) calls observe() on a settled prompt region — a repeated NORMALIZED
+// prompt (spinner/timestamp/progress-only diff) escalates (terminal:escalated, reason
+// loop_detected) and COMPOSES with the P4 maxInteractions EVICT. Closure-local ring,
+// injected clock, never-throw typed result; infra-free (only node:crypto).
+export {
+  createLoopGuard,
+  type LoopGuard,
+  type LoopGuardDeps,
+} from "./terminal-loop-guard.js";
