@@ -13,7 +13,7 @@
  * @module
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { realpathSync, mkdtempSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -975,5 +975,162 @@ describe("terminal-tools — SEC-06 approveOnCreate gates session_create on the 
     const stateEvent = eventBus.events.find((e) => e.event === "terminal:session_state");
     expect(stateEvent).toBeDefined();
     expect(stateEvent?.payload.state).toBe("created");
+  });
+});
+
+// ===========================================================================
+// 123-03 (P4) — TR-10 abort ≠ kill: the tool execute adopts the SDK 4-arg shape
+// execute(toolCallId, params, signal?, onUpdate?) and OBSERVES signal.aborted to
+// END the call, but NEVER calls registry.kill — the session stays alive in the
+// registry for the next turn (session lifetime ⟂ turn lifetime).
+//
+// The tools derive the owner from tryGetContext() (userId ?? deps.agentId,
+// sessionKey ?? ""); since these tests run with NO RequestContext, the owner is
+// { agentId: deps.agentId, sessionKey: "" }. The owner-aware fake below mirrors
+// the new registry interface (get/kill/read/send* take an owner), so the
+// pre-patch tools (which call registry.get(sessionId) with no owner, and ignore
+// arg 3) FAIL these assertions at runtime — the RED.
+// ===========================================================================
+
+/** The owner the tools derive with no RequestContext on the stack. */
+const NO_CTX_OWNER = { agentId: "agent-1", sessionKey: "" };
+
+interface OwnerArg {
+  agentId: string;
+  sessionKey: string;
+}
+function isOwner(v: unknown): v is OwnerArg {
+  return typeof v === "object" && v !== null && typeof (v as OwnerArg).agentId === "string" && typeof (v as OwnerArg).sessionKey === "string";
+}
+
+/**
+ * An owner-aware fake registry whose `kill` is a vi.fn spy. `get`/`read`/`send*`
+ * honour the owner the SAME way the real registry does (owner mismatch / missing
+ * owner ⇒ not-found). It seeds one running session owned by NO_CTX_OWNER.
+ */
+function makeAbortFakeRegistry(): {
+  registry: TerminalSessionRegistry & { killSpy: ReturnType<typeof import("vitest").vi.fn> };
+  sessionId: string;
+} {
+  const sessionId = "sess-abort-1";
+  const handle: SessionHandle = {
+    sessionId,
+    allowId: "bash",
+    command: "/bin/bash",
+    status: "running",
+    cols: 80,
+    rows: 24,
+    lastActivity: 1000,
+  } as SessionHandle;
+  const sessions = new Map<string, SessionHandle>([[sessionId, handle]]);
+  const owners = new Map<string, OwnerArg>([[sessionId, NO_CTX_OWNER]]);
+  const sameOwner = (id: string, owner: unknown): boolean => {
+    const o = owners.get(id);
+    return isOwner(owner) && o !== undefined && o.agentId === owner.agentId && o.sessionKey === owner.sessionKey;
+  };
+  const killSpy = vi.fn(async (_id: string, _owner: unknown): Promise<void> => {
+    /* spy only — never actually drops, so survival is observable post-abort */
+  });
+
+  const registry = {
+    async create(req: CreateRequest, owner: unknown): Promise<CreateResult> {
+      const id = "sess-created";
+      sessions.set(id, { ...handle, sessionId: id, allowId: req.allowId });
+      if (isOwner(owner)) owners.set(id, owner);
+      return { sessionId: id, allowId: req.allowId, cols: req.cols, rows: req.rows };
+    },
+    async read(id: string, owner: unknown): Promise<TerminalView> {
+      if (!sameOwner(id, owner)) {
+        return { screen: "", cursor: { x: 0, y: 0 }, cols: 0, rows: 0, alt: false, alive: false };
+      }
+      return { screen: "alive-screen", cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true };
+    },
+    async sendText(id: string, owner: unknown): Promise<SendResult> {
+      if (!sameOwner(id, owner)) return { screen: "", cursor: { x: 0, y: 0 } };
+      return { screen: "sent", cursor: { x: 1, y: 0 } };
+    },
+    async sendKey(id: string, owner: unknown): Promise<SendResult> {
+      if (!sameOwner(id, owner)) return { screen: "", cursor: { x: 0, y: 0 } };
+      return { screen: "key", cursor: { x: 0, y: 1 } };
+    },
+    async resize(id: string, owner: unknown): Promise<{ ok: boolean }> {
+      return { ok: sameOwner(id, owner) };
+    },
+    async wait(id: string, owner: unknown): Promise<WaitResult> {
+      return { matched: false, isComplete: sameOwner(id, owner), reason: "idle", screen: "", cursor: { x: 0, y: 0 } };
+    },
+    get(id: string, owner: unknown): SessionHandle | undefined {
+      return sameOwner(id, owner) ? sessions.get(id) : undefined;
+    },
+    list(owner: unknown): SessionListing[] {
+      return Array.from(sessions.entries())
+        .filter(([id]) => sameOwner(id, owner))
+        .map(([id, h]) => ({ sessionId: id, allowId: h.allowId, command: h.command, alive: h.status === "running", lastActivity: h.lastActivity }));
+    },
+    kill: killSpy,
+    size: () => sessions.size,
+    async cleanup(): Promise<void> {
+      /* no-op */
+    },
+    killSpy,
+  } as unknown as TerminalSessionRegistry & { killSpy: ReturnType<typeof import("vitest").vi.fn> };
+
+  return { registry, sessionId };
+}
+
+describe("terminal-tools — TR-10 abort ends the call, NOT the session (session ⟂ turn)", () => {
+  it("send_text with an already-aborted signal RESOLVES, never calls registry.kill, and the session stays running", async () => {
+    const { registry, sessionId } = makeAbortFakeRegistry();
+    const deps = baseDeps(registry);
+    const sendText = createTerminalSessionSendTextTool(deps);
+
+    const ac = new AbortController();
+    ac.abort(); // the spawning turn aborts BEFORE the tool runs
+
+    // The call must RESOLVE (no hang) — the 4-arg execute observes signal.aborted.
+    const res = await sendText.execute("call-abort", { sessionId, text: "echo hi" }, ac.signal);
+    expect(res).toBeDefined();
+    // The tool threaded the derived owner so the owner-scoped send resolved (RED on
+    // pre-patch: the 2-arg send passes the args object as the owner → not-found empty).
+    expect((res.details as SendResult).screen).toBe("sent");
+
+    // The load-bearing invariant: abort NEVER wires to registry.kill.
+    expect(registry.killSpy).not.toHaveBeenCalled();
+
+    // The session is STILL alive in the registry (decoupled from the turn).
+    expect(registry.get(sessionId, NO_CTX_OWNER)?.status).toBe("running");
+  });
+
+  it("after the turn's signal aborts, a NEXT-turn read (fresh signal) still sees the session alive (TR-10)", async () => {
+    const { registry, sessionId } = makeAbortFakeRegistry();
+    const deps = baseDeps(registry);
+
+    // Turn 1: abort the spawning turn's signal mid-flow via a send.
+    const sendText = createTerminalSessionSendTextTool(deps);
+    const ac = new AbortController();
+    ac.abort();
+    await sendText.execute("t1", { sessionId, text: "x" }, ac.signal);
+
+    // Turn 2: a fresh signal, same registry — the session survived the abort.
+    const readTool = createTerminalSessionReadTool(deps);
+    const out = await readTool.execute("t2", { sessionId }, new AbortController().signal);
+    const view = out.details as TerminalView;
+    expect(view.alive).toBe(true);
+    expect(registry.killSpy).not.toHaveBeenCalled();
+  });
+
+  it("send_key with an aborted signal also resolves without killing the session", async () => {
+    const { registry, sessionId } = makeAbortFakeRegistry();
+    const deps = baseDeps(registry);
+    const sendKey = createTerminalSessionSendKeyTool(deps);
+
+    const ac = new AbortController();
+    ac.abort();
+    const res = await sendKey.execute("k", { sessionId, keys: ["C-c"] }, ac.signal);
+    expect(res).toBeDefined();
+    // Owner-scoped result reached the tool (RED on pre-patch 2-arg send_key).
+    expect((res.details as SendResult).screen).toBe("key");
+    expect(registry.killSpy).not.toHaveBeenCalled();
+    expect(registry.get(sessionId, NO_CTX_OWNER)?.status).toBe("running");
   });
 });

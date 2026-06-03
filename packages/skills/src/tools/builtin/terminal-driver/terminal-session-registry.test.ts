@@ -1154,3 +1154,172 @@ describe("createTerminalSessionRegistry — TR-03 wait forwarding", () => {
     expect(out.isComplete).toBe(false);
   });
 });
+
+// ===========================================================================
+// 123-03 (P4) — origin-keying: owner-stamped + owner-scoped create/list/read/
+// get/kill/send* (TR-13 visibility + TR-09 isolation). The session stays the
+// opaque handle; ownership is the gate. A SessionOwner is (agentId, sessionKey);
+// two subagents share an agentId but differ on sessionKey (a subagent channelId
+// is "sub-agent:<uuid>", session-key.ts:78-79) so they are MUTUALLY INVISIBLE.
+//
+// RED on the pre-patch single-owner code: list()/read()/get()/kill() ignore the
+// owner arg, so two owners' sessions are visible to each other (list length 2,
+// cross-owner read alive:true) — the invisibility/no-op assertions fail at
+// runtime. The 3-session isolation (TR-09) is proven via a fake worker keying
+// each read reply to the frame's sessionId.
+// ===========================================================================
+
+/** A shared owner for the single-owner isolation tests (TR-09). */
+const OWNER = { agentId: "a", sessionKey: "s" };
+
+/**
+ * A fake worker whose `read` reply screen is keyed to the frame's sessionId, so
+ * three interleaved reads each resolve ONLY their own bytes (no cross-bleed).
+ */
+function makeIsolatingWorker() {
+  return makeFakeWorker((frame) =>
+    frame.method === "read"
+      ? {
+          sessionId: frame.sessionId,
+          requestId: frame.requestId,
+          ok: true,
+          result: {
+            screen: `bytes-for-${frame.sessionId}`,
+            cursor: { x: 0, y: 0 },
+            cols: 80,
+            rows: 24,
+            alt: false,
+            alive: true,
+          },
+        }
+      : { sessionId: frame.sessionId, requestId: frame.requestId, ok: true },
+  );
+}
+
+const bashReq = { allowId: "bash", bin: "/bin/bash", argv: [] as string[], cols: 80, rows: 24 };
+
+describe("createTerminalSessionRegistry — TR-09 per-session isolation (3 interleaved reads)", () => {
+  it("each of three sessions reads ONLY its own bytes under interleaved Promise.all (no state bleed)", async () => {
+    const fake = makeIsolatingWorker();
+    const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const s1 = await reg.create(bashReq, OWNER);
+    const s2 = await reg.create(bashReq, OWNER);
+    const s3 = await reg.create(bashReq, OWNER);
+    // Three distinct opaque handles.
+    expect(new Set([s1.sessionId, s2.sessionId, s3.sessionId]).size).toBe(3);
+
+    const [v1, v2, v3] = await Promise.all([
+      reg.read(s1.sessionId, OWNER),
+      reg.read(s2.sessionId, OWNER),
+      reg.read(s3.sessionId, OWNER),
+    ]);
+
+    // Each view carries ONLY its own session's bytes — no cross-session bleed.
+    expect(v1.screen).toContain(s1.sessionId);
+    expect(v2.screen).toContain(s2.sessionId);
+    expect(v3.screen).toContain(s3.sessionId);
+    expect(v1.screen).not.toContain(s2.sessionId);
+    expect(v2.screen).not.toContain(s3.sessionId);
+    expect(v3.screen).not.toContain(s1.sessionId);
+  });
+});
+
+describe("createTerminalSessionRegistry — TR-13 two subagents are mutually invisible", () => {
+  // Two owners: same agentId, distinct sessionKey (two subagent runs — each
+  // subagent's channelId is "sub-agent:<uuid>", so formatSessionKey() differs).
+  const sub1 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-1" };
+  const sub2 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-2" };
+
+  it("list() is owner-scoped: each subagent sees ONLY its own session, distinct ids", async () => {
+    const fake = makeIsolatingWorker();
+    const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    await reg.create(bashReq, sub1);
+    await reg.create(bashReq, sub2);
+
+    // RED on pre-patch: list ignores the owner → returns BOTH (length 2).
+    expect(reg.list(sub1)).toHaveLength(1);
+    expect(reg.list(sub2)).toHaveLength(1);
+    expect(reg.list(sub1)[0].sessionId).not.toBe(reg.list(sub2)[0].sessionId);
+  });
+
+  it("a cross-owner read returns the not-found minimal view (alive:false) — never the other owner's bytes (T-123-06)", async () => {
+    const fake = makeIsolatingWorker();
+    const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    await reg.create(bashReq, sub1);
+    const s2 = await reg.create(bashReq, sub2);
+
+    // sub1 reads sub2's sessionId → owner mismatch is treated EXACTLY as not-found.
+    const crossView = await reg.read(s2.sessionId, sub1);
+    expect(crossView.alive).toBe(false);
+    expect(crossView.screen).toBe("");
+    // The legitimate owner still reads its own bytes.
+    const ownView = await reg.read(s2.sessionId, sub2);
+    expect(ownView.alive).toBe(true);
+    expect(ownView.screen).toContain(s2.sessionId);
+  });
+
+  it("a cross-owner get returns undefined; the owner's get returns the handle (T-123-06)", async () => {
+    const fake = makeIsolatingWorker();
+    const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const s2 = await reg.create(bashReq, sub2);
+
+    expect(reg.get(s2.sessionId, sub1)).toBeUndefined();
+    expect(reg.get(s2.sessionId, sub2)?.sessionId).toBe(s2.sessionId);
+  });
+});
+
+describe("createTerminalSessionRegistry — TR-13 kill cannot cross owners (T-123-07)", () => {
+  const sub1 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-1" };
+  const sub2 = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-2" };
+
+  it("kill(sub2Session, sub1) is a no-op; only kill(sub2Session, sub2) drops it", async () => {
+    const fake = makeIsolatingWorker();
+    const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const s2 = await reg.create(bashReq, sub2);
+
+    // A foreign owner cannot terminate the session — it survives in sub2's list.
+    await reg.kill(s2.sessionId, sub1);
+    expect(reg.list(sub2).map((s) => s.sessionId)).toContain(s2.sessionId);
+
+    // The real owner's kill drops it.
+    await reg.kill(s2.sessionId, sub2);
+    expect(reg.list(sub2)).toHaveLength(0);
+  });
+
+  it("send*/resize/wait on a cross-owner sessionId degrade as not-running (defense-in-depth)", async () => {
+    const fake = makeIsolatingWorker();
+    const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const s2 = await reg.create(bashReq, sub2);
+
+    // A hijacked caller guessing sub2's sessionId under its OWN owner gets the
+    // degraded empty snapshot — never drives the other owner's session.
+    expect(await reg.sendText(s2.sessionId, sub1, { text: "x" })).toEqual({ screen: "", cursor: { x: 0, y: 0 } });
+    expect(await reg.sendKey(s2.sessionId, sub1, { keys: ["C-c"] })).toEqual({ screen: "", cursor: { x: 0, y: 0 } });
+    expect(await reg.resize(s2.sessionId, sub1, { cols: 100, rows: 30 })).toEqual({ ok: false });
+    expect((await reg.wait(s2.sessionId, sub1, {})).isComplete).toBe(false);
+  });
+});
+
+describe("createTerminalSessionRegistry — cleanup() is owner-agnostic (tears down the whole per-agent registry)", () => {
+  const subA = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-A" };
+  const subB = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-B" };
+
+  it("drops EVERY session regardless of owner (the per-agent worker is shared)", async () => {
+    const fake = makeIsolatingWorker();
+    const reg = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    await reg.create(bashReq, subA);
+    await reg.create(bashReq, subB);
+    expect(reg.size()).toBe(2);
+
+    await reg.cleanup();
+    // cleanup evicts both owners' sessions (it is NOT owner-scoped).
+    expect(reg.size()).toBe(0);
+  });
+});
