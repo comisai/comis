@@ -229,6 +229,16 @@ export const TerminalDriverConfigSchema = z.strictObject({
     ringBytes: z.number().int(),
     stuckMs: z.number().int(),
     maxConcurrentAttentionTurns: z.number().int(),
+    /**
+     * The operator-dialable cgroup `TasksMax` ceiling bounding the concurrent-session
+     * subprocess footprint vs. the systemd `TasksMax` (OPS-05; T-124-22). The tmux
+     * backend (124-08) makes a worker's named sessions outlive the worker, so N
+     * memory-hungry sessions share one cgroup; this bounds the fork footprint so an
+     * unbounded fan-out cannot OOM/fork-starve the daemon. Absent ⇒ bounded by
+     * `maxSessions` alone (no extra ceiling). Optional + positive — adding it keeps the
+     * `worker` block a `strictObject` (an unknown/typo'd worker key still rejects, OPS-02).
+     */
+    tasksMax: z.number().int().positive().optional(),
   }),
   defaults: z.strictObject({
     cols: z.number().int(),
