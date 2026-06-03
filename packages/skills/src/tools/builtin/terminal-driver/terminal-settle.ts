@@ -112,6 +112,7 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
   return new Promise<SettleResult>((resolve) => {
     let done = false;
     let idleTimer: unknown;
+    // eslint-disable-next-line prefer-const -- read by settle() on the fast-path early-returns (forText/dead-session) BEFORE its single conditional assignment at the timeout schedule below; `const` would TDZ-throw on those paths.
     let overallTimer: unknown;
     const unsubs: Array<() => void> = [];
 
