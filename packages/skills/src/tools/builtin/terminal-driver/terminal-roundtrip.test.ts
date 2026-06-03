@@ -205,3 +205,74 @@ describe("barrel — the 9 factories + the registry are importable from @comis/s
     }
   });
 });
+
+// ===========================================================================
+// 121-04 — the read tool's format/scrollback params reach the worker END-TO-END
+// (real registry + real worker + real bash, through the REAL read tool — NOT a
+// FakeRegistry). Proves the 119-04 schema-only gap is closed at the seam: ansi
+// carries SGR while text strips it, and scrollback exposes an off-screen line the
+// default read omits — all observed through `readTool.execute(...)`.
+// ===========================================================================
+
+/** Read the grid through the real read tool with the given params; poll until a marker lands. */
+async function readToolUntil(
+  readTool: ReturnType<typeof createTerminalSessionReadTool>,
+  sessionId: string,
+  params: Record<string, unknown>,
+  marker: string,
+): Promise<string> {
+  for (let i = 0; i < 60; i++) {
+    const res = await readTool.execute("read-call", { sessionId, ...params });
+    const view = res.details as { screen: string };
+    if (view.screen.includes(marker)) return view.screen;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  const res = await readTool.execute("read-call", { sessionId, ...params });
+  return (res.details as { screen: string }).screen;
+}
+
+describe("121-04 — read tool format/scrollback reach the worker end-to-end (through the real tool)", () => {
+  it("ansi preserves SGR while text strips it, and scrollback surfaces an off-screen line", async () => {
+    const shell = realShell();
+    const registry = createTerminalSessionRegistry({
+      spawnWorker: makeBridgedWorkerChild,
+      logger: noopLogger,
+      nowMs: () => Date.now(),
+    });
+    // Emit a RED-coloured marker line (SGR), then 60 numbered lines so the early
+    // ones scroll above a 24-row viewport. `MARK_END` is the last line (always in
+    // the viewport) so the poll terminates on a settled grid.
+    const script =
+      'printf "\\033[31mREDMARK\\033[0m\\n"; for i in $(seq 1 60); do echo "LINE-$i"; done; echo MARK_END; sleep 0.4';
+    const entry: AllowEntryLike = {
+      id: "bash",
+      match: { path: shell, argsPrefix: ["--norc", "--noprofile", "-c", script] },
+    };
+
+    const createTool = createTerminalSessionCreateTool(toolDeps(registry, entry));
+    const readTool = createTerminalSessionReadTool(toolDeps(registry, entry));
+
+    const created = await createTool.execute("create-call", { allowId: "bash", command: shell, cols: 80, rows: 24 });
+    const { sessionId } = created.details as { sessionId: string };
+
+    // ANSI: the SGR escape survives (serialize() preserves it).
+    const ansi = await readToolUntil(readTool, sessionId, { format: "ansi" }, "MARK_END");
+    expect(ansi).toContain("\x1b[");
+
+    // TEXT (default format): the plain grid strips SGR — no escape bytes.
+    const text = await readToolUntil(readTool, sessionId, { format: "text" }, "MARK_END");
+    expect(text).not.toContain("\x1b[");
+
+    // The two formats differ for the SAME grid — the param genuinely reached the worker.
+    expect(ansi).not.toBe(text);
+
+    // SCROLLBACK: a deep read surfaces an early line that scrolled above the
+    // 24-row viewport; the default (scrollback:0) read does not.
+    const deep = await readToolUntil(readTool, sessionId, { format: "text", scrollback: 80 }, "MARK_END");
+    const shallow = await readToolUntil(readTool, sessionId, { format: "text", scrollback: 0 }, "MARK_END");
+    expect(deep).toContain("LINE-1\n");
+    expect(shallow).not.toContain("LINE-1\n");
+
+    await registry.cleanup();
+  });
+});
