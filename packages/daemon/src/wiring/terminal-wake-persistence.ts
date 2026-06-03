@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+// @allow-throw: removeWakeStateFile (line ~169) re-raises a genuine non-ENOENT fs fault (EPERM/EISDIR) from unlinkSync — silently swallowing a real fs error here would hide a security-relevant fault. Mirrors the grandfathered background-task-persistence.ts removeTaskFile re-raise. ENOENT is swallowed (file already gone); everything else surfaces to the daemon caller.
 /**
  * Durable per-session wake-state for the recurring wake-dispatch FSM
  * (terminal-wake-dispatch.ts).
