@@ -35,7 +35,7 @@ This installs all workspace packages including native dependencies (`better-sqli
 ```bash
 pnpm build
 ```
-Runs TypeScript compilation across all 13 packages, respecting project references.
+Runs TypeScript compilation across all 15 packages, respecting project references.
 </Step>
 
 <Step title="Run tests">
@@ -55,7 +55,7 @@ Runs ESLint with `eslint-plugin-security` rules that enforce path safety, secret
 </Steps>
 
 <Tip>
-The full validation command is `pnpm build && pnpm test && pnpm lint:security`. Run this before every commit.
+Run `pnpm validate` before every push. This expands to the full gate chain: `pnpm docs:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage`.
 </Tip>
 
 ## Coding Standards
@@ -103,6 +103,57 @@ The codebase follows five mandatory engineering principles:
 - Run full E2E orchestration with log validation and JSON report: `pnpm test:orchestrate`
 - Clean up integration test artifacts: `pnpm test:cleanup`
 
+## Tests-First Protocol
+
+Every fix and every feature in `packages/*/src/**` starts with a failing test that fails on the pre-patch code, then a production patch that flips it to GREEN. Commit the test first when practical so the failing state is reproducible from that commit alone.
+
+**Exempt from the tests-first rule:** pure docs, comments, formatting, and build-tooling/CI/config edits — when in doubt, write the test.
+
+### RED → GREEN → REFACTOR
+
+1. **RED** — Write the failing test first. Run it and confirm it fails on the current codebase (`pnpm vitest run src/your-file.test.ts` exits non-zero). Commit the test-only change when it would compile against the current code.
+
+2. **GREEN** — Write the minimum production code to make the test pass. Run the test again and confirm it passes.
+
+3. **REFACTOR** (optional) — After GREEN, simplify if the patch leaves duplication or awkward seams. All tests must stay green.
+
+**What the test must prove:** A test that passes both before and after the patch proves nothing — it must demonstrably FAIL on the pre-patch code.
+
+**Commit ordering:** Prefer landing the RED commit first (test-only, failing on current `main`) and the GREEN commit second. Combining is acceptable when the test would not compile against the pre-patch code, when the bug is too narrow to surface from a separate commit, or when shipping a security patch.
+
+**Test types:**
+- Bug fix → regression test that fails on the current codebase
+- New feature → contract test that pins the new behavior
+- Co-locate unit tests: `src/component.ts` + `src/component.test.ts`
+- Integration tests (daemon-level flows only): live in `test/integration/`
+
+## Validation Gates
+
+Run `pnpm validate` before every push. This is the full gate chain:
+
+```bash
+pnpm validate
+# Expands to:
+pnpm docs:check && pnpm build:clean && pnpm cycles && pnpm cycles:refs && pnpm lint:security && pnpm test:coverage
+```
+
+| Step | Command | What It Checks |
+|------|---------|----------------|
+| Docs compile | `pnpm docs:check` | Compiles every `docs/**/*.mdx` through the MDX compiler — catches syntax errors the Mintlify deploy would reject |
+| Clean build | `pnpm build:clean` | `pnpm clean && pnpm build` — clean-room TypeScript build using project references (not incremental) |
+| Circular deps (dist) | `pnpm cycles` | `madge` dist-mode check — finds circular dependencies between compiled packages |
+| Circular deps (refs) | `pnpm cycles:refs` | `tsc -b --dry packages/comis` — catches project-reference cycles (TS6202) |
+| Security lint | `pnpm lint:security` | ESLint security rules |
+| Coverage | `pnpm test:coverage` | `vitest run --coverage` with per-package coverage floors |
+
+### Pre-Push Hook
+
+A pre-push git hook (`.githooks/pre-push`) is auto-installed by the `prepare` script (`git config core.hooksPath .githooks`). It runs `pnpm validate` and blocks the push on failure.
+
+To bypass for a single push (e.g., docs-only changes): `git push --no-verify`
+
+The hook does **not** run integration, E2E, tarball, or audit tiers — those require Linux and additional system dependencies. Run `pnpm validate:full` on Linux for those.
+
 ## Commits and Branches
 
 **Commit format:** [Conventional Commits](https://www.conventionalcommits.org/) with package scope:
@@ -122,10 +173,10 @@ docs(daemon): document pm2 setup process
 - `fix/<description>` -- bug fixes
 - `docs/<description>` -- documentation changes
 
-**Validation before commit:**
+**Validation before push:**
 
 ```bash
-pnpm build && pnpm test && pnpm lint:security
+pnpm validate
 ```
 
 ## Anti-Patterns
