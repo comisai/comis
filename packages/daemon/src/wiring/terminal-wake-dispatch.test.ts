@@ -72,10 +72,14 @@ interface Harness {
   releases: Map<string, () => void>;
 }
 
+/** The releases map of the harness built this test, drained in afterEach. */
+let currentReleases: Map<string, () => void> | undefined;
+
 function makeHarness(dataDir: string, overrides: Partial<TerminalWakeDispatcherDeps> = {}): Harness {
   const bus = makeBus();
   const logger = makeLogger();
   const releases = new Map<string, () => void>();
+  currentReleases = releases;
   const wakeOneTurn = vi.fn(
     (sessionId: string) =>
       new Promise<void>((resolve) => {
@@ -112,6 +116,12 @@ describe("terminal-wake-dispatch (recurring wake-FSM)", () => {
   });
 
   afterEach(async () => {
+    // Release any turns still in flight so shutdown()'s drain (`await inflight`)
+    // can settle — the fixture's wakeOneTurn only resolves on an explicit
+    // release(), so a test that leaves turns pending would otherwise deadlock
+    // the drain. A real woken turn always settles; this just mirrors that.
+    for (const release of currentReleases?.values() ?? []) release();
+    currentReleases = undefined;
     await fsm?.shutdown();
     fsm = undefined;
     rmSync(dataDir, { recursive: true, force: true });
