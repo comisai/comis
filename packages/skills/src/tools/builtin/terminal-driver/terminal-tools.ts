@@ -46,12 +46,13 @@ import { Type } from "typebox";
 import { jsonResult, throwToolError } from "../../../platform-tools/tool-helpers.js";
 import { matchAllowEntry, buildDirectSpawn, type AllowEntryLike } from "./allowlist-matcher.js";
 import type { SandboxProvider } from "../sandbox/types.js";
-import type {
-  TerminalSessionRegistry,
-  TerminalView,
-  SendResult,
-  WaitResult,
-  SessionListing,
+import {
+  DEFAULT_SCROLLBACK,
+  type TerminalSessionRegistry,
+  type TerminalView,
+  type SendResult,
+  type WaitResult,
+  type SessionListing,
 } from "./terminal-session-registry.js";
 
 // ---------------------------------------------------------------------------
@@ -275,7 +276,12 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       const start = deps.nowMs();
       let result;
       try {
-        result = await deps.registry.create({ allowId, bin, argv, cols, rows });
+        // TR-14: scrollback is NOT an agent-facing param — the create surface
+        // exposes only {allowId,command,args,cwd,cols,rows,...} to the model. The
+        // per-session emulator's retained-memory ceiling is sourced from
+        // DEFAULT_SCROLLBACK (operator config later), so the agent cannot inflate
+        // per-session memory (T-121-11). The CreateParams schema is unchanged.
+        result = await deps.registry.create({ allowId, bin, argv, cols, rows, scrollback: DEFAULT_SCROLLBACK });
       } catch (err) {
         const failedAt = deps.nowMs();
         deps.logger.warn(
@@ -341,11 +347,23 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
 
     async execute(_id: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
-      const view: TerminalView = await deps.registry.read(sessionId);
-      deps.logger.debug({ toolName: "terminal_session_read", sessionId, step: "read" }, "terminal session read");
+      // TR-02/14: forward the render params to the worker (closing the 119-04
+      // schema-only gap — these were declared but never forwarded). Spec §5
+      // defaults: format=text, scrollback=0, includeAltBuffer=true. The schema
+      // (TypeBox closed Union) already validated `format`; the worker's render
+      // dispatch (Plan 02) defaults any unrecognized value to text as a 2nd guard.
+      const format = (readString(params, "format") as "text" | "ansi" | "html" | undefined) ?? "text";
+      const scrollback = readInt(params, "scrollback", 0);
+      const includeAltBuffer = readBool(params, "includeAltBuffer") ?? true;
+      const view: TerminalView = await deps.registry.read(sessionId, { format, scrollback, includeAltBuffer });
+      deps.logger.debug(
+        { toolName: "terminal_session_read", sessionId, format, scrollback, step: "read" },
+        "terminal session read",
+      );
       // SEC-15 (P3): wrap read output as untrusted external content (a driven CLI
       // can render attacker-controlled text). The wrapExternalContent seam lands
-      // in Phase 122; P0 returns the view bare and keeps this seam explicit.
+      // in Phase 122; P0 returns the view bare (the `diff` rides on the view) and
+      // keeps this seam explicit.
       return jsonResult(view);
     },
   };
