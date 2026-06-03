@@ -71,15 +71,22 @@ describe("buildEgressRelayLaunch — in-jail relay-as-init launcher builder (SEC
     expect(out.relayArgv[out.relayArgv.length - 1]).toBe("--");
   });
 
-  it("points at a relay-init script that actually exists on disk (the launcher target is real)", () => {
-    // The exported script URL must resolve to a real file — the bug was a launcher
-    // that referenced a not-yet-built binary, leaving listed-hosts egress dead.
-    // Under vitest `import.meta.url` is the `.ts` source (the sibling `.js` lives in
-    // dist), so accept EITHER the compiled `.js` (production / `files:["dist"]`) or
-    // its `.ts` source (what tsc emits the `.js` from) — both prove the target is real.
+  it("points at a relay-init script that is a RUNNABLE compiled .js existing on disk (not the .ts source)", () => {
+    // The launcher runs `process.execPath <RELAY_INIT_SCRIPT_URL>` as a real
+    // subprocess in the jail (the 118 G-3 transport). Node cannot exec a `.ts`, so the
+    // URL MUST resolve to the COMPILED `.js` that exists on disk — in BOTH contexts:
+    //   - production: the worker runs from `dist/`, so `import.meta.url` is the dist
+    //     `.js` and the sibling `egress-relay-init.js` is right there.
+    //   - vitest-from-src: `import.meta.url` is the `.ts` source, but the package is
+    //     BUILT before tests run, so the compiled `.js` lives under the parallel
+    //     `dist/` tree. A bare `new URL("./egress-relay-init.js", import.meta.url)`
+    //     would point at `src/.../egress-relay-init.js` — which does NOT exist (only
+    //     the `.ts` does) — and the VPS egress cell died with `Cannot find module`.
+    // This asserts the resolved target is the real `.js`, NOT merely that a `.ts`
+    // sits next to a phantom `.js` (the prior, weakened assertion masked the bug).
     const jsPath = fileURLToPath(RELAY_INIT_SCRIPT_URL);
-    const tsPath = jsPath.replace(/\.js$/, ".ts");
-    expect(existsSync(jsPath) || existsSync(tsPath)).toBe(true);
+    expect(jsPath.endsWith(".js")).toBe(true);
+    expect(existsSync(jsPath)).toBe(true);
   });
 
   it("the socketPath round-trips so the caller can bind-mount it (buildScopeArgs relaySocketPath)", () => {
