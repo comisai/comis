@@ -81,6 +81,13 @@ export interface AllowEntryLike {
   match: AllowMatch;
   /** The per-session sandbox scope (operator config only — SEC-03). */
   scope: TerminalScope;
+  /**
+   * When true, `session_create` for this entry must clear the operator approval
+   * gate before any spawn (SEC-06, §3.7) — a high-risk entry pauses for the
+   * operator (not the prompt-injectable agent). Operator config only; absent →
+   * the current create path (no approval prompt). A sibling of {@link scope}.
+   */
+  approveOnCreate?: boolean;
 }
 
 /**

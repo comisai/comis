@@ -122,6 +122,14 @@ export interface TerminalToolDeps {
   readonly nowMs: () => number;
   /** The owning agent id — stamped onto every emitted event. */
   readonly agentId: string;
+  /**
+   * The operator approval gate (SEC-06). Injected by the daemon (the existing
+   * `ApprovalGate` from setup-tools). Consulted ONLY when the matched entry sets
+   * `approveOnCreate` — an entry that demands approval with NO gate wired
+   * fail-closes (reject), never silently proceeds. Optional so non-approving
+   * deployments + the read/list/kill tools need not supply it.
+   */
+  readonly approvalGate?: ApprovalGate;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,6 +276,38 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
           "no sandbox provider available; refusing unsandboxed terminal (fail-closed)",
           { hint: "install a sandbox runtime (e.g. bubblewrap on Linux) so sessions can be confined" },
         );
+      }
+
+      // (2b) CONSENT GATE (SEC-06, §3.7). A high-risk entry (`approveOnCreate`)
+      // pauses for the OPERATOR — not the prompt-injectable agent — BEFORE any
+      // spawn. Mirrors the exec-tool precedent (exec-shared.ts:410-438): identity
+      // from tryGetContext() with the documented fallbacks; params are SECRET-FREE
+      // (allowId + command only — `args` may carry secrets, so they are omitted).
+      // FAIL-CLOSED: an entry that demands approval with NO gate wired rejects —
+      // it must NEVER run unauthorized (T-122-16 silent-degrade).
+      if (matched.entry.approveOnCreate) {
+        if (!deps.approvalGate) {
+          throwToolError(
+            "permission_denied",
+            "session_create requires approval but no approval gate is wired (fail-closed)",
+            { hint: "wire the daemon ApprovalGate into the terminal tools, or unset approveOnCreate for this entry" },
+          );
+        }
+        const ctx = tryGetContext();
+        const resolution = await deps.approvalGate.requestApproval({
+          toolName: "terminal_session_create",
+          action: `terminal.session_create:${allowId}`,
+          params: { allowId, command }, // sanitized — no secrets; args omitted
+          agentId: ctx?.userId ?? deps.agentId,
+          sessionKey: ctx?.sessionKey ?? "",
+          trustLevel: (ctx?.trustLevel ?? "admin") as "admin" | "user" | "guest",
+          channelType: ctx?.channelType,
+        });
+        if (!resolution.approved) {
+          throwToolError("permission_denied", "session_create not approved", {
+            hint: resolution.reason ?? "the operator denied this terminal session",
+          });
+        }
       }
 
       // (3) CANONICALIZE (M-1, SEC-14 end-to-end). buildDirectSpawn consumes the

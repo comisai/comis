@@ -56,7 +56,7 @@ import {
   type TerminalScope,
   type SandboxProvider,
 } from "@comis/skills/tools";
-import { systemNowMs, type TerminalAllowEntry } from "@comis/core";
+import { systemNowMs, type TerminalAllowEntry, type ApprovalGate } from "@comis/core";
 
 /** Dependencies the terminal-driver wiring needs from the composition root. */
 export interface TerminalWiringDeps {
@@ -75,6 +75,14 @@ export interface TerminalWiringDeps {
    * runtime ⇒ create fail-closes (the fail-closed posture is unchanged).
    */
   readonly sandboxProvider: SandboxProvider | undefined;
+  /**
+   * The daemon's operator approval gate (SEC-06). The same `ApprovalGate` the
+   * exec path uses (constructed once in `setup-tools.ts`). Threaded into the
+   * terminal tools' `sharedDeps` so a `approveOnCreate` entry gates `session_create`
+   * on operator consent. Optional: when absent, an `approveOnCreate` entry
+   * fail-closes (reject) — it never runs unauthorized.
+   */
+  readonly approvalGate?: ApprovalGate;
 }
 
 /**
@@ -98,6 +106,9 @@ export function mapAllowEntry(entry: TerminalAllowEntry): AllowEntryLike {
     id: entry.id,
     match: entry.match,
     scope: entry.scope as TerminalScope,
+    // SEC-06: carry the operator's approveOnCreate consent flag verbatim (a sibling
+    // of scope) so the create tool can gate on it — never dropped at the boundary.
+    approveOnCreate: entry.approveOnCreate,
   };
 }
 
@@ -191,6 +202,10 @@ export function wireTerminalTools(
     eventBus: deps.eventBus,
     nowMs: systemNowMs,
     agentId,
+    // SEC-06: the operator approval gate — consulted only when a matched entry sets
+    // approveOnCreate (else the create path is unchanged); a demanding entry with no
+    // gate fail-closes in the tool.
+    approvalGate: deps.approvalGate,
   };
 
   tools.push(
