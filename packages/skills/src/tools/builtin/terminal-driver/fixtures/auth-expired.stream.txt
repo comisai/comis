@@ -1,0 +1,5 @@
+[2J[1;1HYour session has expired.
+
+Please sign in again to continue.
+
+Press Enter to open the browser for authentication… 

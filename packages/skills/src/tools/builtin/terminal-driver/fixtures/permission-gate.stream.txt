@@ -1,0 +1,4 @@
+[2J[1;1HClaude wants to run:
+  $ rm -rf build/
+
+Allow this command? (y/n) 

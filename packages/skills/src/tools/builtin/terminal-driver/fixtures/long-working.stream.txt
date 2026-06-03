@@ -1,0 +1,4 @@
+[2J[1;1H● Running the test suite…
+    ⠋ 124 passing  ⠙ 124 passing  ⠹ 124 passing  ⠸ 124 passing  ⠼ 124 passing  ⠴ 124 passing  ⠦ 124 passing  ⠧ 124 passing
+  building packages…
+[4;1H
