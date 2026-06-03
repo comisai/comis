@@ -262,7 +262,7 @@ These items provide additional hardening for environments with strict security r
     </Warning>
 
     <Warning>
-    Enabling `enableNodePermissions: true` also disables the fd-based fs API family (`fsync`, `fchmod`, `fchown`) at the Node.js level. Under `--permission`, encrypted-mode credential file writes are **best-effort durability** (fsync is skipped) and trace/session file permissions (fchmod) are best-effort. Comis guards all call sites via `isFsyncDisabledByPermissionModel`, so the daemon will not crash, but power loss between write and rename could leave a corrupt credential file. This behavior is Linux-only (production systemd deploys). See [Node Permissions -- fd-API disablement](/reference/node-permissions) for full detail.
+    Enabling `enableNodePermissions: true` also disables the fd-based fs API family (`fsync`, `fchmod`, `fchown`) at the Node.js level. Under `--permission`, encrypted-mode credential file writes are **best-effort durability** (fsync is skipped) and trace/session file permissions (fchmod) are best-effort. Comis guards all call sites via `isFsyncDisabledByPermissionModel`, so the daemon will not crash, but power loss between write and rename could leave a corrupt credential file. This behavior is Linux-only (production systemd deploys). See [Node Permissions -- fd-API disablement](/reference/node-permissions#production-fd-api-disablement-linux) for full detail.
     </Warning>
   </Step>
 
