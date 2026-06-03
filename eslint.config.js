@@ -61,6 +61,9 @@ export default tseslint.config(
     files: [
       "packages/*/scripts/**/*.js",
       "packages/*/scripts/**/*.mjs",
+      // src-adjacent dev/tooling scripts (e.g. terminal-driver fixture recorder)
+      "packages/*/src/**/scripts/**/*.js",
+      "packages/*/src/**/scripts/**/*.mjs",
       "scripts/**/*.js",
       "scripts/**/*.mjs",
       "skills/*/scripts/**/*.js",
