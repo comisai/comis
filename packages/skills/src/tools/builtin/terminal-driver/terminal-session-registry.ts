@@ -229,6 +229,22 @@ export interface TerminalSessionRegistry {
    * {@link sendText}.
    */
   sendKey(sessionId: string, args: { keys: string[] }): Promise<SendResult>;
+  /**
+   * Forward a `resize` frame (TR-03) and resolve `{ok}`. On success also updates
+   * the handle's `cols`/`rows` so a subsequent `list()`/`get()` reflects the new
+   * geometry (the snapshot stays coherent). Absent session → `{ok:false}`.
+   */
+  resize(sessionId: string, args: { cols: number; rows: number }): Promise<{ ok: boolean }>;
+  /**
+   * Forward a `wait` frame (TR-03) and resolve the settle snapshot
+   * `{matched,isComplete,reason,screen,cursor}`. The worker's `isComplete:false`
+   * survives the forward verbatim; a wedged worker (the MR-01 reply timeout)
+   * still yields the honest not-complete shape — never `isComplete:true`, never a hang.
+   */
+  wait(
+    sessionId: string,
+    args: { forIdleMs?: number; forText?: string; forExit?: boolean; timeoutMs?: number },
+  ): Promise<WaitResult>;
   get(sessionId: string): SessionHandle | undefined;
   list(): SessionListing[];
   kill(sessionId: string): Promise<void>;
@@ -638,6 +654,71 @@ export function createTerminalSessionRegistry(
     return mapSendReply(handle, reply);
   }
 
+  async function resize(
+    sessionId: string,
+    args: { cols: number; rows: number },
+  ): Promise<{ ok: boolean }> {
+    const handle = sessions.get(sessionId);
+    if (handle === undefined || handle.status !== "running") {
+      return { ok: false };
+    }
+    const reply = await request(sessionId, "resize", {
+      sessionId,
+      cols: args.cols,
+      rows: args.rows,
+    });
+    if (!reply.ok) return { ok: false };
+    // TR-03: keep the handle geometry coherent so list()/get() reflect the resize.
+    handle.cols = args.cols;
+    handle.rows = args.rows;
+    handle.lastActivity = nowMs();
+    return { ok: true };
+  }
+
+  /**
+   * The honest not-complete settle shape for a wedged/absent worker — NEVER
+   * `isComplete:true` (a false `true` would strand the agent: the P5 attention
+   * model would finalize a live session). Used on the MR-01 `ok:false` path.
+   */
+  function degradedWait(): WaitResult {
+    return { matched: false, isComplete: false, reason: "timeout", screen: "", cursor: { x: 0, y: 0 } };
+  }
+
+  async function wait(
+    sessionId: string,
+    args: { forIdleMs?: number; forText?: string; forExit?: boolean; timeoutMs?: number },
+  ): Promise<WaitResult> {
+    const handle = sessions.get(sessionId);
+    if (handle === undefined || handle.status !== "running") {
+      return degradedWait();
+    }
+    const reply = await request(sessionId, "wait", { sessionId, ...args });
+    if (!reply.ok || reply.result === undefined) {
+      // A wedged worker (the MR-01 reply timeout) → the honest not-complete shape.
+      return degradedWait();
+    }
+    // Defensively map the worker's settle result (T-120-08/09): preserve
+    // isComplete VERBATIM, but DEFAULT a missing/odd value to false — never true.
+    const r = reply.result as {
+      matched?: unknown;
+      isComplete?: unknown;
+      reason?: unknown;
+      screen?: unknown;
+      cursor?: { x?: unknown; y?: unknown };
+    };
+    handle.lastActivity = nowMs();
+    return {
+      matched: r.matched === true,
+      isComplete: r.isComplete === true,
+      reason: typeof r.reason === "string" ? r.reason : "timeout",
+      screen: typeof r.screen === "string" ? r.screen : "",
+      cursor: {
+        x: typeof r.cursor?.x === "number" ? r.cursor.x : 0,
+        y: typeof r.cursor?.y === "number" ? r.cursor.y : 0,
+      },
+    };
+  }
+
   function get(sessionId: string): SessionHandle | undefined {
     return sessions.get(sessionId);
   }
@@ -679,5 +760,5 @@ export function createTerminalSessionRegistry(
     }
   }
 
-  return { create, read, sendText, sendKey, get, list, kill, size, cleanup };
+  return { create, read, sendText, sendKey, resize, wait, get, list, kill, size, cleanup };
 }
