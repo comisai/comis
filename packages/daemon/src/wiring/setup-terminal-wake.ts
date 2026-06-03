@@ -1,0 +1,199 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * The daemon-side wake-FSM SUBSCRIBE wiring (124-09 Task 2, THE KEYSTONE; TR-07 /
+ * SEC-11 / SEC-12 / OPS-08 / OPS-09) — modeled on `setup-background-completion-runner.ts`.
+ *
+ * `setupTerminalWake(deps)` makes the attention loop LIVE end-to-end:
+ *   1. Constructs the recurring wake-FSM (`createTerminalWakeDispatcher`, 124-07) against
+ *      a NARROW adapter bus that translates the daemon's re-published
+ *      `terminal:input_needed` (124-09 Task 1) into the FSM's `TerminalInputNeededWake`
+ *      (deriving the owner-scoped `owner` + a per-frame `requestId` the redaction-safe
+ *      core event omits).
+ *   2. Binds `isSessionActive` to the P4 owner-scoped registry (`registries.get(agentId)?
+ *      .get(sessionId, owner) !== undefined`) — a wake for a killed/evicted/cross-owner
+ *      session is dropped.
+ *   3. Binds `wakeOneTurn` to the §4.4 woken-turn driver (`terminal-wake-turn.ts`):
+ *      status → read → decideAutoAnswer (safe-only) → send (audited) | escalate, with the
+ *      loop-guard (SEC-11) escalating a re-rendered prompt.
+ *   4. Binds `escalate` (the FSM's hop-limit path) to a `terminal:escalated` emit + the
+ *      NotifyFn chain (§4.7).
+ *
+ * **Owner derivation (the keystone seam).** The fd3 attention frame is unsolicited and the
+ * worker is owner-agnostic, so the re-published `terminal:input_needed` carries `agentId`
+ * but neither `sessionKey` nor `requestId`. The forcing use case (spec §4.4) is a top-level
+ * agent driving its own session — `sessionKey: ""` (the documented owner fallback,
+ * `terminal-session-owner.ts`). We derive `owner = { agentId, sessionKey: "" }`; every
+ * registry call the woken turn makes is owner-scoped, so a non-matching owner degrades to
+ * the not-found view (never a cross-owner leak). The `requestId` correlation key is
+ * synthesized from `(sessionId, reason)` so N re-publishes of ONE unanswered frame coalesce
+ * to ONE woken turn (OPS-09), and a distinct subsequent prompt (a fresh `reason`) is a fresh
+ * wake.
+ *
+ * **One-per-daemon** (like the completion runner): subscribes the shared `TypedEventBus`
+ * ONCE at startup; `shutdown()` unsubscribes + drains in-flight turns (reverse-order vs the
+ * Task-1 emit hook, which is per-agent on the registry).
+ *
+ * Per AGENTS §2.4: composition root + factories. This wiring lives in `@comis/daemon`; the
+ * FSM body (124-07) and the policy modules (124-04) live in `@comis/daemon` / `@comis/skills`.
+ *
+ * @module
+ */
+
+import { systemNowMs, type TypedEventBus, type ComisLogger } from "@comis/core";
+import { createLoopGuard, type TerminalSessionRegistry } from "@comis/skills/tools";
+
+import {
+  createTerminalWakeDispatcher,
+  type TerminalWakeDispatcher,
+  type TerminalInputNeededWake,
+  type WakeDispatcherBus,
+} from "./terminal-wake-dispatch.js";
+import { buildWokenTurnDriver, type TerminalAttentionConfig, type WokenTurnNotify } from "./terminal-wake-turn.js";
+import type { PersistedWakeOwner } from "./terminal-wake-persistence.js";
+
+/** Dependencies for the keystone wake wiring. */
+export interface SetupTerminalWakeDeps {
+  /** The daemon's typed event bus (the Task-1 hook publishes `terminal:input_needed` here). */
+  eventBus: TypedEventBus;
+  /** The per-agent terminal registries map (closure-local in setupTools; the active-check + woken turn read it). */
+  registries: ReadonlyMap<string, TerminalSessionRegistry>;
+  /**
+   * Resolve the per-agent attention config (operator allow-entry derived: autoAnswer /
+   * hintPatterns + the wake-FSM hop / concurrency caps). Read PER agentId so a
+   * `config:mutated` swap takes effect on the next wake. Absent for an agent ⇒ the woken
+   * turn escalates `no_safe_match` (the SAFE default).
+   */
+  getTerminalAttentionConfig: (agentId: string) => TerminalAttentionConfig | undefined;
+  /** The human-escalation NotifyFn (§4.7). Optional; absent ⇒ bus-only escalation audit. */
+  notify?: WokenTurnNotify;
+  /** Base data dir (~/.comis) — the FSM's durable wake-state lives under `terminal-wake/`. */
+  dataDir: string;
+  /** Injected clock (no raw global). Default `systemNowMs`. */
+  nowMs?: () => number;
+  logger: ComisLogger;
+}
+
+/** The handle the composition root keeps for shutdown. */
+export interface TerminalWakeContext {
+  /** Unsubscribe from the bus + drain in-flight woken turns. Idempotent, awaitable. */
+  shutdown(): Promise<void>;
+}
+
+/**
+ * Wire the wake-FSM against the daemon event bus. Call ONCE at daemon startup (after the
+ * terminal registries map + the notify chain exist). Returns a `shutdown` for the
+ * composition root to thread into `setupShutdown`.
+ */
+export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeContext {
+  const nowMs = deps.nowMs ?? systemNowMs;
+  const log = deps.logger.child({ submodule: "setup-terminal-wake" });
+
+  // Default hop / concurrency caps for the FSM construction. The PER-WAKE owner-config
+  // (getTerminalAttentionConfig) governs the auto-answer policy; the FSM-level caps are
+  // a conservative daemon ceiling (the woken turn cannot widen them).
+  const DEFAULT_MAX_HOPS = 8;
+  const DEFAULT_MAX_CONCURRENT = 4;
+
+  // The shared loop-guard (SEC-11) — closure-local per-session ring, injected clock. One
+  // instance across woken turns so a re-rendered prompt is caught across frames.
+  const loopGuard = createLoopGuard({ nowMs });
+
+  // The §4.4 woken-turn driver the FSM calls.
+  const wakeOneTurn = buildWokenTurnDriver({
+    registries: deps.registries,
+    getTerminalAttentionConfig: deps.getTerminalAttentionConfig,
+    loopGuard,
+    eventBus: deps.eventBus,
+    ...(deps.notify ? { notify: deps.notify } : {}),
+    nowMs,
+    logger: deps.logger,
+  });
+
+  // The owner-scoped active-check (the P4 registry). A wake for a session this reports
+  // false (killed/evicted/cross-owner) is dropped + audited by the FSM.
+  const isSessionActive = (sessionId: string, owner: PersistedWakeOwner): boolean => {
+    const registry = deps.registries.get(owner.agentId);
+    if (!registry) return false;
+    return registry.get(sessionId, { agentId: owner.agentId, sessionKey: owner.sessionKey }) !== undefined;
+  };
+
+  // The hop-limit escalation (the FSM's forced-escalation path) → emit terminal:escalated
+  // + the NotifyFn chain. (The woken-turn driver owns the per-turn auto-answer escalations;
+  // this is the FSM's structural hop_limit path.)
+  const escalate = async (opts: { sessionId: string; owner: PersistedWakeOwner; reason: "hop_limit" }): Promise<void> => {
+    deps.eventBus.emit("terminal:escalated", { sessionId: opts.sessionId, agentId: opts.owner.agentId, reason: opts.reason, timestamp: nowMs() });
+    log.warn(
+      { sessionId: opts.sessionId, agentId: opts.owner.agentId, reason: opts.reason, hint: "wake hop-limit reached; escalating to a human", errorKind: "policy" as const, step: "wake_hop_limit" },
+      "terminal wake hop-limit escalation",
+    );
+    if (deps.notify) {
+      await deps.notify({
+        agentId: opts.owner.agentId,
+        message: `Terminal session ${opts.sessionId} hit the wake hop-limit and needs a human.`,
+        priority: "normal",
+        origin: "background_task",
+      });
+    }
+  };
+
+  const dispatcher: TerminalWakeDispatcher = createTerminalWakeDispatcher({
+    eventBus: makeWakeAdapterBus(deps.eventBus),
+    isSessionActive,
+    wakeOneTurn,
+    escalate,
+    dataDir: deps.dataDir,
+    maxHops: DEFAULT_MAX_HOPS,
+    maxConcurrentAttentionTurns: DEFAULT_MAX_CONCURRENT,
+    nowMs,
+    logger: deps.logger,
+  });
+
+  log.info({ step: "terminal_wake_subscribed" }, "terminal wake-dispatch FSM subscribed");
+
+  return {
+    async shutdown(): Promise<void> {
+      await dispatcher.shutdown();
+    },
+  };
+}
+
+/**
+ * Adapt the daemon `TypedEventBus`'s redaction-safe `terminal:input_needed` event into the
+ * FSM's narrow `WakeDispatcherBus` carrying `TerminalInputNeededWake`. Derives the
+ * owner-scoped `owner` (`sessionKey: ""`, the forcing-use-case fallback) + a per-frame
+ * `requestId` synthesized from `(sessionId, reason)` (the redaction-safe core event omits
+ * requestId; the FSM's `(sessionId,requestId)` dedupe correlation needs it). N re-publishes
+ * of ONE unanswered frame share a `requestId` → coalesce to ONE woken turn (OPS-09); a
+ * distinct subsequent prompt (a fresh `reason`) is a fresh wake.
+ *
+ * The translating handler is wrapped 1:1 so `off` removes exactly the wrapper `on` added —
+ * a per-(handler) WeakMap pairs the FSM's handler with our wrapper (no module-global state).
+ */
+function makeWakeAdapterBus(bus: TypedEventBus): WakeDispatcherBus {
+  const wrappers = new WeakMap<(data: TerminalInputNeededWake) => void, (data: unknown) => void>();
+  return {
+    on(_event: "terminal:input_needed", handler: (data: TerminalInputNeededWake) => void): void {
+      const wrapped = (data: unknown): void => {
+        const ev = data as { sessionId: string; agentId: string; state: "awaiting-input" | "stuck"; reason: string };
+        handler({
+          sessionId: ev.sessionId,
+          // The redaction-safe core event omits requestId; correlate by (sessionId, reason)
+          // so duplicate re-publishes of one frame coalesce, a fresh prompt re-wakes.
+          requestId: `${ev.sessionId}:${ev.reason}`,
+          owner: { agentId: ev.agentId, sessionKey: "" },
+          state: ev.state,
+          reason: ev.reason,
+        });
+      };
+      wrappers.set(handler, wrapped);
+      bus.on("terminal:input_needed", wrapped);
+    },
+    off(_event: "terminal:input_needed", handler: (data: TerminalInputNeededWake) => void): void {
+      const wrapped = wrappers.get(handler);
+      if (wrapped) {
+        bus.off("terminal:input_needed", wrapped);
+        wrappers.delete(handler);
+      }
+    },
+  };
+}

@@ -93,6 +93,7 @@ import type {
   setupNotifications,
   setupBackgroundTasks,
   setupBackgroundCompletionRunner,
+  setupTerminalWake,
 } from "./wiring/index.js";
 import type { BrokerHandle } from "./wiring/setup-broker.js";
 import type { createNamedGraphStore } from "@comis/memory";
@@ -567,6 +568,8 @@ export interface BootContext {
   // Notifications + background completion
   notificationContext?: ReturnType<typeof setupNotifications>;
   bgCompletionRunnerContext?: ReturnType<typeof setupBackgroundCompletionRunner>;
+  // Terminal-driver wake-FSM (v2.11 / 124-09) — drained on shutdown.
+  terminalWakeContext?: ReturnType<typeof setupTerminalWake>;
   // Cross-session + sub-agent runtime
   crossSessionSender?: ReturnType<typeof setupCrossSession>["crossSessionSender"];
   subAgentRunner?: ReturnType<typeof setupCrossSession>["subAgentRunner"];

@@ -87,6 +87,7 @@ import {
 import {
   systemNowMs,
   type TerminalAllowEntry,
+  type TerminalDriverConfig,
   type ApprovalGate,
   type EgressControlPort,
   type TimerPort,
@@ -155,6 +156,16 @@ export interface TerminalWiringDeps {
    * only the tool kill path (T-123-17, no SessionCaps Map leak on the reap path).
    */
   readonly caps?: SessionCaps;
+  /**
+   * The parsed operator terminal-driver config (124-09 — the WR-01 closure). When present,
+   * `config.allow` POPULATES the per-agent allow-set (`config.allow.map(mapAllowEntry)`) so
+   * the create gate matches an allowlisted binary + the per-session caps go live; the
+   * mapped `scope`/`approveOnCreate`/`limits` ride the create frame, and `autoAnswer`/
+   * `hintPatterns`/`backend` are consumed by the wake-FSM woken turn (auto-answer policy)
+   * + the worker (backend selection). Absent ⇒ the wired allow-set is EMPTY (every create
+   * fail-closes) — the pre-P5 posture.
+   */
+  readonly config?: TerminalDriverConfig;
 }
 
 /**
@@ -440,6 +451,64 @@ export function buildTerminalEgressDeps(
 }
 
 /**
+ * The base wiring deps the composition root assembles ONCE per daemon (the egress
+ * dimensions + the cross-agent ports), BEFORE the per-agent config is read. The
+ * per-agent {@link buildTerminalWiringDeps} folds the operator `config` (the allow-set
+ * + worker caps) onto this base.
+ */
+export interface TerminalWiringBaseDeps {
+  readonly dataDir: string;
+  readonly skillsLogger: ComisLogger;
+  readonly eventBus: TerminalEventBus;
+  readonly sandboxProvider: SandboxProvider | undefined;
+  readonly approvalGate?: ApprovalGate;
+  readonly egressControl?: EgressControlPort;
+  readonly bwrapPath?: string;
+  /** The daemon's injected TimerPort (drives the reaper sweep). */
+  readonly timers?: TimerPort;
+}
+
+/**
+ * Fold the per-agent operator terminal config onto the base wiring deps (124-09 — the
+ * WR-01 closure call-site helper). Derives `workerCaps` from `config.worker.{maxSessions,
+ * idleTtlMs,stuckMs}` (so the reaper composes when `timers` is present + maxSessions > 0)
+ * and threads `config` (so `buildTerminalSharedDeps` populates the allow-set + per-session
+ * caps). When `config` is absent the result has no `config`/`workerCaps` ⇒ the wiring
+ * fail-closes (empty allow-set, no reaper) — the pre-P5 posture for an unconfigured agent.
+ *
+ * `wallClockMs` is sourced as 0 at the registry/reaper level (the per-ENTRY
+ * `limits.wallClockMs` is the operative wall-clock budget, enforced per-send via the caps;
+ * the reaper's wall-clock-age sweep stays opt-in via a future worker-level knob). Extracted
+ * here (not inlined at the `setup-tools.ts` call site) to keep that file under the 800-line
+ * architecture cap.
+ */
+export function buildTerminalWiringDeps(
+  base: TerminalWiringBaseDeps,
+  config: TerminalDriverConfig | undefined,
+): TerminalWiringDeps {
+  const workerCaps = config
+    ? {
+        maxSessions: config.worker.maxSessions,
+        idleTtlMs: config.worker.idleTtlMs,
+        wallClockMs: 0,
+        stuckMs: config.worker.stuckMs,
+      }
+    : undefined;
+  return {
+    dataDir: base.dataDir,
+    skillsLogger: base.skillsLogger,
+    eventBus: base.eventBus,
+    sandboxProvider: base.sandboxProvider,
+    ...(base.approvalGate ? { approvalGate: base.approvalGate } : {}),
+    ...(base.egressControl ? { egressControl: base.egressControl } : {}),
+    ...(base.bwrapPath ? { bwrapPath: base.bwrapPath } : {}),
+    ...(base.timers ? { timers: base.timers } : {}),
+    ...(workerCaps ? { workerCaps } : {}),
+    ...(config ? { config } : {}),
+  };
+}
+
+/**
  * Build the shared deps object the nine terminal tools receive — the SINGLE seam
  * where the per-agent registry, the operator allow-set, the cached sandbox
  * provider, the approval gate, AND the net-new egress dimensions (the
@@ -454,11 +523,11 @@ export function buildTerminalSharedDeps(
   agentId: string,
   deps: TerminalWiringDeps,
 ) {
-  // SEC-01 trust source: the operator allow-set. Empty until the config is
-  // threaded into PerAgentConfig (a later step) — so every create fail-closes.
-  // When that lands it becomes `config.allow.map(mapAllowEntry)`, so the per-entry
-  // scope (SEC-02) rides along via the single mapping site above (no silent drop).
-  const allowEntries: AllowEntryLike[] = [];
+  // SEC-01 trust source: the operator allow-set. 124-09 (WR-01 closure) POPULATES it from
+  // the threaded `config.allow` via the single `mapAllowEntry` site (the per-entry scope
+  // SEC-02 + approveOnCreate SEC-06 + limits OPS-03/06 ride along, no silent drop). Absent
+  // config ⇒ EMPTY (every create fail-closes) — the pre-P5 fail-closed posture is preserved.
+  const allowEntries: AllowEntryLike[] = deps.config?.allow.map(mapAllowEntry) ?? [];
 
   // OPS-03/OPS-06: construct ONE shared per-agent SessionCaps instance, fed into BOTH
   // the tool deps (consume*/startSession/forget) AND the registry onCapForget
@@ -468,19 +537,17 @@ export function buildTerminalSharedDeps(
   // the forcing use case). The allow-set is EMPTY today, so the limits are undefined (no
   // caps tripped).
   //
-  // WIRING TO MAKE P4 LIVE (lands with the allow-set/attention work, P5/Phase 124 —
-  // deliberately OUT of Phase 123 scope, RESEARCH Open Q3). Two distinct pieces, do NOT
-  // conflate them:
-  //   1. PER-SESSION caps (consumeRequest/consumeInteraction/checkWallClock): become live
-  //      once the allow-set is POPULATED — `allowEntries[0].limits` then feeds
-  //      createSessionCaps below. No further wiring beyond populating the allow-set.
-  //   2. The REAPER (idle-TTL / wall-clock-age / max-sessions overflow): additionally
-  //      requires `workerCaps` (+ the shared `caps` and `timers` TimerPort) to be threaded
-  //      at the `wireTerminalTools` call site (setup-tools.ts) — without them
-  //      `wireRegistryReaper` never composes a reaper (it needs `timers !== undefined &&
-  //      maxSessions > 0`, terminal-reaper.ts). The live caller does NOT pass these today,
-  //      so the reaper is intentionally inert. Threading them now would run the reaper over
-  //      an empty registry — out of scope until the allow-set lands.
+  // WIRING NOW LIVE (124-09 — the WR-01 closure; RESEARCH Open Q3 resolved). Two pieces:
+  //   1. PER-SESSION caps (consumeRequest/consumeInteraction/checkWallClock): LIVE now the
+  //      allow-set is POPULATED from config — `allowEntries[0].limits` feeds
+  //      createSessionCaps below (the entry's maxInteractions/maxRequestsPerSession/
+  //      wallClockMs go enforceable).
+  //   2. The REAPER (idle-TTL / wall-clock-age / max-sessions overflow): LIVE now the
+  //      `setup-tools.ts` call site threads `workerCaps` (+ the shared `caps` and `timers`
+  //      TimerPort) — `wireRegistryReaper` composes (it needs `timers !== undefined &&
+  //      maxSessions > 0`, terminal-reaper.ts). The reaper sweeps the per-agent registry.
+  // Both fail-closed when config/workerCaps are absent (empty allow-set ⇒ undefined limits
+  // ⇒ no caps tripped; no workerCaps ⇒ no reaper) — the pre-P5 posture for an unconfigured agent.
   const entryLimits = allowEntries[0]?.limits;
   const caps: SessionCaps = deps.caps ?? createSessionCaps(entryLimits, systemNowMs);
 
@@ -517,6 +584,35 @@ export function buildTerminalSharedDeps(
     // OPS-03/OPS-06: the shared per-agent caps the eight tools consume (the SAME
     // instance the registry onCapForget forgets — one source for consume + forget).
     caps,
+  };
+}
+
+/**
+ * The per-agent attention config the wake-FSM woken turn reads (124-09 Task 2). Derived
+ * from the operator terminal config: the `autoAnswer`/`hintPatterns` come from the MATCHED
+ * allow-entry (the forcing use case is a single entry per agent — the first entry's policy),
+ * and the FSM caps from `worker.maxConcurrentAttentionTurns`. Operator-dialable ONLY (never
+ * agent-supplied). Returns `undefined` when the agent has no terminal config or no allow
+ * entry ⇒ the woken turn escalates `no_safe_match` (the SAFE default).
+ *
+ * Hop cap: derived as `maxConcurrentAttentionTurns * 4` (a conservative per-session
+ * consecutive-wake ceiling before forced escalation; the spec leaves the exact hop bound to
+ * the daemon, bounded by the concurrency knob). No agent input feeds it.
+ */
+export function deriveTerminalAttentionConfig(
+  config: TerminalDriverConfig | undefined,
+):
+  | { autoAnswer: "none" | "safe-only" | "all"; hintPatterns: readonly string[]; maxHops: number; maxConcurrentAttentionTurns: number }
+  | undefined {
+  if (!config) return undefined;
+  const entry = config.allow[0];
+  if (!entry) return undefined;
+  const maxConcurrentAttentionTurns = config.worker.maxConcurrentAttentionTurns;
+  return {
+    autoAnswer: entry.autoAnswer,
+    hintPatterns: entry.hintPatterns ?? [],
+    maxHops: Math.max(1, maxConcurrentAttentionTurns * 4),
+    maxConcurrentAttentionTurns,
   };
 }
 

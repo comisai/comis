@@ -73,6 +73,14 @@ export {
   // instance per agent (from the matched entry's limits) feeding both the tool deps
   // (consume*) and the registry onCapForget (caps.forget).
   createSessionCaps,
+  // 124-09: the woken-turn driver (daemon-side) consumes the safe-only auto-answer policy
+  // (124-04) + the normalized loop-guard (124-04) — the SEC-12/SEC-11 governance modules.
+  decideAutoAnswer,
+  createLoopGuard,
+  type AutoAnswerMode,
+  type AutoAnswerDecision,
+  type LoopGuard,
+  type LoopGuardDeps,
   type TerminalToolDeps,
   type TerminalEventBus,
   // 124-09: the decoded fd3 push-channel frame the daemon's onTerminalEvent hook
