@@ -37,22 +37,59 @@
  * @module
  */
 
-import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+import { sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type { EgressControlPort } from "@comis/core";
 
 /**
- * The on-disk relay-as-init script ({@link ./egress-relay-init.ts}, compiled to
- * `egress-relay-init.js` in `dist`). It is spawned as a subprocess inside the bwrap
- * jail as the userns-root PID-1 init: bring `lo` up -> TCP->unix relay on
- * `127.0.0.1:<port>` -> drop to the net-new uid -> exec the child. Resolved from
- * THIS module's URL so it travels with the package (`files: ["dist"]`), works under
- * the `/usr` ro-bind from the daemon install, and needs no separate asset-copy step
- * (tsc emits it alongside this builder). This replaced the 122-05 sentinel name
- * (`comis-egress-relay-init`) which pointed at a binary that was never built — the
- * SEC-07 listed-hosts egress gap this fix closes.
+ * Resolve the on-disk relay-as-init script ({@link ./egress-relay-init.ts},
+ * compiled to `egress-relay-init.js` by tsc) to a RUNNABLE `.js` that EXISTS — the
+ * launcher runs it as a real subprocess (`process.execPath <this URL>`), and Node
+ * cannot exec a `.ts`, so the URL must point at the compiled `.js` in BOTH contexts:
+ *
+ *   - PRODUCTION: the worker runs from `dist/`, so `import.meta.url` is the dist
+ *     `terminal-egress-relay.js` and the sibling `egress-relay-init.js` is right
+ *     there — the direct sibling resolves and exists.
+ *   - VITEST-FROM-SRC: `import.meta.url` is the `.ts` SOURCE, so the direct sibling
+ *     would be `src/.../egress-relay-init.js` — which does NOT exist (only the `.ts`
+ *     is in `src`). The package is BUILT before tests run, so the compiled `.js`
+ *     lives under the parallel `dist/` tree; map the resolved `/src/` path segment to
+ *     `/dist/` to reach it.
+ *
+ * A bare `new URL("./egress-relay-init.js", import.meta.url)` is production-correct
+ * but src-test-broken (it pointed at the absent `src` `.js`, and the VPS scope-matrix
+ * egress cell died with `Cannot find module`). The existsSync-then-src->dist map below
+ * is honest: BOTH branches resolve to the real compiled relay-init.js the launcher
+ * actually spawns. This replaced the 122-05 sentinel name (`comis-egress-relay-init`)
+ * which pointed at a binary that was never built — the SEC-07 listed-hosts gap.
  */
-export const RELAY_INIT_SCRIPT_URL = new URL("./egress-relay-init.js", import.meta.url);
+function resolveRelayInitScript(): URL {
+  // The direct sibling: correct in dist (production) or anywhere the built `.js`
+  // sits next to this module's `.js`.
+  const direct = new URL("./egress-relay-init.js", import.meta.url);
+  if (existsSync(fileURLToPath(direct))) return direct;
+  // vitest-from-src: this module is the `src` `.ts`, so the direct sibling `.js` is
+  // absent — the compiled `.js` is under the parallel `dist/` tree. Map the FIRST
+  // `/src/` path segment to `/dist/` (the dist layout mirrors src 1:1). Use the
+  // path separator on both sides so the swap is a whole-segment replace, never a
+  // substring hit inside a dir name.
+  const distPath = fileURLToPath(direct).replace(`${sep}src${sep}`, `${sep}dist${sep}`);
+  return pathToFileURL(distPath);
+}
+
+/**
+ * The on-disk relay-as-init script the in-jail launch points at — a module-const
+ * URL (mirrors the prior export shape; NO module-global mutable state). Resolved
+ * ONCE via {@link resolveRelayInitScript} so it is the real compiled `.js` in both
+ * production (dist) and vitest-from-src (src->dist-mapped). It is spawned as a
+ * subprocess inside the bwrap jail as the userns-root PID-1 init: bring `lo` up ->
+ * TCP->unix relay on `127.0.0.1:<port>` -> drop to the net-new uid -> exec the
+ * child. Travels with the package (`files: ["dist"]`), works under the `/usr`
+ * ro-bind from the daemon install, and needs no separate asset-copy step.
+ */
+export const RELAY_INIT_SCRIPT_URL = resolveRelayInitScript();
 
 /** Input to {@link buildEgressRelayLaunch}. */
 export interface EgressRelayLaunchInput {
