@@ -39,6 +39,7 @@ import {
   type WaitResult,
   type SessionHandle,
   type SessionListing,
+  type SessionOwner,
 } from "./terminal-session-registry.js";
 import type { ReadOptions } from "./terminal-render.js";
 import type { AllowEntryLike, TerminalScope } from "./allowlist-matcher.js";
@@ -123,6 +124,8 @@ interface FakeRegistry extends TerminalSessionRegistry {
   sendKeyCalls: SendKeyCall[];
   resizeCalls: ResizeCall[];
   waitCalls: WaitCall[];
+  /** 123-03: the owner each owner-scoped method was called with (TR-13 — proves the tool threaded the origin). */
+  capturedOwners: Array<{ method: string; owner: SessionOwner }>;
 }
 
 function makeFakeRegistry(overrides?: {
@@ -143,6 +146,7 @@ function makeFakeRegistry(overrides?: {
   const sendKeyCalls: SendKeyCall[] = [];
   const resizeCalls: ResizeCall[] = [];
   const waitCalls: WaitCall[] = [];
+  const capturedOwners: Array<{ method: string; owner: SessionOwner }> = [];
   const handles = overrides?.handles ?? new Map<string, SessionHandle>();
   let listing = overrides?.listing ?? [];
 
@@ -155,45 +159,58 @@ function makeFakeRegistry(overrides?: {
     sendKeyCalls,
     resizeCalls,
     waitCalls,
-    async create(req: CreateRequest): Promise<CreateResult> {
+    capturedOwners,
+    // 123-03: every session-scoped method gained a required owner arg. The fake
+    // records the OWNER each tool derived (capturedOwners) so tests can assert the
+    // tool threaded `(agentId, sessionKey)` from tryGetContext()/deps.agentId.
+    async create(req: CreateRequest, owner: SessionOwner): Promise<CreateResult> {
       createCalls.push(req);
+      capturedOwners.push({ method: "create", owner });
       if (overrides?.createImpl) return overrides.createImpl(req);
       return { sessionId: "sess-1", allowId: req.allowId, cols: req.cols, rows: req.rows };
     },
-    async read(id: string, opts?: ReadOptions): Promise<TerminalView> {
+    async read(id: string, owner: SessionOwner, opts?: ReadOptions): Promise<TerminalView> {
       readCalls.push(id);
       readOptsCalls.push(opts);
+      capturedOwners.push({ method: "read", owner });
       if (overrides?.readImpl) return overrides.readImpl(id, opts);
       return { screen: "hello", cursor: { x: 0, y: 0 }, cols: 120, rows: 40, alt: false, alive: true };
     },
-    async sendText(id: string, args: SendTextCall["args"]): Promise<SendResult> {
+    async sendText(id: string, owner: SessionOwner, args: SendTextCall["args"]): Promise<SendResult> {
       sendTextCalls.push({ sessionId: id, args });
+      capturedOwners.push({ method: "sendText", owner });
       if (overrides?.sendTextImpl) return overrides.sendTextImpl(id, args);
       return { screen: "after-text", cursor: { x: 1, y: 2 } };
     },
-    async sendKey(id: string, args: SendKeyCall["args"]): Promise<SendResult> {
+    async sendKey(id: string, owner: SessionOwner, args: SendKeyCall["args"]): Promise<SendResult> {
       sendKeyCalls.push({ sessionId: id, args });
+      capturedOwners.push({ method: "sendKey", owner });
       if (overrides?.sendKeyImpl) return overrides.sendKeyImpl(id, args);
       return { screen: "after-key", cursor: { x: 3, y: 4 } };
     },
-    async resize(id: string, args: ResizeCall["args"]): Promise<{ ok: boolean }> {
+    async resize(id: string, owner: SessionOwner, args: ResizeCall["args"]): Promise<{ ok: boolean }> {
       resizeCalls.push({ sessionId: id, args });
+      capturedOwners.push({ method: "resize", owner });
       if (overrides?.resizeImpl) return overrides.resizeImpl(id, args);
       return { ok: true };
     },
-    async wait(id: string, args: WaitCall["args"]): Promise<WaitResult> {
+    async wait(id: string, owner: SessionOwner, args: WaitCall["args"]): Promise<WaitResult> {
       waitCalls.push({ sessionId: id, args });
+      capturedOwners.push({ method: "wait", owner });
       if (overrides?.waitImpl) return overrides.waitImpl(id, args);
       return { matched: true, isComplete: true, reason: "idle", screen: "settled", cursor: { x: 0, y: 0 } };
     },
-    get(id: string): SessionHandle | undefined {
+    get(id: string, owner: SessionOwner): SessionHandle | undefined {
+      capturedOwners.push({ method: "get", owner });
       return handles.get(id);
     },
-    list(): SessionListing[] {
+    list(owner: SessionOwner): SessionListing[] {
+      capturedOwners.push({ method: "list", owner });
       return listing;
     },
-    async kill(id: string): Promise<void> {
+    async kill(id: string, owner: SessionOwner): Promise<void> {
       killCalls.push(id);
+      capturedOwners.push({ method: "kill", owner });
       listing = listing.filter((s) => s.sessionId !== id);
     },
     size(): number {
@@ -1009,7 +1026,11 @@ function isOwner(v: unknown): v is OwnerArg {
  * owner ⇒ not-found). It seeds one running session owned by NO_CTX_OWNER.
  */
 function makeAbortFakeRegistry(): {
-  registry: TerminalSessionRegistry & { killSpy: ReturnType<typeof import("vitest").vi.fn> };
+  registry: TerminalSessionRegistry & {
+    killSpy: ReturnType<typeof vi.fn>;
+    sendTextSpy: ReturnType<typeof vi.fn>;
+    sendKeySpy: ReturnType<typeof vi.fn>;
+  };
   sessionId: string;
 } {
   const sessionId = "sess-abort-1";
@@ -1031,6 +1052,14 @@ function makeAbortFakeRegistry(): {
   const killSpy = vi.fn(async (_id: string, _owner: unknown): Promise<void> => {
     /* spy only — never actually drops, so survival is observable post-abort */
   });
+  // Spies on the forwarding sends: a tool that OBSERVES signal.aborted must NOT
+  // reach these (it short-circuits the call); a tool that IGNORES the signal would.
+  const sendTextSpy = vi.fn(async (id: string, owner: unknown): Promise<SendResult> =>
+    sameOwner(id, owner) ? { screen: "sent", cursor: { x: 1, y: 0 } } : { screen: "", cursor: { x: 0, y: 0 } },
+  );
+  const sendKeySpy = vi.fn(async (id: string, owner: unknown): Promise<SendResult> =>
+    sameOwner(id, owner) ? { screen: "key", cursor: { x: 0, y: 1 } } : { screen: "", cursor: { x: 0, y: 0 } },
+  );
 
   const registry = {
     async create(req: CreateRequest, owner: unknown): Promise<CreateResult> {
@@ -1045,14 +1074,8 @@ function makeAbortFakeRegistry(): {
       }
       return { screen: "alive-screen", cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true };
     },
-    async sendText(id: string, owner: unknown): Promise<SendResult> {
-      if (!sameOwner(id, owner)) return { screen: "", cursor: { x: 0, y: 0 } };
-      return { screen: "sent", cursor: { x: 1, y: 0 } };
-    },
-    async sendKey(id: string, owner: unknown): Promise<SendResult> {
-      if (!sameOwner(id, owner)) return { screen: "", cursor: { x: 0, y: 0 } };
-      return { screen: "key", cursor: { x: 0, y: 1 } };
-    },
+    sendText: sendTextSpy,
+    sendKey: sendKeySpy,
     async resize(id: string, owner: unknown): Promise<{ ok: boolean }> {
       return { ok: sameOwner(id, owner) };
     },
@@ -1073,7 +1096,13 @@ function makeAbortFakeRegistry(): {
       /* no-op */
     },
     killSpy,
-  } as unknown as TerminalSessionRegistry & { killSpy: ReturnType<typeof import("vitest").vi.fn> };
+    sendTextSpy,
+    sendKeySpy,
+  } as unknown as TerminalSessionRegistry & {
+    killSpy: ReturnType<typeof vi.fn>;
+    sendTextSpy: ReturnType<typeof vi.fn>;
+    sendKeySpy: ReturnType<typeof vi.fn>;
+  };
 
   return { registry, sessionId };
 }
@@ -1090,9 +1119,11 @@ describe("terminal-tools — TR-10 abort ends the call, NOT the session (session
     // The call must RESOLVE (no hang) — the 4-arg execute observes signal.aborted.
     const res = await sendText.execute("call-abort", { sessionId, text: "echo hi" }, ac.signal);
     expect(res).toBeDefined();
-    // The tool threaded the derived owner so the owner-scoped send resolved (RED on
-    // pre-patch: the 2-arg send passes the args object as the owner → not-found empty).
-    expect((res.details as SendResult).screen).toBe("sent");
+    // The tool OBSERVED the aborted signal: it short-circuited to the degraded
+    // snapshot and never forwarded to the registry (RED on pre-patch: the 2-arg
+    // execute drops the signal and DOES forward, so sendTextSpy would be called).
+    expect((res.details as SendResult).screen).toBe("");
+    expect(registry.sendTextSpy).not.toHaveBeenCalled();
 
     // The load-bearing invariant: abort NEVER wires to registry.kill.
     expect(registry.killSpy).not.toHaveBeenCalled();
@@ -1128,8 +1159,9 @@ describe("terminal-tools — TR-10 abort ends the call, NOT the session (session
     ac.abort();
     const res = await sendKey.execute("k", { sessionId, keys: ["C-c"] }, ac.signal);
     expect(res).toBeDefined();
-    // Owner-scoped result reached the tool (RED on pre-patch 2-arg send_key).
-    expect((res.details as SendResult).screen).toBe("key");
+    // Observed the abort → short-circuited, never forwarded (RED on pre-patch 2-arg send_key).
+    expect((res.details as SendResult).screen).toBe("");
+    expect(registry.sendKeySpy).not.toHaveBeenCalled();
     expect(registry.killSpy).not.toHaveBeenCalled();
     expect(registry.get(sessionId, NO_CTX_OWNER)?.status).toBe("running");
   });

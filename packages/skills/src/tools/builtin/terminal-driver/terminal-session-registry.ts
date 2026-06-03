@@ -244,10 +244,11 @@ export interface SessionListing {
 
 /**
  * The registry's public surface. Every session-scoped method takes a REQUIRED
- * `owner` `(agentId, sessionKey)` — NO return-all-when-omitted fallback
- * (no-backward-compat; AGENTS.md §2.9). An owner mismatch is treated EXACTLY as
- * not-found (TR-13/TR-09): the caller sees the empty/degraded view, never another
- * owner's session. `size`/`cleanup` are owner-agnostic (lifecycle, not visibility).
+ * `owner` `(agentId, sessionKey)` — there is NO return-all-when-owner-omitted path
+ * (AGENTS.md §2.9 — see RESEARCH Pitfall 2). An owner mismatch is treated EXACTLY
+ * as not-found (TR-13/TR-09): the caller sees the empty/degraded view, never
+ * another owner's session. `size`/`cleanup` are owner-agnostic (lifecycle, not
+ * visibility).
  */
 export interface TerminalSessionRegistry {
   create(req: CreateRequest, owner: SessionOwner): Promise<CreateResult>;
@@ -529,9 +530,8 @@ export function createTerminalSessionRegistry(
       rows: req.rows,
       lastActivity: nowMs(),
       workspace: ownedWorkspace,
-      // TR-13: stamp the origin so list/read/get/kill/send* are owner-scoped. The
-      // owner rides the HANDLE only — NEVER the worker frame (the worker is
-      // owner-agnostic; ownership is a daemon-side authorization concern).
+      // TR-13: stamp the origin (owner-scoped list/read/get/kill/send*). The owner
+      // rides the HANDLE only — NEVER the worker frame (the worker is owner-agnostic).
       owner,
     };
     sessions.set(sessionId, handle);

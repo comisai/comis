@@ -279,6 +279,9 @@ export function buildTerminalSharedDeps(
     logger: deps.skillsLogger,
     eventBus: deps.eventBus,
     nowMs: systemNowMs,
+    // TR-13 origin-keying: the per-session owner = (tryGetContext().userId ?? agentId,
+    // tryGetContext().sessionKey ?? "") — derived PER CALL inside the tool (resolveOwner),
+    // so the daemon needs no new owner arg. This agentId is the fallback half of that key.
     agentId,
     // SEC-06: the operator approval gate — consulted only when a matched entry sets
     // approveOnCreate (else the create path is unchanged); a demanding entry with no

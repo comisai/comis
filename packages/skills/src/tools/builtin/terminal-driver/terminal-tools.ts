@@ -40,7 +40,7 @@
  * @module
  */
 
-import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentTool, AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import {
   wrapExternalContent,
@@ -59,6 +59,7 @@ import {
   type SendResult,
   type WaitResult,
   type SessionListing,
+  type SessionOwner,
 } from "./terminal-session-registry.js";
 
 // ---------------------------------------------------------------------------
@@ -233,6 +234,27 @@ function readOptInt(p: Record<string, unknown>, key: string): number | undefined
 }
 
 // ---------------------------------------------------------------------------
+// Origin-keying: derive the (agentId, sessionKey) owner per call (TR-13)
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the calling origin `(agentId, sessionKey)` for the owner-scoped registry
+ * calls (TR-13/TR-09). Read from the AsyncLocalStorage `RequestContext`
+ * (`tryGetContext()`) the SAME way the create approval gate already does
+ * (terminal-tools.ts create): `agentId = ctx.userId ?? deps.agentId`, `sessionKey
+ * = ctx.sessionKey ?? ""`. Two subagent runs of one parent get distinct owners
+ * (each subagent `channelId` is `"sub-agent:<uuid>"`, session-key.ts:78-79), so a
+ * subagent sees ONLY its own sessions and siblings are mutually invisible.
+ */
+function resolveOwner(deps: TerminalToolDeps): SessionOwner {
+  const ctx = tryGetContext();
+  return { agentId: ctx?.userId ?? deps.agentId, sessionKey: ctx?.sessionKey ?? "" };
+}
+
+/** The degraded `{screen,cursor}` snapshot a send_text/send_key returns when the turn signal already aborted (TR-10). */
+const ABORTED_SEND: SendResult = { screen: "", cursor: { x: 0, y: 0 } };
+
+// ---------------------------------------------------------------------------
 // create (the gate — SEC-01 / SEC-16 / M-1 / OPS-07)
 // ---------------------------------------------------------------------------
 
@@ -249,12 +271,26 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
       "Start an interactive terminal session driving an allowlisted binary. Rejected unless the canonical command matches an operator allowlist entry.",
     parameters: CreateParams,
 
-    async execute(_id: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
+    // TR-10: the SDK 4-arg execute — the turn's AbortSignal is arg 3. We OBSERVE it
+    // to end the call but abort ends the CALL, NOT the session — never registry.kill.
+    async execute(
+      _id: string,
+      params: Record<string, unknown>,
+      signal?: AbortSignal,
+      _onUpdate?: AgentToolUpdateCallback,
+    ): Promise<AgentToolResult<unknown>> {
       const allowId = readString(params, "allowId") ?? "";
       const command = readString(params, "command") ?? "";
       const args = readStringArray(params, "args");
       const cols = readInt(params, "cols", DEFAULT_COLS);
       const rows = readInt(params, "rows", DEFAULT_ROWS);
+
+      // abort ends the call, NOT the session (TR-10) — never registry.kill here. The
+      // turn already aborted, so do NOT spawn a new session (create is the one
+      // mutating-but-not-yet-existing tool); return an honest not-created result.
+      if (signal?.aborted) {
+        return jsonResult({ sessionId: "", allowId, cols, rows, aborted: true });
+      }
 
       // (1) ALLOWLIST GATE (SEC-01). matchAllowEntry (119-02) resolves the
       // realpath ONCE + the optional hash pin; a non-match rejects BEFORE any
@@ -332,15 +368,19 @@ export function createTerminalSessionCreateTool(deps: TerminalToolDeps): AgentTo
         // allow entry (operator closed config) — NEVER from `params`. The agent has
         // no `scope` create param (CreateParams is closed), so it cannot set or
         // widen the jail; scope rides the create frame to the worker (122-06).
-        result = await deps.registry.create({
-          allowId,
-          bin,
-          argv,
-          cols,
-          rows,
-          scrollback: DEFAULT_SCROLLBACK,
-          scope: matched.entry.scope,
-        });
+        result = await deps.registry.create(
+          {
+            allowId,
+            bin,
+            argv,
+            cols,
+            rows,
+            scrollback: DEFAULT_SCROLLBACK,
+            scope: matched.entry.scope,
+          },
+          // TR-13: stamp the origin so this session is visible ONLY to its owner.
+          resolveOwner(deps),
+        );
       } catch (err) {
         const failedAt = deps.nowMs();
         deps.logger.warn(
@@ -404,7 +444,14 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
     description: "Read the current settled screen + cursor of a terminal session.",
     parameters: ReadParams,
 
-    async execute(_id: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
+    // 4-arg execute (TR-10): observe the turn signal (read is read-only — it never
+    // kills; the owner-scoped read is the load-bearing change).
+    async execute(
+      _id: string,
+      params: Record<string, unknown>,
+      _signal?: AbortSignal,
+      _onUpdate?: AgentToolUpdateCallback,
+    ): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
       // TR-02/14: forward the render params to the worker (closing the 119-04
       // schema-only gap — these were declared but never forwarded). Spec §5
@@ -414,7 +461,12 @@ export function createTerminalSessionReadTool(deps: TerminalToolDeps): AgentTool
       const format = (readString(params, "format") as "text" | "ansi" | "html" | undefined) ?? "text";
       const scrollback = readInt(params, "scrollback", 0);
       const includeAltBuffer = readBool(params, "includeAltBuffer") ?? true;
-      const view: TerminalView = await deps.registry.read(sessionId, { format, scrollback, includeAltBuffer });
+      // TR-13: owner-scoped — a cross-owner read returns the not-found view (alive:false).
+      const view: TerminalView = await deps.registry.read(sessionId, resolveOwner(deps), {
+        format,
+        scrollback,
+        includeAltBuffer,
+      });
       // SEC-15 (§3.6): the driven CLI's screen is a PROMPT-INJECTION vector — it can
       // render attacker-controlled text (a file/web the CLI read) and echo secrets.
       // REDACT secret-shaped values FIRST (so a leaked token never reaches the agent
@@ -441,8 +493,14 @@ export function createTerminalSessionListTool(deps: TerminalToolDeps): AgentTool
     description: "List the terminal sessions owned by the caller.",
     parameters: ListParams,
 
-    async execute(_id: string, _params: object): Promise<AgentToolResult<unknown>> {
-      const rows: SessionListing[] = deps.registry.list();
+    async execute(
+      _id: string,
+      _params: object,
+      _signal?: AbortSignal,
+      _onUpdate?: AgentToolUpdateCallback,
+    ): Promise<AgentToolResult<unknown>> {
+      // TR-13: owner-scoped — the caller sees ONLY its own (agentId, sessionKey) sessions.
+      const rows: SessionListing[] = deps.registry.list(resolveOwner(deps));
       deps.logger.debug({ toolName: "terminal_session_list", count: rows.length, step: "list" }, "terminal sessions listed");
       return jsonResult(rows);
     },
@@ -457,12 +515,23 @@ export function createTerminalSessionKillTool(deps: TerminalToolDeps): AgentTool
     description: "Terminate a terminal session (default SIGTERM).",
     parameters: KillParams,
 
-    async execute(_id: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
+    // 4-arg execute. NOTE: the EXPLICIT kill tool is the agent's intentional
+    // terminate — it is NOT the turn abort. The TR-10 invariant (abort ends the
+    // call, never the session) governs the OTHER tools' abort branch; an explicit
+    // kill request from the agent stands on its own and is honoured here.
+    async execute(
+      _id: string,
+      params: Record<string, unknown>,
+      _signal?: AbortSignal,
+      _onUpdate?: AgentToolUpdateCallback,
+    ): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
+      // TR-13: owner-scoped get+kill — a cross-owner kill is a registry no-op.
+      const owner = resolveOwner(deps);
       // Read the exit code (if the session already exited) BEFORE killing.
-      const handle = deps.registry.get(sessionId);
+      const handle = deps.registry.get(sessionId, owner);
       const exitCode = handle?.exitCode;
-      await deps.registry.kill(sessionId);
+      await deps.registry.kill(sessionId, owner);
       deps.logger.info({ toolName: "terminal_session_kill", sessionId, step: "kill" }, "terminal session killed");
       return jsonResult(exitCode === undefined ? { ok: true } : { ok: true, exitCode });
     },
@@ -493,13 +562,23 @@ export function createTerminalSessionSendTextTool(deps: TerminalToolDeps): Agent
     description: "Type text into a terminal session (optionally submit with Enter after a settle).",
     parameters: SendTextParams,
 
-    async execute(_id: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
+    async execute(
+      _id: string,
+      params: Record<string, unknown>,
+      signal?: AbortSignal,
+      _onUpdate?: AgentToolUpdateCallback,
+    ): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
+      const owner = resolveOwner(deps);
+      // abort ends the call, NOT the session (TR-10) — never registry.kill here. The
+      // turn aborted, so end THIS call with the degraded snapshot; the session stays
+      // alive in the registry for the next turn (session lifetime ⟂ turn lifetime).
+      if (signal?.aborted) return jsonResult(ABORTED_SEND);
       const text = readString(params, "text") ?? "";
       const submit = readBool(params, "submit");
       const bracketedPaste = readBool(params, "bracketedPaste");
       const start = deps.nowMs();
-      const out: SendResult = await deps.registry.sendText(sessionId, { text, submit, bracketedPaste });
+      const out: SendResult = await deps.registry.sendText(sessionId, owner, { text, submit, bracketedPaste });
       deps.logger.info(
         { toolName: "terminal_session_send_text", sessionId, durationMs: deps.nowMs() - start, step: "send_text" },
         "terminal session text sent",
@@ -521,11 +600,19 @@ export function createTerminalSessionSendKeyTool(deps: TerminalToolDeps): AgentT
     description: "Send named key chords (e.g. C-c, Up, S-Tab) to a terminal session.",
     parameters: SendKeyParams,
 
-    async execute(_id: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
+    async execute(
+      _id: string,
+      params: Record<string, unknown>,
+      signal?: AbortSignal,
+      _onUpdate?: AgentToolUpdateCallback,
+    ): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
+      const owner = resolveOwner(deps);
+      // abort ends the call, NOT the session (TR-10) — never registry.kill here.
+      if (signal?.aborted) return jsonResult(ABORTED_SEND);
       const keys = readStringArray(params, "keys");
       const start = deps.nowMs();
-      const out: SendResult = await deps.registry.sendKey(sessionId, { keys });
+      const out: SendResult = await deps.registry.sendKey(sessionId, owner, { keys });
       deps.logger.info(
         { toolName: "terminal_session_send_key", sessionId, durationMs: deps.nowMs() - start, step: "send_key" },
         "terminal session keys sent",
@@ -547,13 +634,21 @@ export function createTerminalSessionResizeTool(deps: TerminalToolDeps): AgentTo
     description: "Resize a terminal session (columns + rows).",
     parameters: ResizeParams,
 
-    async execute(_id: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
+    async execute(
+      _id: string,
+      params: Record<string, unknown>,
+      signal?: AbortSignal,
+      _onUpdate?: AgentToolUpdateCallback,
+    ): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
+      const owner = resolveOwner(deps);
+      // abort ends the call, NOT the session (TR-10) — never registry.kill here.
+      if (signal?.aborted) return jsonResult({ ok: false });
       // cols/rows are required by the schema; the readers fall back defensively.
       const cols = readInt(params, "cols", 0);
       const rows = readInt(params, "rows", 0);
       const start = deps.nowMs();
-      const out = await deps.registry.resize(sessionId, { cols, rows });
+      const out = await deps.registry.resize(sessionId, owner, { cols, rows });
       deps.logger.info(
         { toolName: "terminal_session_resize", sessionId, durationMs: deps.nowMs() - start, step: "resize" },
         "terminal session resized",
@@ -577,14 +672,27 @@ export function createTerminalSessionWaitTool(deps: TerminalToolDeps): AgentTool
     description: "Wait for a terminal session to settle (idle, a text match, or exit); bounded by a timeout.",
     parameters: WaitParams,
 
-    async execute(_id: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
+    async execute(
+      _id: string,
+      params: Record<string, unknown>,
+      signal?: AbortSignal,
+      _onUpdate?: AgentToolUpdateCallback,
+    ): Promise<AgentToolResult<unknown>> {
       const sessionId = readString(params, "sessionId") ?? "";
+      const owner = resolveOwner(deps);
+      // abort ends the call, NOT the session (TR-10) — never registry.kill here.
+      // The turn aborted mid-settle: return the honest not-complete shape (NEVER
+      // isComplete:true — a false true would strand the agent) and leave the session
+      // alive for the next turn to resume the settle.
+      if (signal?.aborted) {
+        return jsonResult({ matched: false, isComplete: false, reason: "aborted", screen: "", cursor: { x: 0, y: 0 } });
+      }
       const forIdleMs = readOptInt(params, "forIdleMs");
       const forText = readString(params, "forText");
       const forExit = readBool(params, "forExit");
       const timeoutMs = readOptInt(params, "timeoutMs");
       const start = deps.nowMs();
-      const out: WaitResult = await deps.registry.wait(sessionId, { forIdleMs, forText, forExit, timeoutMs });
+      const out: WaitResult = await deps.registry.wait(sessionId, owner, { forIdleMs, forText, forExit, timeoutMs });
       deps.logger.debug(
         {
           toolName: "terminal_session_wait",
