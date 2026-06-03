@@ -112,12 +112,12 @@ The queue is a per-session lane on top of a global concurrency gate.
 - **Debouncing** -- The optional debounce buffer coalesces a burst of short
   messages into one envelope before the lane sees it.
 
-The implementation lives in `packages/agent/src/queue/`. Key files:
+The implementation lives in `packages/orchestrator/src/queue/`. Key files:
 
 | File | Purpose |
 |------|---------|
 | `command-queue.ts` | The session-lane queue itself |
-| `priority-scheduler.ts` | Multi-lane scheduling with priorities |
+| `lane.ts` | Per-session lane state (concurrency=1 serialized execution) |
 | `overflow.ts` | The three overflow policies |
 | `debounce-buffer.ts` | Pre-queue coalescing of rapid messages |
 | `coalescer.ts` | The `summarize` overflow strategy |

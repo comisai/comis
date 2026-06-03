@@ -15,7 +15,7 @@ the moment you type a message to the moment you see a reply:
 
 ```mermaid
 flowchart TD
-    A["Message arrives"] --> B["Queue assigns priority"]
+    A["Message arrives"] --> B["Queue serializes per session"]
     B --> C["Router picks agent"]
     C --> D["Session loaded"]
     D --> E["Identity files loaded"]
@@ -45,7 +45,7 @@ Messages enter a queue that controls the order of processing. The queue
 serializes work through a concurrency gate so your agent processes
 messages in a sensible order without getting overwhelmed.
 
-See [Message Queue](/agents/queue) for details on priority lanes and queue
+See [Message Queue](/agents/queue) for details on per-session lanes and queue
 modes.
 
 ### 3. Router picks agent
@@ -173,7 +173,7 @@ and you can verify each one by tailing `~/.comis/logs/comis.log`.
 # 1. Inbound webhook → channel adapter
 INFO  [channel.telegram] message received { chatId: 12345, senderId: 67890, textChars: 28 }
 
-# 2. Queue assigns priority + serializes
+# 2. Queue serializes per session
 DEBUG [queue.command] enqueued { lane: "normal", sessionKey: "telegram:67890:12345", depth: 0 }
 
 # 3. Router picks the agent
