@@ -1306,3 +1306,76 @@ describe("createTerminalWorker — 121-01 read serializes the REAL @xterm grid (
     expect(view.alive).toBe(true);
   });
 });
+
+// ===========================================================================
+// Plan 121-02: the worker read threads format/scrollback into emu.snapshot AND
+// awaits the pending write-parse before serializing (the §2.4 stability flush).
+// ===========================================================================
+
+function readFrameWith(params: { format?: string; scrollback?: number }): TerminalRequestFrame {
+  return {
+    sessionId: "s1",
+    requestId: "rq-read-fmt",
+    traceId: TRACE_ID,
+    method: "read",
+    params: { sessionId: "s1", ...params },
+  };
+}
+
+describe("createTerminalWorker — 121-02 read threads format/scrollback + awaits the write-flush", () => {
+  it("read format:'ansi' returns SGR; format:'text' (default) strips it", async () => {
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }));
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    rec.emit("\x1b[31mRED\x1b[0m");
+    await flushEmulator();
+
+    const ansi = (await worker.handle(readFrameWith({ format: "ansi" }))).result as { screen: string };
+    expect(ansi.screen).toContain("\x1b["); // the worker passed format:'ansi' to emu.snapshot
+    expect(ansi.screen).toContain("RED");
+
+    const text = (await worker.handle(readFrameWith({ format: "text" }))).result as { screen: string };
+    expect(text.screen).not.toContain("\x1b[");
+    expect(text.screen).toContain("RED");
+
+    // An absent/invalid format defaults to text (no SGR).
+    const dflt = (await worker.handle(readFrame())).result as { screen: string };
+    expect(dflt.screen).not.toContain("\x1b[");
+  });
+
+  it("read scrollback:N returns an off-screen line the default read omits", async () => {
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }));
+    // Small-rows session so lines scroll off.
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 5 }));
+
+    for (let i = 1; i <= 12; i++) rec.emit(`LINE-${String(i).padStart(2, "0")}\r\n`);
+    await flushEmulator();
+
+    const dflt = (await worker.handle(readFrame())).result as { screen: string };
+    expect(dflt.screen).not.toContain("LINE-01"); // scrolled off the viewport
+
+    const scrolled = (await worker.handle(readFrameWith({ scrollback: 10 }))).result as { screen: string };
+    expect(scrolled.screen).toContain("LINE-01"); // the worker passed scrollback to emu.snapshot
+  });
+
+  it("read AWAITS the pending write-parse — an immediate read (no manual flush) reflects the chunk (§2.4)", async () => {
+    // The load-bearing stability guarantee: the worker tracks the latest write-
+    // flush promise and `read` awaits it before serializing. With the real async
+    // @xterm write(data, cb), a NON-awaiting read would observe a stale (blank)
+    // grid. Here we emit and IMMEDIATELY read WITHOUT flushEmulator() — the read
+    // must still reflect the just-emitted bytes (RED on the pre-patch path).
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }));
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    rec.emit("\x1b[2J\x1b[Himmediate");
+    // NO flushEmulator() — read must await the pending parse itself.
+    const reply = await worker.handle(readFrame());
+    const view = reply.result as { screen: string; cursor: { x: number; y: number } };
+
+    expect(view.screen).toContain("immediate");
+    expect(view.cursor.x).toBe(9); // "immediate" is 9 chars — the real cursor after the awaited parse
+  });
+});
