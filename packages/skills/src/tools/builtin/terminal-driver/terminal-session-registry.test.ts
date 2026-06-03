@@ -735,3 +735,178 @@ describe("createTerminalSessionRegistry — TR-03 sendKey forwarding", () => {
     expect(out).toEqual({ screen: "", cursor: { x: 0, y: 0 } });
   });
 });
+
+// ===========================================================================
+// 120-03 Task 2 — resize (-> {ok}) and wait (-> {matched,isComplete,reason,screen,cursor})
+// ===========================================================================
+
+describe("createTerminalSessionRegistry — TR-03 resize forwarding", () => {
+  it("forwards a resize frame, returns {ok:true}, and updates the handle geometry", async () => {
+    const fake = makeFakeWorker((req) =>
+      req.method === "resize"
+        ? { sessionId: req.sessionId, requestId: req.requestId, ok: true, result: { ok: true } }
+        : undefined,
+    );
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+
+    const out = await registry.resize(sessionId, { cols: 100, rows: 30 });
+
+    const frame = fake.requestFrames.find((f) => f.method === "resize");
+    expect(frame).toBeDefined();
+    expect(frame?.params["sessionId"]).toBe(sessionId);
+    expect(frame?.params["cols"]).toBe(100);
+    expect(frame?.params["rows"]).toBe(30);
+
+    expect(out).toEqual({ ok: true });
+    // TR-03: the snapshot stays coherent — list()/get() reflect the new geometry.
+    expect(registry.get(sessionId)?.cols).toBe(100);
+    expect(registry.get(sessionId)?.rows).toBe(30);
+  });
+
+  it("returns {ok:false} for an absent session (no throw)", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+    const out = await registry.resize("no-such-session", { cols: 100, rows: 30 });
+    expect(out).toEqual({ ok: false });
+  });
+});
+
+describe("createTerminalSessionRegistry — TR-03 wait forwarding", () => {
+  it("forwards a wait frame and resolves {matched,isComplete,reason,screen,cursor} verbatim", async () => {
+    const fake = makeFakeWorker((req) =>
+      req.method === "wait"
+        ? {
+            sessionId: req.sessionId,
+            requestId: req.requestId,
+            ok: true,
+            result: { matched: true, isComplete: true, reason: "idle", screen: "ready>", cursor: { x: 6, y: 0 } },
+          }
+        : undefined,
+    );
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+
+    const out = await registry.wait(sessionId, { forIdleMs: 120, timeoutMs: 5000 });
+
+    const frame = fake.requestFrames.find((f) => f.method === "wait");
+    expect(frame).toBeDefined();
+    expect(frame?.params["sessionId"]).toBe(sessionId);
+    expect(frame?.params["forIdleMs"]).toBe(120);
+    expect(frame?.params["timeoutMs"]).toBe(5000);
+
+    expect(out).toEqual({
+      matched: true,
+      isComplete: true,
+      reason: "idle",
+      screen: "ready>",
+      cursor: { x: 6, y: 0 },
+    });
+  });
+
+  it("preserves isComplete:false on a worker timeout reply (the load-bearing passthrough)", async () => {
+    const fake = makeFakeWorker((req) =>
+      req.method === "wait"
+        ? {
+            sessionId: req.sessionId,
+            requestId: req.requestId,
+            ok: true,
+            result: { matched: false, isComplete: false, reason: "timeout", screen: "still working", cursor: { x: 2, y: 3 } },
+          }
+        : undefined,
+    );
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+
+    const out = await registry.wait(sessionId, { forIdleMs: 120 });
+    // isComplete:false MUST survive the forward — a flip to true strands the agent.
+    expect(out.isComplete).toBe(false);
+    expect(out.matched).toBe(false);
+    expect(out.reason).toBe("timeout");
+    expect(out.screen).toBe("still working");
+  });
+
+  it("yields the honest not-complete shape on an MR-01 worker-timeout (ok:false) — never isComplete:true, never a hang", async () => {
+    const fake = makeFakeWorker(); // no autoReply → the request() reply timeout fires
+    let firedCb: (() => void) | undefined;
+    const setTimer = vi.fn((cb: () => void) => {
+      firedCb = cb;
+      return { id: 1 } as unknown;
+    });
+    const registry = createTerminalSessionRegistry(
+      baseDeps(() => fake.child, {
+        requestTimeoutMs: 500,
+        setTimer: setTimer as never,
+        clearTimer: vi.fn() as never,
+      }),
+    );
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+
+    const p = registry.wait(sessionId, { forIdleMs: 120 });
+    firedCb?.(); // simulate the MR-01 reply-timeout expiry → ok:false
+    const out = await p;
+    expect(out).toEqual({
+      matched: false,
+      isComplete: false,
+      reason: "timeout",
+      screen: "",
+      cursor: { x: 0, y: 0 },
+    });
+    expect(out.isComplete).toBe(false);
+  });
+
+  it("defaults a missing/odd isComplete to false (never coerces to true) on a malformed reply", async () => {
+    // A reply that OMITS isComplete entirely — the registry must default it to
+    // false, never true (a corrupt worker cannot fake completion).
+    const fake = makeFakeWorker((req) =>
+      req.method === "wait"
+        ? {
+            sessionId: req.sessionId,
+            requestId: req.requestId,
+            ok: true,
+            result: { matched: true, reason: "idle", screen: "x" } as unknown as Record<string, unknown>,
+          }
+        : undefined,
+    );
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+    });
+
+    const out = await registry.wait(sessionId, {});
+    expect(out.isComplete).toBe(false);
+  });
+});
