@@ -18,6 +18,9 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   classifyFrame,
@@ -25,7 +28,11 @@ import {
   type ClassifierFrame,
   type FrameHistory,
 } from "./terminal-classifier.js";
-import type { EmulatorSnapshot } from "./terminal-render.js";
+import {
+  createSessionEmulator,
+  diffSnapshot,
+  type EmulatorSnapshot,
+} from "./terminal-render.js";
 
 // ---------------------------------------------------------------------------
 // Snapshot/frame builders — a small canonical grid the predicate reads.
@@ -236,5 +243,168 @@ describe("isCursorParked — parked at/near the last non-blank prompt row", () =
     const lines = ["fake (y/n) banner on row 0", "real generation", "still rendering below"];
     const screen = lines.join("\n");
     expect(isCursorParked({ x: 5, y: 0 }, screen, COLS, ROWS, ["(y/n)"])).toBe(false);
+  });
+});
+
+// ===========================================================================
+// Plan 124-03 Task 3: the 8-scenario fixture corpus that PINS the classifier
+// (spec §10.4 — de-risks the #1 risk). Each `<scenario>.stream.txt` is replayed
+// through a REAL `createSessionEmulator` (the terminal-golden-frame.test.ts
+// pattern); the worker frame (settled/diffEmpty) is modelled per scenario; the
+// classifier verdict is asserted. The streams are HAND-AUTHORED to the documented
+// `claude` byte patterns (deterministic + reviewable, like the spinner/altscreen
+// goldens) — see fixtures/README.md.
+//
+// REFRESH this corpus on each `claude` version bump (spec §10.4): a render that
+// shifts the cursor position will surface as a failing corpus case here.
+// Pinned against `claude --version` 2.1.161.
+// ===========================================================================
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const FIXTURES = join(HERE, "fixtures");
+
+/**
+ * Replay a committed `<scenario>.stream.txt` through a fresh 80×24 emulator (the
+ * canonical session geometry) and return its grid snapshot. Reads the RAW bytes
+ * latin1 so control sequences round-trip exactly (the golden-frame convention).
+ */
+async function replayCorpusFixture(streamName: string): Promise<EmulatorSnapshot> {
+  const bytes = readFileSync(join(FIXTURES, streamName), "latin1");
+  const emu = createSessionEmulator({ cols: 80, rows: 24, scrollback: 1000 });
+  await emu.write(bytes);
+  const snap = emu.snapshot({ format: "text" });
+  emu.dispose();
+  return snap;
+}
+
+/**
+ * The 8 scenarios + the worker frame each represents + the EXPECTED classifier
+ * state. `settled`/`diffEmpty` model the frame the worker would build at the moment
+ * of classification: a quiesced prompt is `settled+diffEmpty`; a still-streaming
+ * `working` frame is `unsettled`. The load-bearing rows are `thinking-pause`
+ * (settled+diffEmpty but the cursor is mid-screen → working, NOT awaiting-input) and
+ * the three real prompts (settled+diffEmpty + cursor parked → awaiting-input).
+ */
+interface CorpusCase {
+  stream: string;
+  settled: boolean;
+  diffEmpty: boolean;
+  hintPatterns?: readonly string[];
+  expected: "working" | "awaiting-input" | "exited" | "stuck";
+  why: string;
+}
+
+const CORPUS: readonly CorpusCase[] = [
+  {
+    stream: "startup.stream.txt",
+    settled: false,
+    diffEmpty: false,
+    expected: "working",
+    why: "the CLI is still drawing its banner — output flowing, not yet settled",
+  },
+  {
+    stream: "trust-dialog.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    why: "a real trust prompt, settled, cursor parked at the affordance near the bottom",
+  },
+  {
+    stream: "ask-user-question.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    why: "an AskUserQuestion choice menu, settled, cursor parked on the selected option",
+  },
+  {
+    stream: "permission-gate.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    why: "a tool-permission (y/n) gate, settled, cursor parked at the prompt",
+  },
+  {
+    stream: "long-working.stream.txt",
+    settled: false,
+    diffEmpty: false,
+    expected: "working",
+    why: "a long working stream (spinner + streaming output) — unsettled",
+  },
+  {
+    // THE load-bearing negative: settled + diffEmpty (a momentary quiet during
+    // generation) but the cursor is mid-screen in the generation region, NOT parked.
+    stream: "thinking-pause.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "working",
+    why: "a thinking/tool-use pause: settled+diff∅ but cursor mid-screen ⇒ working, NEVER awaiting-input (the #1 de-risk)",
+  },
+  {
+    stream: "completion.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    why: "completion returns to the prompt, settled, cursor parked at the bottom",
+  },
+  {
+    stream: "auth-expired.stream.txt",
+    settled: true,
+    diffEmpty: true,
+    expected: "awaiting-input",
+    why: "an auth/login prompt (expired Max) — settled, cursor parked; 124-04 asserts it ESCALATES",
+  },
+];
+
+describe("classifyFrame — the 8-scenario fixture corpus (spec §10.4; refresh on claude version bump)", () => {
+  const noStuckCorpus: FrameHistory = { noProgressMs: 0, stuckMs: 5_000 };
+
+  for (const c of CORPUS) {
+    it(`pins '${c.stream}' → ${c.expected} (${c.why})`, async () => {
+      const snapshot = await replayCorpusFixture(c.stream);
+      // The worker computes diffEmpty from diffSnapshot(prev,next); for these
+      // single-frame fixtures we model it from the scenario (a real second read
+      // would confirm quiescence). Assert the modelled diff is self-consistent: a
+      // settled+quiet frame diffs empty against itself.
+      const selfDiff = diffSnapshot(snapshot, snapshot);
+      expect(selfDiff.changed).toBe(false);
+
+      const frameForClassify: ClassifierFrame = {
+        alive: true,
+        settled: c.settled,
+        diffEmpty: c.diffEmpty,
+        snapshot,
+        hintPatterns: c.hintPatterns,
+      };
+      const result = classifyFrame(frameForClassify, noStuckCorpus);
+      expect(result.state).toBe(c.expected);
+    });
+  }
+
+  it("the THINKING-PAUSE fixture is classified working, NEVER awaiting-input (the load-bearing assertion)", async () => {
+    const snapshot = await replayCorpusFixture("thinking-pause.stream.txt");
+    // Identical settle/diff inputs to a real prompt (settled + diffEmpty) — ONLY the
+    // cursor position (from the fixture bytes) distinguishes them. The cursor sits
+    // mid-screen in the generation region, so the parked gate refuses to park.
+    expect(
+      isCursorParked(snapshot.cursor, snapshot.screen, snapshot.cols, snapshot.rows),
+    ).toBe(false);
+    const result = classifyFrame(
+      { alive: true, settled: true, diffEmpty: true, snapshot },
+      noStuckCorpus,
+    );
+    expect(result.state).toBe("working");
+    expect(result.state).not.toBe("awaiting-input");
+  });
+
+  it("a real PROMPT fixture (trust-dialog) with the SAME settled+diff∅ inputs IS awaiting-input — proving the cursor gate is what differs", async () => {
+    const snapshot = await replayCorpusFixture("trust-dialog.stream.txt");
+    expect(
+      isCursorParked(snapshot.cursor, snapshot.screen, snapshot.cols, snapshot.rows),
+    ).toBe(true);
+    const result = classifyFrame(
+      { alive: true, settled: true, diffEmpty: true, snapshot },
+      noStuckCorpus,
+    );
+    expect(result.state).toBe("awaiting-input");
   });
 });
