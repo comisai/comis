@@ -144,3 +144,16 @@ export {
   type LoopGuard,
   type LoopGuardDeps,
 } from "./terminal-loop-guard.js";
+
+// P5 124-05 (spec §2.3, TR-11): the transition-only in-worker attention emitter — the
+// WORKER half of the no-poll mechanism. The worker (124-05 Task 2) calls observe() with
+// each settled frame's classification; the emitter writes a redaction-safe
+// TerminalEventFrame to the injected fd3-writer ONLY on a state TRANSITION (edge-, not
+// level-triggered) — NO timer, NO clock. Closure-local last-state; infra-free (only the
+// terminal-ipc framer).
+export {
+  createAttentionEmitter,
+  type AttentionEmitter,
+  type AttentionEmitterDeps,
+  type ObserveOptions,
+} from "./terminal-attention-emitter.js";
