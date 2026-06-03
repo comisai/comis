@@ -40,10 +40,47 @@ export interface AllowMatch {
   hash?: string;
 }
 
-/** A minimal allow entry — `match` is the only field this matcher needs. */
+/**
+ * The per-entry sandbox scope (spec §3.3 / SEC-02) — the EXACT union mirror of the
+ * config `scope` strictObject (the `TerminalAllowEntrySchema.scope` in the core
+ * skills config schema).
+ *
+ * This is the canonical TS contract threaded operator-config → matcher →
+ * `CreateRequest` → the worker create frame, so a later phase (122-06) can
+ * materialize it into a bwrap jail. It is MIRRORED by hand, NOT imported from the
+ * core schema: the matcher is a Wave-1-independent pure `node:fs`/`node:crypto`
+ * primitive (JSDoc :17, :24-25) and must not pull `zod` / the config module in.
+ *
+ * The defaults are LEAST-PRIVILEGE (`filesystem: "workspace"`, `network: "none"`,
+ * `credentialHome: "exclude"`, `uid: "dedicated"`) — applied by the config schema's
+ * `.default(...)`, so an entry that omits a sub-field already arrives least-privilege.
+ * Scope is OPERATOR-DIALABLE ONLY (SEC-03): the agent has no tool param that can
+ * set or widen it (the create tool's TypeBox params expose no `scope` field).
+ */
+export interface TerminalScope {
+  /** Filesystem reach (default `workspace`). `listed-paths` consumes `paths`. */
+  filesystem: "workspace" | "listed-paths" | "home" | "full";
+  /** Extra RW binds for `filesystem: "listed-paths"`. */
+  paths?: string[];
+  /** Egress posture (default `none` = deny-all). `listed-hosts` consumes `hosts`. */
+  network: "none" | "listed-hosts" | "full";
+  /** Allowlisted CONNECT hosts for `network: "listed-hosts"`. */
+  hosts?: string[];
+  /** CLI credential dir (`~/.claude`) visibility (default `exclude` = never bound). */
+  credentialHome: "exclude" | "include";
+  /** Child uid (default `dedicated` = a net-new uid ≠ the daemon). */
+  uid: "dedicated" | "daemon";
+}
+
+/**
+ * A minimal allow entry — `match` resolves the canonical binary; `scope` is the
+ * operator-declared sandbox scope (SEC-02) carried verbatim by {@link matchAllowEntry}.
+ */
 export interface AllowEntryLike {
   id: string;
   match: AllowMatch;
+  /** The per-session sandbox scope (operator config only — SEC-03). */
+  scope: TerminalScope;
 }
 
 /**

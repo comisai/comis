@@ -60,7 +60,9 @@ export {
   type TerminalFrame,
 } from "./terminal-ipc.js";
 
-// The canonical-binary allowlist matcher + the config-mapping types.
+// The canonical-binary allowlist matcher + the config-mapping types. `TerminalScope`
+// is the SEC-02 scope contract the daemon wiring maps config scope onto (122-01 is
+// the SOLE writer of this barrel in Wave 1).
 export {
   matchAllowEntry,
   buildDirectSpawn,
@@ -68,6 +70,7 @@ export {
   type AllowEntryLike,
   type AllowMatch,
   type AllowMatchResult,
+  type TerminalScope,
 } from "./allowlist-matcher.js";
 
 // The supervised worker entry (the daemon wires its production spawn posture).

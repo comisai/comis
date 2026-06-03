@@ -76,6 +76,7 @@ export {
   type FakeWorkerChild,
   type AllowEntryLike,
   type AllowMatch,
+  type TerminalScope,
   type SessionListing,
 } from "./builtin/terminal-driver/index.js";
 export type { InstallDetourDecision, DetourOverlap } from "./builtin/install-detour.js";
