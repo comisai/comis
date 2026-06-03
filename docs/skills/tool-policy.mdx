@@ -37,7 +37,7 @@ a default.
 
 | Profile | Tools Included | Where it applies |
 |---------|---------------|------------------|
-| `cron-minimal` | `web_search`, `message`, `read_file`, `write_file`, `list_dir`, `memory_store`, `memory_search`, `cron`, `discover` | Set on a `CronJob` to constrain what a scheduled run can do |
+| `cron-minimal` | `web_search`, `message`, `read`, `write`, `ls`, `memory_store`, `memory_search`, `cron`, `discover` | Set on a `CronJob` to constrain what a scheduled run can do |
 | `heartbeat-minimal` | `message`, `memory_store`, `memory_search`, `discover` | Set on the heartbeat config so the periodic wake-up cannot do much beyond send a message and update memory |
 
 <Tip>
@@ -58,7 +58,7 @@ Instead of listing individual tools in your allow and deny lists, you can use gr
 | `group:memory` | `memory_search`, `memory_get`, `memory_store` | All memory tools |
 | `group:scheduling` | `cron` | Scheduling tools |
 | `group:messaging` | `message` | Messaging tools |
-| `group:sessions` | `sessions_list`, `sessions_history`, `sessions_send`, `sessions_spawn`, `session_status`, `session_search`, `subagents`, `agents_list`, `pipeline` | All session and agent tools |
+| `group:sessions` | `sessions_list`, `sessions_history`, `sessions_send`, `sessions_spawn`, `session_status`, `session_search`, `subagents`, `pipeline` | All session and agent tools |
 | `group:platform_actions` | `discord_action`, `telegram_action`, `slack_action`, `whatsapp_action` | All platform moderation tools |
 | `group:supervisor` | `agents_manage`, `obs_query`, `sessions_manage`, `memory_manage`, `channels_manage`, `tokens_manage`, `models_manage`, `skills_manage`, `mcp_manage`, `heartbeat_manage` | All supervisor tools |
 | `group:context` | `ctx_search`, `ctx_inspect`, `ctx_recall` | Context DAG search and recall tools |

@@ -10,11 +10,11 @@ automation. These tools are always available unless you restrict them with a
 [tool policy](/skills/tool-policy).
 
 <Info>
-**Where these fit.** Comis ships **58 tools** in total. The 13 documented in
-this page (plus the context tools below) are the framework-level "built-ins"
-that any coding-agent host would have. The remaining tools -- messaging,
-scheduling, sessions, media, fleet admin, etc. -- are
-[platform tools](/skills/platform-tools) layered on top. For per-tool guides
+**Where these fit.** Comis ships **70 tools** in total. The 13 documented in
+this page (plus the context tools and terminal driver tools below) are the
+framework-level "built-ins" that any coding-agent host would have. The
+remaining tools -- messaging, scheduling, sessions, media, fleet admin, etc. --
+are [platform tools](/skills/platform-tools) layered on top. For per-tool guides
 with deeper examples, see the [Agent Tools](/agent-tools/index) tab.
 </Info>
 
@@ -605,6 +605,32 @@ This tool is only available to recall sub-agents spawned by `ctx_recall`. Regula
 <Tip>
 Context tools belong to two tool policy groups: `group:context` includes `ctx_search`, `ctx_inspect`, and `ctx_recall`. `group:context_expand` includes `ctx_expand` and `ctx_inspect`. Use these group names in your [tool policy](/skills/tool-policy) configuration to control access.
 </Tip>
+
+## Terminal Driver
+
+Nine tools for driving interactive terminal sessions (v2.11). Each tool
+requires an operator-configured allowlist (`allowEntries`) -- without a
+matching allowlist entry the tool rejects. Designed for use with the
+bubblewrap sandbox on Linux. See [exec sandbox](/security/exec-sandbox) for
+the bubblewrap sandbox that terminal tools require.
+
+| Tool | Description |
+|------|-------------|
+| `terminal_session_create` | Start an interactive terminal session driving an allowlisted binary. Fail-closed without a sandbox provider. |
+| `terminal_session_read` | Read buffered output from an active terminal session (accumulated bytes since last read). |
+| `terminal_session_list` | List all active terminal sessions for the current agent. |
+| `terminal_session_kill` | Terminate an active terminal session and free its resources. |
+| `terminal_session_send_text` | Write text to a terminal session's stdin. |
+| `terminal_session_send_key` | Send a named keypress (e.g., Enter, Ctrl-C) to a terminal session. |
+| `terminal_session_resize` | Resize a terminal session's pseudo-TTY (cols x rows). |
+| `terminal_session_wait` | Wait for a terminal session to produce matching output or a timeout. |
+| `terminal_session_status` | Registered with its final schema; execute rejects with `[not_implemented]` until the implementation lands. |
+
+<Note>
+`terminal_session_status` is a registered stub -- its schema is final but the
+execute handler immediately returns `[not_implemented]`. All other eight
+terminal tools are fully implemented.
+</Note>
 
 ## Disabling Tools
 
