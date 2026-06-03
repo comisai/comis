@@ -53,7 +53,9 @@ import { sanitizeTraceId, WORKER_TRUST_LEVEL } from "./terminal-worker-context.j
 import {
   buildReadResult,
   createSessionEmulator,
+  diffSnapshot,
   readSnapshotParams,
+  type EmulatorSnapshot,
   type ReadResult,
   type SessionEmulator,
 } from "./terminal-render.js";
@@ -244,6 +246,12 @@ interface SessionState {
    */
   writeFlush?: Promise<void>;
   /**
+   * The previous read's emulator snapshot (P2/121, TR-14). `handleRead` diffs the
+   * new snapshot against this (the per-session screen-diff) then stores the new
+   * one. Closure-local on the session.
+   */
+  lastSnapshot?: EmulatorSnapshot;
+  /**
    * Settle subscribers notified when this session's ring grows (the
    * `onRingChange` half of {@link SettleDeps}). Closure-local per session — NOT
    * module-global. `appendRing` notifies these.
@@ -405,6 +413,11 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
         state.exitListeners.add(cb);
         return () => state.exitListeners.delete(cb);
       },
+      // TR-14: a frame with content below the visible viewport is NOT settleable —
+      // the settle's idle path RE-ARMS instead of resolving idle (more content
+      // below ⇒ keep waiting). The gate can only SUPPRESS an idle-settle, never
+      // force one (exit/text/timeout unaffected).
+      isSettleable: () => !(state.emu?.hasContentBelowFold() ?? false),
     };
     return runSettle(settleDeps, params);
   }
@@ -503,12 +516,21 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       return { screen: "", cursor: { x: 0, y: 0 }, cols: 0, rows: 0, alt: false, alive: false };
     }
     await state.writeFlush;
-    return buildReadResult(state.emu?.snapshot(readSnapshotParams(frame.params)), {
+    const snap = state.emu?.snapshot(readSnapshotParams(frame.params));
+    const result = buildReadResult(snap, {
       ring: state.ring,
       cols: state.cols,
       rows: state.rows,
       alive: state.alive,
     });
+    // TR-14 screen-diff: compare to the prior snapshot, attach the diff, store the
+    // new one as lastSnapshot. Only when an emulator snapshot exists (the diff is
+    // over the rendered grid; the degraded ring-fallback path carries no diff).
+    if (snap !== undefined) {
+      result.diff = diffSnapshot(state.lastSnapshot, snap);
+      state.lastSnapshot = snap;
+    }
+    return result;
   }
 
   /** The not-alive minimal `{screen,cursor}` for an absent/gone session. */

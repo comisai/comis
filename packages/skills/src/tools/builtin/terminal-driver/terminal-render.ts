@@ -311,6 +311,8 @@ export function diffSnapshot(
  * alt-screen flag (P2/121), serialized from the per-session emulator. The raw
  * stdout ring is retained only as the emulator-absent / degraded fallback (NOT a
  * dual path on the live backend). `alive` reflects whether the backend runs.
+ * `diff` is the per-read screen-diff vs the prior read (TR-14, Plan 03) —
+ * ADDITIVE to the P1 view; absent only on the emulator-absent fallback.
  */
 export interface ReadResult {
   screen: string;
@@ -319,6 +321,8 @@ export interface ReadResult {
   rows: number;
   alt: boolean;
   alive: boolean;
+  /** The screen-diff vs the previous read (changed flag + changed-row range); TR-14. */
+  diff?: SnapshotDiff;
 }
 
 /**
