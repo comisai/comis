@@ -5,12 +5,15 @@ icon: "cloud"
 ---
 
 import SecretWarning from '/snippets/secret-warning.mdx';
+import NonTechnicalNote from '/snippets/non-technical-note.mdx';
 
 This guide deploys Comis to [Render.com](https://render.com) using the prebuilt
 Docker Hub image. You get a managed Linux host (so the exec sandbox is fully
 active — unlike Docker Desktop on macOS), automatic HTTPS, a persistent volume
 for memory and configuration, and a public URL within ~5 minutes. No Docker
 installed locally, no server to provision, no kernel to manage.
+
+<NonTechnicalNote />
 
 <Tip>
 **Why Render specifically:** It's the simplest "click-deploy a Docker Hub image

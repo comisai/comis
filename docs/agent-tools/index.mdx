@@ -4,7 +4,7 @@ description: "Master reference for every tool your Comis agents can use"
 icon: "toolbox"
 ---
 
-Comis ships with **58 built-in agent tools** spanning file operations, web access, messaging, scheduling, media processing, browser automation, context management, and administration. This page is the master reference -- every tool listed with its category, description, and link to detailed documentation.
+Comis ships with **70 built-in agent tools** spanning file operations, web access, messaging, scheduling, media processing, browser automation, context management, interactive terminal sessions, and administration. This page is the master reference -- every tool listed with its category, description, and link to detailed documentation.
 
 When an agent receives a message, it decides which tools to use based on what you asked it to do. Need a daily briefing? The agent uses the `cron` tool. Want to send a message to another channel? It uses `message`. Need to analyze an image someone sent? It reaches for `image_analyze`.
 
@@ -16,14 +16,14 @@ Tools fall into three tiers:
 
 | Tier | Count | Description |
 |------|-------|-------------|
-| **Built-in tools** | 58 | Core capabilities shipped with Comis -- file operations, shell commands, web search, browser automation, messaging, scheduling, sessions, media, infrastructure, context, supervisor admin, and platform actions. Available on every agent unless restricted by tool policy. |
+| **Built-in tools** | 70 | Core capabilities shipped with Comis -- file operations, shell commands, web search, browser automation, messaging, scheduling, sessions, media, infrastructure, context, interactive terminal sessions, supervisor admin, and platform actions. Available on every agent unless restricted by tool policy. |
 | **MCP tools** | Configurable | External Model Context Protocol servers -- Anthropic's reference servers, community-built MCP servers, and your own. Discovered at runtime and qualified with `mcp:{server}/{tool}` names. See [MCP Management](/web-dashboard/mcp-management). |
 | **Custom skills** | Unlimited | Markdown-defined "mini-programs" with optional tool restrictions and bin/env requirements. Comis ships 7 built-in skills; you can author your own. See [Skills](/skills/index). |
 
 Tool access is controlled by [tool policy](/skills/tool-policy). By default, agents have access to all tools, but you can restrict access per agent using profiles (like `coding` or `messaging`) or fine-grained allow/deny lists.
 
 <Info>
-All tool names use `snake_case` -- for example, `web_search`, `sessions_spawn`, and `memory_tool`. When referencing tools in configuration files (such as tool policy allow/deny lists), use these exact names.
+All tool names use `snake_case` -- for example, `web_search`, `sessions_spawn`, and `memory_store`. When referencing tools in configuration files (such as tool policy allow/deny lists), use these exact names.
 </Info>
 
 ## Master Reference Table
@@ -51,6 +51,22 @@ File and code tools are always available unless explicitly denied by tool policy
 |------|-------------|-------|
 | `exec` | Sandboxed shell execution with restricted-binary policy | [Built-in Tools](/skills/built-in-tools) |
 | `process` | Background process lifecycle (spawn, kill, status, logs) | [Built-in Tools](/skills/built-in-tools) |
+
+### Terminal (Interactive Shell)
+
+Interactive terminal sessions for driving allowlisted binaries (added in v2.11). Requires an operator-configured `allowEntries` allowlist -- without a matching entry the tool rejects. Requires bubblewrap sandbox on Linux. See [exec sandbox](/security/exec-sandbox).
+
+| Tool | Description | Guide |
+|------|-------------|-------|
+| `terminal_session_create` | Start an interactive terminal session driving an allowlisted binary. | [Built-in Tools](/skills/built-in-tools) |
+| `terminal_session_read` | Read buffered output from an active session (accumulated since last read). | [Built-in Tools](/skills/built-in-tools) |
+| `terminal_session_list` | List all active terminal sessions for the current agent. | [Built-in Tools](/skills/built-in-tools) |
+| `terminal_session_kill` | Terminate an active terminal session and free its resources. | [Built-in Tools](/skills/built-in-tools) |
+| `terminal_session_send_text` | Write text to a terminal session's stdin (optionally submit with Enter after a settle). | [Built-in Tools](/skills/built-in-tools) |
+| `terminal_session_send_key` | Send named key chords (e.g., Enter, Ctrl-C, S-Tab) to a terminal session. | [Built-in Tools](/skills/built-in-tools) |
+| `terminal_session_resize` | Resize a terminal session's pseudo-TTY (cols x rows). | [Built-in Tools](/skills/built-in-tools) |
+| `terminal_session_wait` | Wait for a terminal session to produce matching output or a timeout. | [Built-in Tools](/skills/built-in-tools) |
+| `terminal_session_status` | Registered with final schema; execute rejects with `[not_implemented]` (stub). | [Built-in Tools](/skills/built-in-tools) |
 
 ### Web & Browser (3 tools)
 
@@ -86,11 +102,13 @@ Session tools let agents manage their conversations, communicate with other agen
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `session_tool` | Unified session management with 4 actions: `search`, `status`, `history`, `list` | [Sessions](/agent-tools/sessions) |
+| `session_search` | Search session history by query | [Sessions](/agent-tools/sessions) |
+| `session_status` | Get the current session status | [Sessions](/agent-tools/sessions) |
+| `sessions_history` | Retrieve session history entries | [Sessions](/agent-tools/sessions) |
+| `sessions_list` | List all sessions for the current agent | [Sessions](/agent-tools/sessions) |
 | `sessions_send` | Send a message into another session in 3 modes (`fire-and-forget`, `wait`, `ping-pong`) | [Sessions](/agent-tools/sessions) |
 | `sessions_spawn` | Spawn a sub-agent session with workspace isolation, artifact refs, and an optional objective | [Sessions](/agent-tools/sessions) |
 | `subagents` | Manage running sub-agents (`list`, `kill`, `steer`) | [Sessions](/agent-tools/sessions) |
-| `agents_list` | List all configured agent IDs | [Sessions](/agent-tools/sessions) |
 
 ### Pipelines (Execution Graphs)
 
@@ -119,26 +137,40 @@ Memory tools give agents access to their long-term memory. Agents automatically 
 
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `memory_tool` | Unified memory management with 4 actions: `get` (read by path), `search` (hybrid text + vector), `store` (persist with secret-detection guard), `manage` (admin CRUD: stats, browse, delete, flush, export) | [Sessions](/agent-tools/sessions#memory_tool) |
+| `memory_get` | Retrieve a memory entry by key | [Sessions](/agent-tools/sessions#memory-tools-long-term-memory) |
+| `memory_manage` | Create, update, or delete memory entries | [Sessions](/agent-tools/sessions#memory-tools-long-term-memory) |
+| `memory_search` | Semantic search over agent memory (hybrid text + vector) | [Sessions](/agent-tools/sessions#memory-tools-long-term-memory) |
+| `memory_store` | Store a new memory entry (secret-detection guard applied) | [Sessions](/agent-tools/sessions#memory-tools-long-term-memory) |
+| `memory_ask` | Grounded natural-language answer over the agent's recall pipeline. Opt-in: requires `dialectic.enabled: true` in agent config. | [Sessions](/agent-tools/sessions#memory-tools-long-term-memory) |
 
 ### Context (Conversation DAG)
 
 The `context_tool` lets agents inspect their compressed conversation history. Each request the agent processes is stored as a node in a directed acyclic graph; the context tool searches, recalls, inspects, and expands these nodes.
 
+In pipeline mode, four individual tools expose the same underlying operations. In DAG mode, `context_tool` is used instead.
+
 | Tool | Description | Guide |
 |------|-------------|-------|
-| `context_tool` | Unified context DAG management with 4 actions: `search`, `recall`, `inspect`, `expand` | [Context Management](/context-management) |
+| `context_tool` | Unified context DAG management with 4 actions: `search`, `recall`, `inspect`, `expand` | [Context Management](/agents/context-management) |
+| `ctx_expand` | Expand context entries (pipeline mode). In DAG mode, use `context_tool` instead. | [Context Management](/agents/context-management) |
+| `ctx_inspect` | Inspect individual context entries (pipeline mode). In DAG mode, use `context_tool` instead. | [Context Management](/agents/context-management) |
+| `ctx_recall` | Recall context by semantic query (pipeline mode). In DAG mode, use `context_tool` instead. | [Context Management](/agents/context-management) |
+| `ctx_search` | Search context by keyword (pipeline mode). In DAG mode, use `context_tool` instead. | [Context Management](/agents/context-management) |
 
 ### Infrastructure
 
-These platform-management tools let agents inspect or modify the running Comis daemon. The `gateway` tool drives configuration and the secret store; `background_tasks` inspects the long-running task queue; `mcp_manage` reaches into the MCP client manager. The deep-dive `browser` automation guide is on its own page.
+These platform-management tools let agents inspect or modify the running Comis daemon. The `gateway` tool drives configuration and the secret store; `background_tasks` inspects the long-running task queue; `mcp_manage` reaches into the MCP client manager. See also: `browser` (listed under the [Web and Browser](#web--browser-3-tools) section).
 
 | Tool | Description | Guide |
 |------|-------------|-------|
 | `gateway` | Configuration management and gateway control (11 actions: read, patch, apply, restart, schema, status, history, diff, rollback, env_set, env_list) | [Infrastructure](/agent-tools/infrastructure) |
 | `background_tasks` | Inspect and manage background task queue (list, get, cancel, read_output) | [Infrastructure](/agent-tools/infrastructure) |
 | `mcp_manage` | MCP server lifecycle (list, status, connect, disconnect, reconnect) | [Infrastructure](/agent-tools/infrastructure) |
-| `browser` | Orchestrator entry point -- see the [Browser](/agent-tools/browser) deep dive for all 16 actions and 11 `act` sub-kinds | [Browser](/agent-tools/browser) |
+| `mcp_login` | MCP provider OAuth login (e.g., for Higgsfield and other MCP services that require authentication) | [Infrastructure](/agent-tools/infrastructure) |
+| `get_prompt` | Fetch a named prompt from a connected MCP server. Conditional: active only when a connected server advertises prompts. | [Infrastructure](/agent-tools/infrastructure) |
+| `list_prompts` | List available prompts from connected MCP servers. Conditional: active only when a connected server advertises prompts. | [Infrastructure](/agent-tools/infrastructure) |
+| `list_resources` | List available resources from connected MCP servers. Conditional: active only when a connected server advertises resources. | [Infrastructure](/agent-tools/infrastructure) |
+| `read_resource` | Read a specific resource from a connected MCP server. Conditional: active only when a connected server advertises resources. | [Infrastructure](/agent-tools/infrastructure) |
 
 ### Supervisor
 
@@ -153,12 +185,13 @@ Supervisor tools can modify agents, delete sessions, flush memory, and manage ga
 | `agents_manage` | Agent fleet management (create, get, update, delete, suspend, resume) | [Infrastructure](/agent-tools/infrastructure) |
 | `obs_query` | Observability and metrics queries (diagnostics, billing, delivery, channels) | [Infrastructure](/agent-tools/infrastructure) |
 | `sessions_manage` | Session lifecycle management (delete, reset, export, compact) | [Infrastructure](/agent-tools/infrastructure) |
-| `memory_manage` | Memory lifecycle management (stats, browse, delete, flush, export) | [Infrastructure](/agent-tools/infrastructure) |
 | `channels_manage` | Channel adapter management (list, get, enable, disable, restart, configure) | [Infrastructure](/agent-tools/infrastructure) |
 | `tokens_manage` | Gateway token management (list, create, revoke, rotate) | [Infrastructure](/agent-tools/infrastructure) |
 | `models_manage` | Model catalog queries (list, test) | [Infrastructure](/agent-tools/infrastructure) |
+| `providers_manage` | Manage model provider configurations (add, remove, update providers) | [Infrastructure](/agent-tools/infrastructure) |
 | `skills_manage` | Skill lifecycle management (list, import, delete) with per-agent scope | [Infrastructure](/agent-tools/infrastructure) |
-| `heartbeat_manage` | Configure agent heartbeats (get, update, status, trigger) | [Scheduling](/agent-tools/scheduling) |
+
+See also: `heartbeat_manage` (listed under the [Scheduling](#scheduling) section).
 
 ### Platform Actions
 
@@ -214,7 +247,7 @@ Not sure which tool you need? Start here. The table below maps common tasks to t
 | Scrape a JavaScript-heavy site | `browser` (`navigate`, `snapshot`, `act`) | [Browser](/agent-tools/browser) |
 | Kick a user from Discord | `discord_action` (action: `kick`) | [Platform Actions](/agent-tools/platform-actions) |
 | Pin the first message of the day | `discord_action` / `telegram_action` / `slack_action` (action: `pin`) | [Platform Actions](/agent-tools/platform-actions) |
-| Remember something for later | `memory_tool` (action: `store`) | [Sessions](/agent-tools/sessions#memory_tool) |
+| Remember something for later | `memory_store` | [Sessions](/agent-tools/sessions#memory-tools-long-term-memory) |
 | Read a PDF attachment | `extract_document` | [Media](/agent-tools/media) |
 | Check what's scheduled | `cron` (action: `list`) | [Scheduling](/agent-tools/scheduling) |
 | Toggle a config value | `gateway` (action: `patch` then `apply`) | [Infrastructure](/agent-tools/infrastructure) |

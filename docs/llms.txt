@@ -46,7 +46,7 @@
 - [Slash Commands](https://docs.comis.ai/agents/slash-commands): All the commands you can type to control your agent
 - [Sessions](https://docs.comis.ai/agents/sessions): How Comis manages conversations between you and your agent
 - [Subagent Context Lifecycle](https://docs.comis.ai/agents/subagent-lifecycle): How Comis prepares, runs, and captures results from sub-agent sessions
-- [Context Management](https://docs.comis.ai/context-management): Plain-language overview of the 10-layer context engine pipeline that keeps conversations in budget
+- [Context Management](https://docs.comis.ai/agents/context-management): Plain-language overview of the 10-layer context engine pipeline that keeps conversations in budget
 - [Compaction](https://docs.comis.ai/agents/compaction): How Comis automatically manages conversation length
 - [Memory Recall (RAG)](https://docs.comis.ai/agents/rag): How your agent remembers past conversations when answering new questions
 - [Message Queue](https://docs.comis.ai/agents/queue): How Comis handles multiple messages and ensures orderly processing
@@ -145,9 +145,9 @@
 
 - [Developer Guide](https://docs.comis.ai/developer-guide): Extend Comis with custom adapters, plugins, skills, and execution pipelines
 - [Architecture](https://docs.comis.ai/developer-guide/architecture): Hexagonal architecture, ports, adapters, and the composition root
-- [Packages](https://docs.comis.ai/developer-guide/packages): All 13 packages with roles, key exports, and dependency relationships
-- [Event Bus](https://docs.comis.ai/developer-guide/event-bus): 160 typed events across 4 domain subsystems for cross-module communication
-- [Delivery Pipeline](https://docs.comis.ai/architecture/delivery-pipeline): How outbound messages flow from agent response through crash-safe persistence to channel delivery
+- [Packages](https://docs.comis.ai/developer-guide/packages): All 15 packages with roles, key exports, and dependency relationships
+- [Event Bus](https://docs.comis.ai/developer-guide/event-bus): 183 typed events across 5 domain subsystems for cross-module communication
+- [Delivery Pipeline](https://docs.comis.ai/developer-guide/architecture/delivery-pipeline): How outbound messages flow from agent response through crash-safe persistence to channel delivery
 - [Custom Adapters](https://docs.comis.ai/developer-guide/custom-adapters): Build a channel adapter from the ChannelPort interface to a working platform integration
 - [Plugins](https://docs.comis.ai/developer-guide/plugins): 13 lifecycle hooks (5 modifying, 8 void) and 4 extension registrations for customizing Comis behavior
 - [Custom Skills](https://docs.comis.ai/developer-guide/custom-skills): Advanced skill development with SkillPort, manifests, content scanning, and MCP integration
@@ -161,7 +161,7 @@
 - [Environment Variables](https://docs.comis.ai/reference/environment-variables): Complete reference for all Comis environment variables
 - [Hot Reload](https://docs.comis.ai/reference/hot-reload): Config and skill hot reload mechanism reference covering SIGUSR1 restart and chokidar file watching
 - [Secret Manager](https://docs.comis.ai/reference/secret-manager): Secret management system technical reference covering SecretManager interface, encryption, scoping, and audit
-- [Delivery Queue](https://docs.comis.ai/configuration/delivery-queue): Crash-safe outbound message persistence, recovery, and delivery queue configuration reference
+- [Delivery Queue](https://docs.comis.ai/reference/configuration/delivery-queue): Crash-safe outbound message persistence, recovery, and delivery queue configuration reference
 - [Security Model](https://docs.comis.ai/reference/security-model): Complete technical reference for all security mechanisms, thresholds, patterns, and configuration
 - [Sandbox](https://docs.comis.ai/reference/sandbox): Skill sandboxing implementation reference covering content scanning, sanitization, tool policy, and execution limits
 - [Safe Path](https://docs.comis.ai/reference/safe-path): Path traversal prevention reference with 5 attack vector defenses

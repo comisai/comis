@@ -15,12 +15,12 @@ The Scheduler view lets you set up recurring tasks that run automatically on a s
 
 ## Backing RPC
 
-- `scheduler.list` -- jobs list
-- `scheduler.get(jobId)` -- single job + history
-- `scheduler.create(config)`, `scheduler.update(jobId, config)`, `scheduler.delete(jobId)` -- CRUD (writes back to `config.yaml` `scheduler` section)
-- `scheduler.run(jobId)` -- trigger immediately
-- `scheduler.history(limit?)` -- recent executions
-- `scheduler.heartbeat.*` -- per-agent heartbeat config and recent alerts/deliveries
+- `cron.list` -- jobs list
+- `cron.add(config)`, `cron.update(jobId, config)`, `cron.remove(jobId)` -- CRUD (writes back to `config.yaml` `scheduler` section)
+- `cron.run(jobId)` -- trigger immediately
+- `cron.runs(limit?)` -- recent executions
+- `cron.status(jobId)` -- single job status
+- `scheduler.wake` -- wake a sleeping heartbeat agent
 - `tasks.list` / `tasks.complete` / `tasks.dismiss` -- extracted-tasks tab
 
 Refresh is on demand; cards reload after each action.

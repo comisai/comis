@@ -1,10 +1,10 @@
 ---
 title: "Packages"
-description: "All 13 packages with roles, key exports, and dependency relationships"
+description: "All 15 packages with roles, key exports, and dependency relationships"
 icon: "cubes"
 ---
 
-Comis is structured as a monorepo with 13 TypeScript packages under `packages/`. Each package has a single responsibility, exports a public API via `dist/index.js`, and follows strict dependency rules -- always importing inward toward `@comis/core`, never across sibling packages' internals.
+Comis is structured as a monorepo with 15 TypeScript packages under `packages/`. Each package has a single responsibility, exports a public API via `dist/index.js`, and follows strict dependency rules -- always importing inward toward `@comis/core`, never across sibling packages' internals.
 
 All packages use ES modules (`"type": "module"`), strict TypeScript with `composite: true` project references, and ES2023 as the compilation target.
 
@@ -23,6 +23,8 @@ All packages use ES modules (`"type": "module"`), strict TypeScript with `compos
 | channels | `@comis/channels` | 10 platform adapters (Discord, Telegram, Slack, WhatsApp, Signal, iMessage, LINE, IRC, Echo, Email) | Channel adapters, message mappers, media resolvers |
 | cli | `@comis/cli` | Commander.js CLI, JSON-RPC client | CLI commands, RPC client |
 | daemon | `@comis/daemon` | Orchestrator, observability, graph coordinator | `DaemonInstance`, wiring, graph coordinator |
+| observability | `@comis/observability` | Diagnostics substrate: queued writer, payload bounding, sanitization, cache-trace runtime, EventBus bridge, cache-stats aggregation and RPC | Diagnostics runtime, cache-trace recorder, stats aggregator |
+| orchestrator | `@comis/orchestrator` | Inbound pipeline, execution coordination, channel-manager, command queue, routing, and cross-session messaging | Pipeline coordinator, channel manager, command router |
 | comis | `comisai` | Umbrella package (namespace re-exports) and `comis` CLI bin | Namespace re-exports of all sub-packages |
 | web | `@comis/web` | Lit + Vite + Tailwind standalone SPA | Web dashboard views and components |
 
@@ -177,10 +179,10 @@ Integration tests in `test/integration/` require `pnpm build` first because they
 
 The Comis monorepo contains approximately:
 
-- **~1185 source files** across 13 packages
+- **~1185 source files** across 15 packages
 - **~944 test files** co-located with source code
 - **19 port interfaces** defining the hexagonal architecture boundaries
-- **160 typed events** across 4 domain subsystems (Messaging, Agent, Channel, Infra)
+- **183 typed events** across 5 domain subsystems (Messaging, Agent, Channel, Infra, Terminal) — see [Event Bus](/developer-guide/event-bus) for the full per-subsystem breakdown
 - **13 lifecycle hooks** for plugin integration (5 modifying, 8 void)
 - **10 channel adapters** connecting to real-world chat platforms
 

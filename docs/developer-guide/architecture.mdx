@@ -6,7 +6,7 @@ icon: "hexagon"
 
 Comis follows hexagonal architecture (ports and adapters). The core domain defines port interfaces that describe what the system needs. Adapter packages implement those interfaces with platform-specific code. This separation means you can swap implementations (e.g., replace SQLite memory with PostgreSQL) without touching the core, and the core compiles without knowing which adapters exist.
 
-All 13 packages adhere to this pattern. The dependency direction is always inward -- adapters depend on ports, never on each other.
+All 15 packages adhere to this pattern. The dependency direction is always inward -- adapters depend on ports, never on each other.
 
 ## Hexagonal Pattern
 
@@ -265,6 +265,8 @@ graph TD
     scheduler["@comis/scheduler<br/>Cron, heartbeat"]
     agent["@comis/agent<br/>Executor, sessions, RAG"]
     channels["@comis/channels<br/>Platform adapters"]
+    observability["@comis/observability<br/>Diagnostics, cache-trace, EventBus bridge"]
+    orchestrator["@comis/orchestrator<br/>Inbound pipeline, channel-manager, routing"]
     cli["@comis/cli<br/>CLI commands"]
     daemon["@comis/daemon<br/>Orchestrator"]
 
@@ -281,6 +283,11 @@ graph TD
     core --> channels
     agent --> channels
     infra --> channels
+    core --> observability
+    core --> orchestrator
+    agent --> orchestrator
+    channels --> orchestrator
+    orchestrator --> daemon
     core --> cli
     memory --> cli
     agent --> cli

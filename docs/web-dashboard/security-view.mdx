@@ -18,8 +18,8 @@ The Security view is your command center for reviewing what your agents are doin
 - `security.events(...)` -- streaming security event log (SSE-backed)
 - `security.audit(days?, action?)` -- filtered historical audit log
 - `security.permissions` -- role/permission matrix
-- `security.tokens.list` / `security.tokens.create` / `security.tokens.revoke` -- API token CRUD
-- `security.secrets.list` / `security.secrets.update` / `security.secrets.delete` -- secret-store control
+- `tokens.list` / `tokens.create` / `tokens.revoke` -- API token CRUD
+- `secrets.list` / `secrets.set` / `secrets.delete` -- secret-store control
 - `security.providerHealth` -- circuit-breaker state per provider
 - `approvals.list` -- pending queue
 - `approvals.respond(approvalId, decision, comment?)` -- approve / deny

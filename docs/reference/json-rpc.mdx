@@ -1,12 +1,14 @@
 ---
 title: "JSON-RPC Methods Reference"
-description: "Complete reference for all 180 JSON-RPC methods across 36 namespaces"
+description: "Complete reference for all 167 JSON-RPC methods across 39 namespaces"
 icon: "code"
 ---
 
 **What this is for:** every JSON-RPC method the daemon exposes — what to send, what comes back, and which scope you need. **Who it's for:** developers building CLIs, dashboards, or external integrations against the Comis gateway.
 
-Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 180 methods across 36 namespaces (counted from `packages/daemon/src/rpc/*-handlers.ts`) covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
+Complete reference for all JSON-RPC methods available over the Comis gateway WebSocket and HTTP transports. The gateway exposes 167 methods across 39 namespaces covering agent execution, memory, configuration, sessions, scheduling, browser automation, context engine, workspace management, media processing, image generation, text-to-speech, link enrichment, cross-channel messaging, sub-agent lifecycle, platform actions, notifications, environment secrets, and administrative operations. Methods are accessed via the JSON-RPC 2.0 protocol over the [WebSocket endpoint](/reference/websocket) at `/ws` or the HTTP endpoint at `POST /rpc`.
+
+Method count is sourced from `packages/core/src/api-contracts/` contract files (167 unique method strings across 39 namespaces). The 29 handler-factory modules in `packages/daemon/src/api/rpc-dispatch.ts` implement these contracts. Some older handler files may use additional direct-keyed methods not yet covered by the contracts layer; 167 represents the formally declared public API surface.
 
 ## Session-creation walkthrough
 

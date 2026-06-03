@@ -1,6 +1,6 @@
 ---
 title: "Event Bus"
-description: "Typed events across 4 domain subsystems for cross-module communication"
+description: "Typed events across 5 domain subsystems for cross-module communication"
 icon: "tower-broadcast"
 ---
 
@@ -8,7 +8,7 @@ Comis uses a `TypedEventBus` for cross-module communication. Instead of packages
 
 ## How It Works
 
-The `TypedEventBus` wraps Node.js `EventEmitter` with a type-safe generic interface. All typed events are defined in the `EventMap` interface, which is composed from 4 domain-specific sub-interfaces (`MessagingEvents`, `AgentEvents`, `ChannelEvents`, `InfraEvents`).
+The `TypedEventBus` wraps Node.js `EventEmitter` with a type-safe generic interface. All typed events are defined in the `EventMap` interface, which is composed from 5 domain-specific sub-interfaces (`MessagingEvents`, `AgentEvents`, `ChannelEvents`, `InfraEvents`, `TerminalEvents`).
 
 API methods include `emit()`, `on()`, `off()`, `once()`, `removeAllListeners()`, `listenerCount()`, and `setMaxListeners()`. All methods are constrained by `EventMap` -- you cannot emit an event name that does not exist in the map, and every payload is type-checked at compile time.
 
@@ -32,14 +32,15 @@ eventBus.emit("tool:executed", {
 
 ## Event Naming Convention
 
-Events follow a `subsystem:action` naming pattern (for example, `message:received`, `tool:executed`, `graph:started`). Events are organized into 4 subsystems:
+Events follow a `subsystem:action` naming pattern (for example, `message:received`, `tool:executed`, `graph:started`). Events are organized into 5 subsystems:
 
 | Subsystem | Event Count | Scope |
 |-----------|-------------|-------|
-| `MessagingEvents` | 37 | Message lifecycle, sessions, subagent lifecycle, compaction, context, execution control, announcements |
-| `AgentEvents` | 36 | Skills, tools, audit, observability, model selection, security, graphs, cache, SEP |
-| `ChannelEvents` | 44 | Channel lifecycle, queuing, streaming, typing, auto-reply, policies, delivery, steer |
-| `InfraEvents` | 46 | Approvals, config, plugins, hooks, auth, diagnostics, media, scheduler, system, MCP, notifications, background tasks |
+| `MessagingEvents` | 38 | Message lifecycle, sessions, subagent lifecycle, compaction, context, execution control, announcements |
+| `AgentEvents` | 43 | Skills, tools, audit, observability, model selection, security, graphs, cache, SEP |
+| `ChannelEvents` | 43 | Channel lifecycle, queuing, streaming, typing, auto-reply, policies, delivery, steer |
+| `InfraEvents` | 55 | Approvals, config, plugins, hooks, auth, diagnostics, media, scheduler, system, MCP, notifications, background tasks |
+| `TerminalEvents` | 4 | Terminal session lifecycle, keystrokes, session eviction |
 
 ## Most Commonly Used Events
 
@@ -64,7 +65,7 @@ A quick reference for the events developers are most likely to need when buildin
 
 <AccordionGroup>
 
-<Accordion title="MessagingEvents (37 events)">
+<Accordion title="MessagingEvents (38 events)">
 
 Message lifecycle, session management, subagent lifecycle, compaction, context engine lifecycle, context engine metrics, response filtering, execution control, and dead-letter queue events.
 
@@ -120,7 +121,7 @@ See [Compaction](/agents/compaction) for details on what triggers each event.
 
 </Accordion>
 
-<Accordion title="AgentEvents (36 events)">
+<Accordion title="AgentEvents (43 events)">
 
 Skill lifecycle, tool execution, audit logging, observability (tokens and latency), cache break detection, model failover, security, execution graph, provider health, SEP (step-execution planning), and exec command blocking events.
 
@@ -179,7 +180,7 @@ Subscribe to this event for driver-level monitoring, logging, or triggering down
 
 </Accordion>
 
-<Accordion title="ChannelEvents (44 events)">
+<Accordion title="ChannelEvents (43 events)">
 
 Channel registration, sender blocking, command queuing, streaming delivery, typing indicators, auto-reply, send policies, debounce, group history, follow-up chains, priority lanes, elevated routing, retry engine, ack reactions, steer lifecycle, block coalescing, unified delivery pipeline, delivery queue, channel health monitoring, delivery hooks, and sub-agent proxy typing events.
 
@@ -232,7 +233,7 @@ Channel registration, sender blocking, command queuing, streaming delivery, typi
 
 </Accordion>
 
-<Accordion title="InfraEvents (46 events)">
+<Accordion title="InfraEvents (55 events)">
 
 Approval gates, config patches, plugin lifecycle, hook execution, auth token rotation, diagnostics, media file extraction, scheduler (cron, heartbeat, tasks), process metrics, observability admin, agent hot-add/remove, MCP server connection lifecycle, notifications, background task lifecycle, system lifecycle, secret management, security warnings, and lifecycle reaction events.
 
@@ -283,6 +284,21 @@ Approval gates, config patches, plugin lifecycle, hook execution, auth token rot
 | `security:warn` | category, agentId, message, timestamp |
 | `system:error` | error, source |
 | `system:shutdown` | reason, graceful |
+
+</Accordion>
+
+<Accordion title="TerminalEvents (4 events)">
+
+Terminal session lifecycle, spawn failures, keystroke forwarding, and session pool eviction events.
+
+| Event Name | Key Payload Fields |
+|------------|-------------------|
+| `terminal:session_state` | Terminal session state change (created, active, idle, closed) |
+| `terminal:spawn_failed` | Terminal session spawn failed |
+| `terminal:keystroke` | Keystroke sent to a terminal session |
+| `terminal:session_evicted` | Terminal session evicted from the session pool |
+
+**Source:** `packages/core/src/event-bus/events-terminal.ts`
 
 </Accordion>
 

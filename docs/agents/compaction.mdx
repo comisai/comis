@@ -9,7 +9,7 @@ handle efficiently. Comis offers two context engine modes to manage long
 conversations. The default **DAG** mode preserves your full conversation history
 in a lossless directed acyclic graph with recall tools, so nothing is thrown away
 — `contextEngine.version` defaults to `"dag"`. The opt-out **pipeline** mode
-(`version: "pipeline"`) instead processes every conversation through eight steps
+(`version: "pipeline"`) instead processes every conversation through ten layers
 before each AI call, dropping and masking old content as it goes. The result:
 your agent never runs out of room to think.
 
@@ -23,9 +23,9 @@ chapters, masks old footnotes, summarizes if the manuscript is still too long,
 and restores key references at the end. All of this happens automatically in the
 background, and you do not need to configure or monitor it.
 
-## The eight steps (pipeline mode, the opt-out engine)
+## The ten layers (pipeline mode, the opt-out engine)
 
-These eight steps run only in **pipeline** mode — the opt-out engine you reach by
+These ten layers run only in **pipeline** mode — the opt-out engine you reach by
 setting `contextEngine.version: "pipeline"`. (The default DAG engine handles long
 conversations differently; see [DAG mode](#dag-mode) below.) Here is what happens
 during each step, in order:
@@ -227,7 +227,7 @@ Every pipeline run logs structured metrics so you can see exactly what the conte
 
 ## Advanced compaction strategies
 
-Beyond the eight pipeline steps, Comis includes three additional strategies that improve compaction quality and cache efficiency.
+Beyond the ten pipeline layers, Comis includes three additional strategies that improve compaction quality and cache efficiency.
 
 ### Middle-out compaction
 
@@ -266,7 +266,7 @@ DAG compresses it into hierarchical summaries. Your agent can recall any past
 content through search and inspection tools -- nothing is ever truly lost.
 
 Because `contextEngine.version` defaults to `"dag"`, this is what your agent runs
-out of the box — no configuration required. To opt out and run the eight-step
+out of the box — no configuration required. To opt out and run the ten-layer
 pipeline instead, set `version: "pipeline"`. See [Switching modes](#switching-modes)
 below.
 
@@ -328,7 +328,7 @@ leaving the DAG's stored content intact for a later switch-back. `contextEngine.
 is operator-only — an agent cannot switch its own engine mode via the `config.patch`
 RPC. For the full switching semantics (including the `context:mode_switched` event
 and the security boundary), see
-[Switching context modes](/context-management#switching-context-modes-operator-safe).
+[Switching context modes](/agents/context-management#switching-context-modes-operator-safe).
 
 ## Configuration
 

@@ -216,6 +216,22 @@ command line rather than through the interactive prompt. See `comis init --help`
 for all 27 available flags.
 </Info>
 
+<Tip>
+**OpenAI Codex on a headless server?** If you are setting up on an SSH-only Linux
+server and pick `openai-codex` as your provider, the wizard auto-selects
+Device code login (no browser needed). You can also run it manually at any time:
+
+```bash
+comis auth login --provider openai-codex --method device-code
+```
+
+The CLI prints a short code and the URL `https://auth.openai.com/codex/device`.
+Open that URL on a phone or laptop browser, sign into ChatGPT, and enter the code.
+The CLI polls every 5 seconds and completes when the code is accepted (15-minute timeout).
+For the full walkthrough including multi-account profiles, see
+[Install on a VPS](/installation/install-vps#codex-oauth-on-headless-hosts).
+</Tip>
+
 ## Common Issues
 
 <AccordionGroup>

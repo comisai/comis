@@ -12,67 +12,69 @@ icon: "users"
 
 | Tool | What It Does |
 |------|-------------|
-| `session_tool` | Unified session management with 4 actions: `status`, `list`, `history`, `search` |
+| `session_search` | Search session history by query |
+| `session_status` | Get the current session status |
+| `sessions_history` | Retrieve session history entries |
+| `sessions_list` | List all sessions for the current agent |
 | `sessions_send` | Send a message into another session in 3 modes: `fire-and-forget`, `wait`, `ping-pong` |
 | `sessions_spawn` | Create a sub-agent session with workspace isolation, artifact references, and an optional objective |
 | `subagents` | Manage running sub-agents (`list`, `kill`, `steer`) |
-| `agents_list` | List all configured agents in the fleet |
-| `memory_tool` | Unified long-term memory: `get`, `search`, `store`, `manage` (admin) |
+| `memory_get` | Retrieve a memory entry by key |
+| `memory_manage` | Create, update, or delete memory entries (admin CRUD: stats, browse, delete, flush, export) |
+| `memory_search` | Semantic search over agent memory (hybrid text + vector similarity) |
+| `memory_store` | Store a new memory entry (secret-detection guard applied) |
 
 For DAG-style multi-agent workflows (debate, vote, refine, map-reduce, etc.), see [Pipelines](/agent-tools/pipelines) -- the `pipeline` tool is the canonical entry point.
 
-### session_tool -- Unified Session Management
+### Session tools
 
-The `session_tool` consolidates session search, status, history, and listing behind a single `action` parameter.
+The four session tools (`session_search`, `session_status`, `sessions_history`, `sessions_list`) let agents inspect conversations and discover active sessions.
 
 <AccordionGroup>
-  <Accordion title="action: status -- View current session">
+  <Accordion title="session_status -- View current session">
     Shows the current session's status including the agent ID, model, token usage, and duration.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `action` | string | Yes | Must be `status` |
+    | (none) | -- | -- | No parameters required |
 
     Returns the current session's metadata.
   </Accordion>
 
-  <Accordion title="action: list -- List active sessions">
-    Lists all active sessions across the platform, with optional filters by session kind and recency.
+  <Accordion title="sessions_list -- List active sessions">
+    Lists all active sessions for the current agent, with optional filters by session kind and recency.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `action` | string | Yes | Must be `list` |
     | `kind` | string | No | Filter by session kind: `all` (default), `dm`, `group`, or `sub-agent` |
     | `since_minutes` | integer | No | Only sessions active within the last N minutes |
 
     Returns a list of sessions with their session keys, agent assignments, channels, and last activity timestamps.
   </Accordion>
 
-  <Accordion title="action: history -- Browse conversation history">
-    Views the conversation history for a specific session by session key.
+  <Accordion title="sessions_history -- Browse conversation history">
+    Retrieves the conversation history for a specific session by session key.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `action` | string | Yes | Must be `history` |
-    | `session_key` | string | Yes | Session key in `{tenantId}:{filename}` form. Use `action: list` first to discover available keys. |
+    | `session_key` | string | Yes | Session key in `tenantId:filename` form. Use `sessions_list` first to discover available keys. |
     | `limit` | integer | No | Maximum messages to return (default: 20) |
     | `offset` | integer | No | Skip this many messages (default: 0) |
   </Accordion>
 
-  <Accordion title="action: search -- Search/browse conversation history">
+  <Accordion title="session_search -- Search/browse conversation history">
     Search across session messages using FTS keywords or boolean expressions.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `action` | string | Yes | Must be `search` |
     | `query` | string | No | Search query -- keywords, phrases, or boolean expressions. Omit for recent-session metadata. |
     | `scope` | string | No | Filter by message role: `all` (default), `user`, `assistant`, or `tool` |
     | `summarize` | boolean | No | Summarize matched sessions using LLM (default: true when `query` provided) |
@@ -90,7 +92,7 @@ The `session_tool` consolidates session search, status, history, and listing beh
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `session_key` | string | Yes | Target session key (use `session_tool` action `list` to discover keys) |
+    | `session_key` | string | Yes | Target session key (use `sessions_list` to discover keys) |
     | `text` | string | Yes | The message to send |
     | `mode` | string | No | How to handle the response: `fire-and-forget` (default), `wait`, or `ping-pong` |
     | `timeout_ms` | integer | No | Wait timeout in ms (for `wait` and `ping-pong` modes) |
@@ -199,18 +201,6 @@ The `session_tool` consolidates session search, status, history, and listing beh
     ```
   </Accordion>
 
-  <Accordion title="agents_list -- List configured agents">
-    Lists all agent IDs configured in the system. This is useful when the agent needs to know which other agents are available for spawning or delegation.
-
-    **Parameters:**
-
-    | Parameter | Type | Required | Description |
-    |-----------|------|----------|-------------|
-    | (none) | -- | -- | No parameters needed |
-
-    Returns the names and IDs of all configured agents in the system.
-  </Accordion>
-
   <Accordion title="pipeline -- multi-agent execution graphs">
     For DAG-style multi-agent workflows -- parallel research, debate, vote, sequential refinement, map-reduce, and human approval gates -- use the dedicated `pipeline` tool. It has its own page with the full schema, the 7 built-in node type drivers, and worked examples.
 
@@ -218,19 +208,18 @@ The `session_tool` consolidates session search, status, history, and listing beh
   </Accordion>
 </AccordionGroup>
 
-## memory_tool -- Long-term Memory
+## Memory tools -- Long-term Memory
 
-Agents have access to long-term memory that persists across conversations. The `memory_tool` consolidates four actions behind a single `action` parameter: `get` (read by path), `search` (hybrid text + vector similarity), `store` (persist new memory), and `manage` (admin CRUD). Memory uses hybrid text and vector search, so agents can find relevant information even when the wording differs from the original.
+Agents have access to long-term memory that persists across conversations. Four dedicated tools cover the full memory lifecycle: `memory_search` for hybrid text and vector search, `memory_get` for reading entries by path, `memory_store` for persisting new information, and `memory_manage` for admin CRUD operations. Memory uses hybrid text and vector search, so agents can find relevant information even when the wording differs from the original.
 
 <AccordionGroup>
-  <Accordion title="action: search -- Search long-term memory">
+  <Accordion title="memory_search -- Search long-term memory">
     Searches the agent's long-term memory using hybrid text and vector similarity. Returns matching memory entries ranked by relevance.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `action` | string | Yes | Must be `search` |
     | `query` | string | Yes | The search text (natural language works best) |
     | `limit` | integer | No | Maximum results to return (default: 10) |
 
@@ -238,39 +227,35 @@ Agents have access to long-term memory that persists across conversations. The `
 
     **Example:**
     ```yaml
-    action: search
     query: "What did the user say about their project deadline?"
     limit: 5
     ```
   </Accordion>
 
-  <Accordion title="action: get -- Read a memory entry">
+  <Accordion title="memory_get -- Read a memory entry">
     Reads memory file sections by path, with an optional line range.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `action` | string | Yes | Must be `get` |
     | `path` | string | Yes | File path relative to the agent's workspace |
     | `start_line` | integer | No | Start line (1-based) |
     | `end_line` | integer | No | End line (1-based) |
   </Accordion>
 
-  <Accordion title="action: store -- Store a memory entry">
+  <Accordion title="memory_store -- Store a memory entry">
     Explicitly stores information in the agent's long-term memory. While Comis automatically stores important information from conversations, this lets agents deliberately save specific facts, preferences, or notes.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `action` | string | Yes | Must be `store` |
     | `content` | string | Yes | The information to remember |
     | `tags` | string[] | No | Optional tags for categorization |
 
     **Example:**
     ```yaml
-    action: store
     content: "User prefers weekly reports delivered on Monday mornings."
     tags: ["preferences", "reporting"]
     ```
@@ -280,14 +265,13 @@ Agents have access to long-term memory that persists across conversations. The `
     </Warning>
   </Accordion>
 
-  <Accordion title="action: manage -- Admin CRUD">
+  <Accordion title="memory_manage -- Admin CRUD">
     Admin-only memory CRUD operations. Requires admin trust level. The `delete` and `flush` sub-actions require user approval.
 
     **Parameters:**
 
     | Parameter | Type | Required | Description |
     |-----------|------|----------|-------------|
-    | `action` | string | Yes | Must be `manage` |
     | `manage_action` | string | Yes | One of `stats`, `browse`, `delete`, `flush`, `export` |
     | `tenant_id` | string | No | Tenant scope filter |
     | `agent_id` | string | No | Agent scope filter |

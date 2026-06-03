@@ -4,11 +4,15 @@ description: "How Comis delivers messages: streaming, typing indicators, retry l
 icon: "truck-fast"
 ---
 
+import NonTechnicalNote from '/snippets/non-technical-note.mdx';
+
 When your agent writes a response, Comis does not just dump it into the chat.
 The delivery pipeline splits the response into blocks, paces them at
 human-like intervals, shows typing indicators while the agent thinks, and
 retries automatically on failure. This page explains each stage of the pipeline
 so you can tune it for your use case.
+
+<NonTechnicalNote />
 
 ## How delivery works
 

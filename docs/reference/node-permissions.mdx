@@ -171,6 +171,54 @@ security:
 
 The full `SecurityConfigSchema` is defined in `packages/core/src/config/schema-security.ts` and parsed via Zod with defaults for all fields.
 
+## Production fd-API Disablement (Linux)
+
+When Comis runs under `node --permission`, Node.js categorically disables the file-descriptor-based fs API family at the V8/libuv level — **this applies to the daemon process itself**, not just child processes. This is distinct from the path-restriction behavior described above and affects how the daemon writes credential files and sets file permissions.
+
+Understanding this behavior matters if you enable `security.permission.enableNodePermissions: true` or if you run the daemon via the reference systemd unit (which passes `--permission` in `ExecStart`).
+
+### Disabled APIs
+
+Under `node --permission`, the following APIs are refused with `ERR_ACCESS_DENIED`:
+
+| API | Impact |
+|-----|--------|
+| `fs.fsyncSync` / `fs.fdatasyncSync` / `FileHandle.sync()` | Credential file writes (secrets, OAuth profiles) skip the fsync durability barrier |
+| `fs.fchmodSync` | Trace files and session metadata cannot have permissions set after write |
+| `fs.fchownSync` | Ownership changes on daemon-managed files are skipped |
+
+Each refusal throws: `Error [ERR_ACCESS_DENIED]: ... is disabled when permission model is enabled`
+
+### Historical production impact
+
+Observed on a production VPS (2026-06-02): the data-dir lock's `fsync` killed every boot attempt — every daemon start threw `ERR_ACCESS_DENIED` before the first log line. Later, `fchmod` refusals broke MCP OAuth discovery (no OAuth-protected MCP server could connect) and session-metadata writes. ([Source: `packages/shared/src/fsync-permission.ts:15-22`](https://github.com/comisai/comis))
+
+Both issues were root-caused to the fd-API categorical disablement rather than missing path grants.
+
+### How Comis guards against this
+
+Comis guards all fd-API call sites via `isFsyncDisabledByPermissionModel` (defined in `packages/shared/src/fsync-permission.ts:33`). This function detects `ERR_ACCESS_DENIED` by error code or the categorical error message and returns `true`, allowing callers to skip the failing call gracefully rather than crashing.
+
+Guarded call sites:
+
+- `packages/daemon/src/wiring/data-dir-lock.ts` — `fsyncSync` on the lock file and parent directory (boot-critical)
+- `packages/core/src/oauth/oauth-credential-store-file.ts` — `fsyncSync` on OAuth profile atomic writes
+- `packages/memory/src/file-secret-store.ts` — `fsyncSync` on the secrets file atomic writes
+- `packages/cli/src/sync-tooling/atomic-write.ts` — `fsyncSync`
+- `packages/observability/src/shared/fs-safe.ts` — `fchmodSync` on trace files and session metadata
+- `packages/skills/src/tools/builtin/terminal-driver/terminal-worker-entry.ts` — fd-based API
+
+### Operator implications
+
+- **Best-effort durability:** Under `--permission`, encrypted-mode credential file writes (secrets, OAuth profiles) are `tmp → rename` atomic but **not fsync-durable**. A kernel panic or power failure between `rename` and the next journal flush could corrupt the credential file. This risk is identical to writes on any filesystem without journaling guarantees — acceptable for most production deployments, but notable for high-availability setups with unreliable power.
+- **Best-effort permissions:** Trace files and session metadata may not have the expected `0o600` mode under `--permission`. Files are still written correctly; only the post-write `chmod` is skipped.
+- **Linux-only:** This behavior only occurs on production systemd deployments that pass `--permission`. macOS default setups and development installs (without `--permission`) are unaffected.
+- **No action required by default:** `security.permission.enableNodePermissions` defaults to `false`. You must explicitly opt in. If you do not enable it, none of this applies.
+
+<Note>
+If you see `ERR_ACCESS_DENIED` errors in daemon logs that are NOT related to child-process file access, check whether the operation involves one of the fd-based APIs above. The `isFsyncDisabledByPermissionModel` guard handles the known call sites, but third-party Node.js libraries loaded by the daemon may also use fd-based APIs.
+</Note>
+
 <CardGroup cols={2}>
   <Card title="Security Model" icon="shield" href="/security">
     Defense-in-depth security architecture

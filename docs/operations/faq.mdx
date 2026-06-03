@@ -131,6 +131,8 @@ Answers to the most common questions about running and using Comis.
     Only if you explicitly enable file tools in the [tool policy](/skills/tool-policy). By default, agents have restricted file system access.
 
     When running as a systemd service, the Node.js `--permission` flags provide an additional sandbox layer that restricts file access to specific directories. See the [Security](/security) documentation for details on all protection layers.
+
+    When `security.permission.enableNodePermissions` is enabled, the Node.js permission model also disables fd-based fs APIs (`fsync`, `fchmod`, `fchown`) in the daemon process itself — credential file writes become best-effort durability and trace permissions are best-effort. This is Linux-only and off by default. See [Node Permissions — Production fd-API Disablement](/reference/node-permissions#production-fd-api-disablement-linux) for details.
   </Accordion>
 
   <Accordion title="What if an agent goes rogue?">
