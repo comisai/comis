@@ -125,6 +125,134 @@ function makeFakePipeBackend(): {
   };
 }
 
+/**
+ * A RECORDING stub PTY backend (Wave-2 interaction tests): every `write()` is
+ * captured into `writes: string[]`, every `resize()` into `resizes`, so the
+ * send_text/send_key/resize handlers can be asserted at the byte level. The test
+ * drives stdout via `emit(chunk)` (into the worker's ring).
+ */
+function makeRecordingBackend(): {
+  spawn: ReturnType<typeof vi.fn>;
+  writes: string[];
+  resizes: Array<[number, number]>;
+  emit: (chunk: string) => void;
+} {
+  const writes: string[] = [];
+  const resizes: Array<[number, number]> = [];
+  let onData: ((d: string) => void) | undefined;
+  const spawn = vi.fn(() => {
+    const handle: FakePtyLike = {
+      pid: 5252,
+      onData: (cb: (d: string) => void) => {
+        onData = cb;
+      },
+      write: (data: string) => {
+        writes.push(data);
+      },
+      resize: (cols: number, rows: number) => {
+        resizes.push([cols, rows]);
+      },
+      kill: vi.fn(),
+    };
+    return handle;
+  });
+  return {
+    spawn,
+    writes,
+    resizes,
+    emit: (chunk: string) => onData?.(chunk),
+  };
+}
+
+/**
+ * A RECORDING stub PIPE backend (the degraded path) whose `stdin.write` is
+ * captured into `writes` — used to prove resize on a backend with no PTY winsize
+ * still records geometry, and that send_* writes route to `stdin`.
+ */
+function makeRecordingPipeBackend(): {
+  spawnPipe: ReturnType<typeof vi.fn>;
+  writes: string[];
+  emit: (chunk: string) => void;
+  close: () => void;
+} {
+  const writes: string[] = [];
+  let onData: ((chunk: Buffer) => void) | undefined;
+  let onClose: ((arg?: unknown) => void) | undefined;
+  const spawnPipe = vi.fn(() => {
+    return {
+      pid: 5253,
+      stdout: {
+        on: (_event: "data", cb: (chunk: Buffer) => void) => {
+          onData = cb;
+        },
+      },
+      stdin: {
+        write: (data: string) => {
+          writes.push(data);
+        },
+      },
+      on: (event: "close" | "error", cb: (arg?: unknown) => void) => {
+        if (event === "close") onClose = cb;
+      },
+      kill: vi.fn(),
+    };
+  });
+  return {
+    spawnPipe,
+    writes,
+    emit: (chunk: string) => onData?.(Buffer.from(chunk, "utf8")),
+    close: () => onClose?.(0),
+  };
+}
+
+/**
+ * A deterministic fake scheduler for the injected `setTimer`/`clearTimer` ports —
+ * the same shape Plan 02's settle suite drives. `advance(ms)` fires every timer
+ * whose cumulative delay is due, so the in-worker settle is exercised WITHOUT any
+ * real wall-clock wait. `liveTimerCount()` proves no leak.
+ */
+function makeFakeScheduler(): {
+  setTimer: (cb: () => void, ms: number) => unknown;
+  clearTimer: (handle: unknown) => void;
+  advance: (ms: number) => void;
+  liveTimerCount: () => number;
+} {
+  interface Entry {
+    cb: () => void;
+    fireAt: number;
+    cancelled: boolean;
+  }
+  let nowMs = 0;
+  let nextId = 1;
+  const entries = new Map<number, Entry>();
+  return {
+    setTimer: (cb: () => void, ms: number) => {
+      const id = nextId++;
+      entries.set(id, { cb, fireAt: nowMs + ms, cancelled: false });
+      return id;
+    },
+    clearTimer: (handle: unknown) => {
+      const e = entries.get(handle as number);
+      if (e !== undefined) e.cancelled = true;
+      entries.delete(handle as number);
+    },
+    advance: (ms: number) => {
+      nowMs += ms;
+      // Fire all due, non-cancelled timers in scheduled order; a fired timer is
+      // removed before its cb runs (a one-shot), so a cb that schedules a new
+      // timer is honored on a later advance.
+      for (const [id, e] of [...entries.entries()].sort((a, b) => a[1].fireAt - b[1].fireAt)) {
+        if (e.cancelled) continue;
+        if (e.fireAt <= nowMs) {
+          entries.delete(id);
+          e.cb();
+        }
+      }
+    },
+    liveTimerCount: () => [...entries.values()].filter((e) => !e.cancelled).length,
+  };
+}
+
 function baseDeps(over: Partial<TerminalWorkerDeps> = {}): TerminalWorkerDeps {
   return {
     loadPty: () => {
@@ -447,5 +575,134 @@ describe("createTerminalWorker — G-4 durable write under disabled fsync", () =
     const worker = createTerminalWorker(baseDeps({ fs: fsPort }));
 
     expect(() => worker.writeDurable("/data/state.json", "payload")).toThrow(/EIO/);
+  });
+});
+
+// ===========================================================================
+// Wave-2 (120-04): the interaction frame handlers.
+//
+// These compose Plan-01's `encodeKeyChord` (the named-key grammar) and Plan-02's
+// `runSettle` (the bounded injected-clock settle). The recording backend captures
+// every byte written so the EXACT bytes + the submit ORDERING (text -> settle ->
+// \r, never coalesced) are asserted; the fake scheduler drives the in-worker
+// settle deterministically.
+// ===========================================================================
+
+function sendKeyFrame(keys: string[]): TerminalRequestFrame {
+  return {
+    sessionId: "s1",
+    requestId: "rq-send-key",
+    traceId: TRACE_ID,
+    method: "send_key",
+    params: { sessionId: "s1", keys },
+  };
+}
+
+describe("createTerminalWorker — TR-04 send_key (named-key grammar -> exact bytes)", () => {
+  it("writes the EXACT control byte for C-c (\\x03) and replies { screen, cursor }", async () => {
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }),
+    );
+
+    await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }),
+    );
+    rec.emit("prompt$ "); // seed the ring so the post-action snapshot is non-empty
+
+    const reply = await worker.handle(sendKeyFrame(["C-c"]));
+
+    expect(reply.ok).toBe(true);
+    expect(rec.writes).toEqual(["\x03"]); // exactly one write of Ctrl-C
+    const result = reply.result as { screen: string; cursor: { x: number; y: number } };
+    expect(result.screen).toBe("prompt$ "); // the post-action ring view
+    expect(result.cursor).toEqual({ x: 0, y: 0 });
+  });
+
+  it("writes the joined chord bytes for [Up, Enter] -> \\x1b[A\\r", async () => {
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }),
+    );
+    await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }),
+    );
+
+    await worker.handle(sendKeyFrame(["Up", "Enter"]));
+
+    // A single write of the joined chord is fine; assert the concatenation.
+    expect(rec.writes.join("")).toBe("\x1b[A\r");
+  });
+
+  it("writes \\x1b[Z for S-Tab (back-tab)", async () => {
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }),
+    );
+    await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }),
+    );
+
+    await worker.handle(sendKeyFrame(["S-Tab"]));
+
+    expect(rec.writes.join("")).toBe("\x1b[Z");
+  });
+
+  it("does NOT write to the backend on an unknown key and replies ok:false with the invalid key (keystroke-injection guard)", async () => {
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }),
+    );
+    await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }),
+    );
+
+    const reply = await worker.handle(sendKeyFrame(["Frobnicate"]));
+
+    expect(reply.ok).toBe(false);
+    expect(reply.error ?? "").toMatch(/Frobnicate|invalid|unknown/i);
+    // T-120-01b: the encodeKeyChord throw is caught and surfaced — NOTHING written.
+    expect(rec.writes.length).toBe(0);
+  });
+
+  it("routes send_key writes to the pipe backend stdin on the degraded path", async () => {
+    const pipe = makeRecordingPipeBackend();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => {
+          throw new Error("no node-pty");
+        },
+        spawnPipe: pipe.spawnPipe,
+      }),
+    );
+    await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }),
+    );
+
+    await worker.handle(sendKeyFrame(["C-c"]));
+
+    expect(pipe.writes).toEqual(["\x03"]);
+  });
+
+  it("accepts injected setTimer/clearTimer ports on TerminalWorkerDeps", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    // The deps MUST accept setTimer/clearTimer (needed for the settle in Task 2/3);
+    // send_key itself needs no timer, but constructing the worker with them must
+    // type-check and run.
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: rec.spawn }),
+        setTimer: sched.setTimer,
+        clearTimer: sched.clearTimer,
+      }),
+    );
+    await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }),
+    );
+
+    const reply = await worker.handle(sendKeyFrame(["C-c"]));
+    expect(reply.ok).toBe(true);
+    expect(rec.writes).toEqual(["\x03"]);
   });
 });
