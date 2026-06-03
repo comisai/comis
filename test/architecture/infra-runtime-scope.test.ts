@@ -149,8 +149,9 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
       // 124-03: the pure state classifier (cursor-parked gate) — node builtins +
       // the TYPE-ONLY EmulatorSnapshot from terminal-render, never @comis/infra.
       "terminal-classifier.ts",
-      // 124-04 (SEC-12): the safe-only auto-answer policy — value-imports ONLY
-      // @comis/core's scrubSecretsFromText (+ node builtins), never @comis/infra.
+      // 124-04 (SEC-12): the safe-only auto-answer policy — a pure decision over
+      // operator inputs + the screen; value-imports only node builtins, never
+      // @comis/infra (any audited-value redaction happens in the woken turn).
       "terminal-auto-answer.ts",
       // 124-04 (SEC-11): the normalized region-scoped loop guard — node:crypto +
       // an injected clock + a closure-local ring, never @comis/infra.

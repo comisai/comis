@@ -35,16 +35,16 @@
  *     {@link AutoAnswerDecision}; the woken turn (124-09) acts on it (an `answer`
  *     keystroke rides the P4 `enforceSendCapsThenAudit` path; an `escalate` raises
  *     the `terminal:escalated` audit). A degenerate screen yields escalate (safe dir).
- *   - Infra-free: value-imports ONLY `@comis/core` (`scrubSecretsFromText` for a
- *     redaction-safe matched-value summary — the @comis/core redaction primitive, NOT
- *     the observability-side egress helper, which is forbidden in skills value-imports)
- *     — no platform runtime packages, no raw timer (the globals + infra-runtime-scope
- *     architecture gates enforce this; this module names none of them).
+ *   - Infra-free: value-imports NOTHING outside node builtins — no `@comis/infra`, no
+ *     observability egress, no platform runtime packages, no raw timer (the globals +
+ *     infra-runtime-scope architecture gates enforce this; this module names none of
+ *     them). The decision is a pure function of operator inputs + the screen; the
+ *     redaction of any audited value happens in the woken turn (terminal-wake-turn.ts),
+ *     not here (the canned answer is structural Enter and the audit carries the matched
+ *     pattern INDEX, never the pattern text).
  *
  * @module
  */
-
-import { scrubSecretsFromText } from "@comis/core";
 
 /** The auto-answer modes — the operator allow-entry `autoAnswer` (default `safe-only`). */
 export type AutoAnswerMode = "none" | "safe-only" | "all";
@@ -164,15 +164,12 @@ function matchesSafePattern(screen: string, pattern: string): boolean {
 /**
  * The canned keystroke set for a matched safe pattern. The operator allowlisted the
  * pattern precisely because its safe answer is "proceed" — a single Enter (`\r`)
- * acknowledges a "press enter to continue" / benign affordance. The matched value is
- * run through {@link scrubSecretsFromText} (the @comis/core redaction primitive) so a
- * pattern accidentally carrying a secret never rides a downstream summary verbatim.
+ * acknowledges a "press enter to continue" / benign affordance. The answer is purely
+ * structural (always Enter); the pattern TEXT is never echoed downstream (the audit
+ * carries the matched pattern INDEX, never the text — terminal-wake-turn.ts), so there
+ * is nothing to redact here.
  */
-function cannedKeysFor(pattern: string): string[] {
-  // Redaction-safe touch of the matched pattern: the canned answer is structural
-  // (Enter), but scrubbing the pattern here keeps any later matched-value summary
-  // (logged by the woken turn) free of an operator typo that embedded a secret.
-  void scrubSecretsFromText(pattern);
+function cannedKeysFor(): string[] {
   return ["\r"];
 }
 
@@ -213,7 +210,7 @@ export function decideAutoAnswer(
   for (let i = 0; i < hintPatterns.length; i++) {
     const pattern = hintPatterns[i] ?? "";
     if (matchesSafePattern(screen, pattern)) {
-      return { action: "answer", keys: cannedKeysFor(pattern), matchedPatternIndex: i };
+      return { action: "answer", keys: cannedKeysFor(), matchedPatternIndex: i };
     }
   }
   return { action: "escalate", reason: "no_safe_match" };
