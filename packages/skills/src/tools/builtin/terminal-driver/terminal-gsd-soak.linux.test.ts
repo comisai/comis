@@ -315,13 +315,22 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
         expect(wokenTurns).toBeLessThanOrEqual(MAX_INTERACTIONS);
         // 3) maxConcurrentAttentionTurns honored — at most MAX_CONCURRENT in flight at once.
         expect(maxInFlightObserved).toBeLessThanOrEqual(MAX_CONCURRENT_ATTENTION_TURNS);
-        // 4) The no-poll mechanism fired: the worker PUSHED this run's transitions on fd3.
-        //    A prompting run (the bash stand-in; a parked claude) pushes ≥1 input_needed —
-        //    one per woken park. A run that completes WITHOUT ever prompting (the operator
-        //    points COMIS_SOAK_CLAUDE_ARGS at e.g. `--help`) has NO awaiting-input
-        //    transition to push, but its exited transition still rides fd3
-        //    (`terminal:session_state`) — either way the agent is woken by a push, never a spin.
-        if (wokenTurns > 0) {
+        // 4) The no-poll mechanism fired: the worker PUSHED this run's transitions on fd3, so
+        //    the agent is woken by a push and NEVER spins. The push is the load-bearing
+        //    invariant for BOTH driven programs → assert it unconditionally (`fd3Frames ≥ 1`).
+        //    WHICH attention frame depends on the program:
+        //      - the deterministic bash stand-in (`!isClaude`) genuinely parks at a `read`
+        //        prompt → the emitter classifies awaiting-input → ≥1 `terminal:input_needed`.
+        //      - a REAL claude (`isClaude`, operator-supplied args) is NON-deterministic: it
+        //        may exit before parking (→ `terminal:session_state` exited), or park in its
+        //        full-screen TUI which the emitter classifies `stuck` not awaiting-input
+        //        (claude 2.1.x parks the cursor on the empty bottom input line while the
+        //        prompt renders above — the live-VPS finding). The soak's `wokenTurns` counts
+        //        `status`-frame awaiting-input, a DIFFERENT classification site than the
+        //        settle-path emitter, so the two legitimately disagree on a claude screen —
+        //        hence NO `wokenTurns ⇒ input_needed` coupling here. The bound + no-crash +
+        //        fd3-fired invariants are what OPS-05 actually proves for the real CLI.
+        if (!isClaude) {
           expect(inputNeededEvents.length).toBeGreaterThanOrEqual(1);
         }
         expect(fd3Frames.length).toBeGreaterThanOrEqual(1);
