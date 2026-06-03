@@ -93,3 +93,93 @@ describe("createSessionEmulator — dispose is safe + idempotent", () => {
     expect(() => emu.dispose()).not.toThrow();
   });
 });
+
+// ===========================================================================
+// Plan 121-02: render formats (text | ansi | html) via @xterm/addon-serialize
+// + the scrollback:N off-screen perception (TR-02 formats, TR-14 scrollback).
+// ===========================================================================
+
+describe("createSessionEmulator — render formats (TR-02)", () => {
+  it("format:'text' (the default) returns the plain grid with NO SGR escapes", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 24, scrollback: 1000 });
+    await emu.write("\x1b[31mRED\x1b[0m"); // red text — the SGR must NOT survive in text
+
+    const defaultScreen = emu.snapshot().screen;
+    const textScreen = emu.snapshot({ format: "text" }).screen;
+
+    expect(defaultScreen).not.toContain("\x1b[");
+    expect(textScreen).not.toContain("\x1b[");
+    expect(textScreen).toContain("RED"); // the visible text remains
+    emu.dispose();
+  });
+
+  it("format:'ansi' preserves SGR (calls serializeAddon.serialize())", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 24, scrollback: 1000 });
+    await emu.write("\x1b[31mRED\x1b[0m");
+
+    const ansi = emu.snapshot({ format: "ansi" }).screen;
+
+    // The ANSI serialization re-emits an SGR escape AND the text.
+    expect(ansi).toContain("\x1b[");
+    expect(ansi).toContain("RED");
+    emu.dispose();
+  });
+
+  it("format:'html' returns an HTML-shaped fragment (calls serializeAsHTML())", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 24, scrollback: 1000 });
+    await emu.write("hi");
+
+    const html = emu.snapshot({ format: "html" }).screen;
+
+    // HTML-shaped + non-empty + carries the text (an exact golden is Plan 05).
+    expect(html).toContain("<");
+    expect(html).toContain("hi");
+    expect(html.length).toBeGreaterThan(0);
+    emu.dispose();
+  });
+});
+
+describe("createSessionEmulator — scrollback perception beyond the viewport (TR-14)", () => {
+  // Zero-padded labels (LINE-01..LINE-12) so "LINE-01" is NEVER a substring of
+  // "LINE-10"/"LINE-11"/"LINE-12" — the off-screen assertions are unambiguous.
+  function label(i: number): string {
+    return `LINE-${String(i).padStart(2, "0")}`;
+  }
+
+  it("scrollback:N (text) returns off-screen lines that the viewport-only snapshot omits", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 5, scrollback: 1000 });
+    // 12 CRLF-separated lines on a 5-row viewport — 7 lines scroll above the fold.
+    for (let i = 1; i <= 12; i++) await emu.write(`${label(i)}\r\n`);
+
+    const viewportOnly = emu.snapshot().screen; // default scrollback:0
+    const withScrollback = emu.snapshot({ scrollback: 10 }).screen;
+
+    // The viewport only shows the bottom lines — LINE-01 has scrolled off.
+    expect(viewportOnly).not.toContain(label(1));
+    // With scrollback, the early off-screen line is perceivable.
+    expect(withScrollback).toContain(label(1));
+    emu.dispose();
+  });
+
+  it("scrollback:N (ansi) calls serialize({scrollback:N}) and includes an off-screen line", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 5, scrollback: 1000 });
+    for (let i = 1; i <= 12; i++) await emu.write(`${label(i)}\r\n`);
+
+    const ansiScroll = emu.snapshot({ format: "ansi", scrollback: 10 }).screen;
+
+    expect(ansiScroll).toContain(label(1)); // off-screen line in the ansi serialization
+    emu.dispose();
+  });
+
+  it("scrollback:0 (the default) returns only the visible viewport rows", async () => {
+    const emu = createSessionEmulator({ cols: 80, rows: 5, scrollback: 1000 });
+    for (let i = 1; i <= 12; i++) await emu.write(`${label(i)}\r\n`);
+
+    const viewportOnly = emu.snapshot({ scrollback: 0 }).screen;
+
+    expect(viewportOnly).not.toContain(label(1));
+    // The latest lines ARE visible (the bottom of the buffer).
+    expect(viewportOnly).toContain(label(12));
+    emu.dispose();
+  });
+});
