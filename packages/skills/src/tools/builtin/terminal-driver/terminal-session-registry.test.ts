@@ -857,8 +857,9 @@ describe("createTerminalSessionRegistry — TR-03 sendText forwarding", () => {
     expect(frame?.params["submit"]).toBe(false);
     expect(frame?.params["bracketedPaste"]).toBe(false);
 
-    // The resolved value is the {screen,cursor} subset, NOT the full view.
-    expect(out).toEqual({ screen: "hello", cursor: { x: 5, y: 0 } });
+    // The resolved value is the {screen,cursor} subset, NOT the full view; a send that
+    // round-trips an ok worker reply is flagged delivered:true (WR-05).
+    expect(out).toEqual({ screen: "hello", cursor: { x: 5, y: 0 }, delivered: true });
   });
 
   it("advances the session handle's lastActivity on a successful send_text", async () => {
@@ -958,7 +959,8 @@ describe("createTerminalSessionRegistry — TR-03 sendKey forwarding", () => {
     expect(frame?.params["sessionId"]).toBe(sessionId);
     expect(frame?.params["keys"]).toEqual(["C-c"]);
 
-    expect(out).toEqual({ screen: "^C", cursor: { x: 0, y: 1 } });
+    // A send that round-trips an ok worker reply is flagged delivered:true (WR-05).
+    expect(out).toEqual({ screen: "^C", cursor: { x: 0, y: 1 }, delivered: true });
   });
 
   it("degrades a send_key on an MR-01 timeout reply (ok:false) — no throw, no hang", async () => {

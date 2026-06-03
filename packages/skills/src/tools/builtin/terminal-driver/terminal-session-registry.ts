@@ -199,6 +199,15 @@ export interface TerminalView {
 export interface SendResult {
   screen: string;
   cursor: { x: number; y: number };
+  /**
+   * Whether the send was actually FORWARDED to a live worker (WR-05). `true` only
+   * when the owned, running session round-tripped an `ok` reply; absent/falsy on the
+   * degraded path (absent/cross-owner/not-running session OR a wedged worker — the
+   * `{screen:"",cursor:{0,0}}` not-delivered shape). The woken-turn audit reads this
+   * so a keystroke that reached nothing is recorded `outcome:"rejected"`, never
+   * `attempted` — keeping the §2.7 audit trail honest about delivery.
+   */
+  delivered?: boolean;
 }
 
 // The §5 `status` view + its pure composition live in the leaf `terminal-status-view.ts`
@@ -598,10 +607,13 @@ export function createTerminalSessionRegistry(
    */
   function mapSendReply(handle: SessionHandle, reply: TerminalReplyFrame): SendResult {
     if (!reply.ok || reply.result === undefined) {
+      // Not-delivered (WR-05): a wedged worker (the MR-01 reply timeout) — the send
+      // reached no live pane. delivered is left falsy so the audit records "rejected".
       return { screen: "", cursor: { x: 0, y: 0 } };
     }
     handle.lastActivity = nowMs();
-    return toSendResult(reply.result);
+    // The worker round-tripped an ok reply ⇒ the keystroke WAS forwarded (WR-05).
+    return { ...toSendResult(reply.result), delivered: true };
   }
 
   async function sendText(

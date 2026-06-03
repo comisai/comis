@@ -66,7 +66,7 @@ export interface WokenTurnBus {
   ): unknown;
   emit(
     event: "terminal:keystroke",
-    payload: { sessionId: string; agentId: string; kind: "text" | "key"; redactions: number; byteLength: number; outcome: "attempted"; timestamp: number },
+    payload: { sessionId: string; agentId: string; kind: "text" | "key"; redactions: number; byteLength: number; outcome: "attempted" | "rejected"; timestamp: number },
   ): unknown;
 }
 
@@ -177,21 +177,38 @@ export function buildWokenTurnDriver(
 
     // (5) answer — send the canned keystroke via the registry send path + AUDIT every send.
     const text = decision.keys.join("");
-    await registry.sendText(sessionId, ownerObj, { text });
-    auditAnswer(deps, sessionId, owner.agentId, text, decision.matchedPatternIndex, decision.keys.length);
-    log.info(
-      { sessionId, agentId: owner.agentId, matchedPatternIndex: decision.matchedPatternIndex, keystrokeCount: decision.keys.length, durationMs: deps.nowMs() - startMs, step: "wake_turn_answered" },
-      "terminal woken turn auto-answered a safe prompt",
-    );
+    const sent = await registry.sendText(sessionId, ownerObj, { text });
+    // WR-05: the audit MUST reflect actual delivery. A degraded send (wedged worker /
+    // dropped tmux send-keys — `delivered` falsy) is audited `outcome:"rejected"` and
+    // does NOT emit `terminal:auto_answered` (nothing was answered); a delivered send is
+    // `attempted` + `auto_answered`. So a keystroke that hit nothing is never logged as
+    // a successful answer (§2.7: the failure is reconstructable from logs+events alone).
+    const delivered = sent.delivered === true;
+    auditAnswer(deps, sessionId, owner.agentId, text, decision.matchedPatternIndex, decision.keys.length, delivered);
+    if (delivered) {
+      log.info(
+        { sessionId, agentId: owner.agentId, matchedPatternIndex: decision.matchedPatternIndex, keystrokeCount: decision.keys.length, durationMs: deps.nowMs() - startMs, step: "wake_turn_answered" },
+        "terminal woken turn auto-answered a safe prompt",
+      );
+    } else {
+      log.warn(
+        { sessionId, agentId: owner.agentId, matchedPatternIndex: decision.matchedPatternIndex, durationMs: deps.nowMs() - startMs, hint: "the safe-pattern keystroke was not delivered (wedged worker / dropped send); a fresh input_needed will re-wake", errorKind: "dependency" as const, step: "wake_turn_send_failed" },
+        "terminal woken turn: auto-answer send not delivered",
+      );
+    }
   };
 }
 
 /**
- * Audit one auto-answer (SEC-12 / T-124-27): emit `terminal:auto_answered` (the matched
- * pattern INDEX + keystroke COUNT — never the keystroke), a redacted §2.7 keystroke DEBUG
- * log (`scrubSecretsFromText`), AND the redaction-safe `terminal:keystroke` summary (the
- * same shape `enforceSendCapsThenAudit` produces — `redactions` + `byteLength`, never the
- * payload). The raw keystroke NEVER reaches a log or the bus.
+ * Audit one auto-answer (SEC-12 / T-124-27 / WR-05): emit a redacted §2.7 keystroke DEBUG
+ * log (`scrubSecretsFromText`) + the redaction-safe `terminal:keystroke` summary (the same
+ * shape `enforceSendCapsThenAudit` produces — `redactions` + `byteLength`, never the
+ * payload), both tagged with the actual delivery `outcome` (`attempted` when the registry
+ * forwarded the keystroke to a live worker, `rejected` when the send degraded — a wedged
+ * worker / dropped tmux send-keys). `terminal:auto_answered` (the matched pattern INDEX +
+ * keystroke COUNT, never the keystroke) is emitted ONLY on a delivered send — a keystroke
+ * that reached nothing did not answer the prompt. The raw keystroke NEVER reaches a log or
+ * the bus.
  */
 function auditAnswer(
   deps: WokenTurnDriverDeps,
@@ -200,11 +217,13 @@ function auditAnswer(
   payload: string,
   matchedPatternIndex: number,
   keystrokeCount: number,
+  delivered: boolean,
 ): void {
   const { text: redactedText, redactions } = scrubSecretsFromText(payload);
   const timestamp = deps.nowMs();
+  const outcome: "attempted" | "rejected" = delivered ? "attempted" : "rejected";
   deps.logger.debug(
-    { sessionId, agentId, redactedText, redactions, outcome: "attempted", step: "keystroke_audit" },
+    { sessionId, agentId, redactedText, redactions, outcome, step: "keystroke_audit" },
     "terminal auto-answer keystroke",
   );
   deps.eventBus.emit("terminal:keystroke", {
@@ -213,8 +232,11 @@ function auditAnswer(
     kind: "text",
     redactions,
     byteLength: Buffer.byteLength(redactedText),
-    outcome: "attempted",
+    outcome,
     timestamp,
   });
-  deps.eventBus.emit("terminal:auto_answered", { sessionId, agentId, matchedPatternIndex, keystrokeCount, timestamp });
+  // A not-delivered send did not answer the prompt — do not claim an auto-answer (WR-05).
+  if (delivered) {
+    deps.eventBus.emit("terminal:auto_answered", { sessionId, agentId, matchedPatternIndex, keystrokeCount, timestamp });
+  }
 }

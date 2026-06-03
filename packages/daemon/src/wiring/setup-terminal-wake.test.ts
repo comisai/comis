@@ -60,7 +60,9 @@ function makeBus() {
 
 /** A fake per-agent registry: owner-scoped get/status/read/sendText with a scriptable screen. */
 function makeRegistry(opts: { screen: string; alive?: boolean }) {
-  const sendText = vi.fn(async () => ({ screen: opts.screen, cursor: { x: 0, y: 0 } }));
+  // delivered:true mirrors the production registry's ok-reply path (WR-05) — a send that
+  // round-trips a live worker is delivered, so the woken turn audits it as a real answer.
+  const sendText = vi.fn(async () => ({ screen: opts.screen, cursor: { x: 0, y: 0 }, delivered: true }));
   return {
     sendText,
     get: vi.fn(() => (opts.alive === false ? undefined : ({ sessionId: "s", owner: { agentId: "a", sessionKey: "" } } as never))),
