@@ -1092,3 +1092,196 @@ describe("createTerminalWorker — TR-05 wait (settle -> {matched,isComplete,rea
     expect(r).toMatchObject({ matched: false, isComplete: false, reason: "exit" });
   });
 });
+
+// ===========================================================================
+// Wave (121-01): the worker rewired to the per-session @xterm emulator.
+//
+// `read` now serializes the REAL grid (real cursor, real alt) from the
+// per-session emulator instead of the raw stdout ring. These tests drive the
+// REAL `createSessionEmulator` (pure-JS @xterm — runs on macOS) for the
+// grid/cursor/alt assertions, and a RECORDING emulator stub (via the injectable
+// `createEmulator` dep) to prove the wiring (resize called, write fed).
+// ===========================================================================
+
+function readFrame(): TerminalRequestFrame {
+  return {
+    sessionId: "s1",
+    requestId: "rq-read-emu",
+    traceId: TRACE_ID,
+    method: "read",
+    params: { sessionId: "s1" },
+  };
+}
+
+/**
+ * A RECORDING emulator stub for the injectable `createEmulator` dep. Captures
+ * `write`/`resize`/`dispose` calls so the worker WIRING can be asserted without
+ * a real Terminal. `snapshot` returns a canned grid view (the wiring tests do
+ * not need real parsing — the real-emulator tests cover that).
+ */
+function makeRecordingEmulator(): {
+  createEmulator: (opts: { cols: number; rows: number; scrollback: number }) => unknown;
+  writes: string[];
+  resizes: Array<[number, number]>;
+  disposes: number;
+  lastConstruct: () => { cols: number; rows: number; scrollback: number } | undefined;
+} {
+  const writes: string[] = [];
+  const resizes: Array<[number, number]> = [];
+  let disposes = 0;
+  let lastOpts: { cols: number; rows: number; scrollback: number } | undefined;
+  return {
+    writes,
+    resizes,
+    get disposes() {
+      return disposes;
+    },
+    lastConstruct: () => lastOpts,
+    createEmulator: (opts: { cols: number; rows: number; scrollback: number }) => {
+      lastOpts = opts;
+      let curCols = opts.cols;
+      let curRows = opts.rows;
+      return {
+        // Mirror the real wrapper's `write(data): Promise<void>` shape so the
+        // worker's appendRing wiring is unchanged.
+        write: (data: string): Promise<void> => {
+          writes.push(data);
+          return Promise.resolve();
+        },
+        snapshot: () => ({
+          screen: "CANNED",
+          cursor: { x: 7, y: 2 },
+          cols: curCols,
+          rows: curRows,
+          alt: false,
+        }),
+        resize: (cols: number, rows: number) => {
+          resizes.push([cols, rows]);
+          curCols = cols;
+          curRows = rows;
+        },
+        dispose: () => {
+          disposes++;
+        },
+        // `term` is unused by the worker wiring; a stub satisfies the type.
+        term: {} as unknown,
+      };
+    },
+  };
+}
+
+describe("createTerminalWorker — 121-01 read serializes the REAL @xterm grid (TR-02)", () => {
+  it("read returns the real grid + REAL cursor (not {0,0}) — the ring-snapshot replacement", async () => {
+    // Use the REAL createSessionEmulator (default dep) so the grid/cursor/alt are
+    // produced by genuine @xterm parsing.
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }));
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    // Clear + home + "abc": the real emulator lands the cursor at column 3.
+    rec.emit("\x1b[2J\x1b[Habc");
+    // Yield so the (now-tracked) emulator write-parse completes before the read.
+    await Promise.resolve();
+
+    const reply = await worker.handle(readFrame());
+    const view = reply.result as {
+      screen: string;
+      cursor: { x: number; y: number };
+      cols: number;
+      rows: number;
+      alt: boolean;
+      alive: boolean;
+    };
+
+    expect(view.screen).toContain("abc");
+    // RED-provable: the pre-patch ring path returned cursor {0,0}; the emulator
+    // returns the REAL cursorX (3 after "abc").
+    expect(view.cursor.x).toBe(3);
+    expect(view.alt).toBe(false);
+    expect(view.alive).toBe(true);
+  });
+
+  it("read reports alt:true on an alt-screen byte stream and alt:false on leave", async () => {
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }));
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/vim", argv: [], cols: 80, rows: 24 }));
+
+    rec.emit("\x1b[?1049h"); // enter alt screen
+    rec.emit("VIM");
+    await Promise.resolve();
+    let reply = await worker.handle(readFrame());
+    let view = reply.result as { screen: string; alt: boolean };
+    expect(view.alt).toBe(true);
+    expect(view.screen).toContain("VIM");
+
+    rec.emit("\x1b[?1049l"); // leave alt screen
+    await Promise.resolve();
+    reply = await worker.handle(readFrame());
+    view = reply.result as { screen: string; alt: boolean };
+    expect(view.alt).toBe(false);
+  });
+
+  it("resize resizes the emulator grid (the real @xterm reflow) and read reflects it", async () => {
+    const rec = makeRecordingBackend();
+    const recEmu = makeRecordingEmulator();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), createEmulator: recEmu.createEmulator }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    await worker.handle(resizeFrame(100, 30));
+
+    // The emulator's resize was called with the new geometry (the spy proves the
+    // wiring; the real-emulator path reflows for real).
+    expect(recEmu.resizes).toEqual([[100, 30]]);
+    const reply = await worker.handle(readFrame());
+    const view = reply.result as { cols: number; rows: number };
+    expect(view.cols).toBe(100);
+    expect(view.rows).toBe(30);
+  });
+
+  it("constructs the emulator on create and feeds appendRing into it (wiring)", async () => {
+    const rec = makeRecordingBackend();
+    const recEmu = makeRecordingEmulator();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), createEmulator: recEmu.createEmulator }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    // The emulator was constructed with the create-frame geometry + a default scrollback.
+    expect(recEmu.lastConstruct()?.cols).toBe(80);
+    expect(recEmu.lastConstruct()?.rows).toBe(24);
+    expect(recEmu.lastConstruct()?.scrollback).toBeGreaterThan(0);
+
+    // Every data chunk is fed into the emulator's write (the grid ingest).
+    rec.emit("first");
+    rec.emit("second");
+    await Promise.resolve();
+    expect(recEmu.writes).toEqual(["first", "second"]);
+  });
+
+  it("degraded backend (loadPty throws) STILL feeds the emulator + read uses it (no TR-08 regression)", async () => {
+    // The emulator renders whatever bytes arrive on BOTH backends. On the
+    // degraded pipe backend the emulator is still constructed + fed; read uses it.
+    const pipe = makeFakePipeBackend();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => {
+          throw new Error("no node-pty");
+        },
+        spawnPipe: pipe.spawnPipe,
+      }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    pipe.emit("degraded-line\n");
+    await Promise.resolve();
+    const reply = await worker.handle(readFrame());
+    const view = reply.result as { screen: string; alive: boolean };
+
+    // The accumulated output is perceivable (the emulator rendered it); the
+    // degraded backend keeps working (TR-08 not regressed).
+    expect(view.screen).toContain("degraded-line");
+    expect(view.alive).toBe(true);
+  });
+});
