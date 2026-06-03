@@ -72,6 +72,17 @@ export interface SettleDeps {
   onRingChange: (cb: () => void) => () => void;
   /** Subscribe to backend-exit notifications; returns an unsubscribe. */
   onExit: (cb: () => void) => () => void;
+  /**
+   * OPTIONAL gate (P2/121, TR-14): may the session settle IDLE right now? The
+   * worker wires this to `!hasContentBelowFold()` so a frame with content below
+   * the visible viewport (still scrolling / more to render) is NOT marked idle —
+   * the idle timer RE-ARMS instead of resolving. Absent ⇒ always settleable (the
+   * 120-02 behavior). This gates ONLY the idle path; exit/text/timeout are
+   * UNCHANGED (exit stays always-terminal, the load-bearing `isComplete:false`
+   * on timeout is preserved). The gate can only SUPPRESS an idle-settle (keep
+   * waiting), never falsely declare settled — the SAFE direction.
+   */
+  isSettleable?: () => boolean;
 }
 
 /** The settle parameters (the `wait` tool's body, spec §5). All conditions are opt-in. */
@@ -156,11 +167,21 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
      * (Re)start the idle debounce: clear the prior idle timer, schedule a fresh
      * one. A NO-OP when idle is not armed (forExit/forText-only waits) so a quiet
      * window can never pre-empt the requested exit/text condition (TR-05).
+     *
+     * When the idle window elapses but `isSettleable()` is false (P2/121, TR-14 —
+     * content remains below the fold), the timer RE-ARMS instead of resolving
+     * idle: a still-rendering frame is never marked idle. The gate can only delay
+     * an idle-settle (bounded by the overall timeout), never force one — exit/text
+     * /timeout are unaffected.
      */
     function restartIdle(): void {
       if (!idleArmed) return;
       if (idleTimer !== undefined) deps.clearTimer(idleTimer);
       idleTimer = deps.setTimer(() => {
+        if (deps.isSettleable !== undefined && !deps.isSettleable()) {
+          restartIdle(); // content below the fold ⇒ keep waiting, don't settle idle
+          return;
+        }
         settle({ matched: true, isComplete: true, reason: "idle" });
       }, idleMs);
     }
