@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure LoCoMo dataset loader (BENCH-01, the parse half).
+ * Pure LoCoMo dataset loader (the parse half).
  *
  * Parses a LoCoMo sample's `conversation` into one dated document per session
  * (`session_N` + `session_N_date_time`), ingesting ONLY `{speaker,text,dia_id}`
  * per turn — the `qa` block (answers + evidence) is NEVER serialized into
- * document content (the gold lives outside the conversation; Pitfall 1 /
- * T-88-01-02). Normalizes `qa[].evidence` `"D<sess>:<dia>"` strings to
+ * document content (the gold lives outside the conversation).
+ * Normalizes `qa[].evidence` `"D<sess>:<dia>"` strings to
  * SESSION-QUALIFIED gold refs (the full `"D<sess>:<dia>"`, NOT the bare dia
- * index — the prefix prevents cross-session collisions, WR-02) and excludes
+ * index — the prefix prevents cross-session collisions) and excludes
  * `category === 5` adversarial items from the recall-gold qa list.
  *
  * PURE parser. Imports ONLY @comis/shared (Result) + Node stdlib types. The
  * agent->memory architecture cut (architecture-graph.test.ts:133) FORBIDS any
- * import of the memory package here — the gated harness (Plan 88-03, a
+ * import of the memory package here — the gated harness (a
  * `.test.ts`) is the only file that may import the memory adapter. Mirrors the
  * discipline of the sibling longmemeval-loader.ts.
  *
@@ -22,7 +22,7 @@
  * Conversation keys are matched against an anchored allowlist (`/^session_\d+$/`)
  * so `__proto__`/`constructor`/non-matching keys are ignored; outputs are built
  * with LITERAL keys only (no write indexed by a raw dataset key) so attacker-
- * shaped keys cannot pollute (T-88-01-03). No `eval` / `Function` — content is
+ * shaped keys cannot pollute. No `eval` / `Function` — content is
  * only ever `JSON.stringify`'d, never interpreted (AGENTS.md §2.2).
  *
  * @module
@@ -41,7 +41,7 @@ export interface LocomoDoc {
   /**
    * The SESSION-QUALIFIED dia refs (`"D<sess>:<dia>"`) contained in this session
    * — the harness keys the gold side-map on these verbatim, so they MUST match
-   * the form `parseLocomoEvidence` emits for `qa[].goldDiaIds` (WR-02).
+   * the form `parseLocomoEvidence` emits for `qa[].goldDiaIds`.
    */
   diaIds: string[];
 }
@@ -50,7 +50,7 @@ export interface LocomoDoc {
 export interface LocomoParsed {
   docs: LocomoDoc[];
   /**
-   * Kept qa items (category-5 excluded). `questionId` is the Blocker-3
+   * Kept qa items (category-5 excluded). `questionId` is the
    * cross-plan gold-map key (`${sample_id}:${qaIdx}`, original pre-filter index);
    * `query` (NOT `question`) carries the question text under the SAME field name
    * as LongMemEvalParsed.questions[].query so the harness reads `q.query`
@@ -61,13 +61,13 @@ export interface LocomoParsed {
 
 /**
  * Normalize LoCoMo `evidence` `"D<session>:<dia>"` strings to SESSION-QUALIFIED
- * gold refs (WR-02 / Assumption A3).
+ * gold refs.
  *
  * Keeps the FULL `"D<session>:<dia>"` ref (NOT the bare 2nd colon-segment). The
  * session prefix is load-bearing: keying the gold side-map on only the dia index
  * lets two sessions that share a dia index (or two degenerate `"D1:"`/`"D2:"`
  * entries that both reduce to an empty index) silently overwrite each other,
- * zeroing a recall lane against the WRONG document (WR-02). The full ref is
+ * zeroing a recall lane against the WRONG document. The full ref is
  * unique by construction, and the loader's `doc.diaIds` carry the same full form,
  * so both sides of the side-map key identically.
  *
@@ -120,12 +120,12 @@ function daysInUtcMonth(year: number, monthIdx: number): number {
  * to epoch ms.
  *
  * Anchored, bounded regex (`^...$`, fixed-width/bounded classes, no nested
- * quantifiers) -> linear-time, no ReDoS (T-88-01-04). Builds the epoch with
+ * quantifiers) -> linear-time, no ReDoS. Builds the epoch with
  * `Date.UTC(...)` (a static-method call, NOT a flagged global — globals-
  * classifier.ts:228-236 flags only `Date.now` and `new Date`).
  *
  * Returns `err` (no throw) on a structural mismatch, an unknown month, or an
- * out-of-range component (WR-01 / IN-01). `Date.UTC` silently ROLLS OVER
+ * out-of-range component. `Date.UTC` silently ROLLS OVER
  * out-of-range-but-numeric components, so the `Number.isNaN` guard alone is dead
  * code for those inputs. The day is bounded (1-31) consistently with hour/minute
  * AND validated against the actual month length (leap-aware), so day 99 — or an
@@ -182,8 +182,8 @@ function isObject(value: unknown): value is Record<string, unknown> {
  * array with its zero-based index `qaIdx`: skips `category === 5`, and for each
  * KEPT item sets `questionId = `${sample_id}:${qaIdx}`` (original index, so a
  * skipped category-5 item leaves a gap rather than shifting later ids — stable,
- * collision-free; Blocker-3), `query` = the LoCoMo source `question` field
- * MAPPED to `query` (round-2 normalization; an absent/empty source question is a
+ * collision-free), `query` = the LoCoMo source `question` field
+ * MAPPED to `query` (the query-field normalization; an absent/empty source question is a
  * structural mismatch -> `err`), and `goldDiaIds = parseLocomoEvidence(...)`.
  */
 export function loadLocomo(raw: unknown): Result<LocomoParsed, Error> {
@@ -273,7 +273,7 @@ export function loadLocomo(raw: unknown): Result<LocomoParsed, Error> {
 }
 
 /**
- * Load a FULL LoCoMo dataset (BENCH-01, full-set half). The public `locomo10.json` is
+ * Load a FULL LoCoMo dataset (full-set half). The public `locomo10.json` is
  * an ARRAY of samples; a single sample object is also accepted (back-compat with the
  * vendored single-sample fixture). Each sample is parsed by {@link loadLocomo}.
  *

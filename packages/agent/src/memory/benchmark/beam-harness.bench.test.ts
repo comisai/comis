@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated BEAM scale-probe harness (SUITE-01 1M; SUITE-06 stretch = 10M) — the
+ * Env-gated BEAM scale-probe harness (1M; 10M stretch) — the
  * long-context per-ability recall measurement engine. It GENERATES a deterministic
  * synthetic haystack AT RUN TIME via {@link generateBeamHaystack} (the haystack is
  * NEVER read from disk and NEVER committed — at ~1M / ~10M tokens it is megabytes of
@@ -8,18 +8,18 @@
  * `SqliteMemoryAdapter`, runs the LIVE `createMemoryRecall` pipeline per planted
  * needle, and scores per-ability recall@k by REUSING the pure {@link scoreBeam}
  * (which reuses `scoreRanking`). The number it prints is the BEAM scale signal that
- * feeds the Phase-98 gap report's Open Decision 3 (FORGET inclusion).
+ * feeds the gap report's open decision on FORGET inclusion.
  *
  * KEYLESS: recall@k needs no answer/judge model, so the gate is `COMIS_BENCH` ONLY
  * (no `COMIS_BENCH_ANSWER_*` / `COMIS_BENCH_JUDGE_*` lane). A default `pnpm test`
  * (no COMIS_BENCH) skips this entire suite.
  *
  * THE 1M / 10M SPLIT:
- * - The 1M `it` ALWAYS runs under COMIS_BENCH (SUITE-01) — the haystack token budget
+ * - The 1M `it` ALWAYS runs under COMIS_BENCH — the haystack token budget
  *   is ~1,000,000 tokens (≈4M chars ≈ ~1,250 seeded ~800-char docs + 4 planted
  *   needles). On-device embedding of that many docs is genuinely slow, so the ingest
- *   runs inside `runBeam` under the 2h `it` budget (BUG-001).
- * - The 10M `it` is behind `COMIS_BENCH_BEAM_10M` (SUITE-06 stretch, deferrable) —
+ *   runs inside `runBeam` under the 2h `it` budget.
+ * - The 10M `it` is behind `COMIS_BENCH_BEAM_10M` (a deferrable stretch tier) —
  *   it SKIPS unless that flag is set, so default CI never pays the 10M cost.
  *
  * ARCHITECTURE CUT (the single escape hatch): this *.bench.test.ts MAY import
@@ -35,12 +35,12 @@
  *
  * SECURITY:
  * - Bench store is a fresh `mkdtempSync` tmp DB (NEVER ~/.comis), `tenantId:"default"`
- *   / `agentId:"bench"` — isolated from any live agent (T-99-06-01). Closed per run.
+ *   / `agentId:"bench"` — isolated from any live agent. Closed per run.
  * - The report is built via buildSuiteReport (structural secret omission) and written
  *   via the confined `writeRegularFile` (O_NOFOLLOW + EXCL + confinement, outside
  *   Pino's redaction net); recall@k is KEYLESS so no secret exists, but the gated body
- *   still asserts the serialized report carries none of `/apiKey|sk-|Bearer/`
- *   (T-99-06-02). The harness `console.log`s ONLY the score object, never content.
+ *   still asserts the serialized report carries none of `/apiKey|sk-|Bearer/`.
+ *   The harness `console.log`s ONLY the score object, never content.
  *
  * @module
  */
@@ -55,10 +55,10 @@ import {
 } from "@comis/memory";
 // BARE production orchestrator (the live recall pipeline this harness drives).
 import { createMemoryRecall, type MemoryRecallDeps } from "@comis/agent";
-// RELATIVE Task-1 (this plan) deterministic generator + Task-2 pure per-ability scorer.
+// RELATIVE deterministic generator + the pure per-ability scorer.
 import { generateBeamHaystack, type BeamAbility, type BeamNeedle } from "./beam-generator.js";
 import { scoreBeam, type BeamScore } from "./beam-scorer.js";
-// RELATIVE Wave-1 (99-01) secret-free per-tier report builder + its types.
+// RELATIVE secret-free per-tier report builder + its types.
 import { buildSuiteReport, type AbilityScore } from "./suite-report.js";
 import type { CategoryAccuracy } from "./qa-accuracy.js";
 import type { RankingMetrics } from "../recall-eval.js";
@@ -81,16 +81,16 @@ const COMIS_BENCH = process.env.COMIS_BENCH; // enables the full generate+ingest
 const LLAMA_MODEL_PATH = process.env.LLAMA_MODEL_PATH; // optional vector lane (embeddings)
 const LLAMA_RERANKER_MODEL_PATH = process.env.LLAMA_RERANKER_MODEL_PATH; // optional rerank lift
 const COMIS_BENCH_DATA = process.env.COMIS_BENCH_DATA; // optional report-output base
-// The 10M stretch flag (SUITE-06, deferrable) — when set, the 10M `it` runs; else it skips.
+// The 10M stretch flag (deferrable) — when set, the 10M `it` runs; else it skips.
 const BEAM_10M = process.env.COMIS_BENCH_BEAM_10M;
 
-/** Fixed epoch (matches the Phase-88/89/99 siblings' neutral clock). */
+/** Fixed epoch (matches the sibling harnesses' neutral clock). */
 const BENCH_NOW = 1_700_000_000_000;
 /** The BEAM tier's harness version stamp (recorded in the report). */
 const HARNESS_VERSION = "phase-99-v1";
 /** The fixed generator seed — a BEAM run is reproducible from this one command + git. */
 const BEAM_SEED = 1234;
-/** The 2h beforeAll/it budget (BUG-001) — a 1M-token ingest far exceeds the 2-min default. */
+/** The 2h beforeAll/it budget — a 1M-token ingest far exceeds the 2-min default. */
 const BEAM_TIMEOUT_MS = 7_200_000;
 
 /**
@@ -119,7 +119,7 @@ const BENCH_SESSION_KEY: SessionKey = {
 /**
  * Resolve the report output directory (DUPLICATED from the retrieval harness). The
  * write itself uses `writeRegularFile({ confinedBaseDir })`, so the O_NOFOLLOW + EXCL +
- * confinement guard applies regardless (T-99-06-02).
+ * confinement guard applies regardless.
  */
 function resolveReportDir(fallbackTmpDir: string): string {
   if (COMIS_BENCH_DATA !== undefined && COMIS_BENCH_DATA.length > 0) {
@@ -192,7 +192,7 @@ describe.skipIf(!COMIS_BENCH)("BEAM scale probe (gated)", () => {
           })
         : undefined;
     rerankerPort = reranker?.ok ? reranker.value : undefined;
-    // 2h hook timeout (BUG-001) — provider warm-up (a GGUF load) can be slow; the heavy
+    // 2h hook timeout — provider warm-up (a GGUF load) can be slow; the heavy
     // per-scale ingest runs in `runBeam` inside each `it` body (also at the 2h budget).
   }, BEAM_TIMEOUT_MS);
 
@@ -304,8 +304,8 @@ describe.skipIf(!COMIS_BENCH)("BEAM scale probe (gated)", () => {
       Date.now(),
     );
     const reportJson = JSON.stringify(report, null, 2);
-    // KEYLESS recall@k → no secret exists; the assertion is the structural guarantee
-    // (T-99-06-02). The ONLY allowed occurrence of these tokens in this file.
+    // KEYLESS recall@k → no secret exists; the assertion is the structural guarantee.
+    // The ONLY allowed occurrence of these tokens in this file.
     expect(reportJson).not.toMatch(/apiKey|sk-|Bearer/);
     const writeResult = writeRegularFile({
       path: join(reportDir, fileName),
@@ -325,14 +325,14 @@ describe.skipIf(!COMIS_BENCH)("BEAM scale probe (gated)", () => {
       writeBeamReport(score, "beam-1m-report.json");
       assertStructural(score);
     },
-    // 2h `it` budget (BUG-001) — the 1M-token ingest is genuinely slow.
+    // 2h `it` budget — the 1M-token ingest is genuinely slow.
     BEAM_TIMEOUT_MS,
   );
 
   it.skipIf(!BEAM_10M)(
     "BEAM 10M per-ability recall (stretch)",
     async () => {
-      // SUITE-06 stretch tier — SKIPS unless COMIS_BENCH_BEAM_10M is set (deferrable;
+      // Stretch tier — SKIPS unless COMIS_BENCH_BEAM_10M is set (deferrable;
       // default CI never pays the 10M cost).
       const score = await runBeam(10_000_000);
       // eslint-disable-next-line no-console -- gated bench harness reports its number (this is a .test.ts, not packages/cli)
@@ -340,7 +340,7 @@ describe.skipIf(!COMIS_BENCH)("BEAM scale probe (gated)", () => {
       writeBeamReport(score, "beam-10m-report.json");
       assertStructural(score);
     },
-    // 2h `it` budget (BUG-001) — the 10M-token ingest is far slower than 1M.
+    // 2h `it` budget — the 10M-token ingest is far slower than 1M.
     BEAM_TIMEOUT_MS,
   );
 });

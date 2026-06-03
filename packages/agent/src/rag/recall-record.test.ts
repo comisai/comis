@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the pure recall-record assembly helpers (Phase 86 / OBS-01/03/04).
+ * Tests for the pure recall-record assembly helpers.
  *
  * Load-bearing assertions:
- * - recallQueryDigest is a stable 64-char hex sha256, NEVER the raw query (OBS-02).
+ * - recallQueryDigest is a stable 64-char hex sha256, NEVER the raw query.
  * - buildRecallRecord assembles lanes/fusedOrder/rerank/ranked/durationMs and omits
  *   empty optional clusters (preScores/postScores/degradations).
  * - vectorLaneCouldContribute is conservative: false ONLY for an empty/whitespace query.
@@ -43,7 +43,7 @@ function obs(overrides: Partial<RecallObservations> = {}): RecallObservations {
 }
 
 describe("recallQueryDigest", () => {
-  it("produces a stable 64-char hex sha256 that is NOT the raw query (OBS-02)", () => {
+  it("produces a stable 64-char hex sha256 that is NOT the raw query", () => {
     const q = "my secret query about project apollo";
     const d = recallQueryDigest(q);
     expect(d).toMatch(/^[0-9a-f]{64}$/);
@@ -110,7 +110,7 @@ describe("buildRecallRecord", () => {
   });
 });
 
-describe("buildRecallRecord — citation→sourceId chain (DIAL-03)", () => {
+describe("buildRecallRecord — citation→sourceId chain", () => {
   it("carries the citation chain (ids only) when obs.citations is populated", () => {
     const rec = buildRecallRecord(
       obs({
@@ -138,7 +138,7 @@ describe("buildRecallRecord — citation→sourceId chain (DIAL-03)", () => {
 
   it("the serialized record carries only ids/sourceIds in the chain — never a memory body", () => {
     // The chain is redaction-safe: citationId is the recalled entry.id, sourceIds are
-    // the entry's sourceIds — no `content` ever reaches this field (DIAL-03 / OBS-02).
+    // the entry's sourceIds — no `content` ever reaches this field.
     const rec = buildRecallRecord(
       obs({
         query: "secret question about apollo",

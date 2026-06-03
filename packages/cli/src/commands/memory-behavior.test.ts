@@ -455,7 +455,7 @@ describe("memory stats display", () => {
 
     vi.mocked(withClient).mockImplementation(async (fn) => {
       // memory.stats is the base daemon stats surface; memory.recall_stats is
-      // the OBS-07 recall-counter overlay that `comis memory stats` now folds in.
+      // the recall-counter overlay that `comis memory stats` now folds in.
       const mockClient = createMockRpcClient()
         .onCall("memory.stats", STATS_DATA)
         .onCall("memory.recall_stats", RECALL_STATS_DATA)
@@ -938,7 +938,7 @@ describe("memory commands handle daemon offline", () => {
 });
 
 // ===========================================================================
-// OBS-06 diagnostic subcommands — dispatch + render behavior.
+// Diagnostic subcommands — dispatch + render behavior.
 // ===========================================================================
 
 // ── memory recall-trace dispatches MemoryRecallTraceContract ────────────────
@@ -1107,7 +1107,7 @@ describe("memory entities dispatch", () => {
   });
 });
 
-// ── memory stats folds in the recall counters (OBS-07) ──────────────────────
+// ── memory stats folds in the recall counters ──────────────────────────────
 
 describe("memory stats recall-counter overlay", () => {
   let consoleSpy: ReturnType<typeof createConsoleSpy>;

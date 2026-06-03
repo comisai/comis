@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * AppendOnly strategy tests (STRAT-05, §7.3 row "AppendOnly").
+ * AppendOnly strategy tests (§7.3 row "AppendOnly").
  *
  * Used by iMessage / LINE (no edit, no delete). Posts one opening status. On
  * success NO closing is posted (the windowed-edit "✓ done" branch is not
@@ -164,9 +164,9 @@ describe("createAppendOnlyRenderer", () => {
     expect(calls).toHaveLength(0);
   });
 
-  // --- Phase 78 / SPEC-§8.5 production wiring (Task 3 — elapsedMs threading) ---
+  // --- §8.5 production wiring (elapsedMs threading) ---
   //
-  // AppendOnly accepts an optional `clock?: ClockPort` (new in 78-05) and
+  // AppendOnly accepts an optional `clock?: ClockPort` and
   // captures `startedAtMs` on first apply(). Because AppendOnly posts
   // ONCE — later apply() calls are no-ops — the elapsed fallback only ever
   // fires on the FIRST visible frame. That is acceptable because the first

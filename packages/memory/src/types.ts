@@ -24,27 +24,27 @@ export interface MemoryRow {
   tags: string;
   /** Unix timestamp in milliseconds */
   created_at: number;
-  /** Unix timestamp in milliseconds, null if the event time is unknown (TEMP-01). */
+  /** Unix timestamp in milliseconds, null if the event time is unknown. */
   occurred_at: number | null;
-  /** Evidence count; null = raw memory, >=1 = observation (P84/CONS-01). */
+  /** Evidence count; null = raw memory, >=1 = observation. */
   proof_count: number | null;
   /** JSON-encoded string[] of contributing source ids; null on raw memories. */
   source_ids: string | null;
-  /** Unix ms; set when folded into an observation (P84/CONS-04). */
+  /** Unix ms; set when folded into an observation. */
   consolidated_at: number | null;
-  /** Observation confidence 0..1 (P84/CONS-08); null on raw memories. */
+  /** Observation confidence 0..1; null on raw memories. */
   confidence: number | null;
-  /** JSON-encoded audit array of prior contents (P84/CONS-05); null on raw memories. */
+  /** JSON-encoded audit array of prior contents; null on raw memories. */
   history: string | null;
-  /** Reasoning-observation kind TEXT; null = "merge" (P101/REASON-01). */
+  /** Reasoning-observation kind TEXT; null = "merge". */
   observation_kind: string | null;
-  /** Inductive pattern class TEXT; null unless observationKind="inductive" (P101/REASON-01). */
+  /** Inductive pattern class TEXT; null unless observationKind="inductive". */
   pattern_type: string | null;
-  /** Unix ms; non-destructive demote marker (P112/FORGET-02); null = not demoted (DORMANT). */
+  /** Unix ms; non-destructive demote marker; null = not demoted (DORMANT). */
   lifecycle_demoted_at: number | null;
-  /** Unix ms; non-destructive evict marker (P112/FORGET-02); null = not evicted (DORMANT). */
+  /** Unix ms; non-destructive evict marker; null = not evicted (DORMANT). */
   evicted_at: number | null;
-  /** Computed lifecycle strength 0..1 (P112/FORGET-02); null = not yet computed. */
+  /** Computed lifecycle strength 0..1; null = not yet computed. */
   strength: number | null;
   /** Unix timestamp in milliseconds, null if never updated */
   updated_at: number | null;

@@ -192,11 +192,11 @@ export interface CommandHandlerDeps {
    */
   getAvailableThinkingLevels?: () => string[];
   /**
-   * WIRE-08: snapshot of currently-tripped activity circuit breakers (for the
+   * Snapshot of currently-tripped activity circuit breakers (for the
    * /status Activity section). OPTIONAL — like the other accessors here, the
    * daemon feeds it from `breaker.getTripped()`. When absent or empty, /status
    * renders no Activity-breaker section. The live daemon thread-through is the
-   * documented composition-root follow-on (same boundary as the WIRE-07/08
+   * documented composition-root follow-on (same boundary as the activity
    * coordinator deps); this is the seam, not the wiring.
    */
   getActivityBreakerStatus?: () => Array<{ agentId: string; channelKey: string; reason: BreakerReason }>;

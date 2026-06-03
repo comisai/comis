@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED->GREEN unit suite for the letta-fs-baseline adapter (PROVE-01 honesty
+ * RED->GREEN unit suite for the letta-fs-baseline adapter (the honesty
  * anchor) — the keyless Letta-style filesystem-tool CONTROL that conforms to the
- * Task-1 `CompetitorAdapter` interface by wrapping the existing pure
+ * `CompetitorAdapter` interface by wrapping the existing pure
  * `formatFilesystemContext` full-haystack formatter.
  *
  * WHY IT EXISTS (the honesty control): a deliberately-trivial no-memory baseline.
@@ -10,8 +10,7 @@
  * judge models grade it. If a full-dump baseline ties/beats Comis's ranked recall
  * on a benchmark, the BENCHMARK is weak, not Comis (Letta's filesystem agent
  * scored 74.0% on LoCoMo, above Mem0's self-reported 68.5%). It is recorded ONLY
- * under an explicit control label + isControl:true — NEVER as Comis's headline
- * (T-98-02-01 / T-104-03-04).
+ * under an explicit control label + isControl:true — NEVER as Comis's headline.
  *
  * KEYLESS at $0: no env, no key, no provider call — the formatter is pure. This is
  * the ONLY competitor adapter that actually runs in the keyless CI.
@@ -32,7 +31,7 @@ function cfgWithDocs(docs: ReadonlyArray<{ content: string; createdAt: number }>
   return { tier: "j1", docs };
 }
 
-describe("letta-fs-baseline-adapter — the keyless Letta-style filesystem control (PROVE-01)", () => {
+describe("letta-fs-baseline-adapter — the keyless Letta-style filesystem control", () => {
   it("Test 1 (RED): system === 'letta-fs-baseline' and isControl === true (the control flag)", () => {
     const adapter = createLettaFsBaselineAdapter();
     expect(adapter.system).toBe("letta-fs-baseline");
@@ -124,7 +123,7 @@ describe("letta-fs-baseline-adapter — the keyless Letta-style filesystem contr
     expect(out.ran).toBe(true);
   });
 
-  it("Test 7 (RED, WR-02): run() OBSERVES the formatted control context — contextChars equals the rendered length (the format call is load-bearing, not dead)", async () => {
+  it("Test 7 (RED): run() OBSERVES the formatted control context — contextChars equals the rendered length (the format call is load-bearing, not dead)", async () => {
     // The honesty contract: the control's only real keyless work is formatting the
     // full-dump context. The run MUST observe that work (record its length), so a
     // linter/refactor cannot delete the format call with zero behavioural change.
@@ -145,7 +144,7 @@ describe("letta-fs-baseline-adapter — the keyless Letta-style filesystem contr
     expect(out.contextChars).toBeGreaterThan(0);
   });
 
-  it("Test 8 (RED, WR-02): contextChars tracks the haystack — a larger haystack yields a larger observed context", async () => {
+  it("Test 8 (RED): contextChars tracks the haystack — a larger haystack yields a larger observed context", async () => {
     const adapter = createLettaFsBaselineAdapter();
     const small = await adapter.run("j1", cfgWithDocs([{ content: "x", createdAt: 1 }]));
     const large = await adapter.run(

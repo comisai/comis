@@ -64,7 +64,7 @@ export interface AgentEvents {
     action?: string;
     /** Sanitised tool params for activity rendering. MUST be redacted via
      *  redactValue() at the emit site before emit (§10.1) — the type carries
-     *  no redaction guarantee; the EVT-06 emit redaction + CI grep gate enforce it. */
+     *  no redaction guarantee; the emit-site redaction + CI grep gate enforce it. */
     params?: Record<string, unknown>;
   };
 
@@ -74,7 +74,7 @@ export interface AgentEvents {
     durationMs: number;
     success: boolean;
     timestamp: number;
-    /** Correlates start↔end for a stable activityId (EVT-01, §16.11). */
+    /** Correlates start↔end for a stable activityId (§16.11). */
     toolCallId: string;
     userId?: string;
     traceId?: string;
@@ -85,7 +85,7 @@ export interface AgentEvents {
     params?: Record<string, unknown>;
     /** Truncated error message when success=false (max 1500 chars). */
     errorMessage?: string;
-    /** Error classification (closed ErrorKind union, EVT-01). "timeout" for
+    /** Error classification (closed ErrorKind union). "timeout" for
      *  abort signal, "internal" for other failures. */
     errorKind?: ErrorKind;
     /** Human-readable activity label for exec commands. */
@@ -103,13 +103,13 @@ export interface AgentEvents {
     profile: string;
     agentId?: string;
     /** Per-entry `toolCallId` is optional — activity renders a policy-block
-     *  only when the filtered tool is correlatable to a call (EVT-03). */
+     *  only when the filtered tool is correlatable to a call. */
     filtered: Array<{ toolName: string; reason: string; toolCallId?: string }>;
     timestamp: number;
   };
 
   /**
-   * v1.1 capability layer -- install detour detected by exec/process tool.
+   * Capability layer -- install detour detected by exec/process tool.
    * Emission lives in the skills package; this is the type-only declaration.
    *
    * Privacy invariants:
@@ -276,7 +276,7 @@ export interface AgentEvents {
 
   /** Model failover: attempt to switch from one model to another.
    *  Turn-scoping ids (agentId/sessionKey/traceId) are optional — emit sites
-   *  populate them so activity can attribute the event to a turn (EVT-04, §16.9). */
+   *  populate them so activity can attribute the event to a turn (§16.9). */
   "model:fallback_attempt": {
     fromProvider: string;
     fromModel: string;
@@ -458,8 +458,8 @@ export interface AgentEvents {
 
   /**
    * Memory consolidation completed (periodic clustering of near-duplicate raw
-   * memories into observations — Phase 84 / CONS-07). MINIMAL payload by design:
-   * Phase 86 (OBS-03/04) owns the rich observability surface (recall trace,
+   * memories into observations). MINIMAL payload by design: the recall
+   * observability events own the rich observability surface (recall trace,
    * per-cluster diagnostics). Counts only — NEVER memory content or tags
    * (AGENTS.md §2.7).
    */
@@ -469,24 +469,24 @@ export interface AgentEvents {
     clustersProcessed: number;
     /** New observation rows created (excludes dedup-hit clusters). */
     observationsCreated: number;
-    /** Clusters skipped because an equivalent observation already existed (CONS-04). */
+    /** Clusters skipped because an equivalent observation already existed. */
     dedupHits: number;
-    /** Observations grown by folding new corroborating sources into them (FOLD-01). */
+    /** Observations grown by folding new corroborating sources into them. */
     foldsApplied: number;
     durationMs: number;
     timestamp: number;
   };
 
   /**
-   * Hybrid memory recall completed for one turn (Phase 86 / OBS-04). MINIMAL
-   * payload by design — counts/booleans/ids ONLY, NEVER the query text, memory
-   * bodies, or entity names (AGENTS.md §2.7). The per-recall ranking detail
-   * lives in the opt-in `diagnostics.recallTrace` JSONL artifact, not on the
-   * bus. Drives the in-process recall counters (OBS-07) lane-usage + hit-rate.
+   * Hybrid memory recall completed for one turn. MINIMAL payload by design —
+   * counts/booleans/ids ONLY, NEVER the query text, memory bodies, or entity
+   * names (AGENTS.md §2.7). The per-recall ranking detail lives in the opt-in
+   * `diagnostics.recallTrace` JSONL artifact, not on the bus. Drives the
+   * in-process recall counters (lane-usage + hit-rate).
    *
    * Emit site: `createMemoryRecall` in
-   * `packages/agent/src/rag/memory-recall.ts` (Plan 03), at the single
-   * one-per-recall site after fuse/rerank/score.
+   * `packages/agent/src/rag/memory-recall.ts`, at the single one-per-recall
+   * site after fuse/rerank/score.
    */
   "memory:recalled": {
     agentId: string;
@@ -509,15 +509,15 @@ export interface AgentEvents {
   };
 
   /**
-   * Cross-encoder rerank stage completed for one recall (Phase 86 / OBS-04).
-   * MINIMAL payload by design — counts/booleans ONLY, NEVER memory bodies or
-   * query text (AGENTS.md §2.7). The `fellBack` / `timedOut` flags make the
+   * Cross-encoder rerank stage completed for one recall. MINIMAL payload by
+   * design — counts/booleans ONLY, NEVER memory bodies or query text
+   * (AGENTS.md §2.7). The `fellBack` / `timedOut` flags make the
    * graceful-degradation paths (reranker err / budget exceeded → fusion order)
-   * queryable (OBS-03); they feed the rerank-fallback-rate counter (OBS-07).
+   * queryable; they feed the rerank-fallback-rate counter.
    *
    * Emit site: `createMemoryRecall` in
-   * `packages/agent/src/rag/memory-recall.ts` (Plan 03), alongside
-   * `memory:recalled` whenever a rerank stage ran.
+   * `packages/agent/src/rag/memory-recall.ts`, alongside `memory:recalled`
+   * whenever a rerank stage ran.
    */
   "memory:reranked": {
     agentId: string;
@@ -537,14 +537,13 @@ export interface AgentEvents {
   };
 
   /**
-   * Entity resolve-and-link pass completed during a memory-review run
-   * (Phase 86 / OBS-04). MINIMAL payload by design — counts ONLY, NEVER entity
-   * names or memory bodies (AGENTS.md §2.7). `newEntities` is the subset of
-   * `entityCount` that created a fresh entity row (the rest reused an existing
-   * one).
+   * Entity resolve-and-link pass completed during a memory-review run.
+   * MINIMAL payload by design — counts ONLY, NEVER entity names or memory
+   * bodies (AGENTS.md §2.7). `newEntities` is the subset of `entityCount` that
+   * created a fresh entity row (the rest reused an existing one).
    *
    * Emit site: the `resolveAndLink` loop in `runMemoryReview`
-   * (`packages/agent/src/memory/memory-review-job.ts`, Plan 04).
+   * (`packages/agent/src/memory/memory-review-job.ts`).
    */
   "memory:entities_linked": {
     agentId: string;
@@ -557,17 +556,17 @@ export interface AgentEvents {
   };
 
   /**
-   * Recall-usage attribution complete for one turn (Phase 93 / FEED-01). MINIMAL
-   * payload — counts + memory IDS only, NEVER memory content, the agent
-   * response, or the query (AGENTS.md §2.7, matching the whole memory:* family).
-   * The overlap heuristic (recall-attribution.ts) reads memory content in-process
-   * at the turn-end site and discards it; only the resulting ids cross the bus.
+   * Recall-usage attribution complete for one turn. MINIMAL payload —
+   * counts + memory IDS only, NEVER memory content, the agent response, or the
+   * query (AGENTS.md §2.7, matching the whole memory:* family). The overlap
+   * heuristic (recall-attribution.ts) reads memory content in-process at the
+   * turn-end site and discards it; only the resulting ids cross the bus.
    *
    * Emit site: `postExecution` in
-   * `packages/agent/src/executor/executor-post-execution.ts` (Plan 93-02),
+   * `packages/agent/src/executor/executor-post-execution.ts`,
    * flag-gated on `rag.feedback.enabled` (default OFF → no emit). The daemon
    * subscriber (setup-memory-usefulness-wiring.ts) writes the signal through the
-   * FEED-02 `MemoryUsefulnessStore.recordUsage` port.
+   * `MemoryUsefulnessStore.recordUsage` port.
    */
   "memory:recall_used": {
     agentId: string;
@@ -582,10 +581,10 @@ export interface AgentEvents {
     /** == ignoredIds.length. */
     ignoredCount: number;
     /**
-     * Optional query-INTENT bucket (LEARN-01/H1) — the deterministic classifyIntent
+     * Optional query-INTENT bucket — the deterministic classifyIntent
      * result for the recall that produced these ids. When present the daemon
      * write-back records the per-intent bucket; when OMITTED it records the GLOBAL
-     * bucket (byte-identical to v2.8). A closed-union string (factual|temporal|
+     * bucket (byte-identical to the prior behaviour). A closed-union string (factual|temporal|
      * preference|enumeration), NOT memory content — ids/counts/intent ONLY ever
      * cross the bus (AGENTS.md §2.7), never bodies/query/response.
      */
@@ -678,7 +677,7 @@ export interface AgentEvents {
    * Emit site: `packages/agent/src/executor/prompt-assembly.ts`, after the
    * hybrid split. `charsInjected`/`hitCount` count RETRIEVED memory only
    * (inline + retrieved sections); the §7.3 temporal-guidance block is fixed
-   * guidance text and is deliberately NOT tallied here (WR-02).
+   * guidance text and is deliberately NOT tallied here.
    */
   "memory:injected": {
     agentId: string;

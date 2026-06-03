@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure recall-outcome learning-lift rank scorer (SUITE-03, Plan 99-03, Task 1).
+ * Pure recall-outcome learning-lift rank scorer.
  *
  * THE METRIC: given the gold doc's 0-based rank in the recalled, ranked list on
  * each FEED episode (lower = better; `undefined` = the gold was not recalled at

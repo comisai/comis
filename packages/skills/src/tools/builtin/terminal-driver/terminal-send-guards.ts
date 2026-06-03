@@ -1,30 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The send-path guards for `terminal_session_send_text` / `_send_key` (SEC-10,
- * OPS-03, OPS-06) PLUS the resize geometry validator ({@link readDimension}, IN-02)
+ * The send-path guards for `terminal_session_send_text` / `_send_key` PLUS the
+ * resize geometry validator ({@link readDimension})
  * — extracted from `terminal-tools.ts` so that file stays under the 800-line
- * architecture cap (RESEARCH Pitfall 5; the same discipline that produced
+ * architecture cap (the same discipline that produced
  * `terminal-worker-launch.ts` / `terminal-workspace.ts` / `terminal-reaper.ts`).
  *
  * The two send tools call {@link enforceSendCapsThenAudit} (which composes the two
- * primitives below in the SEC-10 order — enforce caps, then audit EVERY invocation
- * tagged with its outcome, INCLUDING a cap-rejected one — WR-02/WR-03) BEFORE
+ * primitives below in the canonical order — enforce caps, then audit EVERY invocation
+ * tagged with its outcome, INCLUDING a cap-rejected one) BEFORE
  * forwarding to the registry:
  *
- *   1. {@link enforceSendCaps} — the binding EVICT-vs-REJECT cap split (123-CONTEXT):
- *      - `maxRequestsPerSession` (OPS-03/R1, rate cap) → REJECT only; the session
+ *   1. {@link enforceSendCaps} — the binding EVICT-vs-REJECT cap split:
+ *      - `maxRequestsPerSession` (rate cap) → REJECT only; the session
  *        SURVIVES (read/list/other sends still work).
- *      - `maxInteractions` (OPS-06, interaction budget spent) → EVICT via
+ *      - `maxInteractions` (interaction budget spent) → EVICT via
  *        `registry.evict(sessionId, owner, "max_interactions")` (the single audited
  *        eviction path: drop + workspace cleanup + `terminal:session_evicted` + the
  *        registry `onCapForget` → `caps.forget`) THEN reject.
- *      - `wallClockMs` (OPS-06) → EVICT likewise (reason `wall_clock`) THEN reject;
+ *      - `wallClockMs` → EVICT likewise (reason `wall_clock`) THEN reject;
  *        the reaper sweep also evicts on age — this is the immediate per-send guard
  *        routing through the SAME eviction path.
  *      The tool does NOT call `caps.forget` in the evict branches — the registry's
  *      `onCapForget` owns that (no double-forget).
  *
- *   2. {@link auditKeystroke} — the SEC-10 per-send audit: scrub the raw payload via
+ *   2. {@link auditKeystroke} — the per-send keystroke audit: scrub the raw payload via
  *      `scrubSecretsFromText` (the @comis/core primitive the read tool uses — NEVER
  *      `redactSecretsInText`, which is the skills-forbidden @comis/observability),
  *      put the REDACTED payload in the structured LOG (DEBUG, step `keystroke_audit`),
@@ -59,7 +59,7 @@ interface KeystrokeAuditEvent {
   kind: "text" | "key";
   redactions: number;
   byteLength: number;
-  /** Attempt outcome (WR-03): `attempted` = forwarded; `rejected` = blocked by a cap breach. */
+  /** Attempt outcome: `attempted` = forwarded; `rejected` = blocked by a cap breach. */
   outcome: "attempted" | "rejected";
   timestamp: number;
 }
@@ -132,11 +132,11 @@ export async function enforceSendCaps(
 }
 
 /**
- * Emit the SEC-10 keystroke audit for one `send_*` INVOCATION. See the module doc.
+ * Emit the keystroke audit for one `send_*` INVOCATION. See the module doc.
  * The raw `payload` NEVER reaches a log or the bus — only the scrubbed payload (LOG)
  * and the redaction-safe summary (EVENT). `outcome` tags the attempt: `attempted`
  * (passed the caps, forwarded) or `rejected` (a cap breach blocked the forward) —
- * an ATTEMPT signal, never proof of delivery (WR-03; the event doc spells this out).
+ * an ATTEMPT signal, never proof of delivery (the event doc spells this out).
  */
 export function auditKeystroke(
   deps: SendGuardDeps,
@@ -166,8 +166,8 @@ export function auditKeystroke(
 }
 
 /**
- * Enforce the per-session caps THEN audit the send — the single SEC-10/OPS-03 order
- * the two send tools call (WR-02/WR-03). EVERY invocation is audited exactly once:
+ * Enforce the per-session caps THEN audit the send — the single canonical order
+ * the two send tools call. EVERY invocation is audited exactly once:
  *   - a cap breach → audit `outcome:"rejected"` (the redacted attempt is still
  *     recorded — what the agent TRIED to type before it was rate-capped/evicted),
  *     then the `enforceSendCaps` rejection re-propagates (the forward is skipped);
@@ -188,18 +188,18 @@ export async function enforceSendCapsThenAudit(
   try {
     await enforceSendCaps(deps, sessionId, owner, toolName);
   } catch (err) {
-    // SEC-10: a capped/evicted send is STILL audited (tagged rejected) before the
+    // A capped/evicted send is STILL audited (tagged rejected) before the
     // typed permission_denied propagates — the attempt must not vanish from the trail.
     auditKeystroke(deps, sessionId, toolName, kind, payload, "rejected");
     // @allow-throw: re-propagate the enforceSendCaps rejection after recording the
-    // SEC-10 audit; the forward is intentionally skipped on a cap breach.
+    // keystroke audit; the forward is intentionally skipped on a cap breach.
     throw err;
   }
   auditKeystroke(deps, sessionId, toolName, kind, payload, "attempted");
 }
 
 /**
- * The upper bound on a terminal dimension (IN-02). A real terminal is never this
+ * The upper bound on a terminal dimension. A real terminal is never this
  * wide/tall; the cap blocks an agent from inflating the worker's emulator buffer /
  * PTY winsize with an absurd value. The schema types cols/rows as integers; this is
  * the value-range guard the schema does not express.
@@ -207,7 +207,7 @@ export async function enforceSendCapsThenAudit(
 export const MAX_TERMINAL_DIMENSION = 10_000;
 
 /**
- * Read + VALIDATE a terminal dimension (cols/rows) from agent params (IN-02). The
+ * Read + VALIDATE a terminal dimension (cols/rows) from agent params. The
  * geometry is not a trust boundary, but the tool layer must not forward a degenerate
  * value (0/negative/non-integer/absurd) into the worker's `Terminal({cols,rows})` /
  * PTY winsize. Throws a typed `invalid_value` (never returns on a bad value) so the

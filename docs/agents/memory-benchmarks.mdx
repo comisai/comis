@@ -16,8 +16,8 @@ There are now real numbers to cite, and they come in two clearly separate kinds
   measured under the disclosed protocol and graded by two independent LLM judges.
   These are Comis's sole end-to-end QA-accuracy numbers.
 - **Mechanical, keyless, at $0.** A set of
-  [structural gate deltas](#what-the-v2-8-tracks-provably-do-keyless-at-0) for the
-  v2.8 tracks (KG / reasoning / query understanding) -- a lane surfaces a linked
+  [structural gate deltas](#what-the-structural-tracks-provably-do-keyless-at-0) for the
+  structural tracks (KG / reasoning / query understanding) -- a lane surfaces a linked
   doc, a write lands at the right trust tier, an off-knob is byte-identical.
   These run with no answer model, no judge, no key, no cost. They are **not**
   QA-accuracy lifts.
@@ -42,7 +42,7 @@ Two distinct things are measured, and they are not interchangeable:
 
 - **Retrieval recall@k / MRR** -- an internal regression proxy. It scores
   whether the recall pipeline surfaces the gold-labelled memories for a question.
-  It is the gate every v2.7 recall change is re-run against.
+  It is the gate every recall change is re-run against.
 - **End-to-end QA accuracy** -- the apples-to-apples number. It drives recalled
   context through an answer model, grades correctness with a category-specific
   LLM judge, and reports overall plus per-category accuracy. This is the metric
@@ -79,9 +79,9 @@ no model weights.
 
 ## Retrieval recall@k harness (a regression proxy)
 
-The retrieval harness lives in `retrieval-harness.bench.test.ts` (BENCH-02). It
-is the v2.7 **regression proxy** -- every recall change from Phase 90 onward
-re-runs it and reads the recall@k / MRR delta. It is not a published score.
+The retrieval harness lives in `retrieval-harness.bench.test.ts`. It
+is the **regression proxy** -- every recall change re-runs it and reads the
+recall@k / MRR delta. It is not a published score.
 
 What it does:
 
@@ -154,7 +154,7 @@ never mistaken for semantic recall.
 
 ## End-to-end QA + LLM-judge accuracy (the apples-to-apples number)
 
-The QA harness lives in `qa-judge-harness.bench.test.ts` (BENCH-03 / BENCH-04).
+The QA harness lives in `qa-judge-harness.bench.test.ts`.
 This is the metric comparable to what other memory systems publish. It ingests
 the datasets once, then for each question:
 
@@ -225,8 +225,8 @@ until two independent judges agree within tolerance** (`|A - B| <= 5.0` points).
   **Independence caveat (honest).** Judge A and Judge B are two different OpenAI
   models -- this is a cross-**MODEL** check, **not cross-PROVIDER**. The intended
   Anthropic judge failed on a same-provider answer+judge pairing
-  (**BUG-004**; the model resolved -- the failure was the pairing, not resolution),
-  so a true cross-provider judge is deferred to Phase 104. A same-provider pair is
+  (the model resolved -- the failure was the pairing, not resolution),
+  so a true cross-provider judge is still deferred. A same-provider pair is
   a *weaker* independence test than cross-provider, so treat "survives" as
   necessary-not-sufficient evidence.
 </Note>
@@ -234,7 +234,7 @@ until two independent judges agree within tolerance** (`|A - B| <= 5.0` points).
 ## The cross-judged baseline (the measured accuracy)
 
 These are the **only** end-to-end QA-accuracy numbers Comis publishes -- the
-Phase-98 baseline, each cell graded by both judges. Every number here is read back
+measured baseline, each cell graded by both judges. Every number here is read back
 from the committed manifest
 [`benchmarks/results/2026-05-31-j1-baseline/`](https://github.com/comisai/comis/tree/main/benchmarks/results/2026-05-31-j1-baseline)
 (`cross-judge-spread.md`, `qa-report.judge-a.json`, `qa-report.judge-b.json`,
@@ -281,11 +281,11 @@ How to read this table honestly:
   passes -- genuinely infeasible in one session -- so the J1 protocol's
   disclosed-subset fallback applies (full is the default; silent subsetting is
   forbidden). **Retrieval recall@k is on the full 500+10 set.** The full published
-  head-to-head on the complete set is the Phase-104 proving run.
+  head-to-head on the complete set is the proving run.
 
-## What the v2.8 tracks provably do (keyless, at $0)
+## What the structural tracks provably do (keyless, at $0)
 
-This section is deliberately separate from the accuracy table above. The four v2.8
+This section is deliberately separate from the accuracy table above. The four
 tracks each ship a **mechanical / structural** gate delta -- a lane surfaces a
 linked doc, a write lands at the right trust tier, a ranking knob reorders a
 candidate, an off-knob is byte-identical. Each is measured **keyless, with no
@@ -300,17 +300,17 @@ answer model, no judge, no key, no cost.**
   benchmark forbids.
 </Note>
 
-| v2.8 track | Measured delta (mechanical, keyless, $0) | Manifest |
-|------------|------------------------------------------|----------|
+| Track | Measured delta (mechanical, keyless, $0) | Manifest |
+|-------|------------------------------------------|----------|
 | **KG** graph-spread lane | linked-doc recall **delta +1** (OFF: linked doc absent -> ON: surfaced purely by the KG edge) | [`graph-spread-contribution-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase100-kg/graph-spread-contribution-report.json) |
-| **KG** trust-first invalidation | **100% (2/2)** older-high-trust-wins on SUITE-04 via the real `upsertTriple` | [`trust-first-kg-invalidation-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase100-kg/trust-first-kg-invalidation-report.json) |
+| **KG** trust-first invalidation | **100% (2/2)** older-high-trust-wins via the real `upsertTriple` | [`trust-first-kg-invalidation-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase100-kg/trust-first-kg-invalidation-report.json) |
 | **Reasoning** inductive write | written at `learned`, capped **<= `learned`** (0 `system`-trust inductive rows) | [`reasoning-write-correctness-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase101-reason/reasoning-write-correctness-report.json) |
 | **IQ** MMR diversity | diverse-doc rank **OFF 3 -> ON 2** (`diversityRankLift` 1); lambda=1.0 byte-identical to OFF | [`mmr-diversity-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase102-iq/mmr-diversity-report.json) |
 | **IQ** intent reweight | temporal candidate rank **OFF 2 -> ON 1** (`reweightRankLift` 1) | [`intent-reweight-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase102-iq/intent-reweight-report.json) |
 | **IQ** NL temporal-range | in-window precision **OFF 0.5 -> ON 1.0**; unparseable query -> no filter (byte-identity) | [`temporal-range-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase102-iq/temporal-range-report.json) |
 
-**Default-OFF byte-identity.** Every v2.8 factor is **default-off** and, when off,
-**byte-identical** to the Phase-98 shipping config -- no silent behaviour change,
+**Default-OFF byte-identity.** Every structural factor is **default-off** and, when off,
+**byte-identical** to the baseline shipping config -- no silent behaviour change,
 zero category regression
 ([`default-off-byte-identity-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase102-iq/default-off-byte-identity-report.json)).
 
@@ -321,10 +321,10 @@ keyless on injected verdicts: **3 of 4 categories survive** the 5pt tolerance; t
 This proves the *mechanism* at $0 -- the costed pass fills the real cross-judged
 numbers.
 
-## What the v2.9 tracks provably do (keyless, at $0)
+## What the shipped capabilities provably do (keyless, at $0)
 
-Like the v2.8 section above, this is deliberately **separate from the accuracy
-table**. The v2.9 milestone **ships** six new capabilities -- a per-user profile, a
+Like the structural-tracks section above, this is deliberately **separate from the accuracy
+table**. This set **ships** six new capabilities -- a per-user profile, a
 per-channel relationship model, an ask-your-memory tool, a query-conditional
 usefulness reorder, a recall loop that learns which memories prove useful, and
 principled ranking decay of stale memories -- each TDD-green. Every number below is
@@ -341,29 +341,29 @@ model, no judge, no key, no cost.**
   [`2026-06-01-phase113-reprove`](https://github.com/comisai/comis/tree/main/benchmarks/results/2026-06-01-phase113-reprove)).
 </Note>
 
-| v2.9 capability (shipped) | Measured delta (mechanical, keyless, $0) | Manifest |
-|---------------------------|------------------------------------------|----------|
+| Capability (shipped) | Measured delta (mechanical, keyless, $0) | Manifest |
+|----------------------|------------------------------------------|----------|
 | **Per-user profile** | typed per-user records round-trip **4/4**; an external-trust upsert is **rejected** (0 rows); (tenant, agent, user) isolation; recall stays LLM-free | [`claim1-prefix-typing-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase107-user/claim1-prefix-typing-report.json) |
 | **Per-channel relationship model** (ships default-off / dormant) | directional A→B and B→A stored as **two distinct edges**; the sign-off gate holds (enabled-but-unsigned ⇒ **0 reads**, null block) | [`claim4-signoff-gate-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase108-social/claim4-signoff-gate-report.json) |
 | **Ask-your-memory tool** (opt-in / default-off) | recall stays **LLM-free** (0 model calls on read); citations are a **subset** of the recalled ids; **mandatory abstention** on empty recall | [consolidated re-prove `GATE-REPORT.md`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase113-reprove/GATE-REPORT.md) |
-| **Query-conditional usefulness reorder** | a memory used for intent X ranks **1 vs 2** for an X- vs Y-query (`perIntentRankLift` 1); citation→FEED accrual; default-off byte-identical | [`claim1-per-intent-bucket-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase110-learn-iq/claim1-per-intent-bucket-report.json) |
+| **Query-conditional usefulness reorder** | a memory used for intent X ranks **1 vs 2** for an X- vs Y-query (`perIntentRankLift` 1); citation→usefulness accrual; default-off byte-identical | [`claim1-per-intent-bucket-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase110-learn-iq/claim1-per-intent-bucket-report.json) |
 | **Learning-to-rank** (trust frozen) | an opt-in loop **learns which memories prove useful** and bounded-tunes recall ranking from that signal; trust stays **frozen** under tuning; default-off byte-identical | [`claim1-bandit-rank-lift-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase111-learn-rank/claim1-bandit-rank-lift-report.json) |
 | **The one measured learning signal** | bandit recall-**score** lift **+0.1** over 5 episodes (`goldScoreLift` 0.1, measured-positive); the gold's **rank position is flat** on the keyless lane (`rankLift` 0) -- never rounded into "+0.1% accuracy" | [`claim1-bandit-rank-lift-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase111-learn-rank/claim1-bandit-rank-lift-report.json) |
 | **Principled ranking decay** (eviction dormant / default-off) | old + unused rank lower (old/unused factor **0.553** < fresh **0.995**; gap 0.441); decay **ranks, never gates**; byte-identical at neutral; dormant footprint 5→5 | [`claim2-deterministic-decay-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-01-phase112-forget/claim2-deterministic-decay-report.json) |
 
-**Default-OFF byte-identity.** As with v2.8, every v2.9 factor is **default-off**
+**Default-OFF byte-identity.** As with the structural tracks, every capability factor is **default-off**
 and, when off, byte-identical to the shipping config -- no silent behaviour change,
 zero category regression. The costed per-capability QA-accuracy lift and the
 competitor head-to-head are **not measured** here -- they are the operator-costed
 re-run consolidated in
 [`2026-06-01-phase113-reprove`](https://github.com/comisai/comis/tree/main/benchmarks/results/2026-06-01-phase113-reprove).
 
-## The v2.10 competitive head-to-head (the costed re-run, finally measured)
+## The competitive head-to-head (the costed re-run, finally measured)
 
 The operator-costed competitor head-to-head that the section below frames as
-"reproduce via the gate" **has now been run.** This is the v2.10 result, and it is
+"reproduce via the gate" **has now been run.** This is the result, and it is
 an **accuracy, cross-judged** number -- the second real end-to-end QA-accuracy set
-after the Phase-98 baseline, kept clearly separate from the mechanical $0 deltas
+after the measured baseline, kept clearly separate from the mechanical $0 deltas
 above. Every cell is read back from the committed manifest
 [`benchmarks/results/2026-06-02-phase114-prove2/`](https://github.com/comisai/comis/tree/main/benchmarks/results/2026-06-02-phase114-prove2)
 (`head-to-head-report.json`, `GATE-REPORT.md`, `run-provenance.json`).
@@ -412,7 +412,7 @@ How to read this honestly:
 [`capability-lift-report.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-06-02-phase114-prove2/capability-lift-report.json):
 Comis's as-shipped recall scores **98.0% (gpt-4o) / 94.0% (claude)** (cross-judge
 spread 4.0, survives) on a 50-item LongMemEval+LoCoMo mix. The two recall-config
-v2.9 capabilities (intent-reweight, forget) produce recall **byte-identical to
+capabilities (intent-reweight, forget) produce recall **byte-identical to
 baseline on all 50 questions** -> **+0.0 pt** measured QA-lift (p=1.000). This is the
 measure-first outcome: **no recall-config capability showed a measured QA-lift**, so
 the activation phase that follows flips nothing by default.
@@ -430,10 +430,10 @@ the activation phase that follows flips nothing by default.
 
 ## What is measured at $0 vs the operator-costed head-to-head
 
-Two things are measured **at $0** (keyless): the v2.8 mechanical gate deltas above,
+Two things are measured **at $0** (keyless): the mechanical gate deltas above,
 and the proving-machine mechanism. The competitor head-to-head -- the "Comis vs
 another memory system" accuracy comparison -- is the **operator-costed** re-run, and
-[its first measured result is the v2.10 head-to-head above](#the-v2-10-competitive-head-to-head-the-costed-re-run-finally-measured)
+[its first measured result is the head-to-head above](#the-competitive-head-to-head-the-costed-re-run-finally-measured)
 (best-effort N=8, cross-judged). To **extend** it -- a larger N, or the
 skip-with-disclosure competitors (Zep / Hindsight / Mnemosyne) -- you run it
 yourself: it needs answer + judge model credentials and the competitor systems
@@ -457,7 +457,7 @@ cp scripts/bench-memory.env.example scripts/bench-memory.env
 scripts/bench-memory.sh gate
 ```
 
-The costed re-run is now done and cross-judged (the v2.10 head-to-head above), and
+The costed re-run is now done and cross-judged (the head-to-head above), and
 its honest outcome is **"competitive-with mem0 / at-$0-on-device"** -- a tie, never a
 superiority headline. The gate command above stays the path to **extend** it to a
 larger N or more competitors.
@@ -521,7 +521,7 @@ comparable to Hindsight's scoreboard.
 Comis now has published QA-accuracy numbers -- the
 [cross-judged baseline](#the-cross-judged-baseline-the-measured-accuracy) above
 (overall 71.1 / 73.3) and the
-[v2.10 head-to-head](#the-v2-10-competitive-head-to-head-the-costed-re-run-finally-measured)
+[competitive head-to-head](#the-competitive-head-to-head-the-costed-re-run-finally-measured)
 (competitive-with mem0 at N=8) -- but this page still states **no comparative result
 against Hindsight**: Hindsight was skip-with-disclosure in that run, not re-run under
 this protocol. A fair side-by-side requires the other system re-run under this exact
@@ -544,7 +544,7 @@ The high-level entry points (the script's own documented modes):
 pnpm bench:memory dry                  # keyless smoke over the vendored fixtures ($0)
 pnpm bench:memory retrieval            # recall@k / MRR (keyless; lights vector/rerank if model paths set)
 pnpm bench:memory qa                   # end-to-end QA + judge (requires answer + judge env)
-scripts/bench-memory.sh suite <tier>   # one v2.8 SUITE tier -> committed secret-free report
+scripts/bench-memory.sh suite <tier>   # one SUITE tier -> committed secret-free report
 scripts/bench-memory.sh head-to-head   # the proving machine, keyless at $0
 scripts/bench-memory.sh gate           # the per-release regression gate
 ```
@@ -590,7 +590,7 @@ For the recall defaults the QA harness uses, see the
 
 Every number on this page traces to the committed run manifest
 [`benchmarks/results/2026-05-31-j1-baseline/run-provenance.json`](https://github.com/comisai/comis/blob/main/benchmarks/results/2026-05-31-j1-baseline/run-provenance.json)
-(and, for the v2.8 deltas, the dated phase manifests linked in their table):
+(and, for the structural-track deltas, the dated phase manifests linked in their table):
 
 | Field | Value |
 |-------|-------|
@@ -599,7 +599,7 @@ Every number on this page traces to the committed run manifest
 | Harness | `phase-89-v1` |
 | Datasets | LongMemEval `xiaowu0162/longmemeval` (`longmemeval_s.json`, 500) · LoCoMo `snap-research/locomo` (`locomo10.json`, 10) |
 | Answer model | anthropic `claude-sonnet-4-6` (temperature 0) |
-| Judges | openai `gpt-4o-2024-11-20` + openai `gpt-4.1` (cross-model, not cross-provider -- BUG-004) |
+| Judges | openai `gpt-4o-2024-11-20` + openai `gpt-4.1` (cross-model, not cross-provider) |
 | Embedding | local `nomic-embed-text-v1.5` |
 | Reranker | local `bge-reranker-v2-m3` |
 

@@ -587,12 +587,12 @@ describe("config + env + gateway-infrastructure contracts", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // EnvSetContract widening — REQ-14 / Plan 02-02
+  // EnvSetContract widening.
   // RED: these tests fail until storage is z.enum(["encrypted","file"]) and
   // restarting is z.boolean().
   // ---------------------------------------------------------------------------
 
-  it("env.set: response accepts file storage variant (02-02 widening)", () => {
+  it("env.set: response accepts file storage variant (widening)", () => {
     expect(() =>
       EnvSetContract.response.parse({
         set: true,
@@ -603,7 +603,7 @@ describe("config + env + gateway-infrastructure contracts", () => {
     ).not.toThrow();
   });
 
-  it("env.set: response accepts file storage + restarting:false (02-02 widening)", () => {
+  it("env.set: response accepts file storage + restarting:false (widening)", () => {
     expect(() =>
       EnvSetContract.response.parse({
         set: true,
@@ -614,7 +614,7 @@ describe("config + env + gateway-infrastructure contracts", () => {
     ).not.toThrow();
   });
 
-  it("env.set: response accepts encrypted storage + restarting:false (02-02 widening)", () => {
+  it("env.set: response accepts encrypted storage + restarting:false (widening)", () => {
     expect(() =>
       EnvSetContract.response.parse({
         set: true,

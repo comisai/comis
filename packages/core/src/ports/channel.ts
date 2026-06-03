@@ -89,8 +89,8 @@ export interface ChannelPort {
    *
    * The optional `options` arg lets activity renderers update rich approval /
    * status frames in place — inline keyboards, components, or Block Kit — not
-   * just the message text (STRAT-06, §16.11). In-tree adapters are updated to
-   * honour it in Phase 71/72; this is the port-shape widening only.
+   * just the message text (§16.11). In-tree adapters are updated separately to
+   * honour it; this is the port-shape widening only.
    *
    * @param channelId - Target channel/chat/room identifier
    * @param messageId - The platform-specific ID of the message to edit

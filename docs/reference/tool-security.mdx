@@ -11,7 +11,7 @@ Tool security encompasses four subsystems that protect against malicious input f
 The SSRF guard prevents server-side request forgery by validating every outbound URL before any HTTP request is made. The `validateUrl()` function performs DNS-pinned validation: it resolves the hostname, then checks the resolved IP against blocked ranges.
 
 <Info>
-  **Source:** `packages/core/src/security/ssrf-guard.ts` -- FNDTN-01 requirement: every web-facing tool must pass through `validateUrl()` before fetch.
+  **Source:** `packages/core/src/security/ssrf-guard.ts` -- requirement: every web-facing tool must pass through `validateUrl()` before fetch.
 </Info>
 
 ### Validation Steps

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * SqliteUserRepresentationStore: the SOLE adapter for the segregated
- * `UserRepresentationStore` port (@comis/core, Phase 107, Track E1 — USER-01).
+ * `UserRepresentationStore` port (@comis/core).
  * It owns ALL the per-user-representation SQL over the additive
  * `user_representation` table — the only place SQL is written for this capability.
  *
@@ -12,14 +12,14 @@
  *   anti-poisoning defense: it REJECTS a below-floor `trust` at the write boundary
  *   (returns `err` — never stores it at a reduced weight), BEFORE the INSERT, as
  *   defense-in-depth with the DB `CHECK(trust IN ('system','learned'))` (layer 1)
- *   and the port-type floor (layer 2, 107-01). `content` is untrusted profile
+ *   and the port-type floor (layer 2). `content` is untrusted profile
  *   text — it runs through `validateMemoryWrite` (redaction firewall) and is bound
  *   as a `?` parameter, never concatenated. The row id is a `randomUUID()`
  *   (imported from `node:crypto`, mirror the triple store); `created_at` is the
  *   injected clock `scope.now`, NEVER `Date.now()`.
  * - `read(scope, cap)` is the LLM-free profile read: the entries for the caller's
  *   (tenant, agent, user) scope ONLY, capped. This is the deterministic read the
- *   prompt-assembly injection block (Plan 107-04) consumes with NO model call.
+ *   prompt-assembly injection block consumes with NO model call.
  *   Returns an empty array when the user has no profile (the default-OFF no-op).
  *
  * It shares the `better-sqlite3` handle of the `SqliteMemoryAdapter` (passed in
@@ -27,7 +27,7 @@
  * ON` already set — that pragma is what makes the `source_memory_id ->
  * memories(id)` `ON DELETE CASCADE` fire.
  *
- * ## Provenance / retirement caveat (LR-02)
+ * ## Provenance / retirement caveat
  *
  * The `ON DELETE CASCADE` ONLY retires rows that carry a non-NULL
  * `source_memory_id` — i.e. the single-source write path. The PRIMARY producer,
@@ -41,8 +41,8 @@
  * is no orphan-sweep job. Do not assume CASCADE garbage-collects offline-built
  * rows — it does not.
  *
- * ## Isolation is the load-bearing security boundary (T-107-02-01, the §5.2 /
- *    ENT-03 pattern, EXTENDED with `user_id`)
+ * ## Isolation is the load-bearing security boundary (the §5.2 isolation
+ *    pattern, EXTENDED with `user_id`)
  *
  * Comis runs many agents and many users in one DB. BOTH the write (the INSERT)
  * and the read (the scoped SELECT) filter on `(tenant_id, agent_id, user_id)` —
@@ -138,7 +138,7 @@ export function createSqliteUserRepresentationStore(
       "(id, tenant_id, agent_id, user_id, entry_type, content, trust, source_memory_id, created_at) " +
       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   );
-  // The scoped read (T-107-02-01). The `tenant_id = ? AND agent_id = ? AND
+  // The scoped read. The `tenant_id = ? AND agent_id = ? AND
   // user_id = ?` filter is the load-bearing 3-way ISOLATION boundary: a row
   // written under one scope can NEVER be read under any differing tenant/agent/
   // user. Newest-first, capped (the cap is a bound `?`). Bound params only.
@@ -174,8 +174,8 @@ export function createSqliteUserRepresentationStore(
           return err(new Error("user-representation: trust below high-trust floor"));
         }
 
-        // The redaction firewall on the untrusted profile text (T-107-02-04 /
-        // the port's validateMemoryWrite boundary). The profile is HIGH-TRUST-ONLY
+        // The redaction firewall on the untrusted profile text (the port's
+        // validateMemoryWrite boundary). The profile is HIGH-TRUST-ONLY
         // — there is no `external` tier to down-store a `warn` into (unlike
         // memory-review-job, which downgrades warn→external) — so ANYTHING not
         // `clean` (a secret-egress hit OR a suspicious-pattern hit) is REJECTED,

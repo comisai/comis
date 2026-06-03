@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * E2E-01: Linux-gated sibling-exec-cannot-recover-key check.
+ * Linux-gated sibling-exec-cannot-recover-key check.
  *
  * Verifies that a sibling exec inside the same bwrap session cannot
  * recover the real API key via env inspection, /proc, credential files,
@@ -12,13 +12,13 @@
  * On Linux with bwrap available, all four recovery-vector tests run as live
  * assertions.
  *
- * Depends on: Phase 5 --unshare-net bwrap egress enforcement (bwrap-provider.ts,
+ * Depends on: --unshare-net bwrap egress enforcement (bwrap-provider.ts,
  * secureCredentialHome profile).
  *
  * Outstanding: The live sibling-exec recovery check is Linux-gated.
- * On macOS this suite skips entirely (0 tests run). The in-process Phase 6
- * observability tests (Plan 03) cover the broker and session manager in-process.
- * Full E2E-01 validation requires running on a Linux host with bwrap available
+ * On macOS this suite skips entirely (0 tests run). The in-process
+ * observability tests cover the broker and session manager in-process.
+ * Full validation requires running on a Linux host with bwrap available
  * (CI or production host class).
  *
  * @module
@@ -116,7 +116,7 @@ function sandboxEnv(): Record<string, string> {
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!linuxEgressAvailable)(
-  "E2E-01: sibling exec cannot recover proxy key inside bwrap sandbox (Linux only)",
+  "sibling exec cannot recover proxy key inside bwrap sandbox (Linux only)",
   () => {
     // Validate that the real sentinel is actually distinct from the placeholder
     // before any test runs. If somehow equal, the assertions below are vacuous.
@@ -217,7 +217,7 @@ describe.skipIf(!linuxEgressAvailable)(
     // Test 3: file vector (~/.claude credential access)
     //
     // GO: The secure-profile sandbox (secureCredentialHome: true via
-    //     BwrapProvider.buildArgs) omits the ~/.claude bind-mount (EGRESS-02).
+    //     BwrapProvider.buildArgs) omits the ~/.claude bind-mount.
     //     Inside this sandbox, cat ~/.claude/.credentials.json must fail
     //     (no such file or directory) OR return empty output.
     //

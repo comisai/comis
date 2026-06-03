@@ -21,7 +21,7 @@ import type { MemorySearchResult } from "./memory.js";
  */
 
 /**
- * The isolation boundary for every entity operation (ENT-03). Both the resolver
+ * The isolation boundary for every entity operation. Both the resolver
  * UNIQUE index and the lane self-join key on `(tenantId, agentId)` — this is a
  * load-bearing SECURITY scope in a multi-agent DB, not a nicety: two agents (or
  * tenants) must NEVER collapse to one entity row or surface each other's
@@ -41,7 +41,7 @@ export interface EntityScope {
 }
 
 /**
- * A single entity row for the entity-graph diagnostic (OBS-06). Counts +
+ * A single entity row for the entity-graph diagnostic. Counts +
  * bookkeeping timestamps only — `name` is the canonical display name the
  * admin-gated diagnostic surfaces to an operator (NOT exposed on the bus
  * `memory:entities_linked` event, which stays counts-only). `firstSeen` /
@@ -63,7 +63,7 @@ export interface EntityRow {
 
 export interface MemoryEntityStore {
   /**
-   * WRITE PATH (IN-01). Resolve `name` to an entity scoped to (tenant, agent)
+   * WRITE PATH. Resolve `name` to an entity scoped to (tenant, agent)
    * — exact `canonical_key` reuse first, else a fuzzy match >= 0.6, else create
    * a new entity — bump its `mention_count` / `last_seen`, and link
    * `memoryId` <-> the resolved entity id (idempotent). Returns the resolved
@@ -72,11 +72,11 @@ export interface MemoryEntityStore {
   resolveAndLink(memoryId: string, name: string, scope: EntityScope): Promise<Result<string, Error>>;
 
   /**
-   * READ PATH (ENT-02). Given seed memory ids, return OTHER memories — scoped to
+   * READ PATH. Given seed memory ids, return OTHER memories — scoped to
    * (tenant, agent), the seeds themselves excluded — that share >= 1 entity,
-   * HYDRATED as `MemorySearchResult[]` ordered most-shared-first (OQ-1).
+   * HYDRATED as `MemorySearchResult[]` ordered most-shared-first.
    * Returns an empty array when there are no seeds or no shared entities
-   * (ENT-04 — the entity lane is then empty and RRF ranking is unchanged).
+   * (the entity lane is then empty and RRF ranking is unchanged).
    * `cap` bounds the returned row count.
    */
   associativeLane(
@@ -86,15 +86,15 @@ export interface MemoryEntityStore {
   ): Promise<Result<MemorySearchResult[], Error>>;
 
   /**
-   * DIAGNOSTIC READ PATH (OBS-06). List the entities scoped to a single
+   * DIAGNOSTIC READ PATH. List the entities scoped to a single
    * `(tenantId, agentId)` partition, ordered most-mentioned-first, bounded by
    * `limit`. This is the entity-graph diagnostic's surface — a NON-seed read,
    * distinct from the seed-based `associativeLane` (which needs memory seeds to
    * traverse). Bakes the SAME `(tenant, agent)` SQL isolation as the resolver
-   * UNIQUE index and the lane self-join (ENT-03) — two agents/tenants must
+   * UNIQUE index and the lane self-join — two agents/tenants must
    * never surface each other's entity rows even when a name is identical. The
    * sole adapter is in @comis/memory; called only from the daemon
-   * (`memory.entities` handler, Plan 05). No new authority beyond a scoped read
+   * (`memory.entities` handler). No new authority beyond a scoped read
    * within the caller's own (tenant, agent).
    */
   listEntities(

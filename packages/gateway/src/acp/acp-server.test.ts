@@ -364,7 +364,7 @@ describe("createAcpAgent", () => {
     });
   });
 
-  describe("per-session AgentSideConnection registry (ACP-01)", () => {
+  describe("per-session AgentSideConnection registry", () => {
     it("retains the registered connection per session id after newSession", async () => {
       const deps = createMockDeps();
       const { agent, registerConnection, getConnection } = createAcpAgent(deps);
@@ -420,16 +420,16 @@ describe("createAcpAgent", () => {
 });
 
 /**
- * Bridge-wiring suite (74-07, ACP-02/03/04): startAcpServer must construct the
- * three ACP bridges and subscribe the plan bridge per connection when the
- * injection seams (executionPlanPort + eventBus + activityStreamPort) are
- * present, and remain a no-op for non-ACP-plan callers when they are absent.
+ * Bridge-wiring suite: startAcpServer must construct the three ACP bridges and
+ * subscribe the plan bridge per connection when the injection seams
+ * (executionPlanPort + eventBus + activityStreamPort) are present, and remain a
+ * no-op for non-ACP-plan callers when they are absent.
  *
  * RED on pre-patch code: `AcpServerDeps` carries no `executionPlanPort` /
  * `eventBus`, and startAcpServer constructs no bridge — so the
  * `getCurrentPlan` read after a `sep:plan_extracted` emit never fires.
  */
-describe("startAcpServer bridge wiring (74-07, ACP-02/03/04)", () => {
+describe("startAcpServer bridge wiring", () => {
   const ACP_SESSION_ID = "wire-acp-session-1";
   const SESSION_KEY = formatSessionKey({
     tenantId: "default",

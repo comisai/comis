@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated KEYLESS graph-spread lane-contribution harness (KG-05, Phase 100-06) --
- * the FREE, deterministic, no-API-cost measurement of whether the trust-first
- * bi-temporal KG's graph-spread lane (Plan 100-04) actually CONTRIBUTES to recall.
+ * Env-gated KEYLESS graph-spread lane-contribution harness -- the FREE,
+ * deterministic, no-API-cost measurement of whether the trust-first
+ * bi-temporal KG's graph-spread lane actually CONTRIBUTES to recall.
  *
- * WHY THIS HARNESS EXISTS (the honest gap the Phase-100 gate must measure): the
+ * WHY THIS HARNESS EXISTS (the honest gap this gate must measure): the
  * shipping QA + retrieval + contradiction harnesses construct `createMemoryRecall`
  * WITHOUT a `tripleStore` dep and WITHOUT a `lanes.graphSpread` config, so with the
  * lane DEFAULT-OFF they exercise the KG lane NOT AT ALL -- running them ON the J1
- * subset reproduces the Phase-98 baseline with the lane dormant (a NULL result for
+ * subset reproduces the prior baseline with the lane dormant (a NULL result for
  * the headline). To measure the lane's read-side claim HONESTLY and for FREE, this
  * harness wires the SAME production recall pipeline (`createMemoryRecall`) to the
  * SAME production adapter (`createSqliteTripleStore` over the SqliteMemoryAdapter's
@@ -30,11 +30,11 @@
  *     memory-recall.ts:289-293), the walk is the real bounded recursive-CTE
  *     `spreadLane`, and the hydrate is the real `source_memory_id -> memories` join.
  * The only thing the harness does that production wiring (the daemon) does too is
- * POPULATE the triples (production does it via the offline triple-extraction job,
- * Plan 100-05); here we write them directly via the port's `upsertTriple` so the
+ * POPULATE the triples (production does it via the offline triple-extraction job);
+ * here we write them directly via the port's `upsertTriple` so the
  * test is deterministic + LLM-free.
  *
- * KEYLESS (T-89-03 family): no answer/judge model, no API key, no provider call, no
+ * KEYLESS: no answer/judge model, no API key, no provider call, no
  * cost. The vector lane lights up only if LLAMA_MODEL_PATH is set (the linked-doc
  * surfacing claim is then even STRONGER -- the linked doc is non-lexical AND
  * non-semantic for the query, so only the graph edge can surface it); absent, FTS-only.
@@ -60,8 +60,8 @@ import { SqliteMemoryAdapter, createSqliteTripleStore } from "@comis/memory";
 import { createMemoryRecall, type MemoryRecallDeps, type MemoryRecallConfig } from "@comis/agent";
 // VALUE obs import (fine in a .test.ts) -- the confined report writer.
 import { writeRegularFile } from "@comis/observability";
-// RELATIVE (99-01) constructed SUITE-04 contradiction pairs (Paris/vegetarian) -- the
-// SAME fixtures the gate consumes; reused here to drive the NEW KG write-path invalidation.
+// Constructed contradiction pairs (Paris/vegetarian) -- the SAME fixtures the gate
+// consumes; reused here to drive the NEW KG write-path invalidation.
 import { buildContradictionPairs } from "./suite-scenario.js";
 // Determinism helpers (test/support -- 5 segments up).
 import { createFakeClock } from "../../../../../test/support/fake-clock.js";
@@ -107,7 +107,7 @@ const BENCH_SESSION_KEY: SessionKey = {
 
 /**
  * The agent partition the memories + triples are ingested under -- AND the agentId
- * recall is called with. THE SCOPE IS LOAD-BEARING (T-100-04-02): the graph-spread
+ * recall is called with. THE SCOPE IS LOAD-BEARING: the graph-spread
  * walk's recursive arm filters on `(tenant_id, agent_id)`, and recall derives the
  * spread scope as `agentId ?? sessionKey.agentId ?? "default"` (memory-recall.ts).
  * The SessionKey here carries NO `agentId`, so recall MUST be called with this
@@ -170,7 +170,7 @@ const SCENARIO: LinkedScenario = {
   linkedContent: "Zephyr ledger note: approver delegate is Mirabel Okonkwo, escalation code TZ-7.",
 };
 
-describe.skipIf(!COMIS_BENCH)("graph-spread lane contribution (KG-05, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("graph-spread lane contribution (keyless gated)", () => {
   // Captured in beforeAll: the recall results with the lane OFF then ON, plus the
   // structural witnesses the assertions + the report read.
   let rankedOff: MemorySearchResult[] = [];
@@ -361,11 +361,11 @@ describe.skipIf(!COMIS_BENCH)("graph-spread lane contribution (KG-05, keyless ga
 });
 
 /**
- * SUITE-04 TRUST-FIRST KG WRITE-PATH INVALIDATION (KG-02, the NEW Phase-100 behavior).
+ * TRUST-FIRST KG WRITE-PATH INVALIDATION (the NEW behavior).
  *
  * Distinct from the lane-contribution probe above AND from the shipped recall trust
  * filter the contradiction-harness.bench.test.ts measures: this drives the SAME
- * SUITE-04 fixtures (Paris/vegetarian) through the REAL `upsertTriple` trust-first
+ * contradiction fixtures (Paris/vegetarian) through the REAL `upsertTriple` trust-first
  * single-current-truth invalidation, in the correct temporal order (the OLDER
  * high-trust fact written first, THEN the NEWER external contradiction), and asserts
  * the OLDER high-trust object remains the CURRENT TRUTH (`currentTruth` returns it,
@@ -379,7 +379,7 @@ describe.skipIf(!COMIS_BENCH)("graph-spread lane contribution (KG-05, keyless ga
  * trust-first ladder (system/learned > external) must keep the incumbent current and
  * record the external claim as "recorded-not-believed" (soft-closed on write).
  */
-describe.skipIf(!COMIS_BENCH)("trust-first KG write-path invalidation (KG-02, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("trust-first KG write-path invalidation (keyless gated)", () => {
   // A wrong (contradicting) object per pair, deliberately != the correct substring.
   const WRONG_OBJECT_BY_QUERY: Record<string, string> = {
     "What is the user's home city?": "Berlin",

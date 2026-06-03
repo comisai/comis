@@ -2,7 +2,7 @@
 // @allow-throw: test fixture loader; the thrown "missing fixture" error is the
 // RED signal for an un-pinned scenario and is caught by Vitest at the call site.
 /**
- * Golden-fixture read helper (CHAN-05; §18.1 read-from-disk + `toEqual`).
+ * Golden-fixture read helper (§18.1 read-from-disk + `toEqual`).
  *
  * The single shared piece every channel renderer test reuses (rule-of-three):
  * `readFixture(channel, scenario)` reads
@@ -13,13 +13,13 @@
  * `toMatchSnapshot` / `toMatchFileSnapshot`, which auto-write and self-heal a
  * wrong fixture (Pitfall 3). A missing fixture THROWS — that is the RED signal
  * for a scenario the author has not yet pinned; the `check-fixture-diff.sh` CI
- * gate then guards undeclared fixture mutations (T-71-01-02).
+ * gate then guards undeclared fixture mutations.
  *
  * Path resolution goes through `safePath` (no `path.join` — AGENTS.md §2.2),
  * with the base directory derived from this file's own location via
  * `import.meta.url` (the `__fixtures__/` dir is a sibling of this file). There
  * is no dynamic/user-controlled path segment at runtime — the inputs are
- * literal channel/scenario names from the test files (T-71-01-03).
+ * literal channel/scenario names from the test files.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -35,7 +35,7 @@ const HARNESS_DIR = dirname(fileURLToPath(import.meta.url));
  * @param channel - Channel directory under `__fixtures__/` (e.g. `"echo"`).
  * @param scenario - Scenario id (e.g. `"S2"`); resolves `<scenario>.expected.json`.
  * @returns The parsed fixture object (assert against it with `toEqual`).
- * @throws When the fixture file does not exist — pin it (CHAN-05).
+ * @throws When the fixture file does not exist — pin it.
  */
 export function readFixture(channel: string, scenario: string): unknown {
   const fixturePath = safePath(HARNESS_DIR, "__fixtures__", channel, `${scenario}.expected.json`);
@@ -44,7 +44,7 @@ export function readFixture(channel: string, scenario: string): unknown {
     raw = readFileSync(fixturePath, "utf8");
   } catch {
     throw new Error(
-      `Missing golden fixture: ${channel}/${scenario}.expected.json — pin it (CHAN-05)`,
+      `Missing golden fixture: ${channel}/${scenario}.expected.json — pin it`,
     );
   }
   return JSON.parse(raw);

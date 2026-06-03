@@ -3,7 +3,7 @@ import type { MemorySearchResult } from "@comis/core";
 import { cosine } from "../memory/memory-consolidation-clustering.js"; // reuse — pure, no-NaN
 
 /**
- * Greedy Maximal Marginal Relevance (MMR) re-rank (IQ-01). Diversifies a relevance-ranked
+ * Greedy Maximal Marginal Relevance (MMR) re-rank. Diversifies a relevance-ranked
  * candidate list by trading relevance against similarity-to-already-selected:
  *
  *   select_i = argmax_i [ λ · rel(i) − (1 − λ) · max_{j ∈ selected} cos(e_i, e_j) ]
@@ -12,7 +12,7 @@ import { cosine } from "../memory/memory-consolidation-clustering.js"; // reuse 
  * from `embeddingsById` (id → vector; an id ABSENT from the map has no embedding and contributes
  * cosine 0 against everything — treated as maximally diverse via {@link cosine}'s no-NaN guard,
  * mirroring surprisal()'s "no neighbour → 0" discipline). Raw `rel` + raw `cos` are used directly
- * (both ≈ [0,1]) — NO min-max normalization (RESEARCH Open Q3: start raw; the λ-sweep validates).
+ * (both ≈ [0,1]) — NO min-max normalization (start raw; the λ-sweep validates).
  *
  * Neutral / off guarantees (byte-identity — the same array reference is returned, no copy):
  *   - `lambda >= 1` → pure relevance → returns `ranked` UNCHANGED.
@@ -53,11 +53,11 @@ export function mmrRerank(
       const mmr = lambda * rel - (1 - lambda) * maxSim;
       // Strictly-greater wins; an EXACT tie resolves by entry.id ascending (deterministic).
       // CONTRACT (do NOT relax without revisiting the tiebreak): `rel` and `cos` are used RAW
-      // (≈[0,1], NO min-max normalization — RESEARCH Open Q3 starts raw). Under raw scores the
+      // (≈[0,1], NO min-max normalization — starts raw). Under raw scores the
       // `mmr === bestScore` exact-float compare engages ONLY on bit-identical MMR — i.e. genuine
       // duplicates (equal `rel` + both unembedded → maxSim 0 for each) — so the id tiebreak is a
       // determinism backstop, not a frequent path. IF a future change introduces score
-      // normalization (the Open Q3 door), this exact `===` MUST be revisited (replace with an
+      // normalization, this exact `===` MUST be revisited (replace with an
       // epsilon band, advancing `bestIdx` but NOT `bestScore` on the tie) or genuine near-ties
       // will silently fall to scan order instead of id order and be mis-ordered.
       if (mmr > bestScore || (mmr === bestScore && d.entry.id < remaining[bestIdx].entry.id)) {

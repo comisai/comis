@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tool-first capability-layer configuration schema (v1.1).
+ * Tool-first capability-layer configuration schema.
  *
  * Operator-only YAML tree controlling capability clusters, MCP/skill
  * capability hints, install-detour mode, and the per-turn capability

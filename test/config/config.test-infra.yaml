@@ -1,6 +1,6 @@
 # Comis Test Configuration — Infrastructure Read-Only Tests
 #
-# Designed for INFRA-01/03/04 integration testing with:
+# Designed for infrastructure integration testing with:
 # - Port 8451 to avoid conflicts with other test suites (4766-8450)
 # - Separate memory DB to avoid cross-test pollution
 # - All other settings identical to config.test.yaml

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Daemon-side wiring for the interactive terminal driver (v2.11, Phase 119 P0 +
- * Phase 120 P1 interaction).
+ * Daemon-side wiring for the interactive terminal driver.
  *
  * The daemon is the composition root — the only package that may value-import
  * `@comis/infra` — so it constructs the per-agent `TerminalSessionRegistry`
@@ -10,17 +9,17 @@
  * tool set. The eight implemented tools (create/read/list/kill + the four
  * interaction tools send_text/send_key/wait/resize) all share one `sharedDeps`
  * (the injected registry + allow-set + provider + logger/bus/clock); `status` is
- * the lone no-arg stub (Phase 124). All nine are registered
- * `mcpExportPolicy:"never-export"` (119-01), so they stay inside Comis's trust
+ * the lone no-arg stub. All nine are registered
+ * `mcpExportPolicy:"never-export"`, so they stay inside Comis's trust
  * boundary and never reach MCP.
  *
  * Extracted from `setup-tools.ts` to keep that file under the 800-line
  * architecture cap. State (the per-agent registry map) lives in the `setupTools`
  * closure and is threaded in here — there is NO module-global mutable state.
  *
- * SEC-01 / SEC-16 fail-closed by construction at this phase: the operator
+ * Fail-closed by construction at this stage: the operator
  * `TerminalDriverConfig.allow[]` is not yet threaded into `PerAgentConfig` (that
- * config-plumbing + the worker process entrypoint are later P0/P-phase work), so
+ * config-plumbing + the worker process entrypoint are later work), so
  * the wired allow-set is EMPTY — every `terminal_session_create` is rejected by
  * the allowlist gate (`matchAllowEntry` returns undefined) before any worker is
  * spawned. The surface is live + governed; the worker is never spawned until both
@@ -78,16 +77,16 @@ export interface TerminalWiringDeps {
   /** The daemon's typed event bus (structurally compatible with `TerminalEventBus`). */
   readonly eventBus: TerminalEventBus;
   /**
-   * The daemon's once-detected sandbox provider (MR-03). Detected ONCE at daemon
+   * The daemon's once-detected sandbox provider. Detected ONCE at daemon
    * startup (the same value the exec path threads via `sandboxCfg.sandbox`) and
-   * reused here — so the create gate's SEC-16 fail-closed branch reads the cached
+   * reused here — so the create gate's fail-closed branch reads the cached
    * provider instead of re-running the blocking `detectSandboxProvider()`
    * (`spawnSync("bwrap")` smoke test) on every create. `undefined` ⇒ no sandbox
    * runtime ⇒ create fail-closes (the fail-closed posture is unchanged).
    */
   readonly sandboxProvider: SandboxProvider | undefined;
   /**
-   * The daemon's operator approval gate (SEC-06). The same `ApprovalGate` the
+   * The daemon's operator approval gate. The same `ApprovalGate` the
    * exec path uses (constructed once in `setup-tools.ts`). Threaded into the
    * terminal tools' `sharedDeps` so a `approveOnCreate` entry gates `session_create`
    * on operator consent. Optional: when absent, an `approveOnCreate` entry
@@ -95,10 +94,10 @@ export interface TerminalWiringDeps {
    */
   readonly approvalGate?: ApprovalGate;
   /**
-   * The host-side no-secret allowlist egress proxy (SEC-07), constructed at the
+   * The host-side no-secret allowlist egress proxy, constructed at the
    * composition root (`createTerminalEgressProxy`) and injected here as the
-   * {@link EgressControlPort}. Threaded toward the worker path so 122-06 can call
-   * `materialize(scope.hosts)` for `network: listed-hosts` and bind-mount the
+   * {@link EgressControlPort}. Threaded toward the worker path so the worker can
+   * call `materialize(scope.hosts)` for `network: listed-hosts` and bind-mount the
    * returned socket. Optional: absent => no `listed-hosts` egress is materialized
    * (the create gate + scope still enforce `none`/`full`); never a silent open.
    */
@@ -106,17 +105,17 @@ export interface TerminalWiringDeps {
   /**
    * The resolved `bwrap` binary path (the daemon detects it ONCE at startup, the
    * same value the sandbox provider resolves via `which bwrap`). Threaded toward
-   * the worker path so 122-06 can pass it to `buildScopeArgs({ bwrapPath, ... })`
+   * the worker path so it can be passed to `buildScopeArgs({ bwrapPath, ... })`
    * (the scope->argv composer needs the explicit path; it is NOT implicit). Made
-   * EXPLICIT here per the W1 plan-checker — do not leave bwrapPath implicit.
+   * EXPLICIT here — do not leave bwrapPath implicit.
    */
   readonly bwrapPath?: string;
   /**
-   * P4 reaper caps (TR-06/OPS-06) — the closed `worker.{maxSessions,idleTtlMs,
+   * Reaper caps — the closed `worker.{maxSessions,idleTtlMs,
    * stuckMs}` (schema-skills.ts) + the per-entry `limits.wallClockMs` (default 0
    * while the allow-set is empty). Threaded into the per-agent registry's reaper so
    * the session footprint is bounded (max-sessions overflow on create, idle-TTL +
-   * wall-clock-age on the sweep). Optional: absent ⇒ no reaper (the pre-P4 posture).
+   * wall-clock-age on the sweep). Optional: absent ⇒ no reaper.
    */
   readonly workerCaps?: { maxSessions: number; idleTtlMs: number; wallClockMs: number; stuckMs: number };
   /**
@@ -126,20 +125,20 @@ export interface TerminalWiringDeps {
    */
   readonly timers?: TimerPort;
   /**
-   * The shared per-agent {@link SessionCaps} instance (Plan 02/05). Threaded so the
+   * The shared per-agent {@link SessionCaps} instance. Threaded so the
    * registry's `onCapForget` is wired to `caps.forget` — the per-session cap state is
    * dropped on EVERY eviction (idle/wall_clock/max_sessions/max_interactions), not
-   * only the tool kill path (T-123-17, no SessionCaps Map leak on the reap path).
+   * only the tool kill path (no SessionCaps Map leak on the reap path).
    */
   readonly caps?: SessionCaps;
 }
 
 /**
  * Map a parsed config `TerminalAllowEntry` onto the skills-side `AllowEntryLike`
- * (SEC-02/03) — the SINGLE site config scope becomes an `AllowEntryLike`.
+ * — the SINGLE site config scope becomes an `AllowEntryLike`.
  *
  * Copies `{ id, match, scope }`: the operator-declared scope is carried verbatim so
- * it threads on to the create frame (RESEARCH Pitfall 4 — scope must NOT be dropped
+ * it threads on to the create frame (scope must NOT be dropped
  * at the daemon boundary). The config schema already applied the least-privilege
  * `.default(...)` to every scope sub-field, so this is a pure passthrough — no
  * defaulting / widening here (scope is operator-only, never agent-dialable). When
@@ -155,10 +154,10 @@ export function mapAllowEntry(entry: TerminalAllowEntry): AllowEntryLike {
     id: entry.id,
     match: entry.match,
     scope: entry.scope as TerminalScope,
-    // SEC-06: carry the operator's approveOnCreate consent flag verbatim (a sibling
+    // Carry the operator's approveOnCreate consent flag verbatim (a sibling
     // of scope) so the create tool can gate on it — never dropped at the boundary.
     approveOnCreate: entry.approveOnCreate,
-    // OPS-03/OPS-06: carry the operator's per-entry usage caps verbatim (a sibling of
+    // Carry the operator's per-entry usage caps verbatim (a sibling of
     // scope/approveOnCreate) so the daemon builds the per-agent SessionCaps from them —
     // never dropped at the boundary (the silent-no-op/security regression class).
     limits: entry.limits,
@@ -176,19 +175,19 @@ export function mapAllowEntry(entry: TerminalAllowEntry): AllowEntryLike {
 function resolveWorkerJsPath(dataDir: string): string {
   // Placeholder under the data dir until the standalone worker main lands
   // (the worker is currently an in-process factory; the separate-process entry
-  // is wired in a later P0 step). Never spawned while the allow-set is empty.
+  // is wired in a later step). Never spawned while the allow-set is empty.
   return resolve(dataDir, "terminal-worker", "worker-main.js");
 }
 
 /**
- * Build the daemon-side reaper eviction hooks for one agent (TR-06/OPS-06) —
+ * Build the daemon-side reaper eviction hooks for one agent —
  * mirrors the `onSpawnFailed` template. `onEvict` closes the observability loop on
  * EVERY reaped session: it emits `terminal:session_evicted` (the audited reason) +
  * `terminal:session_state` (state→`lost`, the lifecycle transition) + a WARN
  * (`hint` + `errorKind: "resource"`, §2.7) — so a reap is reconstructable from
  * logs+events alone. `onCapForget` is wired to the shared `caps.forget` so the
- * per-session cap state is dropped on the reap path (T-123-17, no SessionCaps Map
- * leak). Exported so the audit wiring is unit-testable in isolation (Test D).
+ * per-session cap state is dropped on the reap path (no SessionCaps Map
+ * leak). Exported so the audit wiring is unit-testable in isolation.
  */
 export function buildTerminalReaperHooks(
   agentId: string,
@@ -204,7 +203,7 @@ export function buildTerminalReaperHooks(
         "terminal session evicted",
       );
     },
-    // T-123-17: drop the per-session cap state on EVERY eviction (not only the tool kill).
+    // Drop the per-session cap state on EVERY eviction (not only the tool kill).
     onCapForget: (sessionId) => deps.caps?.forget(sessionId),
   };
 }
@@ -212,7 +211,7 @@ export function buildTerminalReaperHooks(
 /**
  * Get (or lazily create) the per-agent `TerminalSessionRegistry`. The map lives
  * in the `setupTools` closure (passed in) — no module-global state. The registry
- * is constructed with the 118-proven `--permission` worker-spawn posture
+ * is constructed with the proven `--permission` worker-spawn posture
  * (`buildProductionSpawnWorker`) scoped to the agent's data dir.
  */
 function getOrCreateTerminalRegistry(
@@ -230,13 +229,13 @@ function getOrCreateTerminalRegistry(
       spawnWorker: buildProductionSpawnWorker(resolveWorkerJsPath(deps.dataDir), deps.dataDir),
       logger: deps.skillsLogger,
       nowMs: systemNowMs,
-      // SEC-16 / SEC-07 (122-06): the daemon-resolved bwrap path rides the create
+      // The daemon-resolved bwrap path rides the create
       // frame to the worker's fail-closed branch; the live egress port is the
       // daemon->worker-main seam for `listed-hosts`. Both undefined on a no-sandbox
       // host ⇒ the worker fail-closes (no unjailed spawn).
       bwrapPath: deps.bwrapPath,
       egressControl: deps.egressControl,
-      // HR-03 / OPS-07: turn a worker backend-spawn failure (an `ok:false` create
+      // Turn a worker backend-spawn failure (an `ok:false` create
       // reply, which the registry uses to flip the session to `lost`) into the
       // `terminal:spawn_failed` bus event. The registry already logged the WARN +
       // flipped the handle; this closes the observability loop on the bus.
@@ -249,10 +248,10 @@ function getOrCreateTerminalRegistry(
           timestamp: systemNowMs(),
         });
       },
-      // P4 (TR-06/OPS-06): the reaper caps + TimerPort + the audited eviction hooks.
+      // The reaper caps + TimerPort + the audited eviction hooks.
       // worker.{maxSessions,idleTtlMs} + the entry limits.wallClockMs (0 while the
       // allow-set is empty) bound the per-agent session footprint; onCapForget wires
-      // caps.forget so the cap-state map is dropped on EVERY reap path (T-123-17).
+      // caps.forget so the cap-state map is dropped on EVERY reap path.
       maxSessions: deps.workerCaps?.maxSessions,
       idleTtlMs: deps.workerCaps?.idleTtlMs,
       wallClockMs: deps.workerCaps?.wallClockMs,
@@ -274,11 +273,11 @@ function getOrCreateTerminalRegistry(
  * + the daemon's once-detected cached `sandboxProvider` (fail-closed when
  * `undefined`) + the real logger/bus; `status` is the lone stub that rejects
  * `not_implemented`. The four interaction tools delegate to the registry's
- * forwarding methods (120-03) — they do not re-gate the allowlist (the session was
+ * forwarding methods — they do not re-gate the allowlist (the session was
  * gated at create). Mirrors how exec/process/apply-patch join the same array.
  */
 /**
- * The net-new SEC-07 egress dimensions, constructed ONCE at the composition root
+ * The net-new egress dimensions, constructed ONCE at the composition root
  * (not per-agent): the host-side no-secret allowlist proxy (the
  * {@link EgressControlPort} impl) + the resolved `bwrap` binary path.
  */
@@ -290,13 +289,13 @@ export interface TerminalEgressDeps {
 }
 
 /**
- * Construct the SEC-07 egress dependencies ONCE for the daemon (the composition
+ * Construct the egress dependencies ONCE for the daemon (the composition
  * root), to inject into every agent's terminal wiring. The proxy materializes
- * `listed-hosts` egress on demand (per session) in 122-06; constructing the port
+ * `listed-hosts` egress on demand (per session); constructing the port
  * once avoids re-standing-up a server factory per agent/per create. `bwrapPath` is
  * resolved only when the provider IS bwrap (Linux) — matching
  * `BwrapProvider.available()`'s `which bwrap` so the terminal scope composer
- * (122-06 `buildScopeArgs`) binds the SAME binary the exec sandbox uses; on
+ * (`buildScopeArgs`) binds the SAME binary the exec sandbox uses; on
  * macOS/no-sandbox it stays undefined (the create gate already fail-closes there).
  */
 export function buildTerminalEgressDeps(
@@ -321,8 +320,8 @@ export function buildTerminalEgressDeps(
  * where the per-agent registry, the operator allow-set, the cached sandbox
  * provider, the approval gate, AND the net-new egress dimensions (the
  * {@link EgressControlPort} impl + the resolved `bwrapPath`) flow toward the
- * worker path. Extracted so the egress wiring is testable in isolation (122-05
- * Task 3) and so 122-06 has one obvious place to read `egressControl` +
+ * worker path. Extracted so the egress wiring is testable in isolation and so
+ * the worker has one obvious place to read `egressControl` +
  * `bwrapPath` when composing the `listed-hosts` jail. No module-global state — the
  * registry map is passed in.
  */
@@ -331,22 +330,22 @@ export function buildTerminalSharedDeps(
   agentId: string,
   deps: TerminalWiringDeps,
 ) {
-  // SEC-01 trust source: the operator allow-set. Empty until the config is
+  // Trust source: the operator allow-set. Empty until the config is
   // threaded into PerAgentConfig (a later step) — so every create fail-closes.
   // When that lands it becomes `config.allow.map(mapAllowEntry)`, so the per-entry
-  // scope (SEC-02) rides along via the single mapping site above (no silent drop).
+  // scope rides along via the single mapping site above (no silent drop).
   const allowEntries: AllowEntryLike[] = [];
 
-  // OPS-03/OPS-06: construct ONE shared per-agent SessionCaps instance, fed into BOTH
+  // Construct ONE shared per-agent SessionCaps instance, fed into BOTH
   // the tool deps (consume*/startSession/forget) AND the registry onCapForget
-  // (caps.forget) so eviction forgets the same cap-state map (T-123-17, no leak; no
+  // (caps.forget) so eviction forgets the same cap-state map (no leak; no
   // double-forget). Prefer a composition-root-supplied instance (deps.caps) if present;
   // otherwise construct from the matched single-entry limits (single-entry-per-agent is
   // the forcing use case). The allow-set is EMPTY today, so the limits are undefined (no
   // caps tripped).
   //
-  // WIRING TO MAKE P4 LIVE (lands with the allow-set/attention work, P5/Phase 124 —
-  // deliberately OUT of Phase 123 scope, RESEARCH Open Q3). Two distinct pieces, do NOT
+  // WIRING TO MAKE THE CAPS/REAPER LIVE (lands with the allow-set/attention work —
+  // deliberately out of scope for now). Two distinct pieces, do NOT
   // conflate them:
   //   1. PER-SESSION caps (consumeRequest/consumeInteraction/checkWallClock): become live
   //      once the allow-set is POPULATED — `allowEntries[0].limits` then feeds
@@ -366,32 +365,32 @@ export function buildTerminalSharedDeps(
   return {
     registry,
     allowEntries,
-    // MR-03: reuse the daemon's once-detected cached provider — do NOT re-run the
+    // Reuse the daemon's once-detected cached provider — do NOT re-run the
     // blocking `detectSandboxProvider()` (`spawnSync("bwrap")`) on every create.
     // This mirrors how `setup-tools.ts` feeds `sandboxCfg.sandbox = sandboxProvider`
     // to the exec path. Fail-closed is intact: `undefined` ⇒ the create gate's
-    // SEC-16 branch rejects (never an unsandboxed spawn).
+    // fail-closed branch rejects (never an unsandboxed spawn).
     detectProvider: () => deps.sandboxProvider,
     logger: deps.skillsLogger,
     eventBus: deps.eventBus,
     nowMs: systemNowMs,
-    // TR-13 origin-keying: the per-session owner = (tryGetContext().userId ?? agentId,
+    // Origin-keying: the per-session owner = (tryGetContext().userId ?? agentId,
     // tryGetContext().sessionKey ?? "") — derived PER CALL inside the tool (resolveOwner),
     // so the daemon needs no new owner arg. This agentId is the fallback half of that key.
     agentId,
-    // SEC-06: the operator approval gate — consulted only when a matched entry sets
+    // The operator approval gate — consulted only when a matched entry sets
     // approveOnCreate (else the create path is unchanged); a demanding entry with no
     // gate fail-closes in the tool.
     approvalGate: deps.approvalGate,
-    // SEC-07 (122-05): the net-new egress dimensions, threaded toward the worker.
+    // The net-new egress dimensions, threaded toward the worker.
     // The PORT impl (the no-secret allowlist proxy) + the resolved bwrap path; the
-    // worker (122-06) calls `egressControl.materialize(scope.hosts)` for
+    // worker calls `egressControl.materialize(scope.hosts)` for
     // `listed-hosts` and passes `bwrapPath` to `buildScopeArgs`. EXPLICIT, not
-    // implicit (W1 plan-checker). Today unused by the eight tools — they carry it
+    // implicit. Today unused by the eight tools — they carry it
     // through the seam so the worker composer has it.
     egressControl: deps.egressControl,
     bwrapPath: deps.bwrapPath,
-    // OPS-03/OPS-06: the shared per-agent caps the eight tools consume (the SAME
+    // The shared per-agent caps the eight tools consume (the SAME
     // instance the registry onCapForget forgets — one source for consume + forget).
     caps,
   };

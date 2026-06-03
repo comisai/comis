@@ -341,7 +341,7 @@ export function createSecretsHandlers(
       const description = params.description;
       const expiresAt = params.expiresAt;
 
-      // SecretStorePort is always wired (REQ-04); env-mode set() returns err.
+      // SecretStorePort is always wired; env-mode set() returns err.
       // The value parameter is the plaintext. It flows directly into the
       // store's set() call below and is NEVER assigned to any other binding,
       // logged, or included in an audit event.
@@ -400,7 +400,7 @@ export function createSecretsHandlers(
       // broker/exec observe the new value on the very next request. No restart needed.
       deps.mutableSecretManager.upsert(name, value);
 
-      // Emit secret:changed event — metadata only, never the value (residency — T-03-09).
+      // Emit secret:changed event — metadata only, never the value (residency).
       deps.container.eventBus.emit("secret:changed", {
         name,
         action: "upserted" as const,
@@ -431,7 +431,7 @@ export function createSecretsHandlers(
       const userParams = stripInternalFields(rawParams);
       SecretsListContract.request.parse(userParams);
 
-      // SecretStorePort is always wired (REQ-04); env-mode list() returns the
+      // SecretStorePort is always wired; env-mode list() returns the
       // name-scoped snapshot (empty in typical env mode with no sensitive vars set).
       const listResult = deps.secretStore.list();
       if (!listResult.ok) {
@@ -526,7 +526,7 @@ export function createSecretsHandlers(
       const params = SecretsDeleteContract.request.parse(userParams);
       const name = params.name;
 
-      // Additive restart rule (P4a): check BEFORE store delete to know if this
+      // Additive restart rule: check BEFORE store delete to know if this
       // name was live-tracked. Must be pre-delete so the Map reflects current state.
       const existed = deps.container.secretManager.has(name);
 
@@ -581,7 +581,7 @@ export function createSecretsHandlers(
       if (existed) {
         // Remove from live Map to keep it consistent with the store.
         deps.mutableSecretManager.remove(name);
-        // Emit secret:changed — metadata only, never the value (residency — T-03-09).
+        // Emit secret:changed — metadata only, never the value (residency).
         deps.container.eventBus.emit("secret:changed", {
           name,
           action: "removed" as const,
@@ -592,7 +592,7 @@ export function createSecretsHandlers(
       // Use existed || delResult.value for deleted so the response is internally
       // consistent: if the Map tracked the name (existed=true), deletion is
       // authoritative regardless of any store soft-delete quirk. This prevents
-      // the { deleted: false, restarting: true } contradictory state (WR-02).
+      // the { deleted: false, restarting: true } contradictory state.
       const result = { name, deleted: existed || delResult.value, restarting: false as const };
       if (systemGetEnv("NODE_ENV") !== "production") {
         SecretsDeleteContract.response.parse(result);

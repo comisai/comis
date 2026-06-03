@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase-96 causal-lane recall-eval fixtures (EXTRACT-03) — the `"causal"` group.
+ * Causal-lane recall-eval fixtures — the `"causal"` group.
  *
  * Split out of recall-eval-fixtures.ts (the parent crossed the 800-line cap when the 5th-lane
  * fixtures landed) and re-exported from it, so the recall-eval.test.ts import path is unchanged.
  *
- * THE KEYSTONE PROOF (the phase invariant — the causal edge table is NEVER write-only dead
+ * THE KEYSTONE PROOF (the invariant — the causal edge table is NEVER write-only dead
  * data; it is CONSUMED by the read lane): each fixture is a lexical DISTRACTOR with a HIGHER
  * fusion score vs a causally-LINKED relevant memory with a LOWER fusion score. Fusion-only
  * ranks the distractor @1 and MISSES the linked id (`baseline.recallAt1 < 1` — the headroom
  * guard makes the lift NON-VACUOUS). The causal lane (relevant-first, modeled by
  * {@link causalLane}) sums the linked id's two RRF terms and lifts it to recall@1 — the
- * measurable EXTRACT-03 figure. The cause is stated in the distractor's sibling content; the
+ * measurable causal-lane figure. The cause is stated in the distractor's sibling content; the
  * `effect` (the linked memory) is what the lane surfaces.
  *
  * Determinism (AGENTS.md §2.5): neutral placeholders + stable ids `cz1`, `cz2`, … No real

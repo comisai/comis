@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-release REGRESSION-vs-BASELINE verdict (Phase 116, GATE-01) -- the pure
- * comparison that backs the SCHEDULED CI regression gate
+ * Per-release REGRESSION-vs-BASELINE verdict -- the pure comparison that backs
+ * the SCHEDULED CI regression gate
  * (`.github/workflows/bench-regression.yml` + the `gate` mode of
  * `scripts/bench-memory.sh`).
  *
- * THE GATE (.planning + GATE-REPORT.md §4): every per-release benchmark run must
+ * THE GATE: every per-release benchmark run must
  * be checked against the committed J1 baseline
  * (`benchmarks/results/2026-05-31-j1-baseline/qa-report.judge-a.json`, judge A =
  * gpt-4o, the LongMemEval reference judge). A category "regresses" -- and fails
@@ -26,7 +26,7 @@
  * both materially large AND not noise.
  *
  * NO NEW STATISTICAL TEST: this reuses {@link twoProportionTest} from
- * significance.ts (no prior test existed before Phase 104; none is added here)
+ * significance.ts (which had no prior dedicated test, and none is added here)
  * and the `CategoryAccuracy` count shape from qa-accuracy.ts. The accuracy
  * PERCENTAGE on each bucket is informational; the significance test reads the raw
  * `correct`/`total` counts (a percentage alone cannot be tested for significance).

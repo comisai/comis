@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the ActivityStream EventBus subscriber (STRAT-07, OBS-01/02/03).
+ * RED test for the ActivityStream EventBus subscriber.
  *
  * Fails on pre-patch code: `./activity-stream.js` does not exist.
  *
  * Behavior under test:
  *   - maps tool:started → tool:executed to ordered ActivityEvents (validated by
  *     parseActivityEvent), scoped to a turn via subscribeForTurn.
- *   - subagent events map to kind:"subagent" (APV-01) — the dedicated cases live
+ *   - subagent events map to kind:"subagent" — the dedicated cases live
  *     in `__tests__/activity-stream.subagent.test.ts`.
  *   - approval:requested → approval:resolved (same requestId) close the matching
  *     activity via the correlation index keyed by requestId.
  *   - subscribeForTurn delivers only events scoped to {agentId,sessionKey,traceId};
  *     ActivitySubscription.unsubscribe() detaches (no leak).
- *   - OBS-03: a non-empty redactionsApplied logs exactly ONE WARN with
+ *   - a non-empty redactionsApplied logs exactly ONE WARN with
  *     hint+errorKind; a malformed event logs ERROR; NO `module:` field appears.
- *   - OBS-01: counters expose emitted + dropped + redaction-replacement counts.
+ *   - counters expose emitted + dropped + redaction-replacement counts.
  */
 import { describe, it, expect, vi } from "vitest";
 import { TypedEventBus, registerActivityLabelSpec, themeForName, type ComisLogger } from "@comis/core";
@@ -66,7 +66,7 @@ function makeLogger(): ComisLogger & {
   return logger;
 }
 
-describe("createActivityStream (STRAT-07 / spec §5)", () => {
+describe("createActivityStream (spec §5)", () => {
   it("maps tool:started then tool:executed to ordered ActivityEvents for the turn", () => {
     const bus = new TypedEventBus();
     const logger = makeLogger();
@@ -105,7 +105,7 @@ describe("createActivityStream (STRAT-07 / spec §5)", () => {
     sub.unsubscribe();
   });
 
-  it("maps a subagent spawn to a kind:'subagent' event for the matching turn (APV-01)", () => {
+  it("maps a subagent spawn to a kind:'subagent' event for the matching turn", () => {
     const bus = new TypedEventBus();
     const logger = makeLogger();
     const stream = createActivityStream({ eventBus: bus, logger });
@@ -162,7 +162,7 @@ describe("createActivityStream (STRAT-07 / spec §5)", () => {
     sub.unsubscribe();
   });
 
-  it("carries the SAME authoritative shortId on the resolved event as the start event (WR-04)", () => {
+  it("carries the SAME authoritative shortId on the resolved event as the start event", () => {
     const bus = new TypedEventBus();
     const logger = makeLogger();
     const stream = createActivityStream({ eventBus: bus, logger });
@@ -256,7 +256,7 @@ describe("createActivityStream (STRAT-07 / spec §5)", () => {
     expect(received).toHaveLength(0);
   });
 
-  it("logs exactly ONE WARN with hint+errorKind when redactionsApplied is non-empty (OBS-03)", () => {
+  it("logs exactly ONE WARN with hint+errorKind when redactionsApplied is non-empty", () => {
     const bus = new TypedEventBus();
     const logger = makeLogger();
     // A label spec whose template substitutes a secret-keyed value triggers
@@ -281,12 +281,12 @@ describe("createActivityStream (STRAT-07 / spec §5)", () => {
     const [payload] = logger.warns[0] as [Record<string, unknown>, string];
     expect(payload.hint).toBeTypeOf("string");
     expect(payload.errorKind).toBe("validation");
-    // OBS-02: NO module: field in the payload.
+    // NO module: field in the payload.
     expect(payload).not.toHaveProperty("module");
     sub.unsubscribe();
   });
 
-  it("logs ERROR when a mapped event fails parseActivityEvent (OBS-03)", () => {
+  it("logs ERROR when a mapped event fails parseActivityEvent", () => {
     const bus = new TypedEventBus();
     const logger = makeLogger();
     // Force a parse failure: a tool event missing the required toolName maps to
@@ -317,7 +317,7 @@ describe("createActivityStream (STRAT-07 / spec §5)", () => {
     sub.unsubscribe();
   });
 
-  it("exposes OBS-01 counters for emitted events", () => {
+  it("exposes counters for emitted events", () => {
     const bus = new TypedEventBus();
     const logger = makeLogger();
     const stream = createActivityStream({ eventBus: bus, logger });
@@ -355,13 +355,13 @@ describe("createActivityStream (STRAT-07 / spec §5)", () => {
     }
     expect(received).toHaveLength(100);
     expect(stream.counters().emitted).toBe(100);
-    // No drops under a draining consumer; the drop counter is the OBS-01 sink.
+    // No drops under a draining consumer; the drop counter is the sink.
     expect(stream.counters().dropped).toBe(0);
     sub.unsubscribe();
   });
 });
 
-describe("ActivityStream themed status markers (UX-01)", () => {
+describe("ActivityStream themed status markers", () => {
   /** Emit one subagent spawn and return the single produced ActivityEvent. */
   function spawnSubagentLabel(theme?: ReturnType<typeof themeForName>): ActivityEvent {
     const bus = new TypedEventBus();
@@ -385,7 +385,7 @@ describe("ActivityStream themed status markers (UX-01)", () => {
 
   it("ascii theme strips the robot emoji from the subagent label", () => {
     const event = spawnSubagentLabel(themeForName("ascii"));
-    // ascii subagent marker is the bracketed pure-ASCII tag [SUB] (75-01).
+    // ascii subagent marker is the bracketed pure-ASCII tag [SUB].
     expect(event.defaultLabel).toBe(`[SUB] ${AGENT} subagent`);
     expect(event.defaultLabel).not.toContain("🤖");
     expect(event.defaultLabel ?? "").not.toMatch(/\p{Extended_Pictographic}/u);
@@ -406,7 +406,7 @@ describe("ActivityStream themed status markers (UX-01)", () => {
 
   it("no theme preserves the robot emoji subagent label byte-identically", () => {
     // Default-parity: a markerless construction is byte-identical to today's
-    // hardcoded glyph, so existing channel golden fixtures (71-73) do not regress.
+    // hardcoded glyph, so existing channel golden fixtures do not regress.
     const event = spawnSubagentLabel();
     expect(event.defaultLabel).toBe(`🤖 ${AGENT} subagent`);
   });
@@ -439,7 +439,7 @@ describe("ActivityStream themed status markers (UX-01)", () => {
   });
 });
 
-describe("SEC-05 -- failure paths leak nothing", () => {
+describe("failure paths leak nothing", () => {
   // Neutral placeholders (AGENTS.md §2.2): an obviously-fake secret token and a
   // non-routable example host. These ride on the model-fallback payload's `error`
   // field — the field the stream must NEVER read into a label.
@@ -467,10 +467,10 @@ describe("SEC-05 -- failure paths leak nothing", () => {
     });
     expect(received).toHaveLength(1);
     const modelEvent = received[0];
-    // The label is STATIC — it never reflects p.error (onModelEvent). Phase 78
-    // WS-B (SPEC-§3.1) bakes the running marker prefix at the emit site, so the
-    // default-theme rendering is `🔧 switching model provider`. Still STATIC —
-    // no leak of p.error.
+    // The label is STATIC — it never reflects p.error (onModelEvent). The
+    // running marker prefix is baked at the emit site, so the default-theme
+    // rendering is `🔧 switching model provider`. Still STATIC — no leak of
+    // p.error.
     expect(modelEvent.defaultLabel).toBe("🔧 switching model provider");
     // Defense-in-depth: the WHOLE serialized event leaks neither secret nor host.
     // (Would FAIL if a future edit read p.error into the label or any field.)
@@ -534,7 +534,7 @@ describe("SEC-05 -- failure paths leak nothing", () => {
   });
 });
 
-describe("buildLabel compresses the post-redaction defaultLabel (UX-02 wiring)", () => {
+describe("buildLabel compresses the post-redaction defaultLabel", () => {
   /** Register a tool spec and emit a tool:started for it; return the produced event. */
   function renderToolLabel(
     toolName: string,
@@ -568,8 +568,8 @@ describe("buildLabel compresses the post-redaction defaultLabel (UX-02 wiring)",
   it("compresses an iso timestamp surfaced in a rendered tool label", () => {
     // A static label carrying an ISO-8601 timestamp flows through applyTemplate
     // (no params → no redaction change) then compressLabel → HH:MM:SS only.
-    // Phase 78 WS-B (SPEC-§3.1) bakes `${markers.running} ` at the emit site,
-    // so the default-theme rendered label is `🔧 snapshot at 18:42:00`.
+    // `${markers.running} ` is baked at the emit site, so the default-theme
+    // rendered label is `🔧 snapshot at 18:42:00`.
     const event = renderToolLabel("ux02_ts_tool", {
       actions: { run: { label: "snapshot at 2025-05-22T18:42:00.123Z", detailKeys: [] } },
     });
@@ -581,8 +581,8 @@ describe("buildLabel compresses the post-redaction defaultLabel (UX-02 wiring)",
   it("leaves a redact-compacted path untouched in the rendered label", () => {
     // Pitfall 2 / redact-then-compress order: redactValue compacts the absolute
     // path ($HOME→~, last-2-segments) BEFORE compressLabel runs; the compressor
-    // must treat that as a fixed point and NOT re-trim it. Phase 78 WS-B then
-    // prepends `${markers.running} ` at the emit site (subagent precedent at
+    // must treat that as a fixed point and NOT re-trim it. The emit site then
+    // prepends `${markers.running} ` (subagent precedent at
     // activity-stream.ts:602/621) — the compaction body is unchanged.
     const event = renderToolLabel(
       "ux02_path_tool",
@@ -600,7 +600,7 @@ describe("buildLabel compresses the post-redaction defaultLabel (UX-02 wiring)",
   it("rendered label compressed body is a fixed point of compressLabel (idempotent at the call site)", () => {
     // A second compressor pass over the rendered label's body (sans marker
     // prefix) is a no-op — proves the wiring did not break the one-pass
-    // idempotency contract. Phase 78 WS-B prepends the running marker AFTER
+    // idempotency contract. The running marker is prepended AFTER
     // compressLabel, so we strip the marker prefix before asserting the
     // compressor fixed-point property.
     const event = renderToolLabel("ux02_idem_tool", {
@@ -612,8 +612,8 @@ describe("buildLabel compresses the post-redaction defaultLabel (UX-02 wiring)",
 
   it("leaves a plain semantic label byte-identical after wiring (no-op)", () => {
     // A plain label (no URL/timestamp/long-mcp-name) is unchanged by the
-    // compressor — no regression for existing label tests/fixtures. Phase 78
-    // WS-B prepends the running marker at the emit site.
+    // compressor — no regression for existing label tests/fixtures. The
+    // running marker is prepended at the emit site.
     const event = renderToolLabel("ux02_plain_tool", {
       actions: { run: { label: "reading file", detailKeys: [] } },
     });
@@ -621,7 +621,7 @@ describe("buildLabel compresses the post-redaction defaultLabel (UX-02 wiring)",
   });
 });
 
-describe("activity-stream — markers.running prefix on phase:start (Phase 78 WS-B / SPEC-§3.1)", () => {
+describe("activity-stream — markers.running prefix on phase:start", () => {
   /**
    * Helper: build an ActivityStream (optional theme), emit a single bus event,
    * return the produced ActivityEvent(s) for the turn. Mirrors the existing
@@ -643,7 +643,7 @@ describe("activity-stream — markers.running prefix on phase:start (Phase 78 WS
     return { bus, received, sub };
   }
 
-  it("onToolStarted emits defaultLabel with markers.running prefix under default theme — SPEC-§3.1", () => {
+  it("onToolStarted emits defaultLabel with markers.running prefix under default theme", () => {
     // Default theme (no explicit theme arg → DEFAULT_MARKERS). The `read` tool
     // has no LabelSpec registered here, so buildLabel falls back to the
     // humanized tool name ("read"). The stream MUST prefix `🔧 ` at the emit
@@ -667,7 +667,7 @@ describe("activity-stream — markers.running prefix on phase:start (Phase 78 WS
     sub.unsubscribe();
   });
 
-  it("onToolStarted emits defaultLabel with [..] prefix under ascii theme — SPEC-§3.1 + §8.9", () => {
+  it("onToolStarted emits defaultLabel with [..] prefix under ascii theme — §8.9", () => {
     // Ascii theme strips ALL Unicode > U+007F (themes/ascii.ts:8 LOCKED FACT).
     // The marker `[..]` is pure ASCII; combined with the fallback tool name
     // "read" the entire defaultLabel must be strictly ASCII.
@@ -749,7 +749,7 @@ describe("activity-stream — markers.running prefix on phase:start (Phase 78 WS
   });
 
   it("marker resolution captures the markers reference at stream construction — replacing deps.theme.markers post-construction is ignored", () => {
-    // Pattern 2 contract (RESEARCH §Q2 + threat T-78-02-02): the implementation
+    // Pattern 2 contract: the implementation
     // at activity-stream.ts:198 does `const markers = deps.theme?.markers ??
     // DEFAULT_MARKERS;` — capturing the markers OBJECT REFERENCE once. Any
     // subsequent re-assignment of `deps.theme.markers` to a NEW object MUST be

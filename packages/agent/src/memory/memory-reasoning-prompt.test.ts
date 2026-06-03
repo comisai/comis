@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Prompt-parser suite for the reasoning specialists (Phase 101 — REASON-02/03/04).
+// Prompt-parser suite for the reasoning specialists.
 // `parseDeductiveResult` / `parseInductiveResult` are the LENIENT, total,
 // never-throws parsers for the two specialist LLM contracts — the anti-laundering
 // boundary. The LLM has NO trust field and NO supersede field: any
 // `trustLevel`/`supersededIds` it smuggles is STRIPPED by the lenient `z.object`
 // (unknown keys dropped) before it can reach the job, which computes trust in
-// CODE (101-05). Mirrors `parseConsolidationResult`.
+// CODE. Mirrors `parseConsolidationResult`.
 import { describe, it, expect } from "vitest";
 import {
   DEDUCTIVE_PROMPT,
@@ -15,7 +15,7 @@ import {
   parseInductiveResult,
 } from "./memory-reasoning-prompt.js";
 
-describe("parseInductiveResult — lenient INDUCTIVE-pattern parser (REASON-03 anti-laundering)", () => {
+describe("parseInductiveResult — lenient INDUCTIVE-pattern parser (anti-laundering)", () => {
   it("accepts a well-formed pattern object with content + patternType + confidence", () => {
     const parsed = parseInductiveResult(
       '{"content":"the user prefers vegetarian","patternType":"preference","confidence":0.8}',
@@ -85,7 +85,7 @@ describe("parseInductiveResult — lenient INDUCTIVE-pattern parser (REASON-03 a
   });
 });
 
-describe("parseDeductiveResult — lenient DEDUCTIVE S/P/O parser (REASON-02 anti-laundering)", () => {
+describe("parseDeductiveResult — lenient DEDUCTIVE S/P/O parser (anti-laundering)", () => {
   it("accepts a well-formed subject/predicate/object triple with confidence", () => {
     const parsed = parseDeductiveResult(
       '{"subject":"X","predicate":"located_in","object":"Berlin","confidence":0.9}',

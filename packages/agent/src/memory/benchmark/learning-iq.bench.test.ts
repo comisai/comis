@@ -1,43 +1,43 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated KEYLESS learning-IQ harness (LEARN-01 + LEARN-02, Phase 110-06) -- the
- * FREE, deterministic, no-API-cost measurement of the Phase-110 learning MECHANISM:
- * the per-intent usefulness bucket the recall hot path reads (LEARN-01, Tracks H1)
- * and the citation->FEED accrual the dialectic answer feeds (LEARN-02, Track H3).
+ * Env-gated KEYLESS learning-IQ harness -- the
+ * FREE, deterministic, no-API-cost measurement of the learning MECHANISM:
+ * the per-intent usefulness bucket the recall hot path reads (Track H1)
+ * and the citation->FEED accrual the dialectic answer feeds (Track H3).
  * It is the MECHANICAL gate that ships alongside the PARTIAL manifest; the costed
- * rank-over-episodes learning-LIFT (the accuracy number) is DEFERRED to Phase 111
- * (LEARN-04, the learning-lift-harness over real episodes + the H2 bandit).
+ * rank-over-episodes learning-LIFT (the accuracy number) is DEFERRED to the
+ * learning-lift-harness over real episodes + the H2 bandit.
  *
- * WHY THIS HARNESS EXISTS (the honest gap the Phase-110 gate must measure -- the
- * SAME structural finding the Phase-102 IQ-04 gate and the Phase-109 DIAL gate
+ * WHY THIS HARNESS EXISTS (the honest gap the learning gate must measure -- the
+ * SAME structural finding the IQ and dialectic gates
  * verified): the shipping QA + retrieval harnesses construct `createMemoryRecall`
  * with feedback DEFAULT-OFF and no `usefulnessStore`, so they exercise the learning
- * features NOT AT ALL. To measure the LEARN-01/02 read-side + write-side claims
+ * features NOT AT ALL. To measure the read-side + write-side learning claims
  * HONESTLY and for FREE, this harness wires the SAME production recall pipeline
  * (`createMemoryRecall`) to the SAME production adapters (`SqliteMemoryAdapter` +
  * `createSqliteMemoryUsefulnessStore`, both over one shared `getDb()` handle),
  * seeds the per-intent usefulness buckets DIRECTLY (the write path the daemon
- * subscriber drives -- Plan 110-05), and runs recall with the learning knobs ON
+ * subscriber drives), and runs recall with the learning knobs ON
  * vs OFF.
  *
  * THE FOUR MEASURED CLAIMS (each mechanical, keyless, $0 -- NOT a learning-LIFT):
  *   1. PER-INTENT BUCKET DRIVES THE ORDER: a memory recorded used-for-intent-X
  *      (a high used-rate in the X bucket, none in the Y bucket) ranks HIGHER for an
  *      X-classified query than for a Y-classified query -- the per-intent usefulness
- *      bucket reorders recall (LEARN-01). The two queries are picked so the
+ *      bucket reorders recall. The two queries are picked so the
  *      DETERMINISTIC `classifyIntent` lands them in different buckets; the harness
  *      measures the OBSERVABLE rank effect and never imports `classifyIntent`.
  *   2. DEFAULT-OFF BYTE-IDENTITY + READ-SPY=0: with `feedback` OFF, recall is
  *      byte-identical to a no-store run AND `readUsefulness` is NEVER called (the
- *      cost/no-op gate -- the `readEmbeddings`-spy=0 precedent for IQ-04 claim 4).
+ *      cost/no-op gate -- the `readEmbeddings`-spy=0 precedent).
  *   3. CITATION->FEED ACCRUAL: a cited id's usefulness accrues -- `recordUsage`
  *      with `usedIds=[cited]` then `readUsefulness` shows the cited id's used-rate
- *      HIGHER than an ignored sibling's (the citation attribution Plan 110-04 emits
+ *      HIGHER than an ignored sibling's (the citation attribution emitted
  *      into the SHIPPED FEED write path; here measured at the store level, $0).
  *   4. TENANT/AGENT/INTENT ISOLATION: a write under (tenantA, agentA, intentX) is
  *      INVISIBLE to a read under (tenantB, *) or (*, agentB) -- (tenant, agent)
  *      stay the load-bearing isolation boundary; intent is an ADDITIONAL key, never
- *      a relaxation (T-110-03 / T-93-01).
+ *      a relaxation.
  *
  * THIS IS THE PRODUCTION CODE PATH, NOT A MOCK:
  *   - recall = `createMemoryRecall(deps, cfg)` (bare @comis/agent production orchestrator),
@@ -46,23 +46,23 @@
  *   - cfg.feedback = { enabled } + cfg.queryUnderstanding = { intentReweight } (the
  *     real learning knobs). With both ON the recall read scope carries the per-intent
  *     bucket (the SAME pure `classifyIntent` already done for lane reweighting -- NO
- *     second classify, NO model call on the read path, Plan 110-03); with feedback OFF
+ *     second classify, NO model call on the read path); with feedback OFF
  *     the read block is SKIPPED entirely (the cost gate). The sole thing the harness
  *     does that production wiring does too is POPULATE the usefulness buckets (the
  *     daemon subscriber does this from the turn-end / citation FEED emit).
  *
- * KEYLESS (binding-constraint-#8 honest protocol): no answer model, no judge, no API
+ * KEYLESS (honest protocol): no answer model, no judge, no API
  * key, no provider call, no cost. The learning claims need NO model: the per-intent
  * buckets are seeded DIRECTLY via `recordUsage` and recall is the LLM-free
  * `createMemoryRecall`. The costed rank-over-episodes learning-LIFT (the accuracy
- * number) is Phase 111's LEARN-04 (`learning-lift-harness.bench.test.ts`); this
+ * number) lives in `learning-lift-harness.bench.test.ts`; this
  * harness produces NO lift number -- a fresh one here would be fabricated.
  *
  * ARCHITECTURE CUT (the single escape hatch): this *.bench.test.ts MAY import
  * @comis/memory (a devDependency) -- the agent->memory cut excludes the `.test.ts`
  * suffix (source-rules.test.ts `excludeFileSuffixes: [".test.ts"]`). Mirrors the
- * blessed precedent recall-iq-contribution.bench.test.ts (IQ-04) /
- * learning-lift-harness.bench.test.ts (SUITE-03).
+ * blessed precedent recall-iq-contribution.bench.test.ts /
+ * learning-lift-harness.bench.test.ts.
  *
  * SECURITY: fresh `mkdtempSync` tmp DB (NEVER ~/.comis), `trustLevel:"learned"`,
  * `tenantId:"default"`/`agentId:"bench"` -- isolated from any live agent. All fixture
@@ -236,10 +236,10 @@ function writeReport(reportDir: string, name: string, report: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// CLAIM 1 -- the per-intent usefulness bucket drives the recall order (LEARN-01)
+// CLAIM 1 -- the per-intent usefulness bucket drives the recall order
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("learning-IQ: per-intent bucket drives order (LEARN-01 claim 1, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("learning-IQ: per-intent bucket drives order (claim 1, keyless gated)", () => {
   // Two memories, BOTH FTS-matched by BOTH queries (the shared lexical anchor). OTHER
   // repeats the anchor terms MORE, so on a NEUTRAL query (no usefulness boost) OTHER
   // out-ranks M by raw FTS relevance. M is recorded used-for-intent "temporal" (a high
@@ -253,7 +253,7 @@ describe.skipIf(!COMIS_BENCH)("learning-IQ: per-intent bucket drives order (LEAR
   // intent-driven difference is the per-intent USEFULNESS bucket). The harness picks
   // queries whose DETERMINISTIC classification differs (a "when ... last" temporal
   // marker vs a "prefer/favorite" preference marker) -- the observable-effect proof; it
-  // NEVER imports classifyIntent (Pitfall 2).
+  // NEVER imports classifyIntent.
   const M = { id: "", content: "rotation roster handoff schedule anchor topic note" };
   // OTHER repeats the high-frequency anchor terms -> a higher raw FTS score than M, so
   // OTHER leads M on a neutral query (and M must be usefulness-boosted to overtake it).
@@ -282,8 +282,8 @@ describe.skipIf(!COMIS_BENCH)("learning-IQ: per-intent bucket drives order (LEAR
     await storeFixture(adapter, { id: M.id, content: M.content, createdAt: BENCH_NOW - 20_000 });
     await storeFixture(adapter, { id: OTHER.id, content: OTHER.content, createdAt: BENCH_NOW - 10_000 });
 
-    // Seed the per-intent buckets DIRECTLY (the write path the daemon subscriber drives,
-    // Plan 110-05): M is used-for-"temporal" 3x (a high used-rate in the temporal bucket),
+    // Seed the per-intent buckets DIRECTLY (the write path the daemon subscriber drives):
+    // M is used-for-"temporal" 3x (a high used-rate in the temporal bucket),
     // and NOT recorded under "preference" (the preference bucket is absent -> neutral).
     // OTHER is left with no signal in either bucket (neutral everywhere). The writes touch
     // ONLY their (…, intent) bucket -- the no-clobber per-intent upsert.
@@ -324,7 +324,7 @@ describe.skipIf(!COMIS_BENCH)("learning-IQ: per-intent bucket drives order (LEAR
     // THE CLAIM: the temporal bucket's high used-rate lifts M for the temporal-classified
     // query, while the (absent) preference bucket leaves M neutral for the preference
     // query -- so M ranks STRICTLY HIGHER (a smaller 1-based rank number) on the temporal
-    // query. The per-intent usefulness bucket drives the order (LEARN-01).
+    // query. The per-intent usefulness bucket drives the order.
     expect(
       mRankTemporalQuery,
       "M ranks higher (smaller rank #) for its used-for intent than for the other intent",
@@ -348,7 +348,7 @@ describe.skipIf(!COMIS_BENCH)("learning-IQ: per-intent bucket drives order (LEAR
 // CLAIM 2 -- DEFAULT-OFF byte-identity + readUsefulness-spy=0 (the cost gate)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("learning-IQ: default-OFF byte-identity + read-spy=0 (LEARN-01 claim 2, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("learning-IQ: default-OFF byte-identity + read-spy=0 (claim 2, keyless gated)", () => {
   // The SHIPPING config ships feedback OFF. With the store PRESENT (the daemon always
   // injects it) but feedback off, recall must be byte-identical to a no-store run AND
   // readUsefulness must NEVER be called (the cost/no-op gate -- the readEmbeddings-spy=0
@@ -448,14 +448,14 @@ describe.skipIf(!COMIS_BENCH)("learning-IQ: default-OFF byte-identity + read-spy
 });
 
 // ---------------------------------------------------------------------------
-// CLAIM 3 -- citation->FEED accrual (a cited id's usefulness rises) (LEARN-02)
+// CLAIM 3 -- citation->FEED accrual (a cited id's usefulness rises)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("learning-IQ: citation->FEED accrual (LEARN-02 claim 3, keyless gated)", () => {
-  // The dialectic (Plan 110-04) emits the VALIDATED citations of a grounded memory.ask
+describe.skipIf(!COMIS_BENCH)("learning-IQ: citation->FEED accrual (claim 3, keyless gated)", () => {
+  // The dialectic emits the VALIDATED citations of a grounded memory.ask
   // answer into the SHIPPED `memory:recall_used` FEED write path: usedIds = the citations,
   // ignoredIds = the recalled-but-not-cited complement. The daemon subscriber forwards
-  // that to recordUsage (the GLOBAL bucket -- the handler does not re-classify, Pitfall 2).
+  // that to recordUsage (the GLOBAL bucket -- the handler does not re-classify).
   // Here we measure the STORE-level accrual that emit drives, at $0: record a CITED id as
   // used and an OTHER recalled id as ignored, then read both back -- the cited id's
   // used-count incremented and its used-rate is HIGHER than the ignored sibling's.
@@ -488,8 +488,8 @@ describe.skipIf(!COMIS_BENCH)("learning-IQ: citation->FEED accrual (LEARN-02 cla
     });
     citedBeforeUsed = before.ok ? (before.value.get(CITED.id)?.usedCount ?? 0) : -1;
 
-    // The citation->FEED write (the GLOBAL bucket -- the dialectic emit shape from Plan
-    // 110-04: usedIds = the validated citations, ignoredIds = the recalled complement). No
+    // The citation->FEED write (the GLOBAL bucket -- the dialectic emit shape:
+    // usedIds = the validated citations, ignoredIds = the recalled complement). No
     // intent is supplied (the handler does not re-classify) -> the adapter's global bucket.
     const rec = await usefulnessStore.recordUsage([CITED.id], [OTHER.id], {
       tenantId: "default",
@@ -545,10 +545,10 @@ describe.skipIf(!COMIS_BENCH)("learning-IQ: citation->FEED accrual (LEARN-02 cla
 // CLAIM 4 -- tenant/agent/intent isolation (the load-bearing security scope)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("learning-IQ: tenant/agent/intent isolation (LEARN-01 claim 4, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("learning-IQ: tenant/agent/intent isolation (claim 4, keyless gated)", () => {
   // A usefulness write under (tenantA, agentA, intentX) must be INVISIBLE to a read under
   // a foreign tenant OR a foreign agent -- (tenant, agent) is the load-bearing isolation
-  // boundary (T-110-03 / T-93-01); intent is an ADDITIONAL key, never a relaxation. The
+  // boundary; intent is an ADDITIONAL key, never a relaxation. The
   // in-scope read (same tenant + agent + intent) DOES see it. (memory_id is byte-identical
   // across the reads -- the isolation is the scope, not the id.) The memory ROW is stored
   // under (tenantA, agentA) first to satisfy the usefulness FK (memory_id -> memories(id)

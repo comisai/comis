@@ -43,27 +43,27 @@ export const MemoryRowSchema = z.strictObject({
   tags: z.string(),
   /** Unix timestamp in milliseconds. */
   created_at: z.number(),
-  /** Unix timestamp in milliseconds, null if event time unknown (TEMP-01). */
+  /** Unix timestamp in milliseconds, null if event time unknown. */
   occurred_at: z.number().nullable(),
-  /** Evidence count; null = raw memory, >=1 = observation (P84/CONS-01). */
+  /** Evidence count; null = raw memory, >=1 = observation. */
   proof_count: z.number().nullable(),
   /** JSON-encoded string[] of source ids — consumer parses; null on raw. */
   source_ids: z.string().nullable(),
-  /** Unix ms; set when folded into an observation (P84/CONS-04); null on raw. */
+  /** Unix ms; set when folded into an observation; null on raw. */
   consolidated_at: z.number().nullable(),
-  /** Observation confidence 0..1 (P84/CONS-08); null on raw. */
+  /** Observation confidence 0..1; null on raw. */
   confidence: z.number().nullable(),
-  /** JSON-encoded audit array — consumer parses; null on raw (P84/CONS-05). */
+  /** JSON-encoded audit array — consumer parses; null on raw. */
   history: z.string().nullable(),
-  /** Reasoning-observation kind TEXT; null = "merge" (P101/REASON-01). */
+  /** Reasoning-observation kind TEXT; null = "merge". */
   observation_kind: z.string().nullable(),
-  /** Inductive pattern class TEXT; null unless observationKind="inductive" (P101/REASON-01). */
+  /** Inductive pattern class TEXT; null unless observationKind="inductive". */
   pattern_type: z.string().nullable(),
-  /** Unix ms; non-destructive demote marker (P112/FORGET-02); null = not demoted (DORMANT). */
+  /** Unix ms; non-destructive demote marker; null = not demoted (DORMANT). */
   lifecycle_demoted_at: z.number().nullable(),
-  /** Unix ms; non-destructive evict marker (P112/FORGET-02); null = not evicted (DORMANT). */
+  /** Unix ms; non-destructive evict marker; null = not evicted (DORMANT). */
   evicted_at: z.number().nullable(),
-  /** Computed lifecycle strength 0..1 (P112/FORGET-02); null = not yet computed. */
+  /** Computed lifecycle strength 0..1; null = not yet computed. */
   strength: z.number().nullable(),
   /** Unix timestamp in milliseconds, null if never updated. */
   updated_at: z.number().nullable(),
@@ -74,8 +74,8 @@ export const MemoryRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the `memory_entities` table (Phase 83, ENT-05). `canonical_key` is
- * DB-row-ONLY (OQ-2): the normalized dedup/index key (TS lower+NFKD+strip-marks, see
+ * Schema for the `memory_entities` table. `canonical_key` is
+ * DB-row-ONLY: the normalized dedup/index key (TS lower+NFKD+strip-marks, see
  * entity-resolver.ts), intentionally NOT a field on the strict `MemoryEntity` domain
  * type in @comis/core (which carries only the display `canonicalName`) — an
  * implementation detail of the resolver + UNIQUE index, not the domain contract.
@@ -96,8 +96,7 @@ export const MemoryEntityRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the `readUsefulness` projection (Phase 93, FEED-02; per-intent in
- * Phase 110, LEARN-01). The scoped `SELECT memory_id, intent, used_count,
+ * Schema for the `readUsefulness` projection (per-intent). The scoped `SELECT memory_id, intent, used_count,
  * ignored_count, last_useful_at FROM memory_usefulness WHERE tenant_id=? AND
  * agent_id=? AND intent IN (?, '') AND memory_id IN (...)` read; tenant_id/agent_id
  * NOT projected (the WHERE pins them). `intent` IS projected (the per-intent vs
@@ -115,7 +114,7 @@ export const MemoryUsefulnessRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the lifecycle-sweep candidate-scan projection (Phase 112, FORGET-02).
+ * Schema for the lifecycle-sweep candidate-scan projection.
  * The scoped `SELECT id, memory_type, occurred_at, created_at, proof_count,
  * lifecycle_demoted_at, evicted_at, strength FROM memories WHERE tenant_id=? AND
  * agent_id=?` read the DORMANT sweep uses to compute each candidate's decayed
@@ -144,11 +143,10 @@ export const MemoryLifecycleRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the entity associative-lane self-join projection (Phase 83,
- * ENT-02; RESEARCH Pattern 2). The one-hop self-join over
+ * Schema for the entity associative-lane self-join projection. The one-hop self-join over
  * `memory_entity_links` returns, per other memory, the count of distinct
  * entities it shares with the seed set. Parsed via `createRowMapper` in the
- * (Plan-02) lane query — never `as Row[]`.
+ * lane query — never `as Row[]`.
  */
 export const EntityLaneRowSchema = z.strictObject({
   memory_id: z.string(),
@@ -157,8 +155,7 @@ export const EntityLaneRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the causal one-hop edge-lookup projection (Phase 96, EXTRACT-03;
- * RESEARCH Pattern 3). The scoped UNION over `memory_causal_edges` returns, per
+ * Schema for the causal one-hop edge-lookup projection. The scoped UNION over `memory_causal_edges` returns, per
  * counterpart memory, the linked memory id (the cause/effect counterpart of a seed,
  * EITHER direction) + the edge `confidence`; tenant_id/agent_id NOT projected (the
  * WHERE pins them). Parsed via `createRowMapper` — never `as Row[]`.
@@ -169,7 +166,7 @@ export const CausalLaneRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the `memory_triples` table (Phase 100, KG-01). The segregated
+ * Schema for the `memory_triples` table. The segregated
  * bi-temporal KG row: an S/P/O assertion with the FOUR bi-temporal timestamps
  * (`t_valid_start`/`t_valid_end` valid-time, `t_ingested`/`expired_at` txn-time) +
  * the occurred range + the `trust` ladder + optional `source_memory_id` + `confidence`.
@@ -197,7 +194,7 @@ export const MemoryTripleRowSchema = z.strictObject({
   confidence: z.number().nullable(),
 });
 
-// Schema for a `user_representation` row projection (Phase 107, USER-01). The scoped
+// Schema for a `user_representation` row projection. The scoped
 // read projects the 7 columns below (NOT tenant_id/agent_id/user_id — the WHERE pins
 // them); trust/entry_type z.enum match the DDL CHECKs ('external' absent);
 // source_memory_id/updated_at nullable. Parsed via createRowMapper.
@@ -211,7 +208,7 @@ export const UserRepresentationRowSchema = z.strictObject({
   updated_at: z.number().nullable().optional(),
 });
 
-// Schema for a `relationship` row projection (Phase 108, SOCIAL-02). The scoped read
+// Schema for a `relationship` row projection. The scoped read
 // projects 8 columns (NOT tenant_id/agent_id/channel_id — the WHERE pins them); the
 // directional (subject_user_id, about_user_id) pair is ROW DATA; trust z.enum matches
 // the DDL CHECK ('external' absent). Parsed via createRowMapper.
@@ -226,7 +223,7 @@ export const RelationshipRowSchema = z.strictObject({
   updated_at: z.number().nullable().optional(),
 });
 
-// Schema for a `tuned_alpha` row projection (Phase 111, LEARN-03). The scoped read
+// Schema for a `tuned_alpha` row projection. The scoped read
 // projects 5 columns (NOT tenant_id/agent_id — the WHERE pins them): the 4 REAL
 // tunable boost alphas + updated_at. NO fifth (trust-weight) column (the structural
 // trust-freeze belt #3). Maps snake_case -> camelCase `TunedAlphaVector`. Via createRowMapper.
@@ -239,7 +236,7 @@ export const TunedAlphaRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the graph-spread recursive-CTE node projection (Phase 100, KG-04). The
+ * Schema for the graph-spread recursive-CTE node projection. The
  * bounded `WITH RECURSIVE walk(node, depth)` over current-truth subject→object edges
  * returns, per reached node, the node string + its hop `depth` (`SELECT DISTINCT
  * node, depth FROM walk WHERE depth > 0`); tenant_id/agent_id NOT projected (the
@@ -251,10 +248,10 @@ export const SpreadNodeRowSchema = z.strictObject({
 });
 
 /**
- * Schema for the `listEntities` diagnostic projection (Phase 86, OBS-06). The
+ * Schema for the `listEntities` diagnostic projection. The
  * scoped `SELECT id, canonical_name, mention_count, first_seen, last_seen FROM
  * memory_entities WHERE tenant_id=? AND agent_id=? ORDER BY mention_count DESC` read
- * — a STRICT SUBSET: omits `canonical_key` (DB-internal dedup key, OQ-2) + the
+ * — a STRICT SUBSET: omits `canonical_key` (DB-internal dedup key) + the
  * tenant_id/agent_id scope columns (the WHERE pins them). The adapter maps it to the
  * camelCase `EntityRow` domain shape (@comis/core) — via `createRowMapper`.
  */

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ACP composition-root holder wiring (74-07, ACP-03).
+ * ACP composition-root holder wiring.
  *
  * The composition root must create ONE `ExecutionPlanHolder` per agent runtime
  * and thread the SAME instance into BOTH the agent executor and the gateway:
@@ -10,8 +10,8 @@
  *     same live ref (the holder IS a `@comis/core` `ExecutionPlanPort`).
  *
  * A second holder (one published-into, a different one read-from) would make
- * the plan bridge read an empty port forever (threat T-74-33); this helper is
- * the single seam that guarantees the shared instance.
+ * the plan bridge read an empty port forever; this helper is the single seam
+ * that guarantees the shared instance.
  *
  * Hexagonal boundary: this file (the daemon composition root) is the ONE place
  * allowed to import BOTH `@comis/agent` (for the holder factory) and
@@ -37,12 +37,12 @@ export interface CreateAcpWiringDeps {
   /** Agent event bus — threaded onto AcpServerDeps for the SEP plan bridge. */
   readonly eventBus: TypedEventBus;
   /**
-   * Orchestrator-facing redacted activity stream port (WIRE-04). Threaded onto
+   * Orchestrator-facing redacted activity stream port. Threaded onto
    * AcpServerDeps so startAcpServer constructs the activity + approval bridges.
    * Optional — absent in runtimes without an activity stream.
    */
   readonly activityStreamPort?: ActivityStreamPort;
-  /** Bound logger (OBS-02). */
+  /** Bound logger. */
   readonly logger: ComisLogger;
 }
 
@@ -69,7 +69,7 @@ export interface AcpWiring {
 
 /**
  * Create the one ExecutionPlanHolder for an agent runtime and the ACP-bridge
- * slice of AcpServerDeps that shares it by reference (ACP-03, T-74-33).
+ * slice of AcpServerDeps that shares it by reference.
  */
 export function createAcpWiring(deps: CreateAcpWiringDeps): AcpWiring {
   // ONE holder per agent runtime. The agent runtime publishes into it; the

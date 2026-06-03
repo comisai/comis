@@ -11,18 +11,18 @@ import type { MemoryEntry, TrustLevel } from "../domain/memory-entry.js";
  * This is a NEW port — it deliberately does NOT widen the security-reviewed
  * agent-facing `MemoryPort` (store/search/delete). Per design §3.2 that surface
  * is never widened for agent use; new maintenance capabilities arrive as their
- * own segregated port (the same pattern as `MemoryEntityStore` §6.5, threat
- * T-84-03 — Elevation of Privilege). The sole adapter lives in the memory
+ * own segregated port (the same pattern as `MemoryEntityStore` §6.5, guarding
+ * against Elevation of Privilege). The sole adapter lives in the memory
  * package (it owns the `db` handle and runs all SQL); the consolidation job
  * consumes this port TYPE from core — it cannot import the memory package (the
  * agent↛memory build cut); the daemon injects the concrete adapter.
  *
  * The surface is four methods — list candidates, list existing observations,
  * apply one (create) consolidation, AND fold new corroborating sources into an
- * EXISTING observation (Phase 94, FOLD-01/02). The fold path grows
+ * EXISTING observation. The fold path grows
  * `proof_count`/`source_ids`/`history` + refreshes confidence/occurred_at on a
  * row that already exists instead of creating a second observation — the
- * proof-accrual axis Phase-84's create-only path lacked.
+ * proof-accrual axis the earlier create-only path lacked.
  *
  * This file is type-only (mirrors the entity-store port): no zod, no
  * cross-package runtime import.
@@ -43,15 +43,15 @@ export interface ConsolidationCandidate {
 }
 
 /**
- * The atomic unit applied by {@link MemoryConsolidationStore.applyConsolidation}
- * (CONS-03). Either the observation is created AND its sources are marked
+ * The atomic unit applied by {@link MemoryConsolidationStore.applyConsolidation}.
+ * Either the observation is created AND its sources are marked
  * `consolidated_at`, or NOTHING is — one `db.transaction` (auto-rollback on
  * throw).
  */
 export interface ConsolidationPlan {
   /** The new observation MemoryEntry (proofCount/sourceIds/confidence already set by the job). */
   observation: MemoryEntry;
-  /** Source memory ids to mark `consolidated_at` (non-destructive — never deleted, CONS-05). */
+  /** Source memory ids to mark `consolidated_at` (non-destructive — never deleted). */
   markConsolidated: string[];
   /** Isolation scope for the source-mark UPDATE (the V4 access-control boundary). */
   tenantId: string;
@@ -60,21 +60,21 @@ export interface ConsolidationPlan {
 }
 
 /**
- * The atomic unit applied by {@link MemoryConsolidationStore.foldIntoExisting}
- * (FOLD-01/02). Grows an EXISTING observation (`proof_count IS NOT NULL`) with
+ * The atomic unit applied by {@link MemoryConsolidationStore.foldIntoExisting}.
+ * Grows an EXISTING observation (`proof_count IS NOT NULL`) with
  * new corroborating sources instead of creating a second one. Either the
  * observation grow AND every source-mark commit together, or NOTHING does — one
  * `db.transaction` (auto-rollback on throw).
  *
  * Three invariants the adapter enforces from these fields:
- *   - **Idempotency (FOLD-02):** `proof_count` is recomputed as the CARDINALITY
+ *   - **Idempotency:** `proof_count` is recomputed as the CARDINALITY
  *     of `UNION(existing.source_ids, newSourceIds)` — a set recompute, NEVER a
  *     blind `+=`. Re-folding the same (already-present) sources is a no-op.
- *   - **Trust ceiling (FOLD-02, anti-laundering):** `trustLevel` is written
+ *   - **Trust ceiling (anti-laundering):** `trustLevel` is written
  *     VERBATIM. The job computes `min(existing.trust, minTrust(newSources))`
  *     upstream so a fold can only LOWER trust, never raise it; the adapter has
  *     no path to raise it.
- *   - **Half-life refresh (FOLD-02):** `confidence` + `occurredAt` are refreshed
+ *   - **Half-life refresh:** `confidence` + `occurredAt` are refreshed
  *     so the live half-life decay clock resets — accrued proof stays meaningful
  *     in ranking instead of decaying to neutral.
  */
@@ -86,7 +86,7 @@ export interface ConsolidationFoldPlan {
   /**
    * Trust ceiling for the GROWN observation = min(existing.trust,
    * minTrust(newSources)), computed in CODE by the job, written verbatim. A fold
-   * can only LOWER trust, never raise it (anti-laundering, T-94-01).
+   * can only LOWER trust, never raise it (anti-laundering).
    */
   trustLevel: TrustLevel;
   /** Refreshed confidence 0..1 (the job recomputes; default 1 on fold). */
@@ -104,7 +104,7 @@ export interface ConsolidationFoldPlan {
 export interface MemoryConsolidationStore {
   /**
    * Candidates = raw memories (proof_count IS NULL) NOT yet consolidated
-   * (consolidated_at IS NULL — a STATE predicate, NOT a time cursor; CONS-04),
+   * (consolidated_at IS NULL — a STATE predicate, NOT a time cursor),
    * scoped to (tenantId, agentId), oldest-first, capped at `limit`, with
    * embeddings hydrated for clustering.
    */
@@ -116,7 +116,7 @@ export interface MemoryConsolidationStore {
 
   /**
    * Existing observations (proof_count IS NOT NULL) in scope — used by the
-   * deterministic dedup pre-check (CONS-04) so a re-run does not create a
+   * deterministic dedup pre-check so a re-run does not create a
    * duplicate observation. Capped at `limit`.
    */
   listObservations(
@@ -126,7 +126,7 @@ export interface MemoryConsolidationStore {
   ): Promise<Result<MemoryEntry[], Error>>;
 
   /**
-   * Apply ONE consolidation atomically (CONS-03): create the observation AND
+   * Apply ONE consolidation atomically: create the observation AND
    * mark its sources `consolidated_at`, both in a single `db.transaction`
    * (auto-rollback on throw — no orphan observation, no lost sources). Returns
    * the stored observation.
@@ -134,7 +134,7 @@ export interface MemoryConsolidationStore {
   applyConsolidation(plan: ConsolidationPlan): Promise<Result<MemoryEntry, Error>>;
 
   /**
-   * Grow an EXISTING observation atomically (FOLD-01/02) instead of creating a
+   * Grow an EXISTING observation atomically instead of creating a
    * second one: recompute `proof_count` as the CARDINALITY of the UNIONed
    * source-id set (the idempotency key — NOT a blind `+=`), UNION `source_ids`,
    * append a `history` entry (only when content changes), carry the trust
@@ -148,19 +148,19 @@ export interface MemoryConsolidationStore {
   foldIntoExisting(plan: ConsolidationFoldPlan): Promise<Result<MemoryEntry, Error>>;
 
   /**
-   * READ (REASON-04 — the surprisal-gate engine). The k nearest-neighbour cosine
+   * READ (the surprisal-gate engine). The k nearest-neighbour cosine
    * DISTANCES for one embedding. Backed by the shipped sqlite-vec searchByVector
    * (hybrid-search.ts). Returns the distances sorted ASCENDING (closer first);
    * `ok([])` when sqlite-vec is unavailable (graceful degrade — the caller's
    * missing-embedding policy then applies).
    *
-   * ## Surprisal novelty is CORPUS-RELATIVE by design (T-101-03-01)
+   * ## Surprisal novelty is CORPUS-RELATIVE by design
    * The `agentId`/`tenantId` parameters are RESERVED — they are NOT currently
    * applied. The shipped `vec_memories` vec0 table is GLOBAL (no tenant/agent
    * column), so this read ranks the embedding against the ENTIRE multi-tenant
    * corpus, and a cross-tenant near-duplicate intentionally INFLUENCES this
-   * candidate's surprisal ranking. This is the sanctioned design (plan
-   * T-101-03-01, plan-checker risk-accepted): the threat model is distances-only
+   * candidate's surprisal ranking. This is the sanctioned design (risk-accepted):
+   * the threat model is distances-only
    * — ONLY scalar float distances are read, NEVER ids or content, so no other
    * scope's memory body crosses the boundary; it is a side-channel on the
    * per-agent SELECTION decision, never an exfiltration. A future filtered-vec
@@ -178,7 +178,7 @@ export interface MemoryConsolidationStore {
 
   /**
    * Mark source memories `consolidated_at` WITHOUT creating an observation
-   * (REASON-02 — the deductive-only drain). `applyConsolidation` marks sources
+   * (the deductive-only drain). `applyConsolidation` marks sources
    * only as a side effect of creating an inductive observation row; a scope that
    * yields ONLY a deductive triple (no inductive pattern) has no observation to
    * create, yet its sources must still leave the candidate pool — otherwise the

@@ -29,15 +29,15 @@ const here = dirname(fileURLToPath(import.meta.url));
 const portSrc = readFileSync(resolve(here, "./memory-entity-store.ts"), "utf8");
 
 /**
- * Phase 86 (OBS-06) — the scoped `listEntities` read on `MemoryEntityStore`.
+ * The scoped `listEntities` read on `MemoryEntityStore`.
  *
  * Type-only assertions: an implementer must expose `listEntities(agentId,
  * tenantId, limit)` returning `Promise<Result<EntityRow[], Error>>` — a
  * NON-seed scoped read for the entity-graph diagnostic (distinct from the
  * seed-based `associativeLane`). The `(tenant, agent)` scope is the same
- * SQL-baked ENT-03 isolation boundary.
+ * SQL-baked entity-isolation boundary.
  */
-describe("MemoryEntityStore.listEntities — scoped entity-graph read (OBS-06)", () => {
+describe("MemoryEntityStore.listEntities — scoped entity-graph read", () => {
   it("declares listEntities + EntityRow and stays a type-only port (no zod, no @comis/memory)", () => {
     // Runtime RED proof: fails on pre-patch source where the method/type are absent.
     expect(portSrc, "EntityRow type must be declared").toMatch(/export\s+interface\s+EntityRow\b/);

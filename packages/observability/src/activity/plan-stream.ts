@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * plan-stream — derives plan-update events from the Silent Execution Planner
- * (SEP) without introducing a new tool (STRAT-11, spec §16.7).
+ * (SEP) without introducing a new tool (spec §16.7).
  *
  * SEP is the canonical plan-state source. The bus already emits
  * `sep:plan_extracted` whenever the agent extracts a plan, and the live
- * `ExecutionPlan` is read through the core `ExecutionPlanPort` (declared in
- * 70-05; implemented in Phase 74). This stream:
+ * `ExecutionPlan` is read through the core `ExecutionPlanPort`. This stream:
  *
  *   - subscribes `sep:plan_extracted` → reads `executionPlanPort.getCurrentPlan()`
  *     and emits a {@link PlanUpdate} whose entries map from `ExecutionPlan.steps`.
@@ -18,8 +17,8 @@
  *
  * Mirrors the cache-trace `event-bus-bridge.ts` subscription-bag idiom: a
  * subscriptions array, `bus.on(...)` per event, a single returned
- * `unsubscribe()` that `bus.off`s all. Logger is injected via Deps (OBS-02 —
- * never `getLogger()` in-module). Never imports `channels`.
+ * `unsubscribe()` that `bus.off`s all. Logger is injected via Deps (never
+ * `getLogger()` in-module). Never imports `channels`.
  *
  * @module
  */
@@ -58,9 +57,9 @@ export interface PlanUpdate {
 /** Dependencies for {@link createPlanStream}. */
 export interface CreatePlanStreamDeps {
   readonly eventBus: TypedEventBus;
-  /** Read-only accessor for the live SEP plan (70-05 port; Phase 74 impl). */
+  /** Read-only accessor for the live SEP plan. */
   readonly executionPlanPort: ExecutionPlanPort;
-  /** Injected bound logger (OBS-02). Optional — DEBUG plan-update traces. */
+  /** Injected bound logger. Optional — DEBUG plan-update traces. */
   readonly logger?: ComisLogger;
 }
 
@@ -75,7 +74,7 @@ export interface PlanStream {
 }
 
 /**
- * Create the SEP plan-stream. NO new tool is registered (STRAT-11, §16.7).
+ * Create the SEP plan-stream. NO new tool is registered (§16.7).
  */
 export function createPlanStream(deps: CreatePlanStreamDeps): PlanStream {
   return {

@@ -2,13 +2,13 @@
 // @allow-throw: upsertTriple's trust-first invalidation runs the SELECT-incumbent → soft-close-loser → INSERT-new unit inside a better-sqlite3 `db.transaction(() => {...})()` callback, where a throw is the ONLY way to trigger the atomic ROLLBACK — returning a Result.err from the callback would COMMIT a torn supersession (an orphan close, or a double current-truth). The incumbent-row parse guard (`throw new Error(parsed.error.message)`) and any in-transaction fault are caught by the method's outer try/catch and converted to `err` (the tests prove "never throws"); consumed by the offline triple-extraction writer (the @allow-throw boundary), which treats the err as a non-fatal skipped write.
 /**
  * SqliteTripleStore: the SOLE adapter for the segregated `TripleStorePort`
- * (@comis/core, Phase 100, Track F — KG-01/KG-02/KG-03). It owns ALL the
+ * (@comis/core). It owns ALL the
  * knowledge-graph triple SQL over the additive `memory_triples` table.
  *
  * ## Method status
  *
- * - `upsertTriple` does TRUST-FIRST single-current-truth invalidation (Plan
- *   100-02 / KG-02) in ONE `db.transaction`: it SELECTs the current-truth
+ * - `upsertTriple` does TRUST-FIRST single-current-truth invalidation
+ *   in ONE `db.transaction`: it SELECTs the current-truth
  *   incumbent on (tenant, agent, subject, predicate) WHERE `t_valid_end IS NULL`,
  *   then resolves a contradiction (same s+p, DIFFERENT object) on the HARD trust
  *   ladder (`system` > `learned` > `external`) — the higher-trust row stays
@@ -17,19 +17,19 @@
  *   `expired_at` set), NEVER deleted. Same object is idempotent corroboration (no
  *   new history row). Non-overlapping occurred intervals coexist (Graphiti's
  *   interval-overlap guard).
- * - `asOf(t, scope, mode)` is the bi-temporal as-of read (Plan 100-03 / KG-03):
+ * - `asOf(t, scope, mode)` is the bi-temporal as-of read:
  *   `"valid"` (default) queries the VALID-time window (`t_valid_start <= t AND
  *   (t_valid_end IS NULL OR t_valid_end > t)` — "what was BELIEVED true at t");
  *   `"txn"` queries the TXN/record-time window (`t_ingested <= t AND (expired_at
  *   IS NULL OR expired_at > t)` — "what the system had RECORDED as of t"). The
  *   two modes index DIFFERENT column pairs, so a back-dated or future-valid fact
  *   appears in one but not the other at a chosen `t`. Both scoped.
- * - `currentTruth(scope, cap)` is the DEFAULT-RECALL read (Plan 100-03 / KG-03):
+ * - `currentTruth(scope, cap)` is the DEFAULT-RECALL read:
  *   only `t_valid_end IS NULL` rows — superseded losers and recorded-but-not-
  *   believed rows are DEFAULT-FILTERED out (the Graphiti opt-in-leak fix). As-of
  *   history is reachable only via an explicit `asOf(t)`. Scoped, capped.
  * - `spreadLane(seedSubjects, scope, maxDepth, fanOut, cap)` is the read-side
- *   graph-spread lane (Plan 100-04 / KG-04): a bounded `WITH RECURSIVE walk`
+ *   graph-spread lane: a bounded `WITH RECURSIVE walk`
  *   over current-truth `subject → object` edges from the seed subjects. The
  *   recursive arm is scoped on `(tenant_id, agent_id)` AND filtered on
  *   `t_valid_end IS NULL` (scope + current-truth ON THE RECURSIVE STEP, not just
@@ -45,10 +45,10 @@
  * memories(id)` `ON DELETE CASCADE` fire (deleting a source memory drops its
  * derived triples; no orphan-sweep job).
  *
- * ## Isolation is the load-bearing security boundary (T-100-01-01, the §5.2 / ENT-03 pattern)
+ * ## Isolation is the load-bearing security boundary (the §5.2 pattern)
  *
  * Comis runs many agents in one DB. BOTH the write (the INSERT) and the read
- * (`asOf`, and the Plan-04 `spreadLane` CTE) filter on `(tenant_id, agent_id)` —
+ * (`asOf`, and the `spreadLane` CTE) filter on `(tenant_id, agent_id)` —
  * parameterized — so a triple written under one (tenant, agent) is NEVER returned
  * for another scope by subject/object-string coincidence.
  *
@@ -89,7 +89,7 @@ export interface MemoryTripleStoreDeps {
 // asOf window read AND the single current-truth incumbent (SELECT *) in the
 // invalidation transaction (`parseOptionalRow`).
 const tripleRowMapper = createRowMapper(MemoryTripleRowSchema);
-// Graph-spread (KG-04) read mappers: the recursive-CTE node projection
+// Graph-spread read mappers: the recursive-CTE node projection
 // (node + depth) and the full `memories` row hydrate (→ rowToEntry). Both
 // parse via createRowMapper (no `as Foo[]`).
 const spreadNodeRowMapper = createRowMapper(SpreadNodeRowSchema);
@@ -98,7 +98,7 @@ const memoryRowMapper = createRowMapper(MemoryRowSchema);
 /**
  * Default per-node fan-out cap for the graph-spread walk — bounds each node's
  * expansion to its top-F current-truth out-edges (by trust then recency) so a
- * dense hub cannot blow the recursive frontier (T-100-04-01). The caller passes
+ * dense hub cannot blow the recursive frontier. The caller passes
  * an explicit `fanOut` (the lane config default is 8).
  */
 const DEFAULT_SPREAD_FANOUT = 8;
@@ -119,12 +119,12 @@ type TripleUpsertOutcome =
   | "coexist";
 
 /**
- * The Comis trust ladder as a HARD ordinal for the invalidation comparison
- * (KG-02). Trust is a HARD BRANCH here — the higher-trust row stays current
+ * The Comis trust ladder as a HARD ordinal for the invalidation comparison.
+ * Trust is a HARD BRANCH here — the higher-trust row stays current
  * REGARDLESS of recency — NOT a soft score multiplier (that is `score.ts`'s job
  * on the read path). An `external`-trust claim can therefore NEVER supersede a
- * `system`/`learned` current-truth (the anti-poisoning control; SUITE-04 probes
- * exactly this). `system` (2) > `learned` (1) > `external` (0).
+ * `system`/`learned` current-truth (the anti-poisoning control; the security
+ * suite probes exactly this). `system` (2) > `learned` (1) > `external` (0).
  */
 const TRUST_RANK: Record<"system" | "learned" | "external", number> = {
   system: 2,
@@ -189,7 +189,7 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
   const { db, logger } = deps;
 
   // --- Prepared statements (parameterized; reused across calls) ---
-  // INSERT-ONLY current-truth write (Plan 100-01 skeleton). t_valid_end +
+  // INSERT-ONLY current-truth write. t_valid_end +
   // expired_at are NULL (currently believed / live record); t_ingested =
   // scope.now (injected clock, NEVER Date.now()). Bound params only.
   const insertTriple = db.prepare(
@@ -199,7 +199,7 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
       "source_memory_id, confidence) " +
       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?)",
   );
-  // Loser-path INSERT (KG-02): the new row is written ALREADY-CLOSED
+  // Loser-path INSERT: the new row is written ALREADY-CLOSED
   // (`t_valid_end` + `expired_at` set) — "recorded but NOT believed" — when a
   // lower-trust or older-on-tiebreak claim must not supersede the incumbent. The
   // conflict is RETAINED (never dropped) and surfaceable. Bound params only.
@@ -213,14 +213,14 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
   // SELECT the current-truth incumbent for (tenant, agent, subject, predicate),
   // scoped. `t_valid_end IS NULL` = currently believed. SELECT * → parsed via
   // the full-row mapper (no `as Row`). The (tenant, agent) filter is the
-  // load-bearing ISOLATION boundary (T-100-02-02): a contradiction in one scope
+  // load-bearing ISOLATION boundary: a contradiction in one scope
   // can NEVER read/close a row in another. Bound params only.
   const selectIncumbent = db.prepare(
     "SELECT * FROM memory_triples " +
       "WHERE tenant_id = ? AND agent_id = ? AND subject = ? AND predicate = ? " +
       "AND t_valid_end IS NULL",
   );
-  // Soft-close the LOSER (KG-02 / T-100-02-03): set `t_valid_end` + `expired_at`
+  // Soft-close the LOSER: set `t_valid_end` + `expired_at`
   // — NEVER a DELETE. Keyed by id AND re-scoped on (tenant, agent) so a stray id
   // can never close a cross-scope row. Bound params only.
   const softCloseIncumbent = db.prepare(
@@ -233,15 +233,15 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
     "UPDATE memory_triples SET confidence = ? " +
       "WHERE id = ? AND tenant_id = ? AND agent_id = ?",
   );
-  // Valid-time as-of read (KG-03), scoped. The `tenant_id = ? AND agent_id = ?`
-  // is the load-bearing ISOLATION boundary (T-100-01-01). Bound params only.
+  // Valid-time as-of read, scoped. The `tenant_id = ? AND agent_id = ?`
+  // is the load-bearing ISOLATION boundary. Bound params only.
   // "What was BELIEVED true at t" — indexes the VALID-time window.
   const asOfSelect = db.prepare(
     "SELECT * FROM memory_triples " +
       "WHERE tenant_id = ? AND agent_id = ? " +
       "AND t_valid_start <= ? AND (t_valid_end IS NULL OR t_valid_end > ?)",
   );
-  // Txn/record-time as-of read (KG-03), scoped. SAME shape over the OTHER
+  // Txn/record-time as-of read, scoped. SAME shape over the OTHER
   // bi-temporal axis — "what the system had RECORDED as of t": the record window
   // `t_ingested <= t AND (expired_at IS NULL OR expired_at > t)`. Querying a
   // DIFFERENT column pair than asOfSelect is the whole point of the txn variant
@@ -252,21 +252,21 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
       "WHERE tenant_id = ? AND agent_id = ? " +
       "AND t_ingested <= ? AND (expired_at IS NULL OR expired_at > ?)",
   );
-  // Default-recall current-truth read (KG-03 — the Graphiti opt-in-leak fix).
+  // Default-recall current-truth read (the Graphiti opt-in-leak fix).
   // ONLY `t_valid_end IS NULL` rows are believed NOW: superseded losers (soft-
   // closed) and recorded-but-not-believed rows (inserted already-closed by the
-  // KG-02 write path) are DEFAULT-FILTERED out. Newest-valid first, capped.
+  // invalidation write path) are DEFAULT-FILTERED out. Newest-valid first, capped.
   // (tenant, agent) scoped; bound params only (the cap is a bound `?`).
   const currentTruthSelect = db.prepare(
     "SELECT * FROM memory_triples " +
       "WHERE tenant_id = ? AND agent_id = ? AND t_valid_end IS NULL " +
       "ORDER BY t_valid_start DESC LIMIT ?",
   );
-  // Graph-spread hydrate (KG-04): resolve a reached node (a triple `object`) →
+  // Graph-spread hydrate: resolve a reached node (a triple `object`) →
   // its source memory row. Pick the highest-trust, most-recent current-truth
   // triple whose `object` is the node AND that carries a source_memory_id, then
   // join `memories` re-asserting the FULL (tenant, agent) scope (self-sufficient
-  // hydrate — LO-01, no fail-open if the CTE is ever refactored). Bound params only.
+  // hydrate — no fail-open if the CTE is ever refactored). Bound params only.
   const hydrateSpreadNode = db.prepare(
     "SELECT m.* FROM memories m " +
       "JOIN memory_triples t ON t.source_memory_id = m.id " +
@@ -274,7 +274,7 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
       "AND m.tenant_id = ? AND m.agent_id = ? " +
       "ORDER BY t.trust DESC, t.t_ingested DESC LIMIT 1",
   );
-  // IDF seed-damp helper (KG-04, HippoRAG): a seed's current-truth out-edge
+  // IDF seed-damp helper (HippoRAG): a seed's current-truth out-edge
   // count — the spread weight is divided by this so a hub seed (many edges)
   // damps its neighbours vs a sparse seed. Scoped + current-truth; bound params.
   const seedOutEdgeCount = db.prepare(
@@ -327,7 +327,7 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
           );
         };
 
-        // Trust-first single-current-truth invalidation (KG-02) — ONE
+        // Trust-first single-current-truth invalidation — ONE
         // synchronous transaction. better-sqlite3 BEGINs, runs fn, COMMITs — and
         // auto-ROLLBACKs on ANY throw, so the SELECT-incumbent → soft-close-loser
         // → INSERT-new unit is atomic: no orphan close, no double current-truth.
@@ -391,8 +391,8 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
           }
 
           if (newRank < incRank) {
-            // A newer LOW-trust claim NEVER supersedes a higher-trust fact
-            // (SUITE-04). Record it (closed) so the conflict is retained +
+            // A newer LOW-trust claim NEVER supersedes a higher-trust fact.
+            // Record it (closed) so the conflict is retained +
             // surfaceable; the incumbent stays current.
             insertRecordedNotBelieved();
             return "recorded-not-believed";
@@ -534,7 +534,7 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
       const startMs = systemNowMs();
       const { tenantId, agentId } = scope;
       try {
-        // ENT-04 (reused): no seeds -> empty lane (no query). RRF unchanged.
+        // No seeds -> empty lane (no query). RRF unchanged.
         if (seedSubjects.length === 0) {
           logger?.debug(
             { step: "triple-spread", seedCount: 0, reachedCount: 0, durationMs: 0 },
@@ -545,11 +545,11 @@ export function createSqliteTripleStore(deps: MemoryTripleStoreDeps): TripleStor
 
         // The bounded recursive-CTE neighbourhood walk (RESEARCH §Graph-spread
         // lane — VERIFIED in better-sqlite3 12.9.0). Seeds bound as ONE JSON
-        // array `?` to json_each (NEVER concatenated — T-100-04-05). The
+        // array `?` to json_each (NEVER concatenated). The
         // RECURSIVE arm's WHERE carries the (tenant, agent) scope + the
         // current-truth filter (t_valid_end IS NULL) + the depth cap — the scope
-        // is on the RECURSIVE JOIN, not just the base case (T-100-04-02, the
-        // easy one to forget). The FAN-OUT cap (T-100-04-01) is a correlated
+        // is on the RECURSIVE JOIN, not just the base case (the
+        // easy one to forget). The FAN-OUT cap is a correlated
         // subquery in the recursive arm bounding each node to its top-F
         // current-truth out-edges (trust DESC, then recency) so a dense hub
         // cannot blow the frontier. Final `WHERE depth > 0 LIMIT ?` bounds the

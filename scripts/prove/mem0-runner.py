@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """
-PROVE2 (Phase 114) competitor runner — mem0.
+Competitor runner — mem0.
 
 Reads the EXACT sampled items exported by the prove2-qa-lift bench harness
 (prove2-sample.json: a list of {docs:[{content,createdAt}], questions:[...]}),

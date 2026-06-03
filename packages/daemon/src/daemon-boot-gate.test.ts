@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Daemon boot gate spy tests — REQ-17 / ROADMAP criterion 3.
+ * Daemon boot gate spy tests.
  *
  * These tests prove that `writeMasterKeyIfAbsent` is NEVER called when
  * `security.storage` is "file" or "env" (no key material created on first
  * boot), and IS called exactly once when `security.storage` is "encrypted".
  *
- * This is the concrete proof for ROADMAP criterion 3:
- *   "file/env first boot creates no key material"
+ * This is the concrete proof that file/env first boot creates no key material.
  *
  * Structure: each test injects `overrides.preReadStorageMode` to return
  * the desired storageMode, and `overrides.writeMasterKeyIfAbsent` as a spy.
  * The test then asserts the spy call count.
  *
  * RED+GREEN committed together per AGENTS.md §2.10:
- * The test references the daemon boot gate code which is rewritten in Plan 01-03.
- * Before the rewrite, `preReadStorageMode` and `writeMasterKeyIfAbsent` were not
- * injectable overrides. A RED-only commit would fail to compile.
+ * The test references the daemon boot gate code which was rewritten to expose
+ * injectable overrides. Before the rewrite, `preReadStorageMode` and
+ * `writeMasterKeyIfAbsent` were not injectable, so a RED-only commit would fail
+ * to compile.
  *
  * @module
  */
@@ -227,7 +227,7 @@ function buildBootGateOverrides(storageMode: "encrypted" | "file" | "env") {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("daemon boot gate — writeMasterKeyIfAbsent call gate (REQ-17)", () => {
+describe("daemon boot gate — writeMasterKeyIfAbsent call gate", () => {
   const originalEnv = process.env;
   const instances: Array<{ shutdownHandle: { trigger: (r: string) => Promise<void>; dispose: () => void } }> = [];
   let tmpDir: string;
@@ -251,7 +251,7 @@ describe("daemon boot gate — writeMasterKeyIfAbsent call gate (REQ-17)", () =>
   });
 
   // ------------------------------------------------------------------
-  // REQ-17: file mode — no key material
+  // file mode — no key material
   // ------------------------------------------------------------------
 
   it("writeMasterKeyIfAbsent is NOT called when security.storage is 'file' (spy call count === 0)", async () => {
@@ -273,7 +273,7 @@ describe("daemon boot gate — writeMasterKeyIfAbsent call gate (REQ-17)", () =>
   });
 
   // ------------------------------------------------------------------
-  // REQ-17: env mode — no key material
+  // env mode — no key material
   // ------------------------------------------------------------------
 
   it("writeMasterKeyIfAbsent is NOT called when security.storage is 'env' (spy call count === 0)", async () => {
@@ -292,7 +292,7 @@ describe("daemon boot gate — writeMasterKeyIfAbsent call gate (REQ-17)", () =>
   });
 
   // ------------------------------------------------------------------
-  // REQ-17: encrypted mode — key material IS written
+  // encrypted mode — key material IS written
   // ------------------------------------------------------------------
 
   it("writeMasterKeyIfAbsent IS called when security.storage is 'encrypted' (spy call count === 1)", async () => {
@@ -313,10 +313,10 @@ describe("daemon boot gate — writeMasterKeyIfAbsent call gate (REQ-17)", () =>
 });
 
 // ---------------------------------------------------------------------------
-// WR-03: storageMode vs container.config.security.storage divergence gate
+// storageMode vs container.config.security.storage divergence gate
 // ---------------------------------------------------------------------------
 
-describe("daemon boot gate — storageMode vs post-bootstrap security.storage divergence (WR-03)", () => {
+describe("daemon boot gate — storageMode vs post-bootstrap security.storage divergence", () => {
   const originalEnv = process.env;
   let tmpDir: string;
 

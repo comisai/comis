@@ -50,10 +50,10 @@ import {
 import { mergeSessionStats } from "./pi-executor/session-stats.js";
 import { recordLastResponseTs } from "./ttl-guard.js";
 import { stripDiscoverySchemas } from "./schema-stripping.js";
-// FEED-01: in-package pure attribution fn (the agent↛memory cut — core types
+// In-package pure attribution fn (the agent↛memory cut — core types
 // only; the write-back is the daemon's job, off the recall-used bus event).
 import { attributeRecallUsage } from "../rag/recall-attribution.js";
-// LEARN-01 (write side): the DETERMINISTIC, LLM-free intent classifier (same package, NOT
+// Write side: the DETERMINISTIC, LLM-free intent classifier (same package, NOT
 // publicly exported — Pitfall 2). The turn-end memory:recall_used emit threads
 // classifyIntent(msg.text) so the daemon write-back records the per-intent usefulness bucket.
 import { classifyIntent } from "../rag/query-understanding.js";
@@ -150,7 +150,7 @@ export interface PostExecutionParams {
   executionStartMs: number;
   executionId: string;
   executionOverrides: ExecutionOverrides | undefined;
-  /** Recalled memories (id + content) for FEED-01 turn-end attribution. Consumed
+  /** Recalled memories (id + content) for turn-end attribution. Consumed
    *  IN-PROCESS by the overlap heuristic here; content NEVER logged/emitted (only
    *  ids/counts cross the bus). Absent ⇒ no attribution (default-off / no recall). */
   recalledMemories?: ReadonlyArray<{ id: string; content: string }>;
@@ -223,11 +223,11 @@ export interface PostExecutionParams {
 // ---------------------------------------------------------------------------
 
 /**
- * Forward-declared shape of the `rag.feedback` sub-object (FEED-04 adds it to
- * RagConfigSchema in Plan 93-04). Until that lands, RagConfig has no `feedback`
+ * Forward-declared shape of the `rag.feedback` sub-object (a later change adds
+ * it to RagConfigSchema). Until that lands, RagConfig has no `feedback`
  * key, so we read it through this view via a structural widening. Optional
  * chaining + the `=== true` check make the gate default-OFF: absent field ⇒
- * no attribution, no emit. When 93-04 adds the field, this access stays correct.
+ * no attribution, no emit. When the field is added, this access stays correct.
  */
 interface FeedbackView {
   enabled?: boolean;
@@ -840,11 +840,11 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
     }
   }
 
-  // FEED-01: attribute recall usage + emit the recall-used event (flag-gated, non-fatal).
+  // Attribute recall usage + emit the recall-used event (flag-gated, non-fatal).
   // The overlap heuristic reads recalled text in-process and produces ids only; the event
   // carries counts + ids (never bodies). Default-OFF: when rag.feedback.enabled !== true
   // this whole block is skipped (no attribution, no emit). The daemon subscriber
-  // (setup-memory-usefulness-wiring.ts) does the write-back through the FEED-02 port; the
+  // (setup-memory-usefulness-wiring.ts) does the write-back through the usefulness-store port; the
   // agent stays inside the build cut (no memory-package import on the write path).
   const feedback = (config.rag as (typeof config.rag & { feedback?: FeedbackView }) | undefined)?.feedback;
   if (
@@ -855,13 +855,13 @@ export async function postExecution(params: PostExecutionParams): Promise<void> 
   ) {
     try {
       const { usedIds, ignoredIds } = attributeRecallUsage(params.recalledMemories, result.response);
-      // LEARN-01 (write side): thread the recall-time intent so the daemon subscriber writes
+      // Write side: thread the recall-time intent so the daemon subscriber writes
       // the PER-INTENT usefulness bucket. The intent is classifyIntent over the SAME recalled
       // query the recall read classified (msg.text — prompt-assembly.ts:818), gated on the SAME
       // queryUnderstanding.intentReweight flag the recall read uses. classifyIntent is pure +
       // deterministic ("NO LLM, NO network") so the emit adds NO model call. intentReweight off
       // (or msg.text absent) → intent stays undefined → the spread OMITS it → the subscriber
-      // records the global ('') bucket (byte-identical write to v2.8). The intent is a
+      // records the global ('') bucket (byte-identical to the prior write). The intent is a
       // closed-union metadata string (factual|temporal|preference|enumeration), never the raw
       // query — the event stays ids/counts/intent-only (§2.7).
       const intent =

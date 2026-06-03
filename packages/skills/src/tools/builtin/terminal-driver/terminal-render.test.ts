@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the per-session terminal emulator wrapper (spec §2.4, TR-02).
+ * Unit tests for the per-session terminal emulator wrapper (spec §2.4).
  *
  * `terminal-render.ts` wraps a REAL `@xterm/headless` Terminal (pure-JS — these
  * tests run green on macOS without a PTY or a forked process). It is the new
@@ -8,7 +8,7 @@
  * character grid, the REAL cursor (`buffer.active.cursorX/cursorY`), and the
  * REAL alt-screen flag (`buffer.active.type === "alternate"`).
  *
- * Plan 121-01 (this file): construct + plain grid + real cursor + alt-screen flag
+ * This file covers: construct + plain grid + real cursor + alt-screen flag
  * + write-flush ordering + resize + safe dispose.
  *
  * @module
@@ -18,7 +18,7 @@ import { describe, it, expect } from "vitest";
 
 import { createSessionEmulator, diffSnapshot } from "./terminal-render.js";
 
-describe("createSessionEmulator — construct + plain grid (TR-02)", () => {
+describe("createSessionEmulator — construct + plain grid", () => {
   it("renders written text into the grid and reports cols/rows/alt", async () => {
     const emu = createSessionEmulator({ cols: 80, rows: 24, scrollback: 1000 });
     await emu.write("hello world");
@@ -32,20 +32,20 @@ describe("createSessionEmulator — construct + plain grid (TR-02)", () => {
   });
 });
 
-describe("createSessionEmulator — real cursor (replaces the P1 {0,0} placeholder)", () => {
+describe("createSessionEmulator — real cursor (replaces the earlier {0,0} placeholder)", () => {
   it("reports the REAL cursorX/cursorY after a write", async () => {
     const emu = createSessionEmulator({ cols: 80, rows: 24, scrollback: 1000 });
     await emu.write("abc");
     const snap = emu.snapshot();
 
-    // The real emulator cursor — NOT the P1 hard-coded {0,0}.
+    // The real emulator cursor — NOT the earlier hard-coded {0,0}.
     expect(snap.cursor.x).toBe(3);
     expect(snap.cursor.y).toBe(0);
     emu.dispose();
   });
 });
 
-describe("createSessionEmulator — alt-screen flag (TR-02)", () => {
+describe("createSessionEmulator — alt-screen flag", () => {
   it("flips alt:true on the alt-screen enter sequence and alt:false on leave", async () => {
     const emu = createSessionEmulator({ cols: 80, rows: 24, scrollback: 1000 });
 
@@ -95,11 +95,11 @@ describe("createSessionEmulator — dispose is safe + idempotent", () => {
 });
 
 // ===========================================================================
-// Plan 121-02: render formats (text | ansi | html) via @xterm/addon-serialize
-// + the scrollback:N off-screen perception (TR-02 formats, TR-14 scrollback).
+// Render formats (text | ansi | html) via @xterm/addon-serialize
+// + the scrollback:N off-screen perception.
 // ===========================================================================
 
-describe("createSessionEmulator — render formats (TR-02)", () => {
+describe("createSessionEmulator — render formats", () => {
   it("format:'text' (the default) returns the plain grid with NO SGR escapes", async () => {
     const emu = createSessionEmulator({ cols: 80, rows: 24, scrollback: 1000 });
     await emu.write("\x1b[31mRED\x1b[0m"); // red text — the SGR must NOT survive in text
@@ -131,7 +131,7 @@ describe("createSessionEmulator — render formats (TR-02)", () => {
 
     const html = emu.snapshot({ format: "html" }).screen;
 
-    // HTML-shaped + non-empty + carries the text (an exact golden is Plan 05).
+    // HTML-shaped + non-empty + carries the text (an exact golden is deferred).
     expect(html).toContain("<");
     expect(html).toContain("hi");
     expect(html.length).toBeGreaterThan(0);
@@ -139,7 +139,7 @@ describe("createSessionEmulator — render formats (TR-02)", () => {
   });
 });
 
-describe("createSessionEmulator — scrollback perception beyond the viewport (TR-14)", () => {
+describe("createSessionEmulator — scrollback perception beyond the viewport", () => {
   // Zero-padded labels (LINE-01..LINE-12) so "LINE-01" is NEVER a substring of
   // "LINE-10"/"LINE-11"/"LINE-12" — the off-screen assertions are unambiguous.
   function label(i: number): string {
@@ -185,11 +185,11 @@ describe("createSessionEmulator — scrollback perception beyond the viewport (T
 });
 
 // ===========================================================================
-// Plan 121-03: hasContentBelowFold() (the "more content below the fold ⇒ NOT
-// settled" rendering signal) + diffSnapshot() (the per-read screen-diff). TR-14.
+// hasContentBelowFold() (the "more content below the fold ⇒ NOT
+// settled" rendering signal) + diffSnapshot() (the per-read screen-diff).
 // ===========================================================================
 
-describe("createSessionEmulator — hasContentBelowFold (TR-14)", () => {
+describe("createSessionEmulator — hasContentBelowFold", () => {
   it("returns true when the viewport is scrolled UP so content sits below the fold", async () => {
     const emu = createSessionEmulator({ cols: 80, rows: 5, scrollback: 1000 });
     // 10 CRLF lines auto-scroll the viewport to the bottom; then scroll UP so
@@ -225,7 +225,7 @@ describe("createSessionEmulator — hasContentBelowFold (TR-14)", () => {
   });
 });
 
-describe("createSessionEmulator — diffSnapshot (the per-read screen-diff, TR-14)", () => {
+describe("createSessionEmulator — diffSnapshot (the per-read screen-diff)", () => {
   it("changed:true when a write alters a row, with the changed-row range covering it", async () => {
     const emu = createSessionEmulator({ cols: 80, rows: 24, scrollback: 1000 });
     const a = emu.snapshot();

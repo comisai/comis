@@ -6,7 +6,7 @@ const RERANKER_Q8_SLUG =
   "hf:gpustack/bge-reranker-v2-m3-GGUF:bge-reranker-v2-m3-Q8_0.gguf";
 
 describe("MemoryConfigSchema reranker fields", () => {
-  it("defaults rerankerModel to the Phase-79 bge-reranker-v2-m3 Q8_0 GGUF slug", () => {
+  it("defaults rerankerModel to the bge-reranker-v2-m3 Q8_0 GGUF slug", () => {
     const result = MemoryConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
@@ -25,7 +25,7 @@ describe("MemoryConfigSchema reranker fields", () => {
     }
   });
 
-  it("defaults rerankerThreads to 4 (Phase-79 4-8 CPU-contention bound)", () => {
+  it("defaults rerankerThreads to 4 (4-8 CPU-contention bound)", () => {
     const result = MemoryConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {

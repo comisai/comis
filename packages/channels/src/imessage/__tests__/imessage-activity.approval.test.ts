@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * iMessage plain-text approval-prompt tests (APV-10 renderer half; §6.4.6 / §18.3).
+ * iMessage plain-text approval-prompt tests (renderer half; §6.4.6 / §18.3).
  *
  * iMessage has NO button surface (AppendOnly, send-only, `buttons:"none"`), so a
  * `kind:"approval"` frame appends the plain-text prompt
@@ -8,12 +8,12 @@
  * "Reply approve or deny within the approval timeout" for a single pending
  * approval, and the shortId-disambiguated form when more than one is pending in the
  * same session. NO signed buttons are attached — HMAC is skipped for plaintext
- * (§6.4.6); the router's plain-text branch (73-04) scopes the reply to
+ * (§6.4.6); the router's plain-text branch scopes the reply to
  * `pendingForSession` and replay is blocked by pending-table removal.
  *
  * The imessage-fake's send row is `{ op, id, text }` (no buttons field at all), so
  * a text-only assertion proves no button surface is introduced. The prompt copy is
- * fixed + the redacted shortId — never raw user/tool content (SEC-06 / T-73-26).
+ * fixed + the redacted shortId — never raw user/tool content.
  */
 import { describe, it, expect } from "vitest";
 import type { ActivityRenderFrame, ActivityEvent, ApprovalCorrelation } from "@comis/core";
@@ -59,7 +59,7 @@ function frame(events: readonly ActivityEvent[]): ActivityRenderFrame {
   };
 }
 
-describe("iMessage plain-text approval prompt (no buttons, shortId when ambiguous — APV-10)", () => {
+describe("iMessage plain-text approval prompt (no buttons, shortId when ambiguous)", () => {
   it("appends 'Reply approve or deny ...' for a single pending approval (no shortId)", async () => {
     const fake = createFakeIMessageAdapter();
     const r = createIMessageActivityRenderer(fake, "chat-1");

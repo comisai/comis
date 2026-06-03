@@ -332,7 +332,7 @@ export function createMcpOauthHandlers(
           ? { portForwardHint: result.portForwardHint }
           : {}),
         ...(result.authUrl !== undefined ? { authUrl: result.authUrl } : {}),
-        // DEVAUTH-03: device-flow path surfaces verification fields. Non-
+        // Device-flow path surfaces verification fields. Non-
         // secret per RFC 8628 §6.1 (userCode is one-shot + time-bound;
         // verificationUri is the provider's public endpoint). Conditional-
         // spread keeps the PKCE path's response shape unchanged.

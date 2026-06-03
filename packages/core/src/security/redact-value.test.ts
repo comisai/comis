@@ -2,11 +2,11 @@
 /**
  * Tests for redactValue() — the pure, bounded redaction primitive.
  *
- * This is the SEC-01/02/03 keystone (AGENT-TRANSPARENCY-SPEC §10.1/§10.2):
- *   - SEC-01: no secrets ever (9 Pino keys + secret shapes → `<redacted>`).
- *   - SEC-02: no absolute paths ($HOME → ~, system-absolute → last 2 segments);
- *             IP / hostname / MAC masked.
- *   - SEC-03: PII (email / phone / CC / SSN) masked.
+ * This is the redaction keystone (AGENT-TRANSPARENCY-SPEC §10.1/§10.2):
+ *   - No secrets ever (9 Pino keys + secret shapes → `<redacted>`).
+ *   - No absolute paths ($HOME → ~, system-absolute → last 2 segments);
+ *     IP / hostname / MAC masked.
+ *   - PII (email / phone / CC / SSN) masked.
  *
  * The replacement token is the lowercase-angle `<redacted>` (Pitfall 5 —
  * NOT `[REDACTED]` like the log sanitizer).
@@ -28,7 +28,7 @@ import {
 
 const REDACTED = "<redacted>";
 
-/** The 9 secret keys mirrored from the CLAUDE.md "Pino auto-redacts" list (SEC-01). */
+/** The 9 secret keys mirrored from the CLAUDE.md "Pino auto-redacts" list. */
 const SECRET_KEYS = [
   "apiKey",
   "token",
@@ -55,7 +55,7 @@ describe("redactValue — token literal (Pitfall 5)", () => {
   });
 });
 
-describe("redactValue — SEC-01 key-based redaction (one assertion per Pino key)", () => {
+describe("redactValue — key-based redaction (one assertion per Pino key)", () => {
   for (const key of SECRET_KEYS) {
     it(`redacts the value under \`${key}\` to <redacted> with reason secret_key`, () => {
       const out = redactValue({ [key]: "any-secret-material-12345" });
@@ -92,7 +92,7 @@ describe("redactValue — SEC-01 key-based redaction (one assertion per Pino key
   });
 });
 
-describe("redactValue — SEC-01 shape-based redaction (secret caught under a benign key)", () => {
+describe("redactValue — shape-based redaction (secret caught under a benign key)", () => {
   it("redacts an Anthropic key (sk-ant-...) embedded under a benign key", () => {
     const out = redactValue({ note: "use sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAA now" });
     const value = out.value as Record<string, unknown>;
@@ -129,15 +129,15 @@ describe("redactValue — SEC-01 shape-based redaction (secret caught under a be
 });
 
 // ---------------------------------------------------------------------------
-// CR-01 (BLOCKER): the three secret shapes the log sanitizer covers but the
-// activity shape pass omitted — URL-embedded password, Bearer token, and
-// aws_secret_access_key. Under a BENIGN allowlisted key these survived verbatim
-// into the user-visible label (reproduced end-to-end through applyTemplate).
-// RED on pre-patch code: the password / token / 40-char secret substring is
-// still present in redactValue(...).value.
+// The three secret shapes the log sanitizer covers but the activity shape pass
+// omitted — URL-embedded password, Bearer token, and aws_secret_access_key.
+// Under a BENIGN allowlisted key these survived verbatim into the user-visible
+// label (reproduced end-to-end through applyTemplate). RED on pre-patch code:
+// the password / token / 40-char secret substring is still present in
+// redactValue(...).value.
 // ---------------------------------------------------------------------------
 
-describe("redactValue — CR-01 secret-shape gap (URL password / Bearer / AWS secret) under a benign key", () => {
+describe("redactValue — secret-shape gap (URL password / Bearer / AWS secret) under a benign key", () => {
   it("redacts the password in a URL-embedded credential (://user:password@host)", () => {
     const out = redactValue({ url: "https://user:hunter2secret@db.internal.example.com/path" });
     const value = out.value as Record<string, unknown>;
@@ -180,7 +180,7 @@ describe("redactValue — CR-01 secret-shape gap (URL password / Bearer / AWS se
   });
 });
 
-describe("applyTemplate — CR-01 no credential survives the rendered label/detail under an allowlisted key", () => {
+describe("applyTemplate — no credential survives the rendered label/detail under an allowlisted key", () => {
   it("masks a URL password in an allowlisted {url} label", () => {
     const spec: LabelSpec = {
       semanticPhase: "tool",
@@ -215,17 +215,17 @@ describe("applyTemplate — CR-01 no credential survives the rendered label/deta
 });
 
 // ---------------------------------------------------------------------------
-// WR-06 (regression guard): the activity SECRET_SHAPE_PATTERNS must stay a
-// superset of the log sanitizer's CREDENTIAL_LOG_PATTERNS. Any future credential
-// shape added to the log sanitizer but not the activity redactor is a silent
-// security regression (CR-01 was exactly this drift). Containment is asserted by
-// pattern `.source`, with an explicit allowlist for intentional exclusions
-// (expected empty after CR-01).
+// Regression guard: the activity SECRET_SHAPE_PATTERNS must stay a superset of
+// the log sanitizer's CREDENTIAL_LOG_PATTERNS. Any future credential shape added
+// to the log sanitizer but not the activity redactor is a silent security
+// regression (this drift was exactly the secret-shape gap above). Containment is
+// asserted by pattern `.source`, with an explicit allowlist for intentional
+// exclusions (expected empty).
 // ---------------------------------------------------------------------------
 
-describe("WR-06 — activity SECRET_SHAPE_PATTERNS contains every log-sanitizer credential shape", () => {
+describe("activity SECRET_SHAPE_PATTERNS contains every log-sanitizer credential shape", () => {
   /**
-   * Intentional exclusions, each with a reason. MUST stay empty after CR-01 —
+   * Intentional exclusions, each with a reason. MUST stay empty —
    * a non-empty entry is a deliberate, reviewed decision to NOT mirror a log
    * sanitizer shape into the activity redactor.
    */
@@ -240,12 +240,12 @@ describe("WR-06 — activity SECRET_SHAPE_PATTERNS contains every log-sanitizer 
     expect(missing).toEqual([]);
   });
 
-  it("keeps the intentional-exclusion allowlist empty (CR-01 closed)", () => {
+  it("keeps the intentional-exclusion allowlist empty", () => {
     expect(ALLOWED_EXCLUSIONS).toHaveLength(0);
   });
 });
 
-describe("redactValue — SEC-02 absolute path COMPACTION (not stripping)", () => {
+describe("redactValue — absolute path COMPACTION (not stripping)", () => {
   it("compacts a $HOME-rooted path to ~ (preserving the trailing segments)", () => {
     const out = redactValue(
       { path: "/Users/alice/.comis/config.yaml" },
@@ -284,14 +284,14 @@ describe("redactValue — SEC-02 absolute path COMPACTION (not stripping)", () =
 });
 
 // ---------------------------------------------------------------------------
-// quick-260528-nsv (Bug 1): URL host NOT stripped by absolute-path matcher.
+// Bug 1: URL host NOT stripped by absolute-path matcher.
 //
 // The live IBM-info turn (instance d6d2a72b, trace 6f93aef3) rendered
 // `"fetching https:/quote/IBM/"` — `compactPaths`'s ABS_PATH_RE greedily
 // matched the `//finance.yahoo.com/quote/IBM/` span inside the URL as a
 // 4-segment absolute path and compacted to its last 2 segments, eating one
 // of the scheme's two slashes. URLs are public info per SPEC §8.4
-// (tavily.com/search renders verbatim); SEC-02 path compaction is for
+// (tavily.com/search renders verbatim); path compaction is for
 // filesystem paths only.
 //
 // RED contract: the patch adds a `(?<!:)` negative-lookbehind on the leading
@@ -303,7 +303,7 @@ describe("redactValue — SEC-02 absolute path COMPACTION (not stripping)", () =
 // compactPaths; the Bug 1 signature is the lost scheme slash.
 // ---------------------------------------------------------------------------
 
-describe("redactValue — quick-260528-nsv: URL host not stripped by absolute-path matcher", () => {
+describe("redactValue — URL host not stripped by absolute-path matcher", () => {
   it("preserves the https:// scheme separator on a public URL (no compactPaths false positive)", () => {
     const out = redactValue({ url: "https://finance.yahoo.com/quote/IBM/" });
     const value = out.value as Record<string, unknown>;
@@ -311,14 +311,14 @@ describe("redactValue — quick-260528-nsv: URL host not stripped by absolute-pa
     // (one slash, host eaten by ABS_PATH_RE compaction).
     expect(String(value.url).startsWith("https://")).toBe(true);
     // And no absolute_path reason is recorded for a URL input — that reason
-    // is for filesystem-path compaction only (SEC-02), not URL hosts.
+    // is for filesystem-path compaction only, not URL hosts.
     expect(out.redactionsApplied.find((r) => r.reason === "absolute_path")).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------
-  // nsv-hotfix: URL host is NOT masked by HOSTNAME_RE.
+  // URL host is NOT masked by HOSTNAME_RE.
   //
-  // After the nsv quick fixed compactPaths, the URL renders as
+  // After the compactPaths fix, the URL renders as
   // "https://<redacted>/quote/MSFT/" because HOSTNAME_RE at redact-value.ts:211
   // still matches finance.yahoo.com (≥3 labels ending in alpha TLD) and replaces
   // it. URL hosts are public info per SPEC §8.4 — they should not be masked.
@@ -346,9 +346,9 @@ describe("redactValue — quick-260528-nsv: URL host not stripped by absolute-pa
 });
 
 // ---------------------------------------------------------------------------
-// quick-260528-ox2 (Bug 2 follow-on): URL PATHS protected from PII matchers.
+// Bug 2 follow-on: URL PATHS protected from PII matchers.
 //
-// After nsv-hotfix exempted URL HOSTS from HOSTNAME_RE via a `(?<!\/\/)`
+// After the hotfix exempted URL HOSTS from HOSTNAME_RE via a `(?<!\/\/)`
 // lookbehind, URL PATHS still flow through every PII matcher unguarded. Live
 // evidence (daemon d103580b, trace 8830d06d): the press-release URL
 // `https://www.prnewswire.com/news-releases/...-302781634.html` is rendered
@@ -364,7 +364,7 @@ describe("redactValue — quick-260528-nsv: URL host not stripped by absolute-pa
 // defense-in-depth invariants).
 // ---------------------------------------------------------------------------
 
-describe("redactValue — quick-260528-ox2: URL paths protected from PII matchers (PHONE/CC/SSN/EMAIL)", () => {
+describe("redactValue — URL paths protected from PII matchers (PHONE/CC/SSN/EMAIL)", () => {
   it("preserves a 9-digit press-release ID in a URL path (no PHONE_RE false positive)", () => {
     const url =
       "https://www.prnewswire.com/news-releases/ituran-presents-first-quarter-2026-results-302781634.html";
@@ -414,11 +414,11 @@ describe("redactValue — quick-260528-ox2: URL paths protected from PII matcher
   });
 
   it("defense-in-depth: URL_PASSWORD still masks embedded credentials (secret-shape runs BEFORE URL guard)", () => {
-    // CR-01-style invariant: the URL guard MUST NOT bypass secret-shape masking.
+    // Secret-shape invariant: the URL guard MUST NOT bypass secret-shape masking.
     // Secret-shape pass runs FIRST, so `://user:password@host` is masked before
     // the URL is ever stashed by the new wrapper. Asserts with a vanilla
     // `example.com` host (not the internal `db.internal.example.com` from the
-    // existing CR-01 block) to prove the new helper doesn't accidentally
+    // secret-shape gap block above) to prove the new helper doesn't accidentally
     // stash the URL BEFORE the secret-shape pass strips the credential.
     const out = redactValue({ url: "https://user:hunter2secret@example.com/path" });
     const value = out.value as Record<string, unknown>;
@@ -427,7 +427,7 @@ describe("redactValue — quick-260528-ox2: URL paths protected from PII matcher
   });
 });
 
-describe("redactValue — SEC-02 network identifiers", () => {
+describe("redactValue — network identifiers", () => {
   it("masks an IPv4 address", () => {
     const out = redactValue({ host: "connect to 10.0.0.5 please" });
     const value = out.value as Record<string, unknown>;
@@ -452,7 +452,7 @@ describe("redactValue — SEC-02 network identifiers", () => {
   });
 });
 
-describe("redactValue — SEC-03 PII masks", () => {
+describe("redactValue — PII masks", () => {
   it("masks an email address", () => {
     const out = redactValue({ contact: "reach a@b.com today" });
     const value = out.value as Record<string, unknown>;

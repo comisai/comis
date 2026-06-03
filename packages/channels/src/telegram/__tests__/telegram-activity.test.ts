@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Telegram EditPlace renderer tests (CHAN-02, CHAN-05; §18.2 EditPlace rows).
+ * Telegram EditPlace renderer tests (§18.2 EditPlace rows).
  *
- * The single net-new piece of logic in this phase is `classifyTelegramError` —
+ * The single net-new piece of logic here is `classifyTelegramError` —
  * it reads STRUCTURAL GrammyError fields (`error_code`, `parameters.retry_after`,
  * and the `description` ONLY to pick the message-not-found variant), NEVER the
  * generic "Failed to…" string. `makeTelegramRenderActions` maps each ChannelPort
- * call through it; `createTelegramActivityRenderer` wires the Phase-70
+ * call through it; `createTelegramActivityRenderer` wires the
  * `createEditPlaceRenderer` (no duplicated state machine).
  *
  * Time discipline: every test drives the injected FakeTimers/FakeClock — no raw
@@ -68,7 +68,7 @@ function receiptAt(deliveredAtMs: number): FinalDeliveryReceipt {
   return { ok: true, deliveredChunks: 1, lastChunkMessageId: "msg-final", deliveredAtMs };
 }
 
-// --- Task 1: classifyTelegramError + makeTelegramRenderActions -------------
+// --- classifyTelegramError + makeTelegramRenderActions -------------
 
 describe("classifyTelegramError (structural fields, never the message string)", () => {
   it("maps a 429 to rate_limited with retryAfterMs from parameters.retry_after * 1000", () => {
@@ -180,7 +180,7 @@ describe("makeTelegramRenderActions (Result discipline, silent send, optional-me
   });
 });
 
-// --- Task 2: createTelegramActivityRenderer + local bounded 429 buffer -----
+// --- createTelegramActivityRenderer + local bounded 429 buffer -----
 
 describe("createTelegramActivityRenderer (EditPlace wiring + deliveredAt-gated delete)", () => {
   it("returns an EditPlace renderer that can edit and delete", () => {
@@ -241,7 +241,7 @@ describe("createTelegramActivityRenderer (EditPlace wiring + deliveredAt-gated d
   });
 });
 
-describe("Telegram 429 local bounded buffer (CHAN-02 — latest text survives backoff)", () => {
+describe("Telegram 429 local bounded buffer (latest text survives backoff)", () => {
   it("retries the LATEST coalesced text after retryAfterMs when an edit is rate-limited, never growing unbounded", async () => {
     const timer = createFakeTimers();
     const clock = createFakeClock(0);
@@ -386,7 +386,7 @@ describe("Telegram 429 local bounded buffer (CHAN-02 — latest text survives ba
   });
 });
 
-// --- Task 3: 11 golden fixtures (S1-S7, S9-S12; no S8) ----------------------
+// --- 11 golden fixtures (S1-S7, S9-S12; no S8) ----------------------
 
 /** Serialise the fake's ordered call-log — the exact shape the fixtures pin. */
 function serialiseCallLog(fake: ReturnType<typeof createFakeTelegramAdapter>): unknown {
@@ -407,7 +407,7 @@ async function runScenario(
   const timer = createFakeTimers();
   const clock = createFakeClock(0);
   const fake = createFakeTelegramAdapter();
-  // Phase 78 reconciliation (option ii — plan §530): omit `clock` so the §8.5
+  // Omit `clock` so the §8.5
   // "(running N s)" elapsed fallback is skipped and committed fixtures stay
   // byte-stable. Strategy-level tests in edit-place.test.ts inject a clock and
   // assert the elapsed text — that is the live-production wiring contract.
@@ -466,12 +466,12 @@ describe("Telegram golden fixtures (§18.2 EditPlace rows — readFixture + toEq
     );
   });
 
-  // NOTE: the shipped Phase-70 createEditPlaceRenderer treats
+  // NOTE: the shipped createEditPlaceRenderer treats
   // success_with_recovered_failures identically to success (edit "✓ done" → gated
   // delete). §18.2-S5 aspires to "0 delete" for the recovered case; that policy
-  // lives in edit-place.ts (Phase-70) and is out of scope for this wiring plan.
-  // The fixture pins the ACTUAL renderer output (delete present). See SUMMARY
-  // "Deferred Issues" — the recovered-failure keep-policy is a Phase-70 follow-up.
+  // lives in edit-place.ts and is out of scope here.
+  // The fixture pins the ACTUAL renderer output (delete present).
+  // The recovered-failure keep-policy is a follow-up.
   it("S5 recovered failure — edits incl. recovery then ✓ done, kind:success_with_recovered_failures (renderer deletes)", async () => {
     const recovered = ev(1, { status: "failed", errorKind: "network" });
     await runScenario(

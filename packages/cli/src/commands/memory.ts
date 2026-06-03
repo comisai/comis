@@ -172,7 +172,7 @@ export function registerMemoryCommand(program: Command): void {
       }
     });
 
-  // memory stats — the single operator stats view. Folds in the OBS-07
+  // memory stats — the single operator stats view. Folds in the
   // recall counters (lane usage + rerank-fallback rate + consolidation
   // throughput + recall hit-rate) alongside the base memory.stats, so an
   // operator sees one combined view (cleaner than a separate `recall-stats`
@@ -199,7 +199,7 @@ export function registerMemoryCommand(program: Command): void {
           return;
         }
 
-        // Best-effort recall-counter overlay (OBS-07). Failures (counters not
+        // Best-effort recall-counter overlay. Failures (counters not
         // wired, non-admin caller) are swallowed — base stats still render.
         let recallStats: Record<string, unknown> | undefined;
         try {
@@ -235,7 +235,7 @@ export function registerMemoryCommand(program: Command): void {
       }
     });
 
-  // memory recall-trace <session> — inspect a session's recall trace (OBS-06).
+  // memory recall-trace <session> — inspect a session's recall trace.
   memory
     .command("recall-trace <session>")
     .description("Inspect a session's hybrid-recall trace (admin)")
@@ -292,7 +292,7 @@ export function registerMemoryCommand(program: Command): void {
       },
     );
 
-  // memory observations — list observation provenance (OBS-06).
+  // memory observations — list observation provenance.
   memory
     .command("observations")
     .description("List observation provenance (sources + history) (admin)")
@@ -338,7 +338,7 @@ export function registerMemoryCommand(program: Command): void {
       }
     });
 
-  // memory entities — list the agent's entity graph (OBS-06).
+  // memory entities — list the agent's entity graph.
   memory
     .command("entities")
     .description("List an agent's entity graph, most-mentioned-first (admin)")

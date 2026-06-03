@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `createSqliteMemoryCausalStore` — the @comis/memory adapter for
- * the `MemoryCausalStore` port (Phase 96, EXTRACT-03).
+ * the `MemoryCausalStore` port.
  *
  * The harness constructs a real `SqliteMemoryAdapter` over an in-memory DB (so
  * `PRAGMA foreign_keys = ON` is set via `openSqliteDatabase` and the edge table's
@@ -9,7 +9,7 @@
  * distinctive `content` so the adapter's scoped FTS resolves `effectText` → a
  * stored memory id deterministically.
  *
- * The load-bearing security boundary (T-96-01, the ENT-03 pattern): every
+ * The load-bearing security boundary (the entity-link pattern): every
  * read/write filters `WHERE tenant_id = ? AND agent_id = ?` (bound params). An
  * edge written under one (tenant, agent) MUST NEVER be returned for another scope
  * by memory-id coincidence — proven by the cross-agent + cross-tenant describes.
@@ -173,7 +173,7 @@ describe("createSqliteMemoryCausalStore", () => {
       expect(edgeCount()).toBe(0);
     });
 
-    it("causalLane with no seeds returns ok([]) (the ENT-04 no-op — RRF unchanged)", async () => {
+    it("causalLane with no seeds returns ok([]) (the no-op — RRF unchanged)", async () => {
       const res = await store.causalLane([], READ_A, 10);
       expect(res.ok).toBe(true);
       if (res.ok) expect(res.value).toEqual([]);
@@ -188,10 +188,10 @@ describe("createSqliteMemoryCausalStore", () => {
   });
 
   // =====================================================================
-  // ISOLATION (T-96-01): cross-agent + cross-tenant
+  // ISOLATION: cross-agent + cross-tenant
   // =====================================================================
 
-  describe("cross-agent isolation (T-96-01)", () => {
+  describe("cross-agent isolation", () => {
     it("an edge written under agent_a is NEVER returned by causalLane under agent_b (same memory ids)", async () => {
       // Two memories under agent_a; link them.
       const cause = await seedMemory({ id: "cause", content: "agent a cause memory token-aaa" });
@@ -219,7 +219,7 @@ describe("createSqliteMemoryCausalStore", () => {
     });
   });
 
-  describe("cross-tenant isolation (T-96-01)", () => {
+  describe("cross-tenant isolation", () => {
     it("an edge written under tenant_a is NEVER returned by causalLane under tenant_b (same memory ids)", async () => {
       const cause = await seedMemory({ id: "cause", content: "tenant a cause memory token-ccc" });
       await seedMemory({ id: "effect", content: "tenant a effect memory token-ddd" });
@@ -233,10 +233,10 @@ describe("createSqliteMemoryCausalStore", () => {
   });
 
   // =====================================================================
-  // ON DELETE CASCADE (T-96-04): deleting a participating memory drops the edge
+  // ON DELETE CASCADE: deleting a participating memory drops the edge
   // =====================================================================
 
-  describe("ON DELETE CASCADE (T-96-04)", () => {
+  describe("ON DELETE CASCADE", () => {
     it("deleting the target memory drops the causal edge (no orphan)", async () => {
       const cause = await seedMemory({ id: "cause", content: "the precipitating event token-eee" });
       const effectId = await seedMemory({ id: "effect", content: "the consequence token-fff downstream" });
@@ -315,12 +315,12 @@ describe("createSqliteMemoryCausalStore", () => {
   });
 
   // =====================================================================
-  // NON-FATAL err paths (T-96-13): a SQL fault during either method is
+  // NON-FATAL err paths: a SQL fault during either method is
   // caught + returned as err (never thrown) — the catch blocks. Simulated
   // by closing the db handle so every prepared statement throws.
   // =====================================================================
 
-  describe("non-fatal err paths (the catch blocks, T-96-13)", () => {
+  describe("non-fatal err paths (the catch blocks)", () => {
     it("linkCausal returns err (not throw) when the underlying db query fails", async () => {
       const cause = await seedMemory({ id: "cause-err", content: "cause token-errsrc" });
       await seedMemory({ id: "effect-err", content: "effect token-errdst" });

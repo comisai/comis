@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { ChannelCapabilitySchema } from "./channel-capability.js";
 
 // ---------------------------------------------------------------------------
-// v2.5 Agent Transparency — ChannelCapability feature widening (STRAT-01)
+// Agent Transparency — ChannelCapability feature widening
 //
 // §16.2 / §16.11: ChannelFeaturesSchema gains `typing` (default false),
 // `threads` (default false), and `buttons` (closed enum, default "none") so
@@ -15,7 +15,7 @@ import { ChannelCapabilitySchema } from "./channel-capability.js";
 // typing/threads/buttons) — RED proof.
 // ---------------------------------------------------------------------------
 
-describe("ChannelCapability feature flags (STRAT-01)", () => {
+describe("ChannelCapability feature flags", () => {
   it("defaults typing and threads to false and buttons to 'none'", () => {
     const cap = ChannelCapabilitySchema.parse({
       limits: { maxMessageChars: 4096 },

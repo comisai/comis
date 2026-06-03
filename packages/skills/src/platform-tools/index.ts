@@ -33,7 +33,7 @@ export type { ToolErrorCode } from "./tool-helpers.js";
 export { createMemorySearchTool } from "./tools/memory-search-tool.js";
 export { createMemoryGetTool } from "./tools/memory-get-tool.js";
 export { createMemoryStoreTool } from "./tools/memory-store-tool.js";
-// The dialectic tool (Phase 109 — DIAL-01/02). Consumed by the registry's memory_ask
+// The dialectic tool. Consumed by the registry's memory_ask
 // conditional descriptor; surfaced on the public ./platform-tools barrel alongside its
 // sibling memory tools (the registry's same-package import is invisible to the
 // public-export-consumers walker, so it is tracked as a baseline orphan in public-api-policy).

@@ -114,7 +114,7 @@ export function wireAuthProvider(args: WireAuthProviderArgs): AuthProvider {
   // handles this for file mode (no change to that path). Encrypted mode has
   // no watcher (watchPath: undefined above), so we subscribe here instead.
   //
-  // INVARIANT (WR-02): This subscription is installed exactly ONCE per agentId.
+  // INVARIANT: This subscription is installed exactly ONCE per agentId.
   // setup-agents-registry calls setupSingleAgent once per agentId at boot;
   // createHotAdd (daemon.ts) only calls it for NEW agentIds that are not yet
   // registered. If a future hot-reload path needs to re-invoke setupSingleAgent

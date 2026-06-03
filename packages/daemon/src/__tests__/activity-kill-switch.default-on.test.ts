@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * §22.2 — WIRE-07 operator-opt-in DEFAULT-ON (per-agent `defaultChannelEnabled`)
+ * §22.2 — operator-opt-in DEFAULT-ON (per-agent `defaultChannelEnabled`)
  * with per-channel opt-OUT.
  *
  * The shipped Day-0 posture is fail-CLOSED (every renderer off until explicitly
@@ -116,7 +116,7 @@ async function framesForAgents(agents: AgentActivityConfigMap): Promise<number> 
   return n;
 }
 
-describe("WIRE-07 §22.2 defaultChannelEnabled: operator opt-in to default-ON with per-channel opt-out", () => {
+describe("§22.2 defaultChannelEnabled: operator opt-in to default-ON with per-channel opt-out", () => {
   it("renders for a renderer with NO explicit channels entry when defaultChannelEnabled is true", async () => {
     const agents: AgentActivityConfigMap = {
       default: { activity: { defaultChannelEnabled: true, channels: {} } },

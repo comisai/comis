@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for NodeCaManager — CA-01, CA-02.
+ * Tests for NodeCaManager.
  * RED-first TDD: all tests must fail before implementation lands.
  * @module
  */
@@ -31,7 +31,7 @@ function makeDeps(overrides?: { leafCacheCap?: number }) {
   };
 }
 
-describe("NodeCaManager — CA-01a: CA key file 0o600", () => {
+describe("NodeCaManager — CA key file 0o600", () => {
   it("CA private key file is created with mode 0o600", async () => {
     const deps = makeDeps();
     const manager = createNodeCaManager(deps);
@@ -41,7 +41,7 @@ describe("NodeCaManager — CA-01a: CA key file 0o600", () => {
   });
 });
 
-describe("NodeCaManager — CA-01b: Idempotent CA reuse", () => {
+describe("NodeCaManager — Idempotent CA reuse", () => {
   it("two manager instances over the same dataDir produce identical broker-ca.pem", async () => {
     const clock = createFakeClock(Date.now());
 
@@ -57,7 +57,7 @@ describe("NodeCaManager — CA-01b: Idempotent CA reuse", () => {
   });
 });
 
-describe("NodeCaManager — CA-01c: Leaf cache hit (reference equality)", () => {
+describe("NodeCaManager — Leaf cache hit (reference equality)", () => {
   it("second serverContextForHost for same host returns reference-equal SecureContext", async () => {
     const deps = makeDeps();
     const manager = createNodeCaManager(deps);
@@ -70,7 +70,7 @@ describe("NodeCaManager — CA-01c: Leaf cache hit (reference equality)", () => 
   });
 });
 
-describe("NodeCaManager — CA-01d: Refresh buffer re-mint", () => {
+describe("NodeCaManager — Refresh buffer re-mint", () => {
   it("leaf within refresh buffer (clock near notAfter) is re-minted (new ctx object)", async () => {
     const deps = makeDeps();
     const manager = createNodeCaManager(deps);
@@ -86,7 +86,7 @@ describe("NodeCaManager — CA-01d: Refresh buffer re-mint", () => {
   });
 });
 
-describe("NodeCaManager — CA-01e: Bounded cache FIFO eviction", () => {
+describe("NodeCaManager — Bounded cache FIFO eviction", () => {
   it("cap+1 entries evicts the first host (re-minted on re-request)", async () => {
     const deps = makeDeps({ leafCacheCap: 3 });
     const manager = createNodeCaManager(deps);
@@ -103,7 +103,7 @@ describe("NodeCaManager — CA-01e: Bounded cache FIFO eviction", () => {
   });
 });
 
-describe("NodeCaManager — CA-02a: Leaf SAN contains dnsName(host)", () => {
+describe("NodeCaManager — Leaf SAN contains dnsName(host)", () => {
   it("leaf cert subjectaltname contains DNS:<host> for requested hostname", async () => {
     const deps = makeDeps();
     const manager = createNodeCaManager(deps);
@@ -144,7 +144,7 @@ describe("NodeCaManager — CA-02a: Leaf SAN contains dnsName(host)", () => {
   });
 });
 
-describe("NodeCaManager — CA-02b+CA-02c: In-process TLS handshake", () => {
+describe("NodeCaManager — In-process TLS handshake", () => {
   it("client trusting broker CA completes TLS handshake with alpnProtocol==='http/1.1' and correct SAN", async () => {
     const deps = makeDeps();
     const manager = createNodeCaManager(deps);
@@ -186,9 +186,9 @@ describe("NodeCaManager — CA-02b+CA-02c: In-process TLS handshake", () => {
   });
 });
 
-// ── (03-fix) RED tests — findings from REVIEW.md ─────────────────────────────
+// ── RED tests — code-review findings ─────────────────────────────────────────
 
-describe("(03-fix) CR-01 — partial-write recovery: key file must not be corrupted by append", () => {
+describe("partial-write recovery: key file must not be corrupted by append", () => {
   it("key-exists-but-cert-missing state: next init regenerates a single valid key (no double-PEM append)", async () => {
     // Simulate the partial-write scenario: key written but cert not.
     // First: create a real CA so we have a valid key PEM on disk.
@@ -216,7 +216,7 @@ describe("(03-fix) CR-01 — partial-write recovery: key file must not be corrup
   });
 });
 
-describe("(03-fix) CR-03 — concurrent ensureCa() calls: promise singleton prevents double initCa", () => {
+describe("concurrent ensureCa() calls: promise singleton prevents double initCa", () => {
   it("two concurrent serverContextForHost calls on a fresh dir: initCa runs once, key file has single PEM block", async () => {
     const clock = createFakeClock(Date.now());
     const manager = createNodeCaManager({ clock, dataDir: tmpDir });

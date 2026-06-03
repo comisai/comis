@@ -27,7 +27,7 @@ import { GATEWAY_ACTIONS } from "../../platform-tools/tools/gateway-tool.js";
  * Coerce an arbitrary tool result into a string for failure-signal matching.
  * Pure and total: a string passes through; everything else is JSON-stringified
  * inside a try/catch so a non-serializable (circular) value yields "" rather
- * than throwing — failureDetector bodies MUST NOT throw (T-75-03-04).
+ * than throwing — failureDetector bodies MUST NOT throw.
  */
 function resultToText(result: unknown): string {
   if (typeof result === "string") return result;
@@ -262,7 +262,7 @@ export function registerAllToolMetadata(): void {
     validKeys: ["action", "server_name", "transport", "command", "args", "url", "headers", "auth"],
     // connect requires [server_name, transport]; command (stdio) / url (sse|http) are
     // transport-conditional and validated downstream by the handler. `auth`
-    // ("headers" | "oauth") is the R11.1 OAuth opt-in — must be in validKeys
+    // ("headers" | "oauth") is the OAuth opt-in — must be in validKeys
     // so the bridge schema-validator doesn't reject before execute() runs.
     requiredByAction: {
       status:     ["server_name"],
@@ -590,7 +590,7 @@ export function registerAllToolMetadata(): void {
   // for code-review and grep-able for the security reviewer.
   //
   // SECURITY GATE — these values are CONSERVATIVE DEFAULTS subject to a
-  // HUMAN security-reviewer gate before the v2.4/v2.5 gateway endpoint
+  // HUMAN security-reviewer gate before the gateway endpoint
   // flips live. The CI gate enforces ANNOTATION PRESENCE only; the
   // literal value here IS the security policy.
   //
@@ -691,7 +691,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("slack_action",    { mcpExportPolicy: "never-export" });
   // Cost-bearing synthesis (1).
   registerToolMetadata("tts_synthesize", { mcpExportPolicy: "never-export" });
-  // Terminal driver (9) — never-export (SEC-08); inside Comis's trust boundary, NOT an MCP-exported surface.
+  // Terminal driver (9) — never-export; inside Comis's trust boundary, NOT an MCP-exported surface.
   registerToolMetadata("terminal_session_create",    { mcpExportPolicy: "never-export" });
   registerToolMetadata("terminal_session_list",      { mcpExportPolicy: "never-export" });
   registerToolMetadata("terminal_session_read",      { mcpExportPolicy: "never-export" });
@@ -703,7 +703,7 @@ export function registerAllToolMetadata(): void {
   registerToolMetadata("terminal_session_kill",      { mcpExportPolicy: "never-export" });
 
   // =========================================================================
-  // Failure Detectors (UX-03, §16.10/§16.11)
+  // Failure Detectors (§16.10/§16.11)
   //
   // Pure, synchronous predicates consulted in pi-event-bridge.ts BEFORE the
   // tool:executed emit, over the RAW result (the only site that sees it).

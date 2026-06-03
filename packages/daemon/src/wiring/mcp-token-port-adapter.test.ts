@@ -181,7 +181,7 @@ describe("port-backed adapter", () => {
   });
 
   it("port write failure is logged at WARN with errorKind: 'internal' (observability over silence)", async () => {
-    // WR-02 regression: the prior implementation silently swallowed both
+    // Regression guard: the prior implementation silently swallowed both
     // ok:false Results AND thrown rejections, leaving a port-set drift
     // completely undiagnosable. The fix logs at WARN with the canonical
     // Pino fields (err, hint, errorKind, submodule) but does NOT throw —
@@ -248,7 +248,7 @@ describe("port-backed adapter", () => {
   });
 
   it("saveTokens rejects server names containing characters outside /^[a-zA-Z0-9_-]+$/", async () => {
-    // CR-01 regression: an unvalidated server name with `:` corrupts the
+    // Regression guard: an unvalidated server name with `:` corrupts the
     // composed profileId "mcp-oauth:<server>" and could overwrite another
     // server's port entry. The wrapper must reject malformed names BEFORE
     // touching the disk store (filename) or the port (profileId key).

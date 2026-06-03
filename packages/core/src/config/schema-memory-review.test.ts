@@ -4,8 +4,8 @@ import { MemoryReviewConfigSchema } from "./schema-memory-review.js";
 import { PerAgentConfigSchema } from "./schema-agent/index.js";
 
 describe("MemoryReviewConfigSchema", () => {
-  it("parses empty object with correct (v1 opt-out ON) defaults", () => {
-    // v2.9 increment 2 — v1 OPT-OUT posture: memory review defaults ON (a COST feature, still
+  it("parses empty object with correct (opt-out ON) defaults", () => {
+    // OPT-OUT posture: memory review defaults ON (a COST feature, still
     // force-disabled by the master kill switch). All bounded tuning constants stay frozen.
     const result = MemoryReviewConfigSchema.parse({});
     expect(result).toEqual({
@@ -64,8 +64,8 @@ describe("PerAgentConfigSchema memoryReview field", () => {
     expect(result.memoryReview!.enabled).toBe(true);
   });
 
-  it("defaults memoryReview ON for a bare config (v1 opt-out posture; kill-switch-gated)", () => {
-    // v2.9 increment 2 — the subtree is no longer `.optional()`; a bare config gets it populated
+  it("defaults memoryReview ON for a bare config (opt-out posture; kill-switch-gated)", () => {
+    // The subtree is no longer `.optional()`; a bare config gets it populated
     // + enabled. The master cost-feature kill switch still force-disables it at the cron site.
     const result = PerAgentConfigSchema.parse({});
     expect(result.memoryReview).toBeDefined();

@@ -88,7 +88,7 @@ describe("Cross-Module Slash Commands Integration", () => {
   });
 
   describe("Section 1: Directive Commands (handled:false)", () => {
-    it("CMD-DIR-01: /think standalone -> thinkingLevel=high (default), handled:false", () => {
+    it("/think standalone -> thinkingLevel=high (default), handled:false", () => {
       const parsed = parseSlashCommand("/think");
       const handler = createCommandHandler(deps);
       const result = handler.handle(parsed, sessionKey);
@@ -101,7 +101,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.directives.thinkingLevel).toBe("high");
     });
 
-    it("CMD-DIR-02: /think low -> thinkingLevel=low, handled:false, isStandalone:true", () => {
+    it("/think low -> thinkingLevel=low, handled:false, isStandalone:true", () => {
       const parsed = parseSlashCommand("/think low");
       const handler = createCommandHandler(deps);
       const result = handler.handle(parsed, sessionKey);
@@ -115,7 +115,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.directives.thinkingLevel).toBe("low");
     });
 
-    it("CMD-DIR-03: /think What about X? -> thinkingLevel=high, cleanedText body, isStandalone:false", () => {
+    it("/think What about X? -> thinkingLevel=high, cleanedText body, isStandalone:false", () => {
       const parsed = parseSlashCommand("/think What about X?");
       const handler = createCommandHandler(deps);
       const result = handler.handle(parsed, sessionKey);
@@ -129,7 +129,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.directives.thinkingLevel).toBe("high");
     });
 
-    it("CMD-DIR-04: /verbose on -> verbose=true, handled:false", () => {
+    it("/verbose on -> verbose=true, handled:false", () => {
       const parsed = parseSlashCommand("/verbose on");
       const handler = createCommandHandler(deps);
       const result = handler.handle(parsed, sessionKey);
@@ -141,7 +141,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.directives.verbose).toBe(true);
     });
 
-    it("CMD-DIR-05: /verbose off -> verbose=false, handled:false", () => {
+    it("/verbose off -> verbose=false, handled:false", () => {
       const parsed = parseSlashCommand("/verbose off");
       const handler = createCommandHandler(deps);
       const result = handler.handle(parsed, sessionKey);
@@ -152,7 +152,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.directives.verbose).toBe(false);
     });
 
-    it("CMD-DIR-06: /verbose Tell me more -> verbose=true, cleanedText body", () => {
+    it("/verbose Tell me more -> verbose=true, cleanedText body", () => {
       const parsed = parseSlashCommand("/verbose Tell me more");
       const handler = createCommandHandler(deps);
       const result = handler.handle(parsed, sessionKey);
@@ -166,7 +166,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.directives.verbose).toBe(true);
     });
 
-    it("CMD-DIR-07: /reasoning -> reasoning=true, handled:false", () => {
+    it("/reasoning -> reasoning=true, handled:false", () => {
       const parsed = parseSlashCommand("/reasoning");
       const handler = createCommandHandler(deps);
       const result = handler.handle(parsed, sessionKey);
@@ -184,7 +184,7 @@ describe("Cross-Module Slash Commands Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("Section 2: Response Commands (handled:true)", () => {
-    it("CMD-RSP-01: /status -> response contains session info fields", () => {
+    it("/status -> response contains session info fields", () => {
       const handler = createCommandHandler(deps);
       const parsed = parseSlashCommand("/status");
       const result = handler.handle(parsed, sessionKey);
@@ -202,7 +202,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.response).toContain("$0.1050");
     });
 
-    it("CMD-RSP-02: /status with model override shows overridden model", () => {
+    it("/status with model override shows overridden model", () => {
       const overrideDeps = makeDeps({
         getSessionInfo: vi.fn().mockReturnValue({
           messageCount: 55,
@@ -221,7 +221,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.response).not.toContain("anthropic/claude-sonnet-4-5-20250929");
     });
 
-    it("CMD-RSP-03: /context -> response contains bootstrap files, tools, total overhead", () => {
+    it("/context -> response contains bootstrap files, tools, total overhead", () => {
       const handler = createCommandHandler(deps);
       const parsed = parseSlashCommand("/context");
       const result = handler.handle(parsed, sessionKey);
@@ -238,7 +238,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.response).toContain("Total overhead: 5,930 chars");
     });
 
-    it("CMD-RSP-04: /context with empty bootstrap/tools -> Not available for both sections", () => {
+    it("/context with empty bootstrap/tools -> Not available for both sections", () => {
       const emptyDeps = makeDeps({
         getBootstrapInfo: vi.fn().mockReturnValue([]),
         getToolInfo: vi.fn().mockReturnValue([]),
@@ -253,7 +253,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.response).not.toContain("Total overhead");
     });
 
-    it("CMD-RSP-05: /usage -> response contains breakdown with provider, tokens, cost, calls", () => {
+    it("/usage -> response contains breakdown with provider, tokens, cost, calls", () => {
       const handler = createCommandHandler(deps);
       const parsed = parseSlashCommand("/usage");
       const result = handler.handle(parsed, sessionKey);
@@ -266,7 +266,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.response).toContain("7 calls");
     });
 
-    it("CMD-RSP-06: /usage with no breakdown data -> No usage data message", () => {
+    it("/usage with no breakdown data -> No usage data message", () => {
       const noUsageDeps = makeDeps({
         getUsageBreakdown: vi.fn().mockReturnValue([]),
       });
@@ -284,7 +284,7 @@ describe("Cross-Module Slash Commands Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("Section 3: Model Commands (handled:true)", () => {
-    it("CMD-MDL-01: /model (no arg) -> shows current model as provider/modelId", () => {
+    it("/model (no arg) -> shows current model as provider/modelId", () => {
       const handler = createCommandHandler(deps);
       const parsed = parseSlashCommand("/model");
       const result = handler.handle(parsed, sessionKey);
@@ -293,7 +293,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.response).toBe("Current model: anthropic/claude-sonnet-4-5-20250929");
     });
 
-    it("CMD-MDL-01b: /model status -> same as /model (no arg)", () => {
+    it("/model status -> same as /model (no arg)", () => {
       const handler = createCommandHandler(deps);
       const parsed = parseSlashCommand("/model status");
       const result = handler.handle(parsed, sessionKey);
@@ -302,7 +302,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.response).toBe("Current model: anthropic/claude-sonnet-4-5-20250929");
     });
 
-    it("CMD-MDL-02: /model list -> Available Models with 3 entries", () => {
+    it("/model list -> Available Models with 3 entries", () => {
       const handler = createCommandHandler(deps);
       const parsed = parseSlashCommand("/model list");
       const result = handler.handle(parsed, sessionKey);
@@ -314,7 +314,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.response).toContain("google/gemini-pro (Gemini Pro)");
     });
 
-    it("CMD-MDL-03: /model openai/gpt-4o -> modelOverride with provider/modelId (handled:false, deferred to executor)", () => {
+    it("/model openai/gpt-4o -> modelOverride with provider/modelId (handled:false, deferred to executor)", () => {
       const handler = createCommandHandler(deps);
       const parsed = parseSlashCommand("/model openai/gpt-4o");
       const result = handler.handle(parsed, sessionKey);
@@ -326,7 +326,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       });
     });
 
-    it("CMD-MDL-04: /model gpt-4o (bare modelId) -> provider defaults to 'default' (handled:false, deferred to executor)", () => {
+    it("/model gpt-4o (bare modelId) -> provider defaults to 'default' (handled:false, deferred to executor)", () => {
       const handler = createCommandHandler(deps);
       const parsed = parseSlashCommand("/model gpt-4o");
       const result = handler.handle(parsed, sessionKey);
@@ -344,7 +344,7 @@ describe("Cross-Module Slash Commands Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("Section 4: Session Commands (handled:true)", () => {
-    it("CMD-SES-01: /new -> newSession=true, destroySession called, response confirmed", () => {
+    it("/new -> newSession=true, destroySession called, response confirmed", () => {
       const handler = createCommandHandler(deps);
       const parsed = parseSlashCommand("/new");
       const result = handler.handle(parsed, sessionKey);
@@ -355,7 +355,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(deps.destroySession).toHaveBeenCalledWith(sessionKey);
     });
 
-    it("CMD-SES-02: /new openai/gpt-4o -> newSession + modelOverride", () => {
+    it("parses /new openai/gpt-4o into newSession + modelOverride", () => {
       const handler = createCommandHandler(deps);
       const parsed = parseSlashCommand("/new openai/gpt-4o");
       const result = handler.handle(parsed, sessionKey);
@@ -370,7 +370,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(deps.destroySession).toHaveBeenCalledWith(sessionKey);
     });
 
-    it("CMD-SES-03: /reset -> resetSession=true, destroySession called", () => {
+    it("/reset -> resetSession=true, destroySession called", () => {
       const handler = createCommandHandler(deps);
       const parsed = parseSlashCommand("/reset");
       const result = handler.handle(parsed, sessionKey);
@@ -387,7 +387,7 @@ describe("Cross-Module Slash Commands Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("Section 5: Compaction Command (handled:false)", () => {
-    it("CMD-CMP-01: /compact -> compact directive with verbose:false, no instructions", () => {
+    it("/compact -> compact directive with verbose:false, no instructions", () => {
       const handler = createCommandHandler(deps);
       const parsed = parseSlashCommand("/compact");
       const result = handler.handle(parsed, sessionKey);
@@ -398,7 +398,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(result.directives.compact).toEqual({ verbose: false, instructions: undefined });
     });
 
-    it("CMD-CMP-02: /compact verbose focus on code -> verbose:true with instructions", () => {
+    it("/compact verbose focus on code -> verbose:true with instructions", () => {
       const handler = createCommandHandler(deps);
       const parsed = parseSlashCommand("/compact verbose focus on code");
       const result = handler.handle(parsed, sessionKey);
@@ -410,7 +410,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       });
     });
 
-    it("CMD-CMP-03: /compact -v keep tool outputs -> verbose:true via -v flag with instructions", () => {
+    it("/compact -v keep tool outputs -> verbose:true via -v flag with instructions", () => {
       const handler = createCommandHandler(deps);
       const parsed = parseSlashCommand("/compact -v keep tool outputs");
       const result = handler.handle(parsed, sessionKey);
@@ -428,7 +428,7 @@ describe("Cross-Module Slash Commands Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("Section 6: Priority & Skill Matching", () => {
-    it("CMD-PRI-01: system /status takes priority -- parseSlashCommand returns found:true before skill matching", () => {
+    it("system /status takes priority -- parseSlashCommand returns found:true before skill matching", () => {
       // Even if "status" were a skill name, parseSlashCommand returns found:true
       const parsed = parseSlashCommand("/status");
       expect(parsed.found).toBe(true);
@@ -443,7 +443,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(skillMatch).toBeNull(); // /status doesn't match /skill:name pattern
     });
 
-    it("CMD-PRI-02: /skill:deploy build api -> matches known skill with args", () => {
+    it("/skill:deploy build api -> matches known skill with args", () => {
       const skillNames = new Set(["deploy", "test-runner", "lint"]);
       const match = matchPromptSkillCommand("/skill:deploy build api", skillNames);
 
@@ -452,7 +452,7 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(match!.args).toBe("build api");
     });
 
-    it("CMD-PRI-03: /skill:DEPLOY (case-insensitive) -> matches canonical 'deploy' name", () => {
+    it("/skill:DEPLOY (case-insensitive) -> matches canonical 'deploy' name", () => {
       const skillNames = new Set(["deploy"]);
       const match = matchPromptSkillCommand("/skill:DEPLOY", skillNames);
 
@@ -461,14 +461,14 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(match!.args).toBe("");
     });
 
-    it("CMD-PRI-04: /skill:unknown-skill with unknown name -> returns null", () => {
+    it("/skill:unknown-skill with unknown name -> returns null", () => {
       const skillNames = new Set(["deploy", "test-runner"]);
       const match = matchPromptSkillCommand("/skill:unknown-skill", skillNames);
 
       expect(match).toBeNull();
     });
 
-    it("CMD-PRI-05: detectSkillCollisions warns when skill named 'status' shadows reserved command", () => {
+    it("detectSkillCollisions warns when skill named 'status' shadows reserved command", () => {
       const skillNames = new Set(["status", "deploy", "model"]);
       const warnings = detectSkillCollisions(skillNames);
 
@@ -508,7 +508,7 @@ describe("Cross-Module Slash Commands Integration", () => {
   // ---------------------------------------------------------------------------
 
   describe("Section 7: Edge Cases", () => {
-    it("CMD-EDGE-01: plain text 'Hello world' -> found:false, cleanedText preserved", () => {
+    it("plain text 'Hello world' -> found:false, cleanedText preserved", () => {
       const parsed = parseSlashCommand("Hello world");
 
       expect(parsed.found).toBe(false);
@@ -517,21 +517,21 @@ describe("Cross-Module Slash Commands Integration", () => {
       expect(parsed.isStandalone).toBe(false);
     });
 
-    it("CMD-EDGE-02: mid-message slash 'Please /status my account' -> found:false (not at start)", () => {
+    it("mid-message slash 'Please /status my account' -> found:false (not at start)", () => {
       const parsed = parseSlashCommand("Please /status my account");
 
       expect(parsed.found).toBe(false);
       expect(parsed.cleanedText).toBe("Please /status my account");
     });
 
-    it("CMD-EDGE-03: unknown command '/foobar hello' -> found:false", () => {
+    it("unknown command '/foobar hello' -> found:false", () => {
       const parsed = parseSlashCommand("/foobar hello");
 
       expect(parsed.found).toBe(false);
       expect(parsed.cleanedText).toBe("/foobar hello");
     });
 
-    it("CMD-EDGE-04: sequential commands on same handler instance produce independent results", () => {
+    it("sequential commands on same handler instance produce independent results", () => {
       const handler = createCommandHandler(deps);
 
       // First: /think (directive)

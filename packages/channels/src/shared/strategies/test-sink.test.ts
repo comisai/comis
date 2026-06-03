@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TestSink strategy tests (STRAT-05, §7.3 + §17.1 row "test-sink").
+ * TestSink strategy tests (§7.3 + §17.1 row "test-sink").
  *
  * The TestSink is the Echo terminus: it records every `apply(frame)` and the
  * single `finalize(outcome)` with full payload, applies NO coalescing, and
- * reflects the TestSink strategy identity. The WIRE-06 acceptance test (70-10)
- * asserts this recorder received the canonical stream.
+ * reflects the TestSink strategy identity. The acceptance test asserts this
+ * recorder received the canonical stream.
  */
 import { describe, it, expect } from "vitest";
 import type {

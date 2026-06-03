@@ -62,14 +62,14 @@ import * as os from "node:os";
 import type { RpcHandler } from "./types.js";
 
 /** Max chars of an observation body surfaced as a provenance PREVIEW
- *  (T-86-21 — never the full body unbounded; mirrors memory.search_files). */
+ *  (never the full body unbounded; mirrors memory.search_files). */
 const OBSERVATION_PREVIEW_MAX = 500;
 
 /** Default cap on the dialectic grounding-set size when the request omits `limit`
  *  and no per-agent `dialectic.maxRecall` is threaded (mirrors the schema default). */
 const DIALECTIC_DEFAULT_MAX_RECALL = 10;
 
-/** The DIAL-01 mandatory-abstention sentinel — the explicit { abstained: true } signal
+/** The mandatory-abstention sentinel — the explicit { abstained: true } signal
  *  (never inferred from an empty answer); matches MemoryAskContract + assembleSynthesis. */
 const ABSTAIN_SENTINEL = { answer: "", citations: [] as string[], abstained: true } as const;
 
@@ -118,7 +118,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
     },
 
     // -----------------------------------------------------------------------
-    // memory.ask — the dialectic (Phase 109 — DIAL-01/02/03). The KEYSTONE: a
+    // memory.ask — the dialectic. The KEYSTONE: a
     // grounded, cited NL answer over the agent's LLM-free recall pipeline. Runs the
     // FULL createMemoryRecall (the injected `buildDialecticRecall`) — NEVER
     // `deps.memoryApi.search`, which bypasses the TRUST FILTER (the documented trap).
@@ -128,7 +128,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
     // (orderByTrust) → the SAME neutralization rag-retriever uses (sanitizeToolOutput
     // + wrapExternalContent) → clamp to the per-agent dialectic.maxRecall DoS bound →
     // the ONE injected query-time seam → assembleSynthesis (abstain-in-code + citations
-    // VALIDATED ⊆ recalled ids). DIAL-03: the citation→sourceId chain (counts/ids-only)
+    // VALIDATED ⊆ recalled ids). The citation→sourceId chain (counts/ids-only)
     // for the recall-trace. Logging is counts/ids-ONLY — never the question, the
     // recalled content, or the answer.
     // -----------------------------------------------------------------------
@@ -143,7 +143,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       const params = MemoryAskContract.request.parse(userParams);
       const question = params.question;
 
-      // Graceful abstain when the dialectic is not wired (no key / Plan 04 not
+      // Graceful abstain when the dialectic is not wired (no key / seam not
       // applied) or the caller carries no agent scope — never throws.
       if (
         deps.dialecticSeam === undefined ||
@@ -184,7 +184,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       // never blends in).
       const ordered = orderByTrust(recalled.value);
 
-      // CR-02: ENFORCE the per-agent `dialectic.maxRecall` as the HARD ceiling (the DoS bound
+      // ENFORCE the per-agent `dialectic.maxRecall` as the HARD ceiling (the DoS bound
       // on the synthesis LLM input) and VALIDATE the caller-controlled `limit`. The contract
       // now types `limit` as a positive int, but defense-in-depth here so a non-int / huge /
       // negative value (or a caller that bypasses the contract parse) can never:
@@ -203,7 +203,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       // trust-FILTERED but RAW `entry.content` — redaction is the PROMPT-ASSEMBLY step's job,
       // NOT recall's (rag-retriever.ts applies it downstream; recall never does). So this
       // handler MUST apply the SAME two-layer neutralization rag-retriever.ts:57-70 runs, in
-      // the SAME order, before the ONE query-time LLM (the seam) sees it (CR-01):
+      // the SAME order, before the ONE query-time LLM (the seam) sees it:
       //   (1) sanitizeToolOutput — NFKC-normalize + strip zero-width/tag-block bypass chars,
       //       then redact the INSTRUCTION_PATTERNS set ([SYSTEM]/[INST]/"ignore previous
       //       instructions"/role markers/…) to [REDACTED]. Applied to ALL trust levels
@@ -216,7 +216,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       //       includeWarning:true) and surface suspicious-pattern telemetry
       //       (onSuspiciousContent). System content is already trusted ⇒ skip the wrap (the
       //       retriever's skip-system rule), but it is STILL sanitized in (1).
-      // CR-06: the `[id]` fence sits OUTSIDE the wrapped region, so a forged `[<other-id>]`
+      // The `[id]` fence sits OUTSIDE the wrapped region, so a forged `[<other-id>]`
       // smuggled in a memory's CONTENT lands INSIDE the warned <<<UNTRUSTED_…>>> fence — the
       // model is explicitly told that region is untrusted data, and the final `citations`
       // array is independently validated ⊆ recalled ids in code (assembleSynthesis), so a
@@ -238,7 +238,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
         })
         .join("\n");
 
-      // The ONE allowed query-time LLM (the injected Plan-02 seam). CR-04: pass the invoking
+      // The ONE allowed query-time LLM (the injected seam). Pass the invoking
       // agentId so the seam synthesizes with THAT agent's own cheap model/key/token bound. It
       // returns the raw parse (or abstains non-fatally); the code-level abstention + citation
       // validation run AROUND it in assembleSynthesis.
@@ -249,23 +249,23 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       // dropped). Validation runs over the SAME ordered grounding set the seam saw.
       const result = assembleSynthesis(grounding, parsed);
 
-      // DIAL-03: the citation→recalled-id→sourceId reasoning-tree chain (counts/
+      // The citation→recalled-id→sourceId reasoning-tree chain (counts/
       // ids-ONLY) for the recall-trace observability surface. Empty on abstain.
       const chains = citationChains(grounding, result.abstained ? [] : result.citations);
 
-      // LEARN-02 (H3): the dialectic's VALIDATED citations (⊆ recalled ids — definitively
-      // used) are HIGH-signal "used" attribution. Emit on the SAME event the FEED subscriber
-      // already consumes (wireMemoryUsefulness → recordUsage) — NO new event, NO new
+      // The dialectic's VALIDATED citations (⊆ recalled ids — definitively
+      // used) are HIGH-signal "used" attribution. Emit on the SAME event the usefulness-feedback
+      // subscriber already consumes (wireMemoryUsefulness → recordUsage) — NO new event, NO new
       // subscriber. usedIds = the citations; ignoredIds = recalled ∖ citations. Guarded on
       // !result.abstained so an abstained (no grounded answer) turn never attributes a "used"
       // (Pitfall 4); the emit is fire-and-forget by the bus contract and the subscriber is
-      // already non-fatal, so a FEED-write failure can NEVER break the answer. ids/counts
+      // already non-fatal, so a usefulness-write failure can NEVER break the answer. ids/counts
       // ONLY — never the question, recalled content, or answer (AGENTS.md §2.7).
       //
       // `intent` is OMITTED here (Pitfall 2): classifyIntent is NOT exported from @comis/agent
       // — importing it would force a public-export-consumer + a daemon→agent-internal edge, and
       // the handler does not re-classify. Omitting it makes the subscriber record the GLOBAL
-      // bucket; the per-intent write rides the turn-end emit (Plan 110-03, in-package).
+      // bucket; the per-intent write rides the turn-end emit (in-package).
       if (!result.abstained && deps.eventBus !== undefined) {
         const recalledIds = grounding.map((r) => r.entry.id);
         const usedSet = new Set(result.citations);
@@ -603,13 +603,13 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
     },
 
     // -----------------------------------------------------------------------
-    // Memory-diagnostic handlers (Phase 86 / OBS-06) — admin-gated FIRST, then
+    // Memory-diagnostic handlers — admin-gated FIRST, then
     // every query scoped to (tenant, agent) via deps.tenantId + params.agent_id.
     // The agent is never on this path; the queries run here in the daemon.
     // -----------------------------------------------------------------------
 
     [MemoryObservationsContract.method]: async (rawParams) => {
-      // Admin gate FIRST (T-86-19) — before parse + query.
+      // Admin gate FIRST — before parse + query.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for memory observations");
@@ -632,7 +632,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       const result = {
         observations: obsResult.value.map((e) => ({
           id: e.id,
-          // Provenance PREVIEW only — truncate the body (T-86-21).
+          // Provenance PREVIEW only — truncate the body.
           content: e.content.slice(0, OBSERVATION_PREVIEW_MAX),
           ...(e.proofCount !== undefined ? { proofCount: e.proofCount } : {}),
           ...(e.sourceIds !== undefined ? { sourceIds: e.sourceIds } : {}),
@@ -648,7 +648,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
     },
 
     [MemoryEntitiesContract.method]: async (rawParams) => {
-      // Admin gate FIRST (T-86-19).
+      // Admin gate FIRST.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for memory entities");
@@ -662,7 +662,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       if (!deps.entityStore) {
         throw new Error("Memory entities unavailable: entity store not wired");
       }
-      // listEntities bakes the ENT-03 `WHERE tenant_id=? AND agent_id=?` scope.
+      // listEntities bakes the `WHERE tenant_id=? AND agent_id=?` scope.
       const entResult = await deps.entityStore.listEntities(agentId, tenantId, limit);
       if (!entResult.ok) {
         throw new Error(`Memory entities failed: ${entResult.error.message}`);
@@ -684,7 +684,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
     },
 
     [MemoryRecallStatsContract.method]: async (rawParams) => {
-      // Admin gate FIRST (T-86-19).
+      // Admin gate FIRST.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for memory recall stats");
@@ -717,7 +717,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
     },
 
     [MemoryRecallTraceContract.method]: async (rawParams) => {
-      // Admin gate FIRST (T-86-19).
+      // Admin gate FIRST.
       const trustLevel = rawParams._trustLevel as string | undefined;
       if (trustLevel !== "admin") {
         throw new Error("Admin access required for memory recall trace");
@@ -740,8 +740,8 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
       const filePath = resolveRecallTraceFilePath({ confinedBaseDir: baseDir });
 
       const records: Array<Record<string, unknown>> = [];
-      // The records are already sanitized/redacted on disk (Plan 01) — do NOT
-      // re-sanitize, but DO scope-filter (defense-in-depth, T-86-20).
+      // The records are already sanitized/redacted on disk — do NOT
+      // re-sanitize, but DO scope-filter (defense-in-depth).
       if (fsSync.existsSync(filePath)) {
         let content: string;
         try {
@@ -750,7 +750,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
           content = "";
         }
         for (const line of content.split("\n")) {
-          // WR-06: early-break once `limit` matching records are collected.
+          // Early-break once `limit` matching records are collected.
           // The handler used `continue` here, so it walked the ENTIRE (up to
           // 50 MB) file even after the limit was satisfied — heavy for an admin
           // RPC. Records are appended chronologically and the response keeps
@@ -767,7 +767,7 @@ export function createMemoryHandlers(deps: MemoryHandlerDeps): Record<string, Rp
             continue;
           }
           // Selector match: session_key OR trace_id.
-          // WR-01: the production recorder ALWAYS writes `sessionId`
+          // The production recorder ALWAYS writes `sessionId`
           // (= formatSessionKey(...)) and writes `sessionKey` only when an
           // envelope is supplied. `comis memory recall-trace <session>` passes
           // the formatted session key, so the selector must match it against

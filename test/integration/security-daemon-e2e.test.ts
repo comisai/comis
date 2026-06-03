@@ -69,11 +69,11 @@ describe("Security Daemon E2E Tests (real daemon)", () => {
   // ---------------------------------------------------------------------------
 
   describe("Security Config Bootstrap Propagation", () => {
-    // WR-03: config.get no longer egresses the secret-bearing security section.
+    // config.get no longer egresses the secret-bearing security section.
     // The logRedaction/auditLog/actionConfirmation values were previously asserted
-    // via config.get({section:"security"}) but are no longer RPC-observable post-WR-03;
+    // via config.get({section:"security"}) but are no longer RPC-observable;
     // we instead assert the section is absent from the response.
-    it("config.get does not egress the security section (WR-03)", async () => {
+    it("config.get does not egress the security section", async () => {
       const response = (await sendJsonRpc(ws, "config.get", { section: "security" }, 100, {
         timeoutMs: RPC_FAST_MS,
       })) as Record<string, unknown>;
@@ -90,7 +90,7 @@ describe("Security Daemon E2E Tests (real daemon)", () => {
       expect(result).toHaveProperty("gateway");
     });
 
-    it("config.get does not egress security actionConfirmation details (WR-03)", async () => {
+    it("config.get does not egress security actionConfirmation details", async () => {
       const response = (await sendJsonRpc(ws, "config.get", { section: "security" }, 101, {
         timeoutMs: RPC_FAST_MS,
       })) as Record<string, unknown>;
@@ -104,7 +104,7 @@ describe("Security Daemon E2E Tests (real daemon)", () => {
       expect(JSON.stringify(result)).not.toContain("requireForDestructive");
     });
 
-    it("config.get does not egress gateway corsOrigins (WR-03)", async () => {
+    it("config.get does not egress gateway corsOrigins", async () => {
       const response = (await sendJsonRpc(ws, "config.get", { section: "gateway" }, 102, {
         timeoutMs: RPC_FAST_MS,
       })) as Record<string, unknown>;
@@ -119,7 +119,7 @@ describe("Security Daemon E2E Tests (real daemon)", () => {
       expect(JSON.stringify(result)).not.toContain("dashboard.example.com");
     });
 
-    it("config.get does not egress gateway trustedProxies (WR-03)", async () => {
+    it("config.get does not egress gateway trustedProxies", async () => {
       const response = (await sendJsonRpc(ws, "config.get", { section: "gateway" }, 103, {
         timeoutMs: RPC_FAST_MS,
       })) as Record<string, unknown>;
@@ -265,11 +265,11 @@ describe("Security Daemon E2E Tests (real daemon)", () => {
       expect(typeof result.uptime).toBe("number");
     });
 
-    it("config.get does not egress security/gateway-internal/agents sections (WR-03)", async () => {
-      // WR-03: requesting restricted sections returns only the safe default
+    it("config.get does not egress security/gateway-internal/agents sections", async () => {
+      // Requesting restricted sections returns only the safe default
       // { tenantId, logLevel, gateway: { enabled, host, port } } -- the requested
       // section is absent. These shapes were previously asserted via config.get but
-      // are no longer RPC-observable post-WR-03.
+      // are no longer RPC-observable.
       const secResponse = (await sendJsonRpc(ws, "config.get", { section: "security" }, 201, {
         timeoutMs: RPC_FAST_MS,
       })) as Record<string, unknown>;

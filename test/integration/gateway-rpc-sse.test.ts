@@ -132,10 +132,10 @@ describe("Gateway: WebSocket RPC, Chat API, and SSE Streaming", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // GATE-03 — Authenticated WebSocket JSON-RPC
+  // Authenticated WebSocket JSON-RPC
   // -------------------------------------------------------------------------
 
-  describe("GATE-03: Authenticated WebSocket JSON-RPC", () => {
+  describe("Authenticated WebSocket JSON-RPC", () => {
     it("WebSocket connects with valid token", async () => {
       let ws: WebSocket | undefined;
       try {
@@ -183,10 +183,10 @@ describe("Gateway: WebSocket RPC, Chat API, and SSE Streaming", () => {
   });
 
   // -------------------------------------------------------------------------
-  // GATE-05 — POST /api/chat
+  // POST /api/chat
   // -------------------------------------------------------------------------
 
-  describe("GATE-05: POST /api/chat", () => {
+  describe("POST /api/chat", () => {
     it(
       "POST /api/chat with valid message returns agent response",
       async () => {
@@ -236,10 +236,10 @@ describe("Gateway: WebSocket RPC, Chat API, and SSE Streaming", () => {
   });
 
   // -------------------------------------------------------------------------
-  // GATE-06 — SSE /api/events
+  // SSE /api/events
   // -------------------------------------------------------------------------
 
-  describe("GATE-06: SSE /api/events", () => {
+  describe("SSE /api/events", () => {
     it("GET /api/events returns SSE stream", async () => {
       const controller = new AbortController();
       try {

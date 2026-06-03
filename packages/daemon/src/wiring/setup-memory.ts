@@ -71,17 +71,17 @@ export interface MemoryResult {
   embeddingCacheStats?: () => import("@comis/memory").EmbeddingCacheStats;
   /** Embedding circuit breaker state accessor for memory persistence operations. */
   embeddingCircuitBreakerState?: () => import("@comis/agent").CircuitState;
-  /** Cross-encoder reranker port (RANK-01). Defined only when at least one agent has
+  /** Cross-encoder reranker port. Defined only when at least one agent has
    *  `rag.rerank.enabled === true` AND the model loaded — otherwise undefined and recall
-   *  degrades to fusion order (RANK-03). The all-default (rerank-off) config NEVER builds
+   *  degrades to fusion order. The all-default (rerank-off) config NEVER builds
    *  it, so the ~606MB GGUF is not downloaded by default. */
   rerankerPort?: import("@comis/core").RerankerPort;
-  /** Phase 92 (RERANK-01/02): whether the reranker GGUF is ALREADY present locally — computed
+  /** Whether the reranker GGUF is ALREADY present locally — computed
    *  ONCE here via the no-download `rerankerModelPresent` probe. The composition root threads
    *  this SAME boolean to `setupAgents` so the per-agent effective `rag.rerank.enabled`
-   *  precedence and this build gate consult one source (T-92-06: no two-gate drift). */
+   *  precedence and this build gate consult one source (no two-gate drift). */
   rerankerModelPresent: boolean;
-  /** Entity-associative store (Phase 83, ENT-01/02/03). The SOLE adapter for the segregated
+  /** Entity-associative store. The SOLE adapter for the segregated
    *  `MemoryEntityStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
    *  memory adapter (so entity tables + memories share one FK-enabled connection and the
    *  `ON DELETE CASCADE` fires). Unlike the reranker there is no model/IO cost to building it,
@@ -89,7 +89,7 @@ export interface MemoryResult {
    *  `agents.<id>.rag.entityLane.enabled` (default OFF) — see setup-agents-runtime / the cron
    *  review wiring, which thread this port into the read + write paths. */
   entityStore: import("@comis/core").MemoryEntityStore;
-  /** Temporal-spread store (Phase 95, LANES-02). The SOLE adapter for the segregated
+  /** Temporal-spread store. The SOLE adapter for the segregated
    *  `MemoryTemporalStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
    *  memory adapter (so the windowed `occurred_at` read shares the (tenant, agent) isolation
    *  + FK-enabled connection with the memory rows it spreads over). Unlike the entity store
@@ -99,7 +99,7 @@ export interface MemoryResult {
    *  threads this port into the recall read path. The agent receives the port TYPE only
    *  (the agent↛memory cut). */
   temporalStore: import("@comis/core").MemoryTemporalStore;
-  /** Causal store (Phase 96, EXTRACT-03). The SOLE adapter for the segregated
+  /** Causal store. The SOLE adapter for the segregated
    *  `MemoryCausalStore` port (linkCausal WRITE + causalLane READ) — built UNCONDITIONALLY on
    *  the SAME shared `db` handle as the memory adapter (so memory_causal_edges + memories share
    *  one FK-enabled connection — the ON DELETE CASCADE fires — and the (tenant, agent) isolation
@@ -109,7 +109,7 @@ export interface MemoryResult {
    *  path (setup-agents-*) AND the cron-review write path (setup-channels-*). The agent receives
    *  the port TYPE only (the agent↛memory cut). */
   causalStore: import("@comis/core").MemoryCausalStore;
-  /** Triple store (Phase 100, KG-01). The SOLE adapter for the segregated
+  /** Triple store. The SOLE adapter for the segregated
    *  `TripleStorePort` (the trust-first bi-temporal knowledge graph: `upsertTriple` WRITE +
    *  `asOf`/`currentTruth`/`spreadLane` READs) — built UNCONDITIONALLY on the SAME shared `db`
    *  handle as the memory adapter (so `memory_triples` + memories share one FK-enabled
@@ -123,7 +123,7 @@ export interface MemoryResult {
    *  (composition root) is the one place this @comis/memory adapter and the @comis/agent
    *  consumers are joined (the agent↛memory cut). */
   tripleStore: import("@comis/core").TripleStorePort;
-  /** Embedding read store (Phase 102, IQ-01). The SOLE adapter for the segregated
+  /** Embedding read store. The SOLE adapter for the segregated
    *  `MemoryEmbeddingStore` port (the bulk `(tenant, agent)`-scoped LEFT JOIN vec_memories read
    *  that hydrates the MMR diversity re-rank) — built UNCONDITIONALLY on the SAME shared `db`
    *  handle as the memory adapter (so the embedding read sees the SAME `memories` rows + the
@@ -135,53 +135,53 @@ export interface MemoryResult {
    *  the one place this @comis/memory adapter and the @comis/agent recall consumer are joined
    *  (the agent↛memory cut). */
   embeddingStore: import("@comis/core").MemoryEmbeddingStore;
-  /** Per-user representation store (Phase 107, USER-01/03 — Track E1). The SOLE adapter for the
+  /** Per-user representation store. The SOLE adapter for the
    *  segregated `UserRepresentationStore` port (the `(tenant, agent, user)`-scoped upsert/read over
    *  the additive `user_representation` table) — built UNCONDITIONALLY on the SAME shared `db`
    *  handle as the memory adapter (so the `source_memory_id` ON DELETE CASCADE — which fires ONLY
-   *  for single-source rows; the offline builder omits `sourceMemoryId`, see the adapter's LR-02
+   *  for single-source rows; the offline builder omits `sourceMemoryId`, see the adapter's
    *  provenance caveat — and the 3-way isolation scope stay consistent with the memory rows the
-   *  profile is distilled from — a read on a DIFFERENT handle would silently return empty,
-   *  T-107-05-02). No model/IO cost, so it is always
+   *  profile is distilled from — a read on a DIFFERENT handle would silently return empty).
+   *  No model/IO cost, so it is always
    *  present; the LLM-free `<user_profile>` injection stays dormant until the offline builder writes
    *  rows (its own default-OFF cost gate). Threaded into the recall read path (setup-agents-*) as the
    *  port TYPE only AND into the offline-builder cron — the daemon (composition root) is the one
    *  place this @comis/memory adapter and the @comis/agent consumers are joined (the agent↛memory cut). */
   userRepresentationStore: import("@comis/core").UserRepresentationStore;
-  /** Directional relationship store (Phase 108, SOCIAL-01/02 — Track E2). The SOLE adapter for the
+  /** Directional relationship store. The SOLE adapter for the
    *  segregated `RelationshipStore` port (the `(tenant, agent, channel)`-scoped upsert/read over the
    *  additive `relationship` table of directional `(subjectUserId, aboutUserId)` edges) — built
    *  UNCONDITIONALLY on the SAME shared `db` handle the memory adapter owns (so the
    *  `source_memory_id` ON DELETE CASCADE + the channel-scoped isolation stay consistent with the
    *  memory rows the edges are distilled from — a read on a DIFFERENT handle would silently return
-   *  empty, T-108-16). No model/IO cost, so it is always present; the LLM-free
+   *  empty). No model/IO cost, so it is always present; the LLM-free
    *  `<channel_relationships>` injection stays dormant until the offline builder writes rows AND an
    *  operator both enables `agents.<id>.socialModeling.enabled` AND records a privacy-review sign-off
-   *  (`privacyReviewSignedOffBy`) — the SOCIAL-03 dual gate. Threaded into the recall read path
+   *  (`privacyReviewSignedOffBy`) — the dual gate. Threaded into the recall read path
    *  (setup-agents-*) as the port TYPE only AND into the offline-builder `__SOCIAL_MODELING__` cron —
    *  the daemon (composition root) is the one place this memory-package adapter and the agent-package
    *  consumers are joined (the agent↛memory cut). */
   relationshipStore: import("@comis/core").RelationshipStore;
-  /** Consolidation store (Phase 84, CONS-01..07). The SOLE adapter for the segregated
+  /** Consolidation store. The SOLE adapter for the segregated
    *  `MemoryConsolidationStore` port — built UNCONDITIONALLY on the SAME shared `db` handle
    *  as the memory adapter + entity store (so the observation columns, the `(tenant, agent)`
    *  isolation scope, and the FK-enabled connection are all consistent with the memory rows
    *  it consolidates). Like the entity store there is no model/IO cost to building it, so it
    *  is always present; the consolidation cron stays dormant until an operator opts in via
-   *  `agents.<id>.memoryConsolidation.enabled` (default OFF, a cost gate — CONS-07). The daemon
+   *  `agents.<id>.memoryConsolidation.enabled` (default OFF, a cost gate). The daemon
    *  (composition root) is the only place this @comis/memory adapter and the @comis/agent
    *  `runMemoryConsolidation` job are joined — the agent receives the port TYPE only. */
   consolidationStore: import("@comis/core").MemoryConsolidationStore;
-  /** Recall-utility usefulness store (Phase 93, FEED-02). The SOLE adapter for the segregated
+  /** Recall-utility usefulness store. The SOLE adapter for the segregated
    *  `MemoryUsefulnessStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
    *  memory adapter + entity/consolidation stores (so the `(tenant, agent)` isolation scope and
    *  the FK-enabled connection — the `memory_usefulness.memory_id` ON DELETE CASCADE — are all
    *  consistent with the memory rows it scores). No model/IO cost to building it, so it is always
    *  present; the feedback loop stays dormant until an operator enables
-   *  `agents.<id>.rag.feedback.enabled` (default OFF). The write-back subscriber is Plan 93-02 —
-   *  this plan only builds + exposes the store + its read capability. */
+   *  `agents.<id>.rag.feedback.enabled` (default OFF). The write-back subscriber is wired
+   *  separately; this site only builds + exposes the store + its read capability. */
   usefulnessStore: import("@comis/core").MemoryUsefulnessStore;
-  /** Tuned-alpha store (Phase 111, LEARN-03 — Track H2). The SOLE adapter for the segregated
+  /** Tuned-alpha store. The SOLE adapter for the segregated
    *  `TunedAlphaStore` port — built UNCONDITIONALLY on the SAME shared `db` handle as the
    *  memory adapter + usefulness store (the (tenant, agent) isolation scope is consistent). No
    *  model/IO cost to building it, so it is always present; it stays dormant until BOTH the
@@ -190,21 +190,21 @@ export interface MemoryResult {
    *  into the recall read path (setup-agents-* -> createPiExecutor -> prompt-assembly) AND the
    *  __ONLINE_TUNING__ cron (setup-channels) — the agent receives the port TYPE only. */
   tunedAlphaStore: import("@comis/core").TunedAlphaStore;
-  /** Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C). The SOLE adapter for the
+  /** Memory-lifecycle sweep store. The SOLE adapter for the
    *  segregated `MemoryLifecyclePort` port — built UNCONDITIONALLY on the SAME shared `db`
    *  handle as the memory adapter (so the sweep scans the SAME `memories` rows + the additive
    *  NON-DESTRUCTIVE marker columns under one (tenant, agent)-scoped, FK-enabled connection;
    *  a sweep on a DIFFERENT handle would scan an empty/foreign table). No model/IO cost to
    *  building it, so it is always present; it stays DORMANT (evicts/demotes 0 rows even when
-   *  enabled — 112-03) and the cron registers ONLY when `memoryLifecycle.enabled` (default OFF,
+   *  enabled) and the cron registers ONLY when `memoryLifecycle.enabled` (default OFF,
    *  KEYLESS). Threaded into the KEYLESS __MEMORY_LIFECYCLE__ cron (setup-channels) — NOT the
-   *  recall executor (RQ8: the lifecycle port is daemon-cron-side, no 3-hop forwarding). The
+   *  recall executor (the lifecycle port is daemon-cron-side, no 3-hop forwarding). The
    *  agent receives the port TYPE only (the agent↛memory cut). */
   memoryLifecycleStore: import("@comis/core").MemoryLifecyclePort;
-  /** Live in-process recall-counter wiring (Phase 86, OBS-07). The single
+  /** Live in-process recall-counter wiring. The single
    *  `wireRecallCounters(container.eventBus)` subscriber is stood up HERE — the
    *  memory composition site that already holds the event bus — so there is ONE
-   *  shared registry for the daemon lifetime (resets on restart, Assumption A2).
+   *  shared registry for the daemon lifetime (resets on restart).
    *  The daemon threads this `{ snapshot }` into `MemoryApiDeps.recallCounters`
    *  so the `memory.recall_stats` handler reads the SAME live counters the
    *  `memory:*` bus events feed (NOT a fresh registry per call). */
@@ -335,17 +335,17 @@ export async function setupMemory(deps: {
 
   // 6.5.1b. Build the cross-encoder reranker — ONLY when at least one agent enables
   // rerank. Building it downloads a ~606MB GGUF on first run, so the all-default
-  // (rerank-off) config must NEVER trigger it (Phase-79: rerank is opt-in/default-OFF).
+  // (rerank-off) config must NEVER trigger it (rerank is opt-in/default-OFF).
   // Scanning the in-memory agent configs is the cheapest correct gate (no I/O). When no
-  // reranker is built, recall degrades to fusion order (RANK-03).
+  // reranker is built, recall degrades to fusion order.
   let rerankerPort: import("@comis/core").RerankerPort | undefined;
   let disposeReranker: (() => Promise<void>) | undefined;
-  // Phase 92 (RERANK-01/02): the gate is no longer explicit-on ONLY — it also auto-builds
+  // The gate is no longer explicit-on ONLY — it also auto-builds
   // when the GGUF is already cached locally, while still NEVER downloading on a fresh
   // install. Resolve the models dir ONCE (the SAME safePath value the factory builds with —
-  // T-92-06: probe and build must consult one dir so the two gates can't drift) and probe
+  // probe and build must consult one dir so the two gates can't drift) and probe
   // presence ONCE (no download — rerankerModelPresent uses resolveModelFile{download:false}).
-  // The whole resolve+probe degrades to `modelPresent = false` (the safe RERANK-02 posture)
+  // The whole resolve+probe degrades to `modelPresent = false` (the safe posture)
   // if anything goes wrong: an unconfigured model URI, or a dataDir/modelsDir pair safePath
   // rejects (e.g. a relative dataDir that lets "models" escape its base). Auto-on is a
   // best-effort convenience; a config that can't even locate the models dir must never throw
@@ -369,8 +369,8 @@ export async function setupMemory(deps: {
     }
   }
   // someAgentExplicitOn preserves the explicit opt-in DOWNLOAD path (operator set
-  // `rag.rerank.enabled: true` on a fresh machine still fetches — Pitfall 3 / T-92-05).
-  // WR-03: read the SAME raw pre-Zod-default signal the per-agent effective-rerank
+  // `rag.rerank.enabled: true` on a fresh machine still fetches).
+  // Read the SAME raw pre-Zod-default signal the per-agent effective-rerank
   // precedence consumes (container.rawAgentRerankEnabled), NOT the parsed
   // container.config.agents. Both gates therefore share ONE definition of "explicitly
   // on" — a future change to the rerank schema default can no longer silently desync the
@@ -385,7 +385,7 @@ export async function setupMemory(deps: {
       );
   const shouldBuildReranker = someAgentExplicitOn || modelPresent;
   // Boundary decision an operator must be able to reconstruct (AGENTS.md §2.7). Booleans
-  // only — never the model-path body beyond the non-secret config path (T-92-07).
+  // only — never the model-path body beyond the non-secret config path.
   memoryLogger.debug(
     { modelPresent, someAgentExplicitOn, willBuild: shouldBuildReranker },
     modelPresent
@@ -393,13 +393,13 @@ export async function setupMemory(deps: {
       : "Reranker model absent -> no download",
   );
   if (shouldBuildReranker) {
-    // Resolve the build models dir ONCE, inside a guard (WR-02). Reuse the dir the probe
-    // resolved (T-92-06: one shared value); it is only unset on the explicit-opt-in path
+    // Resolve the build models dir ONCE, inside a guard. Reuse the dir the probe
+    // resolved (one shared value); it is only unset on the explicit-opt-in path
     // when the probe's safePath threw — recompute there so the operator's opt-in gets the
     // same root-confined resolution. CRITICAL: that recompute uses the SAME args that just
     // threw on the probe, so without this guard it would throw AGAIN — now UNCAUGHT —
     // propagating into daemon startup. Catch it and degrade to the same WARN + fusion the
-    // auto-on path uses (recall falls back to fusion order, RANK-03), never crash boot.
+    // auto-on path uses (recall falls back to fusion order), never crash boot.
     let modelsDirForBuild: string | undefined;
     if (rerankerModelsDir !== undefined) {
       modelsDirForBuild = rerankerModelsDir;
@@ -447,7 +447,7 @@ export async function setupMemory(deps: {
   const memoryAdapter = new SqliteMemoryAdapter(adjustedMemoryConfig, embeddingPort, memoryLogger);
   const db = memoryAdapter.getDb();
 
-  // 6.5.2b. Entity-associative store (Phase 83). Built on the SAME `db` handle the
+  // 6.5.2b. Entity-associative store. Built on the SAME `db` handle the
   // memory adapter owns — NOT a second Database — so the entity tables
   // (memory_entities / memory_entity_links) and the memories table share one
   // FK-enabled connection. That is what makes the link `ON DELETE CASCADE` fire and
@@ -456,16 +456,16 @@ export async function setupMemory(deps: {
   // operator enables `agents.<id>.rag.entityLane.enabled` (default OFF).
   const entityStore = createSqliteMemoryEntityStore({ db, logger: memoryLogger });
 
-  // 6.5.2b'. Temporal-spread store (Phase 95, LANES-02). Built on the SAME `db` handle the
+  // 6.5.2b'. Temporal-spread store. Built on the SAME `db` handle the
   // memory adapter owns — NOT a second Database — so the windowed `occurred_at` read shares
   // one FK-enabled connection and the (tenant, agent) isolation scope is consistent with the
   // memory rows it spreads over. Unlike the entity store there is NO `ensure*` DDL — the
-  // `occurred_at` column already exists (Phase 81). Always constructed (no model/IO cost); the
+  // `occurred_at` column already exists. Always constructed (no model/IO cost); the
   // temporal lane stays dormant until an operator enables `agents.<id>.rag.lanes.temporal.enabled`
   // (default OFF). Composition-root join — the agent receives the port TYPE only.
   const temporalStore = createSqliteMemoryTemporalStore({ db, logger: memoryLogger });
 
-  // 6.5.2b''. Causal store (Phase 96, EXTRACT-03). Built on the SAME shared `db` handle the
+  // 6.5.2b''. Causal store. Built on the SAME shared `db` handle the
   // memory adapter owns — so memory_causal_edges + memories share one FK-enabled connection
   // (the ON DELETE CASCADE on both edge endpoints fires) and the (tenant, agent) isolation
   // scope is consistent with the memory rows the edges link. Always constructed (no model/IO
@@ -476,7 +476,7 @@ export async function setupMemory(deps: {
   // write path (setup-channels-*).
   const causalStore = createSqliteMemoryCausalStore({ db, logger: memoryLogger });
 
-  // 6.5.2b'''. Triple store (Phase 100, KG-01). Built on the SAME shared `db` handle the
+  // 6.5.2b'''. Triple store. Built on the SAME shared `db` handle the
   // memory adapter owns — so `memory_triples` + memories share one FK-enabled connection (the
   // source_memory_id ON DELETE CASCADE fires when a source memory is deleted) and the
   // (tenant, agent) isolation scope is consistent with the memory rows the triples reference
@@ -488,18 +488,18 @@ export async function setupMemory(deps: {
   // only (the agent↛memory cut). Threaded into the recall read path (setup-agents-*).
   const tripleStore = createSqliteTripleStore({ db, logger: memoryLogger });
 
-  // 6.5.2b''''. Embedding read store (Phase 102, IQ-01). Built on the SAME shared `db` handle
+  // 6.5.2b''''. Embedding read store. Built on the SAME shared `db` handle
   // the memory adapter owns — so the bulk `(tenant, agent)`-scoped LEFT JOIN vec_memories read
   // sees the SAME `memories` rows + `vec_memories` index recall hydrates (an embedding read on a
-  // DIFFERENT handle would silently return an empty Map and MMR would no-op — the 102-03
-  // "watch for 102-05" note). Always constructed (no model/IO cost); the MMR diversity re-rank
+  // DIFFERENT handle would silently return an empty Map and MMR would no-op). Always
+  // constructed (no model/IO cost); the MMR diversity re-rank
   // stays dormant until an operator enables `agents.<id>.rag.mmr.enabled` (default OFF), so the
   // scoped read never runs by default. Composition-root join — the agent receives the port TYPE
   // only (the agent↛memory cut). Threaded into the recall read path (setup-agents-*).
   const embeddingStore = createSqliteMemoryEmbeddingStore({ db, logger: memoryLogger });
 
-  // 6.5.2b'''''. Per-user representation store (Phase 107, USER-01/03 — Track E1). Built on the
-  // SAME shared `db` handle the memory adapter owns — NEVER a second Database (T-107-05-02): the
+  // 6.5.2b'''''. Per-user representation store. Built on the
+  // SAME shared `db` handle the memory adapter owns — NEVER a second Database: the
   // `source_memory_id` ON DELETE CASCADE + the `(tenant, agent, user)` 3-way isolation scope must
   // stay consistent with the memory rows the profile is distilled from; a read on a DIFFERENT
   // handle would silently return empty (the same hazard as the embedding store above). Always
@@ -509,47 +509,47 @@ export async function setupMemory(deps: {
   // into the recall read path (setup-agents-*) AND the offline-builder cron (setup-channels).
   const userRepresentationStore = createSqliteUserRepresentationStore({ db, logger: memoryLogger });
 
-  // 6.5.2b''''''. Directional relationship store (Phase 108, SOCIAL-01/02 — Track E2). Built on the
-  // SAME shared `db` handle the memory adapter owns — NEVER a second Database (T-108-16): the
+  // 6.5.2b''''''. Directional relationship store. Built on the
+  // SAME shared `db` handle the memory adapter owns — NEVER a second Database: the
   // `source_memory_id` ON DELETE CASCADE + the `(tenant, agent, channel)` channel-scoped isolation
   // must stay consistent with the memory rows the directional edges are distilled from; a read on a
   // DIFFERENT handle would silently return empty (the same hazard as the embedding / user-representation
   // stores above). Always constructed (no model/IO cost); the LLM-free `<channel_relationships>`
   // injection stays dormant until the offline builder writes rows AND the operator enables the
-  // SOCIAL-03 dual gate (`socialModeling.enabled` + a recorded `privacyReviewSignedOffBy`). Composition-
+  // dual gate (`socialModeling.enabled` + a recorded `privacyReviewSignedOffBy`). Composition-
   // root join — the agent receives the port TYPE only (the agent↛memory cut). Threaded into the recall
   // read path (setup-agents-*) AND the `__SOCIAL_MODELING__` offline-builder cron (setup-channels).
   const relationshipStore = createSqliteRelationshipStore({ db, logger: memoryLogger });
 
-  // 6.5.2c. Consolidation store (Phase 84). Built on the SAME `db` handle the memory
+  // 6.5.2c. Consolidation store. Built on the SAME `db` handle the memory
   // adapter owns — NOT a second Database — so the observation columns (proof_count /
   // source_ids / consolidated_at / confidence / history) and the memories table share
   // one FK-enabled connection, and the (tenant, agent) isolation scope is consistent
   // with the memory rows the consolidation job reads + marks. Always constructed (no
   // model/IO cost, like the entity store); the consolidation cron stays dormant until an
   // operator enables `agents.<id>.memoryConsolidation.enabled` (default OFF — the cost
-  // gate, CONS-07). This is the composition-root join: the daemon builds the @comis/memory
+  // gate). This is the composition-root join: the daemon builds the @comis/memory
   // adapter here and injects it into the @comis/agent job as the port TYPE (no agent→memory
   // edge — the architecture-graph cut is preserved).
   const consolidationStore = createSqliteMemoryConsolidationStore({ db, logger: memoryLogger });
 
-  // 6.5.2d. Recall-utility usefulness store (Phase 93, FEED-02). Built on the SAME `db`
+  // 6.5.2d. Recall-utility usefulness store. Built on the SAME `db`
   // handle the memory adapter owns — NOT a second Database — so the memory_usefulness
   // table and the memories table share one FK-enabled connection (the memory_id ON DELETE
   // CASCADE fires) and the (tenant, agent) isolation scope is consistent with the memory
   // rows it scores. Always constructed (no model/IO cost, like the entity + consolidation
   // stores); the feedback loop stays dormant until an operator enables
   // `agents.<id>.rag.feedback.enabled` (default OFF). This is the composition-root build
-  // ONLY; the FEED-01→02 attribution write-back subscriber is deferred to Plan 93-02
-  // (it depends on a recall-attribution bus event this plan does not yet declare).
+  // ONLY; the attribution write-back subscriber is wired separately
+  // (it depends on a recall-attribution bus event not yet declared at this point).
   const usefulnessStore = createSqliteMemoryUsefulnessStore({ db, logger: memoryLogger });
 
-  // 6.5.2d-bis. Tuned-alpha store (Phase 111, LEARN-03 — Track H2). Built on the SAME
+  // 6.5.2d-bis. Tuned-alpha store. Built on the SAME
   // shared `db` handle the memory adapter owns — NOT a second Database — so the
   // tuned_alpha table and the memories table share one connection and the (tenant, agent)
   // isolation scope is consistent. Always constructed (no model/IO cost, like the
   // usefulness store); it stays dormant until BOTH the recall-side gate
-  // (`agents.<id>.rag.onlineTuning.enabled` — the gated read in 111-03) AND the offline
+  // (`agents.<id>.rag.onlineTuning.enabled` — the gated read) AND the offline
   // KEYLESS bandit cron (`agents.<id>.memoryOnlineTuning.enabled` — the __ONLINE_TUNING__
   // write) are on. This is the composition-root join: the daemon builds the @comis/memory
   // adapter here and threads the port TYPE into BOTH the recall read path (setup-agents-*
@@ -557,7 +557,7 @@ export async function setupMemory(deps: {
   // cron (setup-channels) — the agent receives the port TYPE only (the agent↛memory cut).
   const tunedAlphaStore = createSqliteTunedAlphaStore({ db, logger: memoryLogger });
 
-  // 6.5.2d-ter. Memory-lifecycle sweep store (Phase 112, FORGET-02 — Track C). Built on the
+  // 6.5.2d-ter. Memory-lifecycle sweep store. Built on the
   // SAME shared `db` handle the memory adapter owns — NOT a second Database — so the sweep
   // scans the SAME `memories` rows + the additive NON-DESTRUCTIVE marker columns
   // (lifecycle_demoted_at / evicted_at / strength) under one (tenant, agent)-scoped, FK-enabled
@@ -565,14 +565,14 @@ export async function setupMemory(deps: {
   // constructed (no model/IO cost, like the tuned-alpha store); it stays DORMANT — even when
   // the KEYLESS __MEMORY_LIFECYCLE__ cron (`agents.<id>.memoryLifecycle.enabled`, default OFF)
   // is on, the sweep evicts/demotes/promotes 0 rows (the live policy is the deferred
-  // operator/v2.10 step — OD4). This is the composition-root join: the daemon builds the
+  // operator step). This is the composition-root join: the daemon builds the
   // @comis/memory adapter here and threads the port TYPE into the __MEMORY_LIFECYCLE__ cron
-  // sentinel (setup-channels) — NOT createPiExecutor (RQ8: the lifecycle port is daemon-cron-
+  // sentinel (setup-channels) — NOT createPiExecutor (the lifecycle port is daemon-cron-
   // side, no 3-hop store-forwarding through the recall executor). The agent receives the port
   // TYPE only (the agent↛memory cut).
   const memoryLifecycleStore = createSqliteMemoryLifecycleStore({ db, logger: memoryLogger });
 
-  // 6.5.2e. Recall-counter composition (Phase 86, OBS-07). Stand up the SINGLE
+  // 6.5.2e. Recall-counter composition. Stand up the SINGLE
   // in-process recall-counter registry and subscribe it to the `memory:*` bus
   // events HERE — the memory composition site already holds `container.eventBus`,
   // so this is the natural composition root for the counters (it lives alongside
@@ -581,10 +581,10 @@ export async function setupMemory(deps: {
   // handler reads the SAME live registry the agent's `memory:recalled` /
   // `memory:reranked` (and the consolidation job's `memory:consolidated`) events
   // feed — never a fresh registry per call. The gauge is daemon-lifetime (resets
-  // on restart, Assumption A2). Counts only ever cross the bus (AGENTS.md §2.7).
+  // on restart). Counts only ever cross the bus (AGENTS.md §2.7).
   const recallCounters = wireRecallCounters(container.eventBus);
 
-  // 6.5.2f. Recall-utility write-back subscriber (Phase 93, FEED-01 → FEED-02).
+  // 6.5.2f. Recall-utility write-back subscriber.
   // Subscribe `memory:recall_used` (emitted by @comis/agent's postExecution) →
   // usefulnessStore.recordUsage HERE — the composition root holds BOTH the bus
   // AND the @comis/memory adapter (the agent↛memory cut: the agent emits ids+counts,
@@ -592,7 +592,7 @@ export async function setupMemory(deps: {
   // `feedbackEnabled` gate scans the parsed per-agent config (mirroring the
   // someAgentExplicitOn rerank-gate scan above) so default-off (no agent has
   // feedback on) makes the subscriber a no-op write AND keeps the read-side off.
-  // (When Plan 93-04 adds the `feedback` schema field this access is live; until
+  // (Once the `feedback` schema field is added this access is live; until
   // then the forward-declared view yields false = off.) Fire-and-forget/non-fatal.
   wireMemoryUsefulness({
     eventBus: container.eventBus,

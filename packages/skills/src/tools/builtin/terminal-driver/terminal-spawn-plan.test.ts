@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * buildSpawnPlan — the 122-06 scope-jail COMPOSITION seam (macOS-testable, pure).
+ * buildSpawnPlan — the scope-jail COMPOSITION seam (macOS-testable, pure).
  *
  * These tests prove the PRODUCTION composition (not just `buildScopeArgs` in
  * isolation): `buildSpawnPlan` threads the resolved in-jail relay-as-init SCRIPT
  * path into the bwrap argv as a `--ro-bind` for `network: listed-hosts` ONLY, so
  * the in-jail `node <relayInit>` can READ its own init script. The file exists on
  * the HOST but is not bound by default — the VPS scope-matrix egress cell died with
- * `Cannot find module …/egress-relay-init.js` because that bind was missing (SEC-07).
+ * `Cannot find module …/egress-relay-init.js` because that bind was missing.
  *
  * NO bwrap spawn, NO real socket — a fixed in-memory `EgressControlPort` echoes a
  * socket path, so the full argv composition is asserted on macOS. The live relay
@@ -65,7 +65,7 @@ function hasBind(args: string[], flag: string, src: string, dest?: string): bool
 
 const RELAY_INIT_PATH = fileURLToPath(RELAY_INIT_SCRIPT_URL);
 
-describe("buildSpawnPlan — relay-init script bind (SEC-07, the VPS Cannot-find-module fix)", () => {
+describe("buildSpawnPlan — relay-init script bind (the VPS Cannot-find-module fix)", () => {
   it("listed-hosts ro-binds the relay-init script into the jail (so in-jail node can read it)", async () => {
     const plan = await buildSpawnPlan(
       makeInput({ scope: makeScope({ network: "listed-hosts", hosts: ["example.com"] }) }),

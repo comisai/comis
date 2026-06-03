@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the optional LabelSpec.transform hook (Phase 78 WS-C / LBL-02 /
- * SPEC-§6.3). The hook is an additive override that runs inside
- * applyTemplate AFTER the redacted-substitution pipeline and BEFORE the length
+ * Tests for the optional LabelSpec.transform hook. The hook is an additive
+ * override that runs inside applyTemplate AFTER the redacted-substitution
+ * pipeline and BEFORE the length
  * cap — its non-empty return wins, an empty return falls through to the
  * substituted label. The transform is also defended in depth by a post-hoc
  * redactValue call (see the Pitfall 4 regression-lock test in
@@ -31,7 +31,7 @@ beforeEach(() => {
   _clearActivityLabelSpecsForTest();
 });
 
-describe("LabelSpec transform hook (WS-C, Phase 78)", () => {
+describe("LabelSpec transform hook", () => {
   it("carries the registered transform through resolveLabelSpec onto the resolved LabelSpec", () => {
     registerActivityLabelSpec("test_tool", {
       semanticPhase: "tool",

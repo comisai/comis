@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Neighbor test for the in-jail relay-as-init runtime (`egress-relay-init.ts`,
- * SEC-07) — specifically the BEST-EFFORT privilege drop (Phase-122 gap 1).
+ * Neighbor test for the in-jail relay-as-init runtime (`egress-relay-init.ts`)
+ * — specifically the BEST-EFFORT privilege drop.
  *
  * The relay-init runs INSIDE the bwrap jail as userns-root (for `listed-hosts`
  * the jail does NOT pre-drop `--uid` — `lo`-up needs CAP_NET_ADMIN), then attempts
  * `setgid`/`setuid` to the net-new uid (65534). On the root-worker VPS the bwrap
  * user namespace maps a SINGLE uid (host-root → userns-root), so 65534 is NOT a
- * mapped target and `process.setuid(65534)` throws EINVAL/EPERM. The Phase-118 G-3
+ * mapped target and `process.setuid(65534)` throws EINVAL/EPERM. The egress transport
  * spike PROVED the egress transport working as userns-root with NO uid drop.
  *
  * The fix makes {@link dropPrivileges} best-effort: it attempts the drop, and on a
@@ -29,7 +29,7 @@ import { describe, it, expect } from "vitest";
 
 import { dropPrivileges, type RelayInitAudit } from "./egress-relay-init.js";
 
-describe("egress-relay-init dropPrivileges — best-effort under the unmapped userns-root (SEC-07, gap 1)", () => {
+describe("egress-relay-init dropPrivileges — best-effort under the unmapped userns-root", () => {
   it("does NOT throw when setuid throws the not-mapped EPERM/EINVAL (the VPS root-worker reality)", () => {
     const audit: RelayInitAudit[] = [];
     // Simulate the VPS root-worker: 65534 is not a mapped uid in the single-uid

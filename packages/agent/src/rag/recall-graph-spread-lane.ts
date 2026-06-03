@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * appendGraphSpreadLane — the 6th fused recall lane (KG-04), the file-for-file
+ * appendGraphSpreadLane — the 6th fused recall lane, the file-for-file
  * analog of appendCausalLane. PURE helper: it appends the graph-spread lane to
  * `lanes` IN PLACE and returns the lane's candidate count (0 when the lane has no
  * seeds / the store errored / the lane is empty).
@@ -14,10 +14,10 @@
  * the shared RRF rank scale so a structurally-linked memory can outrank a non-linked
  * one. LLM-free on the hot path.
  *
- * DEFAULT-OFF BYTE-IDENTITY (T-100-04-06): with `lanes.graphSpread.enabled:false`
+ * DEFAULT-OFF BYTE-IDENTITY: with `lanes.graphSpread.enabled:false`
  * (the default) the CALLER skips this helper entirely — spreadLane is NEVER called,
  * no lane is pushed, and the fused output is byte-identical to the pre-graphSpread
- * path (the ENT-04 no-op reused). Every other no-op path (no seeds / empty lane)
+ * path (the empty-lane no-op reused). Every other no-op path (no seeds / empty lane)
  * returns 0 identically. A lane err is NON-FATAL — recall never fails because the
  * graph-spread lane failed; we WARN and rank WITHOUT it. The CTE SQL lives in the
  * memory package behind the injected TripleStorePort port — this file imports the
@@ -66,7 +66,7 @@ export async function appendGraphSpreadLane(
   if (seedSubjects.length === 0) return 0;
   // Scope mirrors the entity/causal/temporal lanes / memoryPort.search: tenant from the
   // session key, agent from the recall arg (else the session key's agent, else "default").
-  // The CTE's recursive-arm WHERE enforces this in SQL — the load-bearing isolation (T-100-04-02).
+  // The CTE's recursive-arm WHERE enforces this in SQL — the load-bearing isolation.
   const scope = { tenantId: sessionKey.tenantId, agentId: agentId ?? sessionKey.agentId ?? "default" };
   const laneRes = await store.spreadLane(seedSubjects, scope, maxDepth, fanOut, maxResults);
   if (!laneRes.ok) {
@@ -81,7 +81,7 @@ export async function appendGraphSpreadLane(
     );
     return 0;
   }
-  // The ENT-04 no-op: an empty lane pushes nothing -> fuse() ranking unchanged.
+  // The empty-lane no-op: an empty lane pushes nothing -> fuse() ranking unchanged.
   if (laneRes.value.length === 0) return 0;
   lanes.push({ results: laneRes.value, weight });
   return laneRes.value.length;

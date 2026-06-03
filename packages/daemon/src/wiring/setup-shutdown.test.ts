@@ -520,7 +520,7 @@ describe("setupShutdown", () => {
     expect(dbCloseIdx).toBeGreaterThan(disposeIdx);
   });
 
-  // LO-03: the reranker dispose step must log durationMs like every sibling step.
+  // The reranker dispose step must log durationMs like every sibling step.
   it("disposes the reranker and logs durationMs for observability parity", async () => {
     const disposeReranker = vi.fn(async () => {});
     const deps = createMinimalDeps({ disposeReranker } as any);
@@ -762,8 +762,7 @@ describe("setup-shutdown honors §1.4 mode invariants", () => {
 });
 
 // ---------------------------------------------------------------------------
-// CR-03 regression: brokerStop must run AFTER shutdownBackgroundProcesses drains
-// (test08-fix)
+// Regression: brokerStop must run AFTER shutdownBackgroundProcesses drains.
 //
 // The bug: setup-shutdown.ts stopped the broker (brokerStop) before draining
 // background exec processes (shutdownBackgroundProcesses). Any live exec using
@@ -771,7 +770,7 @@ describe("setup-shutdown honors §1.4 mode invariants", () => {
 // while still running. Fix: reverse the order.
 // ---------------------------------------------------------------------------
 
-describe("CR-03 — brokerStop runs after shutdownBackgroundProcesses (shutdown ordering)", () => {
+describe("brokerStop runs after shutdownBackgroundProcesses (shutdown ordering)", () => {
   let processOnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {

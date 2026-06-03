@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WS-D Phase 78 composition acceptance test — the chat plan-stream pipe works
+ * Composition acceptance test — the chat plan-stream pipe works
  * end-to-end IN-MEMORY against the real production factories.
  *
  * Two complementary surfaces:
  *
- *   Case 1 — Pitfall 1 regression lock: the SAME ExecutionPlanHolder reference
+ *   Case 1 — shared-holder regression lock: the SAME ExecutionPlanHolder reference
  *   threads through createAcpWiring().holder → ChannelsDeps.executionPlanPort
  *   (NO parallel holder). The identity-equality assertion is the canonical
  *   guard: a future refactor that constructs a fresh
@@ -15,7 +15,7 @@
  *   Case 2 — End-to-end SEP plan flow: publish `sep:plan_extracted` on a real
  *   TypedEventBus, drive `tool:executed` to fire the coordinator's debounced
  *   apply, and assert the rendered frame carries `planSnapshot` whose entries
- *   were mapped through the PlanUpdate→PlanSnapshot adapter (Pitfall 3 shape
+ *   were mapped through the PlanUpdate→PlanSnapshot adapter (the shape
  *   transformation: {index, description, status} → {id, label, status}).
  *
  * Both cases compose the REAL production factories (createAcpWiring +
@@ -71,14 +71,14 @@ function makeCtx(overrides: Partial<TurnActivityContext> = {}): TurnActivityCont
  * The shape of the daemon-side ChannelsDeps slice this test asserts identity
  * on. The full ChannelsDeps interface lives in setup-channels-registry.ts; the
  * single load-bearing field is the `executionPlanPort` reference — that is
- * what the Pitfall 1 lock guards.
+ * what the shared-holder lock guards.
  */
 interface ChannelsDepsSlice {
   executionPlanPort: ExecutionPlanPort | undefined;
 }
 
-describe("WS-D Phase 78 chat plan-stream composition wiring", () => {
-  it("Pitfall 1 regression lock — channels and ACP share the same ExecutionPlanHolder reference", () => {
+describe("chat plan-stream composition wiring", () => {
+  it("shared-holder regression lock — channels and ACP share the same ExecutionPlanHolder reference", () => {
     // The daemon's setup-agents-runtime.ts captures `executionPlanHolder` from
     // createAcpWiring and threads the SAME object into BOTH
     // PiExecutorDeps.executionPlanHolder + ChannelsDeps.executionPlanPort.
@@ -99,7 +99,7 @@ describe("WS-D Phase 78 chat plan-stream composition wiring", () => {
     // The reverse check also holds — the relation is symmetric identity.
     expect(channelsDeps.executionPlanPort).toBe(acpWiring.holder);
     // The holder is also the same object exposed on AcpServerDeps — preserving
-    // the original T-74-33 invariant the createAcpWiring helper introduced.
+    // the original invariant the createAcpWiring helper introduced.
     expect(acpWiring.acpServerDeps.executionPlanPort).toBe(acpWiring.holder);
   });
 

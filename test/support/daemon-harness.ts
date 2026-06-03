@@ -59,7 +59,7 @@ export interface TestDaemonOptions {
   useFakeTimers?: boolean;
   /**
    * Override the per-channelType activity-renderer factory at the daemon
-   * composition root (WIRE-06 test seam). When provided, the harness forwards
+   * composition root (test seam). When provided, the harness forwards
    * this into the daemon override bag (under the activityRendererFactory key) so
    * the daemon's `DaemonOverrides` replaces the renderer produced by
    * `buildActivityRenderers`. Lets an integration test inject a spy/TestSink it
@@ -229,7 +229,7 @@ export async function startTestDaemon(options?: TestDaemonOptions): Promise<Test
     overrides["timers"] = fakeTimers;
   }
 
-  // WIRE-06 test-only renderer-injection seam. Mirrors the useFakeTimers →
+  // Test-only renderer-injection seam. Mirrors the useFakeTimers →
   // overrides["timers"] wiring: thread the typed option into the daemon's
   // DaemonOverrides.activityRendererFactory so the composition root injects the
   // spy renderer the activation test retains a reference to. Never set in

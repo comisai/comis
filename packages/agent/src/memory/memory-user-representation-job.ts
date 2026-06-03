@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Per-user representation offline builder job (Phase 107 — USER-02).
+ * Per-user representation offline builder job.
  *
  * The WRITE path of the per-user profile. Mirrors {@link runMemoryReasoning} 1:1
  * (the canonical offline-job template): a background cron seam OFF the recall hot
@@ -11,32 +11,32 @@
  *
  * Security posture (design §9 — the same anti-poisoning discipline as the
  * reasoning + triple-extraction jobs, with the USER hardening):
- * - Anti-poisoning (USER-02, T-107-03-01): `external`-trust source memories are
- *   filtered out BEFORE the build — UNCONDITIONALLY (there is no `reasonExternal`
- *   escape hatch). An `external` claim can NEVER enter the profile (layer 2 of the
- *   3-layer defense; the 107-02 DB CHECK + write-time reject are layers 1+3).
- * - The redaction firewall (T-107-03-02): every build() candidate runs through
+ * - Anti-poisoning: `external`-trust source memories are filtered out BEFORE the
+ *   build — UNCONDITIONALLY (there is no `reasonExternal` escape hatch). An
+ *   `external` claim can NEVER enter the profile (layer 2 of the 3-layer defense;
+ *   the DB CHECK + write-time reject are layers 1+3).
+ * - The redaction firewall: every build() candidate runs through
  *   `validateMemoryWrite` (the secret-egress guard FIRST) BEFORE upsert. A
  *   non-`clean` verdict (`warn` OR `critical`) is SKIPPED (`blocked++`) — NOT
  *   downgraded-and-stored. This is the USER delta from the KG path (Pitfall 2):
  *   the high-trust floor + the DB CHECK forbid `external`, so the reasoning job's
  *   `warn → downgrade-to-external → store` branch is INVALID here; a `warn` entry
  *   cannot be a valid high-trust row, so it is skipped exactly like `critical`.
- * - Trust is computed in CODE at the source ceiling (T-107-03-03), NEVER chosen by
- *   the LLM (the parser STRIPS any smuggled trust field). The writer can only
- *   lower trust toward the surviving sources' floor — it can never raise it.
- * - DEFAULT-OFF cost gate (T-107-03-04): with `config.enabled === false` the
- *   build() seam is NEVER called and nothing is written (no LLM spend, no write).
+ * - Trust is computed in CODE at the source ceiling, NEVER chosen by the LLM (the
+ *   parser STRIPS any smuggled trust field). The writer can only lower trust toward
+ *   the surviving sources' floor — it can never raise it.
+ * - DEFAULT-OFF cost gate: with `config.enabled === false` the build() seam is
+ *   NEVER called and nothing is written (no LLM spend, no write).
  * - The run is BOUNDED by `maxEntriesPerRun` (caps writes; overflow counted as
  *   `skippedOverCap`). It emits a MINIMAL, counts-only
  *   `memory:user_representation_built` event + counts-only logs — NEVER the
- *   profile `content` (AGENTS.md §2.7 / T-107-03-05).
- * - Idempotent (USER-02): a re-run over unchanged sources writes 0 new — the
- *   upsert is keyed on `(scope, entryType, content)`, so re-distilling the same
- *   sources replaces in place rather than appending.
+ *   profile `content` (AGENTS.md §2.7).
+ * - Idempotent: a re-run over unchanged sources writes 0 new — the upsert is keyed
+ *   on `(scope, entryType, content)`, so re-distilling the same sources replaces in
+ *   place rather than appending.
  *
- * The `build` LLM call is INJECTED (the offline seam) — the daemon (107-05) builds
- * it from a cheap model; it is NEVER invoked on the recall path. The agent consumes
+ * The `build` LLM call is INJECTED (the offline seam) — the daemon builds it from a
+ * cheap model; it is NEVER invoked on the recall path. The agent consumes
  * the store as a port TYPE from `@comis/core` (the agent↛memory build cut); the
  * daemon injects the concrete memory-package adapter. NO memory-package import
  * here, NO wall-clock global (the injected `clock`).
@@ -78,8 +78,8 @@ function minTrust(a: UserRepresentationTrust, b: UserRepresentationTrust): UserR
 /**
  * One high-trust source memory the builder distills the profile from. The builder
  * reads these via the INJECTED `readSources` seam (so the job stays free of any
- * memory-package import — the agent↛memory build cut); the daemon (107-05) wires a
- * scoped `memories` read. `trustLevel` is the FULL ladder (`system`/`learned`/
+ * memory-package import — the agent↛memory build cut); the daemon wires a scoped
+ * `memories` read. `trustLevel` is the FULL ladder (`system`/`learned`/
  * `external`) so the job can EXCLUDE `external` before the build (anti-poisoning).
  */
 export interface UserRepresentationSourceMemory {
@@ -98,17 +98,17 @@ export interface MemoryUserRepresentationConfig {
   /** Upper bound on entries WRITTEN per run (the DoS cost bound on the write side). */
   maxEntriesPerRun: number;
   /**
-   * MR-02 INPUT bound: the max number of source memories fed into ONE build()
-   * prompt. The sources arrive newest-first (the cron's `inspect` orders
-   * `created_at DESC`), so the cap keeps the NEWEST `maxSourceMemories` and drops
-   * the older tail — the build prompt can never grow unbounded with a chatty user's
-   * full history (an over-context prompt silently fails the build → no profile).
-   * Optional: absent ⇒ {@link DEFAULT_MAX_SOURCE_MEMORIES}.
+   * INPUT bound: the max number of source memories fed into ONE build() prompt. The
+   * sources arrive newest-first (the cron's `inspect` orders `created_at DESC`), so
+   * the cap keeps the NEWEST `maxSourceMemories` and drops the older tail — the
+   * build prompt can never grow unbounded with a chatty user's full history (an
+   * over-context prompt silently fails the build → no profile). Optional: absent ⇒
+   * {@link DEFAULT_MAX_SOURCE_MEMORIES}.
    */
   maxSourceMemories?: number;
   /**
-   * MR-02 INPUT bound: the max total characters of the concatenated `sourceText`
-   * fed into ONE build() prompt. Applied AFTER the count cap — sources are admitted
+   * INPUT bound: the max total characters of the concatenated `sourceText` fed into
+   * ONE build() prompt. Applied AFTER the count cap — sources are admitted
    * newest-first until the next one would exceed the budget. Optional: absent ⇒
    * {@link DEFAULT_MAX_SOURCE_CHARS}.
    */
@@ -116,8 +116,8 @@ export interface MemoryUserRepresentationConfig {
 }
 
 /**
- * MR-02 default input bounds. Conservative caps that keep ONE distillation prompt
- * well within a cheap model's context window while admitting a rich profile's worth
+ * Default input bounds. Conservative caps that keep ONE distillation prompt well
+ * within a cheap model's context window while admitting a rich profile's worth
  * of recent high-trust sources. An operator can widen/narrow them via config; they
  * mirror `maxEntriesPerRun`'s DoS-bound intent on the INPUT axis.
  */
@@ -165,11 +165,11 @@ export interface MemoryUserRepresentationStats {
   blocked: number;
   /** Candidates skipped because they exceeded maxEntriesPerRun. */
   skippedOverCap: number;
-  /** MR-02: surviving (post-external-exclude) high-trust sources for this user. */
+  /** Surviving (post-external-exclude) high-trust sources for this user. */
   sourcesConsidered: number;
-  /** MR-02: sources actually fed into the bounded build() prompt. */
+  /** Sources actually fed into the bounded build() prompt. */
   sourcesUsed: number;
-  /** MR-02: true when the input bound dropped one or more sources from the prompt. */
+  /** True when the input bound dropped one or more sources from the prompt. */
   sourcesTruncated: boolean;
 }
 
@@ -205,7 +205,7 @@ export async function runUserRepresentationBuild(
   let written = 0;
   let blocked = 0;
   let skippedOverCap = 0;
-  // MR-02 input-bound counters (counts-only; never carry source content).
+  // Input-bound counters (counts-only; never carry source content).
   let sourcesConsidered = 0;
   let sourcesUsed = 0;
   let sourcesTruncated = false;
@@ -235,7 +235,7 @@ export async function runUserRepresentationBuild(
     sourcesTruncated,
   });
 
-  // T-107-03-04: the DEFAULT-OFF cost gate. No build() call, no write, no spend.
+  // The DEFAULT-OFF cost gate. No build() call, no write, no spend.
   if (!config.enabled) {
     logger.debug(
       { agentId, step: "user-repr" as const },
@@ -252,10 +252,10 @@ export async function runUserRepresentationBuild(
   if (!sourcesResult.value.ok) return err(sourcesResult.value.error);
   const allSources = sourcesResult.value.value;
 
-  // 2. ANTI-POISONING EXCLUDE (USER-02, T-107-03-01): drop `external`-trust sources
-  //    UNCONDITIONALLY, BEFORE the build — there is no `reasonExternal` escape hatch
-  //    for USER. An `external` claim can NEVER enter the profile. The build seam
-  //    never sees the excluded content.
+  // 2. ANTI-POISONING EXCLUDE: drop `external`-trust sources UNCONDITIONALLY, BEFORE
+  //    the build — there is no `reasonExternal` escape hatch for USER. An `external`
+  //    claim can NEVER enter the profile. The build seam never sees the excluded
+  //    content.
   const sources = allSources.filter((s) => s.trustLevel !== "external");
   sourcesConsidered = sources.length;
 
@@ -264,7 +264,7 @@ export async function runUserRepresentationBuild(
     return ok(stats());
   }
 
-  // 3. MR-02 INPUT BOUND: cap the source set fed into ONE build() prompt so it can
+  // 3. INPUT BOUND: cap the source set fed into ONE build() prompt so it can
   //    never grow unbounded (an over-context prompt silently fails the build → no
   //    profile; mirrors maxEntriesPerRun's DoS intent, on the INPUT axis). Sources are
   //    newest-first (the cron orders `created_at DESC`), so we keep the NEWEST and drop
@@ -304,9 +304,9 @@ export async function runUserRepresentationBuild(
     );
   }
 
-  // 4. The source-trust ceiling, computed in CODE over the USED sources
-  //    (T-107-03-03) — the candidates are distilled from exactly these, so the
-  //    ceiling must reflect them. All are high-trust (external already excluded), so
+  // 4. The source-trust ceiling, computed in CODE over the USED sources — the
+  //    candidates are distilled from exactly these, so the ceiling must reflect
+  //    them. All are high-trust (external already excluded), so
   //    the ceiling is the floor of the used sources — a system+learned mix yields
   //    `learned`; the writer can never raise trust above its sources, and the LLM
   //    has no say (the parser stripped any trust field). `usedSources` is non-empty
@@ -340,8 +340,8 @@ export async function runUserRepresentationBuild(
 
   const now = clock.now();
 
-  // 5. IDEMPOTENCY (USER-02, analog #10b): a re-run over unchanged sources must
-  //    write 0 new. Read the current profile once and dedup candidates against the
+  // 5. IDEMPOTENCY: a re-run over unchanged sources must write 0 new. Read the
+  //    current profile once and dedup candidates against the
   //    EXISTING `(entryType, content)` set — re-distilling the same sources yields
   //    the same candidates, which are already present, so they are skipped. The
   //    dedup keys on the CONTENT set (not a global "ran once" flag), so a NEW source
@@ -368,8 +368,8 @@ export async function runUserRepresentationBuild(
   }
 
   for (const candidate of candidates) {
-    // The bounded run (T-107-03-04): count the overflow for observability, then stop
-    // writing once the cap is reached (the DoS cost bound, mirrors reasoning-job.ts:391).
+    // The bounded run: count the overflow for observability, then stop writing once
+    // the cap is reached (the DoS cost bound, mirrors reasoning-job.ts:391).
     if (written >= config.maxEntriesPerRun) {
       skippedOverCap++;
       continue;
@@ -382,8 +382,8 @@ export async function runUserRepresentationBuild(
       continue;
     }
 
-    // T-107-03-02 / Pitfall 2: the redaction firewall on the LLM-produced content
-    // (the secret-egress guard runs FIRST). For USER there is no `external` tier to
+    // Pitfall 2: the redaction firewall on the LLM-produced content (the
+    // secret-egress guard runs FIRST). For USER there is no `external` tier to
     // down-store a `warn` into — the high-trust floor + the DB CHECK forbid it — so
     // a non-`clean` verdict (`warn` OR `critical`) is SKIPPED, NOT downgraded-and-
     // stored. A `warn` entry produces 0 rows, exactly like `critical`.
@@ -405,12 +405,12 @@ export async function runUserRepresentationBuild(
       continue;
     }
 
-    // Trust is CODE-computed at the source ceiling (T-107-03-03) — NEVER from the
-    // LLM, NEVER `external`. `sourceMemoryId` is omitted: a profile entry is
-    // distilled from the FUSED source set, not a single message (provenance to a
-    // single id would be misleading; the table column is optional). CONSEQUENCE
-    // (LR-02): because `source_memory_id` is NULL here, the table's ON DELETE
-    // CASCADE does NOT retire these rows when their source memories are deleted —
+    // Trust is CODE-computed at the source ceiling — NEVER from the LLM, NEVER
+    // `external`. `sourceMemoryId` is omitted: a profile entry is distilled from the
+    // FUSED source set, not a single message (provenance to a single id would be
+    // misleading; the table column is optional). CONSEQUENCE: because
+    // `source_memory_id` is NULL here, the table's ON DELETE CASCADE does NOT retire
+    // these rows when their source memories are deleted —
     // an offline-built entry persists until the next run upsert-replaces it (keyed
     // on (scope, entryType, content)). There is no orphan-sweep; do not rely on
     // CASCADE to garbage-collect builder-produced rows (the adapter docstring
@@ -452,6 +452,6 @@ export async function runUserRepresentationBuild(
   return ok(stats());
 }
 
-// Re-exported so the daemon's seam (107-05) can import the parser alongside the
-// job from a single agent-internal home (mirrors the reasoning-job/seam split).
+// Re-exported so the daemon's seam can import the parser alongside the job from a
+// single agent-internal home (mirrors the reasoning-job/seam split).
 export { parseUserRepresentationOutput };

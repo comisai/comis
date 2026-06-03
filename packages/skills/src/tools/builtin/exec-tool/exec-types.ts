@@ -137,7 +137,7 @@ export interface ExecToolDeps {
   readonly sandboxConfig?: ExecSandboxConfig;
   readonly eventBus?: TypedEventBus;
   readonly getToolResultsDir?: () => string | undefined;
-  /** REQUIRED for v1.1 capability layer. */
+  /** REQUIRED for the capability layer. */
   readonly toolCapabilityPort: ToolCapabilityPort;
   /** Optional. Required only for soft-stop override path. */
   readonly approvalGate?: ApprovalGate;
@@ -145,7 +145,7 @@ export interface ExecToolDeps {
    * Broker proxy env injected ONLY for the driven-CLI spawn — never for general exec.
    * When present, these env vars are merged LAST in buildExecEnv so they win over
    * wrapEnv output. Only the daemon wiring for the driven-CLI call site passes this
-   * field; the general exec call site never passes it (EGRESS-03 security invariant).
+   * field; the general exec call site never passes it (egress security invariant).
    */
   readonly brokerSpawnEnv?: {
     readonly HTTPS_PROXY: string;

@@ -5,19 +5,19 @@
  * Pure-JS / fully-injected → runs green on macOS without forking a process.
  * The worker is a FACTORY (`createTerminalWorker(deps)`) so node-pty, the
  * logger, the clock, the env snapshot, and the durable-fs ops are all
- * substitutable. Proves the P0 worker contract:
- *   - TR-08: an injected `loadPty` that throws selects the PIPE backend and
+ * substitutable. Proves the worker contract:
+ *   - an injected `loadPty` that throws selects the PIPE backend and
  *     reports `backend:"degraded"` — never an unhandled spawn crash;
- *   - TR-08 happy: an injected `loadPty` returning a stub pty uses the PTY
+ *   - happy path: an injected `loadPty` returning a stub pty uses the PTY
  *     backend and reports `backend:"pty"`;
- *   - OPS-07 (worker half): each request frame's `traceId` is re-established as
+ *   - worker half of observability: each request frame's `traceId` is re-established as
  *     the ALS context (`runWithContext`) during handling;
- *   - H-1: a `read` frame returns `{screen,cursor,cols,rows,alt,alive}` from the
- *     per-session accumulated stdout ring (the shape 119-04's round-trip reads);
- *   - M-1: the worker spawns from the frame's `{bin,argv}` verbatim — no
+ *   - a `read` frame returns `{screen,cursor,cols,rows,alt,alive}` from the
+ *     per-session accumulated stdout ring (the shape the round-trip reads);
+ *   - the worker spawns from the frame's `{bin,argv}` verbatim — no
  *     redundant realpath, argsPrefix preserved (buildDirectSpawn is the SOLE
- *     canonicalization site, in 119-02);
- *   - G-4: a durable write swallows ONLY the disabled-fsync refusal and still
+ *     canonicalization site);
+ *   - a durable write swallows ONLY the disabled-fsync refusal and still
  *     completes the write+rename.
  *
  * @module
@@ -39,8 +39,8 @@ const TRACE_ID = "11111111-2222-4333-8444-555555555555";
 /**
  * Flush the per-session @xterm emulator's pending write-parse. `@xterm/headless`
  * parses its write buffer on a MACROTASK (a timer), so a single microtask yield
- * is NOT enough for the grid to reflect just-emitted bytes. Plan 01's `appendRing`
- * fires `emu.write(chunk)` un-awaited (Plan 02 makes `read` itself await the
+ * is NOT enough for the grid to reflect just-emitted bytes. `appendRing`
+ * fires `emu.write(chunk)` un-awaited (`read` itself awaits the
  * flush); until then a test awaits a real macrotask before reading the grid.
  */
 function flushEmulator(): Promise<void> {
@@ -147,7 +147,7 @@ function makeFakePipeBackend(): {
 }
 
 /**
- * A RECORDING stub PTY backend (Wave-2 interaction tests): every `write()` is
+ * A RECORDING stub PTY backend (interaction tests): every `write()` is
  * captured into `writes: string[]`, every `resize()` into `resizes`, so the
  * send_text/send_key/resize handlers can be asserted at the byte level. The test
  * drives stdout via `emit(chunk)` (into the worker's ring).
@@ -234,7 +234,7 @@ function makeRecordingPipeBackend(): {
 
 /**
  * A deterministic fake scheduler for the injected `setTimer`/`clearTimer` ports —
- * the same shape Plan 02's settle suite drives. `advance(ms)` fires every timer
+ * the same shape the settle suite drives. `advance(ms)` fires every timer
  * whose cumulative delay is due, so the in-worker settle is exercised WITHOUT any
  * real wall-clock wait. `liveTimerCount()` proves no leak.
  */
@@ -288,8 +288,8 @@ function baseDeps(over: Partial<TerminalWorkerDeps> = {}): TerminalWorkerDeps {
     logger: makeLogger(),
     nowMs: () => 1_700_000_000_000,
     envSnapshot: () => ({ PATH: "/usr/bin" }) as NodeJS.ProcessEnv,
-    // 122-06: the resolved bwrap path the worker wraps the child in. A real path
-    // here keeps every behavioural test on the spawn-the-jail path; the SEC-16
+    // The resolved bwrap path the worker wraps the child in. A real path
+    // here keeps every behavioural test on the spawn-the-jail path; the
     // fail-closed suite overrides it to `undefined` to prove no-provider rejects.
     // buildScopeArgs / scrubChildEnv / buildEgressRelayLaunch default to the real
     // module exports — tests inject them only to assert the composition.
@@ -312,7 +312,7 @@ function createFrame(
   };
 }
 
-describe("createTerminalWorker — TR-08 backend selection", () => {
+describe("createTerminalWorker — backend selection", () => {
   it("selects the pipe backend and reports degraded when loadPty throws (no crash)", async () => {
     const pipe = makeFakePipeBackend();
     const logger = makeLogger();
@@ -354,7 +354,7 @@ describe("createTerminalWorker — TR-08 backend selection", () => {
       createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }),
     );
     pipe.emit("pipe-out\n");
-    // P2/121: read serializes the @xterm grid (not the raw ring), so the
+    // Read serializes the @xterm grid (not the raw ring), so the
     // rendered viewport CONTAINS the emitted line after the parse flush.
     await flushEmulator();
 
@@ -396,7 +396,7 @@ describe("createTerminalWorker — TR-08 backend selection", () => {
   });
 });
 
-describe("createTerminalWorker — OPS-07 ALS traceId re-establishment", () => {
+describe("createTerminalWorker — ALS traceId re-establishment", () => {
   it("dispatches each frame inside runWithContext so the frame traceId is the live ALS context", async () => {
     let seenTraceId: string | undefined;
     const fake = makeFakeBackend();
@@ -420,7 +420,7 @@ describe("createTerminalWorker — OPS-07 ALS traceId re-establishment", () => {
   });
 });
 
-describe("createTerminalWorker — LR-01 inbound context is validated, not trusted", () => {
+describe("createTerminalWorker — inbound context is validated, not trusted", () => {
   it("regenerates a fresh UUID traceId when the wire traceId is NOT a valid UUID (log-correlation poisoning defense)", async () => {
     // An arbitrary attacker-chosen / forged traceId off the wire must NOT be
     // stamped onto worker logs verbatim — runWithContext does not validate against
@@ -499,7 +499,7 @@ describe("createTerminalWorker — LR-01 inbound context is validated, not trust
   });
 });
 
-describe("createTerminalWorker — H-1 read frame handler", () => {
+describe("createTerminalWorker — read frame handler", () => {
   it("returns {screen,cursor,cols,rows,alt,alive} from the per-session @xterm grid", async () => {
     const fake = makeFakeBackend();
     const ptyLib = { spawn: fake.spawn };
@@ -529,10 +529,10 @@ describe("createTerminalWorker — H-1 read frame handler", () => {
       alt: boolean;
       alive: boolean;
     };
-    // P2/121: the screen is the rendered grid (CONTAINS the line), the cursor is
+    // The screen is the rendered grid (CONTAINS the line), the cursor is
     // REAL — after "hello\n" the bare LF moves DOWN a row without a carriage
     // return, so the cursor is {x:5, y:1} (column 5 = after "hello", row 1), NOT
-    // the P1 {0,0} placeholder.
+    // the {0,0} placeholder.
     expect(view.screen).toContain("hello");
     expect(view.cursor).toEqual({ x: 5, y: 1 });
     expect(view.cols).toBe(100);
@@ -542,10 +542,10 @@ describe("createTerminalWorker — H-1 read frame handler", () => {
   });
 });
 
-describe("createTerminalWorker — M-1 spawn the child verbatim AFTER the bwrap `--` (122-06)", () => {
+describe("createTerminalWorker — spawn the child verbatim AFTER the bwrap `--`", () => {
   it("spawns bwrap as arg0 with the frame's bin + full argv appearing AFTER `--` (no realpath)", async () => {
-    // 122-06: the child is wrapped in bwrap (the worker holds the PTY master,
-    // bwrap+child run inside). M-1 still holds: the frame's {bin,argv} are passed
+    // The child is wrapped in bwrap (the worker holds the PTY master,
+    // bwrap+child run inside). The frame's {bin,argv} are passed
     // VERBATIM — but now AFTER the bwrap composer's `--` terminator, never
     // re-canonicalized (buildDirectSpawn is the SOLE canonicalization site).
     const fake = makeFakeBackend();
@@ -585,9 +585,9 @@ describe("createTerminalWorker — M-1 spawn the child verbatim AFTER the bwrap 
   });
 });
 
-describe("createTerminalWorker — 122-06 the scope materializes into the bwrap argv", () => {
+describe("createTerminalWorker — the scope materializes into the bwrap argv", () => {
   it("wraps the child in bwrap with the scope-materialized args (workspace bind, unshare-net, uid)", async () => {
-    // 122-06 CONSUMES the scope 122-01 threaded onto the frame: the worker calls
+    // The worker CONSUMES the scope threaded onto the frame: it calls
     // buildScopeArgs and spawns `bwrap [scope args] -- bin argv`. Assert the
     // composed argv carries the workspace bind, the deny-all netns, the net-new
     // uid, and the child AFTER `--`.
@@ -631,7 +631,7 @@ describe("createTerminalWorker — 122-06 the scope materializes into the bwrap 
     expect(argv.slice(sep + 1)).toEqual(["/canonical/bash", "extra"]);
   });
 
-  it("includes the always-on ~/.comis carve-out (--tmpfs <dataDir>) before the child (SEC-13)", async () => {
+  it("includes the always-on ~/.comis carve-out (--tmpfs <dataDir>) before the child", async () => {
     // The carve-out rides through the composer — proves the worker passes the real
     // dataDir (os.homedir()/.comis). The tmpfs shadows ~/.comis for every child.
     const fake = makeFakeBackend();
@@ -662,7 +662,7 @@ describe("createTerminalWorker — 122-06 the scope materializes into the bwrap 
 
   it("scrubs the child env: NODE_OPTIONS / CLAUDECODE / CLAUDE_CODE_* are stripped, PATH survives", async () => {
     // bwrap forwards the spawner env to the child (no --clearenv), so the env handed
-    // to pty.spawn IS the child env — it must be scrubbed (SEC-07).
+    // to pty.spawn IS the child env — it must be scrubbed.
     const fake = makeFakeBackend();
     let recordedEnv: NodeJS.ProcessEnv | undefined;
     const recordingSpawn = vi.fn(
@@ -753,10 +753,10 @@ describe("createTerminalWorker — 122-06 the scope materializes into the bwrap 
 });
 
 // ===========================================================================
-// 122-06 Task 2: listed-hosts egress materialization + dispose-on-teardown +
-// the worker-path SEC-16 fail-closed. macOS asserts the WIRING (materialize
+// listed-hosts egress materialization + dispose-on-teardown +
+// the worker-path fail-closed. macOS asserts the WIRING (materialize
 // called, socket bound via the composer, HTTPS_PROXY set, dispose called) — the
-// LIVE relay-as-init bridge is the VPS suite (122-07).
+// LIVE relay-as-init bridge is the VPS suite.
 // ===========================================================================
 
 /**
@@ -773,7 +773,7 @@ function makeFakeEgressControl(socketPath = "/tmp/e.sock") {
   return { egressControl: { materialize }, materialize, dispose, socketPath };
 }
 
-describe("createTerminalWorker — 122-06 listed-hosts egress materialization (SEC-07)", () => {
+describe("createTerminalWorker — listed-hosts egress materialization", () => {
   it("materializes the relay, binds the socket via the composer, and sets HTTPS_PROXY", async () => {
     const fake = makeFakeBackend();
     const egress = makeFakeEgressControl("/tmp/e.sock");
@@ -964,7 +964,7 @@ describe("createTerminalWorker — 122-06 listed-hosts egress materialization (S
   });
 });
 
-describe("createTerminalWorker — 122-06 SEC-16 worker-path fail-closed", () => {
+describe("createTerminalWorker — worker-path fail-closed", () => {
   it("does NOT spawn (ok:false) when bwrapPath is undefined — never an unjailed child", async () => {
     const fake = makeFakeBackend();
     const pipe = makeFakePipeBackend();
@@ -989,7 +989,7 @@ describe("createTerminalWorker — 122-06 SEC-16 worker-path fail-closed", () =>
       }),
     );
 
-    // The create reply is a failure — the registry flips the session lost (HR-03).
+    // The create reply is a failure — the registry flips the session lost.
     expect(reply.ok).toBe(false);
     // NEITHER backend spawned — no unjailed fallback.
     expect(fake.spawn).not.toHaveBeenCalled();
@@ -1030,7 +1030,7 @@ describe("createTerminalWorker — 122-06 SEC-16 worker-path fail-closed", () =>
   });
 });
 
-describe("createTerminalWorker — G-4 durable write under disabled fsync", () => {
+describe("createTerminalWorker — durable write under disabled fsync", () => {
   it("swallows ONLY the disabled-fsync refusal and still completes write+rename", () => {
     const written = new Map<string, string>();
     const renamed: Array<[string, string]> = [];
@@ -1086,9 +1086,9 @@ describe("createTerminalWorker — G-4 durable write under disabled fsync", () =
 });
 
 // ===========================================================================
-// Wave-2 (120-04): the interaction frame handlers.
+// The interaction frame handlers.
 //
-// These compose Plan-01's `encodeKeyChord` (the named-key grammar) and Plan-02's
+// These compose `encodeKeyChord` (the named-key grammar) and
 // `runSettle` (the bounded injected-clock settle). The recording backend captures
 // every byte written so the EXACT bytes + the submit ORDERING (text -> settle ->
 // \r, never coalesced) are asserted; the fake scheduler drives the in-worker
@@ -1105,7 +1105,7 @@ function sendKeyFrame(keys: string[]): TerminalRequestFrame {
   };
 }
 
-describe("createTerminalWorker — TR-04 send_key (named-key grammar -> exact bytes)", () => {
+describe("createTerminalWorker — send_key (named-key grammar -> exact bytes)", () => {
   it("writes the EXACT control byte for C-c (\\x03) and replies { screen, cursor }", async () => {
     const rec = makeRecordingBackend();
     const worker = createTerminalWorker(
@@ -1168,7 +1168,7 @@ describe("createTerminalWorker — TR-04 send_key (named-key grammar -> exact by
 
     expect(reply.ok).toBe(false);
     expect(reply.error ?? "").toMatch(/Frobnicate|invalid|unknown/i);
-    // T-120-01b: the encodeKeyChord throw is caught and surfaced — NOTHING written.
+    // The encodeKeyChord throw is caught and surfaced — NOTHING written.
     expect(rec.writes.length).toBe(0);
   });
 
@@ -1243,7 +1243,7 @@ function resizeFrame(cols: number, rows: number): TerminalRequestFrame {
 }
 
 /**
- * The deterministic settle-drive pattern (Plan-02 precedent): the in-worker
+ * The deterministic settle-drive pattern: the in-worker
  * settle resolves only when the fake clock fires its idle timer, but the handler
  * AWAITS that settle — so we cannot `await worker.handle(...)` then advance (the
  * promise never resolves; deadlock). Instead: kick the handle (capturing the
@@ -1263,7 +1263,7 @@ async function driveSettle<T>(
   return promise;
 }
 
-describe("createTerminalWorker — TR-04 send_text (submit ordering + bracketed paste)", () => {
+describe("createTerminalWorker — send_text (submit ordering + bracketed paste)", () => {
   it("send_text WITHOUT submit writes the text once, settles, never writes \\r", async () => {
     const sched = makeFakeScheduler();
     const rec = makeRecordingBackend();
@@ -1303,7 +1303,7 @@ describe("createTerminalWorker — TR-04 send_text (submit ordering + bracketed 
 
     expect(reply.ok).toBe(true);
     expect(rec.writes).toEqual(["ls", "\r"]); // text, settle, THEN Enter — two writes
-    // TR-04: the text and Enter are NEVER coalesced into one write.
+    // The text and Enter are NEVER coalesced into one write.
     expect(rec.writes).not.toContain("ls\r");
   });
 
@@ -1352,7 +1352,7 @@ describe("createTerminalWorker — TR-04 send_text (submit ordering + bracketed 
   });
 });
 
-describe("createTerminalWorker — TR-03 resize (pty winsize + ring geometry)", () => {
+describe("createTerminalWorker — resize (pty winsize + ring geometry)", () => {
   it("calls pty.resize(cols,rows), updates state geometry, replies { ok:true }", async () => {
     const rec = makeRecordingBackend();
     const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }));
@@ -1364,7 +1364,7 @@ describe("createTerminalWorker — TR-03 resize (pty winsize + ring geometry)", 
     expect((reply.result as { ok: boolean }).ok).toBe(true);
     // The pty backend's winsize was updated.
     expect(rec.resizes).toEqual([[100, 30]]);
-    // The ring geometry (P1 records it; P2 does the real grid resize) — a
+    // The ring geometry is recorded and the grid is resized — a
     // subsequent read reflects the new cols/rows.
     const read = await worker.handle({
       sessionId: "s1",
@@ -1420,7 +1420,7 @@ function waitFrame(params: {
   };
 }
 
-describe("createTerminalWorker — TR-05 wait (settle -> {matched,isComplete,reason,screen,cursor})", () => {
+describe("createTerminalWorker — wait (settle -> {matched,isComplete,reason,screen,cursor})", () => {
   it("wait IDLE: a quiet ring resolves { matched:true, isComplete:true, reason:'idle' } with the ring screen", async () => {
     const sched = makeFakeScheduler();
     const rec = makeRecordingBackend();
@@ -1587,7 +1587,7 @@ describe("createTerminalWorker — TR-05 wait (settle -> {matched,isComplete,rea
 });
 
 // ===========================================================================
-// Wave (121-01): the worker rewired to the per-session @xterm emulator.
+// The worker rewired to the per-session @xterm emulator.
 //
 // `read` now serializes the REAL grid (real cursor, real alt) from the
 // per-session emulator instead of the raw stdout ring. These tests drive the
@@ -1676,7 +1676,7 @@ function makeRecordingEmulator(): {
   };
 }
 
-describe("createTerminalWorker — 121-01 read serializes the REAL @xterm grid (TR-02)", () => {
+describe("createTerminalWorker — read serializes the REAL @xterm grid", () => {
   it("read returns the real grid + REAL cursor (not {0,0}) — the ring-snapshot replacement", async () => {
     // Use the REAL createSessionEmulator (default dep) so the grid/cursor/alt are
     // produced by genuine @xterm parsing.
@@ -1760,8 +1760,8 @@ describe("createTerminalWorker — 121-01 read serializes the REAL @xterm grid (
     expect(recEmu.lastConstruct()?.scrollback).toBeGreaterThan(0);
   });
 
-  it("constructs the emulator with the scrollback carried on the create frame (121-04)", async () => {
-    // 121-04: the create frame now carries the per-session scrollback ceiling
+  it("constructs the emulator with the scrollback carried on the create frame", async () => {
+    // The create frame now carries the per-session scrollback ceiling
     // (the registry sources it from DEFAULT_SCROLLBACK / config). The worker must
     // read it from the frame — NOT hard-code SCROLLBACK_DEFAULT. Pre-patch the
     // construction ignored the frame and always used 1000, so this fails.
@@ -1775,8 +1775,8 @@ describe("createTerminalWorker — 121-01 read serializes the REAL @xterm grid (
     );
     expect(recEmu.lastConstruct()?.scrollback).toBe(250);
 
-    // Every data chunk is fed into the emulator's write (the grid ingest). Plan
-    // 02 chains the writes through state.writeFlush (a serialized in-order queue
+    // Every data chunk is fed into the emulator's write (the grid ingest). The
+    // worker chains the writes through state.writeFlush (a serialized in-order queue
     // resolving on the parse callback), so drain it via a read (which awaits the
     // flush) before asserting the in-order feed.
     rec.emit("first");
@@ -1785,7 +1785,7 @@ describe("createTerminalWorker — 121-01 read serializes the REAL @xterm grid (
     expect(recEmu.writes).toEqual(["first", "second"]);
   });
 
-  it("degraded backend (loadPty throws) STILL feeds the emulator + read uses it (no TR-08 regression)", async () => {
+  it("degraded backend (loadPty throws) STILL feeds the emulator + read uses it (no regression)", async () => {
     // The emulator renders whatever bytes arrive on BOTH backends. On the
     // degraded pipe backend the emulator is still constructed + fed; read uses it.
     const pipe = makeFakePipeBackend();
@@ -1805,14 +1805,14 @@ describe("createTerminalWorker — 121-01 read serializes the REAL @xterm grid (
     const view = reply.result as { screen: string; alive: boolean };
 
     // The accumulated output is perceivable (the emulator rendered it); the
-    // degraded backend keeps working (TR-08 not regressed).
+    // degraded backend keeps working (not regressed).
     expect(view.screen).toContain("degraded-line");
     expect(view.alive).toBe(true);
   });
 });
 
 // ===========================================================================
-// Plan 121-02: the worker read threads format/scrollback into emu.snapshot AND
+// The worker read threads format/scrollback into emu.snapshot AND
 // awaits the pending write-parse before serializing (the §2.4 stability flush).
 // ===========================================================================
 
@@ -1826,7 +1826,7 @@ function readFrameWith(params: { format?: string; scrollback?: number }): Termin
   };
 }
 
-describe("createTerminalWorker — 121-02 read threads format/scrollback + awaits the write-flush", () => {
+describe("createTerminalWorker — read threads format/scrollback + awaits the write-flush", () => {
   it("read format:'ansi' returns SGR; format:'text' (default) strips it", async () => {
     const rec = makeRecordingBackend();
     const worker = createTerminalWorker(baseDeps({ loadPty: () => ({ spawn: rec.spawn }) }));
@@ -1885,11 +1885,11 @@ describe("createTerminalWorker — 121-02 read threads format/scrollback + await
 });
 
 // ===========================================================================
-// Plan 121-03: the per-session lastSnapshot screen-diff on read + the settle
+// The per-session lastSnapshot screen-diff on read + the settle
 // gated on !hasContentBelowFold() (the "more content below ⇒ NOT settled" rule).
 // ===========================================================================
 
-describe("createTerminalWorker — 121-03 read returns a screen-diff + keeps lastSnapshot (TR-14)", () => {
+describe("createTerminalWorker — read returns a screen-diff + keeps lastSnapshot", () => {
   it("first read changed:true; a change -> changed:true; no change -> changed:false", async () => {
     const rec = makeRecordingBackend();
     const recEmu = makeRecordingEmulator();
@@ -1916,7 +1916,7 @@ describe("createTerminalWorker — 121-03 read returns a screen-diff + keeps las
   });
 });
 
-describe("createTerminalWorker — 121-03 settle gated on !hasContentBelowFold (TR-14, load-bearing)", () => {
+describe("createTerminalWorker — settle gated on !hasContentBelowFold (load-bearing)", () => {
   it("a wait over a below-fold frame does NOT resolve idle; it settles once below-fold flips false", async () => {
     const sched = makeFakeScheduler();
     const rec = makeRecordingBackend();
@@ -1969,7 +1969,7 @@ describe("createTerminalWorker — 121-03 settle gated on !hasContentBelowFold (
     expect(r.isComplete).toBe(true);
   });
 
-  it("no regression: below-fold false settles idle as the 120-02 settle does", async () => {
+  it("no regression: below-fold false settles idle as the baseline settle does", async () => {
     const sched = makeFakeScheduler();
     const rec = makeRecordingBackend();
     const recEmu = makeRecordingEmulator();

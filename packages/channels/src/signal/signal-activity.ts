@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Signal DeleteAndRepost activity renderer (CHAN-06; §7.2 / §18.3 row
+ * Signal DeleteAndRepost activity renderer (§7.2 / §18.3 row
  * "DeleteAndRepost"). Signal is the ONLY one of the 5 non-EditPlace channels
  * with a real `deleteMessage`, so this is the canonical DeleteAndRepost wiring
- * the strategy was designed for. Three parts, copying the Phase-71
+ * the strategy was designed for. Three parts, copying the established
  * `make<Ch>RenderActions` / `classify<Ch>Error` / `create<Ch>ActivityRenderer`
  * shape (whatsapp-activity.ts is the closest structural analog — `buttons:"none"`,
  * no rich effect, thin wiring):
@@ -14,7 +14,7 @@
  *      `Error`. There is no reliable structural signal to disambiguate a
  *      retryable/permission case, so the classifier DEFAULTS to
  *      `{kind:"internal", cause:e}` (KISS — Pitfall 4; no invented rich
- *      classifier). SEC-05/§19.3: the raw RPC error `.message` is read for NOTHING
+ *      classifier). Per §19.3: the raw RPC error `.message` is read for NOTHING
  *      user-facing — it selects the variant only and is NEVER rendered or logged
  *      as activity text. The S4 fixture proves the failure text is
  *      `❌ {errorKind}` (from `failureLabel`), not the RPC body.
@@ -29,7 +29,7 @@
  *      `.error` through `classifySignalError`. All paths return `Result`; nothing
  *      throws across the boundary.
  *
- *   3. `createSignalActivityRenderer` — wires the Phase-70
+ *   3. `createSignalActivityRenderer` — wires the
  *      {@link createDeleteAndRepostRenderer} (the delete-prev + post-new state
  *      machine; success deletes the last activity after `deliveredAtMs`; failure
  *      deletes the running activity then posts a KEPT ❌). It does NOT
@@ -37,7 +37,7 @@
  *
  * Unlike the Telegram/Discord/Slack EditPlace renderers there is NO local 429
  * retry buffer: signal-cli surfaces no rate-limit/retry-after for send/delete,
- * and the DeleteAndRepost timer is the Phase-70 body's own unref'd handle — this
+ * and the DeleteAndRepost timer is the strategy body's own unref'd handle — this
  * file adds no raw timer. The channels package depends on core + shared only (no
  * observability substrate), so no diagnostics primitive is reachable here.
  */
@@ -60,7 +60,7 @@ import { buildApprovalPrompt } from "../shared/strategies/approval-render.js";
  * `Error` with no structured numeric code to read, so this DEFAULTS to `internal`
  * carrying the cause. The error is consulted for NOTHING that reaches the user —
  * it selects the variant only and is never rendered or logged as activity text
- * (SEC-05/§19.3, T-72-01-01).
+ * (§19.3).
  */
 export function classifySignalError(e: unknown): ActivityRenderError {
   // signal-cli offers no structured code for these ops; there is no reliable
@@ -104,12 +104,11 @@ export function makeSignalRenderActions(
 }
 
 /**
- * Create the Signal DeleteAndRepost activity renderer — wires the Phase-70
+ * Create the Signal DeleteAndRepost activity renderer — wires the
  * {@link createDeleteAndRepostRenderer} with the per-channel render-actions
  * adapter. The daemon composition root constructs this with its runtime
- * `TimerPort` / `ClockPort` and the chat id (WIRE-02); the `{timer, clock}` gate
- * the deliveredAt-timed success delete. This is the signature the 72-05 wiring
- * constructs.
+ * `TimerPort` / `ClockPort` and the chat id; the `{timer, clock}` gate
+ * the deliveredAt-timed success delete.
  */
 export function createSignalActivityRenderer(
   adapter: ChannelPort,
@@ -123,7 +122,7 @@ export function createSignalActivityRenderer(
     markers: deps.markers,
     // Signal has no button surface, so an approval frame appends the plain-text
     // prompt ("Reply approve or deny …", with shortIds when >1 pending) to the
-    // reposted message (APV-10, §6.4.6). A non-approval frame yields "" (no append).
+    // reposted message (§6.4.6). A non-approval frame yields "" (no append).
     buildPrompt: buildApprovalPrompt,
   });
 }

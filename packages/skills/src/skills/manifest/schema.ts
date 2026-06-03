@@ -68,7 +68,7 @@ export const SkillKeySchema = z.preprocess((val) => {
 
 
 /**
- * Capability metadata block for v1.1 capability layer.
+ * Capability metadata block for the capability layer.
  *
  * Optional sub-block of `comis:` namespace. All inner fields optional. The
  * block is z.strictObject -- unknown nested keys (typos like
@@ -118,7 +118,7 @@ export const ComisNamespaceSchema = z.strictObject({
   /** Metadata-only dispatch tag for command routing */
   "command-dispatch": z.string().optional(),
   /**
-   * v1.1 capability layer -- optional metadata for cluster, summary,
+   * Capability layer -- optional metadata for cluster, summary,
    * package aliases. Defensively parsed at registry-side; a typo here will
    * NOT hide the skill.
    */

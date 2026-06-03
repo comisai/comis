@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Recall-diagnostics isolation + end-to-end redaction integration test
- * (Phase 86, OBS-08 + OBS-02 — the phase security capstone).
+ * (the security capstone for the recall-observability surface).
  *
  * The Wave-4 capstone for the recall-observability surface. It proves, through
  * the REAL wired stores + the REAL admin-gated RPC handlers + the REAL agent
  * recall path (NOT mocks), that the diagnostics never widen the security
  * surface:
  *
- *   1. CROSS-SCOPE-LEAK NEGATIVE (OBS-08, failing-first) — a diagnostic query
+ *   1. CROSS-SCOPE-LEAK NEGATIVE (failing-first) — a diagnostic query
  *      for agent A NEVER returns agent B's data, in EITHER direction, for both
  *      the provenance lane (`listObservations` / the `memory.observations`
  *      handler) AND the entity-graph lane (`listEntities` / the
  *      `memory.entities` handler). Seeded with the BYTE-IDENTICAL entity name
  *      across SCOPE_1 / SCOPE_2 so the ONLY thing separating them is the
- *      `(tenant, agent)` SQL predicate (mirrors the Phase 83 ENT-03 capstone
+ *      `(tenant, agent)` SQL predicate (mirrors the capstone in
  *      `entity-associative-isolation.test.ts`). The negatives turn RED if the
  *      WHERE scope is dropped: the foreign-scope rows share the same name, so
  *      only the scope predicate excludes them.
@@ -26,12 +26,12 @@
  *      observations, entities, recall_stats), invoked with a non-admin
  *      `_trustLevel`, throws "Admin access required ..." BEFORE any query runs.
  *
- *   4. END-TO-END REDACTION PROOF (OBS-02, failing-first) — a recall driven
+ *   4. END-TO-END REDACTION PROOF (failing-first) — a recall driven
  *      through the REAL `createMemoryRecall` path over a memory seeded with a
  *      secret token + a fake message body + an absolute path records a
  *      recall-trace JSONL that contains NONE of them, yet still parses as a
  *      valid `RecallTraceEventSchema` record (redaction did not drop
- *      everything). The integration sibling of Plan 01's unit redaction proof.
+ *      everything). The integration sibling of the unit redaction proof.
  *
  * INTEGRATION TIER (CLAUDE.md / RESEARCH Pitfall 6): imports the REAL stores,
  * handlers, and recall via BARE "@comis" package specifiers (vitest aliases
@@ -152,7 +152,7 @@ function makeHandlerDeps(
     defaultWorkspaceDir: os.tmpdir(),
     tenantId,
     workspaceDirs: new Map<string, string>(),
-    // WR-01/WR-02: when set, the memory.recall_trace handler reads
+    // When set, the memory.recall_trace handler reads
     // <dataDir>/logs/recall-trace.jsonl — the SAME path the recorder writes.
     ...(dataDir !== undefined ? { dataDir } : {}),
     // memoryApi is required by the slice but the diagnostic handlers under test
@@ -173,10 +173,10 @@ function makeHandlerDeps(
 }
 
 // ===========================================================================
-// Task 1: cross-scope-leak NEGATIVE + positive control + admin-reject (OBS-08)
+// Cross-scope-leak NEGATIVE + positive control + admin-reject
 // ===========================================================================
 
-describe("Recall diagnostics -- cross-scope isolation through the wired stores + handlers (OBS-08)", () => {
+describe("Recall diagnostics -- cross-scope isolation through the wired stores + handlers", () => {
   let adapter: SqliteMemoryAdapter;
   let db: Database.Database;
   let entityStore: ReturnType<typeof createSqliteMemoryEntityStore>;
@@ -386,10 +386,10 @@ describe("Recall diagnostics -- cross-scope isolation through the wired stores +
 });
 
 // ===========================================================================
-// Task 2: end-to-end recall-trace redaction proof (OBS-02)
+// End-to-end recall-trace redaction proof
 // ===========================================================================
 
-describe("recall-trace redaction (end-to-end, OBS-02)", () => {
+describe("recall-trace redaction (end-to-end)", () => {
   let adapter: SqliteMemoryAdapter;
   let db: Database.Database;
   let tmpFile: string;
@@ -424,7 +424,7 @@ describe("recall-trace redaction (end-to-end, OBS-02)", () => {
 
   it("records a redacted-yet-valid recall trace that contains no seeded secret, body, or absolute path", async () => {
     // Seed a memory whose CONTENT carries a secret token, a fake message body,
-    // and an absolute path — exactly the three OBS-02 leak classes.
+    // and an absolute path — exactly the three leak classes.
     const memId = randomUUID();
     const stored = await adapter.store(
       makeEntry({
@@ -439,7 +439,7 @@ describe("recall-trace redaction (end-to-end, OBS-02)", () => {
     );
     expect(stored.ok).toBe(true);
 
-    // Build the REAL recorder (the Plan-01 chokepoint) writing to a tmp file.
+    // Build the REAL recorder (the recording chokepoint) writing to a tmp file.
     const recallTrace = createRecallTrace({
       enabled: true,
       filePath: tmpFile,
@@ -450,7 +450,7 @@ describe("recall-trace redaction (end-to-end, OBS-02)", () => {
     expect(recallTrace).not.toBeNull();
     if (recallTrace === null) return;
 
-    // Drive a real recall through createMemoryRecall (the Plan-03 capture path):
+    // Drive a real recall through createMemoryRecall (the capture path):
     // the memory is surfaced AND recorded. recallTrace + clock + logger mirror
     // prompt-assembly's deps.
     const recall = createMemoryRecall(
@@ -470,8 +470,8 @@ describe("recall-trace redaction (end-to-end, OBS-02)", () => {
           temporalAlpha: 0.2,
           proofAlpha: 0.1,
           trustAlpha: 0.1,
-          // FEED-03 + FORGET-01 added two more required ScoringAlphas. Production
-          // config defaults both to 0.1; omitting them here left usefulnessAlpha
+          // The usefulness and forget weights are two more required ScoringAlphas.
+          // Production config defaults both to 0.1; omitting them here left usefulnessAlpha
           // undefined, so `1 + undefined*(…)` = NaN propagated into the breakdown's
           // `usefulness`/`final`, which JSON-serialize as `null` and fail the
           // RecallScoreBreakdownSchema's z.number() (real callers always supply all six).
@@ -514,10 +514,10 @@ describe("recall-trace redaction (end-to-end, OBS-02)", () => {
 });
 
 // ===========================================================================
-// Task 3: recall-trace READ-BACK through the production recorder path (WR-01)
+// Recall-trace READ-BACK through the production recorder path
 // ===========================================================================
 
-describe("memory.recall_trace read-back via the REAL production recorder (WR-01)", () => {
+describe("memory.recall_trace read-back via the REAL production recorder", () => {
   let adapter: SqliteMemoryAdapter;
   let db: Database.Database;
   let dataDir: string;
@@ -595,8 +595,8 @@ describe("memory.recall_trace read-back via the REAL production recorder (WR-01)
           temporalAlpha: 0.2,
           proofAlpha: 0.1,
           trustAlpha: 0.1,
-          // FEED-03 + FORGET-01 added two more required ScoringAlphas. Production
-          // config defaults both to 0.1; omitting them here left usefulnessAlpha
+          // The usefulness and forget weights are two more required ScoringAlphas.
+          // Production config defaults both to 0.1; omitting them here left usefulnessAlpha
           // undefined, so `1 + undefined*(…)` = NaN propagated into the breakdown's
           // `usefulness`/`final`, which JSON-serialize as `null` and fail the
           // RecallScoreBreakdownSchema's z.number() (real callers always supply all six).
@@ -631,7 +631,7 @@ describe("memory.recall_trace read-back via the REAL production recorder (WR-01)
       session_key: SESSION_KEY_STR,
     })) as { records: Array<Record<string, unknown>> };
 
-    // THE WR-01 BINDING ASSERTION: the production recorder's record is RETURNED.
+    // THE BINDING ASSERTION: the production recorder's record is RETURNED.
     // Pre-fix this was [] — the recorder wrote `sessionId` (no `sessionKey`) and
     // the handler matched only `rec.sessionKey`.
     expect(resp.records.length).toBeGreaterThan(0);
@@ -646,7 +646,7 @@ describe("memory.recall_trace read-back via the REAL production recorder (WR-01)
 
   it("does NOT return a recall trace recorded under a DIFFERENT tenant (read-side cross-tenant filter)", async () => {
     // Record under tenant_wr01, then ask the handler scoped to a DIFFERENT
-    // tenant. WR-01 revived the read-side tenant scope-filter (rec.tenantId),
+    // tenant. The read-side tenant scope-filter (rec.tenantId) was revived,
     // so the foreign-tenant query returns nothing even though the session_key
     // string would otherwise match.
     await recordRealRecall(SESSION_KEY, SESSION_KEY.tenantId as string);

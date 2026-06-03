@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 92 (RERANK-01) BEHAVIORAL wiring test — drives the REAL `setupSingleAgent`
+ * BEHAVIORAL wiring test — drives the REAL `setupSingleAgent`
  * boot path end-to-end (NOT a source-string match, NOT the pure `resolveEffectiveRerank`
  * unit) to prove the per-agent effective `rag.rerank.enabled` precedence ACTUALLY fires
  * for the data the production caller has in hand.
  *
- * CR-01 (the BLOCKER this file reproduces): the precedence read the "explicit" signal
+ * The BLOCKER this file reproduces: the precedence read the "explicit" signal
  * from a config object that is ALREADY Zod-parsed, where `rag.rerank.enabled` has been
- * defaulted to a concrete boolean (v2.9 increment 2: `.default(true)`). So the genuine
+ * defaulted to a concrete boolean (`.default(true)`). So the genuine
  * "unset" signal was erased before it reached `resolveEffectiveRerank`, and the
  * zero-download precedence (unset → auto-on iff modelPresent) could NEVER work.
- * The pre-Phase-92 `resolveEffectiveRerank` unit test passed but proved nothing about
- * whether the caller could ever supply `undefined` (IN-01). This file closes that gap:
+ * The earlier `resolveEffectiveRerank` unit test passed but proved nothing about
+ * whether the caller could ever supply `undefined`. This file closes that gap:
  * it asserts the EFFECTIVE config written back to `container.config.agents[agentId]`,
  * driving the SAME parse the boot loop applies.
  *
- * The four scenarios pin the full RERANK-01/02 truth table:
+ * The four scenarios pin the full truth table:
  *   (1) all-default (rerank UNSET) + modelPresent=true  → effective enabled === true  (auto-on FIRES)
- *   (2) all-default (rerank UNSET) + modelPresent=false → effective enabled === false (RERANK-02 stays off)
+ *   (2) all-default (rerank UNSET) + modelPresent=false → effective enabled === false (stays off)
  *   (3) explicit enabled:true      + modelPresent=false → effective enabled === true  (opt-in preserved)
  *   (4) explicit enabled:false     + modelPresent=true  → effective enabled === false (force-off preserved)
  *
@@ -26,7 +26,7 @@
  * happens BEFORE executor construction, so the resolved rerank flag is observable without
  * the real executor stack. `@comis/core` is preserved EXCEPT `safePath`/`ensureWorkspace`/
  * `resolveWorkspaceDir` (filesystem) so `PerAgentConfigSchema` stays REAL — that real parse
- * is exactly what erases the unset signal and reproduces CR-01.
+ * is exactly what erases the unset signal and reproduces the bug.
  *
  * @module
  */
@@ -69,8 +69,8 @@ vi.mock("@comis/skills", () => ({
 }));
 
 // Stub only the filesystem-touching @comis/core helpers; keep PerAgentConfigSchema REAL
-// (its `.default()` on rerank.enabled — v2.9 increment 2: default-ON — is what makes the
-// parsed value a concrete boolean that erases the unset signal, reproducing CR-01).
+// (its `.default()` on rerank.enabled — default-ON — is what makes the
+// parsed value a concrete boolean that erases the unset signal, reproducing the bug).
 vi.mock("@comis/core", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
@@ -190,16 +190,16 @@ async function runAndReadEffectiveRerank(
 
 // --- Tests -----------------------------------------------------------------
 
-describe("setupSingleAgent rag.rerank auto-on through the real parsed-config boot path (RERANK-01)", () => {
+describe("setupSingleAgent rag.rerank auto-on through the real parsed-config boot path", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it("auto-enables rerank for a genuinely all-default agent when the model is present", async () => {
     // rerank is UNSET (the operator never set it) — the raw map carries `undefined`. The
-    // precedence threads that raw tri-state (NOT the parsed default, which v2.9 increment 2
-    // makes a concrete `true`), so modelPresent=true resolves auto-on. (Pre-Phase-92 the
-    // precedence read the parsed default and could never see the unset signal — CR-01.)
+    // precedence threads that raw tri-state (NOT the parsed default, which
+    // makes a concrete `true`), so modelPresent=true resolves auto-on. (Previously the
+    // precedence read the parsed default and could never see the unset signal.)
     const { effectiveEnabled } = await runAndReadEffectiveRerank(undefined, true);
     expect(effectiveEnabled).toBe(true);
   });
@@ -215,7 +215,7 @@ describe("setupSingleAgent rag.rerank auto-on through the real parsed-config boo
     );
   });
 
-  it("keeps rerank off for an all-default agent when the model is absent (RERANK-02 posture)", async () => {
+  it("keeps rerank off for an all-default agent when the model is absent (zero-download posture)", async () => {
     // Fresh install, model NOT present: unset + absent → effective stays false. This holds
     // on pre-patch too (it is the one case the broken read coincidentally gets right), and
     // must REMAIN green after the fix so the zero-download posture is preserved.

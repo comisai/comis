@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * IRC plain-text approval-prompt tests (APV-10 renderer half; §6.4.6 / §18.3).
+ * IRC plain-text approval-prompt tests (renderer half; §6.4.6 / §18.3).
  *
  * IRC has no button surface (LinePerEvent, text-only — §7.1), so a `kind:"approval"`
  * event renders the plain-text prompt `buildApprovalText(event, { includeShortId })`
  * as its per-event line: "Reply approve or deny within the approval timeout" when a
  * single approval is pending in the frame, and the shortId-disambiguated form
  * "Reply approve <S> or deny <S>" when more than one is pending in the same session
- * (so the user's reply, parsed by the router's plain-text branch in 73-04, is
+ * (so the user's reply, parsed by the router's plain-text branch, is
  * unambiguous). NO signed buttons appear — HMAC is skipped for plaintext (§6.4.6);
  * the router scopes the reply to `pendingForSession` and replay is blocked by
  * pending-table removal.
  *
- * The prompt copy is fixed + the redacted shortId — never raw user/tool content
- * (SEC-06 / T-73-26). The renderer reuses the 73-06 `buildApprovalText` via the
+ * The prompt copy is fixed + the redacted shortId — never raw user/tool content.
+ * The renderer reuses the `buildApprovalText` via the
  * shared `buildApprovalPrompt`; it does NOT re-derive the wire format and signs
  * nothing.
  */
@@ -65,7 +65,7 @@ function frame(events: readonly ActivityEvent[]): ActivityRenderFrame {
   };
 }
 
-describe("IRC plain-text approval prompt (no buttons, shortId when ambiguous — APV-10)", () => {
+describe("IRC plain-text approval prompt (no buttons, shortId when ambiguous)", () => {
   it("renders 'Reply approve or deny ...' for a single pending approval (no shortId)", async () => {
     const clock = createFakeClock(0);
     const fake = createFakeIrcAdapter();

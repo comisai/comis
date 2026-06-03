@@ -620,7 +620,7 @@ describe("Trajectory observability events", () => {
 });
 
 // ---------------------------------------------------------------------------
-// v2.5 Agent Transparency — EventBus payload contract widening (EVT-01..04)
+// Agent Transparency — EventBus payload contract widening
 //
 // These cases pin the §16.11 amendment table for tool:* and model:* payloads.
 // Each fails to compile on the pre-patch event-bus types (RED proof):
@@ -630,7 +630,7 @@ describe("Trajectory observability events", () => {
 //   - model:* with agentId/sessionKey/traceId → fields do not exist on pre-patch type
 // ---------------------------------------------------------------------------
 
-describe("v2.5 tool:* payload widening (EVT-01/02/03)", () => {
+describe("tool:* payload widening", () => {
   it("tool:executed requires toolCallId and accepts a closed-union errorKind", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
@@ -735,7 +735,7 @@ describe("v2.5 tool:* payload widening (EVT-01/02/03)", () => {
   });
 });
 
-describe("v2.5 model:* turn-scoping (EVT-04)", () => {
+describe("model:* turn-scoping", () => {
   it("model:fallback_attempt carries agentId, sessionKey, traceId", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
@@ -818,7 +818,7 @@ describe("v2.5 model:* turn-scoping (EVT-04)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 86 (OBS-04) — memory recall/rerank/entity-link observability events.
+// Memory recall/rerank/entity-link observability events.
 //
 // Counts/booleans ONLY closed-union payloads. These fail to compile on the
 // pre-patch event-bus types (RED proof): EventMap has no "memory:recalled",
@@ -827,7 +827,7 @@ describe("v2.5 model:* turn-scoping (EVT-04)", () => {
 // query text / entity-name field; a source-grep test below re-proves it).
 // ---------------------------------------------------------------------------
 
-describe("Phase 86 memory:* recall observability events (OBS-04)", () => {
+describe("memory:* recall observability events", () => {
   it("memory:recalled delivers per-lane candidate counts, finalCount, rerankerAvailable, durationMs", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
@@ -966,7 +966,7 @@ describe("Phase 86 memory:* recall observability events (OBS-04)", () => {
   });
 
   it("payload types carry no content/query/entity-name field (counts-only source invariant)", () => {
-    // Source-grep the three Phase 86 event blocks for forbidden privacy-leak
+    // Source-grep the three memory recall event blocks for forbidden privacy-leak
     // keys. The closed shapes MUST carry counts/booleans/ids only — never
     // query text, memory bodies, or entity names (AGENTS.md §2.7).
     const src = readFileSync(resolve(here, "./events-agent.ts"), "utf8");
@@ -987,7 +987,7 @@ describe("Phase 86 memory:* recall observability events (OBS-04)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 93 (FEED-01) — memory:recall_used recall-usage attribution event.
+// memory:recall_used recall-usage attribution event.
 //
 // Counts + memory IDS only. Fails to compile on the pre-patch event-bus types
 // (RED proof): EventMap has no "memory:recall_used" key yet. The shape
@@ -995,7 +995,7 @@ describe("Phase 86 memory:* recall observability events (OBS-04)", () => {
 // response / query field; the source-grep test below re-proves it).
 // ---------------------------------------------------------------------------
 
-describe("Phase 93 memory:recall_used recall-usage attribution event (FEED-01)", () => {
+describe("memory:recall_used recall-usage attribution event", () => {
   it("delivers usedIds/ignoredIds (string[]) + usedCount/ignoredCount + agentId/traceId/timestamp", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
@@ -1095,18 +1095,18 @@ describe("Phase 93 memory:recall_used recall-usage attribution event (FEED-01)",
 });
 
 // ---------------------------------------------------------------------------
-// Phase 110 (LEARN-01 / H1) — the optional intent on memory:recall_used.
+// The optional intent on memory:recall_used.
 //
 // Additive + forward-only: the payload gains an OPTIONAL `intent?: string` (the
 // deterministic classifyIntent bucket for the recall that produced these ids).
 // When present the daemon write-back records the per-intent bucket; when OMITTED
-// it records the GLOBAL bucket — byte-identical to v2.8, so today's two emit
+// it records the GLOBAL bucket — byte-identical to the prior behaviour, so today's two emit
 // sites compile unchanged. The intent string is metadata (a closed-union
 // factual|temporal|preference|enumeration), NOT memory content — ids/counts/
 // intent ONLY ever cross the bus (AGENTS.md §2.7), never bodies/query/response.
 // ---------------------------------------------------------------------------
 
-describe("Phase 110 memory:recall_used optional intent (LEARN-01 write bucket)", () => {
+describe("memory:recall_used optional intent (write bucket)", () => {
   it("accepts a payload WITH intent:'temporal' AND one WITHOUT intent (additive/byte-identity)", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
@@ -1129,7 +1129,7 @@ describe("Phase 110 memory:recall_used optional intent (LEARN-01 write bucket)",
     expect(r.intent).toBe("temporal");
     expectTypeOf(r.intent).toEqualTypeOf<string | undefined>();
 
-    // intent is OPTIONAL — omitting it is byte-identical to v2.8 (today's emit
+    // intent is OPTIONAL — omitting it is byte-identical to the prior behaviour (today's emit
     // sites compile unchanged; the daemon write-back records the global bucket).
     const noIntent: EventMap["memory:recall_used"] = {
       agentId: "agent-1",

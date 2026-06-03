@@ -3,8 +3,9 @@
  * Log Orchestration Integration Tests
  *
  * Verifies:
- * - LOG-04: All E2E tests produce deterministic pass results (no flaky tests)
- * - LOG-06: Error propagation through Result chains preserves context in structured logs
+ * - Deterministic test execution: all E2E tests produce deterministic pass
+ *   results (no flaky tests)
+ * - Error propagation through Result chains preserves context in structured logs
  *
  * Also validates:
  * - Log quality: captured daemon logs pass validateLogs with clean report
@@ -43,7 +44,7 @@ describe("Log Orchestration", () => {
   let originalDataDir: string | undefined;
 
   beforeAll(async () => {
-    // Isolate the data dir so the Phase 7 REQ-09 boot mismatch-warn does not fire on
+    // Isolate the data dir so the boot credential-mismatch warning does not fire on
     // stranded file-side credentials left in the shared ~/.comis by dev usage or other
     // tests — this suite's log-quality validation asserts no unexpected daemon warnings.
     originalDataDir = process.env["COMIS_DATA_DIR"];
@@ -79,10 +80,10 @@ describe("Log Orchestration", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // LOG-04: Deterministic test execution
+  // Deterministic test execution
   // -------------------------------------------------------------------------
 
-  describe("LOG-04: Deterministic test execution", () => {
+  describe("Deterministic test execution", () => {
     it("daemon starts with DEBUG logging enabled", async () => {
       // Verify log capture has entries
       const entries = logCapture.getEntries();
@@ -118,10 +119,10 @@ describe("Log Orchestration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // LOG-06: Result chain error propagation
+  // Result chain error propagation
   // -------------------------------------------------------------------------
 
-  describe("LOG-06: Result chain error propagation", () => {
+  describe("Result chain error propagation", () => {
     it("error context is preserved in structured log output for RPC errors", async () => {
       let ws: WebSocket | undefined;
       try {

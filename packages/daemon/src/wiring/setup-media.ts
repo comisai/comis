@@ -47,7 +47,7 @@ export interface MediaResult {
   /** Vision provider registry keyed by provider name (optional). */
   visionRegistry?: Map<string, VisionProvider>;
   /**
-   * REQ-13 (WR-05): Stable holder for the vision registry. When visionRegistry
+   * Stable holder for the vision registry. When visionRegistry
    * is undefined at boot (no vision API keys) and materialises later via a
    * secret:changed rotation, the .value field is updated in place so all
    * downstream consumers holding this reference see the new registry without
@@ -79,7 +79,7 @@ export interface MediaResult {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 6 (REQ-13): lazy per-call factory functions for boot-snapshot consumer conversion.
+// Lazy per-call factory functions for boot-snapshot consumer conversion.
 //
 // These factories return a fresh provider on each call by re-reading
 // secretManager.get() at invocation time rather than snapshotting the key at
@@ -90,7 +90,7 @@ export interface MediaResult {
 /**
  * Return a lazy getter that re-creates the STT provider on each call,
  * reading the current secretManager state at invocation time.
- * Satisfies the read-on-use invariant (REQ-13).
+ * Satisfies the read-on-use invariant.
  */
 export function createSTTProviderFactory(
   config: TranscriptionConfig,
@@ -102,7 +102,7 @@ export function createSTTProviderFactory(
 /**
  * Return a lazy getter that re-creates the TTS provider on each call,
  * reading the current secretManager state at invocation time.
- * Satisfies the read-on-use invariant (REQ-13).
+ * Satisfies the read-on-use invariant.
  */
 export function createTTSProviderFactory(
   config: TtsConfig,
@@ -116,7 +116,7 @@ export function createTTSProviderFactory(
  * call, reading the current secretManager state at invocation time.
  * Returns undefined when the required API key is absent or config is missing
  * (graceful degradation). Unwraps the Result returned by createImageGenProvider.
- * Satisfies the read-on-use invariant (REQ-13).
+ * Satisfies the read-on-use invariant.
  */
 export function createImageGenProviderFactory(
   imageGenConfig: ImageGenerationConfig | undefined,
@@ -217,7 +217,7 @@ export async function setupMedia(deps: {
   skillsLogger.debug({ maxBytes: infraConfig.maxRemoteFetchBytes }, "SSRF-guarded fetcher initialized");
 
   // 6.6.8.pre5. STT provider — factory selects from config
-  // REQ-13 (WR-03): use a lazy-delegation wrapper so that each transcribe() call
+  // Use a lazy-delegation wrapper so that each transcribe() call
   // re-invokes createSTTProviderFactory at invocation time, reading the current
   // secretManager value. This makes a rotated STT API key take effect on the
   // LIVE path without a daemon restart.
@@ -239,7 +239,7 @@ export async function setupMedia(deps: {
     const hasFallback = fallbackFactories.length > 0;
 
     // Lazy-delegation wrapper: delegates transcribe() to a fresh provider on
-    // each call so a rotated key is observed without a daemon restart (REQ-13).
+    // each call so a rotated key is observed without a daemon restart.
     transcriber = {
       transcribe: async (audio, options) => {
         const primaryResult = sttFactory();
@@ -273,7 +273,7 @@ export async function setupMedia(deps: {
   }
 
   // 6.6.8. TTS adapter — factory selects provider from config
-  // REQ-13 (WR-03): use a lazy-delegation wrapper so that each synthesize() call
+  // Use a lazy-delegation wrapper so that each synthesize() call
   // re-invokes createTTSProviderFactory at invocation time, reading the current
   // secretManager value. This makes a rotated TTS API key take effect on the
   // LIVE path without a daemon restart.
@@ -282,7 +282,7 @@ export async function setupMedia(deps: {
   if (ttsResult.ok) {
     const ttsFactory = createTTSProviderFactory(mediaConfig.tts, container.secretManager);
     // Lazy-delegation wrapper: delegates synthesize() to a fresh provider on
-    // each call so a rotated key is observed without a daemon restart (REQ-13).
+    // each call so a rotated key is observed without a daemon restart.
     ttsAdapter = {
       synthesize: async (text, options) => {
         const result = ttsFactory();
@@ -300,7 +300,7 @@ export async function setupMedia(deps: {
   // Registry always created when API keys are valid so on-demand tools
   // (describe_image, describe_video) can use it even when auto-preprocessing is off.
   //
-  // REQ-13 (WR-05): The registry is wrapped in a stable holder object so that
+  // The registry is wrapped in a stable holder object so that
   // when it materialises from undefined at first rotation, all downstream
   // consumers holding visionRegistryHolder (rather than the point-in-time
   // visionRegistry snapshot) observe the new registry via .value.
@@ -323,17 +323,17 @@ export async function setupMedia(deps: {
 
   // Stable holder — carries the current registry reference so the
   // first-materialisation path (undefined → Map) is visible to all consumers
-  // that hold this holder rather than the point-in-time snapshot (WR-05).
+  // that hold this holder rather than the point-in-time snapshot.
   const visionRegistryHolder: { value: Map<string, VisionProvider> | undefined } = {
     value: visionRegistry,
   };
 
-  // REQ-13: Rebuild vision registry on credential rotation so rotated vision API
+  // Rebuild vision registry on credential rotation so rotated vision API
   // keys are observed without a daemon restart. The subscription rebuilds the Map
   // in place so all downstream consumers holding a reference to visionRegistry
   // see the new providers on their next invocation. When the registry was absent
   // at boot (undefined), the holder is also updated so late-bound consumers
-  // holding visionRegistryHolder see the first-materialisation transition (WR-05).
+  // holding visionRegistryHolder see the first-materialisation transition.
   const VISION_KEYS = new Set(["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"]);
   container.eventBus.on("secret:changed", ({ name }) => {
     if (!VISION_KEYS.has(name)) return;
@@ -351,7 +351,7 @@ export async function setupMedia(deps: {
     } else if (updated.size > 0) {
       // Registry was absent at boot (no keys then); materialise it now.
       visionRegistry = updated;
-      // WR-05: update the holder so late-bound consumers holding visionRegistryHolder
+      // Update the holder so late-bound consumers holding visionRegistryHolder
       // observe the first-materialisation transition (the point-in-time snapshot
       // remains undefined; only the holder is updated).
       visionRegistryHolder.value = updated;

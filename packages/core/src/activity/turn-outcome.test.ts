@@ -53,7 +53,7 @@ describe("DeliveryStageResult", () => {
   });
 });
 
-describe("TurnOutcome discriminated union (ACT-05)", () => {
+describe("TurnOutcome discriminated union", () => {
   const goodReceipt: FinalDeliveryReceipt = {
     ok: true,
     deliveredChunks: 1,

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Signal plain-text approval-prompt tests (APV-10 renderer half; §6.4.6 / §18.3).
+ * Signal plain-text approval-prompt tests (renderer half; §6.4.6 / §18.3).
  *
  * Signal has NO button surface (DeleteAndRepost, `buttons:"none"`), so a
  * `kind:"approval"` frame appends the plain-text prompt
@@ -8,12 +8,12 @@
  * "Reply approve or deny within the approval timeout" for a single pending
  * approval, and the shortId-disambiguated form when more than one is pending in the
  * same session. NO signed buttons are attached — HMAC is skipped for plaintext
- * (§6.4.6); the router's plain-text branch (73-04) scopes the reply to
+ * (§6.4.6); the router's plain-text branch scopes the reply to
  * `pendingForSession` and replay is blocked by pending-table removal.
  *
  * The signal-fake's send row is `{ op, id, text }` (no buttons field at all), so a
  * text-only assertion proves no button surface is introduced. The prompt copy is
- * fixed + the redacted shortId — never raw user/tool content (SEC-06 / T-73-26).
+ * fixed + the redacted shortId — never raw user/tool content.
  */
 import { describe, it, expect } from "vitest";
 import type { ActivityRenderFrame, ActivityEvent, ApprovalCorrelation } from "@comis/core";
@@ -61,7 +61,7 @@ function frame(events: readonly ActivityEvent[]): ActivityRenderFrame {
   };
 }
 
-describe("Signal plain-text approval prompt (no buttons, shortId when ambiguous — APV-10)", () => {
+describe("Signal plain-text approval prompt (no buttons, shortId when ambiguous)", () => {
   it("appends 'Reply approve or deny ...' for a single pending approval (no shortId)", async () => {
     const timer = createFakeTimers();
     const clock = createFakeClock(0);
@@ -97,8 +97,8 @@ describe("Signal plain-text approval prompt (no buttons, shortId when ambiguous 
   it("posts the prompt as TEXT only — the send carries no button surface (§6.4.6)", async () => {
     const timer = createFakeTimers();
     const fake = createFakeSignalAdapter();
-    // Phase 78 (plan §530, option ii): drop clock so the §8.5 elapsed fallback
-    // is skipped — the test asserts send.text byte-stably.
+    // Drop clock so the §8.5 elapsed fallback is skipped — the test asserts
+    // send.text byte-stably.
     const r = createSignalActivityRenderer(fake, "chat-1", { timer });
 
     await r.apply(frame([approvalEvent("a-1")]));
@@ -116,8 +116,8 @@ describe("Signal plain-text approval prompt (no buttons, shortId when ambiguous 
   it("a non-approval frame appends no prompt (plain message only)", async () => {
     const timer = createFakeTimers();
     const fake = createFakeSignalAdapter();
-    // Phase 78 (plan §530, option ii): drop clock so the §8.5 elapsed fallback
-    // is skipped — the test asserts send.text byte-stably.
+    // Drop clock so the §8.5 elapsed fallback is skipped — the test asserts
+    // send.text byte-stably.
     const r = createSignalActivityRenderer(fake, "chat-1", { timer });
 
     const plain: ActivityRenderFrame = {

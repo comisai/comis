@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * ChannelActivityRenderer port contract tests (STRAT-04).
+ * ChannelActivityRenderer port contract tests.
  *
  * The port consumes render frames (not raw events). These tests pin the frame
  * shape, the Result-returning apply/finalize signatures, and the closed

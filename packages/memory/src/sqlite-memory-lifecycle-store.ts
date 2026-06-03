@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * SqliteMemoryLifecycleStore: the SOLE adapter for the segregated
- * `MemoryLifecyclePort` port (@comis/core, Phase 112, Track C — FORGET-02). It
+ * `MemoryLifecyclePort` port (@comis/core). It
  * owns ALL the per-(tenant, agent) lifecycle SQL over the `memories` table + its
  * additive NON-DESTRUCTIVE marker columns (`lifecycle_demoted_at`/`evicted_at`/
  * `strength` — `ensureMemoryColumns` in schema.ts) — the only place SQL is written
  * for this capability. The agent package never imports it (the agent↛memory cut);
  * it consumes the `MemoryLifecyclePort` TYPE from @comis/core.
  *
- * ## SCAFFOLD-DORMANT (Phase-106 gap-report OD4, RESEARCH Pitfall 3)
+ * ## SCAFFOLD-DORMANT
  *
  * `runLifecycleSweep(scope)` is the cron-driven maintenance pass. It SELECTs the
  * scoped candidate rows, computes each one's importance-decayed `strength` + its
  * hysteresis-banded tier — and then APPLIES NOTHING. The demote/evict/promote step
  * is a NO-OP: no row is DELETEd, no marker column is UPDATEd, and the report's
  * `promoted`/`demoted`/`evicted` are ALWAYS 0 — whether the live policy WOULD touch
- * a row or not. Live eviction is the deferred operator/v2.10 step. The apply branch
+ * a row or not. Live eviction is the deferred operator step. The apply branch
  * is dead BY CONSTRUCTION behind `LIVE_EVICTION = false as const` (so the
  * eviction-candidacy computation stays exercised + documented, while the mutation
  * is statically unreachable — RED-proven by the off-policy fixture test). When the
@@ -23,7 +23,7 @@
  * NON-DESTRUCTIVELY (a marker, never a hard DELETE — the `consolidated_at`
  * precedent), preserving the raw row + provenance for audit.
  *
- * ## Isolation is the load-bearing security boundary (T-112-07, the §5.2 invariant)
+ * ## Isolation is the load-bearing security boundary (the §5.2 invariant)
  *
  * Comis runs many agents and many tenants in ONE DB. The candidate SELECT filters
  * `WHERE tenant_id = ? AND agent_id = ?` (bound params), so a sweep run under one
@@ -69,7 +69,7 @@ interface MemoryLogger {
  * The DORMANT policy constants the live (deferred) step WOULD apply (FadeMem
  * Eq.3/5/6, the design defaults; mirror `MemoryLifecycleConfigSchema`). The
  * SCAFFOLD computes strengths/tiers/candidacy with these but ACTS on nothing. The
- * daemon (112-04) will pass the operator-configured values via `deps` when it
+ * daemon will pass the operator-configured values via `deps` when it
  * wires the cron; until then the unit adapter uses these defaults.
  */
 export interface MemoryLifecyclePolicy {
@@ -99,11 +99,11 @@ const DEFAULT_POLICY: MemoryLifecyclePolicy = {
 const SCAN_CAP = 2000;
 
 /**
- * THE SCAFFOLD-DORMANT FLAG (OD4, RESEARCH Pitfall 3). `false as const` — the
+ * THE SCAFFOLD-DORMANT FLAG. `false as const` — the
  * demote/evict/promote APPLY branch is dead BY CONSTRUCTION. The eviction-candidacy
  * + tier computation above it stays exercised (so the math + the deferral are
  * documented and tested), but NO marker is ever written and NO row is ever deleted.
- * Flipping this to `true` is the deferred operator/v2.10 live step — out of scope
+ * Flipping this to `true` is the deferred operator live step — out of scope
  * for this plan. RED-proven dead: an off-policy fixture (strength far below
  * ε_prune, dormant beyond T_max) still yields evicted/demoted = 0.
  */
@@ -123,7 +123,7 @@ export interface MemoryLifecycleStoreDeps {
   logger?: MemoryLogger;
   /**
    * The DORMANT policy constants (defaults to {@link DEFAULT_POLICY}). The daemon
-   * (112-04) passes the operator-configured `MemoryLifecycleConfigSchema` values;
+   * passes the operator-configured `MemoryLifecycleConfigSchema` values;
    * the unit adapter uses the defaults. Even with these set, the SCAFFOLD applies
    * NOTHING (LIVE_EVICTION is false).
    */
@@ -174,7 +174,7 @@ export function createSqliteMemoryLifecycleStore(
   const { db, logger } = deps;
   const policy = deps.policy ?? DEFAULT_POLICY;
 
-  // The scoped candidate scan (T-112-07). The `tenant_id = ? AND agent_id = ?`
+  // The scoped candidate scan. The `tenant_id = ? AND agent_id = ?`
   // filter is the load-bearing 2-way ISOLATION boundary: a sweep run under one
   // scope can NEVER read another tenant/agent's rows. The LIMIT (a bound `?`)
   // bounds the per-sweep working set. Bound params only — never concatenated.
@@ -240,7 +240,7 @@ export function createSqliteMemoryLifecycleStore(
           if (isEvictionCandidate) evictionCandidates += 1;
         }
 
-        // APPLY NOTHING — the SCAFFOLD-DORMANT contract (OD4 + Pitfall 3). The
+        // APPLY NOTHING — the SCAFFOLD-DORMANT contract. The
         // demote/evict/promote step is dead by construction behind LIVE_EVICTION:
         // no UPDATE of a marker column, no DELETE. promoted/demoted/evicted = 0.
         // `promoted`/`demoted` are `const` (never reassigned even by the deferred
@@ -250,7 +250,7 @@ export function createSqliteMemoryLifecycleStore(
         const demoted = 0;
         let evicted = 0;
         if (LIVE_EVICTION) {
-          // DEFERRED LIVE POLICY (operator/v2.10): mark eviction candidates
+          // DEFERRED LIVE POLICY (operator): mark eviction candidates
           // NON-DESTRUCTIVELY (set evicted_at = now) + apply the tier moves
           // (set lifecycle_demoted_at). Statically unreachable in this plan.
           /* c8 ignore next */

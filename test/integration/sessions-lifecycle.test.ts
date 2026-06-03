@@ -5,13 +5,13 @@
  * Validates session management RPC methods and REST API session endpoints
  * against a real running daemon WITHOUT requiring LLM API keys. Tests cover:
  *
- *   SLCM-01: session.status RPC (model, agentName, tokensUsed, stepsExecuted, maxSteps)
- *   SLCM-02: session.history RPC (error handling for missing sessions)
- *   SLCM-03: REST API session history (GET /api/chat/history)
- *   SLCM-04: session.send error handling (non-existent targets, missing params)
- *   SLCM-05: session.spawn error handling (no LLM, non-existent agent)
- *   SLCM-06: Non-bridged methods return method-not-found (-32601)
- *   SLCM-07: JSON-RPC 2.0 structure validation across all bridged session methods
+ *   session.status RPC (model, agentName, tokensUsed, stepsExecuted, maxSteps)
+ *   session.history RPC (error handling for missing sessions)
+ *   REST API session history (GET /api/chat/history)
+ *   session.send error handling (non-existent targets, missing params)
+ *   session.spawn error handling (no LLM, non-existent agent)
+ *   Non-bridged methods return method-not-found (-32601)
+ *   JSON-RPC 2.0 structure validation across all bridged session methods
  *
  * Uses port 8505 with a dedicated memory database for isolation.
  */
@@ -65,10 +65,10 @@ describe("Sessions Lifecycle: Non-LLM Integration Tests", () => {
   }, 60_000);
 
   // ---------------------------------------------------------------------------
-  // SLCM-01: session.status RPC
+  // session.status RPC
   // ---------------------------------------------------------------------------
 
-  describe("SLCM-01: session.status RPC", () => {
+  describe("session.status RPC", () => {
     it("session.status returns model, agentName, tokensUsed, stepsExecuted, maxSteps on fresh daemon", async () => {
       const response = (await sendJsonRpc(ws, "session.status", {}, msgId++, {
         timeoutMs: RPC_FAST_MS,
@@ -100,10 +100,10 @@ describe("Sessions Lifecycle: Non-LLM Integration Tests", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SLCM-02: session.history RPC
+  // session.history RPC
   // ---------------------------------------------------------------------------
 
-  describe("SLCM-02: session.history RPC", () => {
+  describe("session.history RPC", () => {
     it("session.history with non-existent session key returns error", async () => {
       const response = (await sendJsonRpc(
         ws,
@@ -144,10 +144,10 @@ describe("Sessions Lifecycle: Non-LLM Integration Tests", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SLCM-03: REST API session history
+  // REST API session history
   // ---------------------------------------------------------------------------
 
-  describe("SLCM-03: REST API session history", () => {
+  describe("REST API session history", () => {
     it("GET /api/chat/history on fresh daemon returns empty messages", async () => {
       const response = await fetch(`${gatewayUrl}/api/chat/history?channelId=gateway`, {
         headers: makeAuthHeaders(authToken),
@@ -181,10 +181,10 @@ describe("Sessions Lifecycle: Non-LLM Integration Tests", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SLCM-04: session.send error handling
+  // session.send error handling
   // ---------------------------------------------------------------------------
 
-  describe("SLCM-04: session.send error handling", () => {
+  describe("session.send error handling", () => {
     it("session.send to non-existent target session returns error", async () => {
       const response = (await sendJsonRpc(
         ws,
@@ -233,10 +233,10 @@ describe("Sessions Lifecycle: Non-LLM Integration Tests", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SLCM-05: session.spawn error handling
+  // session.spawn error handling
   // ---------------------------------------------------------------------------
 
-  describe("SLCM-05: session.spawn error handling", () => {
+  describe("session.spawn error handling", () => {
     it("session.spawn without LLM returns error or timeout response", async () => {
       const response = (await sendJsonRpc(
         ws,
@@ -272,10 +272,10 @@ describe("Sessions Lifecycle: Non-LLM Integration Tests", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SLCM-06: Non-bridged methods return method-not-found
+  // Non-bridged methods return method-not-found
   // ---------------------------------------------------------------------------
 
-  describe("SLCM-06: Bridged session methods return valid responses", () => {
+  describe("Bridged session methods return valid responses", () => {
     it("session.list via WS RPC returns a valid result", async () => {
       const response = (await sendJsonRpc(
         ws,
@@ -322,10 +322,10 @@ describe("Sessions Lifecycle: Non-LLM Integration Tests", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // SLCM-07: JSON-RPC structure validation
+  // JSON-RPC structure validation
   // ---------------------------------------------------------------------------
 
-  describe("SLCM-07: JSON-RPC structure validation", () => {
+  describe("JSON-RPC structure validation", () => {
     it("all bridged session methods return valid JSON-RPC 2.0 responses", async () => {
       const methods = [
         { method: "session.status", params: {} },

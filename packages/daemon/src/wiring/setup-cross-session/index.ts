@@ -10,7 +10,7 @@
  *   - setup-cross-session-graph.ts   — buildExecuteSubAgent + resolveGraphCacheRetention + MIN_SUB_AGENT_STEPS
  *   - setup-cross-session-events.ts  — registerProxyTypingListeners (typing:proxy_start/stop + TTL sweep + shutdown)
  *
- * SUB_AGENT_TOOL_DENYLIST was moved to @comis/core in SUBA-03. Import it from
+ * SUB_AGENT_TOOL_DENYLIST was moved to @comis/core. Import it from
  * there: `import { SUB_AGENT_TOOL_DENYLIST } from "@comis/core"`.
  *
  * @module

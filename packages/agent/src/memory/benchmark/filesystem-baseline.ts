@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure full-haystack "filesystem dump" formatter (BASE-01) — the Letta-style
+ * Pure full-haystack "filesystem dump" formatter — the Letta-style
  * filesystem-tool CONTROL the gated QA harness records as a labelled control row.
  *
- * WHAT IT IS (discretion decision 4, the minimal in-harness control): instead of
+ * WHAT IT IS (the minimal in-harness control): instead of
  * Comis's ranked recall (a top-5 `MemorySearchResult[]`), this dumps the ENTIRE
  * conversation haystack — every doc, in deterministic order, with NO relevance
  * scoring and NO top-k truncation — and lets the SAME answer model read it, graded
@@ -12,7 +12,7 @@
  * *benchmark* is weak, not Comis (exactly how Letta showed a filesystem agent
  * scored 74.0% on LoCoMo, above Mem0's self-reported 68.5%;
  * .planning/MEMORY_BENCHMARK_CREDIBILITY.md TL;DR). It is recorded ONLY under an
- * explicit control label — NEVER as Comis's own score (T-98-02-01).
+ * explicit control label — NEVER as Comis's own score.
  *
  * COMPARABLE SHAPE: each doc is rendered as the SAME numbered + dated block that
  * `formatAnswerContext` (qa-answer-prompt.ts:61) uses for the recall path, so the
@@ -21,7 +21,7 @@
  * doc's `createdAt` via the sanctioned `systemDateFrom` indirection (this is
  * `src/`; the globals rule scopes to `src/**`), exactly like qa-answer-prompt.ts.
  *
- * SECURITY — prototype-pollution discipline (T-98-02-02): the doc `content`
+ * SECURITY — prototype-pollution discipline: the doc `content`
  * strings come from the UNTRUSTED dataset haystack. The dump is built by string
  * concatenation ONLY; doc content is NEVER used as an object key, so a
  * `"__proto__"` / `"constructor"` content value becomes ordinary rendered text and
@@ -65,7 +65,7 @@ interface HaystackDoc {
  *
  * Pure: no clock (timestamps come from the docs), no I/O, no memory-package
  * import. Prototype-pollution-safe: built by string concatenation only; doc
- * content is never an object key (T-98-02-02).
+ * content is never an object key.
  */
 export function formatFilesystemContext(docs: ReadonlyArray<HaystackDoc>): string {
   if (docs.length === 0) {

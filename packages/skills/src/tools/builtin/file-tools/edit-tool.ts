@@ -41,8 +41,8 @@ import {
 import { getGitDiffStat } from "./shared/git-diff.js";
 import { withFileMutationQueue } from "./shared/file-mutation-queue.js";
 
-// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). Descriptor name ==
-// emitted name for builtins (edit-tool.ts:196 → `name: "edit"`).
+// Activity label spec (SPEC §6.1). Descriptor name == emitted name for
+// builtins (edit-tool.ts:196 → `name: "edit"`).
 registerActivityLabelSpec("edit", {
   semanticPhase: "tool",
   label: "editing {path}",

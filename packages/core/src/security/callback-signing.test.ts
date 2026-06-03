@@ -66,7 +66,7 @@ describe("verifyCallbackData", () => {
     expect(verifyCallbackData(SECRET, "approve", "ZZ09bY18cX27", sig)).toBe(false);
   });
 
-  // SEC-06: timingSafeEqual THROWS on a length mismatch. The length-guard MUST
+  // timingSafeEqual THROWS on a length mismatch. The length-guard MUST
   // run first so a wrong-length provided tag returns false WITHOUT throwing.
   it("returns false for a too-short HMAC without throwing (length-guard)", () => {
     expect(() => verifyCallbackData(SECRET, "approve", SHORT_ID, "deadbeef")).not.toThrow();

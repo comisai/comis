@@ -23,13 +23,13 @@ import type {
   TunedAlphaScope,
   TunedAlphaVector,
 } from "./tuned-alpha-store.js";
-// Public-surface RED proof (Task 1): the port types must be re-exported on the
+// Public-surface RED proof: the port types must be re-exported on the
 // @comis/core barrel (../index.js is the in-package equivalent of the bare
 // `@comis/core` specifier — index.ts `export *`s the curated exports/ports.js).
 // These imports fail to resolve (a tsc build error) until the export-wiring in
 // ports/index.ts + exports/ports.ts lands. The public-export-consumers gate
 // requires the port be on the public surface; the consumers (the agent overlay +
-// adapter) land in 111-02/03/04.
+// adapter) land in later cuts.
 import type {
   TunedAlphaStore as PublicTunedAlphaStore,
   TunedAlphaScope as PublicTunedAlphaScope,
@@ -40,23 +40,23 @@ const here = dirname(fileURLToPath(import.meta.url));
 const portSrc = readFileSync(resolve(here, "./tuned-alpha-store.ts"), "utf8");
 
 /**
- * Phase 111 (LEARN-03 / Track H2) — the segregated `TunedAlphaStore` foundation.
+ * The segregated `TunedAlphaStore` foundation.
  *
  * The tuned-alpha port lives type-only in @comis/core (mirrors
  * user-representation-store.ts / memory-usefulness-store.ts): the agent-side
- * apply path (the deterministic overlay, 111-03) and the offline update job
- * (111-04) consume it by TYPE, the sole adapter lives in @comis/memory (111-02),
+ * apply path (the deterministic overlay) and the offline update job
+ * consume it by TYPE, the sole adapter lives in @comis/memory,
  * the daemon injects it. The port carries the WRITE (`upsert`) and the
  * (tenant, agent)-scoped READ (`read`) — the dual write+read shape (NOT a split
  * read/write port).
  *
- * THE binding constraint (the OD2 ship-gate, Pitfall 1): the tunable vector is a
+ * THE binding constraint (the ship-gate): the tunable vector is a
  * 4-tuple {recency, temporal, proof, usefulness} that NEVER names trust.
  * `trustAlpha` does NOT exist on `TunedAlphaVector` — trust is frozen under
- * tuning, sourced ONLY from static config at the apply site (111-03). This block
+ * tuning, sourced ONLY from static config at the apply site. This block
  * RED-proves that structural trust-exclusion (compile-time + grep-0).
  */
-describe("TunedAlphaStore — type-only segregated tuned-alpha port (LEARN-03)", () => {
+describe("TunedAlphaStore — type-only segregated tuned-alpha port", () => {
   it("declares upsert/read on TunedAlphaStore and stays type-only (no zod, no @comis/memory)", () => {
     // Runtime RED proof: fails on pre-patch source where the file/method/type are absent.
     expect(portSrc, "TunedAlphaStore interface must be declared").toMatch(
@@ -83,7 +83,7 @@ describe("TunedAlphaStore — type-only segregated tuned-alpha port (LEARN-03)",
   });
 
   it("STRUCTURAL TRUST-FREEZE belt #1: the source names NO trust field (grep-0)", () => {
-    // The OD2 ship-gate (Pitfall 1): the tunable vector + scope NEVER name trust.
+    // The ship-gate: the tunable vector + scope NEVER name trust.
     // This is the reproducible runtime RED for the trust-exclusion: were a future
     // contributor to add `trustAlpha`/`trust_alpha`/`trust:` "for symmetry", this
     // grep would flip RED. The compile-time @ts-expect-error below is the second
@@ -138,7 +138,7 @@ describe("TunedAlphaStore — type-only segregated tuned-alpha port (LEARN-03)",
       temporalAlpha: 0.2,
       proofAlpha: 0.3,
       usefulnessAlpha: 0.4,
-      // @ts-expect-error trustAlpha is structurally ABSENT from TunedAlphaVector (the OD2 ship-gate)
+      // @ts-expect-error trustAlpha is structurally ABSENT from TunedAlphaVector (the ship-gate)
       trustAlpha: 0.5,
     };
     void bad;
@@ -220,16 +220,16 @@ describe("TunedAlphaStore — type-only segregated tuned-alpha port (LEARN-03)",
 });
 
 /**
- * Phase 111 (LEARN-03) — the public @comis/core surface re-export.
+ * The public @comis/core surface re-export.
  *
- * The deterministic overlay (111-03), the offline update job (111-04), and the
+ * The deterministic overlay, the offline update job, and the
  * daemon wiring consume these TYPES from `@comis/core` (never @comis/memory).
  * This block proves the port types are on the public barrel — the same names,
  * structurally identical to the relative-path types. (The public-export-consumers
- * gate requires the export; its consumers land in 111-02/03/04, so this is an
- * ahead-of-consumer planned-orphan tracked in the SUMMARY.)
+ * gate requires the export; its consumers land in later cuts, so this is an
+ * ahead-of-consumer planned-orphan.)
  */
-describe("TunedAlphaStore — public @comis/core re-export (LEARN-03)", () => {
+describe("TunedAlphaStore — public @comis/core re-export", () => {
   it("re-exports the port types on the public barrel, identical to the relative-path types", () => {
     expectTypeOf<PublicTunedAlphaStore>().toEqualTypeOf<TunedAlphaStore>();
     expectTypeOf<PublicTunedAlphaScope>().toEqualTypeOf<TunedAlphaScope>();

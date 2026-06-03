@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED→GREEN coverage for {@link createReasoningSeam} (Phase 101 — REASON-02/03,
- * the daemon-injected reasoning seam, 101-06).
+ * RED→GREEN coverage for {@link createReasoningSeam}, the daemon-injected
+ * reasoning seam.
  *
  * The seam is the OFFLINE LLM call the daemon builds from a cheap model and
  * injects into {@link runMemoryReasoning} as `deps.reason`. It encapsulates the

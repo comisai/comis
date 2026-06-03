@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Transparency label-coverage gate (LBL-03).
+ * Transparency label-coverage gate.
  *
  * Walks the LIVE platform-tool descriptor registry — the single source of
  * truth for every emitted `AgentTool.name` — and asserts each tool is
@@ -12,7 +12,7 @@
  *
  * Why the registry walk (not a hardcoded list): the gate must enumerate the
  * live registry so a newly-added tool that forgets a spec/suppress flag fails
- * THIS test immediately (LBL-03 is a coverage gate, not a fixture).
+ * THIS test immediately (this is a coverage gate, not a fixture).
  *
  * Why `hasRegisteredLabelSpec` (not `resolveLabelSpec`): `resolveLabelSpec` is
  * TOTAL — it always returns a humanized fallback — so "did resolution succeed?"
@@ -28,7 +28,7 @@
  *
  * Scope note: `bash`/`exec`/`shell` are pi-agent-core builtins, NOT platform
  * descriptors — they are out of this registry and delegate to
- * shell-label-parser.ts (LBL-02, Phase 70). The gate walks only the platform
+ * shell-label-parser.ts. The gate walks only the platform
  * registry and does NOT expect shell tools (RESEARCH Pitfall 2).
  *
  * Importing the tool modules and the suppression-metadata module for their

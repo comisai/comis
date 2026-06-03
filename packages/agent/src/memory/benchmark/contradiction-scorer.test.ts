@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit test for the pure trust-first contradiction-correctness scorer (SUITE-04,
- * Plan 99-04, Task 1). RED first: pins the trust-first-correct rate = correct /
+ * Unit test for the pure trust-first contradiction-correctness scorer. RED first:
+ * pins the trust-first-correct rate = correct /
  * validTotal * 100, where `correct` means "answered with the OLDER high-trust
  * fact" (NOT the newer low-trust claim). Invalid verdicts are excluded from the
  * denominator (the qa-accuracy doctrine).
  *
- * This is the SUITE-04 metric the Phase-100 KG gate (KG-05) consumes — freeze it.
+ * This is the metric the KG gate consumes — freeze it.
  */
 
 import { describe, expect, it } from "vitest";

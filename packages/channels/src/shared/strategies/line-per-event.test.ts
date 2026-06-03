@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LinePerEvent strategy tests (STRAT-05, §7.3 row "LinePerEvent" + §7.1 IRC cap).
+ * LinePerEvent strategy tests (§7.3 row "LinePerEvent" + §7.1 IRC cap).
  *
  * Used by IRC (no edit, no delete, 512-char line cap). Emits one line per newly
  * surviving event; a line longer than 512 chars is truncated with "…". A closing
@@ -22,7 +22,7 @@ import { createFakeClock } from "../../../../../test/support/fake-clock.js";
 import { createLinePerEventRenderer } from "./line-per-event.js";
 import type { ActivityRenderActions } from "./actions.js";
 
-/** The locked `ascii` theme markers (75-01): every glyph is bracketed ASCII. */
+/** The locked `ascii` theme markers: every glyph is bracketed ASCII. */
 const ASCII_MARKERS: ActivityStatusMarkers = {
   success: "[OK]",
   failure: "[ERR]",
@@ -165,7 +165,7 @@ describe("createLinePerEventRenderer", () => {
     await r.finalize(success);
 
     const closing = sent[sent.length - 1];
-    // UX-01 governs the MARKER glyph, not the IRC "·" layout separator (U+00B7
+    // The theme governs the MARKER glyph, not the IRC "·" layout separator (U+00B7
     // is theme-independent formatting present under every theme). Assert the
     // themed ASCII marker leads and the default check glyph "✓" (U+2713) is gone;
     // the marker prefix itself carries no non-ASCII codepoint (stricter than
@@ -201,7 +201,7 @@ describe("createLinePerEventRenderer", () => {
     await r.finalize(success);
 
     const closing = sent[sent.length - 1];
-    // Byte-for-byte parity with the pre-75 output: the literal check glyph stays.
+    // Byte-for-byte parity with the historical output: the literal check glyph stays.
     expect(closing).toContain("✓ done");
   });
 });

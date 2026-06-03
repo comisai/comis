@@ -27,7 +27,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const portSrc = readFileSync(resolve(here, "./memory-usefulness-store.ts"), "utf8");
 
 /**
- * Phase 93 (FEED-02) — the durable per-memory usefulness signal port.
+ * The durable per-memory usefulness signal port.
  *
  * Type-only assertions: an implementer must expose `recordUsage(usedIds,
  * ignoredIds, scope)` (WRITE) and `readUsefulness(memoryIds, scope)` (READ),
@@ -36,7 +36,7 @@ const portSrc = readFileSync(resolve(here, "./memory-usefulness-store.ts"), "utf
  * isolation boundary the sole adapter enforces. This is a NEW segregated port —
  * it does NOT widen the security-reviewed `MemoryPort`.
  */
-describe("MemoryUsefulnessStore — durable recall-utility port (FEED-02)", () => {
+describe("MemoryUsefulnessStore — durable recall-utility port", () => {
   it("declares the port + signal interfaces and stays a type-only port (no zod, no @comis/memory)", () => {
     // Runtime RED proof: fails on the absent/empty source where the interfaces
     // + methods do not exist yet.
@@ -115,13 +115,13 @@ describe("MemoryUsefulnessStore — durable recall-utility port (FEED-02)", () =
 });
 
 /**
- * Phase 110 (LEARN-01 / H1) — the optional per-INTENT bucket on UsefulnessScope.
+ * The optional per-INTENT bucket on UsefulnessScope.
  *
  * Additive + forward-only: a `UsefulnessScope` carries an OPTIONAL `intent?:
  * string`. When present the read fetches / the write records the per-intent
  * usefulness signal (a memory's usefulness FOR THAT INTENT); when OMITTED the
- * adapter resolves the GLOBAL bucket (intent="") — byte-identical to v2.8, so
- * today's callers compile unchanged. Because `readUsefulness` takes
+ * adapter resolves the GLOBAL bucket (intent="") — byte-identical to the prior
+ * behaviour, so today's callers compile unchanged. Because `readUsefulness` takes
  * `Omit<UsefulnessScope, "now">`, the optional `intent` flows to BOTH the write
  * (`recordUsage`) AND the read automatically.
  *
@@ -130,17 +130,17 @@ describe("MemoryUsefulnessStore — durable recall-utility port (FEED-02)", () =
  * type-level assertions at runtime (vitest does not type-check), so the grep is
  * the reproducible-from-this-commit RED, mirroring the first test's portSrc guard.
  */
-describe("UsefulnessScope optional per-intent bucket (LEARN-01 / H1)", () => {
+describe("UsefulnessScope optional per-intent bucket", () => {
   it("declares an OPTIONAL intent?: string on UsefulnessScope (runtime RED guard)", () => {
     // Fails on the pre-patch source where UsefulnessScope has no intent field.
     expect(portSrc, "UsefulnessScope must carry an optional intent?: string").toMatch(
       /\bintent\?:\s*string\b/,
     );
-    // The field must stay TYPE-ONLY: no Intent import from @comis/agent (Pitfall
-    // 2 — the bucket is a plain string, the closed-union value comes from the
+    // The field must stay TYPE-ONLY: no Intent import from @comis/agent (the
+    // bucket is a plain string, the closed-union value comes from the
     // agent's deterministic classifyIntent), and the port stays zod-free / with
     // no @comis/memory import (the load-bearing agent↛memory cut, re-proven here).
-    expect(portSrc, "no Intent import from @comis/agent (Pitfall 2)").not.toMatch(
+    expect(portSrc, "no Intent import from @comis/agent").not.toMatch(
       /from\s+["']@comis\/agent["']/,
     );
     expect(portSrc, "no @comis/memory import in core port").not.toMatch(
@@ -157,7 +157,7 @@ describe("UsefulnessScope optional per-intent bucket (LEARN-01 / H1)", () => {
 
   it("a UsefulnessScope WITHOUT intent is still valid (optionality / byte-identity)", () => {
     // The pre-110 shape must still satisfy UsefulnessScope unchanged — omitting
-    // intent is byte-identical to v2.8 at the type level (degrade-to-global).
+    // intent is byte-identical to the prior behaviour at the type level (degrade-to-global).
     const scope: UsefulnessScope = { tenantId: "t", agentId: "a", now: 123 };
     expect(scope.intent).toBeUndefined();
   });

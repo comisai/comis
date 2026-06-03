@@ -171,7 +171,7 @@ describe("createRestApi", () => {
       expect(body.agents).toEqual([
         { id: "default", name: "Comis", provider: "anthropic", model: "claude-sonnet-4-6", status: "active" },
       ]);
-      // WR-03: /agents MUST source from the dedicated non-secret projection,
+      // /agents MUST source from the dedicated non-secret projection,
       // NOT getConfig (which no longer egresses the agents section).
       expect(deps.rpcAdapterDeps.listAgentSummaries).toHaveBeenCalled();
       expect(deps.rpcAdapterDeps.getConfig).not.toHaveBeenCalledWith({ section: "agents" });
@@ -218,7 +218,7 @@ describe("createRestApi", () => {
       expect(body.channels).toEqual([
         { type: "telegram", name: "telegram", enabled: true, status: "connected" },
       ]);
-      // WR-03: /channels MUST source from the dedicated non-secret projection,
+      // /channels MUST source from the dedicated non-secret projection,
       // NOT getConfig (which no longer egresses the channels section).
       expect(deps.rpcAdapterDeps.listChannelSummaries).toHaveBeenCalled();
       expect(deps.rpcAdapterDeps.getConfig).not.toHaveBeenCalledWith({ section: "channels" });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * UNGATED unit tests for the pure personalization + faithfulness loaders
- * (SUITE-07): PrefEval, PerLTQA, PersonaMem, HaluMem.
+ * UNGATED unit tests for the pure personalization + faithfulness loaders:
+ * PrefEval, PerLTQA, PersonaMem, HaluMem.
  *
  * TIER: default CI / fast unit tier (no model, no dataset download, no store).
  * Runs over the tiny vendored neutral-placeholder fixtures in __fixtures__/.
@@ -11,7 +11,7 @@
  *   - returns `err` (never throws) on a missing required field / hostile input,
  *   - is prototype-pollution-safe (a `__proto__` key never mutates Object.prototype),
  *   - keeps gold (answers, HaluMem hallucination labels) OFF document content
- *     (the anti-leak invariant, T-99-07-03).
+ *     (the anti-leak invariant).
  *
  * PerLTQA additionally proves a non-ASCII (Chinese) placeholder round-trips
  * through the content string unharmed (the loader is language-agnostic).
@@ -168,7 +168,7 @@ describe("loadPerLtqa (personal episodic+semantic QA -> dated profile doc + qa[]
   });
 
   it("never serializes the qa gold metadata block into profile doc content (anti-leak)", () => {
-    // The anti-leak invariant (T-99-07-03) is about the gold CHANNEL: the loader
+    // The anti-leak invariant is about the gold CHANNEL: the loader
     // must never fold the qa block (questions + their `answer`/`question_id` gold
     // keys) into the ingested profile document — the gold rides the qa[] channel
     // only. (The answer's natural-language VALUE may legitimately appear in the
@@ -253,7 +253,7 @@ describe("loadPersonaMem (evolving persona -> dated session docs + probe questio
   });
 
   it("never serializes the probe gold metadata block into session doc content (anti-leak)", () => {
-    // Anti-leak (T-99-07-03): the loader serializes ONLY the session turns, never
+    // Anti-leak: the loader serializes ONLY the session turns, never
     // the probes (their `answer`/`probe_id` gold keys). The gold value `climbing`
     // legitimately appears in the LATER session's turns — that is the evolving
     // fact the agent must ingest and recall — so the invariant is that the probe
@@ -322,7 +322,7 @@ describe("loadHaluMem (memory hallucination -> { docs, qa, hallucinationLabels }
   });
 
   it("keeps the hallucination labels + qa gold OFF document content (the anti-leak invariant)", () => {
-    // Anti-leak (T-99-07-03): the loader ingests ONLY the memory ops; the
+    // Anti-leak: the loader ingests ONLY the memory ops; the
     // faithfulness gold (the `hallucination_labels` / `hallucinated` flags) and
     // the qa block ride SEPARATE channels and are never folded into doc content.
     // The answer VALUE `Mittens` is the corrected fact inside the update op the

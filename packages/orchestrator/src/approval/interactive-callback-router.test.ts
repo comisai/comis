@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * SEC-06 suite for the InteractiveCallbackRouter (APV-05 / APV-10).
+ * Security suite for the InteractiveCallbackRouter.
  *
  * The router is the single server-side authority that parses, looks-up-THEN-verifies,
  * and dispatches every approval callback to ApprovalGate.resolveApproval(). The lookup-FIRST
- * ordering + pending-table-removal-as-replay-guard are load-bearing for SEC-06:
+ * ordering + pending-table-removal-as-replay-guard are load-bearing:
  *
  *   1. parseCallbackData (strict regex)            → malformed
  *   2. gate.getRequestByShortId(shortId) FIRST     → unknown (covers replays)
- *   3. req.sessionKey !== inbound.sessionKey       → unknown (cross-session guard, T-73-09)
+ *   3. req.sessionKey !== inbound.sessionKey       → unknown (cross-session guard)
  *   4. clock.now() >= createdAt + timeoutMs        → expired (derived expiresAt, injected clock)
  *   5. !verifyCallbackData(...)                     → invalid_signature (constant-time, no throw)
  *   6. details → details_requested (no resolve); approve/deny → resolveApproval + resolved
@@ -44,7 +44,7 @@ interface ResolveCall {
  * Build a fake ApprovalGate seeded with `seed` pending requests, recording every
  * resolveApproval call and honouring the pending-table-removal replay guard: once a
  * requestId is resolved it is removed from both the by-shortId and by-requestId views,
- * so a replayed lookup returns undefined (mirrors the real gate, 73-02).
+ * so a replayed lookup returns undefined (mirrors the real gate).
  */
 function makeFakeGate(seed: ApprovalRequest[]): {
   gate: ApprovalGate;
@@ -64,7 +64,7 @@ function makeFakeGate(seed: ApprovalRequest[]): {
     },
     resolveApproval: (requestId, approved, approvedBy, reason) => {
       resolveCalls.push({ requestId, approved, approvedBy, reason });
-      // Pending-table removal IS the replay guard (T-73-10): drop from both views.
+      // Pending-table removal IS the replay guard: drop from both views.
       const req = byRequestId.get(requestId);
       if (req) {
         byRequestId.delete(requestId);
@@ -132,7 +132,7 @@ function makeRouter(seed: ApprovalRequest[], clock?: ClockPort) {
   return { router, resolveCalls, gate };
 }
 
-describe("InteractiveCallbackRouter — signed branch (SEC-06)", () => {
+describe("InteractiveCallbackRouter — signed branch", () => {
   it("malformed: a v1-prefixed payload that fails the strict regex → {kind:'malformed'} (a corrupted signed attempt must NOT fall through to the unauthenticated plain-text branch)", async () => {
     const { router, resolveCalls } = makeRouter([makeRequest()]);
     // The signed-format marker `v1.` is present but the body is garbage.
@@ -168,7 +168,7 @@ describe("InteractiveCallbackRouter — signed branch (SEC-06)", () => {
     expect(resolveCalls).toHaveLength(0);
   });
 
-  it("cross-session: inbound sessionKey ≠ the pending entry's sessionKey → {kind:'unknown'} and NOT resolved (T-73-09)", async () => {
+  it("cross-session: inbound sessionKey ≠ the pending entry's sessionKey → {kind:'unknown'} and NOT resolved", async () => {
     const { router, resolveCalls } = makeRouter([makeRequest()]);
     // room B presents room A's shortId
     const res = await router.route(
@@ -179,7 +179,7 @@ describe("InteractiveCallbackRouter — signed branch (SEC-06)", () => {
     expect(resolveCalls).toHaveLength(0);
   });
 
-  it("expired: clock.now() >= createdAt + timeoutMs → {kind:'expired'} and NOT resolved (T-73-11)", async () => {
+  it("expired: clock.now() >= createdAt + timeoutMs → {kind:'expired'} and NOT resolved", async () => {
     const expiredClock = createFakeClock(CREATED_AT + TIMEOUT_MS); // exactly at expiry
     const { router, resolveCalls } = makeRouter([makeRequest()], expiredClock);
     const res = await router.route(inbound(signedPayload("approve")));
@@ -218,11 +218,11 @@ describe("InteractiveCallbackRouter — signed branch (SEC-06)", () => {
 
   it("invalid_signature: verifyCallbackData does NOT throw on an unequal-length tag (length-guard-first contract)", () => {
     // parseCallbackData enforces a 16-char hmac, so the unequal-length path is asserted
-    // directly against the primitive the router calls (the SEC-06 'no throw' line, Pitfall 3).
+    // directly against the primitive the router calls (the 'no throw' line, Pitfall 3).
     const shortTag = "short";
     const longTag = "waytoolongtagvaluethatexceeds16chars";
     expect(() => signCallbackData(SECRET, "approve", SHORT_ID)).not.toThrow();
-    // The router delegates verification to verifyCallbackData (from 73-01), which length-guards
+    // The router delegates verification to verifyCallbackData, which length-guards
     // before timingSafeEqual; a length mismatch must return false, never throw.
     // Re-import lazily to keep this assertion co-located with the router contract.
     return import("@comis/core").then(({ verifyCallbackData }) => {
@@ -271,7 +271,7 @@ describe("InteractiveCallbackRouter — signed branch (SEC-06)", () => {
     expect(gate.getRequestByShortId(SHORT_ID)?.requestId).toBe(REQUEST_ID);
   });
 
-  it("replay-after-resolve: first valid callback resolves; the SAME callback again → {kind:'unknown'} and resolveApproval called exactly ONCE total (T-73-10)", async () => {
+  it("replay-after-resolve: first valid callback resolves; the SAME callback again → {kind:'unknown'} and resolveApproval called exactly ONCE total", async () => {
     const { router, resolveCalls } = makeRouter([makeRequest()]);
     const payload = signedPayload("approve");
 
@@ -288,7 +288,7 @@ describe("InteractiveCallbackRouter — signed branch (SEC-06)", () => {
   });
 });
 
-describe("InteractiveCallbackRouter — plain-text branch (APV-10, §6.4.6)", () => {
+describe("InteractiveCallbackRouter — plain-text branch (§6.4.6)", () => {
   it("exactly-one pending in session + 'approve' → resolved (HMAC skipped)", async () => {
     const { router, resolveCalls } = makeRouter([makeRequest()]);
     const res = await router.route(inbound("approve"));

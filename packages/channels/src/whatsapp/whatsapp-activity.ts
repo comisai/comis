@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WhatsApp windowed EditPlace activity renderer (CHAN-04; §7.2 / §18.2 row
- * "EditPlace"). Copies the Telegram canonical shape (71-02) with a
+ * WhatsApp windowed EditPlace activity renderer (§7.2 / §18.2 row
+ * "EditPlace"). Copies the Telegram canonical shape with a
  * baileys-specific classifier and the windowing semantics. Three parts:
  *
  *   1. `classifyWhatsAppError` — the single net-new piece of logic here. WhatsApp
@@ -16,20 +16,20 @@
  *      connected" Error → `{kind:"transient_network", cause}`. Everything else
  *      (5xx, connection 408/428, unknown) → `{kind:"internal", cause}`. The
  *      message text is consulted only to disambiguate; it is never rendered or
- *      logged (SEC-05/§19.3, T-71-04-01).
+ *      logged (§19.3).
  *
  *   2. `makeWhatsAppRenderActions` — the `ActivityRenderActions` adapter. `send`
  *      posts a plain-text placeholder (WhatsApp has NO button surface —
- *      `buttons:"none"`; the approval instruction is plain text, resolution is
- *      Phase 73). `edit`/`delete` GUARD the OPTIONAL `ChannelPort` methods (early
+ *      `buttons:"none"`; the approval instruction is plain text). `edit`/`delete`
+ *      GUARD the OPTIONAL `ChannelPort` methods (early
  *      `not_supported` — never a non-null-asserted call, AGENTS.md §2.8), map
  *      every `.error` through `classifyWhatsAppError`, and contain any throw the
  *      port lets escape. Once a window-expiry `not_supported` is seen, ALL
- *      further edits are dropped (no retry loop, T-71-04-03) — the EditPlace
+ *      further edits are dropped (no retry loop) — the EditPlace
  *      best-effort `flushEdit` tolerates the mid-stream failure; the finalize
  *      edit propagates the error.
  *
- *   3. `createWhatsAppActivityRenderer` — wires the Phase-70
+ *   3. `createWhatsAppActivityRenderer` — wires the shared
  *      `createEditPlaceRenderer` (the debounce/edit/delete state machine). It
  *      does NOT re-implement any rendering logic.
  *
@@ -129,7 +129,7 @@ export function makeWhatsAppRenderActions(
   return {
     async send(text): Promise<Result<string, ActivityRenderError>> {
       // Plain-text placeholder/approval shell: NO buttons (WhatsApp has no button
-      // surface; the approval resolution is Phase 73). No silent effect either —
+      // surface). No silent effect either —
       // WhatsApp ignores rich effects.
       const r = await runAdapter(() => adapter.sendMessage(channelId, text));
       if (!r.ok) return err(classifyWhatsAppError(r.error));
@@ -175,11 +175,10 @@ async function runAdapter<T>(
 }
 
 /**
- * Create the WhatsApp EditPlace activity renderer — wires the Phase-70
+ * Create the WhatsApp EditPlace activity renderer — wires the shared
  * {@link createEditPlaceRenderer} with the per-channel render-actions adapter. The
  * daemon composition root constructs this with its runtime `TimerPort` /
- * `ClockPort` and the chat id (WIRE-02). This is the signature 71-05 wiring
- * constructs.
+ * `ClockPort` and the chat id.
  */
 export function createWhatsAppActivityRenderer(
   adapter: ChannelPort,
@@ -193,7 +192,7 @@ export function createWhatsAppActivityRenderer(
     markers: deps.markers,
     // WhatsApp has no button surface (`buttons:"none"`), so an approval frame
     // appends the plain-text prompt ("Reply approve or deny …", with shortIds when
-    // >1 pending) to the placeholder (APV-10, §6.4.6). A non-approval frame yields
+    // >1 pending) to the placeholder (§6.4.6). A non-approval frame yields
     // "" (the placeholder text stays byte-identical).
     buildPrompt: buildApprovalPrompt,
   });

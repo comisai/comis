@@ -69,7 +69,7 @@ describe("ActivityEvent", () => {
     });
   });
 
-  describe("z.strictObject rejects unknown keys (T-70-01-01)", () => {
+  describe("z.strictObject rejects unknown keys", () => {
     it("rejects an unknown top-level key", () => {
       const result = parseActivityEvent(validEvent({ bogus: 1 }));
       expect(result.ok).toBe(false);
@@ -95,7 +95,7 @@ describe("ActivityEvent", () => {
     });
   });
 
-  describe("errorKind closed 10-value union (T-70-01-04)", () => {
+  describe("errorKind closed 10-value union", () => {
     it("accepts errorKind 'precondition'", () => {
       expect(parseActivityEvent(validEvent({ errorKind: "precondition" })).ok).toBe(true);
     });
@@ -113,7 +113,7 @@ describe("ActivityEvent", () => {
     });
   });
 
-  describe("overlong label/detail surface too_big inside the single schema variant (T-70-01-03)", () => {
+  describe("overlong label/detail surface too_big inside the single schema variant", () => {
     it("surfaces a too_big issue for defaultLabel of length 121", () => {
       const result = parseActivityEvent(validEvent({ defaultLabel: "x".repeat(121) }));
       expect(result.ok).toBe(false);
@@ -137,7 +137,7 @@ describe("ActivityEvent", () => {
     });
   });
 
-  describe("recursive RedactedParamsSchema (ACT-03)", () => {
+  describe("recursive RedactedParamsSchema", () => {
     it("accepts a nested object with arrays of scalars", () => {
       const result = parseActivityEvent(validEvent({ params: { a: { b: [1, "x", true] } } }));
       expect(result.ok).toBe(true);
@@ -153,7 +153,7 @@ describe("ActivityEvent", () => {
     });
   });
 
-  describe("approval refine: present iff kind === 'approval' (T-70-01-02)", () => {
+  describe("approval refine: present iff kind === 'approval'", () => {
     it("accepts kind 'approval' WITH an approval block", () => {
       const result = parseActivityEvent(
         validEvent({ kind: "approval", approval: validApproval() }),
@@ -170,7 +170,7 @@ describe("ActivityEvent", () => {
     });
   });
 
-  describe("parseActivityEvent NEVER throws (ACT-02)", () => {
+  describe("parseActivityEvent NEVER throws", () => {
     it("returns err({kind:'schema'}) for null without throwing", () => {
       const result = parseActivityEvent(null);
       expect(result.ok).toBe(false);

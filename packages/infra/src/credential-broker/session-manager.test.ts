@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for SessionManager — BROKER-01 token lifecycle.
+ * Tests for SessionManager — token lifecycle.
  *
  * RED-first TDD: these tests are written before the implementation.
  * Security invariants tested: single-use semantics, timing-safe comparison

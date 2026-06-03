@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Slack EditPlace activity renderer (CHAN-03; §7.2 / §18.2 row "EditPlace").
+ * Slack EditPlace activity renderer (§7.2 / §18.2 row "EditPlace").
  *
- * Copies the canonical Telegram shape (71-02) — only the error classifier
+ * Copies the canonical Telegram shape — only the error classifier
  * differs. Three parts:
  *
  *   1. `classifySlackError` — the per-platform net-new logic. It reads the
@@ -13,7 +13,7 @@
  *      (+ `retryAfter`) → rate_limited; `"message_not_found"` /
  *      `"cant_update_message"` → not_supported:edit (drop edits);
  *      `"not_in_channel"` / `"cant_delete_message"` → permission. It NEVER parses
- *      the generic "Failed to…" string. SEC-05/§19.3 (T-71-03-01): `data.error`
+ *      the generic "Failed to…" string. §19.3: `data.error`
  *      is used ONLY to choose the closed `ActivityRenderError` variant — never
  *      rendered or logged as activity text.
  *
@@ -22,20 +22,20 @@
  *      Kit `actions` (each element's callback value = the §6.4.2 wire string from
  *      `buildApprovalButtons`, via the renderer-injected `SignCallbackData`); a
  *      subagent placeholder opens a thread (`thread_ts`) for its expand. These
- *      are DISPLAY affordances — resolution is owned by the Phase-73
+ *      are DISPLAY affordances — resolution is owned by the
  *      InteractiveCallbackRouter, not this renderer. `edit`/`delete` GUARD the
  *      optional `ChannelPort` methods (early `not_supported` — never a non-null
  *      `!` cluster, AGENTS.md §2.8) and map every `.error` through
- *      `classifySlackError`. `delete` is `chat.delete` (CHAN-03's required
+ *      `classifySlackError`. `delete` is `chat.delete` (the required
  *      delete-on-success op). All paths return `Result`; nothing throws across
  *      the boundary.
  *
- *   3. `createSlackActivityRenderer` — wires the Phase-70
+ *   3. `createSlackActivityRenderer` — wires the
  *      `createEditPlaceRenderer` (the debounce/edit/delete state machine, which
  *      fires `chat.delete` after `deliveredAtMs` on success). It does NOT
  *      re-implement any rendering logic.
  *
- * 429 backoff (T-71-03-01, mirrors CHAN-02): the channels package depends on
+ * 429 backoff (mirrors the Telegram renderer): the channels package depends on
  * `core` + `shared` only — no observability substrate — so the buffer is a LOCAL
  * fixed-cap latest-text slot with a `retryAfterMs`-gated retry through the
  * injected `TimerPort` (the handle is `unref`'d and `cancel()`-able — never a raw
@@ -86,7 +86,7 @@ const PERMISSION = new Set(["not_in_channel", "cant_delete_message"]);
  * union by its STRUCTURAL `data.error` field. Reads `data.error`/`retryAfter` off
  * the error itself and, when the live adapter wrapped the Slack error in
  * `new Error(msg, { cause })`, off `error.cause`. The string is consulted ONLY to
- * pick the variant — never rendered or logged (T-71-03-01).
+ * pick the variant — never rendered or logged.
  */
 export function classifySlackError(e: unknown): ActivityRenderError {
   const direct = (e ?? {}) as SlackErrorFields;
@@ -122,9 +122,9 @@ const MAX_RETRY_ATTEMPTS = 4;
 /**
  * Build the {@link ActivityRenderActions} for a Slack channel. `edit`/`delete`
  * guard the optional port methods and classify platform errors structurally;
- * `delete` maps to `chat.delete` (CHAN-03's delete-on-success op). When a `timer`
+ * `delete` maps to `chat.delete` (the delete-on-success op). When a `timer`
  * is supplied, a `rate_limited` edit schedules a single bounded retry of the
- * LATEST text (T-71-03-01).
+ * LATEST text.
  */
 export function makeSlackRenderActions(
   adapter: ChannelPort,
@@ -197,7 +197,7 @@ export function makeSlackRenderActions(
       // thread (thread_ts) for its expand affordance; an approval placeholder
       // carries the signed Block Kit action elements in `buttons` (each element's
       // callback value = v1.<choice>.<shortId>.<hmac>). Both are display
-      // affordances — Phase 73's router owns resolution.
+      // affordances — the InteractiveCallbackRouter owns resolution.
       const threadReply = text.includes(SUBAGENT_MARKER);
       const r = await adapter.sendMessage(channelId, text, {
         ...(threadReply ? { threadReply: true } : {}),
@@ -213,8 +213,8 @@ export function makeSlackRenderActions(
     async delete(id): Promise<Result<void, ActivityRenderError>> {
       cancelRetry();
       pendingText = undefined;
-      // chat.delete — CHAN-03's required delete-on-success op (gated on
-      // deliveredAtMs by the Phase-70 EditPlace finalize).
+      // chat.delete — the required delete-on-success op (gated on
+      // deliveredAtMs by the EditPlace finalize).
       if (!adapter.deleteMessage) return err({ kind: "not_supported", capability: "delete" });
       const r = await adapter.deleteMessage(channelId, id);
       return r.ok ? ok(undefined) : err(classifySlackError(r.error));
@@ -223,14 +223,14 @@ export function makeSlackRenderActions(
 }
 
 /**
- * Create the Slack EditPlace activity renderer — wires the Phase-70
+ * Create the Slack EditPlace activity renderer — wires the
  * {@link createEditPlaceRenderer} with the per-channel render-actions adapter.
  * The daemon composition root constructs this with its runtime `TimerPort` /
- * `ClockPort` and the channel id (WIRE-02).
+ * `ClockPort` and the channel id.
  *
- * `signCallbackData` is the secret-bound signer injected at the composition root
- * (73-10): the renderer CONSUMES it to build signed Block Kit action elements and
- * never imports the orchestrator package (Pitfall 5 / T-73-16). When omitted, an
+ * `signCallbackData` is the secret-bound signer injected at the composition root:
+ * the renderer CONSUMES it to build signed Block Kit action elements and
+ * never imports the orchestrator package (Pitfall 5). When omitted, an
  * approval frame degrades to a button-less text prompt.
  */
 export function createSlackActivityRenderer(

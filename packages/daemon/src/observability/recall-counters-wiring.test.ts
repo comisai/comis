@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the recall-counters bus wiring (OBS-07).
+ * Tests for the recall-counters bus wiring.
  *
  * `wireRecallCounters(eventBus)` stands up a SINGLE in-process recall counter
  * registry and subscribes it to the three `memory:*` bus events. The
@@ -16,7 +16,7 @@ import { describe, it, expect } from "vitest";
 import { TypedEventBus } from "@comis/core";
 import { wireRecallCounters } from "./recall-counters-wiring.js";
 
-describe("wireRecallCounters (OBS-07)", () => {
+describe("wireRecallCounters", () => {
   it("subscribes to memory:recalled and increments recalls + laneUsage", () => {
     const bus = new TypedEventBus();
     const { snapshot } = wireRecallCounters(bus);

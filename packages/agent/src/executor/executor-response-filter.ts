@@ -420,7 +420,7 @@ function findFirstActionableArtifact(text: string): string | undefined {
  * 4. Absence check (substring): skip candidates already present in the final
  *    response. See "Substring-dedupe semantics" below.
  *
- * ## Substring-dedupe semantics (WR-05)
+ * ## Substring-dedupe semantics
  *
  * The Guard-4 absence check is a `String.prototype.includes` substring match.
  * If synthesis (in `recoverEmptyFinalResponse`) already added

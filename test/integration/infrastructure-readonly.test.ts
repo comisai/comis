@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * INFRA: Read-Only Infrastructure Operations Integration Tests
+ * Read-Only Infrastructure Operations Integration Tests
  *
  * Validates infrastructure RPC methods through WebSocket JSON-RPC:
- *   INFRA-01: config.read — returns full config or specific section
- *   INFRA-03: config.schema — returns JSON Schema for full config or section
- *   INFRA-04: gateway.status — returns process and config info
+ *   - config.read — returns full config or specific section
+ *   - config.schema — returns JSON Schema for full config or section
+ *   - gateway.status — returns process and config info
  *
  * Uses a dedicated config (port 8451, separate memory DB) to avoid conflicts.
  */
@@ -36,7 +36,7 @@ const INFRA_CONFIG_PATH = resolve(
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("INFRA: Read-Only Infrastructure Operations", () => {
+describe("Read-Only Infrastructure Operations", () => {
   let handle: TestDaemonHandle;
   let ws: WebSocket;
   let rpcId = 0;
@@ -64,10 +64,10 @@ describe("INFRA: Read-Only Infrastructure Operations", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // INFRA-01 — config.read
+  // config.read
   // -------------------------------------------------------------------------
 
-  describe("INFRA-01: config.read", () => {
+  describe("config.read", () => {
     it("config.read returns full config with sections list", async () => {
       const response = (await sendJsonRpc(ws, "config.read", {}, ++rpcId, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -132,10 +132,10 @@ describe("INFRA: Read-Only Infrastructure Operations", () => {
   });
 
   // -------------------------------------------------------------------------
-  // INFRA-03 — config.schema
+  // config.schema
   // -------------------------------------------------------------------------
 
-  describe("INFRA-03: config.schema", () => {
+  describe("config.schema", () => {
     it("config.schema returns full JSON Schema", async () => {
       const response = (await sendJsonRpc(ws, "config.schema", {}, ++rpcId, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -202,10 +202,10 @@ describe("INFRA: Read-Only Infrastructure Operations", () => {
   });
 
   // -------------------------------------------------------------------------
-  // INFRA-04 — gateway.status
+  // gateway.status
   // -------------------------------------------------------------------------
 
-  describe("INFRA-04: gateway.status", () => {
+  describe("gateway.status", () => {
     it("gateway.status returns process and config info", async () => {
       const response = (await sendJsonRpc(ws, "gateway.status", {}, ++rpcId, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * DeleteAndRepost strategy tests (STRAT-05, §7.3 row "DeleteAndRepost").
+ * DeleteAndRepost strategy tests (§7.3 row "DeleteAndRepost").
  *
  * Used by Signal (no edit, has delete). Each render transition deletes the
  * previous activity message and posts a new one. On success the last activity
  * message is deleted after the answer lands; on failure the final ❌ message is
- * KEPT (the diagnostic trail — T-70-07-02).
+ * KEPT (the diagnostic trail).
  */
 import { describe, it, expect } from "vitest";
 import type { Result } from "@comis/shared";
@@ -122,7 +122,7 @@ describe("createDeleteAndRepostRenderer", () => {
     expect(calls.filter((c) => c.op === "delete").map((c) => c.id)).toEqual(["msg-0"]);
   });
 
-  it("unref's the deliveredAt-gated success-delete timer so it never holds the event loop open (WR-02)", async () => {
+  it("unref's the deliveredAt-gated success-delete timer so it never holds the event loop open", async () => {
     const { actions } = makeRecordingActions();
     const timer = createFakeTimers();
     const clock = createFakeClock(0);
@@ -189,7 +189,7 @@ describe("createDeleteAndRepostRenderer", () => {
     expect(sends[sends.length - 1].text).toBe("❌ timeout");
   });
 
-  // --- Phase 78 / SPEC-§8.5 production wiring (Task 3 — elapsedMs threading) ---
+  // --- §8.5 production wiring (elapsedMs threading) ---
   //
   // DeleteAndRepost captures `startedAtMs` on the first apply() and passes
   // `elapsedMs = clock.now() - startedAtMs` to renderFrameText on EVERY
@@ -209,7 +209,7 @@ describe("createDeleteAndRepostRenderer", () => {
     expect(sends[0].text).toContain("(running 0 s)");
   });
 
-  it("DeleteAndRepost passes elapsedMs into each repost — after 7 500 ms advancement the latest send contains (running 7 s) (SPEC-§8.5 production wiring)", async () => {
+  it("DeleteAndRepost passes elapsedMs into each repost — after 7 500 ms advancement the latest send contains (running 7 s) (§8.5 production wiring)", async () => {
     const { actions, calls } = makeRecordingActions();
     const clock = createFakeClock(1000);
     const timer = createFakeTimers();

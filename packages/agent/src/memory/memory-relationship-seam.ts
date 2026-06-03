@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The daemon-injected OFFLINE directional relationship build seam builder
- * (Phase 108 — SOCIAL-01, Track E2).
+ * The daemon-injected OFFLINE directional relationship build seam builder.
  *
  * {@link runRelationshipBuild} takes an INJECTED `build` seam (a HIGH-TRUST,
  * sender-prefixed source-memory text → typed {@link RelationshipBuildOutput}

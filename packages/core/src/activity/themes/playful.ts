@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The `playful` activity theme (UX-01, Plan 75-01).
+ * The `playful` activity theme.
  *
  * Rich-emoji markers — proves the four themes render the SAME event distinctly
  * (it differs from `default` in success/failure/running) and that the

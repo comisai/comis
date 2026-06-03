@@ -52,7 +52,7 @@ export { createProcessTool } from "./builtin/process-tool.js";
 export { createProcessRegistry } from "./builtin/process-registry.js";
 export type { ProcessRegistry } from "./builtin/process-registry.js";
 
-// Built-in tools -- Interactive terminal driver (v2.11). The nine never-export
+// Built-in tools -- Interactive terminal driver. The nine never-export
 // tool factories + the daemon-side registry + the allowlist/IPC types the
 // daemon wiring (setup-tools.ts, the composition root) consumes.
 export {
@@ -69,7 +69,7 @@ export {
   buildProductionSpawnWorker,
   matchAllowEntry,
   buildDirectSpawn,
-  // P4 OPS-03/06: the per-session caps factory — the daemon constructs ONE shared
+  // The per-session caps factory — the daemon constructs ONE shared
   // instance per agent (from the matched entry's limits) feeding both the tool deps
   // (consume*) and the registry onCapForget (caps.forget).
   createSessionCaps,
@@ -83,7 +83,7 @@ export {
   type AllowMatch,
   type TerminalScope,
   type SessionListing,
-  // P4 OPS-03/06: the per-session caps surface (the daemon wires caps.forget to onCapForget)
+  // The per-session caps surface (the daemon wires caps.forget to onCapForget)
   // + the reaper eviction payload (the daemon's onEvict hook param) + the typed reason.
   type SessionCaps,
   type ReaperEvictInfo,

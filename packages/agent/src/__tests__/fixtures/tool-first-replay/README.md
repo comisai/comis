@@ -16,7 +16,7 @@ For unit-test loops on this package only:
 pnpm --filter @comis/agent build && pnpm --filter @comis/agent test
 ```
 
-> WARNING: repeating because CLAUDE.md repeats it twice and v1.0 paid for skipping it: integration tests run against `dist/`, not `src/`. If a test passes after editing only `src/`, you forgot `pnpm build`.
+> WARNING: repeating because CLAUDE.md repeats it twice and we paid for skipping it before: integration tests run against `dist/`, not `src/`. If a test passes after editing only `src/`, you forgot `pnpm build`.
 
 ## Files
 

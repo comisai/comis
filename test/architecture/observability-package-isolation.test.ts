@@ -142,7 +142,7 @@ describe("@comis/observability isolation — no @comis/agent + @comis/daemon + @
 });
 
 /**
- * Hexagonal renderer-port boundary lock (Agent Transparency v2.5; §16.5 /
+ * Hexagonal renderer-port boundary lock (Agent Transparency; §16.5 /
  * §16.11 / §17.8 ship gate). The activity rendering port
  * (`core/activity/channel-activity-renderer.ts`) and the strategy selector
  * (`core/activity/activity-strategy.ts`) live in `@comis/core`, NOT in

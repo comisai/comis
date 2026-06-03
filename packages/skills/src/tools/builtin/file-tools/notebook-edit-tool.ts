@@ -32,11 +32,11 @@ import {
   serializeNotebook,
 } from "./shared/notebook-edit-ops.js";
 
-// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). The EMITTED name
-// uses an UNDERSCORE — `notebook-edit-tool.ts:120 → name: "notebook_edit"` —
-// while the file basename is hyphenated. Registering on the hyphen would key
-// the wrong entry and the activity stream would fall back to the humanized
-// default (RESEARCH Pitfall 2). The coverage-gate test pins the underscore.
+// Activity label spec (SPEC §6.1). The EMITTED name uses an UNDERSCORE —
+// `notebook-edit-tool.ts:120 → name: "notebook_edit"` — while the file
+// basename is hyphenated. Registering on the hyphen would key the wrong entry
+// and the activity stream would fall back to the humanized default. The
+// coverage-gate test pins the underscore.
 registerActivityLabelSpec("notebook_edit", {
   semanticPhase: "tool",
   label: "editing notebook {path}",

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit test for the LONE remaining terminal-driver stub tool: `status`
- * (`terminal_session_status`). After Phase 120 the four interaction tools
+ * (`terminal_session_status`). The four interaction tools
  * (send_text / send_key / wait / resize) are REAL factories in `terminal-tools.ts`;
  * only `status` is still deferred (→ Phase 124 attention tier). It carries its
  * final spec §5 TypeBox schema now (so the registered surface is correct) but its

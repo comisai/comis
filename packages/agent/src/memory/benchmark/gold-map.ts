@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure gold-map builder (BENCH-01, the gold-mapping half).
+ * Pure gold-map builder (the gold-mapping half).
  *
  * Resolves the loader's dataset gold-evidence refs (LongMemEval session ids,
  * LoCoMo dia_ids) through the ingested-id side-map into the
  * `questionId -> Set<MemoryEntry.id>` shape the recall scorer needs as an
  * EvalQuery's `relevantIds`.
  *
- * THE KEY INSIGHT: the harness (Plan 88-03) assigns a `randomUUID()` per
+ * THE KEY INSIGHT: the harness assigns a `randomUUID()` per
  * ingested document and records `datasetRef -> uuid` in `ingestedIdByRef` at
  * `store()` time. `buildGoldMap` is the pure resolver that turns the loader's
  * `datasetRef`-keyed gold into the `MemoryEntry.id`-keyed gold. The dataset ref
- * is the side-map KEY only — it is NEVER used as an id (Pitfall 6:
- * `MemoryEntry.id = z.guid()`, memory-entry.ts:33 — a ref like "D1:5" or "s1"
+ * is the side-map KEY only — it is NEVER used as an id
+ * (`MemoryEntry.id = z.guid()`, memory-entry.ts:33 — a ref like "D1:5" or "s1"
  * is not a valid id).
  *
  * PURE, types-only. Imports NOTHING (no package imports, no runtime deps) — the

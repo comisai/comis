@@ -44,8 +44,8 @@ export type DeliverDeps = Pick<
 };
 
 /**
- * `delivery.visibleReplies` policy threaded into the delivery stage (TURN-09/10,
- * §16.3). The resolved per-chat-type mode + whether the `message` tool acted
+ * `delivery.visibleReplies` policy threaded into the delivery stage
+ * (§16.3). The resolved per-chat-type mode + whether the `message` tool acted
  * (`send`/`reply`/`attach`) this turn. When the policy for the inbound chat type
  * is `"message_tool"` and the tool did NOT act, the final assistant text is
  * suppressed (the activity/approval surfaces and lifecycle reactions are
@@ -90,7 +90,7 @@ export async function deliverExecutionResponse(
   typingLifecycle: TypingLifecycleController | undefined,
   enforcement?: VisibleRepliesEnforcement,
 ): Promise<DeliveryStageResult> {
-  // === VISIBLE-REPLIES ENFORCEMENT (TURN-09/10, §16.3) ===
+  // === VISIBLE-REPLIES ENFORCEMENT (§16.3) ===
   // Runs AFTER the response filter (the caller passes the post-filter
   // finalDeliveryText) and BEFORE any assistant-text delivery. When the chat
   // type's policy is "message_tool" and the model did not call the `message`
@@ -177,7 +177,7 @@ export async function deliverExecutionResponse(
   const deliveryStartMs = performance.now();
   let deliveredChunks = 0;
   let failedChunks = 0;
-  // TURN-05: the REAL message id of the last successfully-delivered chunk
+  // The REAL message id of the last successfully-delivered chunk
   // (replaces the synthetic "block-delivery" id at the pipeline call site) and
   // the first failure's classified error (for the DeliveryFailureReceipt).
   let lastChunkMessageId = "";
@@ -216,7 +216,7 @@ export async function deliverExecutionResponse(
       if (!deliveryResult.ok || !deliveryResult.value.ok) {
         failedChunks++;
         const chunkErr = !deliveryResult.ok ? deliveryResult.error : undefined;
-        // Record the FIRST failure for the DeliveryFailureReceipt (TURN-05).
+        // Record the FIRST failure for the DeliveryFailureReceipt.
         // Chat-platform send failures classify as "platform" (AGENTS.md §2.1).
         if (!firstFailure) {
           const failChunk = deliveryResult.ok
@@ -308,9 +308,9 @@ export async function deliverExecutionResponse(
     typingLifecycle.markRunComplete();
   }
 
-  // === DELIVERY RECEIPT (TURN-05, §16.6) ===
+  // === DELIVERY RECEIPT (§16.6) ===
   // Any failed chunk => err(DeliveryFailureReceipt) so the coordinator can
-  // classify the turn as kind:"failure" and keep the activity trail (SEC-04).
+  // classify the turn as kind:"failure" and keep the activity trail.
   if (failedChunks > 0 || firstFailure) {
     const rawError = firstFailure?.message ?? "delivery failed";
     // Redact credentials, then bound to the receipt's ≤200-char contract.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WR-07 — the write-failure SENTINEL must route its error text through the
+ * The write-failure SENTINEL must route its error text through the
  * `sanitizeForPersistence` chokepoint, not embed the raw `lastError().message`.
  *
  * The recall-trace recorder's stated invariant (runtime.ts header) is "EVERY
@@ -70,7 +70,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("createRecallTrace -- write-failure sentinel is sanitized (WR-07)", () => {
+describe("createRecallTrace -- write-failure sentinel is sanitized", () => {
   it("routes the sentinel lastError through sanitizeForPersistence so no raw secret reaches disk", async () => {
     const trace = createRecallTrace({
       enabled: true,

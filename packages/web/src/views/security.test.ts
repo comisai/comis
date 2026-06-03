@@ -426,9 +426,9 @@ describe("IcSecurityView", () => {
     expect(header!.textContent).toContain("Credential Storage");
   });
 
-  // --- Secrets tab storage mode rendering (all 3 values, REQ-11) ---
+  // --- Secrets tab storage mode rendering (all 3 values) ---
 
-  describe("secrets tab storage mode rendering (all 3 values, REQ-11)", () => {
+  describe("secrets tab storage mode rendering (all 3 values)", () => {
     for (const mode of ["encrypted", "file", "env"] as const) {
       it(`renders storage mode '${mode}' in Secrets tab`, async () => {
         const rpc = createSecurityMockRpcClient(async (method: string) => {

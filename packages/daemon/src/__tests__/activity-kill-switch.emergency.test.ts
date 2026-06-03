@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * §22.2 acceptance — WIRE-07 "emergency": `emergencyDisabled: true` suppresses
+ * §22.2 acceptance — "emergency": `emergencyDisabled: true` suppresses
  * ALL activity for the agent, overriding an otherwise-enabled channel.
  *
- * Builds the SAME daemon-shaped `coordinatorFactory` Plan 03 wired (a per-turn
+ * Builds the SAME daemon-shaped `coordinatorFactory` the daemon wires (a per-turn
  * `createActivityTurnCoordinator` over a real redacted `ActivityStream`, with a
  * `killSwitch` getter that RE-READS `agents[ctx.agentId]?.activity` fresh per
  * `flushApply`). The per-agent slice has `emergencyDisabled: true` AND
@@ -14,8 +14,8 @@
  *
  * The suppress assertion (`frames.length === 0`) depends on the wired killSwitch:
  * a coordinator built WITHOUT it — or one that ignored `emergencyDisabled` —
- * would render the enabled channel, so this is a genuine driver (T-77-04, the
- * emergency safety barrier).
+ * would render the enabled channel, so this is a genuine driver for the
+ * emergency safety barrier.
  *
  * @module
  */
@@ -59,7 +59,7 @@ function makeCtx(rendererKey: string, channelKey: string): TurnActivityContext {
   };
 }
 
-describe("WIRE-07 §22.2 emergency: emergencyDisabled suppresses an otherwise-enabled channel", () => {
+describe("§22.2 emergency: emergencyDisabled suppresses an otherwise-enabled channel", () => {
   it("paints zero frames for an enabled rendererKey when the agent is emergency-disabled (emergency wins)", async () => {
     const bus = new TypedEventBus();
     const stream = createActivityStream({ eventBus: bus });

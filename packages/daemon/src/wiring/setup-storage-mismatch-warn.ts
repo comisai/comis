@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Boot-time inactive-backend credential probe (REQ-09).
+ * Boot-time inactive-backend credential probe.
  *
  * Called from daemon.ts bootShutdown() after emitStartupInvariants.
  * Probes the INACTIVE credential store (encrypted-side when activeMode is

@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated KEYLESS dialectic mechanical-claims harness (DIAL-01/02/03, Phase 109-04) --
- * the FREE, deterministic, no-API-cost measurement of the SIX MECHANICAL claims the
- * memory_ask dialectic makes, over the REAL SOLE @comis/memory adapter + the REAL LLM-free
- * createMemoryRecall pipeline + the REAL Plan-02 PURE synthesis core, with an INJECTED
- * deterministic STUB seam (a pure fn returning fixed { abstain, answer, citedIds } -- NO
- * model, NO provider, NO key, $0).
+ * Env-gated KEYLESS dialectic mechanical-claims harness -- the FREE, deterministic,
+ * no-API-cost measurement of the SIX MECHANICAL claims the memory_ask dialectic makes,
+ * over the REAL SOLE @comis/memory adapter + the REAL LLM-free createMemoryRecall pipeline
+ * + the REAL PURE synthesis core, with an INJECTED deterministic STUB seam (a pure fn
+ * returning fixed { abstain, answer, citedIds } -- NO model, NO provider, NO key, $0).
  *
- * WHY KEYLESS, AND WHAT IS DEFERRED (binding-constraint-#8 honest protocol):
+ * WHY KEYLESS, AND WHAT IS DEFERRED (the honest protocol):
  * the costed answer-faithfulness / grounding QA lift (does the synthesized cited answer
  * raise grounded-QA accuracy under a real answer model + a real judge?) is NOT measured
  * here -- that is the operator-costed re-run (keys + judge spend), DEFERRED with a
@@ -45,7 +44,7 @@
  * ARCHITECTURE CUT (the single escape hatch): this *.bench.test.ts MAY import @comis/memory
  * (a devDependency) -- the agent->memory cut excludes the `.test.ts` suffix (source-rules.test.ts
  * `excludeFileSuffixes: [".test.ts"]`). Mirrors the blessed precedent
- * user-representation-contribution.bench.test.ts (USER-04) + retrieval-harness.bench.test.ts.
+ * user-representation-contribution.bench.test.ts + retrieval-harness.bench.test.ts.
  *
  * SECURITY: fresh `mkdtempSync` tmp DB (NEVER ~/.comis); `tenantId:"default"`/`agentId:"bench"`
  * -- isolated from any live agent. All fixture strings are synthetic (no secret). The report
@@ -225,7 +224,7 @@ beforeAll(() => {
 // CLAIM 1 — opt-in / default-OFF (the registry conditional gate)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("dialectic: opt-in / default-OFF (DIAL-02 claim 1, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("dialectic: opt-in / default-OFF (claim 1, keyless gated)", () => {
   it("memory_ask is ABSENT when dialecticEnabled is false/absent, PRESENT when true", () => {
     const dir = mkdtempSync(join(tmpdir(), "comis-dialectic-bench-optin-"));
     const reportDir = resolveReportDir(dir);
@@ -272,7 +271,7 @@ describe.skipIf(!COMIS_BENCH)("dialectic: opt-in / default-OFF (DIAL-02 claim 1,
 // CLAIM 2 — recall stays LLM-free (the spy)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("dialectic: recall stays LLM-free (DIAL-02 claim 2, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("dialectic: recall stays LLM-free (claim 2, keyless gated)", () => {
   it("a full createMemoryRecall run over the fixture adapter makes NO model call", async () => {
     completeSimpleSpy.mockClear();
     getModelSpy.mockClear();
@@ -304,7 +303,7 @@ describe.skipIf(!COMIS_BENCH)("dialectic: recall stays LLM-free (DIAL-02 claim 2
 // CLAIM 3 — citations are real recalled ids (bogus dropped)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("dialectic: citations are real recalled ids (DIAL-02 claim 3, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("dialectic: citations are real recalled ids (claim 3, keyless gated)", () => {
   it("a stub seam emitting a BOGUS id => the bogus id is dropped; citations ⊆ recalled ids", async () => {
     const { adapter, dir } = makeAdapter("citations");
     const reportDir = resolveReportDir(dir);
@@ -347,7 +346,7 @@ describe.skipIf(!COMIS_BENCH)("dialectic: citations are real recalled ids (DIAL-
 // CLAIM 4 — mandatory abstention (empty recall => abstain WITHOUT the seam)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("dialectic: mandatory abstention (DIAL-01 claim 4, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("dialectic: mandatory abstention (claim 4, keyless gated)", () => {
   it("empty / irrelevant recall => abstained:true AND the stub seam is NOT called", async () => {
     const { adapter, dir } = makeAdapter("abstain");
     const reportDir = resolveReportDir(dir);
@@ -390,7 +389,7 @@ describe.skipIf(!COMIS_BENCH)("dialectic: mandatory abstention (DIAL-01 claim 4,
 // CLAIM 5 — trust-first contradiction (system beats external in the grounding order)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("dialectic: trust-first contradiction (DIAL-01 claim 5, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("dialectic: trust-first contradiction (claim 5, keyless gated)", () => {
   it("a system claim is ordered BEFORE a contradicting external claim (the HARD trust boundary)", async () => {
     const { adapter, dir } = makeAdapter("trustfirst");
     const reportDir = resolveReportDir(dir);
@@ -436,7 +435,7 @@ describe.skipIf(!COMIS_BENCH)("dialectic: trust-first contradiction (DIAL-01 cla
 // CLAIM 6 — sourceIds in the recall-trace chain (ids only)
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!COMIS_BENCH)("dialectic: sourceIds in the recall-trace (DIAL-03 claim 6, keyless gated)", () => {
+describe.skipIf(!COMIS_BENCH)("dialectic: sourceIds in the recall-trace (claim 6, keyless gated)", () => {
   it("the citationChains reasoning-tree carries the citation->sourceId chain (ids only, no body)", async () => {
     const { adapter, dir } = makeAdapter("sourceids");
     const reportDir = resolveReportDir(dir);

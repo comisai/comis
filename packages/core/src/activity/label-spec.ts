@@ -2,7 +2,7 @@
 /**
  * label-spec — the activity {@link LabelSpec} type plus the module-level
  * registry ({@link registerActivityLabelSpec}) and the theme-merge resolver
- * ({@link resolveLabelSpec}) (ACT-06/08, spec §6.1/§6.2).
+ * ({@link resolveLabelSpec}) (spec §6.1/§6.2).
  *
  * The registry mirrors the verified `core/tool-metadata.ts` idiom: a
  * module-level `Map` keyed by tool name, written via spread-merge so different
@@ -12,11 +12,11 @@
  * fallback** (spec §6.2), applied as a deep merge: each layer's defined fields
  * win and undefined fields inherit, so a theme that overrides only the label
  * preserves the registered detail/detailKeys. A theme cannot remove the
- * allowlist — it can only add/replace fields (T-70-04-04).
+ * allowlist — it can only add/replace fields.
  *
  * Pure domain: no logger, no I/O, no channel coupling. The template engine
- * (plan 70-04 Task 1) consumes the resolved {@link LabelSpec}; the observability
- * label-resolver (plan 70-08) is the production caller of {@link resolveLabelSpec}.
+ * consumes the resolved {@link LabelSpec}; the observability
+ * label-resolver is the production caller of {@link resolveLabelSpec}.
  *
  * @module
  */
@@ -26,7 +26,7 @@ import { classifySemanticPhase, type SemanticPhase } from "./semantic-classifier
  * A resolved activity label spec — the shape {@link import("./template-engine.js").applyTemplate}
  * consumes (spec §6.1 / §10.1). `label`/`detail` are `{key}`-placeholder
  * templates; `detailKeys` is the param-key allowlist the template engine
- * enforces (every other params key is dropped at the gate — SEC-03).
+ * enforces (every other params key is dropped at the gate).
  */
 export interface LabelSpec {
   /** The semantic phase this tool/action maps to (drives projection styling). */
@@ -45,8 +45,7 @@ export interface LabelSpec {
    * Optional override hook. Receives RAW params — the transform is responsible
    * for its own redaction (e.g. parseShellCommand at shell-label-parser.ts:40
    * self-redacts via redactValue at line 53). Returned string MUST be safe to
-   * render. applyTemplate runs redactValue on the output defense-in-depth
-   * (Pitfall 4 / Phase 78 WS-C).
+   * render. applyTemplate runs redactValue on the output defense-in-depth.
    */
   readonly transform?: (params: Readonly<Record<string, unknown>>) => string;
 }
@@ -66,8 +65,7 @@ export interface ActionLabelSpec {
    * Optional override hook. Receives RAW params — the transform is responsible
    * for its own redaction (e.g. parseShellCommand at shell-label-parser.ts:40
    * self-redacts via redactValue at line 53). Returned string MUST be safe to
-   * render. applyTemplate runs redactValue on the output defense-in-depth
-   * (Pitfall 4 / Phase 78 WS-C).
+   * render. applyTemplate runs redactValue on the output defense-in-depth.
    */
   readonly transform?: (params: Readonly<Record<string, unknown>>) => string;
 }
@@ -86,11 +84,11 @@ export interface RegisteredLabelSpec extends ActionLabelSpec {
 }
 
 /**
- * Theme-supplied status markers (UX-01). A theme overrides the default status
+ * Theme-supplied status markers. A theme overrides the default status
  * glyphs (the `✓`/`❌`/`🤖`/running markers) that surface in activity labels.
  * The ascii theme supplies emoji-free markers so "ASCII strips all emoji"
  * holds. These are advisory display strings, NOT part of the label
- * allowlist/merge — Plan 75-05 bakes the resolved marker into
+ * allowlist/merge — the resolved marker is baked into
  * {@link import("./activity-event.js").ActivityEvent}.defaultLabel upstream of
  * the channel painter, so {@link resolveLabelSpec} never reads them.
  *
@@ -108,7 +106,7 @@ export interface ActivityStatusMarkers {
   /** Marker for an in-flight/running event (default theme: e.g. a wrench). */
   readonly running: string;
   /**
-   * WS-E Phase 78 / SPEC-§9 — separator between an event label and its
+   * SPEC-§9 — separator between an event label and its
    * coalesced-group count (e.g. `reading config ×3`). Defaults to `"×"` U+00D7
    * for the default/playful/terminal-minimal themes; the ascii theme overrides
    * to `"x"` (lowercase Latin) so the strict ASCII-parity test
@@ -129,9 +127,9 @@ export interface ActivityTheme {
   /** Per-tool overrides, keyed by tool name. */
   readonly tools?: Readonly<Record<string, RegisteredLabelSpec>>;
   /**
-   * Status-marker overrides (UX-01). Optional — a theme without markers
-   * inherits the default glyphs. Consumed by the observability layer
-   * (Plan 75-05), NOT by {@link resolveLabelSpec} (markers are a parallel
+   * Status-marker overrides. Optional — a theme without markers
+   * inherits the default glyphs. Consumed by the observability layer,
+   * NOT by {@link resolveLabelSpec} (markers are a parallel
    * advisory tier, never part of the label-merge).
    */
   readonly markers?: ActivityStatusMarkers;
@@ -175,7 +173,7 @@ export function registerActivityLabelSpec(toolName: string, spec: RegisteredLabe
  * via {@link registerActivityLabelSpec}. Introspects the registry `Map`
  * directly (mirrors the `getToolMetadata` idiom in tool-metadata.ts).
  *
- * This is the coverage-gate primitive (LBL-03): {@link resolveLabelSpec} is
+ * This is the coverage-gate primitive: {@link resolveLabelSpec} is
  * TOTAL — it always returns a humanized fallback — so "did resolution succeed?"
  * is a no-op check. The transparency gate must ask "was a spec registered?",
  * which is exactly this predicate.
@@ -284,7 +282,7 @@ interface ResolvedFields {
 /**
  * Deep-merge one layer's label fields onto the accumulator: a defined field on
  * `next` wins; an undefined field leaves the accumulator's value intact (this
- * is the "override one field, inherit the rest" semantics of ACT-08).
+ * is the "override one field, inherit the rest" semantics).
  */
 function mergeActionFields(base: ResolvedFields, next: ActionLabelSpec): ResolvedFields {
   return {

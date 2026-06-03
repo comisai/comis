@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Pure assembly helpers for the recall-trace record + the memory:recalled event
- * payload (Phase 86 / OBS-01/03/04). Extracted from `memory-recall.ts` so the
- * orchestrator stays focused on the pipeline (and well under the 800-line cap).
+ * payload. Extracted from `memory-recall.ts` so the orchestrator stays focused on
+ * the pipeline (and well under the 800-line cap).
  *
- * SECURITY (OBS-02, RESEARCH Pitfall 1): the record explains recall WITHOUT echoing
- * bodies. The query is a sha256 DIGEST (never raw text — {@link recallQueryDigest});
- * per-memory data is `id` + numeric `breakdown` (safe) + a closed-union `reason`
- * (safe). NO preview is recorded (id-only is the safer choice the schema permits) —
- * so no memory content reaches the trace from this layer at all. The recorder's
- * `sanitizeForPersistence` (Plan 01) is the second line; this assembly is the first.
+ * SECURITY: the record explains recall WITHOUT echoing bodies. The query is a sha256
+ * DIGEST (never raw text — {@link recallQueryDigest}); per-memory data is `id` +
+ * numeric `breakdown` (safe) + a closed-union `reason` (safe). NO preview is recorded
+ * (id-only is the safer choice the schema permits) — so no memory content reaches the
+ * trace from this layer at all. The recorder's `sanitizeForPersistence` is the second
+ * line; this assembly is the first.
  *
  * ARCHITECTURAL CUT (architecture.test.ts "agent -> memory"): this file imports ONLY
  * core types + the in-package ScoreBreakdown. It MUST NEVER import @comis/memory. The
@@ -40,7 +40,7 @@ export type RecallDegradationKind =
   | "rerank_timeout"
   | "missing_embedding";
 
-/** One queryable graceful-degradation signal recorded in the trace (OBS-03). */
+/** One queryable graceful-degradation signal recorded in the trace. */
 export interface RecallDegradation {
   kind: RecallDegradationKind;
   /** errorKind from the closed LogFields.ErrorKind union (never "security"/"io"). */
@@ -62,16 +62,16 @@ export interface RecallLaneCounts {
   fts: number;
   vector: number;
   entity: number;
-  /** Temporal-spread lane candidate count (LANES-02; append-only). 0 when the lane is
+  /** Temporal-spread lane candidate count (append-only). 0 when the lane is
    *  off / not pushed (default) — byte-identical to before this plan. */
   temporal: number;
-  /** Causal one-hop lane candidate count (EXTRACT-03; append-only). 0 when the lane is
+  /** Causal one-hop lane candidate count (append-only). 0 when the lane is
    *  off / not pushed (default) — byte-identical to before this plan. */
   causal: number;
 }
 
 /**
- * One DIAL-03 reasoning-tree provenance link: a cited claim's recalled id and the
+ * One reasoning-tree provenance link: a cited claim's recalled id and the
  * `sourceIds` it traverses to. IDS ONLY — `citationId` is the recalled `entry.id`,
  * `sourceIds` are that entry's `sourceIds`; NO memory `content` is ever carried here.
  * (sanitizeForPersistence already strips bodies; this field structurally carries none.)
@@ -94,14 +94,14 @@ export interface RecallObservations {
   ranked: RecallRankedEntry[];
   degradations: RecallDegradation[];
   durationMs: number;
-  /** DIAL-03 (Phase 109) reasoning-tree provenance: each cited claim → its recalled id →
+  /** Reasoning-tree provenance: each cited claim → its recalled id →
    *  its sourceIds. IDS ONLY (redaction-safe). Absent/empty on every non-dialectic recall,
    *  so the on-disk line stays byte-identical to before this plan (omitted by buildRecallRecord). */
   citations?: RecallCitationChain[];
 }
 
 /**
- * sha256 hex digest of the raw query (CONS-04 / cache-trace `messagesDigest` precedent).
+ * sha256 hex digest of the raw query (cache-trace `messagesDigest` precedent).
  * The query is a plain string, so a canonical-key-sort serializer is unnecessary — the
  * digest only needs to be stable across byte-identical queries. NEVER record raw text.
  */
@@ -137,7 +137,7 @@ export function buildRecallRecord(obs: RecallObservations): Record<string, unkno
     durationMs: obs.durationMs,
   };
   if (obs.degradations.length > 0) record.degradations = obs.degradations;
-  // DIAL-03 reasoning-tree provenance — each cited claim → its recalled id → its sourceIds.
+  // Reasoning-tree provenance — each cited claim → its recalled id → its sourceIds.
   // Added ONLY when present + non-empty so the default (non-dialectic) recall line is
   // byte-identical to before this plan. The chain is IDS ONLY (no memory body).
   if (obs.citations && obs.citations.length > 0) record.citations = obs.citations;
@@ -146,7 +146,7 @@ export function buildRecallRecord(obs: RecallObservations): Record<string, unkno
 
 /**
  * Conservative recall-layer derivation of whether the vector lane could contribute
- * (OBS-03 vec→FTS gap). The MemoryPort boundary does NOT surface a vec-vs-fts split
+ * (the vec→FTS gap). The MemoryPort boundary does NOT surface a vec-vs-fts split
  * (the SQLite adapter fuses internally and returns one merged score), so the recall
  * layer cannot observe the lane directly. The ONE recall-layer-observable precondition
  * for the memory layer's documented zero-length-embedding → FTS-only fallback is a

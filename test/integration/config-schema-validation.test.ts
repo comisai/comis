@@ -52,7 +52,7 @@ describe("Config Schema Validation", () => {
       // Snapshot-style guard: bump this count when a new top-level section is
       // added so the change surfaces in code review. Count reflects all scalars
       // plus all object sections currently in AppConfigSchema.shape.
-      // Merge note: v1.5 (#147) removed the top-level `oauth` section (folded into
+      // Merge note: #147 removed the top-level `oauth` section (folded into
       // the unified credential storage), dropping this from 42 → 41.
       expect(allKeys).toHaveLength(41);
     });
@@ -69,7 +69,7 @@ describe("Config Schema Validation", () => {
 
       // Object sections should all exist and be objects.
       // `executor` is the one opt-in section: ExecutorConfigSchema.optional() with
-      // no default (credential-broker config, INTEG-02/WIRE-02 — schema.ts:135). It is
+      // no default (credential-broker config, schema.ts:135). It is
       // legitimately `undefined` when absent from config, so unlike every other section
       // it has no default object to assert here. The scalars are excluded for the
       // separate "not an object section" reason.

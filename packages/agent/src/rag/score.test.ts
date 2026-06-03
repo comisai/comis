@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for score() — multiplicative recency/temporal/proof/trust boosts (RANK-05)
- * plus the equal-relevance trust tie-break (RANK-06).
+ * Tests for score() — multiplicative recency/temporal/proof/trust boosts
+ * plus the equal-relevance trust tie-break.
  *
  * Load-bearing RED-first assertions:
  * - alphas all 0 → no boost, order + scores unchanged
  * - recencyAlpha>0 → newer createdAt sorts first at equal base
  * - trustAlpha>0 → system > learned > external at equal base
- * - RANK-06: at EXACTLY equal final score, system > learned > external (deterministic tie-break)
+ * - at EXACTLY equal final score, system > learned > external (deterministic tie-break)
  * - temporal seam: occurredAt absent → factor 1.0 even at temporalAlpha=1.0 (no reorder)
- * - proof seam FILLED (CONS-08): proofCount drives a log-curve boost (higher proofCount
+ * - proof seam FILLED: proofCount drives a log-curve boost (higher proofCount
  *   out-ranks lower at equal base/trust), modulated by an explicit half-life decay over
  *   the observation's `confidence` × event-age (a stale observation's boost fades toward
  *   neutral). The absent-case contract STAYS: proofCount AND confidence absent → factor
@@ -69,10 +69,10 @@ function makeResult(
     tags: [],
     createdAt: opts.createdAt ?? NOW,
   };
-  // occurredAt/proofCount/confidence/memoryType are typed optional MemoryEntry fields
-  // (Plan 01 / P95). Absent → the ranking factor is neutral 1.0 (the no-reorder-when-absent
+  // occurredAt/proofCount/confidence/memoryType are typed optional MemoryEntry fields.
+  // Absent → the ranking factor is neutral 1.0 (the no-reorder-when-absent
   // contract); present → they drive temporal proximity / proof boost / half-life decay /
-  // the FORGET-01 per-type FadeMem β.
+  // the per-type FadeMem β.
   if (opts.occurredAt !== undefined) entry.occurredAt = opts.occurredAt;
   if (opts.proofCount !== undefined) entry.proofCount = opts.proofCount;
   if (opts.confidence !== undefined) entry.confidence = opts.confidence;
@@ -121,7 +121,7 @@ describe("score — boosts + trust tie-break", () => {
     expect(out.map((r) => r.entry.id)).toEqual(["sys", "learned", "ext"]);
   });
 
-  it("resolves an EXACT relevance tie by trust: system > learned > external (RANK-06)", () => {
+  it("resolves an EXACT relevance tie by trust: system > learned > external", () => {
     // All alphas 0 → boosts off → all three keep base 0.5 (an exact tie). The
     // deterministic trust tie-break MUST still order them system>learned>external.
     const ext = makeResult("ext", { base: 0.5, trustLevel: "external" });
@@ -143,7 +143,7 @@ describe("score — boosts + trust tie-break", () => {
     expect(out[1]?.score).toBeCloseTo(0.5, 10);
   });
 
-  it("ranks a recent occurredAt above an old occurredAt at temporalAlpha>0 (TEMP-05)", () => {
+  it("ranks a recent occurredAt above an old occurredAt at temporalAlpha>0", () => {
     // Equal base/createdAt/trust — only the EVENT time (occurredAt) differs. The
     // recent event must outrank the old one once the temporal seam is live.
     const recent = makeResult("recent", { base: 0.5, occurredAt: NOW - 1 * DAY_MS });
@@ -200,7 +200,7 @@ describe("score — boosts + trust tie-break", () => {
     expect(out[1]?.score).toBeCloseTo(0.5, 10);
   });
 
-  it("ranks a higher proofCount above a lower one at equal base and trust (proof boost FILLED, CONS-08)", () => {
+  it("ranks a higher proofCount above a lower one at equal base and trust (proof boost FILLED)", () => {
     // RED 1 — the proof seam is FILLED. Equal base/createdAt/trust; only proofCount differs.
     // A well-corroborated observation (proofCount=100) must strictly out-rank a weakly
     // corroborated one (proofCount=2) once the log curve is live. Today both are neutral
@@ -236,7 +236,7 @@ describe("score — boosts + trust tie-break", () => {
     expect(probe(150)).toBeLessThanOrEqual(cap + 1e-9);
   });
 
-  it("decays a stale observation's proof boost below a fresh one of equal confidence (half-life, CONS-08)", () => {
+  it("decays a stale observation's proof boost below a fresh one of equal confidence (half-life)", () => {
     // RED 2 — half-life confidence decay. Equal base/trust/proofCount/confidence; only
     // the EVENT age (occurredAt) differs. The fresh observation's decayed confidence is
     // larger, so its proof boost is larger → it scores strictly higher. Today there is no
@@ -260,7 +260,7 @@ describe("score — boosts + trust tie-break", () => {
     expect(out[0]?.score ?? 0).toBeGreaterThan(out[1]?.score ?? 0);
   });
 
-  it("halves the confidence contribution to the proof boost at exactly one half-life of age (CONS-08)", () => {
+  it("halves the confidence contribution to the proof boost at exactly one half-life of age", () => {
     // RED 2 (half-life proof) — at exactly one half-life, the decayed confidence is half
     // of its age-0 value, so the ABOVE-NEUTRAL portion of the proof boost is halved.
     //   decayedProof = 0.5 + (proofNorm - 0.5) * (confidence * 0.5^(age/halfLife))
@@ -321,7 +321,7 @@ describe("score — boosts + trust tie-break", () => {
   });
 });
 
-describe("scoreWithBreakdown — per-memory factor breakdown (OBS-01)", () => {
+describe("scoreWithBreakdown — per-memory factor breakdown", () => {
   it("attaches a breakdown whose final equals base * recency * temporal * proof * trust", () => {
     // The four breakdown values are the multiplicative FACTORS (not the centered
     // sub-signals): final === base * recency * temporal * proof * trust. With every
@@ -373,8 +373,8 @@ describe("scoreWithBreakdown — per-memory factor breakdown (OBS-01)", () => {
     expect(b.temporal).toBeCloseTo(1.0, 10);
   });
 
-  it("gives a system-trust memory a strictly larger trust factor than a learned-trust memory (RANK-06 surfaced)", () => {
-    // RANK-06 made visible per-memory: at trustAlpha>0 the system memory's trust
+  it("gives a system-trust memory a strictly larger trust factor than a learned-trust memory (trust tie-break surfaced)", () => {
+    // The trust tie-break made visible per-memory: at trustAlpha>0 the system memory's trust
     // FACTOR exceeds the learned memory's, which is exactly what lets the trace
     // explain a trust-driven rank.
     const sys = makeResult("sys", { base: 0.5, trustLevel: "system", createdAt: NOW });
@@ -428,7 +428,7 @@ describe("scoreWithBreakdown — per-memory factor breakdown (OBS-01)", () => {
   });
 });
 
-describe("scoreWithBreakdown — usefulnessFactor (FEED-03, the 5th bounded factor)", () => {
+describe("scoreWithBreakdown — usefulnessFactor (the 5th bounded factor)", () => {
   /** Build a usefulnessById map carrying a single signal for `id`. */
   function uMap(id: string, sig: UsefulnessSignal): ReadonlyMap<string, UsefulnessSignal> {
     return new Map([[id, sig]]);
@@ -583,7 +583,7 @@ describe("scoreWithBreakdown — usefulnessFactor (FEED-03, the 5th bounded fact
 });
 
 // ---------------------------------------------------------------------------
-// fadeMemFactor — the FORGET-01 per-type FadeMem decay factor (the 6th 0.5-centered
+// fadeMemFactor — the per-type FadeMem decay factor (the 6th 0.5-centered
 // multiplicand). The SAFETY GATE: byte-identity at neutral importance, two ways
 // (default-OFF → forgetFactor exactly 1.0; on-at-neutral → fadeMemFactor exactly 1.0
 // at event-age 0). The DETERMINISTIC effect: an old low-importance ephemeral memory
@@ -591,7 +591,7 @@ describe("scoreWithBreakdown — usefulnessFactor (FEED-03, the 5th bounded fact
 // clock + future-age clamp; the consolidation-on-access boost; trust-first preserved.
 // LLM-free, deterministic, pure over the injected nowMs (never Date.now).
 // ---------------------------------------------------------------------------
-describe("scoreWithBreakdown — fadeMemFactor (FORGET-01, the 6th decay multiplicand)", () => {
+describe("scoreWithBreakdown — fadeMemFactor (the 6th decay multiplicand)", () => {
   // Default decay alpha at the same small magnitude as trust/proof (Pitfall 2 — the bounded
   // factor cannot overturn trust-first). The byte-identity gate is INDEPENDENT of this value.
   const FORGET_ALPHAS: ScoringAlphas = { ...ZERO_ALPHAS, forgetAlpha: 0.1 };
@@ -865,7 +865,7 @@ describe("scoreWithBreakdown — fadeMemFactor (FORGET-01, the 6th decay multipl
   });
 });
 
-/** Build a usefulnessById map carrying a single signal for `id` (FORGET-01 fold tests). */
+/** Build a usefulnessById map carrying a single signal for `id` (forget fold tests). */
 function uMapForForget(id: string, sig: UsefulnessSignal): ReadonlyMap<string, UsefulnessSignal> {
   return new Map([[id, sig]]);
 }

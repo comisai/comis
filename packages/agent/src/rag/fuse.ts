@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * N-lane Reciprocal Rank Fusion (RANK-04).
+ * N-lane Reciprocal Rank Fusion.
  *
  * Generalizes the existing 2-lane `computeRRF` (packages/memory/src/hybrid-search.ts,
  * k=60, FTS weight 1.0 / vector weight 1.5) to an arbitrary number of candidate
@@ -16,14 +16,14 @@
  *   maxScore  = (Σ weights) / (k + 1)                   theoretical max (rank-1 in all lanes)
  *   normalized = min(1, score(d) / maxScore)            → (0, 1]
  *
- * With a SINGLE lane this is a PASS-THROUGH (ME-01): the lane's incoming order is
+ * With a SINGLE lane this is a PASS-THROUGH: the lane's incoming order is
  * preserved AND each result's incoming `score` is carried through unchanged. The
  * upstream adapter (SqliteMemoryAdapter.search) already returns RRF-normalized
  * relevance scores with a genuine distribution (a strong top hit vs. a weak tail);
  * recomputing a fresh score from array rank here would collapse that distribution to
  * a near-flat ramp (1.0/0.984/…) and flip the downstream inlineMinScore=0.7 gate on
  * the DEFAULT (rerank-off) path. So single-lane fusion is the identity on BOTH order
- * and score. Only the multi-lane case (the Phase-83 entity-lane seam) runs the RRF
+ * and score. Only the multi-lane case (the entity-lane seam) runs the RRF
  * rank math, where rebasing onto a common rank scale is exactly the point.
  *
  * @module
@@ -61,7 +61,7 @@ interface FusionAccumulator {
  * fusing the same lanes in a different lane order yields the same final ranking
  * (RRF is commutative over lanes).
  *
- * SINGLE-LANE PASS-THROUGH (ME-01): with exactly one lane the upstream adapter score
+ * SINGLE-LANE PASS-THROUGH: with exactly one lane the upstream adapter score
  * is preserved verbatim (order and `score` both untouched) — see the module doc for
  * why rebuilding a rank-ramp score would regress the inline-injection gate.
  */

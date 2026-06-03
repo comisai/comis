@@ -42,7 +42,7 @@ describe("normalizeHost — port strip and lowercasing", () => {
   });
 });
 
-describe("normalizeHost — IPv6 authority handling (T-02-04)", () => {
+describe("normalizeHost — IPv6 authority handling", () => {
   it("extracts bare IPv6 address from bracketed IPv6 with port without port-split corruption", () => {
     expect(normalizeHost("[2606:4700::1]:443")).toBe("2606:4700::1");
   });
@@ -79,7 +79,7 @@ describe("hostRuleMatches — exact pattern", () => {
   });
 });
 
-describe("hostRuleMatches — suffix pattern (T-02-01, T-02-02)", () => {
+describe("hostRuleMatches — suffix pattern", () => {
   it("matches a hostname that is strictly longer than the suffix", () => {
     expect(
       hostRuleMatches(
@@ -90,14 +90,14 @@ describe("hostRuleMatches — suffix pattern (T-02-01, T-02-02)", () => {
   });
 
   it("rejects the bare suffix itself because length is not strictly greater than suffix length", () => {
-    // T-02-01: length-guard is mandatory — bare suffix must not match itself
+    // Length-guard is mandatory — bare suffix must not match itself
     expect(
       hostRuleMatches(makeSuffixRule("-aiplatform.googleapis.com"), "-aiplatform.googleapis.com"),
     ).toBe(false);
   });
 
   it("rejects a hostname that contains the suffix string but not as a true suffix (mid-string containment)", () => {
-    // T-02-02: endsWith required — mid-string containment must not pass
+    // endsWith required — mid-string containment must not pass
     expect(
       hostRuleMatches(makeSuffixRule(".amazonaws.com"), "notamazonaws.com.evil.com"),
     ).toBe(false);
@@ -162,16 +162,16 @@ describe("pathAllowed — segment wildcard /repos/*/issues", () => {
     expect(pathAllowed(rule, "/repos/foo/bar/issues")).toBe(false);
   });
 
-  it("rejects /repos//issues because the empty segment in the wildcard slot is not a valid segment (CR-01)", () => {
-    // CR-01: empty segment must NOT match — /repos/*/issues requires one non-empty segment
+  it("rejects /repos//issues because the empty segment in the wildcard slot is not a valid segment", () => {
+    // Empty segment must NOT match — /repos/*/issues requires one non-empty segment
     const rule = makeExactRule("example.com", { pathPolicy: ["/repos/*/issues"] });
     expect(pathAllowed(rule, "/repos//issues")).toBe(false);
   });
 });
 
-describe("pathAllowed — query string stripping (T-02-05)", () => {
+describe("pathAllowed — query string stripping", () => {
   it("allows a path with a query string when the path portion matches the boundary glob", () => {
-    // T-02-05: query string must be stripped before comparison — /v1/x?token=LEAK matches /v1/*
+    // Query string must be stripped before comparison — /v1/x?token=LEAK matches /v1/*
     const rule = makeExactRule("example.com", { pathPolicy: ["/v1/*"] });
     expect(pathAllowed(rule, "/v1/x?token=LEAK")).toBe(true);
   });
@@ -206,9 +206,9 @@ describe("pathAllowed — empty pathPolicy fails-closed", () => {
   });
 });
 
-describe("pathAllowed — dotdot segment normalization (WR-01)", () => {
+describe("pathAllowed — dotdot segment normalization", () => {
   it("rejects /v1/../admin/secret when policy is [/v1/*] — dotdot must not bypass path policy", () => {
-    // WR-01: /v1/../admin/secret starts with /v1/ but resolves to /admin/secret
+    // /v1/../admin/secret starts with /v1/ but resolves to /admin/secret
     // which is outside the /v1/* policy scope. Must be rejected.
     const rule = makeExactRule("example.com", { pathPolicy: ["/v1/*"] });
     expect(pathAllowed(rule, "/v1/../admin/secret")).toBe(false);
@@ -223,7 +223,7 @@ describe("pathAllowed — dotdot segment normalization (WR-01)", () => {
 
 // ── resolveBinding ────────────────────────────────────────────────────────────
 
-describe("resolveBinding — fail-closed for unknown host (T-02-03, INJECT-03)", () => {
+describe("resolveBinding — fail-closed for unknown host", () => {
   it("returns undefined when bindings list is empty and host is unknown", () => {
     expect(resolveBinding([], "evil.com", "/")).toBeUndefined();
   });
@@ -286,9 +286,9 @@ describe("resolveBinding — first-match determinism with overlapping bindings",
   });
 });
 
-describe("resolveBinding — provider-agnostic hand-written binding without preset (INJECT-01)", () => {
+describe("resolveBinding — provider-agnostic hand-written binding without preset", () => {
   it("resolves a hand-written binding for an arbitrary host with no preset involved", () => {
-    // INJECT-01: provider-agnostic — any host works with a raw BrokerBinding, no preset required
+    // Provider-agnostic — any host works with a raw BrokerBinding, no preset required
     const rule: HostRule = {
       pattern: { kind: "exact", host: "my-internal-api.example.com" },
       inject: [],

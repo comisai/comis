@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Linux-gated full-sandbox E2E for the credential broker (INTEG-04 / WIRE-04).
+ * Linux-gated full-sandbox E2E for the credential broker.
  *
  * These tests require:
  *   - Linux with bwrap (bubblewrap) available on PATH
- *   - Phase 5 R1 forced-egress spike confirmed GO on the production host class
+ *   - the forced-egress spike confirmed GO on the production host class
  *   - `claude` binary available on PATH (or a stub equivalent for harness smoke)
  *
  * All tests are skipped on non-Linux platforms. They are authored here so the
- * Linux CI / production host exercises the full sandbox-driven path when R1 is green.
+ * Linux CI / production host exercises the full sandbox-driven path when the
+ * forced-egress spike is green.
  *
  * This file MUST compile cleanly on macOS (tsc --noEmit passes).
  * On macOS the entire describe block is silently skipped — no false failures.
  *
- * TODO: ungate when Phase 5 R1 spike is confirmed on the Linux production host class.
+ * TODO: ungate when the forced-egress spike is confirmed on the Linux production host class.
  * @module
  */
 import "reflect-metadata"; // required for createNodeCaManager / @peculiar/x509 / tsyringe
@@ -125,7 +126,7 @@ function minimalBwrapArgs(): string[] {
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!LINUX_E2E_AVAILABLE)(
-  "INTEG-04 Linux-gated: full bwrap sandbox-driven broker E2E",
+  "Linux-gated: full bwrap sandbox-driven broker E2E",
   () => {
     let brokerSocketPath: string;
     let brokerStop: () => Promise<void>;
@@ -169,8 +170,8 @@ describe.skipIf(!LINUX_E2E_AVAILABLE)(
     // -----------------------------------------------------------------------
     // Test 1: bwrap sandbox-driven process routes through broker; fixture receives real key
     //
-    // TODO: requires Phase 5 R1 spike green on production Linux host.
-    // When R1 is confirmed:
+    // TODO: requires the forced-egress spike green on production Linux host.
+    // When the spike is confirmed:
     //   1. Replace node binary with `claude` (or the actual LLM CLI binary)
     //   2. Remove the `echo hello` placeholder with an actual minimal LLM prompt
     //   3. Assert fixture received Authorization: Bearer test-key from the real broker injection
@@ -274,7 +275,7 @@ describe.skipIf(!LINUX_E2E_AVAILABLE)(
     // -----------------------------------------------------------------------
     // Test 2: sibling general exec in same sandbox cannot recover the real key
     //
-    // TODO: requires Phase 5 R1 spike green on production Linux host.
+    // TODO: requires the forced-egress spike green on production Linux host.
     // The general-exec profile runs WITHOUT broker env (no COMIS_BROKER_TOKEN,
     // no ANTHROPIC_API_KEY real value). This proves the sandbox boundary holds:
     // even if a sibling process probes env/proc/files, it cannot recover the key.

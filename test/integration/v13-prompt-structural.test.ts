@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * v13.0 Structural Integration Tests (Non-LLM)
+ * Structural Integration Tests (Non-LLM)
  *
- * Validates v13.0 Agent Intelligence daemon bootstrap, config propagation,
+ * Validates Agent Intelligence daemon bootstrap, config propagation,
  * and log cleanliness WITHOUT requiring LLM API keys. Tests cover:
  *
- *   - Daemon boots cleanly with v13.0 config (health + gateway.status)
+ *   - Daemon boots cleanly with the structural config (health + gateway.status)
  *   - config.get returns reactionLevel for default agent
- *   - Agent config has expected v13.0 shape (name, model, provider, budgets)
+ *   - Agent config has the expected shape (name, model, provider, budgets)
  *   - Daemon logs contain no unexpected errors or warnings
  *
  * Uses port 8550 with a dedicated memory database for isolation.
@@ -48,7 +48,7 @@ const CONFIG_PATH = resolve(
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
+describe("Structural Integration Tests (Non-LLM)", () => {
   let handle: TestDaemonHandle;
   let gatewayUrl: string;
   let authToken: string;
@@ -60,7 +60,7 @@ describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
 
   beforeAll(async () => {
     logCapture = createLogCapture();
-    // Isolate the data dir so the Phase 7 REQ-09 boot mismatch-warn does not fire on
+    // Isolate the data dir so the boot mismatch-warn does not fire on
     // stranded file-side credentials left in the shared ~/.comis by dev usage or other
     // tests — this suite asserts the daemon logs contain no unexpected warnings.
     originalDataDir = process.env["COMIS_DATA_DIR"];
@@ -101,10 +101,10 @@ describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // Daemon boots cleanly with v13.0 config
+  // Daemon boots cleanly with the structural config
   // -------------------------------------------------------------------------
 
-  it("daemon boots cleanly with v13.0 config", async () => {
+  it("daemon boots cleanly with the expected config", async () => {
     // REST health check
     const healthResponse = await fetch(`${gatewayUrl}/health`, {
       headers: makeAuthHeaders(authToken),
@@ -137,7 +137,7 @@ describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
   // -------------------------------------------------------------------------
 
   it("agents.get returns reactionLevel for default agent", async () => {
-    // WR-03: agent config is read via agents.get rather than
+    // Agent config is read via agents.get rather than
     // config.get({section:"agents"}), which no longer egresses agent configs.
     const response = (await sendJsonRpc(
       ws,
@@ -157,11 +157,11 @@ describe("v13.0 Structural Integration Tests (Non-LLM)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Agent config has expected v13.0 shape
+  // Agent config has the expected shape
   // -------------------------------------------------------------------------
 
-  it("agent config has expected v13.0 shape", async () => {
-    // WR-03: agent config is read via agents.get rather than
+  it("agent config has the expected shape", async () => {
+    // Agent config is read via agents.get rather than
     // config.get({section:"agents"}), which no longer egresses agent configs.
     const response = (await sendJsonRpc(
       ws,

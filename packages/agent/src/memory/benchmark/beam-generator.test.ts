@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Unit tests for the deterministic seeded BEAM haystack generator (SUITE-01, Plan
- * 99-06, Task 1) — the keyless-CI proof of determinism + plantable per-ability
+ * Unit tests for the deterministic seeded BEAM haystack generator — the
+ * keyless-CI proof of determinism + plantable per-ability
  * needles. NO @comis/memory, NO clock, NO network. The unit tests use a SMALL
  * approxTokens (50k) so they are fast; the gated harness passes ~1M.
  *

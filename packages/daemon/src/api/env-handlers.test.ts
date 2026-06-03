@@ -21,7 +21,7 @@ function createMockContainer(
     eventBus,
     config: { tenantId: "test-tenant", security: { storage: storageMode } },
     // has() returns false by default (new key) so pre-existing tests stay green;
-    // 03-03 tests override via createSecretManagerWithMutableHandle for full behavior.
+    // additive-restart tests override via createSecretManagerWithMutableHandle for full behavior.
     secretManager: { get: vi.fn(), has: vi.fn(() => false) },
   } as unknown as AppContainer;
 }
@@ -49,13 +49,13 @@ function createTempEnvDir(): { dir: string; envPath: string; cleanup: () => void
 
 function makeDeps(overrides: Partial<EnvHandlerDeps> = {}): EnvHandlerDeps {
   return {
-    // After Plan 02-04: secretStore is always wired (REQ-04).
+    // secretStore is always wired.
     // Default to a mock that returns ok for reads and set.
     secretStore: createMockSecretStore(),
     envFilePath: "/tmp/test-nonexistent/.env",
     container: createMockContainer(),
     logger: createMockLogger(),
-    // Default mutableSecretManager (no-op stubs); 03-03 tests use real handles.
+    // Default mutableSecretManager (no-op stubs); additive-restart tests use real handles.
     mutableSecretManager: { upsert: vi.fn(), remove: vi.fn(() => false) },
     ...overrides,
   };
@@ -241,10 +241,10 @@ describe("env.set handler", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Env-mode adapter rejection (Plan 02-04: guard removed, adapter err surfaces)
+  // Env-mode adapter rejection (guard removed, adapter err surfaces)
   // -----------------------------------------------------------------------
   //
-  // After Plan 02-04: secretStore is always wired. Env-mode adapter returns err
+  // secretStore is always wired. The env-mode adapter returns err
   // from set() with an actionable message. The existing !setResult.ok handler
   // throws that message. Test with a mock adapter returning err("read-only").
 
@@ -345,7 +345,7 @@ describe("env.set handler", () => {
   // Restart scheduling
   // -----------------------------------------------------------------------
 
-  it("06-02: env.set on EXISTING key live-applies (no SIGUSR2, restarting:false)", async () => {
+  it("env.set on EXISTING key live-applies (no SIGUSR2, restarting:false)", async () => {
     const secretStore = createMockSecretStore();
     // Use a container where has() returns true (existing key — rotation).
     const container = createMockContainer(createMockEventBus(), "encrypted");
@@ -355,17 +355,17 @@ describe("env.set handler", () => {
 
     const result = await handlers["env.set"]!({ key: "MY_KEY", value: "val", _trustLevel: "admin" }) as Record<string, unknown>;
 
-    // P4b/06-02: rotation live-applies — no SIGUSR2, restarting:false always.
+    // Rotation live-applies — no SIGUSR2, restarting:false always.
     vi.advanceTimersByTime(500);
     expect(killSpy).not.toHaveBeenCalled();
     expect(result.restarting).toBe(false);
   });
 
   // -----------------------------------------------------------------------
-  // 02-04 RED: storage field reflects config.security.storage (not hardcoded "encrypted")
+  // storage field reflects config.security.storage (not hardcoded "encrypted")
   // -----------------------------------------------------------------------
 
-  it("02-04: env.set returns storage:'file' when config.security.storage is 'file'", async () => {
+  it("env.set returns storage:'file' when config.security.storage is 'file'", async () => {
     const secretStore = createMockSecretStore();
     const container = createMockContainer(createMockEventBus(), "file");
     const deps = makeDeps({ secretStore, container });
@@ -373,12 +373,12 @@ describe("env.set handler", () => {
 
     const result = await handlers["env.set"]!({ key: "OPENAI_API_KEY", value: "sk-test", _trustLevel: "admin" });
 
-    // After Plan 02-04 GREEN: storage reflects config.security.storage, not hardcoded "encrypted"
-    // After Plan 03-03: restarting:false for new key (has() returns false by default)
+    // storage reflects config.security.storage, not hardcoded "encrypted"
+    // restarting:false for new key (has() returns false by default)
     expect(result).toMatchObject({ set: true, storage: "file", restarting: false });
   });
 
-  it("02-04: env.set with env-mode adapter returning err surfaces the adapter error message", async () => {
+  it("env.set with env-mode adapter returning err surfaces the adapter error message", async () => {
     const secretStore = createMockSecretStore();
     (secretStore.set as ReturnType<typeof vi.fn>).mockReturnValue(
       err(new Error("Storage mode is 'env' (read-only). To persist secrets, set security.storage: file or encrypted.")),
@@ -386,7 +386,7 @@ describe("env.set handler", () => {
     const deps = makeDeps({ secretStore });
     const handlers = createEnvHandlers(deps);
 
-    // After Plan 02-04 GREEN: guard removed, adapter err surfaces via existing throw block
+    // Guard removed, adapter err surfaces via existing throw block
     await expect(
       handlers["env.set"]!({ key: "MY_KEY", value: "val", _trustLevel: "admin" }),
     ).rejects.toThrow("read-only");
@@ -719,10 +719,10 @@ describe("env.list handler", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 03-03 — additive restart rule (RED: handler doesn't implement this yet)
+// Additive restart rule (RED: handler doesn't implement this yet)
 // ---------------------------------------------------------------------------
 
-describe("03-03 — additive restart rule (env.set)", () => {
+describe("additive restart rule (env.set)", () => {
   let killSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
@@ -761,7 +761,7 @@ describe("03-03 — additive restart rule (env.set)", () => {
     expect(killSpy).not.toHaveBeenCalled();
   });
 
-  it("06-02: env.set on a key already in secretManager live-applies (restarting:false, no SIGUSR2)", async () => {
+  it("env.set on a key already in secretManager live-applies (restarting:false, no SIGUSR2)", async () => {
     const eventBus = createMockEventBus();
     const container = makeContainerWithManager({ EXISTING_KEY: "old-value" }, eventBus);
     const mutableSecretManager = createSecretManagerWithMutableHandle({}).mutableHandle;
@@ -770,7 +770,7 @@ describe("03-03 — additive restart rule (env.set)", () => {
 
     const result = await handlers["env.set"]!({ key: "EXISTING_KEY", value: "new-value", _trustLevel: "admin" }) as Record<string, unknown>;
 
-    // P4b/06-02: rotation live-applies — restarting:false, no SIGUSR2.
+    // Rotation live-applies — restarting:false, no SIGUSR2.
     expect(result.restarting).toBe(false);
     vi.advanceTimersByTime(500);
     expect(killSpy).not.toHaveBeenCalled();
@@ -798,10 +798,10 @@ describe("03-03 — additive restart rule (env.set)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 06-02 — rotation must live-apply (restarting:false, no SIGUSR2) — RED phase
+// Rotation must live-apply (restarting:false, no SIGUSR2) — RED phase
 // ---------------------------------------------------------------------------
 
-describe("06-02 — env.set rotation: restarting:false, upsert called, no SIGUSR2", () => {
+describe("env.set rotation: restarting:false, upsert called, no SIGUSR2", () => {
   let killSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {

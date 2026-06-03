@@ -398,16 +398,16 @@ describe("MCP OAuth full-cycle roundtrip (mock server)", () => {
   });
 
   // --------------------------------------------------------------------------
-  // (c2) REQ-08/D4: MCP TokenStore read-on-use after saveTokens write.
+  // (c2) MCP TokenStore read-on-use after saveTokens write.
   //
   // After an mcp_login write (saveTokens), the TokenStore resolves the NEW
   // token on the next tokens() call without any daemon restart. The process PID
   // is stable across the write — proving no restart occurred.
   //
-  // This test is the explicit REQ-08/D4 acceptance gate: MCP creds resolve
+  // This test is the explicit read-on-use acceptance gate: MCP creds resolve
   // read-on-use after a write, not from a boot-cached snapshot.
   // --------------------------------------------------------------------------
-  it("MCP TokenStore resolves newly-written token read-on-use without daemon restart (REQ-08/D4)", async () => {
+  it("MCP TokenStore resolves newly-written token read-on-use without daemon restart", async () => {
     const serverName = "req08-d4-provider";
     const pidBefore = process.pid;
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure answer-prompt builder (BENCH-03) — formats the RECALLED context into the
- * prompt the gated harness (Plan 89-03) sends to the answer model, then has the
+ * Pure answer-prompt builder — formats the RECALLED context into the
+ * prompt the gated harness sends to the answer model, then has the
  * judge grade that answer. Drives the "better memory" claim end-to-end: recall ->
  * answer -> judge.
  *
@@ -12,10 +12,10 @@
  * TYPE ONLY from `@comis/core` (exactly recall-eval.ts:33). The live store +
  * recall wiring lives in the gated `.test.ts` (the single cut escape hatch).
  *
- * SYSTEM/USER SPLIT (Info-4): the answer prompt is split into
+ * SYSTEM/USER SPLIT: the answer prompt is split into
  * {@link ANSWER_SYSTEM_PROMPT} (the system preamble — role/behavior instruction)
  * and {@link buildAnswerPrompt} (the USER content — the question + the formatted
- * Retrieved-Context block, with NO preamble), so 89-03 can call
+ * Retrieved-Context block, with NO preamble), so the gated harness can call
  * `completeSimple({ systemPrompt: ANSWER_SYSTEM_PROMPT, messages: [{ role:
  * "user", content: buildAnswerPrompt(...) }] })` cleanly without duplicating the
  * preamble into the user turn.
@@ -33,10 +33,9 @@ import { systemDateFrom } from "@comis/core";
 
 /**
  * The answer-model system preamble (the system slot ONLY — the role/behavior
- * instruction). A minimal faithful port of the LongMemEval answer prompt
- * (89-RESEARCH.md: "a minimal faithful port is sufficient; elaborate guidance is
- * optional polish"). Kept SEPARATE from {@link buildAnswerPrompt} so the user
- * turn never duplicates it (Info-4).
+ * instruction). A minimal faithful port of the LongMemEval answer prompt (a
+ * minimal faithful port is sufficient; elaborate guidance is optional polish).
+ * Kept SEPARATE from {@link buildAnswerPrompt} so the user turn never duplicates it.
  */
 export const ANSWER_SYSTEM_PROMPT =
   "You are a helpful assistant that must answer the question based ONLY on the " +

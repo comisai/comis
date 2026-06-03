@@ -31,11 +31,11 @@ export function isVecAvailable(): boolean {
  * `PRAGMA table_info(memories)` presence check. Safe on every boot, including a live
  * `~/.comis` DB created before a column existed — existing rows get the column NULL (a
  * nullable add is O(1); no rewrite, no backfill).
- * Added columns (each documented at its add-site below): `occurred_at` (TEMP-01),
- * the Phase-84 observation set `proof_count`/`source_ids`/`consolidated_at`/
- * `confidence`/`history` (CONS-01..08), the Phase-101 typed-observation pair
- * `observation_kind`/`pattern_type` (REASON-01), and the Phase-112 lifecycle markers
- * `lifecycle_demoted_at`/`evicted_at`/`strength` (FORGET-02 — nullable SIDE-columns,
+ * Added columns (each documented at its add-site below): `occurred_at`,
+ * the observation set `proof_count`/`source_ids`/`consolidated_at`/
+ * `confidence`/`history`, the typed-observation pair
+ * `observation_kind`/`pattern_type`, and the lifecycle markers
+ * `lifecycle_demoted_at`/`evicted_at`/`strength` (nullable SIDE-columns,
  * NO PK change). All nullable (NULL = the pre-feature default), NO CHECK (the enums
  * are the Zod domain type's job).
  *
@@ -48,26 +48,26 @@ export function ensureMemoryColumns(db: Database.Database): void {
   const cols = new Set(
     (db.prepare(`PRAGMA table_info(memories)`).all() as { name: string }[]).map((r) => r.name),
   );
-  // Nullable add → O(1), no table rewrite, no destructive rewrite (TEMP-01).
+  // Nullable add → O(1), no table rewrite, no destructive rewrite.
   if (!cols.has("occurred_at")) db.exec(`ALTER TABLE memories ADD COLUMN occurred_at INTEGER`);
-  // Observation columns (P84). All nullable → O(1) ADD, no rewrite, no backfill
+  // Observation columns. All nullable → O(1) ADD, no rewrite, no backfill
   // (existing rows get NULL = "raw, never consolidated"). Forward-only.
   if (!cols.has("proof_count")) db.exec(`ALTER TABLE memories ADD COLUMN proof_count INTEGER`);
   if (!cols.has("source_ids")) db.exec(`ALTER TABLE memories ADD COLUMN source_ids TEXT`);
   if (!cols.has("consolidated_at")) db.exec(`ALTER TABLE memories ADD COLUMN consolidated_at INTEGER`);
   if (!cols.has("confidence")) db.exec(`ALTER TABLE memories ADD COLUMN confidence REAL`);
   if (!cols.has("history")) db.exec(`ALTER TABLE memories ADD COLUMN history TEXT`);
-  // Typed-observation columns (P101/REASON-01). Both nullable → O(1) ADD, no rewrite,
+  // Typed-observation columns. Both nullable → O(1) ADD, no rewrite,
   // no backfill (existing rows get NULL: observation_kind NULL = "merge" on read, the
   // forward-only default). NO CHECK — the enum is enforced in the MemoryEntry Zod type
-  // + the lenient LLM parser (101-04), per the occurred_at/proof_count no-CHECK precedent.
+  // + the lenient LLM parser, per the occurred_at/proof_count no-CHECK precedent.
   if (!cols.has("observation_kind")) db.exec(`ALTER TABLE memories ADD COLUMN observation_kind TEXT`);
   if (!cols.has("pattern_type")) db.exec(`ALTER TABLE memories ADD COLUMN pattern_type TEXT`);
-  // Lifecycle marker columns (P112/FORGET-02). Nullable → O(1) ADD, no rewrite/backfill
+  // Lifecycle marker columns. Nullable → O(1) ADD, no rewrite/backfill
   // (existing rows get NULL = "not demoted / not evicted / no strength yet" = byte-
-  // identity for a pre-112 DB). Forward-only, NO CHECK, NO PK CHANGE: nullable SIDE-
-  // columns on the `id`-keyed table, never an identity key (the 110 PK-widening lesson
-  // :150-218 — a side-column over a rebuild). The sweep (112-03) is SCAFFOLD-DORMANT: it
+  // identity for a pre-lifecycle DB). Forward-only, NO CHECK, NO PK CHANGE: nullable SIDE-
+  // columns on the `id`-keyed table, never an identity key (the PK-widening lesson
+  // :150-218 — a side-column over a rebuild). The sweep is SCAFFOLD-DORMANT: it
   // computes strength/tiers but writes NONE of these markers (the deferred live policy
   // sets them NON-DESTRUCTIVELY, a marker never a DELETE — the `consolidated_at` :62).
   if (!cols.has("lifecycle_demoted_at")) db.exec(`ALTER TABLE memories ADD COLUMN lifecycle_demoted_at INTEGER`);
@@ -76,7 +76,7 @@ export function ensureMemoryColumns(db: Database.Database): void {
 }
 
 /**
- * Idempotently create the entity-association junction tables (Phase 83):
+ * Idempotently create the entity-association junction tables:
  * `memory_entities` (one row per resolved entity, scoped to tenant+agent) and
  * `memory_entity_links` (the many-to-many memory<->entity edge). Mirrors
  * `ensureMemoryColumns`'s forward-only, additive contract — all DDL is `CREATE … IF
@@ -88,16 +88,16 @@ export function ensureMemoryColumns(db: Database.Database): void {
  * RESEARCH Pitfall 3: SQLite's built-in `lower()` is ASCII-only (it leaves
  * `İSTANBUL`/`CAFÉ`/`ПРИВЕТ` unchanged), so the original §4.2 spec's UNIQUE index
  * over a SQL `lower(...)` of the display name would NOT dedup Turkish/CJK/Cyrillic
- * case-variants → duplicate entities (ENT-05 break). Instead the resolver computes a
+ * case-variants → duplicate entities. Instead the resolver computes a
  * locale-independent `canonical_key` in TypeScript (`normalizeEntityKey` in
  * entity-resolver.ts: lower+NFKD+strip-marks) and we UNIQUE-index THAT stored column.
  *
  * The index keys on `(tenant_id, agent_id, canonical_key)` so two agents or tenants
  * NEVER collapse to one entity row even with an identical name — the resolver-side
- * half of the ENT-03 isolation boundary.
+ * half of the isolation boundary.
  *
  * `ON DELETE CASCADE` on `memory_entity_links.memory_id → memories(id)` is the
- * ENTIRE link-maintenance story (ENT-04 — no orphan-sweep job). It fires
+ * ENTIRE link-maintenance story (no orphan-sweep job). It fires
  * automatically because `openSqliteDatabase` already sets `PRAGMA foreign_keys = ON`
  * (sqlite-adapter-base.ts:52). NB: the parent `memory_entities` row is intentionally
  * NOT cascaded by a memory delete (entities are per-concept and may be re-linked;
@@ -131,14 +131,14 @@ export function ensureEntityTables(db: Database.Database): void {
 }
 
 /**
- * Idempotently create the recall-utility usefulness table (Phase 93, FEED-02;
- * per-intent in Phase 110, LEARN-01): `memory_usefulness` — one row per
+ * Idempotently create the recall-utility usefulness table (per-intent buckets
+ * were added later): `memory_usefulness` — one row per
  * (tenant, agent, memory, intent) carrying the durable used/ignored counts +
  * last-useful-at the recall-utility feedback loop learns from (HINDSIGHT_VS_COMIS.md
  * #7). Forward-only, idempotent, re-run-safe — safe on every boot incl. a live
  * `~/.comis` DB predating the feature (no row loss, no corruption).
  *
- * ## PRIMARY KEY = isolation boundary + the per-intent upsert key (T-93-01)
+ * ## PRIMARY KEY = isolation boundary + the per-intent upsert key
  *
  * `PRIMARY KEY (tenant_id, agent_id, memory_id, intent)` is both the adapter's
  * `ON CONFLICT` target and the load-bearing isolation scope — two agents/tenants
@@ -148,14 +148,14 @@ export function ensureEntityTables(db: Database.Database): void {
  * row-maintenance story (no orphan-sweep): it fires via the `PRAGMA foreign_keys =
  * ON` already set by `openSqliteDatabase`.
  *
- * ## Widening the PK on a pre-110 DB (Phase 110, LEARN-01): a transactional REBUILD
+ * ## Widening the PK on a pre-intent DB: a transactional REBUILD
  *
  * `intent TEXT NOT NULL DEFAULT ''` partitions the signal per query-intent (global
- * bucket = `''`, the byte-identical v2.8 path). A FRESH DB gets the 4-col PK from
- * `CREATE TABLE`. An EXISTING (pre-110) DB has a 3-col PK, and SQLite has NO
+ * bucket = `''`, the byte-identical pre-intent path). A FRESH DB gets the 4-col PK from
+ * `CREATE TABLE`. An EXISTING (pre-intent) DB has a 3-col PK, and SQLite has NO
  * `ALTER ADD PRIMARY KEY` — a bare `ADD COLUMN intent` leaves it 3-col, so the
  * adapter's 4-col `ON CONFLICT(...,intent)` aborts the SECOND intent bucket's
- * upsert with `UNIQUE constraint failed` (CR-01). So the pre-110 path runs the
+ * upsert with `UNIQUE constraint failed`. So the pre-intent path runs the
  * standard SQLite transactional table REBUILD (taken when the 4-col PK is absent
  * via `PRAGMA table_info`): create a `_new` table with the genuine 4-col PK, copy
  * EVERY row into the `''` bucket (`COALESCE(intent,'')` — no loss/corruption),
@@ -180,13 +180,13 @@ export function ensureUsefulnessTable(db: Database.Database): void {
       PRIMARY KEY (tenant_id, agent_id, memory_id, intent)
     );
   `);
-  // Detect a pre-110 (or partially-migrated) table by its PK shape (`pk>0` marks a
+  // Detect a pre-intent (or partially-migrated) table by its PK shape (`pk>0` marks a
   // PK member). The object-literal cast is the sanctioned PRAGMA idiom, NOT `as Foo[]`.
   const tableInfo = db.prepare(`PRAGMA table_info(memory_usefulness)`).all() as { name: string; pk: number }[];
   const pkHasIntent = tableInfo.some((c) => c.pk > 0 && c.name === "intent");
   if (!pkHasIntent) {
-    // EXISTING (pre-110) DB: REBUILD to genuinely widen the PK to 4-col (ADD COLUMN
-    // cannot — CR-01). A PRISTINE pre-110 table has NO `intent` column (copy the ''
+    // EXISTING (pre-intent) DB: REBUILD to genuinely widen the PK to 4-col (ADD COLUMN
+    // cannot). A PRISTINE pre-intent table has NO `intent` column (copy the ''
     // literal); a PARTIALLY-migrated one (column present, PK still 3-col) COALESCEs
     // it. Toggle foreign_keys OFF around the rename (the pragma is a no-op INSIDE a
     // txn, so it MUST bracket db.transaction) so the memories(id) FK is not dropped.
@@ -223,7 +223,7 @@ export function ensureUsefulnessTable(db: Database.Database): void {
 }
 
 /**
- * Idempotently create the causal-edge table (Phase 96, EXTRACT-03):
+ * Idempotently create the causal-edge table:
  * `memory_causal_edges` — one row per directed cause→effect edge between two
  * memories, scoped to a (tenant, agent). Mirrors `ensureEntityTables` /
  * `ensureUsefulnessTable`'s forward-only, additive contract — the DDL is
@@ -231,7 +231,7 @@ export function ensureUsefulnessTable(db: Database.Database): void {
  * live `~/.comis` DB created before the feature existed (no backfill: existing
  * memories simply have no causal edges until re-extracted).
  *
- * ## The PRIMARY KEY is the isolation boundary AND the idempotency target (T-96-01)
+ * ## The PRIMARY KEY is the isolation boundary AND the idempotency target
  *
  * Comis runs many agents in one DB. `PRIMARY KEY (tenant_id, agent_id,
  * source_memory_id, target_memory_id)` is both the `INSERT OR IGNORE` conflict
@@ -242,7 +242,7 @@ export function ensureUsefulnessTable(db: Database.Database): void {
  *
  * `ON DELETE CASCADE` on BOTH `source_memory_id` and `target_memory_id →
  * memories(id)` is the ENTIRE edge-maintenance story (no orphan-sweep job — the
- * ENT-04 pattern, T-96-04): a memory delete drops every edge it participates in
+ * same cascade pattern the entity links use): a memory delete drops every edge it participates in
  * automatically. It fires because `openSqliteDatabase` already sets
  * `PRAGMA foreign_keys = ON` (sqlite-adapter-base.ts) — no pragma is set here.
  * The `idx_causal_target` index serves the read lane's effect→cause direction
@@ -268,38 +268,38 @@ export function ensureCausalTables(db: Database.Database): void {
 }
 
 /**
- * Create the segregated bi-temporal knowledge-graph triple table (Phase 100,
- * Track F — KG-01/KG-02/KG-03). Forward-only additive, idempotent (every
+ * Create the segregated bi-temporal knowledge-graph triple table.
+ * Forward-only additive, idempotent (every
  * `CREATE TABLE/INDEX IF NOT EXISTS`), safe on every boot — the same path serves
  * a fresh DB and a live DB that predates the table (existing `~/.comis` DBs gain
  * the empty table with no backfill; mirrors `ensureCausalTables`).
  *
- * ## Schema shape (the contract the other Phase-100 plans build on)
+ * ## Schema shape (the contract the other knowledge-graph code builds on)
  *
  * One row = one S/P/O assertion with the FOUR bi-temporal timestamps (Graphiti's
  * model, epoch ms): the VALID-time pair `t_valid_start` / `t_valid_end`
- * (`t_valid_end IS NULL` = currently believed — the KG-03 default recall filter)
+ * (`t_valid_end IS NULL` = currently believed — the default recall filter)
  * and the TXN-time pair `t_ingested` / `expired_at` (when we learned it / when we
  * stopped believing it). Plus the world OCCURRED range `t_occurred` /
  * `t_occurred_end`, the Comis `trust` ladder, optional `source_memory_id`
  * provenance, and a `confidence`.
  *
- * ## The PRIMARY KEY is per-row `id`, NOT the current-truth tuple (T-100-01)
+ * ## The PRIMARY KEY is per-row `id`, NOT the current-truth tuple
  *
  * History is NON-DESTRUCTIVE — many superseded versions of a
  * (tenant, agent, subject, predicate) coexist, so the PK is the row `id`.
  * "Single current truth" is enforced by the partial index `idx_triples_current`
- * (on `t_valid_end IS NULL`) + the Plan-02 upsert transaction, NOT a UNIQUE
+ * (on `t_valid_end IS NULL`) + the upsert transaction, NOT a UNIQUE
  * constraint. The `ON DELETE CASCADE` on `source_memory_id -> memories(id)`
  * fires via the `PRAGMA foreign_keys = ON` already set by `openSqliteDatabase`
  * (no pragma is set here) — deleting a source memory drops its derived triples.
  *
- * ## Isolation (T-100-01-01, the §5.2 invariant)
+ * ## Isolation (the §5.2 invariant)
  *
  * Every row carries `tenant_id` + `agent_id`, and every index leads with them —
  * the adapter (sqlite-triple-store.ts) filters every statement on
  * `(tenant_id, agent_id)`. The `trust` CHECK rejects an out-of-ladder value at
- * write (T-100-01-04).
+ * write.
  *
  * @param db - An open better-sqlite3 Database whose `memories` table already
  *   exists (the FK target). Call AFTER `ensureCausalTables` in `initSchema`.
@@ -334,19 +334,19 @@ export function ensureTripleTable(db: Database.Database): void {
 }
 
 /**
- * Create the segregated per-user-representation table (Phase 107, Track E1 —
- * USER-01). Forward-only additive, idempotent, safe on every boot (a fresh DB and
+ * Create the segregated per-user-representation table.
+ * Forward-only additive, idempotent, safe on every boot (a fresh DB and
  * a pre-table live `~/.comis` DB both gain the empty table with no backfill; NEVER
  * wipes). One row = one durable, PREFIX-TYPED, HIGH-TRUST fact about a single user,
  * scoped to one (tenant, agent, user); PK is the per-row `id`; `created_at` is the
  * injected clock. The sole adapter is `createSqliteUserRepresentationStore`.
  *
- * The high-trust floor at the DB layer (T-107-02-02): the `trust` CHECK admits only
+ * The high-trust floor at the DB layer: the `trust` CHECK admits only
  * `system`/`learned` — `'external'` is DELIBERATELY OMITTED, so an external claim
  * can NEVER enter the profile (layer 1 of the 3-layer anti-poisoning defense; the
- * adapter's write-time reject is layer 3, the port-type floor is 107-01).
+ * adapter's write-time reject is layer 3, the port-type floor is layer 2).
  * `entry_type`'s own CHECK pins the four prefix-types — the DISTINCT vocabulary
- * from `memory_type` (T-107-02-03). Isolation (T-107-02-01, EXTENDED with
+ * from `memory_type`. Isolation (EXTENDED with
  * `user_id`): every row carries `tenant_id`+`agent_id`+`user_id`,
  * `idx_user_repr_scope` leads with all three, and the adapter filters every
  * statement on them. The `source_memory_id -> memories(id)` `ON DELETE CASCADE`
@@ -377,16 +377,16 @@ export function ensureUserRepresentationTable(db: Database.Database): void {
 
 /**
  * Create the `relationship` table — the sole storage for directional, multi-party
- * relationship modeling (Phase 108, Track E2 — SOCIAL-02). Additive, forward-only,
+ * relationship modeling. Additive, forward-only,
  * idempotent. One row = the durable, DIRECTIONAL, HIGH-TRUST edge `subjectUser`'s
  * representation OF `aboutUser`, scoped to one (tenant, agent, channel). Sole
  * adapter: `createSqliteRelationshipStore`.
  *
- * The high-trust floor at the DB layer (T-108-05): `CHECK(trust IN
+ * The high-trust floor at the DB layer: `CHECK(trust IN
  * ('system','learned'))` — `'external'` STRUCTURALLY ABSENT, so external content
  * can NEVER enter a relationship (defense-in-depth with the adapter write-boundary
- * reject (layer 3) + the port-type floor (layer 2, 108-01)). Isolation (SOCIAL-02,
- * EXTENDED with `channel_id`, the NEW privacy axis): every row carries
+ * reject (layer 3) + the port-type floor (layer 2)). Isolation (EXTENDED with
+ * `channel_id`, the NEW privacy axis): every row carries
  * `tenant_id`+`agent_id`+`channel_id`, `idx_relationship_scope` leads with all
  * three, the adapter filters every statement on them; the directional
  * `(subject_user_id, about_user_id)` pair is ROW DATA, NOT a security filter (A→B
@@ -420,10 +420,10 @@ export function ensureRelationshipTable(db: Database.Database): void {
 
 /**
  * Create the `tuned_alpha` table — the sole storage for the per-(tenant, agent)
- * LEARNED ranking weights (Phase 111, Track H2 — LEARN-03). Additive, forward-only,
+ * LEARNED ranking weights. Additive, forward-only,
  * idempotent; safe on a live DB with NO backfill (an absent `(tenant, agent)` row
- * reads back `undefined` — the recall apply site's (111-03) default-OFF no-op).
- * Sole adapter: `createSqliteTunedAlphaStore`. Belt #3 (the OD2 ship-gate, schema
+ * reads back `undefined` — the recall apply site's default-OFF no-op).
+ * Sole adapter: `createSqliteTunedAlphaStore`. Belt #3 (the ship-gate, schema
  * layer): columns for ONLY the 4 tunable boost alphas + `updated_at` — NO fifth
  * (trust-weight) column, so the bandit can never move that weight (it stays
  * config-sourced at the apply site); the `trust_alpha` name is deliberately never
@@ -593,18 +593,18 @@ export function initSchema(db: Database.Database, embeddingDimensions: number): 
   // contracts (schema shape, isolation scope, trust floor) live in each
   // function's JSDoc.
   ensureMemoryColumns(db); // additive memory columns (forward-only; design §4.1)
-  ensureEntityTables(db); // entity junction tables (Phase 83)
-  ensureUsefulnessTable(db); // recall-utility usefulness + intent bucket (P93/P110)
-  ensureCausalTables(db); // causal-edge table (Phase 96, EXTRACT-03)
-  ensureTripleTable(db); // bi-temporal KG triples (Phase 100, KG-01)
-  ensureUserRepresentationTable(db); // per-user representation (Phase 107, USER-01)
-  ensureRelationshipTable(db); // directional relationships (Phase 108, SOCIAL-02)
-  ensureTunedAlphaTable(db); // tuned ranking alphas (Phase 111, LEARN-03)
+  ensureEntityTables(db); // entity junction tables
+  ensureUsefulnessTable(db); // recall-utility usefulness + intent bucket
+  ensureCausalTables(db); // causal-edge table
+  ensureTripleTable(db); // bi-temporal KG triples
+  ensureUserRepresentationTable(db); // per-user representation
+  ensureRelationshipTable(db); // directional relationships
+  ensureTunedAlphaTable(db); // tuned ranking alphas
 
-  // --- Observation partial indexes (Phase 84; design §4.1) ---
+  // --- Observation partial indexes (design §4.1) ---
   // Created AFTER ensureMemoryColumns (the indexed columns must exist first).
-  // `idx_memories_unconsol` serves the candidate scan (WHERE consolidated_at IS NULL,
-  // CONS-04); `idx_memories_observations` serves the observation lookup (WHERE
+  // `idx_memories_unconsol` serves the candidate scan (WHERE consolidated_at IS NULL);
+  // `idx_memories_observations` serves the observation lookup (WHERE
   // proof_count IS NOT NULL). The design's third "live" index (exact-dup-retirement)
   // is OMITTED — that filter + its column are deferred to a later phase.
   db.exec(`

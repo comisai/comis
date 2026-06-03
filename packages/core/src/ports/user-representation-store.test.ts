@@ -24,7 +24,7 @@ import type {
   UserRepresentationEntry,
   UserRepresentationInput,
 } from "./user-representation-store.js";
-// Public-surface RED proof (Task 3): the port types + the prefix-type enum must
+// Public-surface RED proof: the port types + the prefix-type enum must
 // be re-exported on the @comis/core barrel (../index.js is the in-package
 // equivalent of the bare `@comis/core` specifier — index.ts `export *`s the
 // curated exports/ports.js + exports/domain.js). These imports fail to resolve
@@ -44,7 +44,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const portSrc = readFileSync(resolve(here, "./user-representation-store.ts"), "utf8");
 
 /**
- * Phase 107 (USER-01) — the segregated `UserRepresentationStore` foundation.
+ * The segregated `UserRepresentationStore` foundation.
  *
  * The per-user representation port lives type-only in @comis/core (mirrors
  * triple-store.ts / memory-causal-store.ts): the agent-side write path (the
@@ -54,7 +54,7 @@ const portSrc = readFileSync(resolve(here, "./user-representation-store.ts"), "u
  * and the (tenant, agent, user)-scoped READ (`read`) — the dual write+read shape
  * (NOT a split read/write port).
  */
-describe("UserRepresentationStore — type-only segregated per-user port (USER-01)", () => {
+describe("UserRepresentationStore — type-only segregated per-user port", () => {
   it("declares upsert/read on UserRepresentationStore and stays type-only (no zod, no @comis/memory)", () => {
     // Runtime RED proof: fails on pre-patch source where the file/method/type are absent.
     expect(portSrc, "UserRepresentationStore interface must be declared").toMatch(
@@ -163,7 +163,7 @@ describe("UserRepresentationStore — type-only segregated per-user port (USER-0
 
     // The LLM has NO say in trust — the type only admits the floor values. An
     // `external` claim cannot be typed onto an input at the contract layer
-    // (defense-in-depth with the DB CHECK in Plan 02). `@ts-expect-error` FAILS
+    // (defense-in-depth with the DB CHECK in the adapter). `@ts-expect-error` FAILS
     // the build if the error is ABSENT — i.e. if `external` ever became assignable.
     // @ts-expect-error 'external' is excluded from UserRepresentationTrust at the type level
     const _bad: UserRepresentationInput = {
@@ -200,15 +200,15 @@ describe("UserRepresentationStore — type-only segregated per-user port (USER-0
 });
 
 /**
- * Phase 107 (USER-01) — the public @comis/core surface re-export.
+ * The public @comis/core surface re-export.
  *
- * The offline builder (Plan 03), the prompt-assembly injection (Plan 04), and
- * the daemon wiring (Plan 05) import these TYPES from `@comis/core` (never
+ * The offline builder, the prompt-assembly injection, and
+ * the daemon wiring import these TYPES from `@comis/core` (never
  * @comis/memory). This block proves the port types AND the prefix-type enum are
  * on the public barrel — the same names, structurally identical to the
  * relative-path types.
  */
-describe("UserRepresentationStore — public @comis/core re-export (USER-01)", () => {
+describe("UserRepresentationStore — public @comis/core re-export", () => {
   it("re-exports the port types on the public barrel, identical to the relative-path types", () => {
     // Structural identity: the public-barrel types equal the relative-path types.
     expectTypeOf<PublicUserRepresentationStore>().toEqualTypeOf<UserRepresentationStore>();

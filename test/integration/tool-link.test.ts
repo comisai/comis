@@ -20,10 +20,10 @@ import {
 import { DAEMON_STARTUP_MS } from "../support/timeouts.js";
 import { isHttpbinHealthy } from "../support/network-probe.js";
 
-// LINK-01 / LINK-03 fetch live httpbin.org URLs, which intermittently 503s
-// under load. Probe once at load: when it's down, those two SKIP (vs.
-// false-failing). LINK-02 (no URL) and LINK-04 (unreachable URL) don't depend
-// on a healthy httpbin and always run.
+// The single-URL and multiple-URL cases fetch live httpbin.org URLs, which
+// intermittently 503s under load. Probe once at load: when it's down, those
+// two SKIP (vs. false-failing). The no-URL and unreachable-URL cases don't
+// depend on a healthy httpbin and always run.
 const HTTPBIN_UP = await isHttpbinHealthy();
 
 // ---------------------------------------------------------------------------
@@ -84,11 +84,11 @@ describe("TOOL-LINK: Link Understanding Integration", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // LINK-01: link.process enriches text containing a real URL
+  // link.process enriches text containing a real URL
   // -------------------------------------------------------------------------
 
   it.skipIf(!HTTPBIN_UP)(
-    "LINK-01: link.process enriches text containing a real URL",
+    "link.process enriches text containing a real URL",
     async () => {
       const originalText =
         "Check out https://httpbin.org/html for test content";
@@ -105,11 +105,11 @@ describe("TOOL-LINK: Link Understanding Integration", () => {
   );
 
   // -------------------------------------------------------------------------
-  // LINK-02: link.process returns original text when no URLs present
+  // link.process returns original text when no URLs present
   // -------------------------------------------------------------------------
 
   it(
-    "LINK-02: link.process returns original text when no URLs present",
+    "link.process returns original text when no URLs present",
     async () => {
       const plainText = "This is plain text with no links at all";
 
@@ -125,11 +125,11 @@ describe("TOOL-LINK: Link Understanding Integration", () => {
   );
 
   // -------------------------------------------------------------------------
-  // LINK-03: link.process handles multiple URLs in one message
+  // link.process handles multiple URLs in one message
   // -------------------------------------------------------------------------
 
   it.skipIf(!HTTPBIN_UP)(
-    "LINK-03: link.process handles multiple URLs in one message",
+    "link.process handles multiple URLs in one message",
     async () => {
       const originalText =
         "See https://httpbin.org/html and https://httpbin.org/json for examples";
@@ -146,11 +146,11 @@ describe("TOOL-LINK: Link Understanding Integration", () => {
   );
 
   // -------------------------------------------------------------------------
-  // LINK-04: link.process handles unreachable URL gracefully
+  // link.process handles unreachable URL gracefully
   // -------------------------------------------------------------------------
 
   it(
-    "LINK-04: link.process handles unreachable URL gracefully",
+    "link.process handles unreachable URL gracefully",
     async () => {
       const originalText =
         "Visit https://this-domain-does-not-exist-comis-test.example for info";

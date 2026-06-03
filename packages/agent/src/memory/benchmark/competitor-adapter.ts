@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The uniform competitor-adapter layer (PROVE-01) — the single contract the one
+ * The uniform competitor-adapter layer — the single contract the one
  * head-to-head runner drives across every memory system it compares.
  *
  * WHAT THIS IS: a `CompetitorAdapter` interface (`run(tier, config) ->
@@ -15,7 +15,7 @@
  * — a shape that carries NO score field. {@link AdapterResult} is a DISCRIMINATED
  * UNION whose `ran:false` arm has no `accuracy`/`overall`/`score`/`manifestRef`,
  * so it is structurally IMPOSSIBLE for an absent system to fabricate a number
- * (CONTEXT.md decision 4; the T-104-03-01 anti-fabrication threat). The keyless CI
+ * (CONTEXT.md decision 4; the anti-fabrication threat). The keyless CI
  * always hits the skip branch (no env, no install) — that IS the wiring proof; the
  * operator-costed run (keys + competitor installs + LLM spend) fills the real
  * numbers in a costed re-run, honestly deferred.
@@ -55,7 +55,7 @@ export interface AdapterConfig {
   readonly tier: string;
   /**
    * Optional per-cell haystack the letta-fs control dumps as its full-context
-   * baseline (IN-02). Declared so a caller passing the one structured key the
+   * baseline. Declared so a caller passing the one structured key the
    * shipped control consumes gets compiler-checked, while the open extension point
    * below still admits future tier-scoped knobs. The adapter STILL re-validates
    * this at runtime via a total `coerceDocs` (the config can arrive from a
@@ -88,8 +88,8 @@ export type AdapterResult =
       /** The cell -> committed-manifest link (the number lives in the manifest). */
       readonly manifestRef: string;
       /**
-       * The observed character length of the context the cell actually rendered
-       * (WR-02). This makes the cell's keyless work LOAD-BEARING: the letta-fs
+       * The observed character length of the context the cell actually rendered.
+       * This makes the cell's keyless work LOAD-BEARING: the letta-fs
        * control records the length of its full-dump formatted context here, so the
        * format call cannot be deleted as dead code without a behavioural change.
        * NOT a score — a digest of the work done. Absent on cells that render no
@@ -188,7 +188,7 @@ function makeSkeletonAdapter(
 }
 
 /**
- * mem0 skeleton (PROVE-01). Absent by default → skip-with-disclosure naming the
+ * mem0 skeleton. Absent by default → skip-with-disclosure naming the
  * env var AND the install. mem0 is an EXTERNAL package + a hosted key — NEVER a
  * Comis dependency (supply-chain invariant).
  */
@@ -203,7 +203,7 @@ export function createMem0Adapter(options: SkeletonAdapterOptions = {}): Competi
 }
 
 /**
- * zep skeleton (PROVE-01). Absent by default → skip-with-disclosure naming the
+ * zep skeleton. Absent by default → skip-with-disclosure naming the
  * env var / account. zep is an EXTERNAL service + SDK — NEVER a Comis dependency.
  */
 export function createZepAdapter(options: SkeletonAdapterOptions = {}): CompetitorAdapter {
@@ -217,7 +217,7 @@ export function createZepAdapter(options: SkeletonAdapterOptions = {}): Competit
 }
 
 /**
- * hindsight skeleton (PROVE-01). Absent by default → skip-with-disclosure naming
+ * hindsight skeleton. Absent by default → skip-with-disclosure naming
  * the SIBLING-CLONE path. hindsight is a sibling clone (`../hindsight`) the
  * operator builds — NEVER a Comis dependency.
  */
@@ -232,7 +232,7 @@ export function createHindsightAdapter(options: SkeletonAdapterOptions = {}): Co
 }
 
 /**
- * mnemosyne skeleton (PROVE-01). Absent by default → skip-with-disclosure naming
+ * mnemosyne skeleton. Absent by default → skip-with-disclosure naming
  * the SIBLING-CLONE path. mnemosyne is a sibling clone (`../mnemosyne`) the
  * operator builds — NEVER a Comis dependency.
  */

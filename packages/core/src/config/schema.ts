@@ -129,9 +129,9 @@ export const AppConfigSchema = z.strictObject({
     documentation: DocumentationConfigSchema.default(() => DocumentationConfigSchema.parse({})),
     /** Telegram file reference guard: detects hallucinated file paths in responses */
     telegramFileRefGuard: TelegramFileRefGuardConfigSchema.default(() => TelegramFileRefGuardConfigSchema.parse({})),
-    /** Tool-first capability layer (v1.1) -- capability clusters, MCP/skill hints, install-detour mode. Operator-only. */
+    /** Tool-first capability layer -- capability clusters, MCP/skill hints, install-detour mode. Operator-only. */
     tooling: ToolingConfigSchema.default(() => ToolingConfigSchema.parse({})),
-    /** Credential-broker executor configuration (INTEG-02 / WIRE-02). */
+    /** Credential-broker executor configuration. */
     executor: ExecutorConfigSchema.optional(),
   }).superRefine((config, ctx) => {
     // Startup invariant: reject the reserved "default" provider name.

@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cross-mode credential storage integration suite (REQ-08, REQ-10, REQ-18, REQ-19).
+ * Cross-mode credential storage integration suite.
  *
  * Four describe blocks:
  *   1. Encrypted mode — boot daemon with security.storage:encrypted; store
  *      secret+OAuth; assert correct backend + residency (values never in
  *      list responses or logs).
- *   2. File mode — same round-trip for security.storage:file; verify REQ-10
- *      (list never exposes value fields).
+ *   2. File mode — same round-trip for security.storage:file; verify the list
+ *      never exposes value fields.
  *   3. §5.5 Path A — resolveSecretRefs in-process assertions (darwin-runnable).
  *   4. §5.5 Path B — broker per-request resolve (darwin-runnable) + executor
  *      immutability guard (regression).
  *
- * GREEN state (Wave 3): All darwin-runnable assertions pass. Full bwrap
- * subprocess path is skip-guarded for Linux (clearly marked).
+ * GREEN state: All darwin-runnable assertions pass. Full bwrap subprocess path
+ * is skip-guarded for Linux (clearly marked).
  *
  * Run with: `pnpm build && pnpm test:integration -- credential-storage-modes`
  *
@@ -89,10 +89,10 @@ async function rpcCallOrThrow<T = unknown>(
 }
 
 // ---------------------------------------------------------------------------
-// Suite 1: Encrypted mode round-trip + residency (REQ-08, REQ-18)
+// Suite 1: Encrypted mode round-trip + residency
 // ---------------------------------------------------------------------------
 
-describe("credential-storage-modes: encrypted mode (REQ-08)", () => {
+describe("credential-storage-modes: encrypted mode", () => {
   let handle: TestDaemonHandle;
   let ws: WebSocket;
   let tempDataDir: string;
@@ -153,7 +153,7 @@ describe("credential-storage-modes: encrypted mode (REQ-08)", () => {
     }
   }, 30_000);
 
-  it("encrypted mode: secrets.set stores a secret and secrets.list returns name-only (residency, REQ-08)", async () => {
+  it("encrypted mode: secrets.set stores a secret and secrets.list returns name-only (residency)", async () => {
     const SECRET_VALUE = "test-secret-value-" + randomBytes(8).toString("hex");
     const SECRET_NAME = "ENCRYPTED_TEST_KEY";
 
@@ -170,14 +170,14 @@ describe("credential-storage-modes: encrypted mode (REQ-08)", () => {
 
     const entry = list.secrets.find((s) => s.name === SECRET_NAME);
     expect(entry).toBeDefined();
-    // REQ-08 residency: list metadata schema has no value field (T-07-03-01)
+    // Residency: list metadata schema has no value field
     expect(entry?.["value"]).toBeUndefined();
 
     // The serialized list must not contain the plaintext value anywhere
     expect(JSON.stringify(list)).not.toContain(SECRET_VALUE);
   }, 30_000);
 
-  it("encrypted mode: auth.set stores an OAuth profile and auth.list returns token-free response (REQ-08)", async () => {
+  it("encrypted mode: auth.set stores an OAuth profile and auth.list returns token-free response", async () => {
     const ACCESS_TOKEN = "tok-access-encrypted-" + randomBytes(8).toString("hex");
     const REFRESH_TOKEN = "tok-refresh-encrypted-" + randomBytes(8).toString("hex");
     // profileId format: "<provider>:<identity>" (validated by validateProfileId in @comis/core)
@@ -196,7 +196,7 @@ describe("credential-storage-modes: encrypted mode (REQ-08)", () => {
       version: 1,
     });
 
-    // auth.list must return profile without access/refresh tokens (T-07-03-02)
+    // auth.list must return profile without access/refresh tokens
     const list = await rpcCallOrThrow<{
       profiles: Array<{ profileId: string; email?: string }>;
     }>(ws, "auth.list", {});
@@ -210,7 +210,7 @@ describe("credential-storage-modes: encrypted mode (REQ-08)", () => {
     expect(listJson).not.toContain(REFRESH_TOKEN);
   }, 30_000);
 
-  it("encrypted mode: secrets.get returns stored value after secrets.set (SecretRef round-trip, REQ-08)", async () => {
+  it("encrypted mode: secrets.get returns stored value after secrets.set (SecretRef round-trip)", async () => {
     const KEY_VALUE = "secretref-value-" + randomBytes(8).toString("hex");
     const KEY_NAME = "SECRETREF_TEST_KEY";
 
@@ -232,10 +232,10 @@ describe("credential-storage-modes: encrypted mode (REQ-08)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 2: File mode round-trip + residency (REQ-08, REQ-10, REQ-18)
+// Suite 2: File mode round-trip + residency
 // ---------------------------------------------------------------------------
 
-describe("credential-storage-modes: file mode (REQ-18)", () => {
+describe("credential-storage-modes: file mode", () => {
   let handle: TestDaemonHandle;
   let ws: WebSocket;
   let tempDataDir: string;
@@ -284,7 +284,7 @@ describe("credential-storage-modes: file mode (REQ-18)", () => {
     }
   }, 30_000);
 
-  it("file mode: secrets.set stores a secret and secrets.list returns names only (no value field, REQ-10)", async () => {
+  it("file mode: secrets.set stores a secret and secrets.list returns names only (no value field)", async () => {
     const SECRET_VALUE = "file-secret-value-" + randomBytes(8).toString("hex");
     const SECRET_NAME = "FILE_TEST_KEY";
 
@@ -300,12 +300,12 @@ describe("credential-storage-modes: file mode (REQ-18)", () => {
     const entry = list.secrets.find((s) => s.name === SECRET_NAME);
     expect(entry).toBeDefined();
 
-    // REQ-10 file-store residency: no value field in list response (T-07-03-01)
+    // File-store residency: no value field in list response
     expect(entry?.["value"]).toBeUndefined();
     expect(JSON.stringify(list)).not.toContain(SECRET_VALUE);
   }, 30_000);
 
-  it("file mode: auth.set stores OAuth profile and auth.list returns profile without tokens (file-store residency, REQ-10)", async () => {
+  it("file mode: auth.set stores OAuth profile and auth.list returns profile without tokens (file-store residency)", async () => {
     const ACCESS_TOKEN = "tok-access-file-" + randomBytes(8).toString("hex");
     const REFRESH_TOKEN = "tok-refresh-file-" + randomBytes(8).toString("hex");
     // profileId format: "<provider>:<identity>" (validated by validateProfileId in @comis/core)
@@ -330,13 +330,13 @@ describe("credential-storage-modes: file mode (REQ-18)", () => {
     const profile = list.profiles.find((p) => p.profileId === PROFILE_ID);
     expect(profile).toBeDefined();
 
-    // Residency: list response must NOT contain token values (T-07-03-02)
+    // Residency: list response must NOT contain token values
     const listJson = JSON.stringify(list);
     expect(listJson).not.toContain(ACCESS_TOKEN);
     expect(listJson).not.toContain(REFRESH_TOKEN);
   }, 30_000);
 
-  it("file mode: secrets.list returns no value field on any entry across multiple stored secrets (REQ-10 multi-entry residency)", async () => {
+  it("file mode: secrets.list returns no value field on any entry across multiple stored secrets (multi-entry residency)", async () => {
     await rpcCallOrThrow(ws, "secrets.set", {
       name: "FILE_MULTI_KEY_A",
       value: "value-a-" + randomBytes(8).toString("hex"),
@@ -358,10 +358,10 @@ describe("credential-storage-modes: file mode (REQ-18)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Suite 3: §5.5 Path A — resolveSecretRefs in-process (REQ-19, darwin-runnable)
+// Suite 3: §5.5 Path A — resolveSecretRefs in-process (darwin-runnable)
 // ---------------------------------------------------------------------------
 
-describe("§5.5 Path A: resolveSecretRefs in exec-sandbox path (REQ-19)", () => {
+describe("§5.5 Path A: resolveSecretRefs in exec-sandbox path", () => {
   // No daemon boot — pure in-process unit assertion.
   // These tests verify the exec-tool sandbox injection contract (exec-shared.ts)
   // and are darwin-runnable without bwrap or bubblewrap.
@@ -411,10 +411,10 @@ describe("§5.5 Path A: resolveSecretRefs in exec-sandbox path (REQ-19)", () => 
 });
 
 // ---------------------------------------------------------------------------
-// Suite 4a: §5.5 Path B — in-process broker resolve (REQ-19, darwin-runnable)
+// Suite 4a: §5.5 Path B — in-process broker resolve (darwin-runnable)
 // ---------------------------------------------------------------------------
 
-describe("§5.5 Path B: broker per-request resolve (REQ-19, darwin-runnable)", () => {
+describe("§5.5 Path B: broker per-request resolve (darwin-runnable)", () => {
   // No daemon boot — pure in-process unit assertion.
   //
   // resolveSecretRef (from @comis/core security module) is the underlying
@@ -422,7 +422,7 @@ describe("§5.5 Path B: broker per-request resolve (REQ-19, darwin-runnable)", (
   // SecretRef objects before sealing the subprocess environment. This test
   // verifies the contract holds: resolved value is live, placeholder is distinct.
 
-  it("broker resolves env-source SecretRef from live SecretManager; subprocess sees placeholder before injection (T-07-03-05)", () => {
+  it("broker resolves env-source SecretRef from live SecretManager; subprocess sees placeholder before injection", () => {
     // SecretRef with source="env", provider="comis", id="MY_BROKER_KEY"
     const secretRef = {
       source: "env" as const,
@@ -454,13 +454,13 @@ describe("§5.5 Path B: broker per-request resolve (REQ-19, darwin-runnable)", (
     }
 
     // Assert: placeholder !== resolved value — subprocess sees the opaque
-    // ref string until the broker injects the live value at request scope (T-07-03-05).
+    // ref string until the broker injects the live value at request scope.
     expect(PLACEHOLDER).not.toBe(LIVE_VALUE);
   });
 
   it.skip(
     "§5.5 Path B full subprocess (Linux-deferred) — needs bwrap",
-    // Linux: see pnpm validate:full gate in 07-CONTEXT.md deferred items.
+    // Linux: covered by the pnpm validate:full gate.
     // Full broker-injected bwrap subprocess path requires:
     //   - Linux OS (bubblewrap is Linux-only; darwin cannot run bwrap)
     //   - pnpm validate:full in CI or on a Linux dev box
@@ -473,14 +473,14 @@ describe("§5.5 Path B: broker per-request resolve (REQ-19, darwin-runnable)", (
 });
 
 // ---------------------------------------------------------------------------
-// Suite 4b: §5.5 Path B — executor immutability guard (REQ-19)
+// Suite 4b: §5.5 Path B — executor immutability guard
 // ---------------------------------------------------------------------------
 
-describe("§5.5 Path B — executor immutability guard (REQ-19)", () => {
+describe("§5.5 Path B — executor immutability guard", () => {
   it("isImmutableConfigPath('executor', 'broker.bindings') returns true (immutability guard holds)", () => {
-    // REQ-19 §8.1: executor immutability guard is GREEN from Phase 1.
+    // §8.1: the executor immutability guard is GREEN.
     // This test verifies the guard continues to hold — any future regression
-    // in IMMUTABLE_CONFIG_PREFIXES would fail this immediately (T-07-03-03).
+    // in IMMUTABLE_CONFIG_PREFIXES would fail this immediately.
     expect(isImmutableConfigPath("executor", "broker.bindings")).toBe(true);
   });
 

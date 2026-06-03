@@ -140,7 +140,7 @@ describe("setupRpcBridge", () => {
   });
 });
 
-describe("buildRpcAdapterDeps getConfig non-secret allowlist (WR-03)", () => {
+describe("buildRpcAdapterDeps getConfig non-secret allowlist", () => {
   // Minimal container.config carrying an apiKey-shaped secret in the `agents`
   // section (the real leak: per-agent auth/model profiles) plus a non-secret
   // gateway section and the two scalar allowlist fields. Only the fields the
@@ -255,7 +255,7 @@ describe("buildRpcAdapterDeps getConfig non-secret allowlist (WR-03)", () => {
     const deps = await makeDeps(makeContainerConfig());
 
     // Dedicated non-secret projection for the dashboard's GET /api/agents.
-    // WR-03 removed `agents` from getConfig's allowlist, so the REST listing
+    // `agents` was removed from getConfig's allowlist, so the REST listing
     // can no longer source agents from getConfig; this is its replacement.
     const summaries = deps.listAgentSummaries?.();
 

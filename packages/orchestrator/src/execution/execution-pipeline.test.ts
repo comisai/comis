@@ -462,7 +462,7 @@ describe("executeAndDeliver", () => {
       );
     });
 
-    it("emits message:sent event carrying the real lastChunkMessageId (TURN-06, not block-delivery)", async () => {
+    it("emits message:sent event carrying the real lastChunkMessageId (not block-delivery)", async () => {
       const eventBus = makeEventBus();
       const deps = makeDeps({ eventBus });
       const msg = makeMessage();

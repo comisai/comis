@@ -32,13 +32,13 @@ import { renderFrameText, failureLabel, appendPrompt } from "./render.js";
 
 export interface AppendOnlyDeps {
   actions: ActivityRenderActions;
-  /** WS-F Phase 78 / SPEC-§8.5 — optional clock for "(running N s)" fallback.
+  /** §8.5 — optional clock for "(running N s)" fallback.
    *  Read-only display arithmetic (no scheduling, no I/O); omitted →
    *  graceful-degrade. Pitfall 5 was about delete-sequencing TimerPort. */
   clock?: ClockPort;
   /**
-   * Build the plain-text approval prompt for a frame's visible events (APV-10,
-   * §6.4.6). Wired by a button-less channel (iMessage) as a closure over
+   * Build the plain-text approval prompt for a frame's visible events
+   * (§6.4.6). Wired by a button-less channel (iMessage) as a closure over
    * `buildApprovalPrompt`; the opening status carries the prompt appended after
    * the frame text. Omitted by channels with a button surface. Returns `""` for a
    * non-approval frame (nothing appended).
@@ -46,14 +46,14 @@ export interface AppendOnlyDeps {
   buildPrompt?: (events: readonly ActivityEvent[]) => string;
   /**
    * Build the signed native-approval button rows for a frame's visible events
-   * (APV-02, §7.7). Wired by a button-capable send-only channel (LINE) as a
+   * (§7.7). Wired by a button-capable send-only channel (LINE) as a
    * closure over `buildApprovalButtons` + the injected `SignCallbackData`; the
    * opening status `send` carries the returned rows as LINE Quick-Reply chips.
    * Omitted by text-only channels (iMessage). Returns `[]` for a non-approval
    * frame, so a button-less send stays byte-identical.
    */
   buildButtons?: (events: readonly ActivityEvent[]) => RichButton[][];
-  /** Resolved theme status markers (UX-01). Omitted → default glyphs. */
+  /** Resolved theme status markers. Omitted → default glyphs. */
   markers?: ActivityStatusMarkers;
 }
 
@@ -61,7 +61,7 @@ export function createAppendOnlyRenderer(deps: AppendOnlyDeps): ChannelActivityR
   const { actions, clock, buildPrompt, buildButtons, markers } = deps;
 
   let opened = false;
-  /** WS-F: first-apply clock snapshot. AppendOnly posts ONCE so the §8.5
+  /** First-apply clock snapshot. AppendOnly posts ONCE so the §8.5
    *  fallback fires only on the FIRST frame — exactly the pre-SEP window. */
   let startedAtMs: number | undefined;
 
@@ -82,7 +82,7 @@ export function createAppendOnlyRenderer(deps: AppendOnlyDeps): ChannelActivityR
       if (text.length === 0) return ok(undefined);
       // A button-capable channel (LINE) carries the signed Quick-Reply chips; a
       // non-approval frame yields `[]` → omit `buttons` so the send stays
-      // byte-identical to the pre-73 opening status.
+      // byte-identical to the original opening status.
       const buttons = buildButtons?.(frame.visibleEvents) ?? [];
       const sent = await actions.send(text, buttons.length > 0 ? { buttons } : undefined);
       if (!sent.ok) return sent;
@@ -98,7 +98,7 @@ export function createAppendOnlyRenderer(deps: AppendOnlyDeps): ChannelActivityR
           return ok(undefined);
 
         case "failure": {
-          // The marker follows the resolved theme (UX-01); omitting markers
+          // The marker follows the resolved theme; omitting markers
           // yields the byte-identical "❌ {errorKind}".
           const sent = await actions.send(failureLabel(outcome, markers));
           if (!sent.ok) return sent;

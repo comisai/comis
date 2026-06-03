@@ -51,7 +51,7 @@ const CONFIG_PATH = resolve(
 );
 
 // Known token secrets — injected via env vars so the daemon uses these exact values
-// (the daemon resolves tokens from env > config > auto-gen, per TOKEN-04)
+// (the daemon resolves tokens from env > config > auto-gen)
 const ADMIN_SECRET = "test-admin-secret-for-comprehensive-test-2026";
 const RPC_ONLY_SECRET = "test-rpc-only-secret-comprehensive-test-2026";
 const NO_SCOPE_SECRET = "test-noscope-secret-comprehensive-test-2026x";

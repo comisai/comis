@@ -6,7 +6,7 @@ export type { AcpServerDeps, AcpAgentHandle } from "./acp-server.js";
 export { createAcpSessionMap } from "./acp-session-map.js";
 export type { AcpSessionMap, AcpSessionKey } from "./acp-session-map.js";
 
-// Local 256-slot FIFO drop-oldest queue the activity bridge drains (ACP-02).
+// Local 256-slot FIFO drop-oldest queue the activity bridge drains.
 export { createAcpBoundedQueue, DEFAULT_ACP_QUEUE_CAPACITY } from "./acp-bounded-queue.js";
 export type { AcpBoundedQueue, AcpBoundedQueueOptions } from "./acp-bounded-queue.js";
 

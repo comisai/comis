@@ -22,7 +22,7 @@ import { BrowserToolSchema } from "./browser-tool-schema.js";
 import type { SanitizedImage } from "../../tools/integrations/image-sanitizer.js";
 import type { MediaPersistenceService } from "../../tools/media/media-persistence.js";
 
-// Activity label spec (LBL-01, §17.6). Descriptor name == emitted name. A
+// Activity label spec (§17.6). Descriptor name == emitted name. A
 // tool-level label covers the gate; the browser action enum lives in
 // browser-tool-schema.ts and is not surfaced per-action here.
 registerActivityLabelSpec("browser", {

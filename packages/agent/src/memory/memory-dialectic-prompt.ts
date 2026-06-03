@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The dialectic synthesis prompt + its lenient, total parser (Phase 109 — DIAL-01).
+ * The dialectic synthesis prompt + its lenient, total parser.
  *
  * AGENT-INTERNAL: the prompt STRING never crosses the package boundary — the daemon's
- * synthesis seam (`memory-dialectic-seam.ts`, Plan 04 injects its model) imports
+ * synthesis seam (`memory-dialectic-seam.ts`, which injects its model) imports
  * `buildDialecticPrompt` from HERE rather than embedding the prompt, mirroring how
  * `createReasoningSeam` keeps `DEDUCTIVE_PROMPT`/`INDUCTIVE_PROMPT` private and how
  * `createUserRepresentationSeam` keeps `USER_REPRESENTATION_PROMPT` private.
@@ -44,7 +44,7 @@ export type DialecticParsed =
 // ---------------------------------------------------------------------------
 
 /**
- * The dialectic synthesis system prompt (DIAL-01). The model receives the question + a small
+ * The dialectic synthesis system prompt. The model receives the question + a small
  * set of ALREADY trust-filtered, redacted memories (each prefixed by its id) and synthesizes
  * a grounded, cited answer — or abstains.
  *

@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * v2.9 audit fix (WARNING-1 LEARN-03/DIAL + WARNING-2 FORGET-01/DIAL) — the dialectic
+ * Audit fix — the dialectic
  * recall (`memory.ask` via `buildDialecticRecall`) must construct its `createMemoryRecall`
- * with the SAME two v2.9 recall-config inputs the MAIN recall path (prompt-assembly) passes,
+ * with the SAME two recall-config inputs the MAIN recall path (prompt-assembly) passes,
  * so `memory_ask` ranks IDENTICALLY to the main recall once an operator enables either feature:
  *
- *   - WARNING-2 (FORGET-01): the `forget` gate (`rag.forget`) — prompt-assembly.ts:854 passes it.
+ *   - The `forget` gate (`rag.forget`) — prompt-assembly.ts:854 passes it.
  *     Omitted in the dialectic ⇒ no FadeMem decay on memory.ask even when `rag.forget.enabled`.
- *   - WARNING-1 (LEARN-03): the `tunedAlphaStore` gated-read overlay — prompt-assembly.ts:803-839
+ *   - The `tunedAlphaStore` gated-read overlay — prompt-assembly.ts:803-839
  *     reads the learned 4-tuple (gated on `rag.onlineTuning.enabled` + a present store) and feeds
  *     it through `buildScoringAlphas` into the `scoring:` arg. Omitted in the dialectic ⇒ the
  *     tuned alphas never fire on memory.ask.
  *
  * Both are DEFAULT-OFF: with neither feature on, the dialectic recall config must be byte-identical
  * to today (the tuned store is NEVER read; `scoring`/`forget` are the static config values). The
- * TRUST-FREEZE (the OD2 ship-gate, belt #2) MUST hold on the dialectic path too: `scoring.trustAlpha`
+ * TRUST-FREEZE (the ship-gate, belt #2) MUST hold on the dialectic path too: `scoring.trustAlpha`
  * is ALWAYS config-sourced, NEVER from the tuned vector.
  *
  * This test drives the REAL `buildDialecticWiring` and SPIES on `createMemoryRecall` (mocking
@@ -132,8 +132,8 @@ async function captureRecallConfig(deps: any): Promise<Record<string, any>> {
 
 // --- Tests -----------------------------------------------------------------
 
-describe("dialectic recall config parity with the main recall path (v2.9 audit fix)", () => {
-  it("WARNING-2 (FORGET-01/DIAL): the dialectic recall config carries `forget` (the same field the main path passes at prompt-assembly.ts:854)", async () => {
+describe("dialectic recall config parity with the main recall path (audit fix)", () => {
+  it("the dialectic recall config carries `forget` (the same field the main path passes at prompt-assembly.ts:854)", async () => {
     const agentConfig = makeAgentConfig();
     const config = await captureRecallConfig(makeDeps({ agentConfig }));
     // RED before the fix: setup-dialectic's createMemoryRecall config omits `forget`.
@@ -141,8 +141,8 @@ describe("dialectic recall config parity with the main recall path (v2.9 audit f
     expect(config.forget).toEqual((agentConfig as any).rag.forget);
   });
 
-  it("WARNING-1 (LEARN-03/DIAL): with onlineTuning EXPLICITLY OFF the tuned store is NEVER read and `scoring` is the static config (byte-identical)", async () => {
-    // v2.9 increment 2 — rag.onlineTuning now defaults ON (v1 opt-out posture), so the OFF-path
+  it("with onlineTuning EXPLICITLY OFF the tuned store is NEVER read and `scoring` is the static config (byte-identical)", async () => {
+    // rag.onlineTuning now defaults ON (opt-out posture), so the OFF-path
     // guard must construct the OFF state EXPLICITLY. With onlineTuning:false the dialectic recall
     // must NOT read the tuned-alpha store and `scoring` stays the unchanged static config.
     const tunedAlphaStore = makeTunedAlphaStore({
@@ -159,7 +159,7 @@ describe("dialectic recall config parity with the main recall path (v2.9 audit f
     );
   });
 
-  it("WARNING-1 (LEARN-03/DIAL): with onlineTuning ON + a tuned row, the four non-trust alphas come from the tuned vector (consistent with the main path)", async () => {
+  it("with onlineTuning ON + a tuned row, the four non-trust alphas come from the tuned vector (consistent with the main path)", async () => {
     const tuned: TunedAlphaVector = {
       recencyAlpha: 0.85,
       temporalAlpha: 0.75,
@@ -206,7 +206,7 @@ describe("dialectic recall config parity with the main recall path (v2.9 audit f
     expect(config.scoring.forgetAlpha).toBe(0.1);
   });
 
-  it("WARNING-1: onlineTuning ON but NO tunedAlphaStore dep ⇒ scoring stays config (no crash; default-OFF byte-identity)", async () => {
+  it("onlineTuning ON but NO tunedAlphaStore dep ⇒ scoring stays config (no crash; default-OFF byte-identity)", async () => {
     const agentConfig = makeAgentConfig({ onlineTuning: { enabled: true } });
     const config = await captureRecallConfig(makeDeps({ agentConfig })); // no tunedAlphaStore
     expect(config.scoring).toEqual((agentConfig as any).rag.scoring);

@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TR-03/04/05 (Linux/VPS) — the LIVE-PTY interaction round-trip: the four
+ * The LIVE-PTY interaction round-trip: the four
  * implemented interaction tools (send_text / send_key / resize / wait) driven
- * through the REAL TerminalSessionRegistry (120-03) + the REAL Terminal Worker
+ * through the REAL TerminalSessionRegistry + the REAL Terminal Worker
  * with the REAL node-pty `forkpty` backend (`loadPty = defaultLoadPty`) + real
  * injected timers, against a real interactive program (`/bin/cat`).
  *
  * This is the macOS-unprovable half (the macOS author box's node-pty cannot
- * `posix_spawnp` in-harness — the 119-03/119-04 precedent): a real submit ->
+ * `posix_spawnp` in-harness): a real submit ->
  * settle -> observe loop AND a real control-key exit. `describe.skipIf(
  * process.platform !== "linux")` so it COMPILES + SKIPS on macOS and runs live on
  * `comisvps` (where forkpty works). The orchestrator flips it green on the VPS
  * post-execute. Mirrors the `bwrap-egress-integration.test.ts` Linux-gate idiom +
- * the 119-04 macOS sibling's bridge shape, but end-to-end through the TOOLS (not
+ * the macOS sibling's bridge shape, but end-to-end through the TOOLS (not
  * the worker directly).
  *
  * `cat` is a minimal line-buffered interactive program: it echoes each submitted
@@ -51,15 +51,15 @@ function isLinux(): boolean {
 const noopLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
 /**
- * 122-06: the registry threads the daemon-resolved bwrapPath onto the create frame
- * (the SEC-16 seam); the worker ALWAYS jails (no unjailed path), so create
+ * The registry threads the daemon-resolved bwrapPath onto the create frame;
+ * the worker ALWAYS jails (no unjailed path), so create
  * fail-closes without it. Resolved once like `BwrapProvider.available()`.
  */
 function resolveBwrapPath(): string {
   return execFileSync("which", ["bwrap"], { encoding: "utf8" }).trim();
 }
 
-/** The operator scope on the allow entry (SEC-02/03) — `cat` runs fine in a workspace jail. */
+/** The operator scope on the allow entry — `cat` runs fine in a workspace jail. */
 const WORKSPACE_SCOPE: TerminalScope = {
   filesystem: "workspace",
   network: "none",
@@ -85,14 +85,14 @@ function catPath(): string {
  * still bridged in-process here; the FULL separate-process posture is exercised by
  * the daemon wiring + the VPS smoke at a higher tier.
  *
- * gap 2 (now CLOSED): the worker spawns `cat` INSIDE the bwrap workspace jail with
+ * The worker spawns `cat` INSIDE the bwrap workspace jail with
  * `--chdir <cwd>` + `--uid 65534` (nobody), so it needs a real per-session workspace
  * the jail can --bind RW + --chdir into. The REGISTRY now allocates that workspace and
  * threads it onto the create frame (terminal-workspace.ts), so this bridge is a plain
  * frame pass-through — it injects NOTHING. That makes this test exercise the PRODUCTION
  * allocation path live on the VPS (previously the bridge hand-injected a mkdtemp dir to
  * work around the missing allocation; that workaround is gone). The tool→registry path
- * and the SEC-15-wrapped tool-layer read are unchanged.
+ * and the wrapped tool-layer read are unchanged.
  */
 function makeBridgedPtyWorkerChild(): FakeWorkerChild {
   const worker = createTerminalWorker({ loadPty: defaultLoadPty, logger: noopLogger });
@@ -105,7 +105,7 @@ function makeBridgedPtyWorkerChild(): FakeWorkerChild {
         for (const frame of decoder.push(chunk)) {
           const req = frame as TerminalRequestFrame;
           // Plain pass-through — the registry already allocated + threaded the
-          // per-session jail workspace/cwd onto the create frame (gap 2).
+          // per-session jail workspace/cwd onto the create frame.
           void worker.handle(req).then((reply) => onStdout?.(encodeFrame(reply)));
         }
         return true;
@@ -133,28 +133,28 @@ function toolDeps(registry: ReturnType<typeof createTerminalSessionRegistry>, en
     eventBus: { emit: () => true },
     nowMs: () => Date.now(),
     agentId: "agent-interaction-linux",
-    // 123-05: no-limit caps (the live round-trip asserts interaction bytes, not the caps).
+    // No-limit caps (the live round-trip asserts interaction bytes, not the caps).
     caps: createSessionCaps(undefined, () => Date.now()),
   };
 }
 
 // ===========================================================================
-// THE VPS LIVE-PTY INTERACTION ASSERTION (120-05, TR-03/04/05) — through the
+// THE VPS LIVE-PTY INTERACTION ASSERTION — through the
 // TOOLS. Drives a REAL `cat` via a REAL forkpty worker (real injected timers) and
 // proves the full submit -> settle -> observe loop AND that a real control key
 // (C-d / EOF) exits a live program — end-to-end through the agent-facing tools.
 // On macOS this entire describe block is skipped.
 // ===========================================================================
-describe.skipIf(!isLinux())("TR-03/04/05 (Linux) — live-PTY interaction round-trip through the tools", () => {
-  // KNOWN-PENDING — Phase 122 follow-on (does NOT block the jail model): the jailed
+describe.skipIf(!isLinux())("live-PTY interaction round-trip through the tools (Linux)", () => {
+  // KNOWN-PENDING follow-on (does NOT block the jail model): the jailed
   // interaction (send_text submit → echo → wait → C-d → exit) is proven LIVE at the WORKER
   // level by terminal-worker-entry.linux.test.ts ("drives a live program"), which PASSES.
   // This TOOL-LAYER round-trip now spawns the jailed `cat` under the net-new uid in the
   // per-session workspace (created.ok succeeds — the allocation works), but `wait forText`
-  // times out — a tool-layer settle/timing nuance. Re-enable once tuned (see STATE/VERIFICATION).
+  // times out — a tool-layer settle/timing nuance. Re-enable once tuned.
   it.skip("send_text(submit) echoes, wait forText observes it, then send_key C-d exits (submit->settle->observe + control key)", async () => {
     const cat = catPath();
-    // gap 2: the REGISTRY allocates the per-session jail workspace + threads it onto
+    // The REGISTRY allocates the per-session jail workspace + threads it onto
     // the create frame (the worker --binds it RW + --chdirs in), so the jailed `cat`
     // runs under uid 65534 without the unusable HOME cwd. No test-injected workspace —
     // this exercises the production allocation path live.
@@ -162,7 +162,7 @@ describe.skipIf(!isLinux())("TR-03/04/05 (Linux) — live-PTY interaction round-
       spawnWorker: () => makeBridgedPtyWorkerChild(),
       logger: noopLogger,
       nowMs: () => Date.now(),
-      // 122-06: threaded onto the create frame so the worker jails `cat`.
+      // Threaded onto the create frame so the worker jails `cat`.
       bwrapPath: resolveBwrapPath(),
     });
     const entry: AllowEntryLike = { id: "cat", match: { path: cat }, scope: WORKSPACE_SCOPE };

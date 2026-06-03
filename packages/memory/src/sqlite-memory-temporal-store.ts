@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * SqliteMemoryTemporalStore: the SOLE adapter for the segregated
- * `MemoryTemporalStore` port (@comis/core, Phase 95, LANES-02). It owns the
+ * `MemoryTemporalStore` port (@comis/core). It owns the
  * temporal-spread SQL — a windowed read over the EXISTING `memories.occurred_at`
  * column that, given the seed memories' event times, surfaces OTHER memories
  * near those times (the "what else happened around then" lane).
@@ -11,9 +11,9 @@
  * `PRAGMA foreign_keys = ON` already set. Unlike the entity store
  * (`ensureEntityTables`) or the usefulness store (`ensureUsefulnessTable`), this
  * store needs NO `ensure*` DDL — the `occurred_at` column already exists
- * (Phase 81, `ensureMemoryColumns`). There is NO new table.
+ * (added by `ensureMemoryColumns`). There is NO new table.
  *
- * ## Isolation is the load-bearing security boundary (T-95-05, the ENT-03 pattern)
+ * ## Isolation is the load-bearing security boundary
  *
  * Comis runs many agents in one DB. The windowed SELECT filters on
  * `(tenant_id, agent_id)` — parameterized — so two agents (or tenants) whose
@@ -72,7 +72,7 @@ export function createSqliteMemoryTemporalStore(deps: MemoryTemporalStoreDeps): 
   const { db, logger } = deps;
 
   // The scoped windowed SELECT (parameterized). The `AND tenant_id = ? AND agent_id = ?`
-  // is the load-bearing ISOLATION boundary (T-95-05) — a cross-scope memory at the same
+  // is the load-bearing ISOLATION boundary — a cross-scope memory at the same
   // occurred_at is excluded here. `occurred_at IS NOT NULL` drops memories with no event
   // time (nothing to spread from). The `BETWEEN (minSeed - windowMs) AND (maxSeed +
   // windowMs)` bounds the candidate window (no unbounded scan); `LIMIT ?` is a coarse
@@ -98,7 +98,7 @@ export function createSqliteMemoryTemporalStore(deps: MemoryTemporalStoreDeps): 
       const startMs = systemNowMs();
       const { tenantId, agentId } = scope;
       try {
-        // ENT-04 (reused): no seeds -> empty lane (no query). RRF ranking is unchanged.
+        // No seeds -> empty lane (no query). RRF ranking is unchanged.
         if (seedOccurredAts.length === 0) {
           logger?.debug(
             { step: "temporal-lane", seedCount: 0, resultCount: 0, durationMs: 0 },
@@ -121,7 +121,7 @@ export function createSqliteMemoryTemporalStore(deps: MemoryTemporalStoreDeps): 
 
         // The seed event times themselves identify the seed memories — exclude any row
         // whose occurred_at exactly equals a seed time so a seed never re-surfaces in its
-        // own lane (Pitfall 6: seeds are TIMES, not ids).
+        // own lane (seeds are TIMES, not ids).
         const seedSet = new Set(seedOccurredAts);
         // windowDays drives the proximity decay scale; guard a zero/sub-day window so the
         // exponent stays finite (windowMs is z.int().positive()*day at the call site, but

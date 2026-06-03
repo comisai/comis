@@ -171,8 +171,8 @@ import {
   type TokenStore as McpTokenStore,
 } from "@comis/skills";
 import { createChannelHealthMonitor } from "@comis/channels";
-// WIRE-08: the single process-singleton activity circuit breaker is constructed
-// here (D2) and threaded down through ChannelsDeps → buildAndStartChannelManager
+// The single process-singleton activity circuit breaker is constructed
+// here and threaded down through ChannelsDeps → buildAndStartChannelManager
 // into every per-turn coordinator. The daemon is the composition root that owns
 // the breaker's lifetime; the orchestrator owns its logic.
 import { createActivityCircuitBreaker } from "@comis/orchestrator";
@@ -206,7 +206,7 @@ import {
   buildMcpStatusLine,
 } from "./wiring/restart-continuation.js";
 import { setupSingleAgent } from "./wiring/setup-agents/index.js";
-import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js"; // Phase 109 DIAL-01/02
+import { buildDialecticWiring, dialecticWiringDepsFromBoot } from "./wiring/setup-dialectic.js";
 import { setupSecretManager } from "./wiring/setup-secret-manager.js";
 import { restoreApprovalState } from "./wiring/main-helpers.js";
 import { createInboundMessageIdResolver, type InboundMessageIdResolver } from "./wiring/inbound-message-id-resolver.js";
@@ -407,7 +407,7 @@ function scrubProcessEnv(): void {
   }
 }
 
-/** Build mergedEnv: store-wins (REQ-16/D12), stage-1 scrub for ALL modes.
+/** Build mergedEnv: store-wins, stage-1 scrub for ALL modes.
  * Returns shadowed names for deferred WARN logging (logger not yet available). */
 function buildMergedEnv(
   secretStore: SecretStorePort,
@@ -421,7 +421,7 @@ function buildMergedEnv(
     scrubProcessEnv();
     return { mergedEnv: merged, shadowedNames: [] };
   }
-  // file / encrypted: store is authoritative (REQ-16/D12).
+  // file / encrypted: store is authoritative.
   const decryptResult = secretStore.decryptAll();
   if (!decryptResult.ok) {
     throw new Error(`Secret decryption failed: ${decryptResult.error.message}`);
@@ -429,7 +429,7 @@ function buildMergedEnv(
   const shadowedNames: string[] = [];
   for (const [name, value] of decryptResult.value) {
     if (merged[name] !== undefined && merged[name] !== value) {
-      // REQ-16: store wins; collect name for deferred WARN (logger not yet available).
+      // store wins; collect name for deferred WARN (logger not yet available).
       shadowedNames.push(name);
     }
     merged[name] = value;
@@ -580,11 +580,11 @@ function buildChannelManagerDeps(deps: {
   return {
     container, executors, defaultAgentId, sessionManager, sessionStore,
     logger, channelsLogger, clock, timers,
-    // WIRE-03: the orchestrator-facing redacted ActivityStream (setupObservability)
+    // the orchestrator-facing redacted ActivityStream (setupObservability)
     // injected into the inbound coordinatorFactory as its activityStreamPort.
-    // WIRE-08: the process-singleton circuit breaker shared across every coordinator.
+    // the process-singleton circuit breaker shared across every coordinator.
     activityStream, activityBreaker,
-    // WS-D Phase 78: the DEFAULT agent's shared ExecutionPlanHolder reference
+    // the DEFAULT agent's shared ExecutionPlanHolder reference
     // (Pitfall 1 lock — same reference as PiExecutorDeps.executionPlanHolder +
     // AcpServerDeps.executionPlanPort, NOT a parallel createExecutionPlanHolder).
     // Multi-agent note: only the default agent's plan-state reaches chat in this
@@ -592,16 +592,16 @@ function buildChannelManagerDeps(deps: {
     // coordinator by the (agentId, sessionKey) guard. A future per-agent
     // plan-stream Map plumbing lifts that single-agent limitation cleanly.
     executionPlanPort: executionPlanPorts.get(defaultAgentId),
-    // WIRE-06 test-only renderer-injection seam. Default-undefined in production
+    // test-only renderer-injection seam. Default-undefined in production
     // (the daemon override is never set); threaded into buildActivityRenderers so
     // an integration test can inject a spy renderer.
     activityRendererFactory: activityRendererFactoryOverride,
-    // 73-10: signed approval buttons (Telegram/Discord/Slack/LINE) + the Email
+    // signed approval buttons (Telegram/Discord/Slack/LINE) + the Email
     // single-use approval link. The wiring is built once in the agents phase
     // (always present at runtime; optional-typed on BootContext).
     signCallbackData: interactiveCallbackWiring?.signCallbackData,
     mintApprovalLink: interactiveCallbackWiring?.mintApprovalLink,
-    // CR-01: thread the verifier. The InteractiveCallbackRouter is the server-side
+    // thread the verifier. The InteractiveCallbackRouter is the server-side
     // authority that intercepts inbound button callbacks (inbound-gate.ts) BEFORE
     // slash parsing — without this hop the signed payload reaches the LLM as text.
     interactiveCallbackRouter: interactiveCallbackWiring?.router,
@@ -611,21 +611,21 @@ function buildChannelManagerDeps(deps: {
     ttsAdapter, audioConverter, mediaTempManager, mediaSemaphore,
     fileExtractor, fileExtractionConfig: container.config.integrations.media.documentExtraction,
     workspaceDirs, defaultWorkspaceDir, memoryAdapter,
-    // Phase 83: the entity-associative store (built in setup-memory on the shared db).
+    // the entity-associative store (built in setup-memory on the shared db).
     // Forwarded into registerCronEventListeners -> runMemoryReview (the write path that
     // populates memory_entities / memory_entity_links after each successful store).
     entityStore,
-    // Phase 96 (EXTRACT-03): the causal store (built in setup-memory on the shared db).
+    // the causal store (built in setup-memory on the shared db).
     // Forwarded into registerCronEventListeners -> runMemoryReview (the write path that
     // links cause->effect edges via linkCausal after each successful store). The SAME store
     // also rides the setupAgents read path (the 5th causal recall lane).
     causalStore,
-    // Phase 84: the consolidation store (built in setup-memory on the shared db).
+    // the consolidation store (built in setup-memory on the shared db).
     // Forwarded into registerCronEventListeners -> runMemoryConsolidation (the opt-in
     // __MEMORY_CONSOLIDATION__ cron path). The executor recall path does NOT receive it.
     consolidationStore,
-    // P101·REASON-02 tripleStore + P107 userRepresentationStore + P108 relationshipStore + P111·LEARN-03
-    // tunedAlphaStore/usefulnessStore + P112·FORGET-02 memoryLifecycleStore + memoryApi ride the SAME cron-deps chain → the __MEMORY_REASONING__ /
+    // tripleStore + userRepresentationStore + relationshipStore +
+    // tunedAlphaStore/usefulnessStore + memoryLifecycleStore + memoryApi ride the SAME cron-deps chain → the __MEMORY_REASONING__ /
     // __USER_REPRESENTATION__ / __SOCIAL_MODELING__ / __ONLINE_TUNING__ / __MEMORY_LIFECYCLE__ sentinels (the last two are KEYLESS: the bandit over the FEED signal + the DORMANT lifecycle sweep).
     tripleStore, userRepresentationStore, relationshipStore, tunedAlphaStore, memoryLifecycleStore, usefulnessStore, memoryApi,
     tenantId: container.config.tenantId,
@@ -913,7 +913,7 @@ function createHotAdd(deps: {
     if (shutdownRef.value?.isShuttingDown) {
       throw new Error("Cannot hot-add agent during shutdown");
     }
-    // Phase 92 (CR-01): forward the RAW rerank signal from the agents.create RPC input
+    // forward the RAW rerank signal from the agents.create RPC input
     // so the hot-added agent's effective-rerank precedence matches the boot path.
     const result = await setupSingleAgent(agentId, config, singleAgentDeps, rawRerankEnabled);
     executors.set(agentId, result.executor);
@@ -1025,22 +1025,22 @@ function buildRpcDispatchDeps(deps: {
     }
     return cachedMcpTokenStore;
   };
-  // OBS-07: the single in-process recall-counter registry is stood up once in
+  // the single in-process recall-counter registry is stood up once in
   // setup-memory (the composition site that holds the event bus) and threaded
   // here on the boot context. The snapshot accessor feeds the
   // memory.recall_stats handler (comis memory stats reads live counters). The
-  // gauge is daemon-lifetime — it resets on restart (Assumption A2).
+  // gauge is daemon-lifetime — it resets on restart.
   const recallCounters = c.recallCounters;
-  const dialecticWiring = buildDialecticWiring(dialecticWiringDepsFromBoot(c)); // Phase 109 DIAL-01/02: the memory.ask seam + per-agent recall factory (setup-dialectic.ts owns the wiring; the cost gate returns {} when off). Spread into the dispatch deps below; the forward-presence belt locks the spread.
+  const dialecticWiring = buildDialecticWiring(dialecticWiringDepsFromBoot(c)); // the memory.ask seam + per-agent recall factory (setup-dialectic.ts owns the wiring; the cost gate returns {} when off). Spread into the dispatch deps below; the forward-presence belt locks the spread.
   return {
     defaultAgentId: c.defaultAgentId, getAgentCronScheduler: c.getAgentCronScheduler,
     cronSchedulers: c.cronSchedulers, executionTrackers: c.executionTrackers, wakeCoalescer: c.wakeCoalescer,
     defaultWorkspaceDir: c.defaultWorkspaceDir, workspaceDirs: c.workspaceDirs,
     memoryApi: c.memoryApi, memoryAdapter: c.memoryAdapter, embeddingQueue: c.embeddingQueue,
-    // OBS-06 memory-diagnostic deps: the scoped consolidation + entity stores
-    // (provenance + entity-graph reads) and the live recall counters (OBS-07)
+    // memory-diagnostic deps: the scoped consolidation + entity stores
+    // (provenance + entity-graph reads) and the live recall counters
     // for the 4 admin-gated memory.* diagnostic handlers. (usefulnessStore is NOT
-    // here — no diagnostic handler consumes it; FEED-03's read path is the setupAgents
+    // here — no diagnostic handler consumes it; its read path is the setupAgents
     // injection at the setupAgents({…}) call below, mirroring entityStore.)
     consolidationStore: c.consolidationStore, entityStore: c.entityStore, recallCounters, ...dialecticWiring, onSuspiciousContent: c.onSuspiciousContent,
     tenantId: c.container.config.tenantId, agents: c.agentsConfig, costTrackers: c.costTrackers, stepCounters: c.stepCounters,
@@ -1358,20 +1358,20 @@ async function bootFoundation(
   const envPath = safePath(dataDir, ".env");
 
   // Resolve config paths up front so we can pre-read security.storage
-  // before writeMasterKeyIfAbsent (REQ-17). The full bootstrap (which validates the
+  // before writeMasterKeyIfAbsent. The full bootstrap (which validates the
   // whole config + does ${VAR} substitution) runs later — it depends on
   // mergedEnv, which depends on whether the encrypted store opened.
   // eslint-disable-next-line no-restricted-syntax -- process.env access needed before SecretManager for config path resolution + VITEST guard
   const rawConfigPaths = process.env["COMIS_CONFIG_PATHS"]; if (process.env["VITEST"] === "true" && !rawConfigPaths) throw new Error("VITEST=true and COMIS_CONFIG_PATHS unset — refusing to read ~/.comis/config.yaml from a test process. Set COMIS_CONFIG_PATHS to a sandbox path in your test setup, or import test/support/vitest-process-listeners.ts.");
   const requestedConfigPaths = rawConfigPaths ? rawConfigPaths.split(":") : DEFAULT_CONFIG_PATHS;
 
-  // P0 boot gate: REQ-17 — ensure file/env first boot creates no key material.
+  // P0 boot gate: ensure file/env first boot creates no key material.
   //
   // Step 1: Pre-read security.storage from YAML (layered, last-wins). Returns
   // "encrypted"|"file"|"env". NEVER writes key material before this check.
   const storageMode = _preReadStorageMode(requestedConfigPaths);
 
-  // Step 2: Write master key ONLY when storageMode is "encrypted" (REQ-17).
+  // Step 2: Write master key ONLY when storageMode is "encrypted".
   // file/env modes create NO key material on first boot.
   if (storageMode === "encrypted") {
     _writeMasterKeyIfAbsent(dataDir);
@@ -1383,7 +1383,7 @@ async function bootFoundation(
 
   // 0.5. Select secret store by mode, merge with env, scrub process.env.
   const permissionCorrections = hardenDataDirPermissions(dataDir);
-  // D14 singleton lock — must run before any store bootstrap (REQ-03).
+  // singleton lock — must run before any store bootstrap.
   acquireDataDirLock(dataDir);
   // On boot failure (e.g. selectSecretStore error, bootstrap failure), release
   // the lock. Under normal boot setupShutdown.onShutdown owns the release.
@@ -1420,23 +1420,23 @@ async function bootFoundation(
     secretsDb = selected.secretsDb;
   }
 
-  // Build mergedEnv (store-wins, REQ-16/D12) + stage-1 scrub.
+  // Build mergedEnv (store-wins) + stage-1 scrub.
   const { mergedEnv, shadowedNames } = buildMergedEnv(secretStore, storageMode);
 
   // 0.6. Runtime adapter construction (composition root). overrides.timers is opt-in for test fake-timers; never set in production.
   const clock = createSystemClock(); const env = createSystemEnv(mergedEnv); const timers = overrides.timers ?? createSystemTimers();
-  // WIRE-06 test-only renderer-injection seam (mirrors overrides.timers): captured here
+  // test-only renderer-injection seam (mirrors overrides.timers): captured here
   // and threaded onto BootContext so buildChannelManagerDeps can forward it into
-  // buildActivityRenderers. Never set in production; inert on the inbound path until Plan 03.
+  // buildActivityRenderers. Never set in production; inert on the inbound path.
   const activityRendererFactory = overrides.activityRendererFactory;
-  // WIRE-08: ONE process-singleton ActivityCircuitBreaker, constructed at the
-  // composition root (D2) and shared across EVERY per-turn coordinator the inbound
+  // ONE process-singleton ActivityCircuitBreaker, constructed at the
+  // composition root and shared across EVERY per-turn coordinator the inbound
   // coordinatorFactory builds. Constructed once here (NOT inside a per-turn or
   // per-agent loop) so a permission/error storm on one (agentId, channelKey) pair
   // auto-quiesces that pair across turns. Threaded down via BootContext →
   // buildChannelManagerDeps → ChannelsDeps → buildAndStartChannelManager.
   const activityBreaker = createActivityCircuitBreaker(clock);
-  // Shared-map SecretManager (P4a): construct BEFORE bootstrap; same Map → AppContainer + mutableHandle.
+  // Shared-map SecretManager: construct BEFORE bootstrap; same Map → AppContainer + mutableHandle.
   const { secretManager: sharedSecretManager, mutableHandle } = setupSecretManager(mergedEnv);
   const wrappedBootstrap = (opts: Parameters<typeof _bootstrap>[0]) => _bootstrap({ ...opts, secretManager: sharedSecretManager });
   // 1. Bootstrap core container. (security.storage pre-read in step 0 before encrypted-store bootstrap.)
@@ -1455,9 +1455,9 @@ async function bootFoundation(
   }
   const container = { ...initialContainer, config: refResult.value as unknown as typeof initialContainer.config };
 
-  // Stage-2 scrub: remove config-referenced SecretRef names from process.env (REQ-15); runs after config parse.
+  // Stage-2 scrub: remove config-referenced SecretRef names from process.env; runs after config parse.
   for (const name of container.platformSecretNames) {
-    // eslint-disable-next-line no-restricted-syntax -- stage-2 scrub per REQ-15
+    // eslint-disable-next-line no-restricted-syntax -- stage-2 scrub
     delete process.env[name];
   }
 
@@ -1505,20 +1505,20 @@ async function bootFoundation(
     }
   }
 
-  // Deferred REQ-16 WARNs: store-wins shadow notifications (collected pre-logger).
+  // Deferred store-wins WARNs: shadow notifications (collected pre-logger).
   // Log name only — never value (residency invariant).
   for (const name of shadowedNames) {
     daemonLogger.warn(
       { submodule: "secrets-overlay", secretName: name },
       `Secret '${name}' defined in both the active store and process.env — ` +
-      "store value is authoritative (REQ-16). The env var has been removed from process.env.",
+      "store value is authoritative. The env var has been removed from process.env.",
     );
   }
 
-  // WR-03: Assert pre-read storageMode === post-bootstrap security.storage (D17 invariant).
+  // Assert pre-read storageMode === post-bootstrap security.storage (invariant).
   // security.storage is a boot-critical, runtime-immutable switch that must be a literal
   // value — ${VAR} substitution is not supported for this field, because preReadStorageMode
-  // (raw YAML scan, no variable expansion) gates key-material writes (REQ-17) before
+  // (raw YAML scan, no variable expansion) gates key-material writes before
   // bootstrap resolves the substitution. A mismatch means ${VAR} was used and the two
   // values disagree — fail boot loudly rather than silently misrouting credential storage.
   if (container.config.security.storage !== storageMode) {
@@ -1539,7 +1539,7 @@ async function bootFoundation(
         storageMode,
         hint: "Credential stores operating in non-encrypted mode. SECRETS_MASTER_KEY and secrets.db are not created.",
       },
-      `security.storage: ${storageMode} — no key material created (REQ-17).`,
+      `security.storage: ${storageMode} — no key material created.`,
     );
   }
 
@@ -1556,12 +1556,12 @@ async function bootFoundation(
   const {
     tokenTracker, sharedCostTracker,
     diagnosticCollector, billingEstimator, channelActivityTracker, deliveryTracer,
-    // WIRE-01: the canonical redacted ActivityStream (the orchestrator-facing
+    // the canonical redacted ActivityStream (the orchestrator-facing
     // ActivityStreamPort) + its drain hook. `activityStream` is injected into
     // ExecutionPipelineDeps + the ACP renderer hook; `disposeActivityStream` is
-    // threaded into setupShutdown (WIRE-05). The activity-stream logger + homeDir
+    // threaded into setupShutdown. The activity-stream logger + homeDir
     // are read here at the sanctioned composition root (no env reads in the
-    // substrate; OBS-02 injected logger).
+    // substrate; injected logger).
     activityStream, disposeActivityStream,
   } = setupObservability({
     eventBus: container.eventBus,
@@ -1570,7 +1570,7 @@ async function bootFoundation(
     activityLogger: logLevelManager.getLogger("activity-stream"),
     homeDir: mergedEnv["HOME"],
     dataDir,
-    // UX-01 runtime reachability: resolve the DEFAULT agent's activity.theme →
+    // runtime reachability: resolve the DEFAULT agent's activity.theme →
     // themeForName bundle and forward it so the process-wide ActivityStream's
     // subagent marker follows the configured theme (the four themes are now
     // selectable at runtime; the schema fully-defaults activity.theme, the
@@ -1585,15 +1585,15 @@ async function bootFoundation(
     logger: logLevelManager.getLogger("context-pipeline"),
   });
 
-  // WIRE-01 ack: the ActivityStream substrate is live and subscribed to the
-  // EventBus. WIRE-03 (Plan 77-03): the orchestrator-facing ActivityStreamPort +
+  // The ActivityStream substrate is live and subscribed to the
+  // EventBus. The orchestrator-facing ActivityStreamPort +
   // the per-channel coordinator-factory are now threaded into the INBOUND
   // execution pipeline (ExecutionPipelineDeps.activityStreamPort /
   // coordinatorFactory) — `activityStream` flows through buildChannelManagerDeps →
   // ChannelsDeps → buildAndStartChannelManager, which assembles the
   // coordinatorFactory over the live activityRenderers map and injects it onto
   // createChannelManager. The substrate is drained on shutdown via
-  // disposeActivityStream (WIRE-05). Per-renderer egress stays fail-closed until an
+  // disposeActivityStream. Per-renderer egress stays fail-closed until an
   // operator opts in via activity.channels.<rendererKey> (§22.2 Day-0).
   daemonLogger.debug(
     { component: "activity-stream", counters: activityStream.counters() },
@@ -1817,18 +1817,18 @@ async function bootAgents(
     daemonLogger, gatewayLogger, agentLogger, schedulerLogger, skillsLogger,
     memoryAdapter, db, sessionStore, cachedPort, embeddingQueue,
     rerankerPort, // built in setup-memory; threaded into setupAgents -> createPiExecutor
-    rerankerModelPresent, // Phase 92: model-present probe result; threaded into setupAgents -> per-agent effective rerank precedence (same value as the build gate)
-    entityStore, // Phase 83: threaded into setupAgents -> createPiExecutor (recall read path) + the cron review (write path)
-    temporalStore, // Phase 95 (LANES-02): threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the recall temporal-spread read path); dormant until rag.lanes.temporal.enabled
-    causalStore, // Phase 96 (EXTRACT-03): threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 5th causal read lane, dormant until rag.lanes.causal.enabled) AND the cron review -> runMemoryReview -> linkCausal (the write path) — one segregated port, both halves
-    tripleStore, // Phase 100 (KG-01): threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 6th graph-spread read lane, dormant until rag.lanes.graphSpread.enabled); the agent receives the port TYPE only (the agent↛memory cut)
-    embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, // P102·IQ-01 (MMR re-rank's scoped embedding read) + P93·FEED-03 (recall usefulness read) + P107·USER-03 (the LLM-free <user_profile> standing-block read) + P108·SOCIAL-02 (the LLM-free <channel_relationships> standing-block read, dormant until the offline builder writes rows + the SOCIAL-03 sign-off) + P111·LEARN-03 (the buildScoringAlphas tuned-vector read, dormant until rag.onlineTuning.enabled + the bandit cron) -> setupAgents -> createPiExecutor -> prompt-assembly; the agent receives the port TYPEs only (the agent↛memory cut)
+    rerankerModelPresent, // model-present probe result; threaded into setupAgents -> per-agent effective rerank precedence (same value as the build gate)
+    entityStore, // threaded into setupAgents -> createPiExecutor (recall read path) + the cron review (write path)
+    temporalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the recall temporal-spread read path); dormant until rag.lanes.temporal.enabled
+    causalStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 5th causal read lane, dormant until rag.lanes.causal.enabled) AND the cron review -> runMemoryReview -> linkCausal (the write path) — one segregated port, both halves
+    tripleStore, // threaded into setupAgents -> createPiExecutor -> createMemoryRecall (the 6th graph-spread read lane, dormant until rag.lanes.graphSpread.enabled); the agent receives the port TYPE only (the agent↛memory cut)
+    embeddingStore, usefulnessStore, userRepresentationStore, relationshipStore, tunedAlphaStore, // the MMR re-rank's scoped embedding read + recall usefulness read + the LLM-free <user_profile> standing-block read + the LLM-free <channel_relationships> standing-block read (dormant until the offline builder writes rows + the social-modeling sign-off) + the buildScoringAlphas tuned-vector read (dormant until rag.onlineTuning.enabled + the bandit cron) -> setupAgents -> createPiExecutor -> prompt-assembly; the agent receives the port TYPEs only (the agent↛memory cut)
     contextStore,
     activeRunRegistry, canaryFallbackSecret, injectionRateLimiter,
     deliveryMirror, geminiCacheManager,
     channelPluginsRef, backgroundTaskManager,
     secretsCrypto, secretsDb, obsStore, // thread into setupAgents
-    secretStore, // 73-10: interactive-callback signing-secret resolution
+    secretStore, // interactive-callback signing-secret resolution
   } = foundation;
   const _setupMedia = overrides.setupMedia ?? setupMedia;
 
@@ -1937,7 +1937,7 @@ async function bootAgents(
     // getCapabilityPortForAgent into setupTools and mutates this map on
     // hot-add / hot-remove. trajectoryRegistry is drained by setupShutdown.
     toolCapabilityPorts, trajectoryRegistry,
-    // WS-D Phase 78: per-agent shared ExecutionPlanHolder reference map.
+    // per-agent shared ExecutionPlanHolder reference map.
     // Threaded through buildChannelManagerDeps so the chat plan-stream reads
     // from the SAME object SEP publishes into (Pitfall 1).
     executionPlanPorts,
@@ -2087,7 +2087,7 @@ async function bootAgents(
     daemonLogger,
   });
 
-  // 6.6.8.6.3. Interactive-callback wiring (73-10, APV-07/APV-10/SEC-06): resolve
+  // 6.6.8.6.3. Interactive-callback wiring: resolve
   // the signing secret (store or in-memory fallback), bind the renderer signer,
   // construct the InteractiveCallbackRouter over the SAME gate + secret, and build
   // the Email single-use link minter + the gateway approval-token map/resolver.
@@ -2210,7 +2210,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
   const sandboxProvider = detectSandboxProvider(skillsLogger);
   if (sandboxProvider) skillsLogger.info({ provider: sandboxProvider.name }, "Exec sandbox provider detected");
   // Inlined buildImageGenBundle: image-generation provider (lazy getter) + rate limiter + config.
-  // Phase 6 (REQ-13): lazy getter re-reads secretManager on each call so key rotation is live.
+  // lazy getter re-reads secretManager on each call so key rotation is live.
   const imageGenConfig = container.config.integrations.media.imageGeneration;
   const getImageGenProvider = createImageGenGetter(imageGenConfig, container.secretManager);
   const imageGenProvider = getImageGenProvider(); // boot-time probe for rate-limiter + logging
@@ -2254,7 +2254,7 @@ async function bootChannels(boot: BootContext): Promise<void> {
     getMcpServerEntries: () => container.config.integrations?.mcp?.servers ?? [],
     sandboxProvider, imageGenProvider, backgroundTaskManager,
     sessionTrackerRegistry: handle.sessionTrackerRegistry, getCapabilityPortForAgent,
-    // INTEG-03: broker activation seam. When executor.broker is configured,
+    // broker activation seam. When executor.broker is configured,
     // thread the broker handle into setupTools so assembleToolsForAgent wires
     // the exec tool with broker-only network + proxy env + placeholder creds.
     // When absent (no executor.broker config), brokerContext is undefined and
@@ -2710,7 +2710,7 @@ async function bootShutdown(
     continuationTracker,
     lifecycleReactors,  // destroy lifecycle reactors on shutdown
     obsPersistence,  // drain write buffers before db.close
-    disposeActivityStream,  // WIRE-05: drain + unsubscribe ActivityStream from EventBus
+    disposeActivityStream,  // drain + unsubscribe ActivityStream from EventBus
     geminiCacheManager,  // Dispose all Gemini caches on shutdown
     trajectoryRegistry,  // Drain session-scoped trajectory recorders
     // 9 new teardown fields (8 production subscribers + setup-tools
@@ -2847,7 +2847,7 @@ export async function main(overrides: DaemonOverrides = {}): Promise<DaemonInsta
   await bootFoundation(boot, { overrides, startupStartMs, instanceId });
 
   // Stages 2-5: wrapped so a failure in any post-foundation stage releases the
-  // singleton lock (CR-01). Under normal boot, setupShutdown.onShutdown owns
+  // singleton lock. Under normal boot, setupShutdown.onShutdown owns
   // the release; this catch handles partial-boot failures before that fires.
   try {
     // Stage 2: agents. Owns agent executors + mcpClientManager + schedulers +

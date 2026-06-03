@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Discord EditPlace renderer tests (CHAN-03, CHAN-05; §18.2 EditPlace rows).
+ * Discord EditPlace renderer tests (§18.2 EditPlace rows).
  *
  * The single net-new piece of logic is `classifyDiscordError` — it reads the
  * STRUCTURAL DiscordAPIError fields (`.code` / `.status` / `.retryAfter`, and
  * `.cause`), distinct from grammy's `error_code` and Slack's `data.error`. It
  * NEVER parses the generic "Failed to…" string. `makeDiscordRenderActions` maps
  * each ChannelPort call through it; `createDiscordActivityRenderer` wires the
- * Phase-70 `createEditPlaceRenderer` (no duplicated state machine).
+ * `createEditPlaceRenderer` (no duplicated state machine).
  *
  * S7 is an affordance SHELL: a subagent placeholder renders the parent line and
  * requests the thread-expand egress (recorded as `threadCreate`), but NO
  * interaction handler is registered and NO signed callback_data is produced —
- * the InteractiveCallbackRouter is Phase 73 (§17.3 / T-71-03-03). A negative
+ * the InteractiveCallbackRouter lives in a separate component (§17.3). A negative
  * assertion confirms no callback wiring exists.
  *
  * Time discipline: every test drives the injected FakeTimers/FakeClock — no raw
@@ -91,7 +91,7 @@ describe("classifyDiscordError (structural DiscordAPIError fields, never the mes
     expect(classifyDiscordError({ code: 10008 })).toEqual({ kind: "not_supported", capability: "edit" });
   });
 
-  it("classifies a coded error (10008) carrying a stray retryAfter as not_supported, NOT rate_limited (WR-01: a terminal API code is never a rate limit — retrying an edit of a deleted message is the harmful direction)", () => {
+  it("classifies a coded error (10008) carrying a stray retryAfter as not_supported, NOT rate_limited (a terminal API code is never a rate limit — retrying an edit of a deleted message is the harmful direction)", () => {
     // A DiscordAPIError code (10008 Unknown Message = editing a deleted message)
     // takes precedence over a stray rate-limit signal: the structural code/status
     // branches MUST be evaluated before the retryAfter branch, else the renderer
@@ -103,7 +103,7 @@ describe("classifyDiscordError (structural DiscordAPIError fields, never the mes
     });
   });
 
-  it("classifies a coded permission error (50013) carrying a stray retryAfter as permission, NOT rate_limited (WR-01 precedence)", () => {
+  it("classifies a coded permission error (50013) carrying a stray retryAfter as permission, NOT rate_limited (precedence)", () => {
     const r = classifyDiscordError({ code: 50013, message: "Missing Permissions", retryAfter: 2 });
     expect(r.kind).toBe("permission");
     if (r.kind === "permission") expect(r.detail).toBe("Missing Permissions");
@@ -259,14 +259,14 @@ describe("createDiscordActivityRenderer (EditPlace wiring + deliveredAt-gated de
   });
 });
 
-// --- Task 1: S7 subagent thread-expand affordance + Phase-73 approval UI -----
+// --- S7 subagent thread-expand affordance + signed approval UI -----
 
-describe("Discord S7 subagent thread-expand affordance + signed approval UI (Phase 73)", () => {
+describe("Discord S7 subagent thread-expand affordance + signed approval UI", () => {
   it("renders the parent line AND records a thread-create egress for a subagent placeholder", async () => {
     const timer = createFakeTimers();
     const fake = createFakeDiscordAdapter();
-    // Phase 78: drop the clock dep so the §8.5 elapsed fallback is skipped and
-    // `send.text === "🤖 subagent: 3 steps"` byte-stably (option ii — plan §530).
+    // Drop the clock dep so the §8.5 elapsed fallback is skipped and
+    // `send.text === "🤖 subagent: 3 steps"` byte-stably.
     const r = createDiscordActivityRenderer(fake, "chat-1", { timer });
 
     await r.apply(makeFrame(0, "🤖 subagent: 3 steps"));
@@ -278,12 +278,12 @@ describe("Discord S7 subagent thread-expand affordance + signed approval UI (Pha
     expect(thread).toEqual({ op: "threadCreate", parentId: "dc-msg-0" });
   });
 
-  it("FLIPPED (§17.3): the renderer NOW wires the signed approval UI (Phase 73 owns resolution)", () => {
-    // Phase 71 forbade callback_data/signing in this file (the affordance was a
-    // deferral shell). Phase 73 (73-08) makes Discord paint native signed
-    // components: the renderer references `buildApprovalButtons` and threads the
-    // injected `signCallbackData` through to `callback_data`. This assertion is
-    // the positive inverse of the Phase-71 negative — see
+  it("FLIPPED (§17.3): the renderer NOW wires the signed approval UI (the router owns resolution)", () => {
+    // An earlier iteration forbade callback_data/signing in this file (the
+    // affordance was a deferral shell). The current design makes Discord paint
+    // native signed components: the renderer references `buildApprovalButtons`
+    // and threads the injected `signCallbackData` through to `callback_data`.
+    // This assertion is the positive inverse of the earlier negative — see
     // discord-activity.approval.test.ts for the behavioural proof.
     const here = dirname(fileURLToPath(import.meta.url));
     const src = fs.readFileSync(`${here}/../discord-activity.ts`, "utf8");
@@ -322,7 +322,7 @@ async function runScenario(
   const timer = createFakeTimers();
   const clock = createFakeClock(0);
   const fake = createFakeDiscordAdapter();
-  // Phase 78 reconciliation (option ii — plan §530): the golden fixtures were
+  // Fixture reconciliation: the golden fixtures were
   // pinned BEFORE renderFrameText emitted the §8.5 "(running N s)" elapsed
   // fallback. Omitting `clock` from the wrapper deps skips the strategy's
   // first-apply startedAtMs capture (elapsedMs stays undefined → fallback

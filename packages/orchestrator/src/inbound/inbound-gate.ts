@@ -190,7 +190,7 @@ export async function evaluateInboundGate(
   }
 
   // -------------------------------------------------------------------
-  // BUTTON-CALLBACK INTERCEPT (APV-05 inbound wiring)
+  // BUTTON-CALLBACK INTERCEPT
   // -------------------------------------------------------------------
   // A platform button tap arrives as a NormalizedMessage carrying
   // metadata.isButtonCallback + metadata.callbackData (Telegram callback_query /
@@ -198,7 +198,7 @@ export async function evaluateInboundGate(
   // InteractiveCallbackRouter (the verifier) BEFORE any slash-command parsing —
   // a signed payload must never also be parsed as a chat command, and the
   // ApprovalGate is never called directly from this inbound path (the router
-  // performs lookup-first + sessionKey-match + HMAC verify; 73-04). The
+  // performs lookup-first + sessionKey-match + HMAC verify). The
   // orchestrator derives the trusted sessionKey here and forwards only the raw
   // payload; the wire never carries requestId/sessionKey.
   if (
@@ -515,7 +515,7 @@ async function handleApprovalCommand(
         );
       }
     } else {
-      // Single: resolve by EXACT 12-char shortId (APV-09). The full requestId
+      // Single: resolve by EXACT 12-char shortId. The full requestId
       // and its prefix never reach the channel, so the chat path no longer
       // accepts a requestId prefix — only the shortId shown in the prompt. The
       // shortId is unique, so an exact match yields at most one request.

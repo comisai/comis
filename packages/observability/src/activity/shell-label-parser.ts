@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * shell-label-parser — deterministic OpenClaw `summarizeKnownExec()` port
- * (STRAT-09, spec §6.3 / §13.1).
+ * (spec §6.3 / §13.1).
  *
  * `bash`/`exec`/`shell` tool calls carry a free-form command string. This pure
  * parser turns it into a concise human label so the activity stream can render
@@ -14,7 +14,7 @@
  * counter for the remaining stages. Long arguments are truncated so the label
  * stays bounded.
  *
- * SEC-07 secret redaction (WR-03): the produced label is run through the core
+ * Secret redaction: the produced label is run through the core
  * `redactValue` primitive before it is returned, so a secret-bearing operand
  * that flows into the label (e.g. a `grep 'Bearer …'` pattern, a file path) is
  * masked to `<redacted>`. The parser itself never executes the command — it
@@ -46,7 +46,7 @@ export function parseShellCommand(cmd: string): string {
   if (extra > 0) {
     label = `${label} (+${extra} steps)`;
   }
-  // SEC-07 / WR-03: mask any secret / PII / absolute-path shape that flowed into
+  // Mask any secret / PII / absolute-path shape that flowed into
   // the label (e.g. a grep pattern or file operand) before returning. redactValue
   // on a string leaf returns the redacted string in `.value` (pure, non-throwing,
   // no homeDir needed here — $HOME compaction is applied at the param emit site).

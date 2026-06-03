@@ -8,7 +8,7 @@ describe("SocialModelingConfigSchema", () => {
     const result = SocialModelingConfigSchema.parse({});
     expect(result).toEqual({
       enabled: false,
-      // A slot AFTER 107's "0 5 * * *" so relationships build over freshly-reasoned memories.
+      // A slot AFTER the "0 5 * * *" consolidation so relationships build over freshly-reasoned memories.
       schedule: "0 6 * * *",
       maxEntriesPerRun: 50,
       maxSourceMemories: 200,
@@ -18,11 +18,11 @@ describe("SocialModelingConfigSchema", () => {
     expect(result.privacyReviewSignedOffBy).toBeUndefined();
   });
 
-  it("defaults enabled to false (SOCIAL-03 posture: relationship modeling is opt-in, gated on a privacy review)", () => {
+  it("defaults enabled to false (relationship modeling is opt-in, gated on a privacy review)", () => {
     expect(SocialModelingConfigSchema.parse({}).enabled).toBe(false);
   });
 
-  it("SOCIAL-03: accepts a recorded privacyReviewSignedOffBy sign-off", () => {
+  it("accepts a recorded privacyReviewSignedOffBy sign-off", () => {
     const result = SocialModelingConfigSchema.parse({
       enabled: true,
       privacyReviewSignedOffBy: "alice@example.com",
@@ -31,17 +31,17 @@ describe("SocialModelingConfigSchema", () => {
     expect(result.enabled).toBe(true);
   });
 
-  it("SOCIAL-03: rejects an empty privacyReviewSignedOffBy (.min(1) — a recorded sign-off must be a non-empty string)", () => {
+  it("rejects an empty privacyReviewSignedOffBy (.min(1) — a recorded sign-off must be a non-empty string)", () => {
     expect(() => SocialModelingConfigSchema.parse({ privacyReviewSignedOffBy: "" })).toThrow();
   });
 
-  it("MR-02: defaults the per-build input bounds (maxSourceMemories / maxSourceChars)", () => {
+  it("defaults the per-build input bounds (maxSourceMemories / maxSourceChars)", () => {
     const result = SocialModelingConfigSchema.parse({});
     expect(result.maxSourceMemories).toBe(200);
     expect(result.maxSourceChars).toBe(24_000);
   });
 
-  it("MR-02: rejects a non-positive / fractional input bound (the DoS bound is a positive int)", () => {
+  it("rejects a non-positive / fractional input bound (the DoS bound is a positive int)", () => {
     expect(() => SocialModelingConfigSchema.parse({ maxSourceMemories: 0 })).toThrow();
     expect(() => SocialModelingConfigSchema.parse({ maxSourceChars: -1 })).toThrow();
     expect(() => SocialModelingConfigSchema.parse({ maxSourceMemories: 1.5 })).toThrow();
@@ -55,7 +55,7 @@ describe("SocialModelingConfigSchema", () => {
     expect(() => SocialModelingConfigSchema.parse({ maxEntriesPerRun: 2.5 })).toThrow();
   });
 
-  it("defaults the schedule to a cron slot after 107's reasoning slot", () => {
+  it("defaults the schedule to a cron slot after the reasoning slot", () => {
     expect(SocialModelingConfigSchema.parse({}).schedule).toBe("0 6 * * *");
   });
 

@@ -13,10 +13,10 @@
  *       • success (non-trivial): edit to the final form, then WAIT for
  *         `outcome.delivery.deliveredAtMs` before deleting the placeholder. The
  *         delete is gated on the delivery receipt so scaffolding never vanishes
- *         before the assistant answer lands (T-70-07-01, §7.3 sequencing rule).
+ *         before the assistant answer lands (§7.3 sequencing rule).
  *       • success (trivial): delete the placeholder, no edit history.
- *       • failure: edit to the ❌ form and KEEP the message (T-70-07-02 — a
- *         failed turn must leave a diagnostic trail; finalize NEVER deletes).
+ *       • failure: edit to the ❌ form and KEEP the message (a failed turn must
+ *         leave a diagnostic trail; finalize NEVER deletes).
  *       • silent: nothing happened → delete the placeholder.
  *       • aborted: keep the trail (cancel/timeout/fatal are diagnostic).
  *
@@ -55,7 +55,7 @@ export interface EditPlaceDeps {
   clock?: ClockPort;
   /**
    * Build the signed native-approval button rows for a frame's visible events
-   * (APV-02, §7.7). Wired by a button-capable per-channel renderer
+   * (§7.7). Wired by a button-capable per-channel renderer
    * (Discord/Slack/Telegram) as a closure over `buildApprovalButtons` + the
    * injected `SignCallbackData`; the placeholder `send` carries the returned rows
    * to the adapter. Omitted by plain-text channels (IRC/WhatsApp) — they paint a
@@ -63,14 +63,14 @@ export interface EditPlaceDeps {
    */
   buildButtons?: (events: readonly ActivityEvent[]) => RichButton[][];
   /**
-   * Build the plain-text approval prompt for a frame's visible events (APV-10,
-   * §6.4.6). Wired by a button-less edit-capable channel (WhatsApp) as a closure
+   * Build the plain-text approval prompt for a frame's visible events
+   * (§6.4.6). Wired by a button-less edit-capable channel (WhatsApp) as a closure
    * over `buildApprovalPrompt`; the PLACEHOLDER carries the prompt appended after
    * the frame text. Omitted by button channels (Telegram/Discord/Slack), which
    * paint native buttons instead. Returns `""` for a non-approval frame.
    */
   buildPrompt?: (events: readonly ActivityEvent[]) => string;
-  /** Resolved theme status markers (UX-01). Omitted → default glyphs. */
+  /** Resolved theme status markers. Omitted → default glyphs. */
   markers?: ActivityStatusMarkers;
 }
 
@@ -84,7 +84,7 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
   let latestText = "";
   /** Pending delete timer (deliveredAt wait); cancelled on shutdown paths. */
   let pendingDelete: TimerHandle | undefined;
-  /** WS-F Phase 78 / SPEC-§8.5: first-apply clock snapshot; feeds `elapsedMs`
+  /** SPEC-§8.5: first-apply clock snapshot; feeds `elapsedMs`
    *  into renderFrameText so the "(running N s)" fallback lights up when no
    *  SEP plan is active. Undefined → no clock → graceful-degrade (skipped). */
   let startedAtMs: number | undefined;
@@ -100,7 +100,7 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
   ): Promise<Result<void, ActivityRenderError>> {
     if (messageId !== undefined) return ok(undefined);
     // A non-approval frame yields no rows → omit `buttons` entirely so a
-    // button-less send stays byte-identical to the pre-73 placeholder.
+    // button-less send stays byte-identical to the historical placeholder.
     const sent = await actions.send(text, buttons.length > 0 ? { buttons } : undefined);
     if (!sent.ok) return sent;
     messageId = sent.value;
@@ -126,7 +126,7 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
     canDelete: true,
 
     async apply(frame: ActivityRenderFrame): Promise<Result<void, ActivityRenderError>> {
-      // WS-F: capture startedAtMs once per turn (per-instance) + compute
+      // Capture startedAtMs once per turn (per-instance) + compute
       // elapsedMs at every apply() so the live "(running N s)" fallback rides
       // into renderFrameText. No clock injected → graceful-degrade (skipped).
       if (startedAtMs === undefined && clock !== undefined) startedAtMs = clock.now();
@@ -136,11 +136,11 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
 
       // First frame posts the placeholder; later frames only debounce an edit.
       if (messageId === undefined) {
-        // Build the signed approval rows from the frame (APV-02). A button-less
+        // Build the signed approval rows from the frame. A button-less
         // renderer (no `buildButtons`) or a non-approval frame yields `[]`.
         const buttons = buildButtons?.(frame.visibleEvents) ?? [];
         // A button-less channel (WhatsApp) appends the plain-text approval prompt
-        // to the placeholder instead (APV-10, §6.4.6); a non-approval frame yields
+        // to the placeholder instead (§6.4.6); a non-approval frame yields
         // `""`, leaving the placeholder text byte-identical.
         const placeholderText = appendPrompt(latestText, buildPrompt?.(frame.visibleEvents));
         const placed = await ensurePlaceholder(placeholderText, buttons);
@@ -155,8 +155,7 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
         void flushEdit();
       }, EDIT_DEBOUNCE_MS);
       // unref so a pending debounce edit never keeps the event loop alive at
-      // shutdown (the TimerHandle cancel-safety contract also exposes unref) —
-      // WR-02.
+      // shutdown (the TimerHandle cancel-safety contract also exposes unref).
       pendingEdit.unref();
       return ok(undefined);
     },
@@ -176,7 +175,7 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
             return deletePlaceholder();
           }
           // Edit to the final form, then delete AFTER deliveredAt. The success
-          // closing line follows the resolved theme markers (UX-01); omitting
+          // closing line follows the resolved theme markers; omitting
           // them yields the byte-identical default check-done line.
           if (messageId !== undefined) {
             const edited = await actions.edit(messageId, successLabel(markers));
@@ -193,15 +192,15 @@ export function createEditPlaceRenderer(deps: EditPlaceDeps): ChannelActivityRen
             void deletePlaceholder();
           }, deliveredAtMs - now);
           // unref so the deliveredAt-gated delete never holds the event loop
-          // open at shutdown (WR-02).
+          // open at shutdown.
           pendingDelete.unref();
           return ok(undefined);
         }
 
         case "failure": {
-          // KEEP the message: edit to the themed failure form, never delete
-          // (T-70-07-02). The marker follows the resolved theme (UX-01);
-          // omitting markers yields the byte-identical "❌ {errorKind}".
+          // KEEP the message: edit to the themed failure form, never delete.
+          // The marker follows the resolved theme; omitting markers yields the
+          // byte-identical "❌ {errorKind}".
           if (messageId !== undefined) {
             const edited = await actions.edit(messageId, failureLabel(outcome, markers));
             if (!edited.ok) return edited;

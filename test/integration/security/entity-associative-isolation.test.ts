@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Entity-associative recall isolation integration test (Phase 83, ENT-03).
+ * Entity-associative recall isolation integration test.
  *
  * The security capstone for the entity-association feature. It exercises the
  * REAL wired store — `createSqliteMemoryEntityStore` built on the same
@@ -18,13 +18,13 @@
  *   ONE entity row with TWO links, and the associative lane seeded on one surfaces
  *   the other.
  *
- *   CROSS-SCOPE-LEAK NEGATIVE (ENT-03 — the mandatory security assertion) — a
+ *   CROSS-SCOPE-LEAK NEGATIVE (the mandatory security assertion) — a
  *   memory in a DIFFERENT scope (tenant_2, agent_2) that resolveAndLinks to the
  *   byte-identical "Project Helios" mints a SEPARATE entity row (two rows for the
  *   key, partitioned), and the lane NEVER surfaces it across the boundary in
  *   EITHER direction (the tenant_1 seed excludes the tenant_2 memory, and the
  *   tenant_2 seed excludes the tenant_1 memories). This is the V4 access-control
- *   control for the phase. The negative is written to turn RED if the lane's
+ *   control for the feature. The negative is written to turn RED if the lane's
  *   `AND m.tenant_id=? AND m.agent_id=?` scope were dropped (Pitfall 2): the
  *   foreign-scope memory shares the same entity id (cross-scope), so ONLY the
  *   lane WHERE excludes it — proven at the adapter unit level in
@@ -108,7 +108,7 @@ function deterministicEmbeddingPort(): EmbeddingPort {
 // Wired-store isolation
 // ---------------------------------------------------------------------------
 
-describe("Entity-associative recall -- wired-store isolation (ENT-03)", () => {
+describe("Entity-associative recall -- wired-store isolation", () => {
   let adapter: SqliteMemoryAdapter;
   let db: Database.Database;
   // The REAL store the daemon wires (setup-memory: createSqliteMemoryEntityStore
@@ -151,13 +151,13 @@ describe("Entity-associative recall -- wired-store isolation (ENT-03)", () => {
     db.close();
   });
 
-  it("surfaces a same-scope shared-entity neighbour and reuses one entity row across case-folded mentions (ENT-01/ENT-02 positive control)", async () => {
+  it("surfaces a same-scope shared-entity neighbour and reuses one entity row across case-folded mentions (positive control)", async () => {
     // Two memories in the SAME (tenant_1, agent_1) scope.
     const mA = await seedMemory({ id: "mA", tenantId: SCOPE_1.tenantId, agentId: SCOPE_1.agentId });
     const mB = await seedMemory({ id: "mB", tenantId: SCOPE_1.tenantId, agentId: SCOPE_1.agentId });
 
     // Link BOTH to the same concept — one cased, one lowercased. The TS-normalized
-    // canonical_key folds them to one entity (ENT-05 reuse), so this must NOT create
+    // canonical_key folds them to one entity (case-fold reuse), so this must NOT create
     // two entity rows.
     const linkA = await store.resolveAndLink(mA, SHARED_ENTITY, { ...SCOPE_1, now: 1_000 });
     const linkB = await store.resolveAndLink(mB, "project helios", { ...SCOPE_1, now: 2_000 });
@@ -187,7 +187,7 @@ describe("Entity-associative recall -- wired-store isolation (ENT-03)", () => {
     expect(hit?.score).toBeLessThanOrEqual(1);
   });
 
-  it("does NOT surface a cross-tenant/cross-agent memory that shares the same entity name, in EITHER direction (ENT-03 cross-scope-leak negative)", async () => {
+  it("does NOT surface a cross-tenant/cross-agent memory that shares the same entity name, in EITHER direction (cross-scope-leak negative)", async () => {
     // Same-scope pair (tenant_1, agent_1).
     const mA = await seedMemory({ id: "mA", tenantId: SCOPE_1.tenantId, agentId: SCOPE_1.agentId });
     const mB = await seedMemory({ id: "mB", tenantId: SCOPE_1.tenantId, agentId: SCOPE_1.agentId });
@@ -214,7 +214,7 @@ describe("Entity-associative recall -- wired-store isolation (ENT-03)", () => {
     if (!laneFromScope1.ok) return;
     const surfacedFrom1 = laneFromScope1.value.map((r) => r.entry.id);
     expect(surfacedFrom1).toContain(mB); // same-scope neighbour still surfaces
-    expect(surfacedFrom1).not.toContain(mC); // <-- the cross-scope leak guard (ENT-03)
+    expect(surfacedFrom1).not.toContain(mC); // <-- the cross-scope leak guard
 
     // REVERSE direction: the tenant_2 / agent_2 lane (seeded on mC) must NOT surface
     // EITHER tenant_1 memory. mC has no same-scope neighbour, so the lane is empty.

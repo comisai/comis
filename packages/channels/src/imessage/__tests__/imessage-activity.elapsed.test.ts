@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * iMessage wrapper elapsed-fallback wiring (Phase 78 / SPEC-§8.5; plan-checker iter-1
- * fix). Regression-locks the LIVE production path: when the daemon injects a
+ * iMessage wrapper elapsed-fallback wiring (§8.5).
+ * Regression-locks the LIVE production path: when the daemon injects a
  * `ClockPort` into the wrapper deps, the wrapper MUST forward it into
  * `createAppendOnlyRenderer({...clock})` so the strategy's first-apply `startedAtMs`
  * capture fires and the opening status carries the "(running N s)" elapsed-time
@@ -11,7 +11,7 @@
  * startedAtMs stays undefined → elapsedMs stays undefined → the §8.5 fallback is
  * silently inert in iMessage production. The combined RED+GREEN of this file +
  * imessage-activity.ts (AGENTS.md §2.10 escape: the wrapper's deps shape
- * `{ markers? }` did NOT include `clock?: ClockPort` pre-78-05, so the
+ * `{ markers? }` did NOT include `clock?: ClockPort` before this fix, so the
  * `createIMessageActivityRenderer(fake, "chat-1", { clock })` call below would not
  * compile against pre-patch code) is the regression lock.
  *
@@ -64,7 +64,7 @@ function frameWithPlan(label: string): ActivityRenderFrame {
   };
 }
 
-describe("iMessage wrapper forwards deps.clock into AppendOnly (Phase 78 plan-checker iter-1 fix)", () => {
+describe("iMessage wrapper forwards deps.clock into AppendOnly", () => {
   it("forwards deps.clock → AppendOnly: opening status carries '(running 0 s)' on the first frame (no SEP plan)", async () => {
     const fake = createFakeIMessageAdapter();
     const clock = createFakeClock(1000);

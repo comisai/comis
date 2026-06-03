@@ -11,7 +11,7 @@
  *
  * Escape hatch: regions wrapped in `<!-- arch-historical --> ... <!-- /arch-historical -->`
  * HTML comments are stripped before checking. Use sparingly for legitimate
- * historical references (e.g., a "before v2.0" migration note).
+ * historical references (e.g., a pre-migration note describing a former edge).
  *
  * @module
  */

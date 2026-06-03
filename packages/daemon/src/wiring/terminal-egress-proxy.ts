@@ -2,11 +2,11 @@
 /**
  * The host-side no-secret allowlist CONNECT proxy — the production
  * {@link EgressControlPort} impl for the terminal driver's `network: listed-hosts`
- * egress filter (SEC-07, §3.5). It is the Phase-118-proven host side of the egress
+ * egress filter (§3.5). It is the proven host side of the egress
  * transport (`spike-scripts/g3-proxy.mjs`, demonstrated on the VPS: allowlisted ->
  * 200, non-listed -> 403, direct `--unshare-net` bypass -> rc=7).
  *
- * Transport recap (118 §3 / 122-RESEARCH §3.5):
+ * Transport recap (§3 / §3.5):
  *   in-jail loopback relay (`HTTPS_PROXY=http://127.0.0.1:<port>`)
  *     -> bind-mounted unix socket
  *       -> THIS host-side allowlist CONNECT proxy
@@ -19,7 +19,7 @@
  * `host:port`. A non-listed host gets `HTTP/1.1 403 Forbidden` and the connection
  * is closed with NO upstream dial (no SSRF, no leak). The proxy injects NOTHING
  * into the stream — it is a pure CONNECT relay, DISTINCT from the optional
- * credential-injecting egress tier (§3.9/P6): there is NO secret-injection code
+ * credential-injecting egress tier (§3.9): there is NO secret-injection code
  * path here (no auth header, no token mint) by construction. The "no-secret"
  * acceptance grep enforces the absence of any credential-injection token in this
  * file — keep it that way.
@@ -28,7 +28,7 @@
  * would be allowed — but the proxy needs only Node `net`/`fs`, so it stays
  * infra-free for portability + macOS-testability (the allowlist DECISION is fully
  * exercisable over a plain unix socket with no netns; the LIVE relay-as-init is
- * VPS-only, 122-07). The upstream dial, the socket dir, and the id generator are
+ * VPS-only). The upstream dial, the socket dir, and the id generator are
  * injected so the macOS test asserts allow/deny WITHOUT real egress.
  *
  * No module-global mutable state: each `materialize` owns its own server + socket;
@@ -133,7 +133,7 @@ function handleClient(
     }
 
     // ALLOW — forward the raw TCP stream to the real host:port. Inject NOTHING
-    // (no-secret CONNECT relay; NOT the credential-injecting §3.9/P6 tier).
+    // (no-secret CONNECT relay; NOT the credential-injecting §3.9 tier).
     logger.debug(
       { toolName: "terminal_egress_proxy", step: "connect_allow" },
       "egress CONNECT allowed",
@@ -202,7 +202,7 @@ export function createTerminalEgressProxy(
         };
         server.once("error", onError);
         // Await 'listening' so the socket file exists before bwrap evaluates its
-        // --bind argument (118 pitfall 1: bind a not-yet-bound socket -> ENOENT).
+        // --bind argument (binding a not-yet-bound socket -> ENOENT).
         server.listen(socketPath, () => {
           server.removeListener("error", onError);
           resolve();

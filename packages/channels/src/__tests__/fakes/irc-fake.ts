@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeIrcAdapter — a deterministic, clock-free `ChannelPort` test double for the
- * IRC LinePerEvent renderer (CHAN-09 / CHAN-11; §18.1 "fake adapter records every
- * method call").
+ * IRC LinePerEvent renderer (§18.1 "fake adapter records every method call").
  *
- * Mirrors `createFakeSignalAdapter` (the Phase-72 non-EditPlace template) but for
- * the LinePerEvent shape:
+ * Mirrors `createFakeSignalAdapter` (the non-EditPlace template) but for the
+ * LinePerEvent shape:
  *   - mints `irc-msg-N` ids on each `sendMessage`. IRC's LIVE adapter returns the
  *     synthetic id `"sent"` for EVERY message (IRC has no standard message ids),
  *     which would collapse a multi-line call-log into indistinguishable rows. The

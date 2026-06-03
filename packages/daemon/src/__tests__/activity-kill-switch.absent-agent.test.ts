@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * §22.2 acceptance — WIRE-07 fail-CLOSED guard for the kill-switch slice
- * resolver (CR-01 regression guard).
+ * §22.2 acceptance — fail-CLOSED guard for the kill-switch slice
+ * resolver (injection regression guard).
  *
  * The sibling `default-off` test seeds `agents.default.activity = {channels:{}}`
  * (present-but-empty) and proves the gate suppresses. The fail-OPEN hole it
@@ -48,7 +48,7 @@ const silentLogger = {
   },
 } as never;
 
-describe("WIRE-07 §22.2 resolveActivityKillSwitchSlice fails closed (CR-01)", () => {
+describe("§22.2 resolveActivityKillSwitchSlice fails closed", () => {
   it("returns a suppressing slice (never undefined) for an agentId absent from the map", () => {
     const agents: AgentActivityConfigMap = {
       default: { activity: { emergencyDisabled: false, channels: {} } },

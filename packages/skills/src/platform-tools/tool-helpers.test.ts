@@ -277,8 +277,8 @@ describe("throwToolError", () => {
     expect(match![1], "union must include not_implemented").toMatch(/\|\s*"not_implemented"/);
 
     expect(() =>
-      throwToolError("not_implemented", "terminal_session_wait is not available until Phase 124"),
-    ).toThrow("[not_implemented] terminal_session_wait is not available until Phase 124");
+      throwToolError("not_implemented", "terminal_session_wait is not available yet"),
+    ).toThrow("[not_implemented] terminal_session_wait is not available yet");
   });
 
   it("produces correct prefix for all 7 error codes", () => {

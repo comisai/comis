@@ -5,11 +5,11 @@
  * Asserts the composition root pushes all nine never-export terminal tools onto
  * the agent tool array, reuses one registry per agent, and is fail-closed by
  * construction at this phase: the wired allow-set is empty, so a create on the
- * wired tool rejects with `permission_denied` before any worker is spawned
- * (SEC-01). Imports the real `@comis/skills/tools` factories (resolved from the
+ * wired tool rejects with `permission_denied` before any worker is spawned.
+ * Imports the real `@comis/skills/tools` factories (resolved from the
  * built `dist`).
  *
- * After Phase 120 the four interaction tools (send_text/send_key/wait/resize) are
+ * The four interaction tools (send_text/send_key/wait/resize) are
  * IMPLEMENTED factories the wiring constructs with `sharedDeps` (they receive the
  * per-agent registry), so they no longer reject `not_implemented` — they delegate
  * to the registry (which, with no live session, degrades to a resolved gone-shape,
@@ -34,7 +34,7 @@ function makeDeps() {
     dataDir: "/tmp/comis-terminal-wiring-test",
     skillsLogger: createMockLogger(),
     eventBus: { emit: () => true },
-    // MR-03: the daemon's once-detected cached provider (a present sentinel here;
+    // The daemon's once-detected cached provider (a present sentinel here;
     // the empty allow-set still fail-closes every create before it is consulted).
     sandboxProvider: {} as never,
   };
@@ -75,7 +75,7 @@ describe("wireTerminalTools — daemon composition root", () => {
     expect(registries.size).toBe(2);
   });
 
-  it("is fail-closed: a create on the empty allow-set rejects permission_denied, no spawn (SEC-01)", async () => {
+  it("is fail-closed: a create on the empty allow-set rejects permission_denied, no spawn", async () => {
     const tools: ToolLike[] = [];
     const registries = new Map<string, TerminalSessionRegistry>();
     wireTerminalTools(tools as never, registries, "agent-a", makeDeps());
@@ -94,7 +94,7 @@ describe("wireTerminalTools — daemon composition root", () => {
     wireTerminalTools(tools as never, registries, "agent-a", makeDeps());
 
     // The four interaction tools now reach the injected registry. With no live
-    // session the registry degrades to a resolved gone-shape (the 120-03
+    // session the registry degrades to a resolved gone-shape (the
     // degrade-not-hang posture) — they RESOLVE, they do NOT throw not_implemented.
     // (Pre-GREEN the wiring passed no-arg stubs, so this asserts the sharedDeps
     // injection: a no-arg factory would have no registry to delegate to.)
@@ -125,7 +125,7 @@ describe("wireTerminalTools — daemon composition root", () => {
     expect(result.details).toHaveProperty("cursor");
   });
 
-  it("status is the LONE remaining stub — it still rejects not_implemented (Phase 124)", async () => {
+  it("status is the LONE remaining stub — it still rejects not_implemented", async () => {
     const tools: ToolLike[] = [];
     const registries = new Map<string, TerminalSessionRegistry>();
     wireTerminalTools(tools as never, registries, "agent-a", makeDeps());
@@ -137,7 +137,7 @@ describe("wireTerminalTools — daemon composition root", () => {
 });
 
 // ===========================================================================
-// 122-01 Task 3 — config -> AllowEntryLike scope mapping (SEC-02/03). The single
+// config -> AllowEntryLike scope mapping. The single
 // site config scope becomes an AllowEntryLike, so the later config-plumbing step
 // (mapAllowEntries(config.allow)) threads scope automatically — no silent drop.
 // ===========================================================================
@@ -172,7 +172,7 @@ const LEAST_PRIVILEGE: TerminalAllowEntry["scope"] = {
   uid: "dedicated",
 };
 
-describe("mapAllowEntry — config scope is preserved onto AllowEntryLike (SEC-02/03)", () => {
+describe("mapAllowEntry — config scope is preserved onto AllowEntryLike", () => {
   it("copies {id, match, scope} — a config scope.filesystem:'home' survives the map (NOT dropped)", () => {
     const entry = configEntry({
       filesystem: "home",
@@ -185,7 +185,7 @@ describe("mapAllowEntry — config scope is preserved onto AllowEntryLike (SEC-0
 
     expect(mapped.id).toBe("bash");
     expect(mapped.match.path).toBe("/bin/bash");
-    // RESEARCH Pitfall 4: scope MUST survive the daemon boundary.
+    // scope MUST survive the daemon boundary.
     expect(mapped.scope.filesystem).toBe("home");
     expect(mapped.scope.network).toBe("listed-hosts");
     expect(mapped.scope.hosts).toEqual(["api.example.com"]);
@@ -196,7 +196,7 @@ describe("mapAllowEntry — config scope is preserved onto AllowEntryLike (SEC-0
   it("preserves the least-privilege scope through the map (the safe default survives)", () => {
     // The config schema already default-applies least-privilege (workspace/none/
     // exclude/dedicated — core owns + tests that). The daemon mapping must carry it
-    // through UNCHANGED — never re-default or widen it (SEC-03).
+    // through UNCHANGED — never re-default or widen it.
     const mapped = mapAllowEntry(configEntry(LEAST_PRIVILEGE));
 
     expect(mapped.scope.filesystem).toBe("workspace");
@@ -209,13 +209,13 @@ describe("mapAllowEntry — config scope is preserved onto AllowEntryLike (SEC-0
     // Structural proof the mapping yields the exact AllowEntryLike contract the
     // skills matcher consumes ({id, match, scope, approveOnCreate, limits}) — so a
     // later config-plumbing step can do allowEntries = config.allow.map(mapAllowEntry)
-    // and scope + the SEC-06 consent flag + the OPS-03/06 caps flow.
+    // and scope + the consent flag + the caps flow.
     const mapped = mapAllowEntry(configEntry(LEAST_PRIVILEGE));
     expect(Object.keys(mapped).sort()).toEqual(["approveOnCreate", "id", "limits", "match", "scope"]);
   });
 
-  it("SEC-06: copies approveOnCreate so the consent flag survives the daemon boundary (NOT dropped)", () => {
-    // approveOnCreate is a sibling of scope (122-04) — the create tool gates on it.
+  it("copies approveOnCreate so the consent flag survives the daemon boundary (NOT dropped)", () => {
+    // approveOnCreate is a sibling of scope — the create tool gates on it.
     // The daemon mapping MUST carry it through, else a high-risk entry silently
     // skips the operator approval gate.
     const mappedTrue = mapAllowEntry(configEntry(LEAST_PRIVILEGE, true));
@@ -227,13 +227,13 @@ describe("mapAllowEntry — config scope is preserved onto AllowEntryLike (SEC-0
 });
 
 // ===========================================================================
-// 122-05 Task 3 — thread the EgressControlPort impl + the resolved bwrapPath
-// through TerminalWiringDeps -> the worker path (so 122-06 can compose them for
-// network:listed-hosts). The live relay-as-init EXECUTION is VPS-only (122-07);
+// Thread the EgressControlPort impl + the resolved bwrapPath
+// through TerminalWiringDeps -> the worker path (so the worker can compose them
+// for network:listed-hosts). The live relay-as-init EXECUTION is VPS-only;
 // here we assert the PORT + the bwrapPath are carried through the seam.
 // ===========================================================================
 
-describe("wireTerminalTools — threads egressControl + bwrapPath toward the worker (SEC-07)", () => {
+describe("wireTerminalTools — threads egressControl + bwrapPath toward the worker", () => {
   function makeEgressDeps() {
     const egressControl: EgressControlPort = {
       materialize: vi.fn(async (hosts: string[]) => ({
@@ -264,7 +264,7 @@ describe("wireTerminalTools — threads egressControl + bwrapPath toward the wor
     const registries = new Map<string, TerminalSessionRegistry>();
     // The shared-deps builder is the single seam where the port + bwrapPath flow
     // toward the registry/worker. Assert the SAME instances thread through (so the
-    // worker, 122-06, can call materialize for listed-hosts + pass bwrapPath to
+    // worker can call materialize for listed-hosts + pass bwrapPath to
     // buildScopeArgs).
     const shared = buildTerminalSharedDeps(registries, "agent-a", deps);
     expect(shared.egressControl).toBe(deps.egressControl);
@@ -273,10 +273,10 @@ describe("wireTerminalTools — threads egressControl + bwrapPath toward the wor
 });
 
 describe("wireTerminalTools — still fail-closed at this phase (config not yet threaded)", () => {
-  it("the WIRED allow-set stays empty, so a create still fail-closes (the 119-04 invariant holds)", async () => {
+  it("the WIRED allow-set stays empty, so a create still fail-closes", async () => {
     // mapAllowEntry exists, but the wiring does NOT yet populate allowEntries from
     // config (that config-plumbing is a later step). The wired set is empty → every
-    // create rejects before any spawn — SEC-01/16 unchanged.
+    // create rejects before any spawn — the fail-closed posture is unchanged.
     const tools: ToolLike[] = [];
     const registries = new Map<string, TerminalSessionRegistry>();
     wireTerminalTools(tools as never, registries, "agent-a", makeDeps());
@@ -288,7 +288,7 @@ describe("wireTerminalTools — still fail-closed at this phase (config not yet 
 });
 
 // ===========================================================================
-// 123-04 Test D (TR-06/OPS-06) — the daemon wires the reaper eviction audit. The
+// The daemon wires the reaper eviction audit. The
 // onEvict hook emits terminal:session_evicted (reason) + terminal:session_state
 // (state lost) + a WARN log (hint + errorKind resource); onCapForget is wired to
 // caps.forget; worker.{maxSessions,idleTtlMs} + the entry limits.wallClockMs +
@@ -298,7 +298,7 @@ describe("wireTerminalTools — still fail-closed at this phase (config not yet 
 // has no workerCaps/timers/caps; the shared deps do not carry them.
 // ===========================================================================
 
-describe("buildTerminalReaperHooks — the daemon eviction audit (Test D, OPS-06)", () => {
+describe("buildTerminalReaperHooks — the daemon eviction audit", () => {
   function makeReaperDeps() {
     const emitted: Array<{ event: string; payload: Record<string, unknown> }> = [];
     const eventBus = { emit: (event: string, payload: Record<string, unknown>) => { emitted.push({ event, payload }); return true; } };

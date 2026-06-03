@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Discord subagent parent-line + thread-expand tests (APV-03; §18.2-S7 / §17.3).
+ * Discord subagent parent-line + thread-expand tests (§18.2-S7 / §17.3).
  *
  * A `kind:"subagent"` event's `defaultLabel` carries the `🤖` marker the
- * projection set (activity-stream T-73-07); `renderFrameText` paints it verbatim,
+ * activity-stream projection set; `renderFrameText` paints it verbatim,
  * so the sent text shows the subagent parent line (incl. the agentId the
  * projection baked into the label). Discord keys the thread-expand affordance off
  * that marker: a subagent placeholder `send` requests `{ threadReply: true }`,
@@ -48,11 +48,11 @@ function subagentFrame(label: string): ActivityRenderFrame {
   };
 }
 
-describe("Discord subagent parent line + thread-expand affordance (APV-03)", () => {
+describe("Discord subagent parent line + thread-expand affordance", () => {
   it("renders the subagent parent line (text carries the agentId) and requests a thread", async () => {
     const timer = createFakeTimers();
     const fake = createFakeDiscordAdapter();
-    // Phase 78 (plan §530, option ii): drop clock so the §8.5 elapsed fallback
+    // Drop clock so the §8.5 elapsed fallback
     // is skipped — the test asserts send.text byte-stably.
     const r = createDiscordActivityRenderer(fake, "chat-1", { timer, signCallbackData: sign });
 

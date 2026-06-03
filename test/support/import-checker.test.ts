@@ -7,7 +7,7 @@ import { findForbiddenImports } from "./import-checker.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_ROOT = resolve(here, "__fixtures__/import-checker");
 
-describe("findForbiddenImports -- AST-based import detection (ARCH-BASE-13)", () => {
+describe("findForbiddenImports -- AST-based import detection", () => {
   it("detects multi-line imports of forbidden package", () => {
     const result = findForbiddenImports({
       rootDir: FIXTURES_ROOT,

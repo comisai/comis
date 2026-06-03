@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * UNGATED unit tests for the pure recall-trace analyzer (BENCH-05).
+ * UNGATED unit tests for the pure recall-trace analyzer.
  *
  * TIER: default CI / fast unit tier (no model, no store, no live recall). The
  * analyzer is `analyzeRecallTrace(jsonlContent: string)` — a pure fold over the
- * recall-trace JSONL the v2.6 CLI table view DISCARDED (it kept only
+ * recall-trace JSONL the CLI table view DISCARDED (it kept only
  * traceId/sessionKey/finalCount/ts; memory.ts:276-285). The hand-authored
  * fixture is read here with `readFileSync` (fs reads are fine in `.test.ts`);
  * the analyzer itself takes a STRING so it stays trivially testable and pure.
@@ -67,8 +67,8 @@ describe("analyzeRecallTrace (rerank-lift-realized)", () => {
     expect(Number.isNaN(view.rerankLiftRealized)).toBe(false);
   });
 
-  it("does NOT count a ran recall with unequal pre/post score lengths as realized lift (WR-04)", () => {
-    // WR-04: preScores/postScores are independently optional with NO cross-field
+  it("does NOT count a ran recall with unequal pre/post score lengths as realized lift", () => {
+    // preScores/postScores are independently optional with NO cross-field
     // length invariant in the schema. A malformed producer emitting mismatched
     // lengths must NOT inflate rerankLiftRealized — a length mismatch is
     // malformed input, not an observed reordering. Pre-patch, argsortDiffers
@@ -95,7 +95,7 @@ describe("analyzeRecallTrace (rerank-lift-realized)", () => {
     expect(view.rerankLiftRealized).toBe(0);
   });
 
-  it("does NOT count a ran recall with an empty pre/post score pair as realized lift (WR-04)", () => {
+  it("does NOT count a ran recall with an empty pre/post score pair as realized lift", () => {
     // Equal-length but empty arrays reorder nothing observable — excluded too.
     const emptyScores = JSON.stringify({
       traceSchema: "comis-recall-trace",

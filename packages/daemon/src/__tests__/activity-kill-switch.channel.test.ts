@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * §22.2 acceptance — WIRE-07 "channel": per-rendererKey enable/disable + the
+ * §22.2 acceptance — "channel": per-rendererKey enable/disable + the
  * hot-reload re-read proof (BOTH an in-place flip AND the real config.write
  * full-object replacement).
  *
- * Builds the SAME daemon-shaped `coordinatorFactory` Plan 03 wired: a per-turn
+ * Builds the SAME daemon-shaped `coordinatorFactory` the daemon wires: a per-turn
  * `createActivityTurnCoordinator` over a real redacted `ActivityStream`, with a
  * `killSwitch` getter that RE-READS `agents[ctx.agentId]?.activity` fresh on
  * every `flushApply` (through the STABLE top-level `agents` map ref — NOT a
@@ -16,8 +16,8 @@
  *   2. an ABSENT rendererKey (`default:echo:chan-2`) does NOT render (fail-closed);
  *   3. an IN-PLACE flip of chan-1 to `enabled:false` on the live object stops it;
  *   4. a FULL-OBJECT REPLACEMENT of `agents["default"]` (the config.write shape)
- *      stops it — this sub-test FAILS on a stale-ref getter (the W1 bug), so it
- *      pins the re-read fix (T-77-04-02 / T-77-04-04).
+ *      stops it — this sub-test FAILS on a stale-ref getter, so it
+ *      pins the re-read fix.
  *
  * Each suppress assertion (`frames.length === 0`) depends on the wired killSwitch:
  * remove it and the absent/disabled cases would render → the assertion fails →
@@ -73,7 +73,7 @@ function makeCtx(rendererKey: string, channelKey: string, sessionKey: string, tr
 /**
  * Drive ONE turn through a fresh coordinator over the shared stable `agents` map
  * and return how many frames the sink painted. The killSwitch RE-READS
- * `agents[ctx.agentId]?.activity` per flushApply (mirrors Plan 03's live getter),
+ * `agents[ctx.agentId]?.activity` per flushApply (mirrors the daemon's live getter),
  * reading through the STABLE outer `agents` ref so a later full-object swap of
  * `agents["default"]` is observed.
  */
@@ -139,7 +139,7 @@ async function runTurn(
   return painted;
 }
 
-describe("WIRE-07 §22.2 channel: per-rendererKey gate + hot-reload via in-place flip AND full-object replacement", () => {
+describe("§22.2 channel: per-rendererKey gate + hot-reload via in-place flip AND full-object replacement", () => {
   it("renders an enabled rendererKey, suppresses an absent one, and hot-reloads disable both ways without rebuilding", async () => {
     const bus = new TypedEventBus();
     const stream = createActivityStream({ eventBus: bus });
@@ -217,7 +217,7 @@ describe("WIRE-07 §22.2 channel: per-rendererKey gate + hot-reload via in-place
     // flushApply, so it picks up the NEW object and suppresses the second flush.
     // A getter that captured the per-agent object at construction would still see
     // the OLD enabled object and wrongly paint a second frame — so this assertion
-    // fails on the W1 stale-ref bug (T-77-04-04).
+    // fails on the stale-ref bug.
     agents.default.activity.channels["default:echo:chan-1"].enabled = true;
 
     const liveCtx = makeCtx("default:echo:chan-1", "chan-1", "default:echo:chan-1", "t-live");

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * activity-stream — the canonical, redacted `ActivityEvent` source (STRAT-07,
- * OBS-01/02/03; spec §5).
+ * activity-stream — the canonical, redacted `ActivityEvent` source (spec §5).
  *
  * Subscribes to the typed EventBus (consume only — `core/event-bus/bus.ts` is
  * frozen, §17.7) and maps each real `tool:*` / `model:*` / `approval:*` event to
@@ -23,23 +22,23 @@
  * stable `activityId` across `tool:started` → `tool:executed`.
  *
  * Subagent lifecycle events (`session:sub_agent_spawned`/`completed`) map to
- * `kind:"subagent"` ActivityEvents (APV-01, §17.3). The spawn payload carries
+ * `kind:"subagent"` ActivityEvents (§17.3). The spawn payload carries
  * `{runId, parentSessionKey, agentId, task}` — NO `traceId` and NO parent
  * `activityId` — so subagent events are delivered to every turn subscriber whose
  * `{agentId, sessionKey}` match `{agentId, parentSessionKey}`, stamping that
  * subscriber's `traceId` onto the delivered copy. `parentActivityId` is left
  * unset here: the per-turn coordinator (the §4.5 single owner) annotates the
  * parent link from its active-subagent stack. The free-text `task` is never
- * reflected into the rendered label (only `agentId` + the `🤖` marker, T-73-07).
+ * reflected into the rendered label (only `agentId` + the `🤖` marker).
  *
- * Logging (OBS-02): the logger is injected via Deps; object-first; no
+ * Logging: the logger is injected via Deps; object-first; no
  * in-module logger construction, and the module-identity payload field is never
  * set (binding identity comes from the injected logger). Call-site scope uses
- * the `submodule`/`step` fields. OBS-03: a single WARN `{hint, errorKind}` fires
+ * the `submodule`/`step` fields. A single WARN `{hint, errorKind}` fires
  * when a mapped event's `redactionsApplied` is non-empty (a tool tried to
  * substitute a secret-keyed value); a `parseActivityEvent` failure logs ERROR.
  *
- * Counters (OBS-01, spec §20.1): there is no metrics-sink primitive in
+ * Counters (spec §20.1): there is no metrics-sink primitive in
  * `@comis/observability` (the package logs + emits on the bus — see
  * `health-aggregator`). The §20.1 counters are therefore kept as an in-process
  * counter snapshot (`counters()`) — incremented on each emit/drop/redaction and
@@ -47,7 +46,7 @@
  * traced at DEBUG.
  *
  * Boundary: this module never imports the channels package (the hexagonal
- * constraint; the durable guard test lands in 70-10).
+ * constraint, enforced by a durable guard test).
  *
  * @module
  */
@@ -82,19 +81,19 @@ export interface ActivityToolMetadata {
 /** Dependencies for {@link createActivityStream}. */
 export interface CreateActivityStreamDeps {
   readonly eventBus: TypedEventBus;
-  /** Injected bound logger (OBS-02). Optional — when absent the stream is silent. */
+  /** Injected bound logger. Optional — when absent the stream is silent. */
   readonly logger?: ComisLogger;
   /** Per-tool metadata lookup (for `suppressActivity`). Optional. */
   readonly getToolMetadata?: (toolName: string) => ActivityToolMetadata | undefined;
   /** Active operator theme (label override layer). Optional. */
   readonly theme?: ActivityTheme;
-  /** Home directory for `$HOME`→`~` path compaction (SEC-02). Injected; no env read. */
+  /** Home directory for `$HOME`→`~` path compaction. Injected; no env read. */
   readonly homeDir?: string;
   /** Override "now" (ms) for deterministic tests. Defaults to the sanctioned `systemNowMs`. */
   readonly nowMs?: () => number;
 }
 
-/** In-process counter snapshot mirroring the spec §20.1 activity counters (OBS-01). */
+/** In-process counter snapshot mirroring the spec §20.1 activity counters. */
 export interface ActivityCounters {
   /** `activity.events.emitted` total. */
   readonly emitted: number;
@@ -106,7 +105,7 @@ export interface ActivityCounters {
 
 /**
  * The ActivityStream — implements the core `ActivityStreamPort.subscribeForTurn`
- * plus lifecycle (`dispose`) and an OBS-01 `counters()` snapshot.
+ * plus lifecycle (`dispose`) and a `counters()` snapshot.
  */
 export interface ActivityStream {
   /**
@@ -120,7 +119,7 @@ export interface ActivityStream {
   ): { unsubscribe(): void };
   /** Detach all bus handlers + clear the correlation index (composition-root shutdown). */
   dispose(): void;
-  /** OBS-01 counter snapshot. */
+  /** Counter snapshot. */
   counters(): ActivityCounters;
 }
 
@@ -143,15 +142,15 @@ interface CorrelationEntry {
   readonly traceId: string;
   /**
    * The authoritative CSPRNG `shortId` minted by the approval gate and carried
-   * on `approval:requested` (EVT-05). Stored so `approval:resolved` (which
+   * on `approval:requested`. Stored so `approval:resolved` (which
    * carries only `requestId`) reuses the SAME unguessable id on the close
-   * event — never a weak re-derivation (WR-04).
+   * event — never a weak re-derivation.
    */
   readonly shortId: string;
   readonly channelType?: string;
 }
 
-/** EventBus events this layer maps (subagent events map to kind:"subagent", APV-01). */
+/** EventBus events this layer maps (subagent events map to kind:"subagent"). */
 const SUBSCRIBED_EVENTS = [
   "tool:started",
   "tool:executed",
@@ -167,15 +166,15 @@ const SUBSCRIBED_EVENTS = [
 
 /**
  * The status markers used when no theme is supplied (or a markerless theme is
- * passed). These mirror the `default` theme bundle (75-01) byte-for-byte so the
+ * passed). These mirror the `default` theme bundle byte-for-byte so the
  * no-theme / default-theme output is identical to the historical hardcoded
- * glyphs — existing channel golden fixtures (Phases 71-73) do not regress
- * (T-75-05-05). Only `subagent` is read today (the event-produced marker baked
+ * glyphs — existing channel golden fixtures do not regress.
+ * Only `subagent` is read today (the event-produced marker baked
  * into `defaultLabel`); the closing-line `success`/`failure` markers are
- * RENDERER-derived from the `TurnOutcome` and are themed in Plan 75-06 (a
+ * RENDERER-derived from the `TurnOutcome` and are themed separately (a
  * channels-package change importing `ActivityStatusMarkers` from `@comis/core`
  * — the legal channels→core direction). `core`/`observability` never import
- * `channels`, so this plan bakes only the markers it produces here.
+ * `channels`, so this module bakes only the markers it produces here.
  */
 const DEFAULT_MARKERS: ActivityStatusMarkers = {
   success: "✓",
@@ -190,7 +189,7 @@ const DEFAULT_MARKERS: ActivityStatusMarkers = {
  */
 export function createActivityStream(deps: CreateActivityStreamDeps): ActivityStream {
   const now = deps.nowMs ?? systemNowMs;
-  // UX-01: resolve the active status-marker set ONCE. A themed subagent marker
+  // Resolve the active status-marker set ONCE. A themed subagent marker
   // is baked into `defaultLabel` here (upstream of the channel painter, which
   // paints `defaultLabel` verbatim — render.ts:21), so the painter stays dumb
   // and the ascii theme strips emoji at the source. No theme / markerless theme
@@ -202,7 +201,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
   // requestId → correlation context (spec §4.2 approval index).
   const approvalIndex = new Map<string, CorrelationEntry>();
   // runId → parentSessionKey: the spawn payload carries the session, the
-  // completed payload does NOT, so remember it to scope the close event (APV-01).
+  // completed payload does NOT, so remember it to scope the close event.
   const subagentSessions = new Map<string, string>();
 
   let emitted = 0;
@@ -226,15 +225,15 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
 
   /**
    * Build the label for a tool/approval event, re-applying redaction
-   * (defense-in-depth) and emitting the OBS-03 WARN when redactions fired.
+   * (defense-in-depth) and emitting the WARN when redactions fired.
    *
-   * UX-02 wiring boundary: `compressLabel` runs ONCE here, on the FINAL
+   * Label-egress wiring boundary: `compressLabel` runs ONCE here, on the FINAL
    * post-`applyTemplate` (post-redaction) `defaultLabel`, on BOTH return paths —
    * the single label-egress point. The redact→compress order is load-bearing:
    * the compressor runs AFTER `redactValue` (which `applyTemplate` already
    * applied), so it never lets a raw URL/path escape redaction and never
    * re-compacts an already-compacted (`~`-rooted / ≤2-segment) path (it is a
-   * fixed point per 75-02 / Pitfall 2). It is NOT called inside `applyTemplate`
+   * fixed point — see Pitfall 2). It is NOT called inside `applyTemplate`
    * (a `core` redaction-only primitive) and NOT on the subagent/model marker
    * labels (those bypass `buildLabel` — short static `markers.subagent`/
    * "switching model provider" strings; compressing them is a needless no-op).
@@ -255,7 +254,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
     );
     if (!result.ok) {
       // unknown_key — fall back to the placeholder-stripped semantic label,
-      // compressed at the egress (UX-02) like the success path.
+      // compressed at the egress like the success path.
       return {
         defaultLabel: compressLabel(spec.label.replace(/\{[A-Za-z0-9_]+\}/g, "").trim()),
         semanticPhase: spec.semanticPhase,
@@ -263,7 +262,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
     }
     if (result.value.redactionsApplied.length > 0) {
       redactionReplacements += result.value.redactionsApplied.length;
-      // OBS-03 / §10.1: exactly one WARN when a tool tried to substitute a
+      // §10.1: exactly one WARN when a tool tried to substitute a
       // secret-keyed value. Object-first; module-identity field never set.
       childLogger?.warn?.(
         {
@@ -285,7 +284,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
 
   /**
    * Validate + deliver a mapped ActivityEvent to every turn subscriber it is
-   * scoped to. Logs ERROR + drops on a parse failure (OBS-03). Returns true on
+   * scoped to. Logs ERROR + drops on a parse failure. Returns true on
    * successful emit.
    */
   function dispatch(raw: unknown, indexFor?: { requestId: string; shortId: string }): boolean {
@@ -320,7 +319,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
     );
     // Record/refresh the approval correlation index AFTER a successful parse.
     // The authoritative shortId rides on the entry so the resolved event reuses
-    // it verbatim (WR-04) — no re-derivation.
+    // it verbatim — no re-derivation.
     if (indexFor !== undefined) {
       approvalIndex.set(indexFor.requestId, {
         activityId: event.activityId,
@@ -334,7 +333,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
     // Deliver to every turn subscriber whose ids match (turn-scoped filter).
     // The per-consumer bounded queue (§5.1) absorbs backpressure: push then
     // drain synchronously to the consumer. A push that drops (main-ring or
-    // failure-overflow overflow) increments the OBS-01 `dropped` counter.
+    // failure-overflow overflow) increments the `dropped` counter.
     for (const sub of subscribers) {
       if (
         sub.ctx.agentId === event.agentId &&
@@ -366,7 +365,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
   }
 
   /**
-   * Deliver a subagent event (APV-01). The spawn/completed payloads carry no
+   * Deliver a subagent event. The spawn/completed payloads carry no
    * `traceId` (and no parent `activityId`), so the event is delivered to every
    * turn subscriber whose `{agentId, sessionKey}` match, STAMPING that
    * subscriber's `traceId` onto a freshly-parsed copy. `parentActivityId` is left
@@ -449,7 +448,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       semanticPhase,
       toolName: p.toolName,
       ...(p.action !== undefined ? { action: p.action } : {}),
-      // WS-B Phase 78 / SPEC-§3.1: mirror subagent precedent at lines 602/621.
+      // §3.1: mirror subagent precedent at lines 602/621.
       // The running marker is themed (default: 🔧, ascii: [..]) and resolved
       // once at construction (line 198). DO NOT apply to onToolExecuted
       // (phase:"end") — that violates Pitfall 7 (the running marker conveys
@@ -522,7 +521,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       status: "running",
       kind: "model",
       semanticPhase: "thinking",
-      // WS-B Phase 78 / SPEC-§3.1: themed running marker on the static label.
+      // §3.1: themed running marker on the static label.
       // Mirrors the subagent precedent at lines 602/621.
       defaultLabel: `${markers.running} switching model provider`,
     });
@@ -576,7 +575,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
       semanticPhase: p.approved ? "done" : "queued",
       approval: {
         // Reuse the AUTHORITATIVE shortId minted on the start event (carried on
-        // the correlation index, WR-04) so both activity events for one approval
+        // the correlation index) so both activity events for one approval
         // share the same unguessable id. The 2-choice block satisfies the
         // `kind === "approval"` refine; renderers still key off the start event.
         shortId: entry.shortId,
@@ -591,7 +590,7 @@ export function createActivityStream(deps: CreateActivityStreamDeps): ActivitySt
   }
 
   function onSubAgentSpawned(p: EventMap["session:sub_agent_spawned"]): void {
-    // T-73-07: the label uses only agentId + the resolved subagent marker
+    // The label uses only agentId + the resolved subagent marker
     // (`markers.subagent`; 🤖 for default/no theme, [SUB] for ascii) — never the
     // free-text `task` (which could echo user content). parentActivityId is set
     // by the coordinator (§4.5), not here.

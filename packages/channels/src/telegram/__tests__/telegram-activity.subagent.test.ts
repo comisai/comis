@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Telegram subagent parent-line tests (APV-03; §18.2-S7 / §17.3 / §18.3).
+ * Telegram subagent parent-line tests (§18.2-S7 / §17.3 / §18.3).
  *
  * Telegram has no thread primitive, so the subagent expand affordance is INLINE:
  * the `🤖`-marked parent line (the projection baked the agentId into the
@@ -44,11 +44,11 @@ function subagentFrame(label: string): ActivityRenderFrame {
   };
 }
 
-describe("Telegram subagent parent line (inline expand — APV-03)", () => {
+describe("Telegram subagent parent line (inline expand)", () => {
   it("renders the subagent parent line inline (text carries the agentId), no thread", async () => {
     const timer = createFakeTimers();
     const fake = createFakeTelegramAdapter();
-    // Phase 78 (plan §530, option ii): drop clock so the §8.5 elapsed fallback
+    // Drop clock so the §8.5 elapsed fallback
     // is skipped — the test asserts send.text byte-stably.
     const r = createTelegramActivityRenderer(fake, "chat-1", { timer, signCallbackData: sign });
 

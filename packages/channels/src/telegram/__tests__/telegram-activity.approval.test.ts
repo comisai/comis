@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Telegram approval-UI tests (APV-02 rich-channel half; §7.7 / §17.3 / §6.4.3).
+ * Telegram approval-UI tests (rich-channel half; §7.7 / §17.3 / §6.4.3).
  *
- * Phase 73 makes the Telegram renderer paint a `kind:"approval"` frame as a
+ * The Telegram renderer paints a `kind:"approval"` frame as a
  * grammY inline keyboard: `buildApprovalButtons` (over the renderer-injected
  * `SignCallbackData`) yields signed `RichButton` rows, and `renderTelegramButtons`
- * (73-05's budget-guarded mapper) turns them into the `InlineKeyboard`. Each
+ * (the budget-guarded mapper) turns them into the `InlineKeyboard`. Each
  * `callback_data` is the §6.4.2 wire string `v1.<choice>.<shortId>.<hmac>` and
  * survives the 64-byte budget — the over-budget guard OMITS a button (never
  * truncates a signed payload), but the worst-case real payload is ~40 bytes so
  * every choice fits.
  *
- * The signing seam (73-06) is consumed, not re-derived: the renderer reaches the
+ * The signing seam is consumed, not re-derived: the renderer reaches the
  * core HMAC primitive through the injected `signCallbackData` — never importing
  * `@comis/orchestrator`.
  */
@@ -68,7 +68,7 @@ function approvalFrame(corr: ApprovalCorrelation = approval()): ActivityRenderFr
   };
 }
 
-describe("Telegram inline-keyboard approval (budget-safe signed callback_data — APV-02)", () => {
+describe("Telegram inline-keyboard approval (budget-safe signed callback_data)", () => {
   it("paints a kind:'approval' frame as buttons whose callback_data is the signed wire string", async () => {
     const timer = createFakeTimers();
     const clock = createFakeClock(0);
@@ -85,7 +85,7 @@ describe("Telegram inline-keyboard approval (budget-safe signed callback_data �
     expect(flat).toHaveLength(2);
     for (const btn of flat) {
       expect(btn.callback_data).toMatch(WIRE);
-      // Every real signed payload fits Telegram's 64-byte budget (73-05).
+      // Every real signed payload fits Telegram's 64-byte budget.
       const bytes = new TextEncoder().encode(btn.callback_data ?? "").length;
       expect(bytes).toBeLessThanOrEqual(MAX_CALLBACK_DATA_BYTES);
     }

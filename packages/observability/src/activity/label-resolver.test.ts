@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * RED test for the typed-first label-resolver (STRAT-10, spec §6.1).
+ * RED test for the typed-first label-resolver (spec §6.1).
  *
  * Fails on pre-patch code: `./label-resolver.js` does not exist.
  *
@@ -11,18 +11,18 @@
  *     + humanized tool name), never null.
  *   - `metadata.suppressActivity === true` → returns `null` (no activity).
  *   - `resolveLabelDetailed` surfaces `redactionsApplied` upward so the
- *     ActivityStream owns the OBS-03 WARN (the resolver stays pure, no logger).
+ *     ActivityStream owns the redaction WARN (the resolver stays pure, no logger).
  */
 import { describe, it, expect } from "vitest";
 import { registerActivityLabelSpec } from "@comis/core";
 import { resolveLabel, resolveLabelDetailed } from "./label-resolver.js";
 
 // The label-spec registry is a module-level singleton with no barrel-exported
-// reset (70-05: `_clearActivityLabelSpecsForTest` is intentionally NOT public).
+// reset (`_clearActivityLabelSpecsForTest` is intentionally NOT public).
 // Each test registers a UNIQUE tool name so there is zero cross-test
 // interference without needing a registry clear.
 
-describe("resolveLabel (STRAT-10 / spec §6.1 — typed-first)", () => {
+describe("resolveLabel (spec §6.1 — typed-first)", () => {
   it("resolves mcp_manage(action=set, name=X) to the typed template label", () => {
     registerActivityLabelSpec("mcp_manage", {
       semanticPhase: "tool",
@@ -63,7 +63,7 @@ describe("resolveLabel (STRAT-10 / spec §6.1 — typed-first)", () => {
     expect(label).toBe("configuring channel `X`");
   });
 
-  it("surfaces redactionsApplied upward via resolveLabelDetailed for the OBS-03 WARN", () => {
+  it("surfaces redactionsApplied upward via resolveLabelDetailed for the redaction WARN", () => {
     registerActivityLabelSpec("secrets_manage", {
       actions: {
         set: { label: "configuring `{token}`", detailKeys: ["token"] },

@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Recall observability tail (OBS-01/03/04), extracted from memory-recall.ts (which
- * crossed the 800-line cap when the 6th graph-spread lane landed — KG-04). PURE
+ * Recall observability tail, extracted from memory-recall.ts (which
+ * crossed the 800-line cap when the 6th graph-spread lane landed). PURE
  * side-effect helper: it assembles ONE recall-trace record and emits the counts-only
  * `memory:recalled` / `memory:reranked` events from the recall stage snapshots.
  *
  * ALL of this is observability: a recorder or emit failure is caught and logged at
- * DEBUG so it NEVER fails the recall hot path (T-86-13 / RANK-03 spirit: degrade,
- * never error). The query is recorded as a sha256 DIGEST, never raw text (T-86-10).
- * Event payloads are counts/booleans/ids ONLY — never query text or memory bodies
- * (T-86-11). The agent↛memory cut is untouched: this file imports @comis/core types +
+ * DEBUG so it NEVER fails the recall hot path (degrade, never error). The query is
+ * recorded as a sha256 DIGEST, never raw text. Event payloads are counts/booleans/ids
+ * ONLY — never query text or memory bodies. The agent↛memory cut is untouched: this file imports @comis/core types +
  * the in-package recall-record builder + @comis/observability (an EXISTING agent dep)
  * via the RecallTrace recorder type only.
  *
@@ -58,10 +57,9 @@ export interface RecallCaptureCtx {
 /**
  * Assemble + write the recall-trace record and emit the counts-only memory:recalled /
  * memory:reranked events. ALL of this is observability: a recorder or emit failure is
- * caught and logged at DEBUG so it NEVER fails the recall hot path (T-86-13 / RANK-03
- * spirit: degrade, never error). The query is recorded as a sha256 DIGEST, never raw
- * text (T-86-10). Event payloads are counts/booleans only — never query text or memory
- * bodies (T-86-11).
+ * caught and logged at DEBUG so it NEVER fails the recall hot path (degrade, never
+ * error). The query is recorded as a sha256 DIGEST, never raw text. Event payloads are
+ * counts/booleans only — never query text or memory bodies.
  */
 export function captureRecallObservability(
   deps: MemoryRecallDeps,
@@ -125,14 +123,14 @@ export function captureRecallObservability(
     (ctx.ftsCandidates > 0 ? 1 : 0) +
     (ctx.vectorCandidates > 0 ? 1 : 0) +
     (ctx.entityCandidates > 0 ? 1 : 0) +
-    // I1: include the temporal lane so the counts-only memory:recalled event no longer
+    // Include the temporal lane so the counts-only memory:recalled event no longer
     // under-reports the active lane count by one when the temporal lane contributes. The
     // rich recall-trace record already counts lanes.temporal (:575); this aligns the event.
     (ctx.temporalCandidates > 0 ? 1 : 0) +
-    // EXTRACT-03: likewise include the causal lane so the event's lane count counts the 5th
+    // Likewise include the causal lane so the event's lane count counts the 5th
     // lane when it contributes (the rich trace record already counts lanes.causal).
     (ctx.causalCandidates > 0 ? 1 : 0) +
-    // KG-04: include the graph-spread lane so the counts-only event reflects the 6th lane (the
+    // Include the graph-spread lane so the counts-only event reflects the 6th lane (the
     // trace's RecallLaneCounts stays the 5-lane shape — extending it is a deferred obs change).
     (ctx.graphSpreadCandidates > 0 ? 1 : 0);
   try {

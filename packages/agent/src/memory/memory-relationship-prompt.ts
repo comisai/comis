@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The offline DIRECTIONAL relationship builder prompt + its lenient, total parser
- * (Phase 108 — SOCIAL-01, Track E2).
+ * The offline DIRECTIONAL relationship builder prompt + its lenient, total parser.
  *
  * Mirrors `memory-user-representation-prompt.ts` (the prompt + lenient-total-parser
  * pattern). Split out of the builder job so the verbose prompt + the cleanest
@@ -10,18 +9,18 @@
  * agent-internal (it never crosses into the daemon, mirroring how
  * {@link createUserRepresentationSeam} keeps `USER_REPRESENTATION_PROMPT` private).
  *
- * The DELTA from the 107 per-user profile: a relationship candidate is DIRECTIONAL
- * — it carries a `subjectUserId` (the speaker, attributed from the sender-prefixed
- * source line) and an `aboutUserId` (whom the statement concerns, extracted by the
- * model) plus the free relationship `content`. A→B is a DISTINCT candidate from
- * B→A; the parser never symmetrizes. There is NO prefix-type vocabulary (unlike the
- * 107 four `entryType`s) — the edge is `subject → about` + free content (the 108-01
- * port carries no relationship-kind enum, Delta row 3).
+ * The DELTA from the per-user profile builder: a relationship candidate is
+ * DIRECTIONAL — it carries a `subjectUserId` (the speaker, attributed from the
+ * sender-prefixed source line) and an `aboutUserId` (whom the statement concerns,
+ * extracted by the model) plus the free relationship `content`. A→B is a DISTINCT
+ * candidate from B→A; the parser never symmetrizes. There is NO prefix-type
+ * vocabulary (unlike the four per-user-profile `entryType`s) — the edge is
+ * `subject → about` + free content (the port carries no relationship-kind enum).
  *
- * The single anti-laundering invariant (verbatim from 107): the model has NO trust
- * field. Trust is the builder job's CODE-computed source-trust ceiling — capped at
- * the high-trust floor (`system`/`learned`); `external` is structurally excluded
- * (the 108-01 port type + the 108-02 DB CHECK). Any `trust` the model emits anyway
+ * The single anti-laundering invariant (shared with the per-user profile builder):
+ * the model has NO trust field. Trust is the builder job's CODE-computed source-trust
+ * ceiling — capped at the high-trust floor (`system`/`learned`); `external` is
+ * structurally excluded (the port type + the DB CHECK constraint). Any `trust` the model emits anyway
  * is STRIPPED by the lenient `z.object` (unknown keys dropped, NOT rejected) — it
  * can never influence the stored edge. A candidate missing either directional
  * endpoint (`subjectUserId` or `aboutUserId`) is dropped (the per-item `safeParse`
@@ -39,7 +38,7 @@ import { z } from "zod";
 /**
  * One DIRECTIONAL relationship candidate the build() seam emits — the parsed shape
  * the job consumes. NO `trust` field: the LLM has no say in trust; the job sets it
- * in CODE at the source ceiling (SOCIAL-01). The `(subjectUserId, aboutUserId)` pair
+ * in CODE at the source ceiling. The `(subjectUserId, aboutUserId)` pair
  * is the directional edge — subject's representation OF about; it is NEVER
  * symmetrized.
  */
@@ -60,10 +59,10 @@ export type RelationshipBuildOutput = RelationshipCandidate[];
 // ---------------------------------------------------------------------------
 
 /**
- * The offline directional relationship builder system prompt (SOCIAL-01). The model
+ * The offline directional relationship builder system prompt. The model
  * receives a small set of HIGH-TRUST, multi-party source memories from ONE channel
  * (the builder has already excluded `external`-trust sources — the model never sees
- * them). Each source line is SENDER-PREFIXED `- [userId]: content` (RQ3) so the
+ * them). Each source line is SENDER-PREFIXED `- [userId]: content` so the
  * model can attribute who said/believes WHAT about WHOM and emit DIRECTIONAL edges.
  *
  * It explicitly does NOT choose a trust level (the job sets trust in CODE at the
@@ -151,7 +150,7 @@ export function parseRelationshipOutput(raw: string): RelationshipBuildOutput {
   return out;
 }
 
-/** Strip markdown code fences from raw LLM text (mirrors the 107 parser). */
+/** Strip markdown code fences from raw LLM text (mirrors the per-user-profile parser). */
 function stripFences(text: string): string {
   return text.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
 }

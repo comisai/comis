@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Reproducible benchmark report builder (BENCH-04) -- assembles the run config +
- * accuracy results into the single JSON object the gated harness (Plan 89-03)
- * writes to disk, so a Comis benchmark number is comparable across changes and
- * against Hindsight's published figures.
+ * Reproducible benchmark report builder -- assembles the run config +
+ * accuracy results into the single JSON object the gated harness writes to disk,
+ * so a Comis benchmark number is comparable across changes and against
+ * Hindsight's published figures.
  *
  * BUILD-THEN-WRITE split (analog graph-completion.ts:585-607): this module builds
  * the report object PURELY (no I/O, fully unit-testable); the writeRegularFile
@@ -11,7 +11,7 @@
  * harness (where the dataset bytes are read) and passed in as `dataset.sha256` --
  * this module just records the string.
  *
- * SECURITY -- structural secret omission (Pitfall 6 / T-89-02-03, ASVS V7): the
+ * SECURITY -- structural secret omission (Pitfall 6, ASVS V7): the
  * report is persisted via writeRegularFile, OUTSIDE Pino's redaction safety-net,
  * so the builder itself must guarantee no credential ever reaches the file. It
  * does so STRUCTURALLY: each model role is rebuilt as a fresh `{ provider,
@@ -68,7 +68,7 @@ export interface ScoringAlphas {
 }
 
 /**
- * BASE-01 (v2.8 Phase 98) cost block: mean tokens/query for the answer + judge
+ * Cost block: mean tokens/query for the answer + judge
  * roles, plus the combined total and (optionally) the provider-reported USD cost.
  *
  * SECURITY: pure numbers only — no model identity, no key. Recorded by copying
@@ -90,7 +90,7 @@ export interface BenchmarkCost {
 }
 
 /**
- * BASE-01 (v2.8 Phase 98) latency block: p50/p95 wall-clock latency (ms) for the
+ * Latency block: p50/p95 wall-clock latency (ms) for the
  * recall, answer, and judge segments, plus the end-to-end (recall+answer+judge)
  * per-question total. Captured in the harness via real `performance.now()` deltas
  * (NOT the injected fake clock — that exists to neutralize recency scoring and
@@ -111,14 +111,13 @@ export interface BenchmarkLatency {
 }
 
 /**
- * BASE-01 (v2.8 Phase 98, Plan 02) control row: a Letta-style filesystem-baseline
+ * Control row: a Letta-style filesystem-baseline
  * reference — the SAME questions answered from the FULL haystack ("filesystem
  * dump", no recall ranking) by the SAME answer+judge models, recorded under an
  * explicit `label` so it can NEVER be mistaken for Comis's own score (the headline
  * `results` stays the recall accuracy). Its purpose is a sanity control: if a
  * full-dump baseline ties/beats Comis's ranked recall, the *benchmark* is weak
- * (T-98-02-01; .planning/MEMORY_BENCHMARK_CREDIBILITY.md — Letta's filesystem agent
- * scored 74.0% on LoCoMo, above Mem0's self-reported 68.5%).
+ * (Letta's filesystem agent scored 74.0% on LoCoMo, above Mem0's self-reported 68.5%).
  *
  * SECURITY: `label` is a fixed identifier string and `results` is a pure
  * {@link AccuracyResult} (numbers) — structurally secret-free, like
@@ -133,7 +132,7 @@ export interface BenchmarkControl {
 }
 
 /**
- * The BENCH-04 reproducibility object. Records WHAT built/answered/judged
+ * The reproducibility object. Records WHAT built/answered/judged
  * (model identities), the dataset, the recall defaults, and the accuracy results
  * (carrying `invalid` + `validTotal` per the corrected denominator) -- with no
  * secret anywhere.
@@ -171,20 +170,20 @@ export interface BenchmarkReport {
   /** The harness version tag (e.g. "phase-89-v1"). */
   harnessVersion: string;
   /**
-   * BASE-01 tokens/query (answer + judge). Present only when the run measured it;
+   * Tokens/query (answer + judge). Present only when the run measured it;
    * omitted byte-identically otherwise (mirrors `dataset.sha256`).
    */
   cost?: BenchmarkCost;
   /**
-   * BASE-01 wall-clock latency (recall/answer/judge/end-to-end, p50/p95). Present
+   * Wall-clock latency (recall/answer/judge/end-to-end, p50/p95). Present
    * only when the run measured it; omitted byte-identically otherwise.
    */
   latency?: BenchmarkLatency;
   /**
-   * BASE-01 Letta-style filesystem-baseline CONTROL row. Present only when the run
+   * Letta-style filesystem-baseline CONTROL row. Present only when the run
    * computed the control (full-haystack reference); omitted byte-identically
    * otherwise. NEVER Comis's own score — the headline `results` is the recall
-   * accuracy (T-98-02-01).
+   * accuracy.
    */
   control?: BenchmarkControl;
 }
@@ -207,11 +206,11 @@ export interface BenchmarkReportConfig {
   dataset: BenchmarkReport["dataset"];
   defaults: BenchmarkReport["defaults"];
   harnessVersion: string;
-  /** BASE-01 tokens/query block (optional — present only when measured). */
+  /** Tokens/query block (optional — present only when measured). */
   cost?: BenchmarkCost;
-  /** BASE-01 latency block (optional — present only when measured). */
+  /** Latency block (optional — present only when measured). */
   latency?: BenchmarkLatency;
-  /** BASE-01 Letta-style filesystem-baseline control row (optional — present only when computed). */
+  /** Letta-style filesystem-baseline control row (optional — present only when computed). */
   control?: BenchmarkControl;
 }
 
@@ -222,7 +221,7 @@ function pickIdentity(role: { provider: string; modelId: string }): ModelIdentit
 
 /**
  * Strip any embedded credential from a model URI, keeping only the non-secret
- * identity anchor (scheme + host + path) for reproducibility (WR-01, ASVS V7).
+ * identity anchor (scheme + host + path) for reproducibility (ASVS V7).
  *
  * `modelUri` is a free-form `z.string()` (schema-embedding.ts:14) -- a HuggingFace
  * URI or a local GGUF path. An authenticated weights endpoint can carry a secret in
@@ -344,13 +343,13 @@ export function buildBenchmarkReport(
     },
     results: metrics,
     harnessVersion: config.harnessVersion,
-    // BASE-01 cost/latency: appended STRUCTURALLY (mirror pickDataset) -- the key
+    // cost/latency: appended STRUCTURALLY (mirror pickDataset) -- the key
     // exists only when the run measured it, so an unmeasured run is byte-identical
-    // to the pre-BASE-01 report. Copied field-by-field (pickCost/pickLatency),
+    // to the cost/latency-free report. Copied field-by-field (pickCost/pickLatency),
     // never spreading the config, consistent with the module no-secret doctrine.
     ...(config.cost !== undefined ? { cost: pickCost(config.cost) } : {}),
     ...(config.latency !== undefined ? { latency: pickLatency(config.latency) } : {}),
-    // BASE-01 control row: appended STRUCTURALLY (same as cost/latency) -- the key
+    // control row: appended STRUCTURALLY (same as cost/latency) -- the key
     // exists only when the run computed the Letta-style filesystem-baseline control,
     // so a run without it is byte-identical. Recorded under an explicit label so it
     // can NEVER be mistaken for Comis's score (the headline `results` above stays the

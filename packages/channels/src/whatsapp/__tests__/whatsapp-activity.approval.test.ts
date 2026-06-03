@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WhatsApp plain-text approval-prompt tests (APV-10 renderer half; §6.4.6 / §18.2).
+ * WhatsApp plain-text approval-prompt tests (renderer half; §6.4.6 / §18.2).
  *
  * WhatsApp has NO button surface (`buttons:"none"`), so a `kind:"approval"` frame
  * appends the plain-text prompt `buildApprovalText(event, { includeShortId })` to
  * the placeholder text: "Reply approve or deny within the approval timeout" for a
  * single pending approval, and the shortId-disambiguated form when more than one is
  * pending in the same session. NO signed buttons are attached — HMAC is skipped for
- * plaintext (§6.4.6); the router's plain-text branch (73-04) scopes the reply to
+ * plaintext (§6.4.6); the router's plain-text branch scopes the reply to
  * `pendingForSession` and replay is blocked by pending-table removal.
  *
  * The fake records `buttons:boolean` on `send` so we can prove `buttons:"none"`.
- * The prompt copy is fixed + the redacted shortId — never raw user/tool content
- * (SEC-06 / T-73-26).
+ * The prompt copy is fixed + the redacted shortId — never raw user/tool content.
  */
 import { describe, it, expect } from "vitest";
 import type { ActivityRenderFrame, ActivityEvent, ApprovalCorrelation } from "@comis/core";
@@ -65,7 +64,7 @@ function firstSend(fake: ReturnType<typeof createFakeWhatsAppAdapter>): Extract<
   return fake.recorded.calls.find((c): c is Extract<FakeWhatsAppCall, { op: "send" }> => c.op === "send");
 }
 
-describe("WhatsApp plain-text approval prompt (buttons:none, shortId when ambiguous — APV-10)", () => {
+describe("WhatsApp plain-text approval prompt (buttons:none, shortId when ambiguous)", () => {
   it("appends 'Reply approve or deny ...' for a single pending approval (no shortId)", async () => {
     const timer = createFakeTimers();
     const clock = createFakeClock(0);
@@ -111,9 +110,8 @@ describe("WhatsApp plain-text approval prompt (buttons:none, shortId when ambigu
   it("a non-approval frame appends no prompt (byte-stable placeholder, buttons:none)", async () => {
     const timer = createFakeTimers();
     const fake = createFakeWhatsAppAdapter();
-    // Phase 78 (plan §530, option ii): drop clock so the §8.5 elapsed fallback
-    // is skipped — the test asserts the bare "running tool" placeholder
-    // byte-stably (no `(running 0 s)` suffix).
+    // Drop the clock so the §8.5 elapsed fallback is skipped — the test asserts
+    // the bare "running tool" placeholder byte-stably (no `(running 0 s)` suffix).
     const r = createWhatsAppActivityRenderer(fake, "chat-1", { timer });
 
     const plain: ActivityRenderFrame = {

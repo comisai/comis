@@ -4,7 +4,7 @@
  *
  * Unlike the cache-trace (a per-session stream of per-STAGE events keyed by
  * a `stage` enum), the recall trace is a SINGLE rich record per recall
- * (Assumption A1, 86-RESEARCH "Pattern 2"): all of the recall pipeline's
+ * (Assumption A1): all of the recall pipeline's
  * data — lanes fired + candidate counts, fused order, rerank scores
  * pre/post, and the final ranked set with per-memory score breakdowns +
  * include/exclude reasons — lives in ONE `recall()` call, so it is modeled
@@ -18,7 +18,7 @@
  * and recall-trace JSONL streams by `traceId`, and reject foreign artifacts
  * by the `traceSchema` + `schemaVersion` literals.
  *
- * Security shape (OBS-02, 86-RESEARCH "Pitfall 1"): the record explains
+ * Security shape: the record explains
  * recall WITHOUT echoing bodies. The query is a `queryDigest` (a fingerprint
  * — NEVER raw query text; supplied by the agent in Plan 03), per-memory data
  * is `id` + numeric `breakdown` (safe) + a closed-union `reason` (safe) + an
@@ -41,9 +41,9 @@ import { z } from "zod";
  * Closed enum of rerank outcomes for a single recall.
  *   - `ran`        — the cross-encoder reranker ran and produced postScores.
  *   - `fell_back`  — the reranker was unavailable / returned err; the recall
- *                    used the fusion order (graceful degradation, OBS-03).
+ *                    used the fusion order (graceful degradation).
  *   - `timed_out`  — the reranker exceeded its budget; the recall used the
- *                    fusion order (graceful degradation, OBS-03).
+ *                    fusion order (graceful degradation).
  */
 export const RECALL_RERANK_OUTCOMES = ["ran", "fell_back", "timed_out"] as const;
 
@@ -69,8 +69,8 @@ export type RecallIncludeReason = (typeof RECALL_INCLUDE_REASONS)[number];
 
 /**
  * Closed enum of recall/consolidation degradation kinds surfaced into the
- * trace's `degradations[]` so every graceful-degrade path is queryable
- * (OBS-03). Each entry pairs with an `errorKind` + operator-actionable
+ * trace's `degradations[]` so every graceful-degrade path is queryable.
+ * Each entry pairs with an `errorKind` + operator-actionable
  * `hint` recorded at the emit site.
  */
 export const RECALL_DEGRADATION_KINDS = [
@@ -84,10 +84,10 @@ export const RECALL_DEGRADATION_KINDS = [
 export type RecallDegradationKind = (typeof RECALL_DEGRADATION_KINDS)[number];
 
 /**
- * Per-memory score breakdown (OBS-01). Pure numbers — no redaction concern.
+ * Per-memory score breakdown. Pure numbers — no redaction concern.
  * `final` is the product of `base` and the FIVE multiplicative factors
  * (recency/temporal/proof/trust/usefulness) surfaced from `score.ts`. The
- * `usefulness` factor is the FEED-03 read-side payoff of the recall-utility
+ * `usefulness` factor is the read-side payoff of the recall-utility
  * feedback loop (1.0 when the per-memory usefulness signal is absent).
  */
 const RecallScoreBreakdownSchema = z.object({
@@ -125,7 +125,7 @@ const RecallRankedEntrySchema = z.object({
  * Recall-specific fields:
  *   - `queryDigest` — the query as a fingerprint (NEVER raw text).
  *   - `lanes` — candidate counts per retrieval lane (fts / vector / entity / temporal).
- *   - `vectorLaneActive` — false ⇒ vec-unavailable / FTS-only (OBS-03 surface).
+ *   - `vectorLaneActive` — false ⇒ vec-unavailable / FTS-only (degradation surface).
  *   - `fusedOrder` — memory ids in fused order.
  *   - `rerank` — closed-union outcome + candidate count + optional pre/post scores.
  *   - `ranked` — the final ranked set (id + reason + optional breakdown/preview).
@@ -152,11 +152,11 @@ export const RecallTraceEventSchema = z.object({
     fts: z.number().int().nonnegative(),
     vector: z.number().int().nonnegative(),
     entity: z.number().int().nonnegative(),
-    // LANES-02: the temporal-spread lane candidate count (append-only — types.ts:33).
+    // The temporal-spread lane candidate count (append-only — types.ts:33).
     temporal: z.number().int().nonnegative(),
-    // EXTRACT-03: the causal one-hop lane candidate count. OPTIONAL (append-only, types.ts:33):
+    // The causal one-hop lane candidate count. OPTIONAL (append-only, types.ts:33):
     // a pre-causal-lane trace omits it and still parses; the agent always writes it (0 when the
-    // lane is off) once Phase 96 ships. The analyzer coalesces an absent value to 0.
+    // lane is off) once the causal lane ships. The analyzer coalesces an absent value to 0.
     causal: z.number().int().nonnegative().optional(),
   }),
   vectorLaneActive: z.boolean(),

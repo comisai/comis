@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * TOTAL judge-output parser (BENCH-03) -- turns the LLM judge's free text into a
+ * TOTAL judge-output parser -- turns the LLM judge's free text into a
  * `{ correct, reasoning }` verdict, or `undefined` when no verdict can be
  * extracted (the INVALID signal, which `qa-accuracy.ts` EXCLUDES from the
  * accuracy denominator -- never counts as a wrong answer).
@@ -10,7 +10,7 @@
  * leading-`{...}`-object extraction AND a regex fallback because the judge --
  * instructed to emit `{ "correct": bool, "reasoning" }` but free-text by nature --
  * also emits a JSON object followed by trailing commentary, `correct: yes`,
- * fenced JSON, or a `correct=no` token (Pitfall 1; PATTERNS Correction #2). The
+ * fenced JSON, or a `correct=no` token (Pitfall 1). The
  * order is:
  *   1. strip markdown code fences via `stripCodeFences` -- broadens the analog's
  *      lowercase-`json`-only regex to remove ANY `[a-zA-Z]*` language tag,
@@ -21,7 +21,7 @@
  *   4. else a bounded `correct\s*[:=]\s*"?(true|yes|false|no)"?` regex,
  *   5. otherwise `undefined`.
  *
- * SECURITY -- TOTAL over an untrusted boundary (ASVS V5/V7, T-89-02-01): the judge
+ * SECURITY -- TOTAL over an untrusted boundary (ASVS V5/V7): the judge
  * text is lightly-trusted, possibly-injected free text. This function NEVER
  * throws on arbitrary/adversarial input -- a parse failure is a deterministic
  * `undefined` (-> counted invalid, not wrong), so malformed or hostile judge
@@ -29,7 +29,7 @@
  * anchored/bounded with non-nested quantifiers (the loaders' ReDoS-safe
  * convention -- longmemeval-loader.ts:101, locomo-loader.ts:137).
  *
- * ADVISORY-ONLY caveat (T-89-02-02, accept): an injected `correct=true` CAN steer
+ * ADVISORY-ONLY caveat (accept): an injected `correct=true` CAN steer
  * a verdict, but the judge is measurement only and grants no capability. The
  * parser does NOT treat prose as a rubric -- it extracts ONLY the `correct`
  * verdict token the judge was asked to emit; free prose mentioning "correct

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `createSqliteMemoryLifecycleStore` — the SOLE @comis/memory
- * adapter for the `MemoryLifecyclePort` port (Phase 112, Track C — FORGET-02). It
+ * adapter for the `MemoryLifecyclePort` port. It
  * owns ALL the per-(tenant, agent) lifecycle SQL over the `memories` table + its
  * additive NON-DESTRUCTIVE marker columns.
  *
@@ -10,16 +10,16 @@
  * added on boot) and gets `adapter.getDb()` (mirrors the tuned-alpha /
  * usefulness store tests).
  *
- * ## The SCAFFOLD-DORMANT gate (OD4, RESEARCH Pitfall 3)
+ * ## The SCAFFOLD-DORMANT gate
  *
- * Per Phase-106 gap-report OD4 the sweep is DORMANT: it scans + computes
+ * The sweep is DORMANT: it scans + computes
  * strengths/tiers but its demote/evict/promote step performs NOTHING —
  * `promoted`/`demoted`/`evicted` stay 0, NO row is deleted, every marker column
  * stays NULL — whether the live policy WOULD touch a row or not. The RED for this
  * is a full-eviction mis-implementation; the GREEN is the no-op sweep. Live
- * eviction is the deferred operator/v2.10 step.
+ * eviction is the deferred operator step.
  *
- * ## The load-bearing security boundary (T-112-07, the §5.2 invariant)
+ * ## The load-bearing security boundary (the §5.2 invariant)
  *
  * Comis runs many agents and many tenants in ONE DB. Every adapter statement —
  * the candidate SELECT, any read — filters on `(tenant_id, agent_id)`. A sweep
@@ -27,7 +27,7 @@
  * proven by the isolation test (Test 3), which FAILS if the WHERE drops either
  * filter column.
  *
- * ## The additive marker (the 110 PK-widening lesson, RESEARCH Pitfall 4)
+ * ## The additive marker (the PK-widening lesson)
  *
  * The lifecycle markers are nullable side-columns added via `ALTER TABLE ADD
  * COLUMN` — the `memories` PK is UNCHANGED (no transactional table rebuild). A
@@ -149,7 +149,7 @@ function insertMemory(
 }
 
 describe("createSqliteMemoryLifecycleStore", () => {
-  // ── Task 1: the additive nullable lifecycle marker + the row-schema ─────────
+  // ── The additive nullable lifecycle marker + the row-schema ─────────
   describe("the additive nullable lifecycle marker (NO PK change)", () => {
     let adapter: SqliteMemoryAdapter;
     let db: Database.Database;
@@ -188,7 +188,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
     });
 
     it("Test 2: a PRE-112 DB's existing row SURVIVES with a NULL marker (additive, no rewrite/backfill)", () => {
-      // The headline 110-lesson safety: a CREATE-from-scratch-that-drops-rows
+      // The headline safety lesson: a CREATE-from-scratch-that-drops-rows
       // mis-implementation would FAIL this; the additive ALTER adds the column
       // WITH no backfill/rewrite/corruption.
       const fresh = new SqliteMemoryAdapter(memoryConfig);
@@ -246,7 +246,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
       const pkAfter = pkColumns(raw);
 
       // The single-column `id` PK is unchanged — the markers are nullable
-      // side-columns, never part of an identity key (RESEARCH Pitfall 4).
+      // side-columns, never part of an identity key.
       expect(pkBefore).toEqual(["id"]);
       expect(pkAfter).toEqual(pkBefore);
 
@@ -288,7 +288,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
     });
   });
 
-  // ── Task 2: the DORMANT sweep + (tenant, agent) isolation ───────────────────
+  // ── The DORMANT sweep + (tenant, agent) isolation ───────────────────
   describe("runLifecycleSweep (SCAFFOLD-DORMANT — evicts/demotes NOTHING)", () => {
     let adapter: SqliteMemoryAdapter;
     let db: Database.Database;
@@ -354,7 +354,7 @@ describe("createSqliteMemoryLifecycleStore", () => {
     it("Test 2: still evicts/demotes NOTHING even for a policy-VIOLATING row the live step WOULD evict", async () => {
       // A row whose computed strength is far below ε_prune AND dormant beyond
       // T_max (default 90d) — the LIVE policy would evict it. The DORMANT scaffold
-      // does NOT. This is the Pitfall-3 RED: a full-eviction impl FAILS here.
+      // does NOT. This is the RED: a full-eviction impl FAILS here.
       insertMemory(db, {
         id: "evict-me",
         content: "stale, ignored, ancient — the live policy would prune this",

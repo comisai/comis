@@ -28,10 +28,10 @@ export function parseTags(raw: string): string[] {
   }
 }
 
-// Observation JSON-column schemas (P84). The row-level columns are JSON TEXT;
+// Observation JSON-column schemas. The row-level columns are JSON TEXT;
 // the consumer parses them here into the domain shape. Both degrade to
 // `undefined` on corrupt/oversized JSON (mirrors parseTags) so a damaged column
-// yields "field absent", never a throw that breaks recall (threat T-84-01).
+// yields "field absent", never a throw that breaks recall.
 const SourceIdsSchema = z.array(z.string());
 const HistorySchema = z.array(
   z.strictObject({ previousContent: z.string(), changedAt: z.number().int().positive() }),
@@ -60,7 +60,7 @@ function parseHistory(raw: string): MemoryEntry["history"] | undefined {
 /**
  * Spread helper for a nullable JSON column: yields `{ [key]: parsed }` only when
  * the column is non-null AND `parse` succeeds; otherwise yields `{}` so the
- * field is absent (corrupt JSON or NULL both degrade to "field absent", T-84-01).
+ * field is absent (corrupt JSON or NULL both degrade to "field absent").
  */
 function spreadParsedJson<K extends string, V>(
   key: K,
@@ -75,7 +75,7 @@ function spreadParsedJson<K extends string, V>(
 // ── Row Conversion ───────────────────────────────────────────────────
 
 /** Convert a MemoryRow (DB row) to a MemoryEntry (domain type).
- *  `memoryType` is a first-class optional field on MemoryEntry (P95/LANES-03);
+ *  `memoryType` is a first-class optional field on MemoryEntry;
  *  the DB column's CHECK constraint guarantees `row.memory_type` is in the enum set,
  *  so it maps straight onto the typed field (no intersection widening needed).
  */
@@ -95,7 +95,7 @@ export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry {
     tags: parseTags(row.tags),
     createdAt: row.created_at,
     ...(row.occurred_at !== null ? { occurredAt: row.occurred_at } : {}),
-    // Observation fields (P84). Numeric columns mirror occurred_at; JSON columns
+    // Observation fields. Numeric columns mirror occurred_at; JSON columns
     // (source_ids/history) parse-then-spread so a corrupt column degrades to an
     // absent field (parse* returns undefined → spread is empty) instead of throwing.
     ...(row.proof_count !== null ? { proofCount: row.proof_count } : {}),
@@ -109,10 +109,10 @@ export function rowToEntry(row: MemoryRow, embedding?: number[]): MemoryEntry {
     // DB CHECK(memory_type IN ('working','episodic','semantic','procedural')) guarantees
     // the in-set value; cast to the enum mirrors the trust_level mapping above.
     memoryType: row.memory_type as MemoryEntry["memoryType"],
-    // Typed-observation fields (P101/REASON-01). observation_kind NULL -> "merge"
-    // (the forward-only default for all pre-101 rows; the column has no CHECK, so
+    // Typed-observation fields. observation_kind NULL -> "merge"
+    // (the forward-only default for all legacy rows; the column has no CHECK, so
     // the cast is total — an unexpected on-disk value degrades to itself, never
-    // throws on read, T-101-01-03). pattern_type spreads only when non-null.
+    // throws on read). pattern_type spreads only when non-null.
     observationKind: (row.observation_kind ?? "merge") as MemoryEntry["observationKind"],
     ...(row.pattern_type !== null ? { patternType: row.pattern_type as MemoryEntry["patternType"] } : {}),
   };
@@ -147,7 +147,7 @@ export function insertMemoryRow(
     JSON.stringify(entry.tags),
     entry.createdAt,
     entry.occurredAt ?? null,
-    // Observation fields (P84). source_ids/history persist as JSON TEXT; the
+    // Observation fields. source_ids/history persist as JSON TEXT; the
     // numeric fields persist directly. Column-count === placeholder-count ===
     // arg-count (a shift surfaces in the observation round-trip test).
     entry.proofCount ?? null,
@@ -157,10 +157,10 @@ export function insertMemoryRow(
     entry.history ? JSON.stringify(entry.history) : null,
     entry.updatedAt ?? null,
     entry.expiresAt ?? null,
-    // Typed-observation columns (P101/REASON-01). NULL persists; rowToEntry maps
+    // Typed-observation columns. NULL persists; rowToEntry maps
     // observation_kind NULL back to "merge". These two ? are the LAST bound args
     // before the literal 0 (has_embedding) — keep this in lockstep with the two
-    // new columns + placeholders above (Pitfall-5 arg-shift guard, REASON-01 test).
+    // new columns + placeholders above (arg-shift guard).
     entry.observationKind ?? null,
     entry.patternType ?? null,
   );

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Canonical-binary allowlist matcher (spec §3.2 / SEC-14).
+ * Canonical-binary allowlist matcher (spec §3.2).
  *
  * The daemon-side gate that decides whether an agent-named command is an
- * allowlisted binary, and resolves the exact `{ bin, argv }` to spawn. SEC-14:
+ * allowlisted binary, and resolves the exact `{ bin, argv }` to spawn. The
+ * canonical-binary guarantees:
  *   - match by CANONICAL binary — the requested command is resolved via
  *     `fs.realpathSync` BEFORE comparison, so a symlink / PATH-shadowed binary
  *     whose real target differs from the operator-pinned `match.path` cannot
@@ -15,12 +16,12 @@
  *     interpreter, so there is no shell metacharacter / PATH-hijack surface.
  *
  * Pure JS — `node:fs` + `node:crypto` only. `buildDirectSpawn` is the SOLE
- * canonicalization site for a spawn (M-1): the bin it returns is always the
+ * canonicalization site for a spawn: the bin it returns is always the
  * `realpath`, never the agent-supplied path. PATH resolution of a bare command
  * name is deliberately NOT performed here — the agent supplies an absolute or
  * relative path, removing the `$PATH`-lookup attack surface entirely.
  *
- * The daemon-side tool (119-04) maps a parsed `TerminalAllowEntry` config entry
+ * The daemon-side tool maps a parsed `TerminalAllowEntry` config entry
  * onto {@link AllowEntryLike}; this module intentionally does NOT import the
  * core config schema (it stays a pure, Wave-1-independent primitive).
  *
@@ -41,12 +42,12 @@ export interface AllowMatch {
 }
 
 /**
- * The per-entry sandbox scope (spec §3.3 / SEC-02) — the EXACT union mirror of the
+ * The per-entry sandbox scope (spec §3.3) — the EXACT union mirror of the
  * config `scope` strictObject (the `TerminalAllowEntrySchema.scope` in the core
  * skills config schema).
  *
  * This is the canonical TS contract threaded operator-config → matcher →
- * `CreateRequest` → the worker create frame, so a later phase (122-06) can
+ * `CreateRequest` → the worker create frame, so a later step can
  * materialize it into a bwrap jail. It is MIRRORED by hand, NOT imported from the
  * core schema: the matcher is a Wave-1-independent pure `node:fs`/`node:crypto`
  * primitive (JSDoc :17, :24-25) and must not pull `zod` / the config module in.
@@ -54,7 +55,7 @@ export interface AllowMatch {
  * The defaults are LEAST-PRIVILEGE (`filesystem: "workspace"`, `network: "none"`,
  * `credentialHome: "exclude"`, `uid: "dedicated"`) — applied by the config schema's
  * `.default(...)`, so an entry that omits a sub-field already arrives least-privilege.
- * Scope is OPERATOR-DIALABLE ONLY (SEC-03): the agent has no tool param that can
+ * Scope is OPERATOR-DIALABLE ONLY: the agent has no tool param that can
  * set or widen it (the create tool's TypeBox params expose no `scope` field).
  */
 export interface TerminalScope {
@@ -74,22 +75,22 @@ export interface TerminalScope {
 
 /**
  * A minimal allow entry — `match` resolves the canonical binary; `scope` is the
- * operator-declared sandbox scope (SEC-02) carried verbatim by {@link matchAllowEntry}.
+ * operator-declared sandbox scope carried verbatim by {@link matchAllowEntry}.
  */
 export interface AllowEntryLike {
   id: string;
   match: AllowMatch;
-  /** The per-session sandbox scope (operator config only — SEC-03). */
+  /** The per-session sandbox scope (operator config only). */
   scope: TerminalScope;
   /**
    * When true, `session_create` for this entry must clear the operator approval
-   * gate before any spawn (SEC-06, §3.7) — a high-risk entry pauses for the
+   * gate before any spawn (§3.7) — a high-risk entry pauses for the
    * operator (not the prompt-injectable agent). Operator config only; absent →
    * the current create path (no approval prompt). A sibling of {@link scope}.
    */
   approveOnCreate?: boolean;
   /**
-   * The per-entry usage caps (OPS-03/OPS-06) — a STRUCTURAL mirror of the closed
+   * The per-entry usage caps — a STRUCTURAL mirror of the closed
    * config `limits` (`TerminalAllowEntrySchema.limits`, schema-skills.ts), a sibling
    * of {@link scope}/{@link approveOnCreate}. Operator config only — carried verbatim
    * by `mapAllowEntry` (never dropped at the daemon boundary) so the daemon can build
@@ -108,7 +109,7 @@ export interface AllowEntryLike {
 
 /**
  * The result of a successful {@link matchAllowEntry} — the matched entry plus the
- * SINGLE canonical realpath the matcher resolved + hash-verified (MR-02).
+ * SINGLE canonical realpath the matcher resolved + hash-verified.
  *
  * `requestedReal` is the SOLE canonicalization of the agent-supplied path; the
  * caller threads it straight into {@link buildDirectSpawn} so the hash-verified
@@ -123,7 +124,7 @@ export interface AllowMatchResult {
 }
 
 /**
- * Resolve a path to its canonical realpath — the SEC-14 anchor.
+ * Resolve a path to its canonical realpath — the canonicalization anchor.
  *
  * A symlink / PATH-shadow is collapsed to its real target here, so the caller
  * compares real targets, not surface paths. Throws (`ENOENT`, etc.) for an
@@ -147,7 +148,7 @@ function sha256File(path: string): string {
  * must additionally equal the pin. Returns `{ entry, requestedReal }` for the
  * first matching entry, or `undefined` (no match → the caller rejects the spawn).
  *
- * MR-02: the SINGLE `requestedReal` resolution is returned so the caller threads
+ * The SINGLE `requestedReal` resolution is returned so the caller threads
  * the SAME verified path into {@link buildDirectSpawn} — the hash check and the
  * spawn target are provably the same inode (no second, independent `realpath` of
  * the agent-supplied path that a post-check symlink/dir swap could redirect).
@@ -195,12 +196,12 @@ export function matchAllowEntry(
  * `bin` is the matcher's already-resolved canonical realpath (`requestedReal`
  * from {@link matchAllowEntry}), NOT a fresh resolution of the agent-supplied
  * path — so the hash-verified inode and the executed inode are provably the same
- * (MR-02: a single canonicalization, threaded through, closing the double-resolve
+ * (a single canonicalization, threaded through, closing the double-resolve
  * TOCTOU). `canonicalize` (in `matchAllowEntry`) remains the SOLE realpath site
- * for a spawn (M-1); this function does NOT re-resolve. `argv` merges the entry's
+ * for a spawn; this function does NOT re-resolve. `argv` merges the entry's
  * `argsPrefix` then the caller's args. The driven binary is spawned as
  * `spawn(bin, argv)` — there is no shell-interpreter wrapper path anywhere, so
- * agent-controlled args cannot inject shell syntax (SEC-14).
+ * agent-controlled args cannot inject shell syntax.
  */
 export function buildDirectSpawn(
   entry: AllowEntryLike,

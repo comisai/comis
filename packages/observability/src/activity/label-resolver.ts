@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * label-resolver — the typed-first, ActivityStream-side label producer
- * (STRAT-10, spec §6.1).
+ * (spec §6.1).
  *
  * Resolution is typed-first, deterministic-second (spec §6.1):
  *
@@ -12,14 +12,14 @@
  *      (theme override > registered spec > semantic fallback — resolved in core).
  *   3. `applyTemplate(spec, params, { homeDir })` → the redacted, length-capped
  *      label. The allowlist filter inside `applyTemplate` drops every params key
- *      the spec did not declare (the raw message body included — SEC-03).
+ *      the spec did not declare (the raw message body included).
  *   4. An unknown tool with no registered spec still resolves: `resolveLabelSpec`
  *      returns a semantic-fallback spec (humanized tool name) so a label always
  *      exists.
  *
  * This module is PURE — no logger, no I/O. It consumes the `@comis/core` helpers
- * (`resolveLabelSpec` + `applyTemplate`, themselves pure). OBS-03 ownership: the
- * resolver does NOT log the redaction WARN. {@link resolveLabelDetailed} returns
+ * (`resolveLabelSpec` + `applyTemplate`, themselves pure). Redaction-WARN
+ * ownership: the resolver does NOT log the redaction WARN. {@link resolveLabelDetailed} returns
  * `redactionsApplied` upward so the ActivityStream (which holds the injected
  * logger) emits the single WARN when non-empty (spec §10.1). It never imports
  * `channels` (the hexagonal boundary).
@@ -35,7 +35,7 @@ import {
 
 /**
  * The metadata subset the resolver reads. Mirrors the `suppressActivity?` field
- * on `ComisToolMetadata` (`@comis/core/tool-metadata`, added in 70-03) — typed
+ * on `ComisToolMetadata` (`@comis/core/tool-metadata`) — typed
  * here as the minimal shape so the resolver does not depend on the full
  * metadata interface.
  */
@@ -50,11 +50,11 @@ export interface ResolveLabelOpts {
   readonly theme?: ActivityTheme;
   /** The tool's metadata (read for `suppressActivity`). */
   readonly metadata?: ResolveLabelMetadata;
-  /** Home directory for `$HOME`→`~` path compaction (SEC-02). Injected; no env read here. */
+  /** Home directory for `$HOME`→`~` path compaction. Injected; no env read here. */
   readonly homeDir?: string;
 }
 
-/** The detailed resolver result — surfaces redaction telemetry for the OBS-03 WARN. */
+/** The detailed resolver result — surfaces redaction telemetry for the redaction WARN. */
 export interface ResolvedLabel {
   /** The redacted, length-capped label (≤120). */
   readonly label: string;
@@ -82,7 +82,7 @@ export function resolveLabel(
 
 /**
  * Resolve the activity label AND its redaction telemetry. The ActivityStream
- * calls this so it can emit the OBS-03 WARN when `redactionsApplied` is
+ * calls this so it can emit the redaction WARN when `redactionsApplied` is
  * non-empty (the resolver itself stays pure / loggerless).
  *
  * @returns the resolved label + redaction records, or `null` under suppression.

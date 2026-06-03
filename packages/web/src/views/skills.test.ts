@@ -77,7 +77,7 @@ async function createElement(
 }
 
 /**
- * Test-only state accessor. Post-Phase-44 the view delegates state to
+ * Test-only state accessor. The view delegates state to
  * `SkillsController`; `priv()` returns a getter/setter facade so the
  * existing tests keep working via controller snapshot reads and action
  * method writes.

@@ -1,18 +1,18 @@
 #!/usr/bin/env node
-// Reranker CPU latency harness — THROWAWAY measurement spike (Phase 79 / SPIKE-01).
+// Reranker CPU latency harness — THROWAWAY measurement spike.
 //
 // This is exploratory, throwaway code by intent: it answers ONE feasibility
 // question — can a local cross-encoder rerank of ~40 candidates fit a per-turn
 // latency budget — and is NOT production code (no RerankerPort, no adapter, no
-// config keys; that is Phase 80). It lives under scripts/perf/ (outside the
+// config keys; that comes later). It lives under scripts/perf/ (outside the
 // production source tree), so the Result-everywhere / port / TDD-RED /
 // no-console.log architecture rules do NOT apply: printing parseable stdout is
 // the script's job (mirrors the scripts/perf/cli-coldstart.sh precedent).
 //
 // ZERO NEW DEPENDENCIES: reuses the already-pinned node-llama-cpp@3.18.1
-// LlamaRankingContext (RANK-02). Imported dynamically so an absent native
-// binary degrades gracefully instead of crashing — the embryo of Phase 80's
-// RANK-03 graceful-degrade-to-fusion-order seam.
+// LlamaRankingContext. Imported dynamically so an absent native
+// binary degrades gracefully instead of crashing — the embryo of the
+// graceful-degrade-to-fusion-order seam.
 //
 // CPU FORCED (gpu: false): the production target is CPU Linux; this dev box is
 // macOS/Metal, and getLlama defaults to gpu:"auto" → Metal, which would report
@@ -23,7 +23,7 @@
 // ~636 MB GGUF download on the very first run), not a per-turn cost. It is
 // measured ONCE, separately, and reported on its own `cold_load_ms=` line.
 //
-// SECURITY (threat_model T-79-03): the harness reranks SYNTHETIC/neutral fixture
+// SECURITY: the harness reranks SYNTHETIC/neutral fixture
 // text it generates itself. It NEVER reads the live memory DB, NEVER prints
 // candidate content, and NEVER touches secrets or message bodies — only counts,
 // scores-shape sanity, and timings are printed. Pino auto-redaction does not
@@ -58,8 +58,8 @@ const MODEL_URI =
 // Mirrors the embedding provider's models cache: ~/.comis/models (setup-memory.ts:148).
 const MODELS_DIR = path.join(os.homedir(), ".comis", "models");
 
-// Pin the thread count rather than grabbing all cores (RESEARCH Pitfall 3 —
-// thread/CPU contention with embeddings). threads:0 would mean "max hardware
+// Pin the thread count rather than grabbing all cores (avoids thread/CPU
+// contention with embeddings). threads:0 would mean "max hardware
 // threads"; 4 is a conservative, production-plausible default and bounds CPU.
 const THREADS = Number(process.env.RERANK_THREADS ?? 4);
 
@@ -147,13 +147,13 @@ async function main() {
   // --- Cold load (measured SEPARATELY; excluded from per-turn p50/p95) -----
   // Wrapped so an absent binary / 404 / bad path degrades gracefully:
   // print a clear notice to stderr and exit(0) WITHOUT throwing. This is the
-  // Phase-80 RANK-03 graceful-degrade seam in embryo.
+  // graceful-degrade seam in embryo.
   try {
     const llamaCpp = await import("node-llama-cpp");
 
     const coldStart = performance.now();
     // Force CPU — production target is CPU Linux (differs from the embedding
-    // provider's gpu:"auto" default; RESEARCH Pitfall 5).
+    // provider's gpu:"auto" default).
     llama = await llamaCpp.getLlama({ gpu: false });
 
     const modelPath = MODEL_URI.startsWith("hf:")
@@ -191,7 +191,7 @@ async function main() {
       const docs = pool.slice(0, count);
 
       // One DISCARDED warm-up: the first eval after load warms llama.cpp's
-      // compute buffers and reads as a massive outlier (RESEARCH Pitfall 2).
+      // compute buffers and reads as a massive outlier.
       await ctx.rankAll(QUERY, docs);
 
       const samples = [];
@@ -223,7 +223,7 @@ async function main() {
       const p50 = percentile(samples, 50);
       const p95 = percentile(samples, 95);
 
-      // One parseable line per count (counts/scores/timings only — T-79-03).
+      // One parseable line per count (counts/scores/timings only).
       console.log(
         `rerank count=${count} p50=${p50.toFixed(1)}ms p95=${p95.toFixed(
           1,

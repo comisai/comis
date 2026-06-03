@@ -13,11 +13,11 @@
 import type { ErrorKind } from "./logging/log-fields.js";
 
 // ---------------------------------------------------------------------------
-// ToolCapabilityMetadata interface (v1.1 capability layer)
+// ToolCapabilityMetadata interface (capability layer)
 // ---------------------------------------------------------------------------
 
 /**
- * Capability metadata for a builtin/platform tool -- used by the v1.1 capability
+ * Capability metadata for a builtin/platform tool -- used by the capability
  * layer to route tools into clusters and detect install-detour overlap.
  *
  * All fields optional. Operators may override `cluster` per-tool via
@@ -43,7 +43,7 @@ export interface ToolCapabilityMetadata {
 // @optional-field-count: 14 optional fields — this is a side-channel metadata
 // aggregator keyed by tool name, registered incrementally via spread-merge from
 // independent sources (result caps, parallel-safety flags, action-gating
-// schema, MCP-export policy, capability routing, and the v2.5 activity hints
+// schema, MCP-export policy, capability routing, and the activity hints
 // suppressActivity/failureDetector). Every field is conditionally present per
 // tool by design; the registry merges partial registrations, so a required
 // field would force every caller to supply unrelated keys. Splitting would
@@ -86,7 +86,7 @@ export interface ComisToolMetadata {
   validateInput?: (
     params: Record<string, unknown>,
   ) => string | undefined | Promise<string | undefined>;
-  /** Capability metadata for tool-first routing (v1.1). */
+  /** Capability metadata for tool-first routing. */
   capability?: ToolCapabilityMetadata;
   /** Per-tool MCP-export policy for the /mcp/v1 server endpoint.
    *  - `"safe"`: exposed to any MCP client with scope `mcp-client` (no allowlist needed).
@@ -100,14 +100,14 @@ export interface ComisToolMetadata {
   mcpExportPolicy?: "safe" | "permission-gated" | "never-export";
   /** When true, this tool's lifecycle produces no activity messages (the
    *  activity pipeline skips it). Lifecycle reactions + final delivery are
-   *  unaffected. Read by the activity layer in a later phase (EVT-09, §16.11). */
+   *  unaffected. Read by the activity layer (§16.11). */
   suppressActivity?: boolean;
   /** Tool-specific failure classifier consulted *before* the `tool:executed`
    *  emit (§16.10), so observability never sees the raw result. Receives the
    *  tool result and the SDK `isError` flag; returns `true`/`false` (failed or
    *  not) or `{ errorKind }` (failed, with a closed-union classification).
    *  Lets a tool flag a logically-failed result that the SDK reported as
-   *  success (e.g. a non-zero exit code). (EVT-09, §16.11). */
+   *  success (e.g. a non-zero exit code). (§16.11). */
   failureDetector?: (
     result: unknown,
     isError: boolean,

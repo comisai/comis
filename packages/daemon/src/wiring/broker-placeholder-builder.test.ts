@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * WR-02 regression tests for buildPlaceholdersFromBindings.
+ * Regression tests for buildPlaceholdersFromBindings.
  *
- * RED phase (test08-fix): the function does not yet emit a WARN when envVarName is
- * absent and secretRef is not env-var-shaped. These tests fail until the warn
- * is added.
+ * The function emits a WARN when envVarName is absent and secretRef is not
+ * env-var-shaped.
  *
  * Behavior tested:
  *   - When envVarName is present: use it as the key (no warning)
@@ -41,7 +40,7 @@ function makeBinding(secretRef: string, envVarName?: string): BrokerBindingConfi
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("buildPlaceholdersFromBindings (WR-02)", () => {
+describe("buildPlaceholdersFromBindings", () => {
   it("envVarName present → uses envVarName as placeholder key, no warning", async () => {
     const logger = createMockLogger();
     const buildPlaceholdersFromBindings = await getBuilder();

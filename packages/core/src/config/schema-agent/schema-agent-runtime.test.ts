@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { PerAgentConfigSchema } from "./schema-agent-runtime.js";
 
 // ---------------------------------------------------------------------------
-// v2.5 Agent Transparency — per-agent activity + delivery config (TURN-08/09)
+// Agent Transparency — per-agent activity + delivery config
 //
 // §16.3: two NEW per-agent blocks — `activity` (presentation) and `delivery`
 // (final-assistant visibility). Every field defaulted so existing configs
@@ -15,7 +15,7 @@ import { PerAgentConfigSchema } from "./schema-agent-runtime.js";
 // and `delivery`) — RED proof.
 // ---------------------------------------------------------------------------
 
-describe("per-agent activity config block (TURN-08)", () => {
+describe("per-agent activity config block", () => {
   it("applies activity defaults for an empty agent config", () => {
     const cfg = PerAgentConfigSchema.parse({});
     expect(cfg.activity.verbosity).toBe("normal");
@@ -68,7 +68,7 @@ describe("per-agent activity config block (TURN-08)", () => {
   });
 });
 
-describe("per-agent delivery.visibleReplies config block (TURN-09)", () => {
+describe("per-agent delivery.visibleReplies config block", () => {
   it("defaults visibleReplies.direct to 'automatic' and .group to 'message_tool'", () => {
     const cfg = PerAgentConfigSchema.parse({});
     expect(cfg.delivery.visibleReplies.direct).toBe("automatic");
@@ -116,13 +116,13 @@ describe("top-level verbosity stays unchanged alongside activity.verbosity (no-B
 });
 
 // ---------------------------------------------------------------------------
-// Phase 112 (FORGET-02) — the SCAFFOLD-DORMANT memory-lifecycle cron knob wired
+// The SCAFFOLD-DORMANT memory-lifecycle cron knob wired
 // onto the per-agent RUNTIME config (alongside memoryOnlineTuning). `.optional()`
 // so a default agent registers NO lifecycle block (byte-identical) — the cron is
-// default-OFF and even when enabled the dormant adapter (112-03) evicts nothing.
+// default-OFF and even when enabled the dormant adapter evicts nothing.
 // These cases fail on the pre-patch schema (no `memoryLifecycle` field) — RED.
 // ---------------------------------------------------------------------------
-describe("per-agent memoryLifecycle config block (FORGET-02)", () => {
+describe("per-agent memoryLifecycle config block", () => {
   it("treats memoryLifecycle as optional (absent on a bare config — byte-identical default)", () => {
     const cfg = PerAgentConfigSchema.parse({});
     expect(cfg.memoryLifecycle).toBeUndefined();

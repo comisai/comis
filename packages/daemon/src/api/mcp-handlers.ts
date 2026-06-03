@@ -60,7 +60,7 @@ import type { RpcHandler } from "./types.js";
 
 // Re-aliased from the cluster slice in api/types.ts.
 // WorkspaceApiDeps extended with optional mutableSecretManager for live-apply
-// of extracted MCP header secrets (REQ-13). Declared via intersection here
+// of extracted MCP header secrets. Declared via intersection here
 // (not in WorkspaceApiDeps) to avoid TS2320 multi-extends conflict with
 // AuthApiDeps.mutableSecretManager (required). Production wires it always.
 import type { WorkspaceApiDeps } from "./types.js";
@@ -210,7 +210,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // for persistence) and returns resolvedHeaders with RAW values for the
       // immediate live connect. mutableSecretManager.upsert is called for each
       // extracted static-secret header so the shared SecretManager Map is updated
-      // immediately — additive writes are live without a daemon restart (REQ-13).
+      // immediately — additive writes are live without a daemon restart.
       const headersBlock = userParams.headers as Record<string, string> | undefined;
       let resolvedConnectHeaders: Record<string, string> | undefined;
       if (headersBlock) {
@@ -363,7 +363,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
         throw structured;
       };
 
-      // Fix 4 (v1.2-plan R11.1 completion) — token-aware short-circuit.
+      // Fix 4 — token-aware short-circuit.
       // When the operator explicitly opts into OAuth (params.auth==="oauth")
       // AND no token exists in the store yet, attempting manager.connect is
       // doomed: the SDK's auth() drives a DCR with clientMetadata.redirect_uris=[]
@@ -381,7 +381,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
 
       const result = await manager.connect(config);
       if (!result.ok) {
-        // R8.4'-01 + Fix 2: when connectServer surfaced a NeedsOAuthLoginError
+        // Fix 2: when connectServer surfaced a NeedsOAuthLoginError
         // (UnauthorizedError / StreamableHTTPError(401)) AND the operator
         // opted in with auth:"oauth", persist the entry before throwing the
         // structured signal so mcp_login finds it. mcp-handlers.ts.test.ts
@@ -575,7 +575,7 @@ export function createMcpHandlers(deps: McpHandlerDeps): Record<string, RpcHandl
       // success:false response.
       // resolvedTestHeaders carries raw values for the live test connect.
       // mutableSecretManager live-applies extracted secrets to the shared Map
-      // (additive no-restart — REQ-13), consistent with the mcp.connect path.
+      // (additive no-restart), consistent with the mcp.connect path.
       const headersBlockTest = userParams.headers as Record<string, string> | undefined;
       let resolvedTestHeaders: Record<string, string> | undefined;
       if (headersBlockTest) {

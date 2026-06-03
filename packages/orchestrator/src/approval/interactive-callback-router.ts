@@ -2,7 +2,7 @@
 /**
  * InteractiveCallbackRouter — the single server-side authority that parses,
  * looks-up-THEN-verifies, and dispatches every approval callback to
- * `ApprovalGate.resolveApproval()` (spec §6.4.4, APV-05 / APV-10 / SEC-06).
+ * `ApprovalGate.resolveApproval()` (spec §6.4.4).
  *
  * Channels NEVER call `ApprovalGate` directly and NEVER carry `requestId`/`sessionKey`
  * on the wire — only `shortId`. The router resolves `shortId → requestId` server-side,
@@ -12,11 +12,11 @@
  * the router share one signing implementation — no duplicated crypto, no
  * `channels → orchestrator` boundary violation (Pitfall 5).
  *
- * The route ORDER is load-bearing for SEC-06 (Pitfall 2 — verify-before-lookup defeats
+ * The route ORDER is load-bearing (Pitfall 2 — verify-before-lookup defeats
  * replay rejection): the pending-table lookup proves liveness, enables replay rejection,
  * and provides the server-side `requestId`/`sessionKey`/`expiresAt`. There is NO separate
  * replay store — `resolveApproval` removing the pending entry IS the replay guard (the
- * 73-02 gate drops both the by-requestId map and the by-shortId index atomically).
+ * gate drops both the by-requestId map and the by-shortId index atomically).
  *
  * @module
  */
@@ -46,7 +46,7 @@ export type InboundCallback = {
 
 /**
  * Closed result union (spec §6.4.4). `requestId` is returned only to the orchestrator
- * caller — never to the wire (T-73-14); channels receive only the resolution `kind`.
+ * caller — never to the wire; channels receive only the resolution `kind`.
  */
 export type CallbackResolution =
   | { kind: "resolved"; requestId: string; choice: "approve" | "deny" }
@@ -65,7 +65,7 @@ export interface InteractiveCallbackRouter {
 }
 
 export interface InteractiveCallbackRouterDeps {
-  /** The approval gate (server-side resolution substrate — 73-02 read helpers). */
+  /** The approval gate (server-side resolution substrate — read helpers). */
   readonly gate: ApprovalGate;
   /** Returns the HMAC signing secret (injected at the daemon composition root). */
   readonly getSecret: () => string;
@@ -120,7 +120,7 @@ export function createInteractiveCallbackRouter(
     choice: "approve" | "deny" | "details",
     shortId: string,
   ): Result<string, CallbackRenderError> {
-    // Delegate to the core/security primitive (73-01) — single signing implementation.
+    // Delegate to the core/security primitive — single signing implementation.
     return renderCallbackData(getSecret(), choice as CallbackChoice, shortId);
   }
 
@@ -151,14 +151,14 @@ export function createInteractiveCallbackRouter(
     const req = gate.getRequestByShortId(shortId);
     if (req === undefined) return { kind: "unknown" };
 
-    // 3. Cross-session guard (T-73-09): one room cannot act on another's pending
+    // 3. Cross-session guard: one room cannot act on another's pending
     //    approval. sessionKey is orchestrator-derived (trusted), never from the wire.
     if (req.sessionKey !== inbound.sessionKey) return { kind: "unknown" };
 
-    // 4. Expiry via the injected clock (T-73-11). expiresAt is DERIVED, never stored.
+    // 4. Expiry via the injected clock. expiresAt is DERIVED, never stored.
     if (clock.now() >= req.createdAt + req.timeoutMs) return { kind: "expired" };
 
-    // 5. Constant-time HMAC verify (T-73-12, 73-01 — length-guard-first, no throw).
+    // 5. Constant-time HMAC verify (length-guard-first, no throw).
     if (!verifyCallbackData(getSecret(), choice, shortId, hmac)) {
       return { kind: "invalid_signature" };
     }
@@ -169,7 +169,7 @@ export function createInteractiveCallbackRouter(
 
   function routePlainText(inbound: InboundCallback): CallbackResolution {
     // §6.4.6 — HMAC SKIPPED for this branch only (plain-text channels cannot carry a
-    // signed payload, T-73-13 accept); replay protection still from pending-table removal,
+    // signed payload); replay protection still from pending-table removal,
     // and sessionKey scoping still applies via pendingForSession.
     const command = parsePlainText(inbound.rawData);
     if (command === null) return { kind: "unknown" };

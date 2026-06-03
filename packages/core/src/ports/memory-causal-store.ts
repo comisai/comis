@@ -20,16 +20,16 @@ import type { MemorySearchResult } from "./memory.js";
  *
  * It carries BOTH a WRITE (`linkCausal`) and a READ (`causalLane`) method — the
  * `MemoryEntityStore` dual-method shape (NOT a split read/write port, NOT the
- * FEED-01 bus pattern). The causal edge derives from the extraction the agent
- * already runs, so the agent-side injected-port write is the correct, simpler
- * analog (RESEARCH Q3/Q4).
+ * usefulness-feedback bus pattern). The causal edge derives from the extraction
+ * the agent already runs, so the agent-side injected-port write is the correct,
+ * simpler analog.
  *
  * This file is type-only (mirrors memory-temporal-store.ts / memory-entity-store.ts):
  * no zod, no @comis/memory import.
  */
 
 /**
- * The isolation boundary for every causal-edge operation (T-96-01, the ENT-03
+ * The isolation boundary for every causal-edge operation (the same entity-scope
  * pattern). Both the edge PRIMARY KEY and every read/write WHERE key on
  * `(tenantId, agentId)` — this is a load-bearing SECURITY scope in a multi-agent
  * DB, not a nicety: an edge written under one (tenant, agent) must NEVER be
@@ -50,7 +50,7 @@ export interface CausalScope {
 
 export interface MemoryCausalStore {
   /**
-   * WRITE PATH (EXTRACT-03). Record a directed cause→effect edge from
+   * WRITE PATH. Record a directed cause→effect edge from
    * `sourceMemoryId` to the memory whose stored content best matches
    * `effectText`, scoped to (tenant, agent). The adapter resolves `effectText`
    * to a stored memory id via the same scoped FTS the review loop uses (top-1
@@ -72,7 +72,7 @@ export interface MemoryCausalStore {
    * causal influence is bidirectionally relevant even though the edge is
    * directed), scoped to (tenant, agent), the seeds themselves excluded,
    * HYDRATED as `MemorySearchResult[]` ordered by edge confidence. Returns an
-   * empty array when there are no seeds or no edges (the ENT-04 no-op — the
+   * empty array when there are no seeds or no edges (the no-op case — the
    * causal lane is then empty and RRF ranking is unchanged). `cap` bounds the
    * returned row count.
    */

@@ -309,11 +309,11 @@ describe("MessagingEvents payload structure", () => {
     expect(received.totalSummariesCreated).toBe(4);
   });
 
-  // DAG-05 (type half): context:mode_switched carries the switch DIRECTION
+  // context:mode_switched carries the switch DIRECTION
   // (closed "pipeline" | "dag" union) plus the one-time import COST
   // (fullImport / importedCount / durationMs) + correlation ids. Mirrors
   // context:dag_compacted (identifiers + counts + durations only — NO message
-  // text). Emitted from the @comis/agent DAG reconciliation seam in Plan 04.
+  // text). Emitted from the @comis/agent DAG reconciliation seam.
   it("context:mode_switched payload shape: direction union + import cost", () => {
     const bus = new TypedEventBus();
     const handler = vi.fn();
@@ -380,7 +380,7 @@ describe("MessagingEvents payload structure", () => {
     bus.emit("message:sent", { channelId: "c1", messageId: "m1" });
   });
 
-  // DAG-05 closed-union guard (T-85-10): from/to are the literal
+  // Closed-union guard: from/to are the literal
   // "pipeline" | "dag" union — an arbitrary string is a COMPILE error, not a
   // runtime discriminator. These @ts-expect-error lines fail to compile if the
   // member is ever widened to `string`.

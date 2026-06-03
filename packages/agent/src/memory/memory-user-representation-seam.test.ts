@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests for the daemon-injected OFFLINE per-user representation build seam
- * (Phase 107 — USER-04, Track E1).
+ * Tests for the daemon-injected OFFLINE per-user representation build seam.
  *
  * createUserRepresentationSeam wraps the cheap cron model + the agent-internal
  * USER_REPRESENTATION_PROMPT/parser into the `build(sourceText)` seam that

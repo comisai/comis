@@ -871,7 +871,7 @@ export const rawThrowAllowlist: readonly RawThrowAllowlistEntry[] = [
   },
   {
     file: "packages/daemon/src/daemon.ts",
-    lineRanges: [[326, 326], [335, 335]], // INFORMATIONAL ONLY — see reason text. Post-Plan-59-03 actual throws are at daemon.ts: 432, 446, 888, 1318, 1327, 1914 (re-grep with `^[[:space:]]*throw `). lineRanges retained verbatim to avoid `allowlist-shrink.test.ts` tuple-key change (the shrink-test treats any lineRanges modification as an ADDITION). The raw-throw test (`test/architecture/raw-throw.test.ts`) filters on `{file}` alone, plus the file-level `// @allow-throw:` annotation at daemon.ts:2 — neither consults this `lineRanges` array.
+    lineRanges: [[326, 326], [335, 335]], // INFORMATIONAL ONLY — see reason text. The actual throws are now at daemon.ts: 432, 446, 888, 1318, 1327, 1914 (re-grep with `^[[:space:]]*throw `). lineRanges retained verbatim to avoid `allowlist-shrink.test.ts` tuple-key change (the shrink-test treats any lineRanges modification as an ADDITION). The raw-throw test (`test/architecture/raw-throw.test.ts`) filters on `{file}` alone, plus the file-level `// @allow-throw:` annotation at daemon.ts:2 — neither consults this `lineRanges` array.
     reason: "@allow-throw boundary: daemon bootstrap composition-root failures (Bootstrap + SecretRef resolution, secrets bootstrap, secret decryption, capability port resolution, hot-add post-shutdown guard); hard-fail at startup is the correct contract (startup hard-fail contract). stages/* was collapsed back into daemon.ts; the file-level `// @allow-throw: daemon bootstrap composition-root failures` annotation at daemon.ts:2 is the primary mechanism per test/architecture/raw-throw.test.ts. lineRanges retained pre-collapse (`[[326, 326], [335, 335]]`) to honor the shrink-only ratchet in allowlist-shrink.test.ts; actual post-collapse throw positions are noted in the inline comment on the lineRanges line above.",
     removedIn: "permanent",
   },
@@ -1921,10 +1921,10 @@ export const testNamingAllowlist: readonly TestNamingAllowlistEntry[] = [
   { file: "packages/core/src/config/schema-agent-model.test.ts", line: 54, kind: "it", text: "parses valid input", reason: "Captured(min-length=18); shrink in follow-on work"},
   { file: "packages/core/src/config/schema-agent-model.test.ts", line: 104, kind: "it", text: "allows empty object", reason: "Captured(min-length=19); shrink in follow-on work"},
   { file: "packages/core/src/config/schema-agent-model.test.ts", line: 240, kind: "it", text: "rejects zero values", reason: "Captured(min-length=19); shrink in follow-on work"},
-  { file: "packages/core/src/config/schema-agent.test.ts", line: 1404, kind: "it", text: "rejects empty id", reason: "Captured(min-length=16); shrink in follow-on work; line re-synced after Phase 95 rag.lanes + rag.lanes.temporal inserts, then Phase 96 rag.lanes.causal insert, then Phase 100 rag.lanes.graphSpread insert, then Phase 102 rag.mmr + rag.queryUnderstanding inserts, then Phase 112 rag.forget + rag.scoring.forgetAlpha inserts, then v2.9 increment-2 opt-out-defaults re-baseline comments"},
-  // NOTE: line numbers re-synced after Phase 85 Plan 01 flipped the version
+  { file: "packages/core/src/config/schema-agent.test.ts", line: 1404, kind: "it", text: "rejects empty id", reason: "Captured(min-length=16); shrink in follow-on work; line re-synced after the rag.lanes + rag.lanes.temporal inserts, then the rag.lanes.causal insert, then the rag.lanes.graphSpread insert, then the rag.mmr + rag.queryUnderstanding inserts, then the rag.forget + rag.scoring.forgetAlpha inserts, then the increment-2 opt-out-defaults re-baseline comments"},
+  // NOTE: line numbers re-synced after the change that flipped the version
   // default (pipeline -> dag) and inserted the opt-out parse test, shifting
-  // every it() below the `version` describe by +2 lines (85-05). The former
+  // every it() below the `version` describe by +2 lines. The former
   // `it("defaults to 'pipeline'")` (22 chars, passing) was renamed to a
   // descriptive >=20-char name in the test file rather than allowlisted, so
   // this list stays at 22 entries (shrink-only honored — no growth).

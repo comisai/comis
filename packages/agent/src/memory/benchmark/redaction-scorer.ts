@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure privacy/redaction LEAK-RATE scorer for the SUITE-05 benchmark.
+ * Pure privacy/redaction LEAK-RATE scorer for the redaction benchmark.
  *
  * THE METRIC: given one probe per planted-secret-bearing doc — each carrying a
  * BOOLEAN `leaked` flag (did a planted SYNTHETIC secret reach the recalled
@@ -16,7 +16,7 @@
  * `looksLikeSecretValue` / a direct substring check) over each recalled context
  * and feeds this scorer the per-probe boolean result.
  *
- * THE LOAD-BEARING SECURITY CONTRACT (threat T-99-05-01): this scorer takes
+ * THE LOAD-BEARING SECURITY CONTRACT: this scorer takes
  * BOOLEAN flags ONLY — never the planted-secret strings. The detector lives in
  * the harness; the scorer sees `{ leaked: boolean; invalid: boolean }`. There is
  * therefore NO field on the input or the output through which a planted secret
@@ -54,7 +54,7 @@ export interface RedactionProbe {
   readonly invalid: boolean;
 }
 
-/** The SUITE-05 privacy/redaction leak-rate result (the metric the harness reports). */
+/** The privacy/redaction leak-rate result (the metric the harness reports). */
 export interface RedactionScore {
   /**
    * Overall leak rate: leakedCount / validTotal * 100 (0 when no valid probes).
@@ -80,7 +80,7 @@ export interface RedactionScore {
  * (empty / all-invalid) maps to 0 (never NaN).
  *
  * SECURITY: the parameter type carries no secret string, so this function cannot
- * receive — and therefore cannot emit — a planted secret (T-99-05-01).
+ * receive — and therefore cannot emit — a planted secret.
  */
 export function scoreRedaction(probes: ReadonlyArray<RedactionProbe>): RedactionScore {
   let total = 0;

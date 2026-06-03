@@ -26,10 +26,10 @@ import { readStringParam, readNumberParam } from "../../../platform-tools/tool-h
 import { readFileWithMetadata } from "./shared/file-encoding.js";
 import { parseNotebook, renderNotebookCells } from "./shared/notebook-utils.js";
 
-// Activity label spec (LBL-01 / SPEC-§6.1 / Phase 78 WS-A). Descriptor name ==
+// Activity label spec. Descriptor name ==
 // emitted name for builtins (see read-tool.ts:361 → `name: "read"`). The
 // `{path}` placeholder is substituted from the allowlisted `detailKeys`
-// (SEC-03 enforcement: only `path` survives the template-engine filter).
+// (enforcement: only `path` survives the template-engine filter).
 registerActivityLabelSpec("read", {
   semanticPhase: "tool",
   label: "reading {path}",

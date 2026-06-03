@@ -24,7 +24,7 @@ import type {
   RelationshipEntry,
   RelationshipInput,
 } from "./relationship-store.js";
-// Public-surface RED proof (Task 3): the port types must be re-exported on the
+// Public-surface RED proof: the port types must be re-exported on the
 // @comis/core barrel (../index.js is the in-package equivalent of the bare
 // `@comis/core` specifier — index.ts `export *`s the curated exports/ports.js).
 // These imports fail to resolve (a tsc build error) until the export-wiring in
@@ -41,7 +41,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const portSrc = readFileSync(resolve(here, "./relationship-store.ts"), "utf8");
 
 /**
- * Phase 108 (SOCIAL-01) — the segregated `RelationshipStore` foundation.
+ * The segregated `RelationshipStore` foundation.
  *
  * The directional relationship port lives type-only in @comis/core (mirrors
  * user-representation-store.ts / triple-store.ts): the agent-side write path (the
@@ -51,7 +51,7 @@ const portSrc = readFileSync(resolve(here, "./relationship-store.ts"), "utf8");
  * READ (`read`) — the dual write+read shape (NOT a split read/write port). The row
  * carries the DIRECTIONAL (subjectUserId, aboutUserId) pair instead of one userId.
  */
-describe("RelationshipStore — type-only segregated directional port (SOCIAL-01)", () => {
+describe("RelationshipStore — type-only segregated directional port", () => {
   it("declares upsert/read on RelationshipStore and stays type-only (no zod, no @comis/memory)", () => {
     // Runtime RED proof: fails on pre-patch source where the file/method/type are absent.
     expect(portSrc, "RelationshipStore interface must be declared").toMatch(
@@ -66,7 +66,7 @@ describe("RelationshipStore — type-only segregated directional port (SOCIAL-01
     expect(portSrc, "RelationshipInput must carry aboutUserId").toMatch(
       /\baboutUserId\s*:\s*string/,
     );
-    // The NEW isolation axis: channelId on the scope (SOCIAL-02 privacy boundary).
+    // The NEW isolation axis: channelId on the scope (the privacy boundary).
     expect(portSrc, "RelationshipScope must carry channelId").toMatch(
       /\bchannelId\s*:\s*string/,
     );
@@ -174,7 +174,7 @@ describe("RelationshipStore — type-only segregated directional port (SOCIAL-01
 
     // The LLM has NO say in trust — the type only admits the floor values. An
     // `external` claim cannot be typed onto an input at the contract layer
-    // (defense-in-depth with the DB CHECK in Plan 02). `@ts-expect-error` FAILS
+    // (defense-in-depth with the DB CHECK in the adapter). `@ts-expect-error` FAILS
     // the build if the error is ABSENT — i.e. if `external` ever became assignable.
     // @ts-expect-error 'external' is excluded from RelationshipTrust at the type level
     const _bad: RelationshipInput = {
@@ -235,14 +235,14 @@ describe("RelationshipStore — type-only segregated directional port (SOCIAL-01
 });
 
 /**
- * Phase 108 (SOCIAL-01) — the public @comis/core surface re-export.
+ * The public @comis/core surface re-export.
  *
- * The offline directional builder (Plan 02), the LLM-free injection (Plans 03/04),
- * and the daemon wiring (Plan 05) import these TYPES from `@comis/core` (never
+ * The offline directional builder, the LLM-free injection, and the daemon wiring
+ * import these TYPES from `@comis/core` (never
  * @comis/memory). This block proves the port types are on the public barrel — the
  * same names, structurally identical to the relative-path types.
  */
-describe("RelationshipStore — public @comis/core re-export (SOCIAL-01)", () => {
+describe("RelationshipStore — public @comis/core re-export", () => {
   it("re-exports the port types on the public barrel, identical to the relative-path types", () => {
     // Structural identity: the public-barrel types equal the relative-path types.
     expectTypeOf<PublicRelationshipStore>().toEqualTypeOf<RelationshipStore>();

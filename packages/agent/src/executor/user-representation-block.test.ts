@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for buildUserRepresentationBlock — the PURE deterministic per-user-profile
- * formatter (USER-03, Phase 107). The read-path analog of buildTemporalGuidanceBlock
+ * formatter. The read-path analog of buildTemporalGuidanceBlock
  * (rag/temporal-guidance.ts): a pure function over UserRepresentationEntry[] that
  * returns a FIXED-shape system-prompt block string, or `null` when there is nothing
  * to inject (empty input → no block → the caller pushes nothing → byte-identity).

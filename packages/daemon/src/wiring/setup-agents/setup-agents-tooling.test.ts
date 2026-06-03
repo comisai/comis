@@ -149,7 +149,7 @@ describe("resolveAgentModel", () => {
 });
 
 describe("resolveEffectiveRerank", () => {
-  // Phase 92, RERANK-01/RERANK-02. The full 2x3 truth table for the pure
+  // The full 2x3 truth table for the pure
   // precedence fn: the explicit operator value (true | false | undefined-if-unset)
   // crossed with the model-present probe result. Explicit ALWAYS wins both
   // directions; unset (undefined) falls through to the presence signal.
@@ -160,8 +160,8 @@ describe("resolveEffectiveRerank", () => {
     [true, false, true, "explicit true wins even when model absent (opt-in download case)"],
     [false, true, false, "explicit false wins even when model present (operator force-off)"],
     [false, false, false, "explicit false wins when model absent"],
-    [undefined, true, true, "unset -> auto-on iff model present (RERANK-01)"],
-    [undefined, false, false, "unset + absent -> off (RERANK-02 fresh-install posture)"],
+    [undefined, true, true, "unset -> auto-on iff model present"],
+    [undefined, false, false, "unset + absent -> off (fresh-install posture)"],
   ] as const)(
     "resolveEffectiveRerank(%s, %s) === %s — %s",
     (explicit, present, expected) => {

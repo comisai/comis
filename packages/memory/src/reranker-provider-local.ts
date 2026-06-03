@@ -11,10 +11,10 @@
  * Uses dynamic import() so the module gracefully degrades if node-llama-cpp
  * native binaries are unavailable. A failed load (absent binary or invalid
  * model path) returns err() rather than throwing, so the recall orchestrator
- * (Plan 04) can fall back to fusion-ranked order (RANK-03). Reranking is
- * opt-in / default-OFF per the Phase-79 latency decision.
+ * can fall back to fusion-ranked order. Reranking is
+ * opt-in / default-OFF per the latency decision.
  *
- * Zero new runtime dependencies (RANK-02): node-llama-cpp@3.18.1 is already
+ * Zero new runtime dependencies: node-llama-cpp@3.18.1 is already
  * pinned in packages/memory/package.json (the embedding runtime).
  */
 
@@ -36,7 +36,7 @@ export interface LocalRerankerProviderOptions {
    * node-llama-cpp backend selectors passed through to getLlama.
    */
   gpu?: "auto" | "metal" | "cuda" | "vulkan" | "false";
-  /** Thread count for the ranking context. Bounds CPU contention (Phase-79: 4-8). */
+  /** Thread count for the ranking context. Bounds CPU contention (4-8). */
   threads?: number;
 }
 
@@ -80,7 +80,7 @@ export async function createLocalRerankerProvider(
 
     const model = await llama.loadModel({ modelPath });
     // SINGLETON ranking context — created once and reused across every rank()
-    // call. Per-call context creation would dominate latency (Phase-79
+    // call. Per-call context creation would dominate latency (the
     // cold-load ~433 ms is one-time).
     const context = await model.createRankingContext({
       threads: options.threads,

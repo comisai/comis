@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated end-to-end TRUST-FIRST CONTRADICTION-CORRECTNESS harness (SUITE-04) --
- * the benchmark the Phase-100 KG gate (KG-05 KU/TR/CR) consumes. It measures
+ * Env-gated end-to-end TRUST-FIRST CONTRADICTION-CORRECTNESS harness --
+ * the benchmark the KG gate consumes. It measures
  * whether a NEWER low-trust claim wrongly supersedes an OLDER high-trust fact at
  * recall time, exercising the SHIPPED trust-first behavior -- NOT new code:
  *   1. the recall TRUST-FILTER (`createMemoryRecall` step 5 hard-filters by
@@ -15,21 +15,21 @@
  *
  * THE INVARIANT: Comis is trust-FIRST, recency-SECOND -- a newer low-trust claim
  * NEVER wins. The CORRECT answer is the OLDER high-trust fact. The pure
- * {@link scoreContradiction} (Task 1) folds the per-pair verdicts into the
- * trust-first-correct RATE (the SUITE-04 metric); a HIGH rate is good, a rate near
- * 0 is the failure the Phase-100 KG work must fix. The harness asserts only
+ * {@link scoreContradiction} folds the per-pair verdicts into the
+ * trust-first-correct RATE; a HIGH rate is good, a rate near
+ * 0 is the failure the KG work must fix. The harness asserts only
  * STRUCTURAL invariants (`0 <= rate <= 100`, `validTotal === total - invalid`, the
  * secret-omission gate); the rate itself is a model-dependent MEASUREMENT.
  *
- * READ-TIME GUIDANCE BLOCK (CONTRA-01): the plan anticipated prepending
+ * READ-TIME GUIDANCE BLOCK: prepending
  * `buildTemporalGuidanceBlock(...)` (the "higher-TRUST wins even if older"
  * instruction the production injector adds). That symbol is NOT on the
  * `@comis/agent` barrel (`grep -n buildTemporalGuidanceBlock packages/agent/src/index.ts`
  * -> absent; it lives in `rag/temporal-guidance.ts`, used internally by
- * `executor/prompt-assembly.ts`). Per the plan's documented fallback, this harness
+ * `executor/prompt-assembly.ts`). This harness
  * therefore measures the trust-first property via the recall RANKING + trust
  * FILTER ONLY; the guidance-block property is unit-tested separately in
- * `rag/temporal-guidance.test.ts`. See 99-04-SUMMARY.md.
+ * `rag/temporal-guidance.test.ts`.
  *
  * ARCHITECTURE CUT (the single escape hatch): this *.bench.test.ts MAY import
  * @comis/memory (a devDependency) -- the agent->memory cut excludes the `.test.ts`
@@ -38,7 +38,7 @@
  * qa-*) import ONLY @comis/core types. Mirrors the blessed precedent
  * qa-judge-harness.bench.test.ts / poisoning-harness.bench.test.ts.
  *
- * DUPLICATED INGEST WIRING (intentional, RESEARCH Anti-Pattern): makeBenchConfig /
+ * DUPLICATED INGEST WIRING (intentional, a known anti-pattern): makeBenchConfig /
  * BENCH_SESSION_KEY / extractResponseText / resolveReportDir are DUPLICATED from
  * the QA/poisoning harnesses rather than factored into a shared non-`.test.ts`
  * helper -- a shared helper importing @comis/memory WOULD trip the cut.
@@ -51,23 +51,23 @@
  *   `it` additionally nests behind `COMIS_BENCH_ANSWER_*` + `COMIS_BENCH_JUDGE_*`.
  *   Judge/answer model ids MUST be pi-ai-registry ids (gpt-4o / gpt-4.1;
  *   `claude-opus-4-8` entered the pi-ai registry in 0.78.0; under 0.75.3 it graded
- *   all-invalid as a same-provider answer+judge pair on one Anthropic key, BUG-004) -- an unresolved
+ *   all-invalid as a same-provider answer+judge pair on one Anthropic key) -- an unresolved
  *   id makes every probe `invalid` (excluded), never a silent wrong number. The
  *   no-LLM structural witness lives inside the gated describe (it imports
  *   @comis/memory); it proves the SHIPPED trust filter without a provider.
  *
  * SECURITY:
  * - Bench store is a fresh `mkdtempSync` tmp DB (NEVER ~/.comis), `tenantId:
- *   "default"` / `agentId:"bench"` -- isolated from any live agent (T-99-04-01).
+ *   "default"` / `agentId:"bench"` -- isolated from any live agent.
  *   Closed per pair.
  * - The contradiction fixture content is ingested as memory CONTENT only, never
  *   `eval`'d; the judge rubric is placed FIRST (buildJudgePrompt) so injected
- *   fixture content cannot masquerade as a judge instruction (T-99-04-04, accept --
+ *   fixture content cannot masquerade as a judge instruction (accepted --
  *   the judge is advisory measurement only).
  * - The report is built via buildSuiteReport (structural secret omission) and
  *   written via the confined `writeRegularFile` (O_NOFOLLOW + EXCL + confinement,
  *   outside Pino's redaction net); the gated body asserts the serialized report
- *   carries none of `/apiKey|sk-|Bearer/` (T-99-04-02). The harness `console.log`s
+ *   carries none of `/apiKey|sk-|Bearer/`. The harness `console.log`s
  *   ONLY the rate, never a key or a model answer.
  *
  * @module
@@ -86,11 +86,11 @@ import { createMemoryRecall, type MemoryRecallDeps } from "@comis/agent";
 import { completeSimple, getModel } from "@earendil-works/pi-ai";
 // VALUE obs import (fine in a .test.ts) -- the confined report writer.
 import { writeRegularFile } from "@comis/observability";
-// RELATIVE Wave-1 (99-01) constructed contradiction pairs -- no external corpus.
+// RELATIVE constructed contradiction pairs -- no external corpus.
 import { buildContradictionPairs } from "./suite-scenario.js";
-// RELATIVE Wave-1 (99-01) secret-free per-tier report builder.
+// RELATIVE secret-free per-tier report builder.
 import { buildSuiteReport } from "./suite-report.js";
-// RELATIVE Task-1 (this plan) pure trust-first-correctness scorer.
+// RELATIVE pure trust-first-correctness scorer.
 import { scoreContradiction } from "./contradiction-scorer.js";
 // RELATIVE existing pure logic (the answer/judge split + verdict parse + accuracy).
 import { ANSWER_SYSTEM_PROMPT, formatAnswerContext, buildAnswerPrompt } from "./qa-answer-prompt.js";
@@ -122,7 +122,7 @@ const JUDGE_PROVIDER = process.env.COMIS_BENCH_JUDGE_PROVIDER;
 const JUDGE_MODEL = process.env.COMIS_BENCH_JUDGE_MODEL;
 const JUDGE_API_KEY = process.env.COMIS_BENCH_JUDGE_API_KEY;
 
-/** Fixed epoch (matches the Phase-88/89/99 siblings' neutral clock). */
+/** Fixed epoch (matches the sibling harnesses' neutral clock). */
 const BENCH_NOW = 1_700_000_000_000;
 /** Per-LLM-call wall-clock deadline (a standard timer is allowed in a .test.ts). */
 const LLM_TIMEOUT_MS = 120_000;
@@ -130,7 +130,7 @@ const LLM_TIMEOUT_MS = 120_000;
 const HARNESS_VERSION = "phase-99-v1";
 
 /**
- * The bench store config (mirrors the Phase-88/89/99 siblings). `as MemoryConfig`:
+ * The bench store config (mirrors the sibling harnesses). `as MemoryConfig`:
  * the adapter reads the fields it needs; `dims` = the probed embedding dimensions
  * (or 4 for the FTS-only honest fallback).
  */
@@ -178,7 +178,7 @@ function extractResponseText(response: { content?: unknown[] }): string {
 /**
  * Resolve the report output directory (DUPLICATED from the QA harness). The write
  * itself uses `writeRegularFile({ confinedBaseDir })`, so the O_NOFOLLOW + EXCL +
- * confinement guard applies regardless (T-99-04-02).
+ * confinement guard applies regardless.
  */
 function resolveReportDir(fallbackTmpDir: string): string {
   if (COMIS_BENCH_DATA !== undefined && COMIS_BENCH_DATA.length > 0) {
@@ -215,7 +215,7 @@ describe.skipIf(!COMIS_BENCH)("trust-first contradiction correctness (gated)", (
   const haveJudge = !!JUDGE_PROVIDER && !!JUDGE_MODEL && !!JUDGE_API_KEY;
 
   beforeAll(async () => {
-    // 1. PAIRS -- constructed (Wave 1); no external corpus, no download. Each pair
+    // 1. PAIRS -- constructed; no external corpus, no download. Each pair
     //    has an OLDER high-trust fact + a NEWER low-trust contradicting claim; the
     //    CORRECT answer is the OLDER high-trust fact.
     const pairs = buildContradictionPairs();
@@ -333,15 +333,15 @@ describe.skipIf(!COMIS_BENCH)("trust-first contradiction correctness (gated)", (
     await rerankerPort?.dispose?.();
     // 2h hook timeout: ingest + the LLM-free recall for every pair runs HERE (the it
     // body only grades). The 2-min default trips on a non-trivial set before any
-    // grading begins (BUG-001) -- must match the raised it-body budget.
+    // grading begins -- must match the raised it-body budget.
   }, 7_200_000);
 
   it.skipIf(!haveAnswer || !haveJudge)(
     "measures trust-first contradiction correctness (older high-trust fact wins)",
     async () => {
       // Resolve BOTH model lanes up front (the getModel guard). The judge/answer ids
-      // MUST be pi-ai-registry ids (gpt-4o / gpt-4.1; claude-opus-4-8 is now a registry id as of pi 0.78.0 but graded all-invalid as a same-provider judge,
-      // BUG-004) -- an unresolved id makes every probe invalid (excluded), never a
+      // MUST be pi-ai-registry ids (gpt-4o / gpt-4.1; claude-opus-4-8 is now a registry id as of pi 0.78.0 but graded all-invalid as a same-provider judge)
+      // -- an unresolved id makes every probe invalid (excluded), never a
       // silent wrong number.
       let answerModel: ReturnType<typeof getModel> | undefined;
       let judgeModel: ReturnType<typeof getModel> | undefined;
@@ -424,7 +424,7 @@ describe.skipIf(!COMIS_BENCH)("trust-first contradiction correctness (gated)", (
         );
       }
 
-      // SCORE -- the trust-first-correct rate (the SUITE-04 metric Phase 100 reads);
+      // SCORE -- the trust-first-correct rate (the metric the KG gate reads);
       // the per-ability accuracy fold feeds the report row.
       const score = scoreContradiction(verdicts);
       const acc = aggregateAccuracy(verdicts);
@@ -441,7 +441,7 @@ describe.skipIf(!COMIS_BENCH)("trust-first contradiction correctness (gated)", (
       );
       reportJson = JSON.stringify(report, null, 2);
 
-      // WRITE via the CONFINED writer (T-99-04-02) -- O_NOFOLLOW + EXCL + confinement.
+      // WRITE via the CONFINED writer -- O_NOFOLLOW + EXCL + confinement.
       const writeResult = writeRegularFile({
         path: join(reportDir, "trust-contradiction-report.json"),
         content: reportJson,
@@ -451,7 +451,7 @@ describe.skipIf(!COMIS_BENCH)("trust-first contradiction correctness (gated)", (
 
       // Operator-visible number -- ONLY the rate, never a key or a model answer. A
       // HIGH trust-first-correct rate is good (the older high-trust fact won); a rate
-      // near 0 is the failure the Phase-100 KG work must fix.
+      // near 0 is the failure the KG work must fix.
       // eslint-disable-next-line no-console -- gated bench harness reports its number (this is a .test.ts, not packages/cli)
       console.log("BENCH trust-first contradiction", JSON.stringify(score));
       // Trust-evidence (counts only -- no secret, no content): the ranked trust bands
@@ -468,11 +468,11 @@ describe.skipIf(!COMIS_BENCH)("trust-first contradiction correctness (gated)", (
       expect(score.trustFirstCorrectRate).toBeLessThanOrEqual(100);
       expect(score.validTotal).toBe(score.total - score.invalid);
 
-      // The report must carry NO secret substring (T-99-04-02) -- the ONLY allowed
+      // The report must carry NO secret substring -- the ONLY allowed
       // occurrence of these tokens in this file is inside this negation.
       expect(reportJson).not.toMatch(/apiKey|sk-|Bearer/);
     },
-    // 2h `it` budget (BUG-001) -- the serial answer+judge loop can exceed the prior
+    // 2h `it` budget -- the serial answer+judge loop can exceed the prior
     // ceiling; the per-call LLM_TIMEOUT_MS AbortController bounds any single hung call.
     7_200_000,
   );

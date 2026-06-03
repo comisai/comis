@@ -3,13 +3,13 @@
  * Shared rendering helpers for the channel-agnostic strategies.
  *
  * The strategies paint from the redacted `ActivityEvent` hints only — never from
- * raw params (the frame is already projected + redacted, 70-05/70-06;
- * T-70-07-04). `eventLabel` picks the best available short label; `failureLabel`
+ * raw params (the frame is already projected + redacted upstream).
+ * `eventLabel` picks the best available short label; `failureLabel`
  * formats the closing failure form from the `TurnOutcome` errorKind (the kept
  * diagnostic, §7.3). Pure functions: no I/O, no logger.
  *
- * Subagent parent line (APV-03): a `kind:"subagent"` event's `defaultLabel`
- * already carries the `🤖` marker the projection set (activity-stream T-73-07),
+ * Subagent parent line: a `kind:"subagent"` event's `defaultLabel`
+ * already carries the `🤖` marker the projection set (activity-stream),
  * so `renderFrameText`/`eventLabel` paint it verbatim — Discord/Slack key the
  * thread shell off that marker in the sent text. `subagentLine` lets a
  * plain-text, depth-aware renderer (IRC, §18.3) prepend a `↳ ` depth prefix;
@@ -29,8 +29,8 @@ import { renderPlan } from "../plan-renderer.js";
  * Only `success`/`failure` are painted on closing lines (`subagent`/`running`
  * are not), so a local `Pick` keeps the intent tight and avoids a runtime
  * dependency on the `default` theme bundle from the channels tier. These two
- * literals MUST mirror the `default` theme's markers (75-01) so a marker-less
- * call stays byte-identical to the pre-75-06 cross/check closing lines.
+ * literals MUST mirror the `default` theme's markers so a marker-less
+ * call stays byte-identical to the historical cross/check closing lines.
  */
 const DEFAULT_MARKERS: Pick<ActivityStatusMarkers, "success" | "failure"> = {
   success: "✓",
@@ -40,10 +40,10 @@ const DEFAULT_MARKERS: Pick<ActivityStatusMarkers, "success" | "failure"> = {
 /**
  * Default running glyph mirrors {@link DEFAULT_MARKERS}'s pattern (parity with
  * the failure branch). Kept here — not exported — so a markerless `eventLabel`
- * call stays byte-identical to the `default` theme's `🔧` (75-01).
+ * call stays byte-identical to the `default` theme's `🔧`.
  *
  * Pre-quick-260528-nsv: the running marker was baked into START events at the
- * activity-stream emit site only (Phase 78-02, by design per Pitfall 7).
+ * activity-stream emit site only (by design per Pitfall 7).
  * Post-quick-260528-mch: coalesce.ts Step 1.5 prefers `phase:"end"` events (so
  * failed end events get the ❌ prefix via Bug C). Slow-completed end events
  * (>=1500ms, exempt from isDroppableFastSuccess) survive Step 1 AND are kept
@@ -69,7 +69,7 @@ const DEFAULT_RUNNING_MARKER = "🔧";
  *
  * Match the `"${marker} "` prefix INCLUDING the trailing space — the running
  * marker is baked space-delimited at the activity-stream START emit
- * (`"🔧 …"`, Phase 78-02); a defaultLabel that happens to start with the same
+ * (`"🔧 …"`); a defaultLabel that happens to start with the same
  * glyph glued to text (no space) is NOT already-marked and should still get
  * the prefix.
  */
@@ -102,14 +102,14 @@ function withRunningMarker(base: string, runningMarker: string): string {
  *        misrepresent them as work-in-progress.
  *   3. Otherwise — prepend the themed running marker (default: 🔧, ascii: [..])
  *      via {@link withRunningMarker}. Idempotent on labels that already carry
- *      the same marker (Phase 78-02 baked-in START events pass through
+ *      the same marker (baked-in START events pass through
  *      unchanged). Fixes Bug 2 from quick-260528-nsv: kept slow-completed end
  *      events (>=1500ms) arrived bare; now they get the per-step glyph for
  *      symmetry with fast-completed calls.
  *
  * Default-theme parity: markerless call falls back to {@link DEFAULT_MARKERS}
  * for failure and {@link DEFAULT_RUNNING_MARKER} for running, byte-identical
- * to `failureLabel`'s / the `default` theme's markers (75-01).
+ * to `failureLabel`'s / the `default` theme's markers.
  */
 export function eventLabel(event: ActivityEvent, markers?: ActivityStatusMarkers): string {
   const base = event.defaultLabel ?? event.toolName ?? event.kind;
@@ -125,10 +125,10 @@ export function eventLabel(event: ActivityEvent, markers?: ActivityStatusMarkers
 /**
  * Render a frame to text: SPEC §8.3 plan-state header (when SEP is active) +
  * SPEC §8.5 bounded `(step N of M)` counter + a `───` separator + one status
- * line per visible event. WS-E Phase 78 / SPEC-§9 appends `×N` (default) /
+ * line per visible event. SPEC-§9 appends `×N` (default) /
  * `xN` (ascii) to any visible event that represents a coalesced surrogate
- * (`frame.groupedActivityIds[event.activityId].length > 1`). WS-F Phase 78 /
- * SPEC-§8.5 (second half) appends `(running N s)` as an elapsed-time fallback
+ * (`frame.groupedActivityIds[event.activityId].length > 1`). SPEC-§8.5 (second
+ * half) appends `(running N s)` as an elapsed-time fallback
  * when no plan is active AND the caller supplies `elapsedMs`.
  *
  * The 3 in-scope strategies (EditPlace, AppendOnly, DeleteAndRepost) capture
@@ -161,7 +161,7 @@ export function renderFrameText(
     lines.push("───");
   }
 
-  // WS-E Phase 78 / SPEC-§9: per-event line + coalescing surrogate count.
+  // SPEC-§9: per-event line + coalescing surrogate count.
   // `frame.groupedActivityIds[event.activityId]` is the constituents array;
   // a length > 1 marks this event as a coalesced surrogate (the head id is
   // the surrogate's activityId, the array carries the underlying ids the
@@ -172,7 +172,7 @@ export function renderFrameText(
   //
   // The contract declares `groupedActivityIds` as a non-optional
   // `Readonly<Record<string, readonly string[]>>` (channel-activity-renderer.ts:40),
-  // but some pre-Phase-78 test fixtures construct frames via `as` casts that
+  // but some older test fixtures construct frames via `as` casts that
   // omit it. Guarding against `undefined` here keeps those frames rendering
   // bare (no ×N decoration) — the production projection always supplies the
   // map, so this only protects the pre-existing test surface.
@@ -197,7 +197,7 @@ export function renderFrameText(
     }
   }
 
-  // WS-F Phase 78 / SPEC-§8.5 (second half): elapsed-time fallback when no
+  // SPEC-§8.5 (second half): elapsed-time fallback when no
   // SEP plan is active. Fires when `elapsedMs` is supplied (`!== undefined`,
   // so `elapsedMs === 0` legitimately produces `(running 0 s)` on the first
   // apply()) AND `frame.planSnapshot === undefined` (the plan header above
@@ -224,7 +224,7 @@ export function subagentLine(event: ActivityEvent, opts?: { depthPrefix?: string
 }
 
 /**
- * Append a plain-text approval prompt under the frame text (APV-10, §6.4.6).
+ * Append a plain-text approval prompt under the frame text (§6.4.6).
  *
  * The button-less channels (WhatsApp / Signal / iMessage) paint the redacted frame
  * label and, when the frame carries a `kind:"approval"` event, the prompt on the
@@ -241,8 +241,8 @@ export function appendPrompt(text: string, prompt?: string): string {
 /**
  * Closing failure marker carrying the (closed-union) errorKind; themed when
  * markers are supplied. With no markers (or the default theme's markers) the
- * output is byte-identical to the pre-75-06 cross-prefixed `"<marker> {errorKind}"`;
- * the ascii theme yields `"[ERR] {errorKind}"` with no emoji (UX-01). Interpolates
+ * output is byte-identical to the historical cross-prefixed `"<marker> {errorKind}"`;
+ * the ascii theme yields `"[ERR] {errorKind}"` with no emoji. Interpolates
  * ONLY the closed-union `errorKind` — never raw outcome internals.
  */
 export function failureLabel(
@@ -255,11 +255,11 @@ export function failureLabel(
 /**
  * Closing success marker for the windowed-edit success line (§7.3); themed when
  * markers are supplied. With no markers (or the default theme's markers) the
- * output is byte-identical to the pre-75-06 check-prefixed `"<marker> done"`; the
- * ascii theme yields `"[OK] done"` with no emoji (UX-01). The success line carries
+ * output is byte-identical to the historical check-prefixed `"<marker> done"`; the
+ * ascii theme yields `"[OK] done"` with no emoji. The success line carries
  * no errorKind, so `successLabel` takes no outcome.
  *
- * WS-F Phase 78 / SPEC-§8.6 — the optional 2nd arg `recoveredFailures` (the
+ * SPEC-§8.6 — the optional 2nd arg `recoveredFailures` (the
  * count from `TurnOutcome.success_with_recovered_failures.recoveredFailures.length`)
  * appends `(with N recovered failure[s])` after the base label when N > 0,
  * with English singular/plural agreement. 0 or undefined → base label only.

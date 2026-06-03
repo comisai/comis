@@ -7,7 +7,7 @@
  * Buffers the request body up to MAX_BODY_BYTES; returns null on cap exceed
  * (caller must 413 before opening upstream socket).
  *
- * The awsSigV4 finalizer is a tested no-op for Phase 4; signing is FINAL-02.
+ * The awsSigV4 finalizer is currently a tested no-op; real signing is deferred.
  *
  * Security invariants:
  *   - Body bytes are NEVER passed to the logger (AGENTS.md §2.2).
@@ -43,7 +43,7 @@ export interface FinalizerResult {
  * bodyPrefix is the latin1-encoded tail string from readTunnelHeaders —
  * convert via Buffer.from(bodyPrefix, "latin1") before accumulation.
  * innerSocket was paused inside readTunnelHeaders; this function resumes it
- * AFTER attaching all listeners to preserve ordering (CR-01 parallel).
+ * AFTER attaching all listeners to preserve ordering.
  *
  * contentLength: when provided (from the inner request Content-Length header),
  * buffering stops as soon as total bytes >= contentLength, without waiting for
@@ -60,8 +60,8 @@ export interface FinalizerResult {
  * chunked with no Content-Length, bufferBody is called with
  * contentLength = undefined. It then relies on the cap + timeout to settle.
  * The raw chunk-framing bytes are buffered verbatim (not decoded). For the
- * Phase 4 awsSigV4 no-op this is transparent; a real signing finalizer
- * (FINAL-02) must decode chunked framing before signing. To avoid this,
+ * current awsSigV4 no-op this is transparent; a real signing finalizer
+ * must decode chunked framing before signing. To avoid this,
  * mitm-broker.ts rejects chunked requests with 411 Length Required when a
  * finalizer is configured.
  *
@@ -169,9 +169,9 @@ export function bufferBody(
 // ── runAwsSigV4Finalizer ──────────────────────────────────────────────────────
 
 /**
- * AWS SigV4 finalizer — Phase 4 no-op.
+ * AWS SigV4 finalizer — currently a no-op.
  *
- * Signing is deferred to FINAL-02. Logs the deferral at debug level so
+ * Signing is deferred. Logs the deferral at debug level so
  * the skip is observable in operator logs (not silent).
  * Returns body and headers unchanged.
  */

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Tests for `preReadStorageMode` — the daemon-boot pre-read of
- * `security.storage` from YAML config files (REQ-17).
+ * `security.storage` from YAML config files.
  *
  * The daemon needs this answer BEFORE `writeMasterKeyIfAbsent` so that
  * file/env mode first boots do not create key material. The pre-read is
@@ -21,7 +21,7 @@ import { resolve } from "node:path";
 
 import { preReadStorageMode } from "./pre-read-storage-mode.js";
 
-describe("preReadStorageMode (REQ-17)", () => {
+describe("preReadStorageMode", () => {
   let tmpDir: string;
 
   beforeEach(() => {

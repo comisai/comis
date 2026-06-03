@@ -615,7 +615,7 @@ The credential broker intercepts HTTPS requests from driven-CLI spawns, injects 
   <Accordion title="Broker returns 501 (WebSocket upgrade)">
     **What happened:** A WebSocket upgrade from the credentialed sandbox returned 501 with `broker:denied` reason `ws_upgrade_not_supported`. This is an intentional fail-closed guard — WebSocket credential injection is not supported in this release. The error is returned explicitly rather than hanging silently.
 
-    **Resolution:** Use HTTPS (not WebSocket) for API calls that require credential injection. WS credential injection is on the roadmap (WS-01).
+    **Resolution:** Use HTTPS (not WebSocket) for API calls that require credential injection. WS credential injection is on the roadmap.
   </Accordion>
 
   <Accordion title="Tracing a full broker request lifecycle">

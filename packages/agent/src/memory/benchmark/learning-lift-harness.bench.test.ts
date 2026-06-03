@@ -1,41 +1,41 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Env-gated end-to-end RECALL-OUTCOME-LEARNING-LIFT harness (SUITE-03 + LEARN-04)
+ * Env-gated end-to-end RECALL-OUTCOME-LEARNING-LIFT harness
  * — measures a SHIPPED differentiator: recall whose RANKING WEIGHTS LEARN from
  * outcomes. It drives Comis's SHIPPED learning-to-rank loop over N episodes of the
  * SAME query and measures whether the gold memory's rank LIFTS as the OFFLINE
  * BANDIT (`runOnlineTuning` → `computeTunedAlphas`) climbs the tuned alpha vector
  * BETWEEN episodes:
  *   1. `createSqliteMemoryUsefulnessStore({ db })` — the durable per-memory used/
- *      ignored counts (FEED-02), the bandit's INPUT signal,
- *   2. `runOnlineTuning` (111-04) — the LLM-FREE, DETERMINISTIC offline bandit:
+ *      ignored counts, the bandit's INPUT signal,
+ *   2. `runOnlineTuning` — the LLM-FREE, DETERMINISTIC offline bandit:
  *      read the accrued FEED → aggregate the bounded used-RATE → the pure clamped
- *      `computeTunedAlphas` step (111-01) → `upsert` the climbed 4-vector via the
- *      `TunedAlphaStore` port (the SqliteTunedAlphaStore adapter, 111-02), and
+ *      `computeTunedAlphas` step → `upsert` the climbed 4-vector via the
+ *      `TunedAlphaStore` port (the SqliteTunedAlphaStore adapter), and
  *   3. `createMemoryRecall` re-built EACH episode with `scoring: { ...tunedVector,
- *      trustAlpha: <config> }` (the 111-03 overlay shape) — so the NEXT episode's
+ *      trustAlpha: <config> }` (the overlay shape) — so the NEXT episode's
  *      ranking carries the CLIMBED vector. The lift is BANDIT-DRIVEN (the tuned
  *      alpha vector itself learns), not the fixed-alpha usefulness factor alone.
  *
- * THE NUMBER (LEARN-04, RQ8): `scoreLearningLift` (pure) folds the gold doc's
+ * THE NUMBER: `scoreLearningLift` (pure) folds the gold doc's
  * per-episode 0-based rank into `rankLift = firstRank − lastRank`. A POSITIVE lift
  * is the directional learning result the bandit produces over a demotable-then-
  * promotable gold doc. The harness asserts only STRUCTURAL invariants (episode/rank
  * counts, the secret-omission gate); the hard lift sign is signal-dependent on FTS
  * scoring of the constructed docs, so it is LOGGED + recorded (MEASURED), NOT
- * asserted (RESEARCH Anti-Pattern: never a machine-dependent positive floor). A1 is
- * resolved AT RUNTIME by recording the actual sign (MEASURED positive / MEASURED-FLAT).
+ * asserted (RESEARCH Anti-Pattern: never a machine-dependent positive floor). The
+ * lift sign is resolved AT RUNTIME by recording the actual sign (MEASURED positive / MEASURED-FLAT).
  *
  * FOUR keyless claims, all at $0 (no answer/judge LLM — it measures RANK, not QA):
  *   - CLAIM 1 (MEASURED bandit rank-lift): the gold's rank over episodes as the
  *     tuned vector climbs (the bandit-driven lift; structural assertions only).
- *   - CLAIM 2 (trust-frozen under tuning — the OD2 gate): the apply-site trustAlpha
+ *   - CLAIM 2 (trust-frozen under tuning): the apply-site trustAlpha
  *     is byte-identical to config across ALL episodes (the bandit never touches it)
  *     AND the trust filter still DROPS an `external`-trust doc (the trust filter is
  *     intact under tuning — score.test.ts:101 analog).
  *   - CLAIM 3 (clamp holds): a pathological FEED aggregate (±1e9 gradients) through
  *     the SHIPPED `computeTunedAlphas` keeps every output ∈ [0,1] (no runaway / no
- *     boost-inversion that could overturn trust-first — the 111-01 RED at the bench).
+ *     boost-inversion that could overturn trust-first — the clamp RED at the bench).
  *   - CLAIM 4 (default-OFF byte-identity): a recall with the BASELINE config alphas
  *     and NO tuned store yields the SAME episode-1 gold-rank ordering as the tuned
  *     path's episode-1 (before any bandit update) — tuning OFF ⇒ recall unchanged.
@@ -68,14 +68,14 @@
  *
  * SECURITY:
  * - Bench stores are fresh `mkdtempSync` tmp DBs (NEVER ~/.comis), `tenantId:
- *   "default"` / `agentId:"bench"` — isolated from any live agent (T-99-03-01 /
- *   T-111-16). Closed via `adapter.close()`.
+ *   "default"` / `agentId:"bench"` — isolated from any live agent.
+ *   Closed via `adapter.close()`.
  * - The FEED + tuned-alpha stores are content-free (counts + numeric alphas only),
- *   so no body can leak (T-99-03-02 / T-111-16); each report is built via
+ *   so no body can leak; each report is built via
  *   buildSuiteReport (structural secret omission) + written via the confined
  *   `writeRegularFile`, and each gated body asserts the serialized report carries
  *   none of `/apiKey|sk-|Bearer/`.
- * - Fixture content is ingested as memory CONTENT only, never `eval`'d (T-99-03-03).
+ * - Fixture content is ingested as memory CONTENT only, never `eval`'d.
  *
  * @module
  */
@@ -93,17 +93,17 @@ import {
 import { createMemoryRecall, type MemoryRecallDeps } from "@comis/agent";
 // VALUE obs import (fine in a .test.ts) — the confined report writer.
 import { writeRegularFile } from "@comis/observability";
-// RELATIVE Wave-1 (99-01) constructed learning fixture — no external corpus.
+// RELATIVE constructed learning fixture — no external corpus.
 import { buildLearningEpisodes } from "./suite-scenario.js";
-// RELATIVE Wave-1 (99-01) secret-free per-tier report builder.
+// RELATIVE secret-free per-tier report builder.
 import { buildSuiteReport } from "./suite-report.js";
-// RELATIVE Task-1 (this plan) pure first→last rank-lift scorer.
+// RELATIVE pure first→last rank-lift scorer.
 import { scoreLearningLift } from "./learning-lift-scorer.js";
-// RELATIVE (111-01) the SHIPPED pure clamped deterministic bandit step + its
+// RELATIVE the SHIPPED pure clamped deterministic bandit step + its
 // gradient shape — agent-internal pure math (imports @comis/core types only; the
 // cut holds). Claim 3 drives this directly with a pathological aggregate.
 import { computeTunedAlphas, type FeedAggregate } from "../../rag/tuned-alpha-update.js";
-// RELATIVE (111-04) the SHIPPED LLM-free offline bandit job — the WRITE path the
+// RELATIVE the SHIPPED LLM-free offline bandit job — the WRITE path the
 // episode loop runs BETWEEN episodes (read FEED → aggregate → computeTunedAlphas →
 // upsert). Agent-internal; imports @comis/core types only.
 import {
@@ -140,7 +140,7 @@ const HARNESS_VERSION = "phase-111-05-v1";
  * per-id used/ignored attribution to learn from), so across episodes the bandit
  * climbs `usefulnessAlpha` while the others stay 0. The fifth (trust) weight is
  * deliberately NOT in this 4-tuple — it is sourced ONLY from config at the apply
- * site (the OD2 ship-gate, 111-03), recorded as TRUST_ALPHA below.
+ * site (the trust ship-gate), recorded as TRUST_ALPHA below.
  */
 const BASELINE_TUNED = {
   recencyAlpha: 0,
@@ -153,7 +153,7 @@ const BASELINE_TUNED = {
  * The FROZEN trust boost weight — sourced from static `rag.scoring.trustAlpha`
  * (shipped default 0.1) and passed into the recall `scoring` arg UNCHANGED every
  * episode. The bandit NEVER touches it (claim 2). Held as a separate const (not on
- * the tuned 4-tuple) to mirror the 111-03 overlay: `buildScoringAlphas` always
+ * the tuned 4-tuple) to mirror the overlay: `buildScoringAlphas` always
  * sources `trustAlpha` from config, never from the tuned vector.
  */
 const TRUST_ALPHA = 0.1;
@@ -184,7 +184,7 @@ const BENCH_SESSION_KEY: SessionKey = {
 /**
  * Resolve the report output directory (DUPLICATED from the QA/retrieval harness).
  * The write itself uses `writeRegularFile({ confinedBaseDir })`, so the O_NOFOLLOW +
- * EXCL + confinement guard applies regardless (T-99-03-02).
+ * EXCL + confinement guard applies regardless.
  */
 function resolveReportDir(fallbackTmpDir: string): string {
   if (COMIS_BENCH_DATA !== undefined && COMIS_BENCH_DATA.length > 0) {
@@ -195,7 +195,7 @@ function resolveReportDir(fallbackTmpDir: string): string {
 
 /**
  * Build the live recall pipeline for ONE episode with the supplied tuned vector
- * overlaid onto the recall `scoring` arg (the 111-03 overlay SHAPE: the 4 tuned
+ * overlaid onto the recall `scoring` arg (the overlay SHAPE: the 4 tuned
  * alphas + the FROZEN config `trustAlpha`). All other lanes are off (FTS-only honest
  * fallback unless a llama model is present) so the rank delta reflects the climbing
  * usefulness weight alone. `feedback.enabled: true` + the usefulnessStore fold the
@@ -222,7 +222,7 @@ function buildEpisodeRecall(
       minScore: 0,
       includeTrustLevels,
       rerank: { enabled: !!rerankerPort, maxCandidates: 40, minResults: 1, timeoutMs: 800 },
-      // The 111-03 overlay shape: the 4 tuned alphas + the FROZEN config trustAlpha.
+      // The overlay shape: the 4 tuned alphas + the FROZEN config trustAlpha.
       scoring: {
         recencyAlpha: tuned.recencyAlpha,
         temporalAlpha: tuned.temporalAlpha,
@@ -264,7 +264,7 @@ describe.skipIf(!COMIS_BENCH)("recall-outcome learning lift — bandit-driven (g
   let tunedEpisode1Rank: number | undefined;
 
   beforeAll(async () => {
-    // 1. SCENARIO — constructed (Wave 1): a fixed query, N episodes, known goldDocIndex.
+    // 1. SCENARIO — constructed: a fixed query, N episodes, known goldDocIndex.
     const scenario = buildLearningEpisodes();
     expect(scenario.episodes, "learning episodes").toBeGreaterThanOrEqual(2);
     episodeCount = scenario.episodes;
@@ -323,7 +323,7 @@ describe.skipIf(!COMIS_BENCH)("recall-outcome learning lift — bandit-driven (g
     }
 
     // 4. The SHIPPED stores over the adapter's shared db handle: the FEED store
-    //    (FEED-02, the bandit's INPUT) and the tuned-alpha store (111-02, the
+    //    (the bandit's INPUT) and the tuned-alpha store (the
     //    climbed vector's persistence). Mirror the usefulnessStore construction.
     const usefulnessStore = createSqliteMemoryUsefulnessStore({ db: adapter.getDb() });
     const tunedAlphaStore = createSqliteTunedAlphaStore({ db: adapter.getDb() });
@@ -359,7 +359,7 @@ describe.skipIf(!COMIS_BENCH)("recall-outcome learning lift — bandit-driven (g
 
       // The FEED write — ONLY the gold is attributed USED (the rest are recalled-but-not-
       // attributed → neutral, contributing 0 to the aggregate). This is the
-      // "repeatedly-attributed gold memory" signal (LEARN-04): the FEED aggregate is
+      // "repeatedly-attributed gold memory" signal: the FEED aggregate is
       // net-POSITIVE, so the bandit climbs `usefulnessAlpha` (a net used-rate nudges it UP,
       // bounded by STEP*0.5). The gold's used-rate (1.0) then scales its boosted score above
       // the unattributed distractors' neutral factor each episode.
@@ -410,7 +410,7 @@ describe.skipIf(!COMIS_BENCH)("recall-outcome learning lift — bandit-driven (g
       tunedUsefulnessPerEpisode.push(tuned.usefulnessAlpha);
     }
 
-    // 6. CLAIM 2b — the trust FILTER is intact UNDER TUNING (the OD2 gate). Store an
+    // 6. CLAIM 2b — the trust FILTER is intact UNDER TUNING (the trust gate). Store an
     //    `external`-trust doc and confirm a recall with includeTrustLevels
     //    ["system","learned"] DROPS it, even with the climbed tuned vector
     //    (score.test.ts:101 analog — the trust ladder excludes external below-floor).
@@ -470,7 +470,7 @@ describe.skipIf(!COMIS_BENCH)("recall-outcome learning lift — bandit-driven (g
 
     adapter.close();
     await rerankerPort?.dispose?.();
-    // 2h hook timeout (BUG-001): defensive even though the no-LLM loop is fast — the
+    // 2h hook timeout: defensive even though the no-LLM loop is fast — the
     // ingest + per-episode recall + bandit update for a non-trivial set could exceed
     // the 2-min default.
   }, 7_200_000);
@@ -577,15 +577,15 @@ describe.skipIf(!COMIS_BENCH)("recall-outcome learning lift — bandit-driven (g
     expect(usefulnessAlphaClimbed).toBe(true); // the tuned vector itself climbed (bandit-driven)
     expect(goldScoreNonDecreasing).toBe(true); // the climb raised the gold's boosted score
     expect(goldScoreLift).toBeGreaterThan(0); // the MEASURED keyless bandit lift is positive
-    // No secret in either serialized report (T-111-16) — the ONLY allowed occurrence
+    // No secret in either serialized report — the ONLY allowed occurrence
     // of these tokens in this file is inside these negations.
     expect(reportJson).not.toMatch(/apiKey|sk-|Bearer/);
     expect(claimJson).not.toMatch(/apiKey|sk-|Bearer/);
   });
 
-  it("CLAIM 2 — trust-frozen under tuning: trustAlpha byte-identical + the trust filter drops external (OD2 gate)", () => {
+  it("CLAIM 2 — trust-frozen under tuning: trustAlpha byte-identical + the trust filter drops external (trust gate)", () => {
     // The trust boost weight passed into the recall `scoring` arg every episode is
-    // byte-identical to the config TRUST_ALPHA — the bandit NEVER moves it (the OD2
+    // byte-identical to the config TRUST_ALPHA — the bandit NEVER moves it (the trust
     // ship-gate; the tuned 4-tuple structurally has no trust field).
     const trustAlphaStableAcrossEpisodes =
       trustAlphaPerEpisode.length === episodeCount &&
@@ -618,7 +618,7 @@ describe.skipIf(!COMIS_BENCH)("recall-outcome learning lift — bandit-driven (g
   });
 
   it("CLAIM 3 — the clamp holds: a pathological FEED aggregate keeps every tuned alpha in [0,1]", () => {
-    // Drive the SHIPPED pure clamped step (computeTunedAlphas, 111-01) with a
+    // Drive the SHIPPED pure clamped step (computeTunedAlphas) with a
     // pathological aggregate (±1e9 gradients) — the bench-layer proof that the
     // SHIPPED path the bandit runs cannot push an alpha out of range (no runaway, no
     // boost-inversion that could overturn trust-first via the usefulness factor).

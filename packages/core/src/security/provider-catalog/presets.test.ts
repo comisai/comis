@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Preset equivalence tests (INJECT-04).
+ * Preset equivalence tests.
  *
  * Anchors:
  *   - expandPreset("anthropic", secretRef) deep-equals the hand-written anthropic BrokerBinding

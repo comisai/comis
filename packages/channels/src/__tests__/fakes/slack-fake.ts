@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * FakeSlackAdapter — a deterministic, clock-free `ChannelPort` test double for
- * the Slack EditPlace renderer (CHAN-03 / CHAN-05; §18.1 "fake adapter records
+ * the Slack EditPlace renderer (§18.1 "fake adapter records
  * every method call").
  *
- * Mirrors `createFakeTelegramAdapter` (the 71-02 canonical fake) but:
+ * Mirrors `createFakeTelegramAdapter` (the canonical fake) but:
  *   - mints `sl-msg-N` ids (Slack's `ts` analogue; the determinism source for
  *     byte-stable fixtures — Pitfall 2), and
  *   - exposes a Slack-Bolt-shaped (`{ data: { error }, retryAfter? }`) `nextError`
@@ -14,7 +14,7 @@
  * analogue), so `send` records `silent:false` unconditionally — the fixture
  * reflects the real platform behaviour.
  *
- * `chat.delete` on success (CHAN-03's required delete-on-success op) is exercised
+ * `chat.delete` on success (the required delete-on-success op) is exercised
  * through `deleteMessage` and recorded as a `delete` entry.
  *
  * The seam returns the raw Slack-shaped object through the `Result` err branch
@@ -25,7 +25,7 @@
  *
  * The Block Kit `actions` approval is a SHELL only: no interaction handler is
  * registered and no signed callback_data is produced — the
- * InteractiveCallbackRouter is Phase 73 (§17.3 / T-71-03-03).
+ * InteractiveCallbackRouter is handled separately (§17.3).
  */
 import { ok, err, type Result } from "@comis/shared";
 import type {
@@ -115,8 +115,8 @@ export function createFakeSlackAdapter(channelId = "chat-1"): FakeSlackAdapter {
       if (injected) return err(injected);
       const id = `sl-msg-${messageCounter++}`;
       // Slack has no silent-notification effect; record silent:false to reflect
-      // the real platform behaviour. The Block Kit approval `actions` (Phase 73
-      // native UI) ride on `buttons` — recorded ONLY when present so the
+      // the real platform behaviour. The Block Kit approval `actions` (native
+      // UI) ride on `buttons` — recorded ONLY when present so the
       // button-less golden fixtures stay byte-stable.
       recorded.calls.push({
         op: "send",
@@ -126,7 +126,7 @@ export function createFakeSlackAdapter(channelId = "chat-1"): FakeSlackAdapter {
         ...(options?.buttons !== undefined ? { buttons: options.buttons } : {}),
       });
       // A subagent placeholder requests a thread (`thread_ts`) for its expand
-      // affordance; record the thread egress (no callback handler — Phase 73's
+      // affordance; record the thread egress (no callback handler — the
       // router owns resolution).
       if (options?.threadReply) {
         recorded.calls.push({ op: "thread", parentId: id });

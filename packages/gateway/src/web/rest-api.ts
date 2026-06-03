@@ -220,8 +220,8 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
 
   // GET /agents - Non-secret agent listing (id/name/provider/model/status).
   //
-  // Sources from rpcAdapterDeps.listAgentSummaries, NOT getConfig: WR-03
-  // (§17.8) removed `agents` from getConfig's non-secret allowlist, so
+  // Sources from rpcAdapterDeps.listAgentSummaries, NOT getConfig: §17.8
+  // removed `agents` from getConfig's non-secret allowlist, so
   // getConfig now returns the safe default with no `agents` key. The dedicated
   // projection returns only non-secret identity/model fields, so this listing
   // works without re-opening the secret-egress path getConfig closed.
@@ -245,8 +245,8 @@ export function createRestApi(deps: RestApiDeps): Hono<RestApiEnv> {
 
   // GET /channels - Channel connection status (non-secret name/enabled only).
   //
-  // Sources from rpcAdapterDeps.listChannelSummaries, NOT getConfig: WR-03
-  // removed `channels` from getConfig's allowlist (mirrors /agents). The
+  // Sources from rpcAdapterDeps.listChannelSummaries, NOT getConfig:
+  // `channels` was removed from getConfig's allowlist (mirrors /agents). The
   // projection already excludes the internal healthCheck block and every
   // credential field; here we surface only the enabled adapters.
   api.get("/channels", async (c) => {

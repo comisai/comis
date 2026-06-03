@@ -173,7 +173,7 @@ describe("row-schemas — type-equality with paired interfaces", () => {
 // file-internal (the schema IS the SSOT)
 // =====================================================================
 
-describe("row-schemas — MemoryRowSchema occurred_at column (TEMP-01)", () => {
+describe("row-schemas — MemoryRowSchema occurred_at column", () => {
   function baseMemoryRow(): Record<string, unknown> {
     return {
       id: "row-1",
@@ -549,7 +549,7 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
     expect(TokenUsageDbRowSchema.safeParse(sample).success).toBe(false);
   });
 
-  // --- Entity-association row schemas (Phase 83) ---
+  // --- Entity-association row schemas ---
 
   it("MemoryEntityRowSchema parses a full memory_entities row including canonical_key", () => {
     const sample = {
@@ -602,7 +602,7 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
     expect(EntityLaneRowSchema.safeParse({ memory_id: "m2", shared: "two" }).success).toBe(false);
   });
 
-  it("EntityListRowSchema parses the OBS-06 listEntities projection (no canonical_key)", () => {
+  it("EntityListRowSchema parses the listEntities projection (no canonical_key)", () => {
     const sample = {
       id: "e1",
       canonical_name: "Acme Corp",
@@ -613,7 +613,7 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
     expect(EntityListRowSchema.safeParse(sample).success).toBe(true);
   });
 
-  it("EntityListRowSchema rejects the DB-internal canonical_key column (OQ-2 — strictObject keeps it out of the diagnostic projection)", () => {
+  it("EntityListRowSchema rejects the DB-internal canonical_key column (strictObject keeps it out of the diagnostic projection)", () => {
     const sample = {
       id: "e1",
       canonical_name: "Acme Corp",
@@ -625,9 +625,9 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
     expect(EntityListRowSchema.safeParse(sample).success).toBe(false);
   });
 
-  // --- MemoryUsefulnessRowSchema (Phase 110, LEARN-01) — the read projection
+  // --- MemoryUsefulnessRowSchema — the read projection
   // gains `intent`. A strictObject WITHOUT `intent` would REJECT a row carrying
-  // it, so the schema + the SELECT projection (Task 3) move together. ---
+  // it, so the schema + the SELECT projection move together. ---
 
   it("MemoryUsefulnessRowSchema parses a per-intent row (intent survives the strict projection)", () => {
     const parsed = MemoryUsefulnessRowSchema.safeParse({
@@ -682,7 +682,7 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
     ).toBe(false);
   });
 
-  // --- MemoryTripleRowSchema (Phase 100, KG-01) ---
+  // --- MemoryTripleRowSchema ---
 
   const fullTripleRow = {
     id: "tr1",
@@ -752,7 +752,7 @@ describe("row-schemas — strictObject rejects unexpected columns", () => {
     expect(MemoryTripleRowSchema.safeParse(withoutSubject).success).toBe(false);
   });
 
-  // --- SpreadNodeRowSchema (Phase 100, KG-04) — the recursive-CTE node projection ---
+  // --- SpreadNodeRowSchema — the recursive-CTE node projection ---
   // The graph-spread walk's `SELECT DISTINCT node, depth FROM walk WHERE depth > 0`
   // returns ONLY (node, depth) per reached subject — a minimal projection (the full
   // hydrate happens via a second scoped SELECT on the source memory). Parsed via

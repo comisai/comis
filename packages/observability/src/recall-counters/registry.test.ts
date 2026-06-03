@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * createRecallCounters tests — in-process counter registry (OBS-07).
+ * createRecallCounters tests — in-process counter registry.
  *
  * A process-lifetime gauge (Assumption A2 — resets on restart, NOT a durable
  * table). Each createRecallCounters() owns its own closed-over numeric

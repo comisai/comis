@@ -511,7 +511,7 @@ describe("assembleTools — full tool pipeline (JIT, prune, snapshot, normalize,
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Recall-trace config passthrough (OBS-02)
+// Recall-trace config passthrough
 //
 // assembleTools forwards a SUBSET of deps into assembleExecutionPrompt.deps.
 // recallTraceConfig must ride that subset (mirroring dataDir / cacheTraceConfig)
@@ -520,7 +520,7 @@ describe("assembleTools — full tool pipeline (JIT, prune, snapshot, normalize,
 // `deps` argument it was called with carries the forwarded recallTraceConfig.
 // ---------------------------------------------------------------------------
 
-describe("assembleTools — recall-trace config passthrough to prompt assembly (OBS-02)", () => {
+describe("assembleTools — recall-trace config passthrough to prompt assembly", () => {
   it("forwards deps.recallTraceConfig into assembleExecutionPrompt.deps so buildRecallTrace receives the enable flag", async () => {
     // Production-wiring regression guard for the middle link of the chain:
     // setup-agents-runtime → PiExecutorDeps → ToolAssemblyDeps →
@@ -566,8 +566,8 @@ describe("assembleTools — recall-trace config passthrough to prompt assembly (
 //
 // assembleTools forwards a SUBSET of deps into assembleExecutionPrompt.deps —
 // the SAME subset prompt-assembly's createMemoryRecall reads. The recall lane
-// stores (graph-spread tripleStore KG-01/04, causal EXTRACT-03, temporal
-// LANES-02) MUST ride that subset or the lane stays DORMANT even when enabled:
+// stores (graph-spread tripleStore, causal store, temporal store) MUST ride
+// that subset or the lane stays DORMANT even when enabled:
 // the daemon injects the store, createPiExecutor carries it, but the
 // prompt-assembly site sees deps.<store> === undefined → the lane gate
 // (`deps.tripleStore !== undefined`) short-circuits and the recursive-CTE walk
@@ -576,8 +576,8 @@ describe("assembleTools — recall-trace config passthrough to prompt assembly (
 // `deps` argument it was called with carries each forwarded store.
 // ---------------------------------------------------------------------------
 
-describe("assembleTools — recall-store passthrough to prompt assembly (KG-01/04, EXTRACT-03, LANES-02)", () => {
-  it("forwards deps.tripleStore into assembleExecutionPrompt.deps so the graph-spread lane reaches createMemoryRecall (KG-01/04)", async () => {
+describe("assembleTools — recall-store passthrough to prompt assembly", () => {
+  it("forwards deps.tripleStore into assembleExecutionPrompt.deps so the graph-spread lane reaches createMemoryRecall", async () => {
     // RED on pre-patch code: ToolAssemblyDeps had no tripleStore field and
     // assembleTools never forwarded it, so the prompt-assembly site always saw
     // deps.tripleStore === undefined → the 6th graphSpread lane gate
@@ -599,7 +599,7 @@ describe("assembleTools — recall-store passthrough to prompt assembly (KG-01/0
     );
   });
 
-  it("forwards deps.causalStore + deps.temporalStore into assembleExecutionPrompt.deps so the causal + temporal lanes reach createMemoryRecall (EXTRACT-03, LANES-02)", async () => {
+  it("forwards deps.causalStore + deps.temporalStore into assembleExecutionPrompt.deps so the causal + temporal lanes reach createMemoryRecall", async () => {
     // RED on pre-patch code: the assembleExecutionPrompt deps enumeration in
     // assembleTools forwarded entityStore + usefulnessStore but DROPPED
     // causalStore + temporalStore — even though ToolAssemblyDeps carried them
@@ -623,14 +623,14 @@ describe("assembleTools — recall-store passthrough to prompt assembly (KG-01/0
     );
   });
 
-  it("forwards deps.embeddingStore into assembleExecutionPrompt.deps so the MMR diversity re-rank reaches createMemoryRecall (IQ-01)", async () => {
+  it("forwards deps.embeddingStore into assembleExecutionPrompt.deps so the MMR diversity re-rank reaches createMemoryRecall", async () => {
     // RED on pre-patch code: ToolAssemblyDeps had no embeddingStore field and
     // assembleTools never forwarded it, so the prompt-assembly site always saw
     // deps.embeddingStore === undefined → the MMR slot gate
     // (`deps.embeddingStore !== undefined`) short-circuited and the scoped
     // embedding read never ran (MMR a silent no-op even when the daemon injected
     // the store and an operator flipped rag.mmr.enabled). The SAME field-plumbing
-    // hazard the temporal/causal/triple forwards above guard against (100-05).
+    // hazard the temporal/causal/triple forwards above guard against.
     const embeddingStore = {
       readEmbeddings: vi.fn(),
     } as unknown as import("@comis/core").MemoryEmbeddingStore;
@@ -644,9 +644,9 @@ describe("assembleTools — recall-store passthrough to prompt assembly (KG-01/0
     );
   });
 
-  it("forwards deps.tunedAlphaStore into assembleExecutionPrompt.deps so the learned-alpha apply overlay reaches prompt-assembly (LEARN-03 / CR-01 + LR-01 regression guard)", async () => {
+  it("forwards deps.tunedAlphaStore into assembleExecutionPrompt.deps so the learned-alpha apply overlay reaches prompt-assembly", async () => {
     // RED on pre-patch code: ToolAssemblyDeps DID carry tunedAlphaStore (and the
-    // daemon→BootContext→createPiExecutor chain forwards it after the 111-05 fix),
+    // daemon→BootContext→createPiExecutor chain forwards it after the wiring fix),
     // but the PromptAssemblyParams.deps enumeration in assembleTools DROPPED it —
     // it forwarded usefulnessStore/userRepresentationStore/relationshipStore but
     // omitted tunedAlphaStore. So the prompt-assembly apply site (prompt-assembly.ts
@@ -654,12 +654,12 @@ describe("assembleTools — recall-store passthrough to prompt assembly (KG-01/0
     // deps.tunedAlphaStore === undefined → tunedVector stayed undefined →
     // buildScoringAlphas returned the static config alphas → the learned alphas
     // NEVER applied on the live recall path even with rag.onlineTuning.enabled AND
-    // a populated tuned_alpha table (LEARN-03 a silent no-op). This is the SAME
+    // a populated tuned_alpha table (a silent no-op). This is the SAME
     // field-plumbing hazard the tripleStore/causalStore/temporalStore/embeddingStore
-    // forwards above guard against — and it is the final unguarded hop (LR-01) in the
+    // forwards above guard against — and it is the final unguarded hop in the
     // ToolAssemblyDeps → PromptAssemblyParams.deps enumeration. The two upstream hops
     // are guarded by daemon-tuned-alpha-bootcontext.test.ts and
-    // setup-agents-tuned-alpha-wiring.test.ts; this closes the seam that let CR-01
+    // setup-agents-tuned-alpha-wiring.test.ts; this closes the seam that let the bug
     // reach review.
     const tunedAlphaStore = {
       upsert: vi.fn(),

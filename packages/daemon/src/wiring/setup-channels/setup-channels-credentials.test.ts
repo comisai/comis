@@ -5,8 +5,8 @@
  * API-key + model resolution + event dispatch).
  *
  * The witness pins the closure-captured deps key set. The behavioral tests
- * exercise the `__MEMORY_CONSOLIDATION__` sentinel intercept (Phase 84,
- * CONS-07): the opt-in cost gate (a disabled/default agent does NO LLM work)
+ * exercise the `__MEMORY_CONSOLIDATION__` sentinel intercept:
+ * the opt-in cost gate (a disabled/default agent does NO LLM work)
  * and the enabled path (the sentinel runs runMemoryConsolidation with the
  * injected store + clock). The broader integration matrix (memory review,
  * agent_turn, systemEvent, suspend notification) is exercised by
@@ -26,7 +26,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockRunMemoryConsolidation = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
 const mockRunMemoryReview = vi.hoisted(() => vi.fn(async () => ({ ok: true as const, value: undefined })));
-// Phase 101-06: the reasoning job + its injected-seam factory. runMemoryReasoning
+// The reasoning job + its injected-seam factory. runMemoryReasoning
 // is the spy the __MEMORY_REASONING__ dispatch tests assert against;
 // createReasoningSeam returns a sentinel fn the dispatch must pass as deps.reason.
 const mockReasonSeam = vi.hoisted(() => vi.fn(async () => ({ deductive: [], inductive: [] })));
@@ -174,7 +174,7 @@ describe("setup-channels-credentials", () => {
       sessionStore: true,
       logger: true,
       // Composition-root clock threaded to runMemoryReview/runMemoryConsolidation
-      // for relative-date resolution (EXTR-02) + timestamp reads (CONS-07).
+      // for relative-date resolution + timestamp reads.
       clock: true,
       adaptersByType: true,
       deliveryService: true,
@@ -183,10 +183,10 @@ describe("setup-channels-credentials", () => {
       workspaceDirs: true,
       memoryAdapter: true,
       entityStore: true,
-      // Phase 84 (CONS-07): the consolidation store injected into the
+      // The consolidation store injected into the
       // __MEMORY_CONSOLIDATION__ sentinel → runMemoryConsolidation.
       consolidationStore: true,
-      // Phase 101 (REASON-02): the triple store injected into the
+      // The triple store injected into the
       // __MEMORY_REASONING__ sentinel → runMemoryReasoning (the deductive
       // current-truth write path). Threaded daemon → registry → credentials.
       tripleStore: true,
@@ -199,7 +199,7 @@ describe("setup-channels-credentials", () => {
   });
 
   // -------------------------------------------------------------------------
-  // RED A — the opt-in cost gate (CONS-07 / T-84-19)
+  // RED A — the opt-in cost gate
   // A disabled (or default-config) agent must do NO consolidation work and the
   // sentinel must short-circuit ok so the scheduler records a clean run.
   // -------------------------------------------------------------------------
@@ -310,12 +310,12 @@ describe("setup-channels-credentials", () => {
       onComplete,
     });
 
-    // No LLM work without a key; the WARN carries the env-var NAME, never the value (T-84-20).
+    // No LLM work without a key; the WARN carries the env-var NAME, never the value.
     expect(mockRunMemoryConsolidation).not.toHaveBeenCalled();
     expect(onComplete).toHaveBeenCalledWith({ status: "error", error: "No API key for anthropic" });
   });
 
-  it("warns + errors when the consolidation sentinel fires without an agentId (T-84-22)", async () => {
+  it("warns + errors when the consolidation sentinel fires without an agentId", async () => {
     const deps = makeDeps();
     registerCronEventListeners(deps);
 
@@ -331,12 +331,12 @@ describe("setup-channels-credentials", () => {
   });
 
   // -------------------------------------------------------------------------
-  // __MEMORY_REASONING__ sentinel (Phase 101, REASON-02/03 — 101-06).
+  // __MEMORY_REASONING__ sentinel.
   // Mirrors the consolidation block: the opt-in cost gate (a disabled/default
   // agent does NO LLM work) + the enabled path (runMemoryReasoning runs with
   // BOTH the consolidation store AND the triple store injected + the built
   // reason() seam). The triple-store thread is the deductive write path — a
-  // missing thread would make the deductive path a silent no-op (T-101-06-01).
+  // missing thread would make the deductive path a silent no-op.
   // -------------------------------------------------------------------------
 
   it("short-circuits ok and does NOT run reasoning when the agent has it disabled (opt-in gate)", async () => {

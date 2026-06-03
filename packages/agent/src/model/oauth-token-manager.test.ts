@@ -2139,9 +2139,9 @@ describe("refresh_token_reused detection", () => {
 });
 
 // =============================================================================
-// Phase 6 Wave 0: OAuthTokenManager.invalidate() RED test
+// OAuthTokenManager.invalidate() RED test
 //
-// REQ-13 / REQ-08: OAuthTokenManager must expose an invalidate() method that
+// OAuthTokenManager must expose an invalidate() method that
 // clears the in-memory cache so that the next getApiKey() call re-fetches from
 // the credential store. This is the encrypted-mode gap closure: when a CLI
 // `auth login` writes a new OAuth profile (a separate process), the daemon's
@@ -2150,20 +2150,20 @@ describe("refresh_token_reused detection", () => {
 //
 // This test MUST fail RED because invalidate() does NOT exist on the
 // OAuthTokenManager interface or the object returned by createOAuthTokenManager.
-// Plan 06-03 will add the invalidate() method.
+// The invalidate() method will be added later.
 //
-// OQ-2 RESOLVED (from 06-RESEARCH.md, confirmed reading oauth-token-manager.ts):
+// Implementation notes (confirmed reading oauth-token-manager.ts):
 //   (a) Cache: `const cache = new Map<string, OAuthProfile>()` at line ~506 —
 //       factory-closure variable, not a class field. Implementation is `cache.clear()`.
 //   (b) Interface: `OAuthTokenManager` is an exported named interface at line ~142.
 //       `invalidate(): void` must be added as a required method.
 //   (c) auth.set handler (auth-handlers.ts): does NOT emit auth:profile_added —
-//       it only emits audit:event. Plan 06-03 must add the auth:profile_added
-//       emission to auth.set (after successful write) so that the encrypted-mode
+//       it only emits audit:event. The auth.set handler must add the auth:profile_added
+//       emission (after successful write) so that the encrypted-mode
 //       subscription in setup-agents-oauth.ts can fire tokenManager.invalidate().
 // =============================================================================
 
-describe("Phase 6 Wave 0: OAuthTokenManager.invalidate() RED test (not yet implemented)", () => {
+describe("OAuthTokenManager.invalidate() RED test (not yet implemented)", () => {
   let eventBus: TypedEventBus;
   let fetchShim: { restore: () => void };
 
@@ -2183,7 +2183,7 @@ describe("Phase 6 Wave 0: OAuthTokenManager.invalidate() RED test (not yet imple
     fetchShim.restore();
   });
 
-  // Phase 6 Wave 0: invalidate() RED test
+  // invalidate() RED test
   it("invalidate() clears the cache so getApiKey() re-fetches from store after a profile update (RED — method does not exist yet)", async () => {
     // Arrange: construct manager with a mock store that returns profile v1 initially.
     const credentialStore = makeMockCredentialStore();
@@ -2222,12 +2222,12 @@ describe("Phase 6 Wave 0: OAuthTokenManager.invalidate() RED test (not yet imple
     });
 
     // Assert: invalidate() must exist as a function on the manager.
-    // This is the Phase 6 RED assertion — the method is not yet implemented.
+    // This is the RED assertion — the method is not yet implemented.
     expect(typeof (manager as unknown as Record<string, unknown>).invalidate).toBe("function");
 
     // After invalidate(), getApiKey() must return the v2 access token.
     // (This assertion will only be reached if the line above passes GREEN —
-    // i.e., after Plan 06-03 adds the method.)
+    // i.e., after the method is added.)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test-only cast for missing method
     await (manager as unknown as Record<string, (...args: unknown[]) => unknown>).invalidate?.();
 

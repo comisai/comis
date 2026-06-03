@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * In-process recall counter registry types (OBS-07).
+ * In-process recall counter registry types.
  *
  * The counter registry is a process-lifetime GAUGE (Assumption A2): it
  * accumulates lane usage, rerank runs/fallbacks, consolidation throughput,
@@ -8,10 +8,9 @@
  * RESTART. It is deliberately NOT a durable SQLite table (unlike the
  * cache-stats `obs_token_usage` table) — these are health/metrics gauges
  * derivable from the live `memory:*` events, and a durable table would need
- * a schema migration + write path for no operational gain (86-RESEARCH
- * "Alternatives Considered").
+ * a schema migration + write path for no operational gain.
  *
- * Threat note (T-86-05, disposition: accept): the counters are integers only
+ * Threat note (disposition: accept): the counters are integers only
  * — no content, no ids, no PII. Process-lifetime in-memory; no disk, no
  * cross-process leak surface.
  *

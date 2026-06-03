@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Builtin-tools label-coverage gate — Phase 78 WS-A / SPEC-§6.1 / LBL-01.
+ * Builtin-tools label-coverage gate.
  *
  * Sibling of `transparency-label-coverage.test.ts`. That gate walks the LIVE
  * platform-tool descriptor registry; this one walks a HARDCODED list of the
@@ -59,7 +59,7 @@ const BUILTIN_TOOLS = [
   "web_search",      // web-search-tool/index.ts:114          ← UNDERSCORE not hyphen
 ] as const;
 
-describe("builtin-tools-label-coverage (LBL-01 / SPEC-§6.1 / Phase 78 WS-A)", () => {
+describe("builtin-tools-label-coverage", () => {
   beforeAll(async () => {
     // Side-effect imports trigger each tool module's co-located
     // `registerActivityLabelSpec(...)` call at module load. Same idiom the
@@ -81,7 +81,7 @@ describe("builtin-tools-label-coverage (LBL-01 / SPEC-§6.1 / Phase 78 WS-A)", (
     await import("../tools/builtin/web-search-tool/index.js");
   });
 
-  it("every builtin tool has a registered LabelSpec — Phase 78 WS-A / SPEC-§6.1", () => {
+  it("every builtin tool has a registered LabelSpec", () => {
     const offenders = BUILTIN_TOOLS.filter((name) => !hasRegisteredLabelSpec(name));
     expect(offenders).toEqual([]);
   });

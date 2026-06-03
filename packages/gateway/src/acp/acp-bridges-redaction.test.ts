@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Cross-bridge §19.6 M6 redaction sweep (ACP-05, the phase-wide guarantee).
+ * Cross-bridge §19.6 M6 redaction sweep — the whole-surface guarantee.
  *
  * Per-bridge tests (acp-activity-bridge.test.ts, acp-plan-bridge.test.ts,
  * acp-approval-bridge.test.ts) each assert no raw params leak through THAT
@@ -18,9 +18,9 @@
  *
  * The test is NON-VACUOUS: it asserts `captured.length > 0` so a bridge that
  * silently stopped emitting could not vacuously pass. It is RED-first
- * conceptually (T-74-20): a future change that reintroduced raw-param
- * forwarding in ANY one bridge — slipping past the per-bridge unit tests —
- * would surface the sentinel and fail HERE.
+ * conceptually: a future change that reintroduced raw-param forwarding in ANY
+ * one bridge — slipping past the per-bridge unit tests — would surface the
+ * sentinel and fail HERE.
  *
  * Imports the bridge factories from co-located source (relative `./acp-*`),
  * NOT from `dist/` — this is a unit-tier test run by `pnpm vitest run`. The
@@ -50,7 +50,7 @@ import { createAcpApprovalBridge } from "./acp-approval-bridge.js";
 
 /**
  * The raw secret injected into EVERY source surface across the three bridges.
- * It must NEVER appear in any captured frame (§19.6 M6 phase-wide).
+ * It must NEVER appear in any captured frame (§19.6 M6, whole-surface).
  */
 const RAW_PARAM_SENTINEL = "RAW_SECRET_xyz789";
 
@@ -208,8 +208,8 @@ async function flush(): Promise<void> {
   await Promise.resolve();
 }
 
-describe("ACP bridges cross-surface redaction sweep (§19.6 M6 / ACP-05 phase-wide)", () => {
-  it("no raw params cross any ACP bridge frame across all three bridges (§19.6 M6 phase-wide)", async () => {
+describe("ACP bridges cross-surface redaction sweep (§19.6 M6, whole-surface)", () => {
+  it("no raw params cross any ACP bridge frame across all three bridges (§19.6 M6, whole-surface)", async () => {
     const { connection, captured } = makeCapturingConnection();
     const stream = makeFanoutStreamPort();
     const bus = new TypedEventBus();
@@ -282,7 +282,7 @@ describe("ACP bridges cross-surface redaction sweep (§19.6 M6 / ACP-05 phase-wi
     // event into a tool_call frame — so strictly > 0, and in practice ≥ 6.)
     expect(captured.length).toBeGreaterThan(0);
 
-    // §19.6 M6 phase-wide: no raw params in ANY captured frame.
+    // §19.6 M6 (whole-surface): no raw params in ANY captured frame.
     for (const item of captured) {
       const frame = item as Record<string, unknown>;
       // sessionUpdate frames carry `update`; requestPermission carries `toolCall`.

@@ -61,7 +61,7 @@ const POSITIVE_CASES: ReadonlyArray<{ label: string; sample: string }> = [
   { label: "GitLab glpat- token", sample: "glpat-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345" },
   { label: "Stripe sk_live_ secret", sample: "sk_live_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
   { label: "Stripe sk_test_ secret", sample: "sk_test_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789" },
-  // Scheme-strip positives — the load-bearing SEC-02 closure.
+  // Scheme-strip positives — the load-bearing scheme-strip closure.
   { label: "Bearer hf_ token (scheme-strip)", sample: "Bearer hf_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789AbCdEf" },
   { label: "Basic creds (scheme-strip)", sample: "Basic dXNlcjpsb25ncGFzc3dvcmR3aXRoaGlnaGVudHJvcHkxMjM0NTY3OA" },
   { label: "Quoted ghp_ token (quote-strip)", sample: '"ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"' },

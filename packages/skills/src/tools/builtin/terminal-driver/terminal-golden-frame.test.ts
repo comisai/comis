@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Golden-frame tests for the terminal rendering (spec §2.4 / §11, TR-02).
+ * Golden-frame tests for the terminal rendering (spec §2.4 / §11).
  *
  * The §11 "experimental addon-serialize churn" guard: `@xterm/addon-serialize` is
  * pinned (0.14.0) but flagged experimental, so a future bump could silently change
  * the serialization. This test REPLAYS each committed byte-stream fixture through a
  * fresh `createSessionEmulator` and asserts `snapshot({format:'ansi'}).screen`
  * EQUALS a committed golden — a serialization change (or a tampered fixture)
- * surfaces LOUDLY as a `serialize() !== golden` failure (T-121-13), never silently.
+ * surfaces LOUDLY as a `serialize() !== golden` failure, never silently.
  *
  * The replay is platform-independent: `@xterm/headless` is pure-JS, so the SAME
  * bytes produce the SAME serialization on macOS and Linux. That is exactly why the
@@ -17,7 +17,7 @@
  * Fixtures (see `fixtures/README.md`):
  *   - `spinner.stream.txt`   — a synthetic CR-redraw spinner (macOS-authored).
  *   - `altscreen.stream.txt` — a synthetic alt-screen banner (macOS-authored).
- *   - `vim.stream.txt`       — a real `vim` session recorded on the VPS (Task 2).
+ *   - `vim.stream.txt`       — a real `vim` session recorded on the VPS.
  *     The vim case is GATED on the fixture existing (`it.skipIf(!existsSync(...))`)
  *     so this suite is green on macOS BEFORE the VPS records it; once the fixture
  *     is committed the case executes (no longer skipped).
@@ -40,7 +40,7 @@ import { createSessionEmulator, type EmulatorSnapshot } from "./terminal-render.
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, "fixtures");
 
-/** The committed vim fixture (recorded on the VPS in Task 2; absent ⇒ skip). */
+/** The committed vim fixture (recorded on the VPS; absent ⇒ skip). */
 const VIM_STREAM = join(FIXTURES, "vim.stream.txt");
 
 /**
@@ -63,7 +63,7 @@ function readGolden(goldenName: string): string {
   return readFileSync(join(FIXTURES, goldenName), "latin1");
 }
 
-describe("golden-frame — synthetic spinner stream (the §11 serialize-churn guard, TR-02)", () => {
+describe("golden-frame — synthetic spinner stream (the §11 serialize-churn guard)", () => {
   it("replays spinner.stream.txt and serialize() === the committed golden", async () => {
     const snap = await replayFixture("spinner.stream.txt");
 
@@ -77,7 +77,7 @@ describe("golden-frame — synthetic spinner stream (the §11 serialize-churn gu
   });
 });
 
-describe("golden-frame — synthetic alt-screen stream (TR-02)", () => {
+describe("golden-frame — synthetic alt-screen stream", () => {
   it("replays altscreen.stream.txt, stays in alt, and serialize() === the golden", async () => {
     const snap = await replayFixture("altscreen.stream.txt");
 
@@ -91,8 +91,8 @@ describe("golden-frame — synthetic alt-screen stream (TR-02)", () => {
 });
 
 describe("golden-frame — recorded vim stream (VPS-recorded; skips until the fixture lands)", () => {
-  // GATED: `vim.stream.txt` is recorded on the VPS in Task 2. Until it is
-  // committed this case SKIPS so Task 1 is green on macOS; once present it runs
+  // GATED: `vim.stream.txt` is recorded on the VPS. Until it is
+  // committed this case SKIPS so the suite is green on macOS; once present it runs
   // (the replay is host-independent — pure-JS @xterm gives the identical golden).
   it.skipIf(!existsSync(VIM_STREAM))(
     "replays vim.stream.txt, is in alt, and serialize() === the committed vim golden",

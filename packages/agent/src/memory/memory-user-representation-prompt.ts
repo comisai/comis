@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The per-user representation builder prompt + its lenient, total parser
- * (Phase 107 — USER-02).
+ * The per-user representation builder prompt + its lenient, total parser.
  *
  * Mirrors `memory-reasoning-prompt.ts` (the prompt + lenient-total-parser
  * pattern). Split out of the builder job so the verbose prompt + the cleanest
  * defined-I/O unit (string → typed value) get no-mock RED→GREEN coverage, and the
- * daemon's seam (107-05) imports the prompt + parser from HERE — keeping the
- * prompt string agent-internal (it never crosses into the daemon, mirroring how
+ * daemon's seam imports the prompt + parser from HERE — keeping the prompt string
+ * agent-internal (it never crosses into the daemon, mirroring how
  * {@link createReasoningSeam} keeps `DEDUCTIVE_PROMPT`/`INDUCTIVE_PROMPT` private).
  *
  * The single anti-laundering invariant: the model has NO trust field. Trust is the
- * profile-builder job's CODE-computed source-trust ceiling (USER-02) — capped at
- * the high-trust floor (`system`/`learned`); `external` is structurally excluded
- * (the 107-01 port type + the 107-02 DB CHECK). Any `trust` the model emits anyway
- * is STRIPPED by the lenient `z.object` (unknown keys dropped, NOT rejected) — it
+ * profile-builder job's CODE-computed source-trust ceiling — capped at the
+ * high-trust floor (`system`/`learned`); `external` is structurally excluded (the
+ * port type + the DB CHECK). Any `trust` the model emits anyway is STRIPPED by the
+ * lenient `z.object` (unknown keys dropped, NOT rejected) — it
  * can never influence the stored representation. The `entryType` is the CLOSED
  * `identity`/`preference`/`relationship`/`instruction` prefix-type set (DISTINCT
  * from `memoryType` + the trust ladder); a candidate with any other `entryType` is
@@ -32,7 +31,7 @@ import { z } from "zod";
 /**
  * One representation candidate the build() seam emits — the parsed shape the job
  * consumes. NO `trust` field: the LLM has no say in trust; the job sets it in CODE
- * at the source ceiling (USER-02). `entryType` is the closed prefix-type set.
+ * at the source ceiling. `entryType` is the closed prefix-type set.
  */
 export interface UserRepresentationCandidate {
   /** The prefix type (identity/preference/relationship/instruction). */
@@ -49,8 +48,8 @@ export type UserRepresentationBuildOutput = UserRepresentationCandidate[];
 // ---------------------------------------------------------------------------
 
 /**
- * The per-user representation builder system prompt (USER-02). The model receives
- * a small set of HIGH-TRUST source memories about ONE user (the builder has
+ * The per-user representation builder system prompt. The model receives a small
+ * set of HIGH-TRUST source memories about ONE user (the builder has
  * already excluded `external`-trust sources — the model never sees them) and
  * distills durable, PREFIX-TYPED profile facts.
  *
@@ -78,10 +77,9 @@ Return [] if the memories establish no durable profile fact. No markdown fences,
 
 /**
  * Build the builder system prompt for one source-memory set. The source text is
- * appended so the daemon's seam (107-05) can keep this prompt assembly
- * agent-internal — it imports this helper rather than embedding the prompt string
- * itself. Counts-only callers never log the returned text (it embeds source
- * content).
+ * appended so the daemon's seam can keep this prompt assembly agent-internal — it
+ * imports this helper rather than embedding the prompt string itself. Counts-only
+ * callers never log the returned text (it embeds source content).
  */
 export function buildUserRepresentationPrompt(sourceText: string): string {
   return `${USER_REPRESENTATION_PROMPT}\n\nThe trusted memories:\n${sourceText}`;

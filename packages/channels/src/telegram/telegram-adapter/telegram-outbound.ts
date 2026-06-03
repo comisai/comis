@@ -136,7 +136,7 @@ export async function sendMessage(
       "Send message failed",
     );
     // Preserve the typed GrammyError (error_code/parameters) as `cause` so an
-    // activity render-actions adapter can classify it STRUCTURALLY (CHAN-02) —
+    // activity render-actions adapter can classify it STRUCTURALLY —
     // it must never parse this generic message string.
     return err(new Error(`Failed to send message: ${sendErr.message}`, { cause: error }));
   }
@@ -178,7 +178,7 @@ export async function editMessage(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     // Preserve the typed GrammyError as `cause` for structural classification
-    // (CHAN-02: 429 → rate_limited, message-not-found → not_supported).
+    // (429 → rate_limited, message-not-found → not_supported).
     return err(new Error(`Failed to edit message: ${message}`, { cause: error }));
   }
 }

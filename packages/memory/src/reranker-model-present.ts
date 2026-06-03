@@ -2,8 +2,8 @@
 import { existsSync } from "node:fs";
 
 /**
- * Probe whether the reranker GGUF is ALREADY present locally WITHOUT downloading
- * (Phase 92, RERANK-01/RERANK-02). Resolves an hf: URI to its canonical on-disk
+ * Probe whether the reranker GGUF is ALREADY present locally WITHOUT downloading.
+ * Resolves an hf: URI to its canonical on-disk
  * path with downloads disabled, then existsSync. The model path is internal,
  * config-derived, and root-confined by safePath at the caller — not attacker input;
  * any resolution failure (incl. a partial/corrupt file that resolveModelFile rejects)

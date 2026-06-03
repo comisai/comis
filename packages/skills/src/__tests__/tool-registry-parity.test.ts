@@ -64,7 +64,7 @@ describe("platform-tool registry parity", () => {
       "list_resources",
       "mcp_login",
       "mcp_manage",
-      // Phase 109 (DIAL-02): the opt-in, default-OFF dialectic tool. Registered as a
+      // The opt-in, default-OFF dialectic tool. Registered as a
       // CONDITIONAL descriptor (gated on ctx.dialecticEnabled === true, fed from
       // agentConfig.dialectic.enabled). The parity set pins it exactly as the other
       // feature-gated conditionals (browser / unified_context / background_tasks) —
@@ -113,12 +113,12 @@ describe("platform-tool registry parity", () => {
     await expect(json).toMatchFileSnapshot(SNAPSHOT_PATH);
   });
 
-  // DIAL-02 default-OFF byte-identity — the opt-in cost gate. The daemon builds the
+  // memory_ask default-OFF byte-identity — the opt-in cost gate. The daemon builds the
   // live tool set by FILTERING descriptors on `conditional(ctx)` BEFORE invoking
   // `build` (registry.ts JSDoc + setup-tools). So with `dialecticEnabled` absent/false
   // the memory_ask tool is NOT in the built set (no behavior change, no query-time LLM
   // surface); with `dialecticEnabled: true` it IS present, constructed by its `build`.
-  describe("memory_ask conditional opt-in gate (DIAL-02)", () => {
+  describe("memory_ask conditional opt-in gate", () => {
     const askDescriptor = REGISTRY.find((d) => d.name === "memory_ask");
 
     /** Mirror the daemon's filter-then-build: keep only descriptors whose `conditional`

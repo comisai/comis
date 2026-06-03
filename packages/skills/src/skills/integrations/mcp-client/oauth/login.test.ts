@@ -475,7 +475,7 @@ describe("runOauthLogin — full orchestration flow", () => {
     expect(result.authUrl).toContain("idp.example/authorize");
   });
 
-  // DEVAUTH-03 regression guard from the PKCE side: the 3 device-flow-only
+  // Regression guard from the PKCE side: the 3 device-flow-only
   // optional fields stay undefined on every PKCE-path return so contract
   // mirroring (mcp-oauth.ts) stays clean.
   it("PKCE path leaves verificationUri userCode and expiresIn undefined on returned result", async () => {
@@ -510,7 +510,7 @@ describe("runOauthLogin — full orchestration flow", () => {
 });
 
 // ===========================================================================
-// DEVAUTH-02 selection heuristic (plan 09-02).
+// Device-flow selection heuristic.
 //
 // Five behavior-named cases pinning the dispatcher's selection matrix:
 //   1. headless + device-code advertised      → device-flow
@@ -522,7 +522,7 @@ describe("runOauthLogin — full orchestration flow", () => {
 // `runDeviceFlow` is injected as a `vi.fn()`; SDK `auth()` is NOT called on
 // the device-flow path (the loopback handle.close() runs first).
 // ===========================================================================
-describe("runOauthLogin device-flow selection heuristic (DEVAUTH-02)", () => {
+describe("runOauthLogin device-flow selection heuristic", () => {
   let dir: string;
   let store: TokenStore;
   let logger: ReturnType<typeof makeLogger>;

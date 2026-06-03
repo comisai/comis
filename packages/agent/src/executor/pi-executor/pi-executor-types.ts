@@ -68,7 +68,7 @@ export interface PiExecutorDeps {
   eventBus: TypedEventBus;
   logger: ComisLogger;
   /**
-   * Optional ExecutionPlanPort holder (ACP-03). When provided, session-bootstrap
+   * Optional ExecutionPlanPort holder. When provided, session-bootstrap
    * publishes the per-turn SEP ref into it (SEP-on) / clears it (SEP-off) so the
    * gateway/ACP plan bridge reads the live plan via the shared port. Absent in
    * non-ACP runtimes — existing callers are unaffected.
@@ -85,7 +85,7 @@ export interface PiExecutorDeps {
   /** Daemon data dir (COMIS_DATA_DIR / config.dataDir). Threaded to
    *  prompt-assembly via ToolAssemblyDeps so the recall-trace recorder resolves
    *  its containment base from the SAME source the memory.recall_trace reader
-   *  uses (WR-02). Absent ⇒ ~/.comis. */
+   *  uses. Absent ⇒ ~/.comis. */
   dataDir?: string;
   // Tools
   customTools: ToolDefinition[];
@@ -99,51 +99,50 @@ export interface PiExecutorDeps {
   memoryPort?: MemoryPort;
   /** Optional cross-encoder reranker. Built in the daemon (setup-memory) only when an
    *  agent enables rerank; threaded into prompt-assembly's createMemoryRecall via
-   *  ToolAssemblyDeps. Absent -> recall keeps fusion order (RANK-03). */
+   *  ToolAssemblyDeps. Absent -> recall keeps fusion order. */
   reranker?: RerankerPort;
-  /** Optional entity-associative store (ENT-02). Built in the daemon (Plan 05) on the
+  /** Optional entity-associative store. Built in the daemon on the
    *  shared memory db handle; threaded into prompt-assembly's createMemoryRecall via
    *  ToolAssemblyDeps. Absent -> no entity lane (recall RRF unchanged). TYPE-only from
    *  @comis/core — the agent never imports the memory package (the agent↛memory cut). */
   entityStore?: MemoryEntityStore;
-  /** Optional temporal-spread store (LANES-02). Built in the daemon on the shared memory db
+  /** Optional temporal-spread store. Built in the daemon on the shared memory db
    *  handle; threaded into prompt-assembly's createMemoryRecall via ToolAssemblyDeps. Absent or
    *  flag-off -> no temporal lane (recall RRF unchanged). TYPE-only from @comis/core — the agent
    *  never imports the memory package (the agent↛memory cut). */
   temporalStore?: MemoryTemporalStore;
-  /** Optional causal store (EXTRACT-03). Built in the daemon on the shared memory db handle;
+  /** Optional causal store. Built in the daemon on the shared memory db handle;
    *  threaded into prompt-assembly's createMemoryRecall via ToolAssemblyDeps. Absent or flag-off
    *  -> no causal lane (recall RRF unchanged). TYPE-only from @comis/core — the agent never
    *  imports the memory package (the agent↛memory cut). */
   causalStore?: MemoryCausalStore;
-  /** Optional triple store (KG-01/04). Built in the daemon on the shared memory db handle;
+  /** Optional triple store. Built in the daemon on the shared memory db handle;
    *  threaded into prompt-assembly's createMemoryRecall via ToolAssemblyDeps. Absent or flag-off
    *  -> no graph-spread lane (recall RRF unchanged). TYPE-only from @comis/core — the agent
    *  never imports the memory package (the agent↛memory cut). */
   tripleStore?: TripleStorePort;
-  /** Optional embedding read store (IQ-01). Built in the daemon on the shared memory db handle;
+  /** Optional embedding read store. Built in the daemon on the shared memory db handle;
    *  threaded into prompt-assembly's createMemoryRecall via ToolAssemblyDeps. Absent or flag-off
    *  -> no MMR diversity re-rank (recall order unchanged). TYPE-only from @comis/core — the agent
    *  never imports the memory package (the agent↛memory cut). */
   embeddingStore?: MemoryEmbeddingStore;
-  /** Optional usefulness store (FEED-03). Built in the daemon on the shared memory db handle;
+  /** Optional usefulness store. Built in the daemon on the shared memory db handle;
    *  threaded into prompt-assembly's createMemoryRecall via ToolAssemblyDeps. Absent or flag-off
    *  -> no usefulness read (recall scoring unchanged). TYPE-only from @comis/core — the agent
    *  never imports the memory package (the agent↛memory cut). */
   usefulnessStore?: MemoryUsefulnessStore;
-  /** Optional learned-alpha store (LEARN-03). Built in the daemon on the shared memory db handle;
+  /** Optional learned-alpha store. Built in the daemon on the shared memory db handle;
    *  threaded into prompt-assembly's deterministic apply overlay (the gated buildScoringAlphas read)
    *  via ToolAssemblyDeps. Absent or flag-off -> no read, the static config.rag.scoring alphas pass
-   *  unchanged (byte-identical recall). The daemon construction + the createPiExecutor forward land
-   *  in 111-04. TYPE-only from @comis/core — the agent never imports the memory package (the
-   *  agent↛memory cut). */
+   *  unchanged (byte-identical recall). TYPE-only from @comis/core — the agent never imports the
+   *  memory package (the agent↛memory cut). */
   tunedAlphaStore?: TunedAlphaStore;
-  /** Optional per-user representation store (USER-03). Built in the daemon on the shared memory db
+  /** Optional per-user representation store. Built in the daemon on the shared memory db
    *  handle; threaded into prompt-assembly's LLM-free `<user_profile>` injection via ToolAssemblyDeps.
    *  Absent -> no profile read, no push, byte-identical prompt (the default-OFF cost gate). TYPE-only
    *  from @comis/core — the agent never imports the memory package (the agent↛memory cut). */
   userRepresentationStore?: UserRepresentationStore;
-  /** Optional directional relationship store (SOCIAL-02/03). Built in the daemon on the shared memory
+  /** Optional directional relationship store. Built in the daemon on the shared memory
    *  db handle; threaded into prompt-assembly's LLM-free `<channel_relationships>` injection via
    *  ToolAssemblyDeps. Absent -> no relationship read, no push, byte-identical prompt (the default-OFF
    *  + sign-off-gated cost gate). TYPE-only from @comis/core — the agent never imports the memory
@@ -234,7 +233,7 @@ export interface PiExecutorDeps {
   /** Raw database handle for DAG transactions. */
   db?: unknown;
   /**
-   * DAG-05: one-shot consumer of a pending engine-mode switch for this agent.
+   * One-shot consumer of a pending engine-mode switch for this agent.
    * Threaded from the daemon rebuild seam (setup-agents-runtime.ts) through
    * setupContextEngine into the DAG engine, which calls it at the reconcile
    * seam to emit context:mode_switched once and clear the pending flag. Returns
@@ -325,7 +324,7 @@ export interface PiExecutorDeps {
     readonly includeSystem?: boolean;
   };
   /**
-   * Recall-trace writer configuration (Phase 86 / OBS-02). Forwarded from
+   * Recall-trace writer configuration. Forwarded from
    * AppConfig.diagnostics.recallTrace by daemon wiring, EXACTLY mirroring the
    * cacheTraceConfig thread above. Threaded onward via ToolAssemblyDeps into
    * PromptAssemblyParams.deps.recallTraceConfig, where buildRecallTrace reads
@@ -333,7 +332,7 @@ export interface PiExecutorDeps {
    * returns null and createMemoryRecall captures nothing (recall-trace is
    * OPT-IN, default-off). There is intentionally NO raw-content slot (unlike
    * cacheTrace's includeMessages/includeSystem): the recorder always
-   * full-sanitizes before disk (OBS-02).
+   * full-sanitizes before disk.
    */
   recallTraceConfig?: {
     readonly enabled?: boolean;

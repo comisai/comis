@@ -6,10 +6,10 @@
  * running daemon. Each test verifies the correct RPC method is called, the
  * response is a valid JSON-RPC shape, and the daemon returns structured data.
  *
- *   INTEG-SESS-01: Sessions List
- *   INTEG-SESS-02: Sessions Inspect
- *   INTEG-SESS-03: Sessions Delete
- *   INTEG-SESS-04: Sessions Delete All (Reset)
+ *   - Sessions List
+ *   - Sessions Inspect
+ *   - Sessions Delete
+ *   - Sessions Delete All (Reset)
  *
  * Uses the daemon harness for programmatic daemon startup/teardown.
  */
@@ -58,10 +58,10 @@ describe("CLI Sessions Commands Integration (real daemon)", () => {
   }, 30_000);
 
   // ---------------------------------------------------------------------------
-  // INTEG-SESS-01 -- Sessions List
+  // Sessions List
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-SESS-01: Sessions List", () => {
+  describe("Sessions List", () => {
     it("sessions.list with empty params returns valid JSON-RPC", async () => {
       const response = (await sendJsonRpc(ws, "sessions.list", {}, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -111,10 +111,10 @@ describe("CLI Sessions Commands Integration (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // INTEG-SESS-02 -- Sessions Inspect
+  // Sessions Inspect
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-SESS-02: Sessions Inspect", () => {
+  describe("Sessions Inspect", () => {
     it("sessions.inspect with session key returns valid JSON-RPC", async () => {
       const response = (await sendJsonRpc(ws, "sessions.inspect", { key: "test:echo:user1:general" }, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -144,10 +144,10 @@ describe("CLI Sessions Commands Integration (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // INTEG-SESS-03 -- Sessions Delete
+  // Sessions Delete
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-SESS-03: Sessions Delete", () => {
+  describe("Sessions Delete", () => {
     it("sessions.delete with nonexistent key returns valid JSON-RPC", async () => {
       const response = (await sendJsonRpc(ws, "sessions.delete", { key: "nonexistent-session" }, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -176,10 +176,10 @@ describe("CLI Sessions Commands Integration (real daemon)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // INTEG-SESS-04 -- Sessions Delete All (Reset)
+  // Sessions Delete All (Reset)
   // ---------------------------------------------------------------------------
 
-  describe("INTEG-SESS-04: Sessions Delete All (Reset)", () => {
+  describe("Sessions Delete All (Reset)", () => {
     it("sessions.deleteAll returns valid JSON-RPC response", async () => {
       const response = (await sendJsonRpc(ws, "sessions.deleteAll", {}, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 

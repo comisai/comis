@@ -46,14 +46,14 @@ export interface LogValidationReport {
  * These entries are filtered out during validation -- they are expected, not bugs.
  */
 const KNOWN_ACCEPTABLE: LogPattern[] = [
-  // log-verification.test.ts LOG-03: Intentional invalid RPC call to test error logging
+  // log-verification.test.ts: Intentional invalid RPC call to test error logging
   { level: "warn", msg: /RPC call failed: config\.read/ },
 
-  // log-orchestration.test.ts LOG-06: Intentional invalid RPC call that surfaces
+  // log-orchestration.test.ts: Intentional invalid RPC call that surfaces
   // at the JSON-RPC method-error level (one layer below the RPC-call failure log).
   { level: "error", msg: /JSON-RPC method error/ },
 
-  // log-verification.test.ts LOG-02: Intentional tool failure to test audit logging
+  // log-verification.test.ts: Intentional tool failure to test audit logging
   { msg: /Tool audit: fail-tool failed/ },
 
   // Test harness exit override artifact from daemon-harness.ts
@@ -117,7 +117,7 @@ const KNOWN_ACCEPTABLE: LogPattern[] = [
   // — informational, fires whenever a test config omits the oauth block.
   { level: "warn", msg: /OAuth hot-reload disabled in encrypted-store mode/ },
 
-  // memory.costFeatures.enabled defaults to true (v2.9/v2.10 opt-out posture per
+  // memory.costFeatures.enabled defaults to true (opt-out posture per
   // schema-memory.ts). When any cost-bearing memory feature is active, the daemon
   // emits ONE prominent startup WARN naming the budget impact (setup-memory-cost-
   // notice.ts) — an intentional operator notice that fires on every default-config

@@ -95,7 +95,7 @@ export function selectOAuthCredentialStore(
     return encryptedStore;
   }
 
-  // WR-01: env mode has no writable OAuth credential store. The CLI rejects
+  // Env mode has no writable OAuth credential store. The CLI rejects
   // OAuth login before reaching this point; the daemon should never attempt
   // to write OAuth profiles in env mode. Fail fast rather than silently
   // falling through to the file adapter (which would write credentials to

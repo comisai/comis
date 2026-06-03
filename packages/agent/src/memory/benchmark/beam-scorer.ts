@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Pure per-ability BEAM recall@k scorer (SUITE-01, Plan 99-06, Task 2).
+ * Pure per-ability BEAM recall@k scorer.
  *
  * THE METRIC: given the planted per-ability needles (each a `{ability, query,
  * goldDocId}`) and the LIVE ranked recall result per needle (keyed by the needle's

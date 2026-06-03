@@ -5,13 +5,13 @@
  * Validates SSE event delivery and infrastructure RPC methods that the web
  * console depends on for real-time updates and system status display:
  *
- *   SSE-01:   SSE event stream connectivity and format
- *   SSE-02:   SSE events triggered by agent status changes
- *   INFRA-01: config.read response shape for web config editor
- *   INFRA-02: config.schema response shape for web schema viewer
- *   INFRA-03: gateway.status response shape for web dashboard
- *   INFRA-04: admin.approval.pending response shape for web approvals view
- *   INFRA-05: obs.delivery.stats response shape for web observability view
+ *   - SSE event stream connectivity and format
+ *   - SSE events triggered by agent status changes
+ *   - config.read response shape for web config editor
+ *   - config.schema response shape for web schema viewer
+ *   - gateway.status response shape for web dashboard
+ *   - admin.approval.pending response shape for web approvals view
+ *   - obs.delivery.stats response shape for web observability view
  *
  * Uses a dedicated config (port 8701, single admin token, separate memory DB)
  * to avoid conflicts with other test suites.
@@ -141,7 +141,7 @@ describe("Web Console: SSE Event Delivery & Infrastructure RPC", () => {
 
   beforeAll(async () => {
     // Spy on process.kill to no-op SIGUSR1 signals BEFORE starting the daemon.
-    // SSE-02 tests call agents.create/delete which trigger persistToConfig,
+    // The SSE-event-triggering tests call agents.create/delete which trigger persistToConfig,
     // sending SIGUSR1 to the daemon 200ms after success. This kills the daemon
     // mid-test. Suppress it.
     killSpy = vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: string | number) => {
@@ -172,10 +172,10 @@ describe("Web Console: SSE Event Delivery & Infrastructure RPC", () => {
   }, 30_000);
 
   // -------------------------------------------------------------------------
-  // SSE-01 -- SSE Event Stream Connectivity and Format
+  // SSE Event Stream Connectivity and Format
   // -------------------------------------------------------------------------
 
-  describe("SSE-01: SSE Event Stream Connectivity and Format", () => {
+  describe("SSE Event Stream Connectivity and Format", () => {
     it("GET /api/events with auth returns 200 and text/event-stream content type", async () => {
       const controller = new AbortController();
       try {
@@ -222,10 +222,10 @@ describe("Web Console: SSE Event Delivery & Infrastructure RPC", () => {
   });
 
   // -------------------------------------------------------------------------
-  // SSE-02 -- SSE Event Triggering
+  // SSE Event Triggering
   // -------------------------------------------------------------------------
 
-  describe("SSE-02: SSE Event Triggering", () => {
+  describe("SSE Event Triggering", () => {
     it(
       "Agent management action triggers SSE event",
       async () => {
@@ -321,10 +321,10 @@ describe("Web Console: SSE Event Delivery & Infrastructure RPC", () => {
   });
 
   // -------------------------------------------------------------------------
-  // INFRA-01 -- Config Read Response Shape
+  // Config Read Response Shape
   // -------------------------------------------------------------------------
 
-  describe("INFRA-01: Config Read Response Shape", () => {
+  describe("Config Read Response Shape", () => {
     let ws: WebSocket;
     let rpcId = 100;
 
@@ -389,10 +389,10 @@ describe("Web Console: SSE Event Delivery & Infrastructure RPC", () => {
   });
 
   // -------------------------------------------------------------------------
-  // INFRA-02 -- Config Schema Response Shape
+  // Config Schema Response Shape
   // -------------------------------------------------------------------------
 
-  describe("INFRA-02: Config Schema Response Shape", () => {
+  describe("Config Schema Response Shape", () => {
     let ws: WebSocket;
     let rpcId = 200;
 
@@ -439,10 +439,10 @@ describe("Web Console: SSE Event Delivery & Infrastructure RPC", () => {
   });
 
   // -------------------------------------------------------------------------
-  // INFRA-03 -- Gateway Status Response Shape
+  // Gateway Status Response Shape
   // -------------------------------------------------------------------------
 
-  describe("INFRA-03: Gateway Status Response Shape", () => {
+  describe("Gateway Status Response Shape", () => {
     let ws: WebSocket;
     let rpcId = 300;
 
@@ -474,10 +474,10 @@ describe("Web Console: SSE Event Delivery & Infrastructure RPC", () => {
   });
 
   // -------------------------------------------------------------------------
-  // INFRA-04 -- Approval Queue Response Shape
+  // Approval Queue Response Shape
   // -------------------------------------------------------------------------
 
-  describe("INFRA-04: Approval Queue Response Shape", () => {
+  describe("Approval Queue Response Shape", () => {
     let ws: WebSocket;
     let rpcId = 400;
 
@@ -509,10 +509,10 @@ describe("Web Console: SSE Event Delivery & Infrastructure RPC", () => {
   });
 
   // -------------------------------------------------------------------------
-  // INFRA-05 -- Observability Response Shape
+  // Observability Response Shape
   // -------------------------------------------------------------------------
 
-  describe("INFRA-05: Observability Response Shape", () => {
+  describe("Observability Response Shape", () => {
     let ws: WebSocket;
     let rpcId = 500;
 

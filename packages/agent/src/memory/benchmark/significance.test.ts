@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * RED->GREEN unit suite for {@link wilsonInterval} + {@link twoProportionTest}
- * (Phase 104, Plan 104-01, PROVE-03) -- the N + statistical-significance layer
- * every published number must carry.
+ * -- the N + statistical-significance layer every published number must carry.
  *
  * WHY THIS MODULE EXISTS: the believability protocol
  * (.planning/MEMORY_BENCHMARK_CREDIBILITY.md) requires every headline number to
  * report N + a significance flag. No prior statistical test exists in the repo
  * (only `accuracyOf`, a plain fold). This is the only genuinely net-new
- * algorithm in Phase 104: a Wilson 95% confidence interval for a single accuracy
+ * algorithm here: a Wilson 95% confidence interval for a single accuracy
  * + a two-proportion z-test for an A-vs-B delta, over integer {correct, total}
  * counts.
  *
  * UNGATED, default-CI: pure deterministic math (no LLM, no I/O, no clock, no
  * env); imports `significance.ts` so it is never a 0%-coverage file under the
- * agent all:true floor (104-RESEARCH Pitfall 6).
+ * agent all:true floor.
  *
  * KNOWN-VALUE CHECKS (qa-accuracy.test.ts style): the Wilson bounds at n=100,
  * p=0.5 are the textbook (0.404, 0.596); the two-proportion test flips
@@ -22,7 +21,7 @@
  * j1-baseline "n=20 -> ~+-11pt SE" rationale -- a 19pt gap is significant at
  * n=100, a ~6pt gap is noise at n=20).
  *
- * NEVER-NaN GUARDS (T-104-01-03): n=0 -> all-zero CI; a zero denominator / zero
+ * NEVER-NaN GUARDS: n=0 -> all-zero CI; a zero denominator / zero
  * pooled SE -> pValue 1, significant false -- a degenerate count can never
  * silently produce a fabricated-looking "significant" or a NaN that reads as a
  * missing number.
@@ -39,7 +38,7 @@ import {
   type ProportionTest,
 } from "./significance.js";
 
-describe("wilsonInterval -- Wilson 95% CI over integer {correct,total} counts (PROVE-03)", () => {
+describe("wilsonInterval -- Wilson 95% CI over integer {correct,total} counts", () => {
   it("Test 1: the empty set (0,0) yields all-zero, never NaN (the empty-set guard)", () => {
     const ci = wilsonInterval(0, 0);
     expect(ci).toEqual<AccuracyCI>({ n: 0, pHat: 0, lo: 0, hi: 0 });
@@ -76,7 +75,7 @@ describe("wilsonInterval -- Wilson 95% CI over integer {correct,total} counts (P
   });
 });
 
-describe("twoProportionTest -- two-proportion z-test reporting N + significance (PROVE-03)", () => {
+describe("twoProportionTest -- two-proportion z-test reporting N + significance", () => {
   it("Test 5: a 19pt gap at n=100 (71/100 vs 52/100) is significant at p<0.05", () => {
     const r = twoProportionTest({ correct: 71, total: 100 }, { correct: 52, total: 100 });
     expect(r.n).toBe(200);

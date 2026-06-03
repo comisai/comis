@@ -83,7 +83,7 @@ import { createListResourcesTool, createReadResourceTool } from "./tools/mcp-res
 import { createListPromptsTool, createGetPromptTool } from "./tools/mcp-prompts-tool.js";
 
 // Side-effect import: registers `suppressActivity:true` metadata for the
-// non-§17.6 platform tools (LBL-03). Importing the tool factory modules above
+// non-§17.6 platform tools. Importing the tool factory modules above
 // already triggers each §17.6 tool's co-located `registerActivityLabelSpec`
 // call; this completes the other side of the coverage contract so every
 // emitted name is classified before any registry walk.
@@ -156,7 +156,7 @@ export interface PlatformToolBuildContext {
   readonly contextEngineVersion?: string;
   /** `browser` tool's conditional predicate. */
   readonly builtinToolsBrowserEnabled?: boolean;
-  /** `memory_ask` (the dialectic) tool's conditional predicate (DIAL-02). Fed from
+  /** `memory_ask` (the dialectic) tool's conditional predicate. Fed from
    *  `agentConfig.dialectic.enabled === true` at setup-tools; default-OFF (absent ⇒ the
    *  tool is filtered out before build — the query-time-LLM cost gate). */
   readonly dialecticEnabled?: boolean;
@@ -409,7 +409,7 @@ export function createPlatformToolRegistry(): readonly PlatformToolDescriptor[] 
 
     // ---- memory ----
     {
-      // The dialectic (Phase 109 — DIAL-01/02/03): a grounded, cited NL answer over
+      // The dialectic: a grounded, cited NL answer over
       // the agent's LLM-free recall pipeline. The ONE query-time LLM surface, OPT-IN
       // and default-OFF. The `conditional` gate registers it ONLY when the per-agent
       // `dialectic.enabled` knob is true (fed to `ctx.dialecticEnabled` at setup-tools);

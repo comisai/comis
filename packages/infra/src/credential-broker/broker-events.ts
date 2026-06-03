@@ -5,7 +5,7 @@
  * Each function builds a redaction-safe event payload and calls bus.emit()
  * once. Call sites in mitm-broker.ts become one-liners. Security invariant:
  * emitEgressBlocked hashes the host with SHA-256 — the plaintext host value
- * NEVER appears in the emitted payload (OBS-01 redaction-by-construction).
+ * NEVER appears in the emitted payload (redaction-by-construction).
  *
  * No Date.now() — all timestamps are supplied by the caller (deps.clock.now()).
  *
@@ -123,7 +123,7 @@ export function emitCredentialUnavailable(
 /**
  * Emits broker:egress_blocked when an egress attempt is made to a non-broker host.
  *
- * Security invariant (T-06-01 / OBS-01): the plaintext host value is NEVER
+ * Security invariant: the plaintext host value is NEVER
  * passed to bus.emit. Instead, a SHA-256 hex digest is computed here and only
  * the hash reaches the event payload. This is enforced structurally — there is
  * no way for a caller to bypass the hash step.

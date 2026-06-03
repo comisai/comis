@@ -5,7 +5,7 @@
  * Tests gated behind LLAMA_RERANKER_MODEL_PATH are silently skipped in normal
  * CI runs and only execute when the env var points to a valid GGUF reranker
  * model (~606 MB bge-reranker-v2-m3 Q8_0 by default). The invalid-model-path
- * graceful-degrade test (RANK-03) runs unconditionally so the adapter source is
+ * graceful-degrade test runs unconditionally so the adapter source is
  * always imported and never reports 0% coverage (the per-package coverage floor
  * counts every src file via `all: true`).
  *
@@ -90,9 +90,9 @@ describe.skipIf(!LLAMA_RERANKER_MODEL_PATH)(
   },
 );
 
-// Ungated test: graceful degradation on an invalid model path (RANK-03).
+// Ungated test: graceful degradation on an invalid model path.
 // A missing/invalid model must return err() — never throw, never crash — so the
-// recall orchestrator (Plan 04) can fall back to fusion order.
+// recall orchestrator can fall back to fusion order.
 describe("Local reranker provider (error handling)", () => {
   it("returns err() for an invalid model path instead of throwing", async () => {
     const result = await createLocalRerankerProvider({

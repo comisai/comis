@@ -3,7 +3,7 @@
 # Uses port 8519 to avoid conflicts when running in parallel via vitest pool: "forks".
 # High maxRequests (10000) because the daemon is used for JSON-RPC error format tests,
 # NOT rate limit boundary tests (those use package-level app.request()).
-# Two tokens with different scopes to test GW-09 insufficient scope error.
+# Two tokens with different scopes to test the insufficient scope error.
 
 tenantId: "test"
 logLevel: "debug"

@@ -33,7 +33,7 @@ export interface SandboxOptions {
   network?: { mode: "open" } | { mode: "broker-only"; brokerSocketPath: string };
   /**
    * When true, skip the ~/.local/share RW bind so credential material living
-   * under that XDG dir is not read-write-exposed inside the sandbox (EGRESS-02).
+   * under that XDG dir is not read-write-exposed inside the sandbox.
    * Consumed by BwrapProvider.buildArgs(); other providers ignore it.
    * (Hardcoded ~/.claude* binds are no longer emitted by any provider, so this
    * flag no longer needs to gate them.)
@@ -67,17 +67,17 @@ export interface ExecSandboxConfig {
    *  Undefined means the config field was absent (legacy); empty array means seeding is disabled. */
   warmVenvSeed?: string[];
   /**
-   * Network isolation mode forwarded to SandboxOptions.network (EGRESS-01/CR-02).
+   * Network isolation mode forwarded to SandboxOptions.network.
    * When undefined, the sandbox defaults to "open" (--share-net) — existing behavior.
    * Set to broker-only for driven-CLI spawns requiring credential injection via the broker.
-   * Phase 6 daemon wiring activates this; Phase 5 only makes the path reachable.
+   * The daemon wiring activates this; making the path reachable comes first.
    */
   network?: SandboxOptions["network"];
   /**
    * When true, skip the ~/.local/share RW bind so credential material under it
-   * is not read-write-exposed inside the sandbox (EGRESS-02/CR-02).
+   * is not read-write-exposed inside the sandbox.
    * Forwarded to SandboxOptions.secureCredentialHome. Defaults to false/undefined.
-   * Phase 6 daemon wiring activates this; Phase 5 only makes the path reachable.
+   * The daemon wiring activates this; making the path reachable comes first.
    */
   secureCredentialHome?: boolean;
 }

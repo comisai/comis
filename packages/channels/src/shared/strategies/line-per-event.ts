@@ -6,13 +6,12 @@
  * State machine:
  *   - `apply(frame)`: for each event newly visible in this frame
  *     (`frame.changeSet.added`), emit one line. A line longer than the 512-char
- *     IRC cap is truncated with "…" (T-70-07-05 — IRC rejects/splits overlong
- *     lines).
+ *     IRC cap is truncated with "…" (IRC rejects/splits overlong lines).
  *   - `finalize`:
  *       • success (non-trivial): one closing line "<success> done · N steps · Xs"
  *         (N = lines emitted; Xs = elapsed since the first line, when a clock is
  *         injected). The success/failure glyph follows the resolved theme
- *         `markers` (UX-01); omitting them yields the default `✓`/`[ERR]`.
+ *         `markers`; omitting them yields the default `✓`/`[ERR]`.
  *       • failure: one closing line "<failure> {errorKind}".
  *       • trivial / silent / aborted: no closing line.
  *
@@ -39,7 +38,7 @@ import { eventLabel } from "./render.js";
  * helpers: IRC's defaults differ from the windowed-edit channels — the success
  * line is the composed `"✓ done · N steps · Xs"` (not `"✓ done"`) and the failure
  * line is `"[ERR] {errorKind}"` (a bracketed ASCII tag, NOT the `❌` the shared
- * `DEFAULT_MARKERS` use). These two literals are the pre-75-06 IRC defaults; a
+ * `DEFAULT_MARKERS` use). These two literals are the historical IRC defaults; a
  * marker-less call MUST stay byte-identical to them (golden-fixture parity).
  */
 const DEFAULT_SUCCESS_MARKER = "✓";
@@ -54,7 +53,7 @@ export interface LinePerEventDeps {
   /** Optional — supplies the elapsed-time suffix on the success closing line. */
   clock?: ClockPort;
   /**
-   * Per-event line builder (APV-02 / APV-10, §6.4.6 / §18.3). Default: `eventLabel`
+   * Per-event line builder (§6.4.6 / §18.3). Default: `eventLabel`
    * (the redacted `defaultLabel`). A depth-aware plain-text channel (IRC) overrides
    * it to render a `kind:"approval"` event as the plain-text prompt
    * ("Reply approve or deny …", with shortIds when more than one is pending) and a
@@ -64,10 +63,10 @@ export interface LinePerEventDeps {
    */
   lineFor?: (event: ActivityEvent, visibleEvents: readonly ActivityEvent[]) => string;
   /**
-   * Resolved theme status markers (UX-01). The success/failure glyphs on the
+   * Resolved theme status markers. The success/failure glyphs on the
    * closing summary line follow these. Omitted → the IRC defaults
    * (`✓` success, `[ERR]` failure), keeping a marker-less call byte-identical to
-   * the pre-75-06 output. Only `success`/`failure` are read (the closing line
+   * the historical output. Only `success`/`failure` are read (the closing line
    * paints neither `subagent` nor `running`).
    */
   markers?: ActivityStatusMarkers;

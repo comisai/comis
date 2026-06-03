@@ -2,11 +2,11 @@
 /**
  * acp-approval-bridge — maps a redacted `kind:"approval"` {@link ActivityEvent}
  * to a single SDK `connection.requestPermission(...)` round-trip on the
- * retained per-session connection (ACP-04, spec §6.4 / §16.8). Surfaces the
+ * retained per-session connection (spec §6.4 / §16.8). Surfaces the
  * agent's approval gate as a native IDE permission modal.
  *
  * The bridge subscribes a single turn's activity stream via the
- * `ActivityStreamPort` (the WIRE-04 seam — same seam as the activity bridge),
+ * `ActivityStreamPort` (the same seam as the activity bridge),
  * and for each `kind:"approval"` event:
  *
  *   - resolves the ACP session id from `event.sessionKey` via
@@ -17,19 +17,18 @@
  *     `id→kind`), and calls `connection.requestPermission(req)` exactly once;
  *   - reads the SDK outcome and LOGS it (`"selected"` w/ optionId | `"cancelled"`).
  *
- * EMIT-AND-LOG (decision — RESEARCH.md A4 / Open Question 2): no server-side ACP
- * approval-response SINK exists yet, so the outcome is logged for the audit
- * trail but NOT routed back into the §6.4 approval gate. Routing is a deferred
- * follow-up (recorded in the plan SUMMARY); ACP-04 is satisfied by the emission
- * + the verified SDK contract.
+ * EMIT-AND-LOG (decision): no server-side ACP approval-response SINK exists yet,
+ * so the outcome is logged for the audit trail but NOT routed back into the §6.4
+ * approval gate. Routing is a deferred follow-up; the emission + the verified SDK
+ * contract are sufficient for the current bridge.
  *
- * §19.6 M6 (T-74-16): the produced `toolCall` (a `ToolCallUpdate`) carries ONLY
+ * §19.6: the produced `toolCall` (a `ToolCallUpdate`) carries ONLY
  * `toolCallId` + `title`. The SDK's raw-input/raw-output fields are NEVER
  * referenced, and the redacted event `params` are NEVER forwarded — the source
  * `ApprovalCorrelation` deliberately has no full request id (only `shortId`),
  * so nothing identifying crosses the wire. The bridge is a void-emitter (it does
  * not throw and carries no allow-throw annotation); the logger is injected via
- * Deps (OBS-02 — no module-level logger factory, no infra-package import).
+ * Deps (no module-level logger factory, no infra-package import).
  *
  * @module
  */
@@ -51,20 +50,20 @@ import type {
 /** Dependencies for {@link createAcpApprovalBridge}. */
 export interface CreateAcpApprovalBridgeDeps {
   /**
-   * Per-turn activity subscription seam (WIRE-04). The concrete impl lives in
+   * Per-turn activity subscription seam. The concrete impl lives in
    * the observability package; the gateway receives the bound port shape from
    * `@comis/core`.
    */
   readonly activityStreamPort: ActivityStreamPort;
   /**
-   * Look up the retained `AgentSideConnection` for an ACP session id (Plan 01,
-   * ACP-01). Returns `undefined` for an unknown / dropped session — the bridge
+   * Look up the retained `AgentSideConnection` for an ACP session id.
+   * Returns `undefined` for an unknown / dropped session — the bridge
    * then no-ops for that event.
    */
   readonly getConnection: (
     acpSessionId: string,
   ) => AgentSideConnection | undefined;
-  /** Injected bound logger (OBS-02). Optional — records the permission outcome. */
+  /** Injected bound logger. Optional — records the permission outcome. */
   readonly logger?: ComisLogger;
 }
 
@@ -104,7 +103,7 @@ function choiceKind(id: ApprovalChoice["id"]): PermissionOptionKind {
 /**
  * Build the SDK {@link RequestPermissionRequest} for an approval event.
  *
- * §19.6 M6: `toolCall` carries ONLY `toolCallId` + `title`; the SDK's
+ * §19.6: `toolCall` carries ONLY `toolCallId` + `title`; the SDK's
  * raw-input/raw-output fields are never set and the event `params` are never
  * forwarded.
  */
@@ -122,7 +121,7 @@ function toRequestPermissionRequest(
     sessionId: acpSessionId,
     // ToolCallUpdate — toolCallId is the only REQUIRED field; title is a safe
     // redacted label. The SDK's raw-input / raw-output fields are NEVER set
-    // and the event params are never forwarded (T-74-16).
+    // and the event params are never forwarded.
     toolCall: {
       toolCallId: e.toolCallId ?? e.activityId,
       title: e.defaultLabel ?? "Approval required",
@@ -166,7 +165,7 @@ export function createAcpApprovalBridge(
         const connection = deps.getConnection(acpSessionId);
         if (connection === undefined) return;
 
-        // 3) Build the request from the approval choices (§19.6 M6: toolCall
+        // 3) Build the request from the approval choices (§19.6: toolCall
         //    carries only toolCallId + title).
         const req = toRequestPermissionRequest(
           acpSessionId,
@@ -175,16 +174,16 @@ export function createAcpApprovalBridge(
         );
 
         // 4) Drive the SDK round-trip and LOG the outcome. Emit-and-log: there
-        //    is no ACP approval-response sink this phase, so the outcome is NOT
+        //    is no ACP approval-response sink yet, so the outcome is NOT
         //    routed back into the §6.4 gate (deferred follow-up). Log only the
         //    outcome discriminant + optionId — never the shortId, choice label
-        //    content, or any params (OBS-02 — no message bodies / secrets).
+        //    content, or any params (no message bodies / secrets).
         //    The await + outcome log are isolated in a try/catch INSIDE the
         //    .then callback so a rejected requestPermission (e.g. the IDE
         //    disconnects mid-turn) is logged and dropped WITHOUT rejecting the
         //    `chain` — a rejected chain would poison every later approval's
         //    `.then`, silently dropping all remaining approvals for the turn
-        //    (WR-01). The bridge stays a non-throwing void-emitter (no
+        //    The bridge stays a non-throwing void-emitter (no
         //    allow-throw); only the redacted SDK error is logged, never params.
         chain = chain.then(async () => {
           try {

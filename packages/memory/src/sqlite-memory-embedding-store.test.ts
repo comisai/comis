@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `createSqliteMemoryEmbeddingStore` — the @comis/memory adapter
- * for the `MemoryEmbeddingStore` port (Phase 102, IQ-01 Approach A).
+ * for the `MemoryEmbeddingStore` port.
  *
  * The harness constructs a real `SqliteMemoryAdapter` over an in-memory DB (so
  * `initSchema` runs + the `vec_memories` vec0 table exists when sqlite-vec is
@@ -10,7 +10,7 @@
  * then LEFT JOINs `vec_memories` WITHIN the caller's (tenant, agent) scope and
  * returns id→vector.
  *
- * ## The load-bearing security boundary (T-102-03-01)
+ * ## The load-bearing security boundary
  *
  * UNLIKE the corpus-wide distances-only `knnDistances` (which reads the GLOBAL
  * `vec_memories` and returns non-identifying floats), `readEmbeddings` returns
@@ -81,10 +81,10 @@ describe("createSqliteMemoryEmbeddingStore", () => {
   });
 
   // =====================================================================
-  // Scope isolation (T-102-03-01) — the load-bearing security boundary
+  // Scope isolation — the load-bearing security boundary
   // =====================================================================
 
-  describe("(tenant, agent) scope isolation (T-102-03-01)", () => {
+  describe("(tenant, agent) scope isolation", () => {
     it("returns vectors for the caller's (tenant, agent) ONLY — a foreign-agent id requested is ABSENT", async () => {
       expect(schema.isVecAvailable()).toBe(true); // vec table backs the read
 

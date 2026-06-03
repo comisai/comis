@@ -68,7 +68,7 @@ describe("registerMemoryCommand", () => {
     expect(yesOpt).toBeDefined();
   });
 
-  it("has all subcommands under memory (incl. OBS-06 diagnostics)", () => {
+  it("has all subcommands under memory (incl. diagnostics)", () => {
     const memoryCmd = program.commands.find((c) => c.name() === "memory");
     const subcommands = memoryCmd!.commands.map((c) => c.name()).sort();
     expect(subcommands).toEqual([
@@ -93,7 +93,7 @@ describe("registerMemoryCommand", () => {
   });
 
   // -------------------------------------------------------------------------
-  // OBS-06 diagnostic subcommands — structure + options.
+  // Diagnostic subcommands — structure + options.
   // -------------------------------------------------------------------------
   it("registers recall-trace <session> with --trace-id / --agent / --limit / --format", () => {
     const memoryCmd = program.commands.find((c) => c.name() === "memory");

@@ -39,8 +39,8 @@ export function formatMemorySection(
     // Format recorded date (createdAt) as YYYY-MM-DD
     const date = systemDateFrom(entry.createdAt).toISOString().split("T")[0];
 
-    // Surface the EVENT date (occurredAt) only when present (P81/TEMP-05); absent →
-    // the line is byte-identical to the Phase-80 recorded-only format. systemDateFrom
+    // Surface the EVENT date (occurredAt) only when present; absent →
+    // the line is byte-identical to the recorded-only format. systemDateFrom
     // (not new Date) keeps the wall-clock globals banned (globals.test.ts).
     const occurred =
       typeof entry.occurredAt === "number"
@@ -69,7 +69,7 @@ export function formatMemorySection(
       });
     }
 
-    // Build formatted line — explicit recorded/occurred labels back the plan-03
+    // Build formatted line — explicit recorded/occurred labels back the
     // guidance block ("when it was recorded and (if known) when the event occurred").
     const line = `- ${trustTag} (recorded ${date}${occurred}${source}): ${sanitizedContent}\n`;
 

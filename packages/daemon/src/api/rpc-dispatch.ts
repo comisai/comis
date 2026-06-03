@@ -406,7 +406,7 @@ export function createRpcDispatch(deps: ApiDispatchDeps): RpcCall {
       // operator debugging (e.g., `context.expand id=abc-123`) doesn't
       // need a separate grep — the offending input is on the same log line.
       const classified = classifyRpcError(err);
-      // CR-01 defense-in-depth: auth.set params carry bare `access` and
+      // Defense-in-depth: auth.set params carry bare `access` and
       // `refresh` OAuth token fields at the RPC boundary. Strip them
       // before logging so a transient failure (SQLITE_BUSY, admin-gate
       // rejection) does not write raw bearer tokens to the daemon log.

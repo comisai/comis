@@ -46,7 +46,7 @@ describe("CLI Agent Integration (real daemon)", () => {
 
   describe("RPC Connectivity", () => {
     it("connects to daemon and receives a valid JSON-RPC response", async () => {
-      // WR-03: config.get({section:"routing"}) returns only the safe default and
+      // config.get({section:"routing"}) returns only the safe default and
       // does not egress the routing section.
       const response = (await sendJsonRpc(ws, "config.get", { section: "routing" }, 1, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -73,8 +73,8 @@ describe("CLI Agent Integration (real daemon)", () => {
   // -------------------------------------------------------------------------
 
   describe("Agent List", () => {
-    it("config.get does not egress the routing section (WR-03)", async () => {
-      // WR-03: config.get({section:"routing"}) returns only the safe default
+    it("config.get does not egress the routing section", async () => {
+      // config.get({section:"routing"}) returns only the safe default
       // { tenantId, logLevel, gateway } and omits the routing section.
       const response = (await sendJsonRpc(ws, "config.get", { section: "routing" }, 3, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -87,7 +87,7 @@ describe("CLI Agent Integration (real daemon)", () => {
     });
 
     it("returns agent configuration from agents.get", async () => {
-      // WR-03: agent config is read via agents.get rather than
+      // agent config is read via agents.get rather than
       // config.get({section:"agents"}), which no longer egresses agent configs.
       const response = (await sendJsonRpc(ws, "agents.get", { agentId: "default" }, 4, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -147,7 +147,7 @@ describe("CLI Agent Integration (real daemon)", () => {
     });
 
     it("verifies agents.list returns pre-existing agent data after set call", async () => {
-      // WR-03: agent data is read back via agents.list rather than
+      // agent data is read back via agents.list rather than
       // config.get({section:"agents"}), which no longer egresses agent configs.
       const response = (await sendJsonRpc(ws, "agents.list", {}, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -176,7 +176,7 @@ describe("CLI Agent Integration (real daemon)", () => {
     });
 
     it("verifies agents.get still returns consistent agent data after update", async () => {
-      // WR-03: agent data is read back via agents.get rather than
+      // agent data is read back via agents.get rather than
       // config.get({section:"agents"}), which no longer egresses agent configs.
       const response = (await sendJsonRpc(ws, "agents.get", { agentId: "default" }, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 
@@ -204,7 +204,7 @@ describe("CLI Agent Integration (real daemon)", () => {
     });
 
     it("verifies agents.list no longer contains the deleted agent", async () => {
-      // WR-03: agent data is read back via agents.list rather than
+      // agent data is read back via agents.list rather than
       // config.get({section:"agents"}), which no longer egresses agent configs.
       const response = (await sendJsonRpc(ws, "agents.list", {}, msgId++, { timeoutMs: RPC_FAST_MS })) as Record<string, unknown>;
 

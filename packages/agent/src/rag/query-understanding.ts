@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * LLM-free query understanding (IQ-02 + IQ-03) — pure, deterministic helpers over the query
+ * LLM-free query understanding — pure, deterministic helpers over the query
  * STRING. All exports are PURE (no `Result`, no throw, no I/O, no clock, no globals — the
  * rag/score.ts pure-ranking carve-out): a malformed input returns a safe value (the default
  * intent / a 1.0 multiplier / the unchanged string / `undefined`), NEVER an exception.
@@ -19,7 +19,7 @@
  */
 export type Intent = "factual" | "temporal" | "preference" | "enumeration";
 
-/** The CLOSED set of reweightable recall lanes (the IQ-02 reweight surface). */
+/** The CLOSED set of reweightable recall lanes (the intent-reweight surface). */
 export type ReweightLane = "fts" | "vector" | "entity" | "temporal" | "causal" | "graphSpread";
 
 /**
@@ -77,7 +77,7 @@ const ENUMERATION_PHRASE_RE = /\bhow\s+many\b/;
  *
  *   temporal  >  enumeration  >  preference  >  factual (default)
  *
- * Temporal wins first (the NL range parse it enables — 102-04 — is the most specific signal);
+ * Temporal wins first (the NL range parse it enables is the most specific signal);
  * enumeration next (it widens recall + favors MMR diversity); preference next (entity up-weight);
  * a plain lookup with no marker falls through to `"factual"`. Pure + total — an empty/garbage
  * query simply matches nothing → `"factual"` (never throws).
@@ -111,7 +111,7 @@ export function classifyIntent(query: string): Intent {
 const TARGETED_BOOST = 1.5;
 
 /**
- * Per-intent lane reweight multiplier (IQ-02). Returns exactly `1.0` (byte-identity) for the
+ * Per-intent lane reweight multiplier. Returns exactly `1.0` (byte-identity) for the
  * `"factual"` intent on every lane AND for any (intent, lane) pair with no documented boost;
  * a documented `TARGETED_BOOST` (>1.0) on the targeted lane(s):
  *
@@ -119,7 +119,7 @@ const TARGETED_BOOST = 1.5;
  *   - `preference`  → up-weights the `entity` lane (preferences are entity-associative — the
  *                     person↔preference links the entity lane surfaces).
  *   - `enumeration` → NEUTRAL on every lane: enumeration's payoff is DIVERSITY, which is handled
- *                     by the MMR-λ knob in 102-04, NOT a lane weight (documented design fork).
+ *                     by the MMR-λ knob, NOT a lane weight (documented design fork).
  *   - `factual`     → NEUTRAL everywhere (the default-lookup byte-identity case).
  *
  * The switch over the closed {@link Intent} union carries an exhaustive `const _exhaustive: never`
@@ -133,7 +133,7 @@ export function intentMultiplier(intent: Intent, lane: ReweightLane): number {
     case "preference":
       return lane === "entity" ? TARGETED_BOOST : 1.0;
     case "enumeration":
-      return 1.0; // diversity via MMR-λ (102-04), not a lane weight
+      return 1.0; // diversity via MMR-λ, not a lane weight
     case "factual":
       return 1.0; // default lookup → byte-identity on every lane
     default: {
@@ -145,7 +145,7 @@ export function intentMultiplier(intent: Intent, lane: ReweightLane): number {
 }
 
 // ---------------------------------------------------------------------------
-// IQ-03a — synonym / acronym expansion (whole-query, bounded, FTS-safe)
+// Synonym / acronym expansion (whole-query, bounded, FTS-safe)
 // ---------------------------------------------------------------------------
 
 /** Max synonym/acronym expansions appended PER term (the DoS / query-blow-up fan-out cap). */
@@ -170,19 +170,19 @@ const SYNONYM_MAP: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
- * Expand a query STRING via the bounded {@link SYNONYM_MAP} (IQ-03a, whole-query expansion — the
+ * Expand a query STRING via the bounded {@link SYNONYM_MAP} (whole-query expansion — the
  * locked fork). For each token, up to {@link SYNONYM_FANOUT_CAP} mapped expansion phrases are
  * appended (so buildFtsQuery's OR-join surfaces both the original term and its synonyms), then the
  * whole token list is de-duplicated and re-joined with single spaces.
  *
  * Guarantees (pure, never throws):
  *   - NO-MAP NO-OP: a query whose tokens are all unmapped returns the input STRING UNCHANGED
- *     (byte-identity — the precondition for the `synonyms:false` off-path proof in 102-04).
+ *     (byte-identity — the precondition for the `synonyms:false` off-path proof).
  *   - BOUNDED FAN-OUT: at most `SYNONYM_FANOUT_CAP` expansions per term (a term with many
- *     synonyms cannot blow up the query — the DoS guard, T-102-02-03).
+ *     synonyms cannot blow up the query — the DoS guard).
  *   - FTS-SAFE: double-quotes are stripped (the buildFtsQuery sanitisation shape) and the static
  *     map holds only plain tokens, so the output introduces no FTS5 special characters
- *     (T-102-02-01; the downstream buildFtsQuery re-sanitises).
+ *     (the downstream buildFtsQuery re-sanitises).
  *   - DE-DUP: a synonym already present in the query is not appended twice.
  */
 export function expandSynonyms(query: string): string {
@@ -220,7 +220,7 @@ export function expandSynonyms(query: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// IQ-03b — NL temporal-range parse → [start,end] epoch range (nowMs param)
+// NL temporal-range parse → [start,end] epoch range (nowMs param)
 // ---------------------------------------------------------------------------
 
 /** Milliseconds per day (UTC days are exactly 86_400_000 ms — no DST in UTC). */
@@ -290,8 +290,8 @@ const WEEKDAYS: Readonly<Record<string, number>> = {
 
 /**
  * Parse a natural-language time expression in `query` into a `[start, end]` epoch-ms range,
- * computed entirely from the `nowMs` PARAMETER (IQ-03b). NEVER reads a global clock — the recall
- * path passes `deps.clock.now()` (102-04). NEVER throws — any unparseable / ambiguous query, or
+ * computed entirely from the `nowMs` PARAMETER. NEVER reads a global clock — the recall
+ * path passes `deps.clock.now()`. NEVER throws — any unparseable / ambiguous query, or
  * any unexpected internal error, returns `undefined` (→ no `occurred_at` filter, recall unchanged).
  *
  * Supported expression families (the bounded grammar's contract):
@@ -304,7 +304,7 @@ const WEEKDAYS: Readonly<Record<string, number>> = {
  * Deterministic: the same (query, nowMs) yields the same range every call. Boundary math uses the
  * static `Date.UTC(...)` (NOT the banned `new Date(...)`); UTC calendar parts of `nowMs` come from
  * the pure {@link utcPartsOf} arithmetic. The returned numbers flow to a BOUND `?` parameter in
- * the 102-03 WHERE clause (never string-concatenated into SQL — T-102-02-02).
+ * the occurred_at WHERE clause (never string-concatenated into SQL).
  */
 export function parseTemporalRange(
   query: string,

@@ -28,7 +28,7 @@ describe("Daemon Lifecycle", () => {
   let originalDataDir: string | undefined;
 
   beforeAll(async () => {
-    // Isolate the data dir to a fresh temp so the Phase 7 REQ-09 boot
+    // Isolate the data dir to a fresh temp so the credential-backend boot
     // mismatch-warn does not fire on stranded file-side credentials left in the
     // shared ~/.comis by dev usage or other tests (this config uses
     // `dataDir: ""` → ~/.comis). A clean empty dir has no inactive-backend
@@ -74,10 +74,10 @@ describe("Daemon Lifecycle", () => {
   }, 30_000);
 
   // ---------------------------------------------------------------------------
-  // DAEMON-01: Startup Logging
+  // Startup Logging
   // ---------------------------------------------------------------------------
 
-  describe("Startup Logging (DAEMON-01)", () => {
+  describe("Startup Logging", () => {
     it("logs bootstrap/config initialization", () => {
       const entries = logCapture.getEntries();
       const result = assertLogContains(entries, { msg: "Memory services initialized" });
@@ -153,7 +153,7 @@ describe("Daemon Lifecycle", () => {
         // whenever the test config omits the oauth block).
         if (msg.includes("OAuth hot-reload disabled in encrypted-store mode")) return false;
         // Exclude the cost-bearing memory features notice (memory.costFeatures.enabled
-        // defaults to true — v2.9/v2.10 opt-out posture; the daemon emits one startup
+        // defaults to true — opt-out posture; the daemon emits one startup
         // WARN naming the budget impact). Intentional operator notice, not a regression.
         if (msg.includes("cost-bearing memory features are ACTIVE")) return false;
         // Exclude the benign control-plane guard that fires non-deterministically
@@ -172,10 +172,10 @@ describe("Daemon Lifecycle", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // DAEMON-02: Shutdown Logging
+  // Shutdown Logging
   // ---------------------------------------------------------------------------
 
-  describe("Shutdown Logging (DAEMON-02)", () => {
+  describe("Shutdown Logging", () => {
     it("shutdown logs graceful shutdown initiated", async () => {
       // Trigger shutdown via SIGTERM
       shutdownTriggered = true;

@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Phase 6 credential live-rotation GREEN integration test.
+ * Credential live-rotation GREEN integration test.
  *
- * REQ-18 / REQ-07 / REQ-14: Asserts that rotating a credential (writing an
- * EXISTING secret key with a new value) makes the new value immediately
- * visible through the shared secretManager (exec-sandbox reads
- * secretManager.get() per call), and that no daemon restart occurs.
+ * Asserts that rotating a credential (writing an EXISTING secret key with a new
+ * value) makes the new value immediately visible through the shared
+ * secretManager (exec-sandbox reads secretManager.get() per call), and that no
+ * daemon restart occurs.
  *
- * Plans 06-02 (drop SIGUSR2) + 06-03 (live-apply on rotation) fixed the
- * production handler so that:
+ * The production handler was fixed (drop SIGUSR2, live-apply on rotation) so
+ * that:
  *   - env-handlers.ts calls mutableSecretManager.upsert() unconditionally
  *     (for both new-key and rotation paths).
  *   - No SIGUSR2 is scheduled on rotation — restarting: false is returned.
  *
- * All three tests below are GREEN after Plans 02-05.
+ * All three tests below are GREEN.
  *
  * Uses createSecretManagerWithMutableHandle directly (from @comis/core) to
  * exercise the shared-Map contract: both handles reference ONE Map.
@@ -31,7 +31,7 @@ import { describe, it, expect } from "vitest";
 import { createSecretManagerWithMutableHandle } from "@comis/core";
 
 // ---------------------------------------------------------------------------
-// Sentinel values: neutral test strings — never real credentials (T-06-01-02)
+// Sentinel values: neutral test strings — never real credentials
 // ---------------------------------------------------------------------------
 
 const EXEC_TEST_KEY = "EXEC_TEST_KEY";
@@ -42,17 +42,17 @@ const VALUE_V2 = "exec-test-v2-rotated";
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("credential live-rotation integration (Phase 6 GREEN)", () => {
+describe("credential live-rotation integration (GREEN)", () => {
   // ---------------------------------------------------------------------------
   // Test 1: shared Map live-apply contract (GREEN — baseline invariant)
   //
   // This test verifies that the secretManager + mutableHandle share ONE backing
   // Map. A write via mutableHandle.upsert() is immediately visible through
-  // secretManager.get(). This is the mechanism Plan 06-03 will use to make
-  // rotation live-apply — and it ALREADY works at the Map level (Phase 3).
+  // secretManager.get(). This is the mechanism rotation live-apply uses — and
+  // it ALREADY works at the Map level.
   //
-  // This test is GREEN now and must STAY GREEN through Phase 6. It documents
-  // the core invariant that the later tests depend on.
+  // This test is GREEN now and must STAY GREEN. It documents the core invariant
+  // that the later tests depend on.
   // ---------------------------------------------------------------------------
 
   it("shared Map: mutableHandle.upsert() for a new key makes value visible via secretManager.get() (GREEN — additive already works)", () => {
@@ -68,7 +68,7 @@ describe("credential live-rotation integration (Phase 6 GREEN)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 2: rotation live-apply (GREEN — Plans 06-02+06-03 fixed the handler)
+  // Test 2: rotation live-apply (GREEN — the handler fix)
   //
   // After a rotation write (existing key with new value), the env-handler now
   // calls mutableHandle.upsert(key, newValue) unconditionally for both the
@@ -88,7 +88,7 @@ describe("credential live-rotation integration (Phase 6 GREEN)", () => {
     // Initial state: secretManager has v1.
     expect(secretManager.get(EXEC_TEST_KEY)).toBe(VALUE_V1);
 
-    // Simulate the FIXED handler behavior (Plans 06-02+06-03):
+    // Simulate the FIXED handler behavior:
     //   1. secretStore.set(key, value)  — persists to disk (not modeled here)
     //   2. mutableHandle.upsert(key, value)  — live-apply to shared Map
     //   3. // NO SIGUSR2 — return restarting: false
@@ -102,16 +102,16 @@ describe("credential live-rotation integration (Phase 6 GREEN)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 3: restarting: false on rotation (GREEN — Plans 06-02+06-03 fixed it)
+  // Test 3: restarting: false on rotation (GREEN — the handler fix)
   //
   // env.set on any path (new or rotation) now returns restarting: false and
   // calls mutableSecretManager.upsert() unconditionally.
   //
   // This test inspects the env-handlers.ts source to confirm the post-fix
   // structural invariants:
-  //   1. No SIGUSR2 in the handler (Plans 06-02 removed it).
+  //   1. No SIGUSR2 in the handler (it was removed).
   //   2. mutableSecretManager.upsert is present unconditionally — not gated
-  //      inside an `if (!isNew)` block (Plans 06-03 made it unconditional).
+  //      inside an `if (!isNew)` block (it was made unconditional).
   // ---------------------------------------------------------------------------
 
   it("env.set rotation path returns restarting: false and calls mutableHandle.upsert unconditionally (GREEN)", () => {
@@ -128,13 +128,13 @@ describe("credential live-rotation integration (Phase 6 GREEN)", () => {
     const handlerSrc = readFileSync(handlerPath, "utf-8");
 
     // GREEN assertion 1: SIGUSR2 must be absent from env-handlers.ts.
-    // Plans 06-02 removed it — the restart signal is not fired on credential writes.
+    // It was removed — the restart signal is not fired on credential writes.
     expect(handlerSrc).not.toContain("SIGUSR2");
 
     // GREEN assertion 2: mutableSecretManager.upsert must be present and
     // unconditional — not gated inside an `if (!isNew)` conditional block.
-    // Plans 06-03 moved the upsert call unconditionally (before or outside
-    // the isNew check), so `if (!isNew)` no longer exists in the file.
+    // The upsert call was moved unconditionally (before or outside the isNew
+    // check), so `if (!isNew)` no longer exists in the file.
     const upsertIdx = handlerSrc.indexOf("mutableSecretManager.upsert");
     expect(upsertIdx).toBeGreaterThan(-1); // upsert call present
 

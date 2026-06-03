@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Unit tests for `createSqliteMemoryTemporalStore` — the @comis/memory adapter
- * for the `MemoryTemporalStore` port (Phase 95, LANES-02).
+ * for the `MemoryTemporalStore` port.
  *
  * The harness constructs a real `SqliteMemoryAdapter` over an in-memory DB (so
  * `PRAGMA foreign_keys = ON` is set via `openSqliteDatabase`) and seeds memories
  * through `adapter.store(...)` at known `occurred_at` event times. The temporal
  * lane reads the EXISTING `memories.occurred_at` column — there is NO new table.
  *
- * The load-bearing security boundary (T-95-05, the ENT-03 pattern): every query
+ * The load-bearing security boundary: every query
  * filters `WHERE tenant_id = ? AND agent_id = ?` (bound params). Two agents (or
  * tenants) whose memories share the SAME occurred_at MUST NEVER surface each
  * other's rows by event-time coincidence — proven by the isolation describe.
@@ -159,7 +159,7 @@ describe("createSqliteMemoryTemporalStore", () => {
   });
 
   // =====================================================================
-  // Multi-seed proximity (min-distance over seeds — Pitfall 6)
+  // Multi-seed proximity (min-distance over seeds)
   // =====================================================================
 
   describe("multi-seed proximity", () => {
@@ -195,10 +195,10 @@ describe("createSqliteMemoryTemporalStore", () => {
   });
 
   // =====================================================================
-  // Isolation (T-95-05, the HIGH security lever) — (tenant, agent) scope
+  // Isolation (the HIGH security lever) — (tenant, agent) scope
   // =====================================================================
 
-  describe("(tenant, agent) isolation (T-95-05)", () => {
+  describe("(tenant, agent) isolation", () => {
     const SEED = 100 * DAY;
 
     it("does NOT surface a cross-AGENT memory at the SAME occurred_at", async () => {
@@ -240,10 +240,10 @@ describe("createSqliteMemoryTemporalStore", () => {
   });
 
   // =====================================================================
-  // No-op paths (ENT-04 reused): no seed / no neighbour → ok([])
+  // No-op paths: no seed / no neighbour → ok([])
   // =====================================================================
 
-  describe("no-op (the ENT-04 no-op — lane empty, RRF unchanged)", () => {
+  describe("no-op (lane empty, RRF unchanged)", () => {
     it("empty seeds → ok([]) (no query runs)", async () => {
       await seedMemory({ id: "m1", occurredAt: 100 * DAY });
       const res = await store.spreadLane([], SCOPE_A, 7 * DAY, 50);

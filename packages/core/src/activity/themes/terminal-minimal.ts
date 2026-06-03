@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * The `terminal-minimal` activity theme (UX-01, Plan 75-01).
+ * The `terminal-minimal` activity theme.
  *
  * Terse, low-emoji markers built from plain Unicode symbols — distinct from
  * both `default` (no ❌/🤖/🔧 emoji) and `ascii` (uses symbols, not bracketed

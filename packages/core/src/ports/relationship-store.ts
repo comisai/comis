@@ -3,7 +3,7 @@ import type { Result } from "@comis/shared";
 
 /**
  * RelationshipStore: the SEGREGATED hexagonal boundary for directional,
- * multi-party relationship modeling (Phase 108, Track E2 — SOCIAL-01). A
+ * multi-party relationship modeling. A
  * relationship entry is a durable, DIRECTIONAL, HIGH-TRUST fact — `subjectUser`'s
  * representation OF `aboutUser` — scoped to one (tenant, agent, channel), built by
  * an offline LLM job and (optionally) injected LLM-free into the prompt. The edge
@@ -29,15 +29,15 @@ import type { Result } from "@comis/shared";
  */
 
 /**
- * The isolation boundary for every relationship operation (SOCIAL-02 — the §5.2 /
- * ENT-03 pattern, scoped by CHANNEL). Every adapter statement — INSERT, UPDATE,
+ * The isolation boundary for every relationship operation (the §5.2 pattern,
+ * scoped by CHANNEL). Every adapter statement — INSERT, UPDATE,
  * SELECT — filters on `(tenantId, agentId, channelId)`. This is a load-bearing
  * SECURITY scope in a multi-agent, multi-channel DB, not a nicety: a relationship
  * populated in one (tenant, agent, channel) must NEVER be returned for another
  * scope (a cross-channel OR cross-tenant read is structurally impossible). The
  * directional `(subjectUserId, aboutUserId)` pair is ROW DATA inside this scope,
  * NOT part of the security filter. `channelId` is the NEW privacy axis that makes
- * this STRICTER than the Phase-107 (tenant, agent, user) scope — `agentId` is
+ * this STRICTER than the earlier (tenant, agent, user) scope — `agentId` is
  * carried too (the per-agent partition within a channel — the SAFE default,
  * stricter than the bare (tenant, channel)).
  */
@@ -46,7 +46,7 @@ export interface RelationshipScope {
   tenantId: string;
   /** Agent partition (isolation boundary). */
   agentId: string;
-  /** Channel partition (the per-channel privacy isolation boundary — the Track E2 point). */
+  /** Channel partition (the per-channel privacy isolation boundary). */
   channelId: string;
   /**
    * Injected wall-clock epoch milliseconds for the write's bookkeeping
@@ -59,20 +59,20 @@ export interface RelationshipScope {
 }
 
 /**
- * The HIGH-TRUST floor for a relationship entry, as a TYPE (SOCIAL-01). DISTINCT
+ * The HIGH-TRUST floor for a relationship entry, as a TYPE. DISTINCT
  * from the full `TripleTrust` ladder (`system`/`learned`/`external`): `external`
  * is STRUCTURALLY ABSENT here. The relationship is built only from high-trust
  * sources — an LLM-produced entry cannot type a forbidden trust value at the
- * contract layer (T-108-01, defense-in-depth with the DB CHECK in Plan 02). Trust
+ * contract layer (defense-in-depth with the DB CHECK in the adapter). Trust
  * is CODE-computed, never LLM-chosen.
  */
 export type RelationshipTrust = "system" | "learned";
 
 /**
- * A directional relationship entry to write (SOCIAL-01). `content` is the
+ * A directional relationship entry to write. `content` is the
  * conversation-derived (untrusted) relationship text — DATA, never SQL; the
  * adapter binds every value as a `?` parameter and runs it through the redaction
- * firewall + `validateMemoryWrite` (Plan 02/03). The `(subjectUserId, aboutUserId)`
+ * firewall + `validateMemoryWrite`. The `(subjectUserId, aboutUserId)`
  * pair is the directional edge — subject's representation OF about; it is NEVER
  * symmetrized. `trust` admits ONLY the high-trust floor (the LLM has no say — it
  * is code-computed).
@@ -91,7 +91,7 @@ export interface RelationshipInput {
 }
 
 /**
- * A relationship entry read back (SOCIAL-01) — the input shape plus the
+ * A relationship entry read back — the input shape plus the
  * adapter-assigned identity + bookkeeping timestamps.
  */
 export interface RelationshipEntry extends RelationshipInput {
@@ -105,17 +105,16 @@ export interface RelationshipEntry extends RelationshipInput {
 
 export interface RelationshipStore {
   /**
-   * WRITE PATH (SOCIAL-01). Upsert one directional relationship edge under the
+   * WRITE PATH. Upsert one directional relationship edge under the
    * caller's (tenant, agent, channel) scope. The adapter binds every value as a
    * `?` parameter, enforces the high-trust floor + redaction-clean + the
    * `validateMemoryWrite` boundary, and is idempotent (re-upserting an unchanged
-   * edge writes 0 new rows — Plan 02's idempotence contract). The directional
+   * edge writes 0 new rows). The directional
    * pair is preserved verbatim — A→B and B→A are distinct rows. Deterministic,
    * one synchronous transaction; the timestamp comes from `scope.now`.
    *
-   * NOTE (Plan 108-01): this is the type contract only. The SQLite adapter is
-   * implemented in Plan 108-02; the offline builder that produces edges lands in
-   * a later plan.
+   * NOTE: this is the type contract only. The SQLite adapter is implemented
+   * separately; the offline builder that produces edges lands later.
    */
   upsert(
     entry: RelationshipInput,
@@ -123,18 +122,18 @@ export interface RelationshipStore {
   ): Promise<Result<void, Error>>;
 
   /**
-   * READ PATH (SOCIAL-01). The LLM-free relationship read: the relationship edges
+   * READ PATH. The LLM-free relationship read: the relationship edges
    * for the caller's (tenant, agent, channel) scope ONLY, capped by `cap` (a sane
    * default bound). Takes `Omit<RelationshipScope, "now">` — no clock is needed to
    * read (mirror TripleStorePort.asOf). This is the deterministic read the
    * (optional) prompt-assembly injection block consumes with NO model call (the
    * milestone's #1 binding constraint — the recall hot path stays LLM-free). A
-   * cross-channel OR cross-tenant read returns nothing (the SOCIAL-02 structural
+   * cross-channel OR cross-tenant read returns nothing (the structural
    * isolation); an empty array is returned when the channel has no edges (the
    * default-OFF byte-identity no-op).
    *
-   * NOTE (Plan 108-01): this is the type contract only; the scoped SELECT is
-   * implemented in Plan 108-02.
+   * NOTE: this is the type contract only; the scoped SELECT is implemented
+   * separately.
    */
   read(
     scope: Omit<RelationshipScope, "now">,

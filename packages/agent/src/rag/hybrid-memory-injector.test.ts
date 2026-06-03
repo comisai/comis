@@ -42,12 +42,12 @@ describe("hybrid-memory-injector", () => {
       expect(result.inlineMemory).toBeDefined();
       expect(result.inlineMemory).toContain("User prefers dark mode");
       expect(result.inlineMemory).toContain("recorded 2026-01-15");
-      // No occurredAt → no "occurred" segment (Phase-80 inline format unchanged).
+      // No occurredAt → no "occurred" segment (recorded-only inline format unchanged).
       expect(result.inlineMemory).not.toContain("occurred ");
       expect(result.systemPromptSections).toEqual([]);
     });
 
-    it("inlines BOTH recorded and occurred dates when occurredAt is present (TEMP-05)", () => {
+    it("inlines BOTH recorded and occurred dates when occurredAt is present", () => {
       const injector = createHybridMemoryInjector();
       const results = [
         mockResult("Discussed the launch on the 3rd", 0.85, "2026-01-15", "2026-01-03"),

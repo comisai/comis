@@ -9,24 +9,24 @@ export {
   MemorySourceSchema,
   MemoryEntrySchema,
   parseMemoryEntry,
-  // Structured extraction (Phase 82 — EXTR-01)
+  // Structured extraction
   ExtractedEntitySchema,
   StructuredMemorySchema,
   MemoryExtractionResultSchema,
   MemoryEntitySchema,
-  // Per-user representation prefix-type enum (Phase 107 — USER-01)
+  // Per-user representation prefix-type enum
   UserRepresentationTypeSchema,
 } from "./memory-entry.js";
 export type {
   TrustLevel,
   MemoryEntry,
-  // Structured extraction (Phase 82) + Phase-83 domain target
+  // Structured extraction + resolved-entity domain target
   MemorySource,
   ExtractedEntity,
   StructuredMemory,
   MemoryExtractionResult,
   MemoryEntity,
-  // Per-user representation prefix type (Phase 107 — USER-01)
+  // Per-user representation prefix type
   UserRepresentationType,
 } from "./memory-entry.js";
 

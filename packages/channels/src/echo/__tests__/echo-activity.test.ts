@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Echo activity renderer + harness tests (CHAN-01, CHAN-05; §18.2 Echo/TestSink row).
+ * Echo activity renderer + harness tests (§18.2 Echo/TestSink row).
  *
  * Echo is the canonical-stream reference: `createEchoActivityRenderer()` wraps
  * `createTestSink()`, which records every `apply(frame)` verbatim with NO
@@ -74,7 +74,7 @@ function serialiseRecorded(recorded: {
 
 // --- Task 1 behavior tests -------------------------------------------------
 
-describe("createEchoActivityRenderer (CHAN-01 canonical fidelity)", () => {
+describe("createEchoActivityRenderer (canonical fidelity)", () => {
   it("captures every apply frame verbatim with coalescing NOT applied plus the finalize outcome", async () => {
     const renderer = createEchoActivityRenderer();
     expect(renderer.strategy).toBe("TestSink");
@@ -158,7 +158,7 @@ describe("readFixture (read-from-disk helper)", () => {
   });
 });
 
-// --- Task 2 scenario cases (S1-S7, S10-S12; S8 deferred to Phase 73, S9 n/a) ---
+// --- Scenario cases (S1-S7, S10-S12; S8 deferred, S9 n/a) ---
 
 /**
  * Build the recorded {frames, outcome} for a scenario, drive the Echo renderer,

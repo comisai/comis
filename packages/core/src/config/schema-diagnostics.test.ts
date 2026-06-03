@@ -305,16 +305,16 @@ describe("cacheTrace.maxFileBytes config field", () => {
 });
 
 // ---------------------------------------------------------------------------
-// recallTrace subsection (Phase 86 / OBS-02)
+// recallTrace subsection
 //
 // `diagnostics.recallTrace` is the OPT-IN sibling of `cacheTrace` — it gates
-// Plan 01's per-recall ranking-preview JSONL recorder. Default OFF (distinct
+// the per-recall ranking-preview JSONL recorder. Default OFF (distinct
 // from cacheTrace's enabled:true digests) because it records ranking previews
 // for a debug session. It has NO includeMessages/includeSystem slot: the
 // recorder always full-sanitizes (no raw-content opt-in).
 // ---------------------------------------------------------------------------
 
-describe("DiagnosticsConfigSchema.recallTrace — fields and defaults (OBS-02)", () => {
+describe("DiagnosticsConfigSchema.recallTrace — fields and defaults", () => {
   it("empty parse populates recallTrace with enabled:false (opt-in) + 50 MB cap", () => {
     const result = DiagnosticsConfigSchema.safeParse({});
     expect(result.success).toBe(true);
