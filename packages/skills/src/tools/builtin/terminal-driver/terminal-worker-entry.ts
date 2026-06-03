@@ -57,6 +57,7 @@ import { buildEgressRelayLaunch as defaultBuildEgressRelayLaunch } from "./termi
 import type { TerminalReplyFrame, TerminalRequestFrame } from "./terminal-ipc.js";
 import { encodeKeyChord } from "./terminal-key-grammar.js";
 import { sanitizeTraceId, WORKER_TRUST_LEVEL } from "./terminal-worker-context.js";
+import { attachBackend } from "./terminal-worker-backend-attach.js";
 import {
   buildReadResult,
   createSessionEmulator,
@@ -208,8 +209,13 @@ interface WaitResult {
   cursor: { x: number; y: number };
 }
 
-/** A closure-local per-session record (NOT module-global). */
-interface SessionState {
+/**
+ * A closure-local per-session record (NOT module-global). Exported as a worker-internal
+ * structural type so the extracted backend-attach sibling ({@link attachBackend} in
+ * `terminal-worker-backend-attach.ts`) can type the `state` it feeds; it is NOT a
+ * public-surface contract (not re-exported by the barrel) — purely intra-module.
+ */
+export interface SessionState {
   backend: WorkerBackend;
   cols: number;
   rows: number;
@@ -338,39 +344,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     bwrapPath: deps.bwrapPath,
   };
 
-  /**
-   * Append a chunk to the session ring (RAW settle feed + degraded view) AND feed it
-   * into the @xterm emulator (the rendered-`read` source of truth), then notify the
-   * settle's ring-change subscribers. The emu write chains onto
-   * {@link SessionState.writeFlush} (serialized, @xterm-PARSE-backed) so `handleRead`
-   * awaits it before serializing a settled frame.
-   */
-  function appendRing(state: SessionState, chunk: string): void {
-    state.ring += chunk;
-    state.writeFlush = (state.writeFlush ?? Promise.resolve()).then(() => state.emu?.write(chunk));
-    for (const cb of state.ringListeners) cb();
-  }
-
-  /**
-   * Flip a session to not-alive + notify the settle's exit subscribers (onExit half)
-   * so a pending `wait`/settle resolves `exit`. ALSO disposes the `listed-hosts`
-   * egress materialization ONCE (socket cleanup, 122-06) — nulling the handle first
-   * so a second exit signal (close AND error) cannot double-dispose.
-   */
-  function markExited(state: SessionState): void {
-    state.alive = false;
-    if (state.egress !== undefined) {
-      const { egress } = state;
-      state.egress = undefined; // dispose once, even if close+error both fire
-      void egress.dispose().catch((err: unknown) => {
-        logger.warn(
-          { err, hint: "egress dispose failed on session teardown", errorKind: "internal" as const },
-          "terminal egress dispose failed",
-        );
-      });
-    }
-    for (const cb of state.exitListeners) cb();
-  }
+  // appendRing (ring + emulator feed + settle ring-change notify) and markExited (not-alive
+  // flip + once-only egress dispose + settle exit notify) moved to terminal-worker-backend-attach.ts
+  // (124-01) — their ONLY callers are the backend stream handlers there, so they ride with
+  // attachBackend; behavior is byte-for-byte identical.
 
   /** Resolve the backend write sink: pty.write for the pty backend, else pipe.stdin.write. */
   function writeToBackend(state: SessionState, bytes: string): void {
@@ -480,41 +457,19 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     }
     state.egress = plan.egress; // disposed on teardown (markExited)
 
-    let pty: PtyModuleLike | undefined;
-    try {
-      pty = deps.loadPty();
-    } catch (err) {
-      // TR-08: node-pty unavailable → the pipe backend, reported as degraded.
-      logger.warn(
-        { err, hint: "node-pty unavailable; pipe fallback", errorKind: "dependency" as const },
-        "terminal worker degraded",
-      );
-      state.backend = "degraded";
-    }
-
-    if (pty !== undefined) {
-      // PTY backend — spawn the bwrap jail; the child rides after the composer's `--`.
-      const handle = pty.spawn(plan.bin, plan.argv, { cols, rows, env: plan.env });
-      handle.onData((d) => appendRing(state, d));
-      // Wire child exit -> markExited (the pty analog of the pipe close/error below;
-      // payload ignored). WITHOUT it a real node-pty child that exits never notifies
-      // an in-flight wait({forExit:true}) (the VPS real-PTY gate).
-      handle.onExit(() => {
-        markExited(state);
-      });
-      state.pty = handle;
-    } else {
-      // Pipe backend (degraded) — ALSO wrapped in bwrap (no unjailed degraded path).
-      const child = spawnPipe(plan.bin, plan.argv, { env: plan.env });
-      child.stdout?.on("data", (chunk: Buffer) => appendRing(state, chunk.toString("utf8")));
-      child.on("close", () => {
-        markExited(state);
-      });
-      child.on("error", () => {
-        markExited(state);
-      });
-      state.pipe = child;
-    }
+    // Attach the backend (PTY or the degraded pipe fallback) — the EXACT try-loadPty /
+    // wire-onData/onExit / pipe-close-error block, lifted into a sibling so this file
+    // keeps headroom under the 800-line cap (124-01). appendRing/markExited moved with it
+    // (their only callers were those stream handlers); the rest ride in as explicit params.
+    attachBackend({
+      plan: { bin: plan.bin, argv: plan.argv, env: plan.env },
+      cols,
+      rows,
+      state,
+      loadPty: deps.loadPty,
+      spawnPipe,
+      logger,
+    });
 
     // (The session was registered synchronously above so concurrent frames find it.)
     logger.info(
