@@ -61,12 +61,6 @@ function snap(
   };
 }
 
-/** A full ROWS-high blank grid (every line empty) with the given prompt drawn near the bottom. */
-function promptGrid(promptLine: string, promptRow: number, cursorX: number): EmulatorSnapshot {
-  const lines = Array.from({ length: ROWS }, (_, i) => (i === promptRow ? promptLine : ""));
-  return snap(lines, { x: cursorX, y: promptRow });
-}
-
 function frame(over: Partial<ClassifierFrame> = {}): ClassifierFrame {
   return {
     alive: true,
@@ -114,8 +108,10 @@ describe("classifyFrame — working (unsettled output)", () => {
 
 describe("classifyFrame — awaiting-input (settled + diff∅ + cursor parked)", () => {
   it("settled + diffEmpty + cursor parked at a plausible prompt → awaiting-input (high)", () => {
-    // A shell prompt on the last non-blank row, cursor just after it.
-    const snapshot = promptGrid("$ ", 0, 2);
+    // A shell prompt at the BOTTOM of rendered content (rows past the tiny-screen guard,
+    // so the structural cursor-below-content discriminator genuinely applies, WR-04).
+    const lines = ["Welcome to the shell", "Type a command:", "$ "];
+    const snapshot = snap(lines, { x: 2, y: 2 });
     const c = classifyFrame(frame({ settled: true, diffEmpty: true, snapshot }), noStuck);
     expect(c.state).toBe("awaiting-input");
     expect(c.confidence).toBe("high");
@@ -179,8 +175,11 @@ describe("classifyFrame — stuck (settled, no affordance, no progress > stuckMs
 
   it("a PARKED cursor takes precedence over stuck (a real prompt is awaiting-input, not stuck)", () => {
     // Even with no progress, if the cursor is genuinely parked at a prompt it is
-    // awaiting-input (the human/agent simply hasn't answered yet), not stuck.
-    const snapshot = promptGrid("$ ", 0, 2);
+    // awaiting-input (the human/agent simply hasn't answered yet), not stuck. Uses a
+    // prompt with content past row 1 so the structural gate applies (lastNonBlankRow=2,
+    // above the WR-04 tiny-screen guard).
+    const lines = ["Build finished.", "All checks passed.", "Continue? (y/n) "];
+    const snapshot = snap(lines, { x: 16, y: 2 });
     const history: FrameHistory = { noProgressMs: 30_000, stuckMs: 5_000 };
     expect(classifyFrame(frame({ snapshot }), history).state).toBe("awaiting-input");
   });
@@ -201,9 +200,20 @@ describe("classifyFrame — never throws (typed result, pure)", () => {
 // ---------------------------------------------------------------------------
 
 describe("isCursorParked — parked at/near the last non-blank prompt row", () => {
-  it("parked: cursor at the last non-blank row, just after the prompt text", () => {
+  it("WR-04: a ≤2-row content screen does NOT park on the bare line-has-text leg (the structural row gate is a no-op there)", () => {
+    // lastNonBlankRow=0 → the row gate accepts every cursor row, so the structural
+    // "cursor below all content" discriminator means nothing. Without a positive
+    // operator hint the verdict must be NOT parked (the safe direction — `working`),
+    // never the weaker bare line-has-text heuristic.
     const screen = ["$ "].concat(Array.from({ length: ROWS - 1 }, () => "")).join("\n");
-    expect(isCursorParked({ x: 2, y: 0 }, screen, COLS, ROWS)).toBe(true);
+    expect(isCursorParked({ x: 2, y: 0 }, screen, COLS, ROWS)).toBe(false);
+  });
+
+  it("WR-04: a ≤2-row content screen DOES park when an operator hintPattern positively matches the cursor line", () => {
+    // The operator opted into this exact prompt cue, so a tiny screen may still park —
+    // the guard only removes the bare line-has-text leg, not an operator-allowlisted cue.
+    const screen = ["$ proceed? "].concat(Array.from({ length: ROWS - 1 }, () => "")).join("\n");
+    expect(isCursorParked({ x: 11, y: 0 }, screen, COLS, ROWS, ["proceed?"])).toBe(true);
   });
 
   it("parked: cursor on the last non-blank row (a multi-line prompt block at the bottom)", () => {

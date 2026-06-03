@@ -139,7 +139,10 @@ export interface Classification {
  *   - the cursor's own line is non-blank (a prompt has text), OR an operator
  *     `hintPattern` matches that line, AND
  *   - the cursor column is plausible (at or just past the cursor line's content —
- *     where one would type, not stranded far out in blank space).
+ *     where one would type, not stranded far out in blank space), AND
+ *   - on a ≤2-row content screen (`lastNonBlankRow <= PARK_ROW_TOLERANCE`, where the
+ *     row gate is structurally a no-op) an operator `hintPattern` POSITIVELY matches the
+ *     cursor line — the bare line-has-text leg alone is insufficient there (WR-04).
  *
  * `hintPatterns` can only REINFORCE the line-has-text leg; they cannot satisfy the
  * row/column structure on their own, so a fake mid-screen "(y/n)" is rejected.
@@ -185,6 +188,17 @@ export function isCursorParked(
   const cursorLine = lines[cursor.y] ?? "";
   const lineHasText = cursorLine.trim().length > 0;
   const hintMatches = hintPatterns.some((p) => p.length > 0 && cursorLine.includes(p));
+
+  // WR-04: when the rendered content is ≤ PARK_ROW_TOLERANCE+1 rows tall
+  // (`lastNonBlankRow <= PARK_ROW_TOLERANCE`), the row gate above accepts EVERY cursor
+  // row — the "cursor at the bottom of content, not mid-generation" discriminator is a
+  // no-op, so the bare line-has-text leg alone is not enough signal to park. Lean on a
+  // positive operator hint instead: a tiny screen parks ONLY when an allowlisted cue
+  // matches the cursor line, else it stays not-parked (the safe direction — `working`).
+  // A short streaming frame mid-generation can therefore never spuriously read as a
+  // prompt, while the auth/menu cases the operator opted into are preserved.
+  const tooShortForStructure = lastNonBlankRow <= PARK_ROW_TOLERANCE;
+  if (tooShortForStructure && !hintMatches) return false;
 
   // The cursor's line must carry prompt text (or match an operator cue). A blank
   // cursor line with no hint is not an input position.
