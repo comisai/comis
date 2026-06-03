@@ -33,6 +33,46 @@ describe("SkillsConfigSchema -- toolDiscovery.minBm25Score [.max(1) tightening]"
     const result = SkillsConfigSchema.parse({});
     expect(result.toolDiscovery.minBm25Score).toBe(0.8);
   });
+
+  // 124-09 (WR-01 closure): the interactive terminal driver config is now MOUNTED on
+  // SkillsConfigSchema (it was an orphaned, unmounted schema). Optional + fail-closed:
+  // absent ⇒ undefined (the daemon wires an empty allow-set + no reaper). When present
+  // it round-trips so the daemon threads the allow-set + worker caps into the registry.
+  it("terminal is OPTIONAL and absent by default (fail-closed: no terminal config ⇒ undefined)", () => {
+    const result = SkillsConfigSchema.parse({});
+    expect(result.terminal).toBeUndefined();
+  });
+
+  it("terminal round-trips through SkillsConfigSchema when present (the WR-01 config-plumbing seam)", () => {
+    const result = SkillsConfigSchema.parse({
+      terminal: {
+        enabled: true,
+        worker: { maxSessions: 4, idleTtlMs: 60_000, ringBytes: 65_536, stuckMs: 30_000, maxConcurrentAttentionTurns: 2 },
+        defaults: { cols: 80, rows: 24, scrollback: 1000 },
+        allow: [],
+        redactSecrets: true,
+        audit: { enabled: true },
+      },
+    });
+    expect(result.terminal?.worker.maxSessions).toBe(4);
+    expect(result.terminal?.worker.idleTtlMs).toBe(60_000);
+    expect(result.terminal?.allow).toEqual([]);
+  });
+
+  it("terminal stays a closed strictObject inside skills (a typo'd terminal key rejects, OPS-02)", () => {
+    const result = SkillsConfigSchema.safeParse({
+      terminal: {
+        enabled: true,
+        worker: { maxSessions: 4, idleTtlMs: 60_000, ringBytes: 65_536, stuckMs: 30_000, maxConcurrentAttentionTurns: 2 },
+        defaults: { cols: 80, rows: 24, scrollback: 1000 },
+        allow: [],
+        redactSecrets: true,
+        audit: { enabled: true },
+        bogusTerminalKey: 1,
+      },
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 /**
