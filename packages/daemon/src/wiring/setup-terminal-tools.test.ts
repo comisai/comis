@@ -148,7 +148,10 @@ describe("wireTerminalTools — daemon composition root", () => {
  * are owned + tested by core's `schema-skills.test.ts`); these tests assert the
  * daemon-boundary MAPPING preserves whatever scope arrives, not the defaulting.
  */
-function configEntry(scope: TerminalAllowEntry["scope"]): TerminalAllowEntry {
+function configEntry(
+  scope: TerminalAllowEntry["scope"],
+  approveOnCreate?: boolean,
+): TerminalAllowEntry {
   return {
     id: "bash",
     match: { path: "/bin/bash" },
@@ -156,6 +159,7 @@ function configEntry(scope: TerminalAllowEntry["scope"]): TerminalAllowEntry {
     autoAnswer: "safe-only",
     consent: { acknowledgedRisk: true, acknowledgedAt: "2026-06-03T00:00:00Z" },
     hardening: "none",
+    ...(approveOnCreate === undefined ? {} : { approveOnCreate }),
   };
 }
 
@@ -202,10 +206,22 @@ describe("mapAllowEntry — config scope is preserved onto AllowEntryLike (SEC-0
 
   it("is the single mapping site: the mapped entry feeds matchAllowEntry's AllowEntryLike shape unchanged", () => {
     // Structural proof the mapping yields the exact AllowEntryLike contract the
-    // skills matcher consumes ({id, match, scope}) — so a later config-plumbing step
-    // can do allowEntries = config.allow.map(mapAllowEntry) and scope flows.
+    // skills matcher consumes ({id, match, scope, approveOnCreate}) — so a later
+    // config-plumbing step can do allowEntries = config.allow.map(mapAllowEntry)
+    // and scope + the SEC-06 consent flag flow.
     const mapped = mapAllowEntry(configEntry(LEAST_PRIVILEGE));
-    expect(Object.keys(mapped).sort()).toEqual(["id", "match", "scope"]);
+    expect(Object.keys(mapped).sort()).toEqual(["approveOnCreate", "id", "match", "scope"]);
+  });
+
+  it("SEC-06: copies approveOnCreate so the consent flag survives the daemon boundary (NOT dropped)", () => {
+    // approveOnCreate is a sibling of scope (122-04) — the create tool gates on it.
+    // The daemon mapping MUST carry it through, else a high-risk entry silently
+    // skips the operator approval gate.
+    const mappedTrue = mapAllowEntry(configEntry(LEAST_PRIVILEGE, true));
+    expect(mappedTrue.approveOnCreate).toBe(true);
+
+    const mappedUnset = mapAllowEntry(configEntry(LEAST_PRIVILEGE));
+    expect(mappedUnset.approveOnCreate).toBeUndefined();
   });
 });
 
