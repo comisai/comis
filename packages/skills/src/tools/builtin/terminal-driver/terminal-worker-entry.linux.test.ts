@@ -20,7 +20,29 @@
 
 import { describe, it, expect } from "vitest";
 
+import { createTerminalWorker, defaultLoadPty } from "./terminal-worker-entry.js";
+import type { TerminalRequestFrame } from "./terminal-ipc.js";
+
 const isLinux = process.platform === "linux";
+
+const VPS_TRACE_ID = "22222222-3333-4444-8555-666666666666";
+
+/** A no-op structural logger for the live-PTS worker (the VPS run captures nothing). */
+const silentLogger = {
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
+
+/** Build a request frame for the live-PTY interaction assertion. */
+function liveFrame(
+  method: string,
+  params: Record<string, unknown>,
+  requestId: string,
+): TerminalRequestFrame {
+  return { sessionId: "live", requestId, traceId: VPS_TRACE_ID, method, params };
+}
 
 /**
  * The 118-proven worker-launch posture (the daemon spawns the worker under this
@@ -45,5 +67,75 @@ describe.skipIf(!isLinux)("terminal worker posture (Linux only)", () => {
     expect(WORKER_PERMISSION_ARGS).toContain("--permission");
     expect(WORKER_PERMISSION_ARGS).toContain("--allow-addons");
     expect(WORKER_PERMISSION_ARGS).toContain("--allow-child-process");
+  });
+
+  // ==========================================================================
+  // THE VPS LIVE-PTY INTERACTION ASSERTION (120-04, TR-04/TR-05).
+  //
+  // Drives a REAL interactive program through a REAL node-pty forkpty worker
+  // (loadPty = defaultLoadPty, real injected timers) and proves the full
+  // submit -> settle -> observe loop AND that a control key affects a live
+  // program. This is the macOS-unprovable half (the macOS box's node-pty can't
+  // posix_spawnp in-harness — the 119-03/119-04 precedent), so the orchestrator
+  // runs it on comisvps. On macOS this entire describe block is skipped.
+  // ==========================================================================
+  it("drives a live program: send_text(submit) echoes, then C-d exits (submit->settle->observe + control key)", async () => {
+    // `cat` is a minimal line-buffered interactive program: it echoes each
+    // submitted line and exits on EOF (C-d).
+    const worker = createTerminalWorker({
+      loadPty: defaultLoadPty,
+      logger: silentLogger,
+    });
+
+    // create a real PTY session running `cat`.
+    const created = await worker.handle(
+      liveFrame(
+        "create",
+        { sessionId: "live", bin: "/bin/cat", argv: [], cols: 80, rows: 24 },
+        "rq-create",
+      ),
+    );
+    expect(created.ok).toBe(true);
+    expect((created.result as { backend: string }).backend).toBe("pty"); // real forkpty
+
+    // submit "hello\n": text -> settle -> \r. `cat` echoes the line back.
+    const sent = await worker.handle(
+      liveFrame(
+        "send_text",
+        { sessionId: "live", text: "hello", submit: true, bracketedPaste: false },
+        "rq-send",
+      ),
+    );
+    expect(sent.ok).toBe(true);
+
+    // wait for the echoed text to appear in the ring (bounded; resolves on text).
+    const waited = await worker.handle(
+      liveFrame("wait", { sessionId: "live", forText: "hello", timeoutMs: 3_000 }, "rq-wait-1"),
+    );
+    expect(waited.ok).toBe(true);
+    expect((waited.result as { isComplete: boolean }).isComplete).toBe(true);
+
+    // read: the screen shows the submitted line echoed by the live program.
+    const read = await worker.handle(
+      liveFrame("read", { sessionId: "live" }, "rq-read"),
+    );
+    expect((read.result as { screen: string }).screen).toContain("hello");
+    expect((read.result as { alive: boolean }).alive).toBe(true);
+
+    // send_key C-d (EOF) -> `cat` exits. Then wait for the exit.
+    await worker.handle(liveFrame("send_key", { sessionId: "live", keys: ["C-d"] }, "rq-eof"));
+    const exited = await worker.handle(
+      liveFrame("wait", { sessionId: "live", forExit: true, timeoutMs: 3_000 }, "rq-wait-2"),
+    );
+    expect(exited.ok).toBe(true);
+    // The live program exited: reason "exit" and the settle is complete.
+    expect((exited.result as { reason: string }).reason).toBe("exit");
+    expect((exited.result as { isComplete: boolean }).isComplete).toBe(true);
+
+    // A final read confirms the session is no longer alive.
+    const finalRead = await worker.handle(
+      liveFrame("read", { sessionId: "live" }, "rq-read-final"),
+    );
+    expect((finalRead.result as { alive: boolean }).alive).toBe(false);
   });
 });

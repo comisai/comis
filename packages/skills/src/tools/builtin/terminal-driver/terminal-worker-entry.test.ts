@@ -897,3 +897,134 @@ describe("createTerminalWorker — TR-03 resize (pty winsize + ring geometry)", 
     expect((read.result as { cols: number; rows: number }).rows).toBe(40);
   });
 });
+
+function waitFrame(params: {
+  forIdleMs?: number;
+  forText?: string;
+  forExit?: boolean;
+  timeoutMs?: number;
+}): TerminalRequestFrame {
+  return {
+    sessionId: "s1",
+    requestId: "rq-wait",
+    traceId: TRACE_ID,
+    method: "wait",
+    params: { sessionId: "s1", ...params },
+  };
+}
+
+describe("createTerminalWorker — TR-05 wait (settle -> {matched,isComplete,reason,screen,cursor})", () => {
+  it("wait IDLE: a quiet ring resolves { matched:true, isComplete:true, reason:'idle' } with the ring screen", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+    rec.emit("boot\n");
+
+    const p = worker.handle(waitFrame({ forIdleMs: 100 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    sched.advance(100); // ring quiet for the idle window
+    const reply = await p;
+
+    expect(reply.ok).toBe(true);
+    const r = reply.result as {
+      matched: boolean;
+      isComplete: boolean;
+      reason: string;
+      screen: string;
+      cursor: { x: number; y: number };
+    };
+    expect(r).toMatchObject({ matched: true, isComplete: true, reason: "idle" });
+    expect(r.screen).toBe("boot\n");
+    expect(r.cursor).toEqual({ x: 0, y: 0 });
+  });
+
+  it("wait TEXT: a ring append carrying forText resolves reason:'text' WITHOUT waiting the full idle window", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    const p = worker.handle(waitFrame({ forText: "ready>", forIdleMs: 5_000, timeoutMs: 10_000 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    // A backend data event carries the awaited text — resolves immediately (no
+    // idle advance, no timeout advance).
+    rec.emit("ready>");
+    const reply = await p;
+
+    const r = reply.result as { matched: boolean; isComplete: boolean; reason: string; screen: string };
+    expect(r).toMatchObject({ matched: true, isComplete: true, reason: "text" });
+    expect(r.screen).toContain("ready>");
+  });
+
+  it("wait EXIT: a backend close resolves reason:'exit'", async () => {
+    const sched = makeFakeScheduler();
+    const pipe = makeRecordingPipeBackend();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => {
+          throw new Error("no node-pty");
+        },
+        spawnPipe: pipe.spawnPipe,
+        setTimer: sched.setTimer,
+        clearTimer: sched.clearTimer,
+      }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    const p = worker.handle(waitFrame({ forExit: true, forIdleMs: 5_000, timeoutMs: 10_000 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    pipe.close(); // backend exits
+    const reply = await p;
+
+    const r = reply.result as { matched: boolean; isComplete: boolean; reason: string };
+    expect(r).toMatchObject({ matched: true, isComplete: true, reason: "exit" });
+  });
+
+  it("wait TIMEOUT (load-bearing): a ring that never quiets resolves { matched:false, isComplete:false, reason:'timeout' }", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
+
+    // forIdleMs:100 but a data event every 40ms keeps the ring from ever being
+    // quiet for 100ms; the overall timeout (capped) fires first.
+    const p = worker.handle(waitFrame({ forIdleMs: 100, timeoutMs: 1_000 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    // Drive the ring busy: emit every 40ms up to (and past) the 1000ms cap.
+    for (let t = 40; t <= 1_040; t += 40) {
+      rec.emit("x");
+      sched.advance(40);
+      await Promise.resolve();
+    }
+    const reply = await p;
+
+    const r = reply.result as { matched: boolean; isComplete: boolean; reason: string; screen: string };
+    // The reply RESOLVES (the worker never holds the frame open).
+    expect(reply.ok).toBe(true);
+    expect(r.isComplete).toBe(false); // EXPLICIT: a false isComplete:true would strand the agent
+    expect(r).toMatchObject({ matched: false, reason: "timeout" });
+    expect(r.screen).toContain("x"); // the current (busy) ring
+  });
+
+  it("wait on an ABSENT session resolves the gone shape { matched:false, isComplete:false, reason:'exit' }", async () => {
+    const sched = makeFakeScheduler();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: makeRecordingBackend().spawn }), setTimer: sched.setTimer, clearTimer: sched.clearTimer }),
+    );
+    // No create.
+    const reply = await worker.handle(waitFrame({ forIdleMs: 100 }));
+    const r = reply.result as { matched: boolean; isComplete: boolean; reason: string };
+    expect(r).toMatchObject({ matched: false, isComplete: false, reason: "exit" });
+  });
+});
