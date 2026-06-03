@@ -26,6 +26,7 @@ import { EventEmitter } from "node:events";
 
 import {
   createTerminalSessionRegistry,
+  DEFAULT_SCROLLBACK,
   type TerminalSessionRegistryDeps,
   type FakeWorkerChild,
 } from "./terminal-session-registry.js";
@@ -266,6 +267,141 @@ describe("createTerminalSessionRegistry — M-1 create forwards bin/argv verbati
     expect(createFrame).toBeDefined();
     expect(createFrame?.params["bin"]).toBe("/canonical/bash");
     expect(createFrame?.params["argv"]).toEqual(["--prefix", "x"]);
+  });
+});
+
+// ===========================================================================
+// 121-04 Task 1 — read(sessionId, opts) forwards {format,scrollback,
+// includeAltBuffer} + returns the diff; create carries a scrollback depth.
+// ===========================================================================
+
+describe("createTerminalSessionRegistry — TR-02/14 read forwards the render opts", () => {
+  it("forwards {format,scrollback,includeAltBuffer} into the read frame's params", async () => {
+    const fake = makeFakeWorker((req) =>
+      req.method === "read"
+        ? {
+            sessionId: req.sessionId,
+            requestId: req.requestId,
+            ok: true,
+            result: { screen: "x", cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true },
+          }
+        : undefined,
+    );
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      scrollback: 1000,
+    });
+
+    await registry.read(sessionId, { format: "ansi", scrollback: 10, includeAltBuffer: false });
+
+    // The read frame must carry the render opts (Plan 02's handleRead reads them).
+    const readFrame = fake.requestFrames.find((f) => f.method === "read");
+    expect(readFrame).toBeDefined();
+    expect(readFrame?.params["sessionId"]).toBe(sessionId);
+    expect(readFrame?.params["format"]).toBe("ansi");
+    expect(readFrame?.params["scrollback"]).toBe(10);
+    expect(readFrame?.params["includeAltBuffer"]).toBe(false);
+  });
+
+  it("a bare read(sessionId) (no opts) still round-trips and forwards no render opts", async () => {
+    const fake = makeFakeWorker((req) =>
+      req.method === "read"
+        ? {
+            sessionId: req.sessionId,
+            requestId: req.requestId,
+            ok: true,
+            result: { screen: "y", cursor: { x: 0, y: 0 }, cols: 80, rows: 24, alt: false, alive: true },
+          }
+        : undefined,
+    );
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      scrollback: 1000,
+    });
+
+    const view = await registry.read(sessionId);
+    expect(view.screen).toBe("y");
+
+    const readFrame = fake.requestFrames.find((f) => f.method === "read");
+    expect(readFrame).toBeDefined();
+    // opts absent → only the session id rides the frame; no format/scrollback keys.
+    expect(readFrame?.params["format"]).toBeUndefined();
+    expect(readFrame?.params["scrollback"]).toBeUndefined();
+    expect(readFrame?.params["includeAltBuffer"]).toBeUndefined();
+  });
+
+  it("returns the worker's diff field on the TerminalView (TR-14 screen-diff reaches the daemon)", async () => {
+    const fake = makeFakeWorker((req) =>
+      req.method === "read"
+        ? {
+            sessionId: req.sessionId,
+            requestId: req.requestId,
+            ok: true,
+            result: {
+              screen: "z",
+              cursor: { x: 0, y: 0 },
+              cols: 80,
+              rows: 24,
+              alt: false,
+              alive: true,
+              diff: { changed: true, firstChangedRow: 1, lastChangedRow: 3 },
+            },
+          }
+        : undefined,
+    );
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    const { sessionId } = await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      scrollback: 1000,
+    });
+
+    const view = await registry.read(sessionId);
+    // The diff Plan 03 produced rides the view through to the tool layer.
+    expect(view.diff).toEqual({ changed: true, firstChangedRow: 1, lastChangedRow: 3 });
+  });
+});
+
+describe("createTerminalSessionRegistry — TR-14 create threads a scrollback depth", () => {
+  it("carries an explicit scrollback into the create frame's params", async () => {
+    const fake = makeFakeWorker();
+    const registry = createTerminalSessionRegistry(baseDeps(() => fake.child));
+
+    await registry.create({
+      allowId: "bash",
+      bin: "/bin/bash",
+      argv: [],
+      cols: 80,
+      rows: 24,
+      scrollback: 5000,
+    });
+
+    const createFrame = fake.requestFrames.find((f) => f.method === "create");
+    expect(createFrame).toBeDefined();
+    // handleCreate constructs Terminal({cols,rows,scrollback}) from this field.
+    expect(createFrame?.params["scrollback"]).toBe(5000);
+  });
+
+  it("exposes DEFAULT_SCROLLBACK (1000) as the registry-level default scrollback const", async () => {
+    // The const is the single source the create tool defaults to (Task 2). It is
+    // the value Plan 01 hard-coded worker-side, now sourced from the registry.
+    expect(DEFAULT_SCROLLBACK).toBe(1000);
   });
 });
 
