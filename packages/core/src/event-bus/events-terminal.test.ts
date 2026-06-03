@@ -108,3 +108,162 @@ describe("TerminalEvents payload structure (Open Q2)", () => {
     expect(seen).toEqual(["created", "running", "exited", "lost"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 123 P4 (SEC-10 / OPS-06) — terminal:keystroke + terminal:session_evicted.
+//
+// P4 needs two NET-NEW typed bus events so the tool layer (Plan 05) and the
+// reaper (Plan 04) can `emit(...)` them: `TypedEventBus` is a CLOSED union, so
+// an undeclared event fails to typecheck (RESEARCH Pitfall 4). This block is
+// RED on pre-patch code: `events-terminal.ts` declares only session_state +
+// spawn_failed, so the source-introspection cases below (the genuinely-RED
+// layer — esbuild strips bare type annotations) do not find the two new keys.
+//
+// Payloads are redaction-SAFE: counts / ids / a typed reason ONLY — NEVER the
+// raw keystroke text/keys, screen, or command (the REDACTED payload rides the
+// structured LOG, never the bus; the file's own doc-comment forbids it). The
+// keystroke event's exact safe key-set is asserted so a leak field cannot creep
+// in (T-123-01); the eviction reason union is exactly the four EvictReason
+// values (idle | max_sessions | wall_clock | max_interactions).
+// ---------------------------------------------------------------------------
+describe("TerminalEvents — P4 keystroke + eviction (SEC-10/OPS-06)", () => {
+  it("declares terminal:keystroke + terminal:session_evicted on TerminalEvents (source RED on pre-patch)", () => {
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    expect(src, "terminal:keystroke key must be declared").toMatch(/"terminal:keystroke":/);
+    expect(src, "terminal:session_evicted key must be declared").toMatch(
+      /"terminal:session_evicted":/,
+    );
+  });
+
+  it("terminal:keystroke delivers sessionId/agentId/kind/redactions/byteLength — redaction-safe summary only", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["terminal:keystroke"] = {
+      sessionId: "sess-3",
+      agentId: "agent-1",
+      kind: "text",
+      redactions: 2,
+      byteLength: 17,
+      timestamp: 3,
+    };
+
+    bus.on("terminal:keystroke", handler);
+    bus.emit("terminal:keystroke", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["terminal:keystroke"];
+    expect(typeof received.sessionId).toBe("string");
+    expect(typeof received.agentId).toBe("string");
+    expect(["text", "key"]).toContain(received.kind);
+    expect(typeof received.redactions).toBe("number");
+    expect(typeof received.byteLength).toBe("number");
+    expect(typeof received.timestamp).toBe("number");
+  });
+
+  it("terminal:keystroke kind union accepts text | key", () => {
+    const bus = new TypedEventBus();
+    const seen: string[] = [];
+    bus.on("terminal:keystroke", (p) => seen.push(p.kind));
+    for (const kind of ["text", "key"] as const) {
+      bus.emit("terminal:keystroke", {
+        sessionId: "s",
+        agentId: "a",
+        kind,
+        redactions: 0,
+        byteLength: 0,
+        timestamp: 0,
+      });
+    }
+    expect(seen).toEqual(["text", "key"]);
+  });
+
+  it("terminal:keystroke carries ONLY the redaction-safe key-set — no text/keys/screen/payload/command", () => {
+    // The exact safe key-set. Constructed from EventMap so it tracks the type;
+    // Object.keys proves no raw-payload field rides the bus (T-123-01).
+    const payload: EventMap["terminal:keystroke"] = {
+      sessionId: "s",
+      agentId: "a",
+      kind: "text",
+      redactions: 0,
+      byteLength: 0,
+      timestamp: 0,
+    };
+    expect(Object.keys(payload).sort()).toEqual([
+      "agentId",
+      "byteLength",
+      "kind",
+      "redactions",
+      "sessionId",
+      "timestamp",
+    ]);
+
+    // Source-block guard (the events-agent.ts counts-only pattern): the declared
+    // keystroke block must NOT contain a raw text/keys/screen/payload/command
+    // field. RED on pre-patch (the block does not exist yet).
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    const match = src.match(/"terminal:keystroke":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "terminal:keystroke event block must exist").toBeTruthy();
+    const block = match![0];
+    expect(block, "no raw text field").not.toMatch(/^\s*text[?]?:/m);
+    expect(block, "no raw keys field").not.toMatch(/^\s*keys[?]?:/m);
+    expect(block, "no screen field").not.toMatch(/^\s*screen[?]?:/m);
+    expect(block, "no payload field").not.toMatch(/^\s*payload[?]?:/m);
+    expect(block, "no command field").not.toMatch(/^\s*command[?]?:/m);
+  });
+
+  it("terminal:session_evicted delivers sessionId/agentId/reason/durationMs — audited reason only", () => {
+    const bus = new TypedEventBus();
+    const handler = vi.fn();
+    const payload: EventMap["terminal:session_evicted"] = {
+      sessionId: "sess-4",
+      agentId: "agent-1",
+      reason: "idle",
+      durationMs: 60_000,
+      timestamp: 4,
+    };
+
+    bus.on("terminal:session_evicted", handler);
+    bus.emit("terminal:session_evicted", payload);
+
+    expect(handler).toHaveBeenCalledWith(payload);
+    const received = handler.mock.calls[0]![0] as EventMap["terminal:session_evicted"];
+    expect(typeof received.sessionId).toBe("string");
+    expect(typeof received.agentId).toBe("string");
+    expect(typeof received.durationMs).toBe("number");
+    expect(typeof received.timestamp).toBe("number");
+  });
+
+  it("terminal:session_evicted reason union is exactly idle | max_sessions | wall_clock | max_interactions", () => {
+    const bus = new TypedEventBus();
+    const seen: string[] = [];
+    bus.on("terminal:session_evicted", (p) => seen.push(p.reason));
+    for (const reason of [
+      "idle",
+      "max_sessions",
+      "wall_clock",
+      "max_interactions",
+    ] as const) {
+      bus.emit("terminal:session_evicted", {
+        sessionId: "s",
+        agentId: "a",
+        reason,
+        durationMs: 0,
+        timestamp: 0,
+      });
+    }
+    expect(seen).toEqual(["idle", "max_sessions", "wall_clock", "max_interactions"]);
+
+    // Source guard: the declared reason union carries exactly those four members
+    // and no screen/command/text leak. RED on pre-patch (block absent).
+    const src = readFileSync(resolve(here, "./events-terminal.ts"), "utf8");
+    const match = src.match(/"terminal:session_evicted":\s*\{[\s\S]*?\n\s*\};/);
+    expect(match, "terminal:session_evicted event block must exist").toBeTruthy();
+    const block = match![0];
+    expect(block, "no screen field").not.toMatch(/^\s*screen[?]?:/m);
+    expect(block, "no command field").not.toMatch(/^\s*command[?]?:/m);
+    expect(block, "no text field").not.toMatch(/^\s*text[?]?:/m);
+    expect(block, "reason union exactly the four EvictReason values").toMatch(
+      /reason:\s*"idle"\s*\|\s*"max_sessions"\s*\|\s*"wall_clock"\s*\|\s*"max_interactions"/,
+    );
+  });
+});
