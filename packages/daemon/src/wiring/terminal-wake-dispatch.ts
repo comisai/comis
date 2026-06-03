@@ -302,6 +302,15 @@ export function createTerminalWakeDispatcher(
       // Clear the pending flag so a FRESH frame can wake again; back to idle.
       st.pendingFrame = undefined;
       st.dispatchState = "idle";
+      // WR-01: a turn that settled SUCCESSFULLY ends the consecutive wake run, so
+      // reset hopCount. `maxHops` is the CONSECUTIVE-wakes-without-progress cap (the
+      // loop/recursion guard the "consecutive" docstrings promise) — NOT a lifetime
+      // budget (that is the P4 maxInteractions cap). A long-lived session driven
+      // through many safe answered prompts must never permanently over-escalate;
+      // only an unbroken run of un-settled wakes climbs to the cap. A REJECTED turn
+      // (err !== undefined) is NOT progress — leave hopCount climbing so a wedged
+      // session still escalates after maxHops consecutive failures.
+      if (err === undefined) st.hopCount = 0;
       persist(sessionId, st);
     }
     if (err !== undefined) {

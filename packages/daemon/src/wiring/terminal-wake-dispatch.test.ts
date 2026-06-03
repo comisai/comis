@@ -154,33 +154,79 @@ describe("terminal-wake-dispatch (recurring wake-FSM)", () => {
     expect(h.logger.warn).toHaveBeenCalled();
   });
 
-  it("forces escalation (NotifyFn) instead of another turn once hopCount reaches maxHops", async () => {
-    const h = makeHarness(dataDir, { maxHops: 2, maxConcurrentAttentionTurns: 5 });
+  it("a SUCCESSFUL turn resets the consecutive run so a later failure run starts from zero — not a lifetime cap (WR-01)", async () => {
+    // The discriminating WR-01 contract: a settled turn moves the goalpost. Drive a
+    // FAILING wake (hop→1), then a SUCCEEDING wake (resets hop→0), then a fresh
+    // consecutive FAILURE run must take the FULL maxHops again before escalating.
+    //
+    // On the pre-fix CUMULATIVE code hopCount never resets, so after fail+success it
+    // sits at 2 (== maxHops) and the very NEXT failing wake escalates — fewer turns
+    // run. On the fixed code the success reset it to 0, so two more failing wakes run
+    // (hop 1, then 2) before the third escalates. The wakeOneTurn call count is the
+    // observable that separates the two.
+    let mode: "fail" | "succeed" = "fail";
+    const mixedWake = vi.fn(() =>
+      mode === "fail" ? Promise.reject(new Error("no progress")) : Promise.resolve(),
+    );
+    const h = makeHarness(dataDir, { maxHops: 2, maxConcurrentAttentionTurns: 5, wakeOneTurn: mixedWake });
     fsm = createTerminalWakeDispatcher(h.deps);
 
-    // Each answered frame increments hopCount by 1; drive consecutive turns.
+    // req-1 FAILS → hop 0→1 (no reset on failure).
+    mode = "fail";
     h.bus.fire(wake("sess-a", "req-1"));
     await Promise.resolve();
-    h.releases.get("sess-a")?.();
-    await Promise.resolve();
     await Promise.resolve();
 
+    // req-2 SUCCEEDS → hop resets to 0 (the fix). On pre-fix code hop becomes 2.
+    mode = "succeed";
     h.bus.fire(wake("sess-a", "req-2"));
     await Promise.resolve();
-    h.releases.get("sess-a")?.();
-    await Promise.resolve();
     await Promise.resolve();
 
-    // hopCount is now 2 (== maxHops). The next wake must escalate, NOT wake.
-    h.escalate.mockClear();
+    // A fresh consecutive FAILURE run. On the fixed code this takes the full maxHops
+    // again: req-3 (hop→1) + req-4 (hop→2) both RUN, only req-5 escalates → 4 turns.
+    // On pre-fix code hop was already 2, so req-3 escalates immediately → 2 turns.
+    mode = "fail";
     h.bus.fire(wake("sess-a", "req-3"));
     await Promise.resolve();
+    await Promise.resolve();
+    h.bus.fire(wake("sess-a", "req-4"));
+    await Promise.resolve();
+    await Promise.resolve();
 
-    expect(h.wakeOneTurn).toHaveBeenCalledTimes(2); // no 3rd turn
-    expect(h.escalate).toHaveBeenCalledTimes(1);
+    expect(mixedWake).toHaveBeenCalledTimes(4); // pre-fix cumulative code stops at 2
+
+    // The 5th consecutive failing frame finally hits the (reset-based) cap.
+    h.escalate.mockClear();
+    h.bus.fire(wake("sess-a", "req-5"));
+    await Promise.resolve();
+    expect(mixedWake).toHaveBeenCalledTimes(4); // still no 5th turn — escalated instead
     expect(h.escalate).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: "sess-a", reason: "hop_limit" }),
     );
+  });
+
+  it("RESETS the consecutive hop count after a turn SETTLES — a long run of answered prompts never over-escalates (WR-01)", async () => {
+    // The availability defect WR-01 fixes: a long-lived session that keeps SETTLING
+    // its woken turns must NOT escalate after maxHops total answers. Each settled
+    // turn ends the consecutive run, so hopCount returns to 0 and the cap is never hit.
+    const h = makeHarness(dataDir, { maxHops: 2, maxConcurrentAttentionTurns: 5 });
+    fsm = createTerminalWakeDispatcher(h.deps);
+
+    // Drive FOUR fully-settled frames (twice the cap). Settling between each resets
+    // the consecutive counter, so none of them escalates.
+    for (const reqId of ["req-1", "req-2", "req-3", "req-4"]) {
+      h.bus.fire(wake("sess-a", reqId));
+      await Promise.resolve();
+      h.releases.get("sess-a")?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+
+    // All four were answered (woken), none escalated — the lifetime budget is
+    // maxInteractions (the P4 cap), NOT maxHops.
+    expect(h.wakeOneTurn).toHaveBeenCalledTimes(4);
+    expect(h.escalate).not.toHaveBeenCalled();
   });
 
   it("bounds simultaneous woken turns to maxConcurrentAttentionTurns; over-bound wakes stay pending", async () => {
