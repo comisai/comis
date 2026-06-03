@@ -122,6 +122,10 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
       // EgressControlPort/EgressMaterialization TYPES from @comis/core + the sibling
       // skills composers + node builtins — never @comis/infra (worker ↛ infra).
       "terminal-spawn-plan.ts",
+      // 122-fix: the in-jail relay-as-init runtime (SEC-07). Spawned as a subprocess
+      // inside the bwrap jail; imports ONLY node builtins (net / child_process) —
+      // carries no secret, injects nothing, never @comis/infra.
+      "egress-relay-init.ts",
     ] as const;
 
     const { violations, checkedFiles } = findForbiddenImports({
@@ -141,7 +145,7 @@ describe("infra-runtime-scope — only daemon/infra/umbrella value-import @comis
       namedViolations,
       formatViolations({
         description:
-          "The terminal scope/egress files (terminal-scope-args.ts, terminal-env-scrub.ts, terminal-egress-relay.ts, terminal-spawn-plan.ts) MUST NOT value-import @comis/infra — they depend only on the EgressControlPort type in @comis/core + node builtins (SEC-07 trust boundary; worker ↛ infra).",
+          "The terminal scope/egress files (terminal-scope-args.ts, terminal-env-scrub.ts, terminal-egress-relay.ts, terminal-spawn-plan.ts, egress-relay-init.ts) MUST NOT value-import @comis/infra — they depend only on the EgressControlPort type in @comis/core + node builtins (SEC-07 trust boundary; worker ↛ infra).",
         violations: namedViolations.map((v) => ({
           file: v.file,
           line: v.line,
