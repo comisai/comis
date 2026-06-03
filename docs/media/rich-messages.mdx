@@ -4,6 +4,8 @@ description: "Buttons, cards, and effects across Discord, Telegram, Slack, and m
 icon: "rectangle-list"
 ---
 
+import NonTechnicalNote from '/snippets/non-technical-note.mdx';
+
 **Can my agent send buttons people can click? A poll? A pretty card with an
 image?** On the platforms that support those, yes — your agent describes
 them once in a platform-neutral way and Comis renders them natively
@@ -20,6 +22,8 @@ Polls are also available, but they are dispatched through the
 `platform_action` tool (action: `poll`) rather than as part of a normal
 `message` send. See [Platform Actions](/agent-tools/platform-actions) for the
 full poll parameters.
+
+<NonTechnicalNote />
 
 ## What Your Agent Can Send
 
