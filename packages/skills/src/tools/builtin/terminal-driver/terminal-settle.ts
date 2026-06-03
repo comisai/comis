@@ -5,10 +5,13 @@
  * The bounded, injected-clock debounce that powers every P1 mutating tool's
  * "act then return the SETTLED snapshot" contract and the explicit `wait` tool.
  * It resolves on the EARLIEST of:
- *   - the stdout ring going quiet for `idleMs` (idle debounce),
- *   - a `forText` substring appearing in the ring (text),
- *   - the session exiting (exit),
- *   - the capped `timeoutMs` elapsing (timeout).
+ *   - the stdout ring going quiet for `idleMs` (idle debounce) — armed IFF the
+ *     caller asked for idle (`forIdleMs`) or asked for nothing specific (idle is
+ *     the DEFAULT only when no `forText`/`forExit` is requested; see TR-05),
+ *   - a `forText` substring appearing in the ring (text) — armed IFF `forText` set,
+ *   - the session exiting (exit) — ALWAYS terminal (an exited program can produce
+ *     no more output, so it ends any wait, including an idle/text wait),
+ *   - the capped `timeoutMs` elapsing (timeout) — ALWAYS armed (the DoS bound).
  *
  * On timeout it resolves a LOAD-BEARING `isComplete:false` — it NEVER throws and
  * NEVER holds the turn open. A settle that could hang would strand a turn; a
@@ -71,9 +74,15 @@ export interface SettleDeps {
   onExit: (cb: () => void) => () => void;
 }
 
-/** The settle parameters (the `wait` tool's body, spec §5). */
+/** The settle parameters (the `wait` tool's body, spec §5). All conditions are opt-in. */
 export interface SettleParams {
-  /** The idle debounce window in ms (default {@link SETTLE_DEFAULT_IDLE_MS}). */
+  /**
+   * The idle debounce window in ms. When set, the idle condition is ARMED at this
+   * value. When omitted, idle is armed only if NO other condition (`forText`/
+   * `forExit`) is requested — then it defaults to {@link SETTLE_DEFAULT_IDLE_MS};
+   * a `forExit`/`forText`-only wait does NOT arm idle, so a quiet window cannot
+   * pre-empt the requested exit/text condition (TR-05).
+   */
   forIdleMs?: number;
   /** Resolve `text` when this substring appears in the ring. */
   forText?: string;
@@ -109,6 +118,18 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
   const idleMs = params.forIdleMs ?? SETTLE_DEFAULT_IDLE_MS;
   const { forText } = params;
 
+  // The wait conditions are OPT-IN (spec §5). The idle debounce is armed IFF the
+  // caller explicitly asked for it (`forIdleMs`) OR asked for NOTHING specific
+  // (idle is the sensible DEFAULT only when no forText/forExit is requested). When
+  // the caller asked for forExit (or forText), a quiet output window must NOT fire
+  // the idle timer and pre-empt the slightly-later exit/text event (TR-05): on a
+  // real PTY that mis-reported reason:"idle" for a session that actually EXITED,
+  // and the P5 attention model would read "awaiting input" for a dead session.
+  // exit and timeout stay ALWAYS armed regardless; text is armed when forText is
+  // set. The post-action send_text/send_key quiesce requests forIdleMs explicitly,
+  // so it keeps its idle behavior.
+  const idleArmed = params.forIdleMs !== undefined || (forText === undefined && params.forExit !== true);
+
   return new Promise<SettleResult>((resolve) => {
     let done = false;
     let idleTimer: unknown;
@@ -131,8 +152,13 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
       resolve(result);
     }
 
-    /** (Re)start the idle debounce: clear the prior idle timer, schedule a fresh one. */
+    /**
+     * (Re)start the idle debounce: clear the prior idle timer, schedule a fresh
+     * one. A NO-OP when idle is not armed (forExit/forText-only waits) so a quiet
+     * window can never pre-empt the requested exit/text condition (TR-05).
+     */
     function restartIdle(): void {
+      if (!idleArmed) return;
       if (idleTimer !== undefined) deps.clearTimer(idleTimer);
       idleTimer = deps.setTimer(() => {
         settle({ matched: true, isComplete: true, reason: "idle" });
@@ -175,7 +201,9 @@ export function runSettle(deps: SettleDeps, params: SettleParams): Promise<Settl
       }),
     );
 
-    // Start the idle debounce once at entry (quiet-from-now resolves idle).
+    // Arm the idle debounce once at entry IFF idle is armed (a no-op otherwise):
+    // quiet-from-now resolves idle only when the caller asked for idle or for
+    // nothing specific. exit + timeout (and text, if forText) remain armed above.
     restartIdle();
   });
 }
