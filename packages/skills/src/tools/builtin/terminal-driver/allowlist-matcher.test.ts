@@ -34,12 +34,21 @@ import {
   buildDirectSpawn,
   canonicalize,
   type AllowEntryLike,
+  type TerminalScope,
 } from "./allowlist-matcher.js";
 
 // A real, present binary on both macOS and Linux — the pinned canonical.
 const CANONICAL_BASH = realpathSync("/bin/bash");
 // A different real binary — the "evil" PATH-shadow target.
 const OTHER_BIN = realpathSync("/bin/ls");
+
+/** The least-privilege default scope (mirrors the config schema defaults). */
+const DEFAULT_SCOPE: TerminalScope = {
+  filesystem: "workspace",
+  network: "none",
+  credentialHome: "exclude",
+  uid: "dedicated",
+};
 
 let work: string;
 
@@ -51,8 +60,12 @@ afterEach(() => {
   rmSync(work, { recursive: true, force: true });
 });
 
-function entry(overrides: Partial<AllowEntryLike["match"]> = {}, id = "bash"): AllowEntryLike {
-  return { id, match: { path: CANONICAL_BASH, ...overrides } };
+function entry(
+  overrides: Partial<AllowEntryLike["match"]> = {},
+  id = "bash",
+  scope: TerminalScope = DEFAULT_SCOPE,
+): AllowEntryLike {
+  return { id, match: { path: CANONICAL_BASH, ...overrides }, scope };
 }
 
 describe("matchAllowEntry — canonical match", () => {
@@ -100,7 +113,7 @@ describe("matchAllowEntry — hash pin (SEC-14)", () => {
     const wrongHash = createHash("sha256").update("DIFFERENT-content\n").digest("hex");
 
     const matched = matchAllowEntry(file, [
-      { id: "pinned", match: { path: realpathSync(file), hash: wrongHash } },
+      { id: "pinned", match: { path: realpathSync(file), hash: wrongHash }, scope: DEFAULT_SCOPE },
     ]);
     expect(matched).toBeUndefined();
   });
@@ -112,7 +125,7 @@ describe("matchAllowEntry — hash pin (SEC-14)", () => {
     const rightHash = createHash("sha256").update(content).digest("hex");
 
     const matched = matchAllowEntry(file, [
-      { id: "pinned", match: { path: realpathSync(file), hash: rightHash } },
+      { id: "pinned", match: { path: realpathSync(file), hash: rightHash }, scope: DEFAULT_SCOPE },
     ]);
     expect(matched).toBeDefined();
     expect(matched?.entry.id).toBe("pinned");
@@ -174,7 +187,7 @@ describe("MR-02 — single canonicalization (no double-realpath TOCTOU)", () => 
     const linkToFile = join(work, "file-link");
     symlinkSync(file, linkToFile);
     const matched = matchAllowEntry(linkToFile, [
-      { id: "pinned", match: { path: realpathSync(file), hash } },
+      { id: "pinned", match: { path: realpathSync(file), hash }, scope: DEFAULT_SCOPE },
     ]);
     expect(matched).toBeDefined();
     const verifiedReal = matched!.requestedReal;
@@ -197,5 +210,65 @@ describe("canonicalize", () => {
     const link = join(work, "bash-link");
     symlinkSync(CANONICAL_BASH, link);
     expect(canonicalize(link)).toBe(CANONICAL_BASH);
+  });
+});
+
+describe("AllowEntryLike.scope — the SEC-02 scope contract carried verbatim (SEC-03 no-mutate)", () => {
+  it("returns the matched entry WITH its declared scope on AllowMatchResult.entry.scope", () => {
+    // SEC-02: the operator-declared scope must survive the match so the create
+    // tool can thread it into the worker create frame. Pre-patch, AllowEntryLike
+    // is {id, match} only — scope is silently dropped (RESEARCH Pitfall 4).
+    const link = join(work, "bash-link");
+    symlinkSync(CANONICAL_BASH, link);
+    const scope: TerminalScope = {
+      filesystem: "listed-paths",
+      paths: ["/srv/data"],
+      network: "listed-hosts",
+      hosts: ["api.example.com"],
+      credentialHome: "include",
+      uid: "daemon",
+    };
+    const matched = matchAllowEntry(link, [entry({}, "bash", scope)]);
+    expect(matched).toBeDefined();
+    // The whole scope object rides the entry verbatim.
+    expect(matched!.entry.scope).toEqual(scope);
+  });
+
+  it("does NOT derive, default-substitute, or widen the entry's scope (SEC-03 — scope is operator-only)", () => {
+    // SEC-03: the matcher is a pure pass-through for scope. It must NEVER swap a
+    // declared scope for a default, nor widen it. Given an entry with a NON-default
+    // scope, the matcher returns EXACTLY that scope — byte-for-byte (same reference).
+    const link = join(work, "bash-link");
+    symlinkSync(CANONICAL_BASH, link);
+    const declared: TerminalScope = {
+      filesystem: "full",
+      network: "full",
+      credentialHome: "include",
+      uid: "daemon",
+    };
+    const input = entry({}, "bash", declared);
+    const matched = matchAllowEntry(link, [input]);
+    expect(matched).toBeDefined();
+    // Not a default substitution — the exact declared values survive.
+    expect(matched!.entry.scope).toEqual(declared);
+    expect(matched!.entry.scope.filesystem).toBe("full");
+    expect(matched!.entry.scope.network).toBe("full");
+    // The matcher returns the SAME entry object (no clone, no mutation of scope).
+    expect(matched!.entry.scope).toBe(input.scope);
+  });
+
+  it("the least-privilege default scope rides unchanged when an entry declares it", () => {
+    // The default (workspace fs, deny-all egress, credentialHome exclude, uid
+    // dedicated) is the safe baseline — the matcher carries it untouched.
+    const link = join(work, "bash-link");
+    symlinkSync(CANONICAL_BASH, link);
+    const matched = matchAllowEntry(link, [entry()]); // entry() uses DEFAULT_SCOPE
+    expect(matched).toBeDefined();
+    expect(matched!.entry.scope).toEqual({
+      filesystem: "workspace",
+      network: "none",
+      credentialHome: "exclude",
+      uid: "dedicated",
+    });
   });
 });
