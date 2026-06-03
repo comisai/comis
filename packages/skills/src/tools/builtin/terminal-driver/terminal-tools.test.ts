@@ -23,6 +23,10 @@ import {
   createTerminalSessionReadTool,
   createTerminalSessionListTool,
   createTerminalSessionKillTool,
+  createTerminalSessionSendTextTool,
+  createTerminalSessionSendKeyTool,
+  createTerminalSessionResizeTool,
+  createTerminalSessionWaitTool,
   type TerminalToolDeps,
 } from "./terminal-tools.js";
 import type {
@@ -30,6 +34,8 @@ import type {
   CreateRequest,
   CreateResult,
   TerminalView,
+  SendResult,
+  WaitResult,
   SessionHandle,
   SessionListing,
 } from "./terminal-session-registry.js";
@@ -80,21 +86,50 @@ function makeCapturingBus(): {
   };
 }
 
+interface SendTextCall {
+  sessionId: string;
+  args: { text: string; submit?: boolean; bracketedPaste?: boolean };
+}
+interface SendKeyCall {
+  sessionId: string;
+  args: { keys: string[] };
+}
+interface ResizeCall {
+  sessionId: string;
+  args: { cols: number; rows: number };
+}
+interface WaitCall {
+  sessionId: string;
+  args: { forIdleMs?: number; forText?: string; forExit?: boolean; timeoutMs?: number };
+}
+
 interface FakeRegistry extends TerminalSessionRegistry {
   createCalls: CreateRequest[];
   readCalls: string[];
   killCalls: string[];
+  sendTextCalls: SendTextCall[];
+  sendKeyCalls: SendKeyCall[];
+  resizeCalls: ResizeCall[];
+  waitCalls: WaitCall[];
 }
 
 function makeFakeRegistry(overrides?: {
   createImpl?: (req: CreateRequest) => Promise<CreateResult>;
   readImpl?: (id: string) => Promise<TerminalView>;
+  sendTextImpl?: (id: string, args: SendTextCall["args"]) => Promise<SendResult>;
+  sendKeyImpl?: (id: string, args: SendKeyCall["args"]) => Promise<SendResult>;
+  resizeImpl?: (id: string, args: ResizeCall["args"]) => Promise<{ ok: boolean }>;
+  waitImpl?: (id: string, args: WaitCall["args"]) => Promise<WaitResult>;
   handles?: Map<string, SessionHandle>;
   listing?: SessionListing[];
 }): FakeRegistry {
   const createCalls: CreateRequest[] = [];
   const readCalls: string[] = [];
   const killCalls: string[] = [];
+  const sendTextCalls: SendTextCall[] = [];
+  const sendKeyCalls: SendKeyCall[] = [];
+  const resizeCalls: ResizeCall[] = [];
+  const waitCalls: WaitCall[] = [];
   const handles = overrides?.handles ?? new Map<string, SessionHandle>();
   let listing = overrides?.listing ?? [];
 
@@ -102,6 +137,10 @@ function makeFakeRegistry(overrides?: {
     createCalls,
     readCalls,
     killCalls,
+    sendTextCalls,
+    sendKeyCalls,
+    resizeCalls,
+    waitCalls,
     async create(req: CreateRequest): Promise<CreateResult> {
       createCalls.push(req);
       if (overrides?.createImpl) return overrides.createImpl(req);
@@ -111,6 +150,26 @@ function makeFakeRegistry(overrides?: {
       readCalls.push(id);
       if (overrides?.readImpl) return overrides.readImpl(id);
       return { screen: "hello", cursor: { x: 0, y: 0 }, cols: 120, rows: 40, alt: false, alive: true };
+    },
+    async sendText(id: string, args: SendTextCall["args"]): Promise<SendResult> {
+      sendTextCalls.push({ sessionId: id, args });
+      if (overrides?.sendTextImpl) return overrides.sendTextImpl(id, args);
+      return { screen: "after-text", cursor: { x: 1, y: 2 } };
+    },
+    async sendKey(id: string, args: SendKeyCall["args"]): Promise<SendResult> {
+      sendKeyCalls.push({ sessionId: id, args });
+      if (overrides?.sendKeyImpl) return overrides.sendKeyImpl(id, args);
+      return { screen: "after-key", cursor: { x: 3, y: 4 } };
+    },
+    async resize(id: string, args: ResizeCall["args"]): Promise<{ ok: boolean }> {
+      resizeCalls.push({ sessionId: id, args });
+      if (overrides?.resizeImpl) return overrides.resizeImpl(id, args);
+      return { ok: true };
+    },
+    async wait(id: string, args: WaitCall["args"]): Promise<WaitResult> {
+      waitCalls.push({ sessionId: id, args });
+      if (overrides?.waitImpl) return overrides.waitImpl(id, args);
+      return { matched: true, isComplete: true, reason: "idle", screen: "settled", cursor: { x: 0, y: 0 } };
     },
     get(id: string): SessionHandle | undefined {
       return handles.get(id);
@@ -332,5 +391,193 @@ describe("terminal-tools — read / list / kill delegation", () => {
     const rows = result.details as SessionListing[];
     expect(rows).toHaveLength(1);
     expect(rows[0].sessionId).toBe("sess-9");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The four interaction tools (send_text / send_key / resize / wait) — TR-03/04/05.
+// Each is a THIN delegation to the registry method (the read/kill precedent):
+// it reads its params, calls the one registry method, logs durationMs (§2.7), and
+// returns the registry's returned shape VERBATIM. No re-gating (the session was
+// gated at create); no detectProvider touch.
+// ---------------------------------------------------------------------------
+
+describe("terminal-tools — send_text delegation", () => {
+  it("calls registry.sendText once with {text,submit,bracketedPaste} and returns its {screen,cursor} verbatim", async () => {
+    const registry = makeFakeRegistry({
+      sendTextImpl: async () => ({ screen: "echoed HELLO", cursor: { x: 7, y: 1 } }),
+    });
+    const tool = createTerminalSessionSendTextTool(baseDeps(registry));
+
+    const res = await tool.execute("call-1", {
+      sessionId: "s1",
+      text: "hi",
+      submit: true,
+      bracketedPaste: false,
+    });
+
+    expect(registry.sendTextCalls).toHaveLength(1);
+    expect(registry.sendTextCalls[0]).toEqual({
+      sessionId: "s1",
+      args: { text: "hi", submit: true, bracketedPaste: false },
+    });
+    // The tool body equals the registry's returned {screen,cursor}.
+    expect(res.details).toEqual({ screen: "echoed HELLO", cursor: { x: 7, y: 1 } });
+  });
+
+  it("forwards a missing text as the empty-string default (the schema validates upstream; no tool-layer throw)", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionSendTextTool(baseDeps(registry));
+
+    await tool.execute("call-1", { sessionId: "s1" });
+    expect(registry.sendTextCalls).toHaveLength(1);
+    expect(registry.sendTextCalls[0].args.text).toBe("");
+  });
+
+  it("logs an INFO with durationMs (§2.7)", async () => {
+    const registry = makeFakeRegistry();
+    const logger = makeCapturingLogger();
+    let t = 1000;
+    const tool = createTerminalSessionSendTextTool(baseDeps(registry, { logger, nowMs: () => (t += 5) }));
+
+    await tool.execute("call-1", { sessionId: "s1", text: "x" });
+    const info = logger.logs.find((l) => l.level === "info");
+    expect(info).toBeDefined();
+    expect(info?.obj.durationMs).toBeTypeOf("number");
+    expect(info?.obj.toolName).toBe("terminal_session_send_text");
+  });
+});
+
+describe("terminal-tools — send_key delegation", () => {
+  it("calls registry.sendKey with {keys} and returns its {screen,cursor}", async () => {
+    const registry = makeFakeRegistry({
+      sendKeyImpl: async () => ({ screen: "after C-c", cursor: { x: 0, y: 9 } }),
+    });
+    const tool = createTerminalSessionSendKeyTool(baseDeps(registry));
+
+    const res = await tool.execute("call-1", { sessionId: "s1", keys: ["C-c"] });
+
+    expect(registry.sendKeyCalls).toHaveLength(1);
+    expect(registry.sendKeyCalls[0]).toEqual({ sessionId: "s1", args: { keys: ["C-c"] } });
+    expect(res.details).toEqual({ screen: "after C-c", cursor: { x: 0, y: 9 } });
+  });
+
+  it("forwards an EMPTY keys array as-is (the worker no-ops; not a tool-layer error)", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionSendKeyTool(baseDeps(registry));
+
+    await tool.execute("call-1", { sessionId: "s1", keys: [] });
+    expect(registry.sendKeyCalls).toHaveLength(1);
+    expect(registry.sendKeyCalls[0].args.keys).toEqual([]);
+  });
+
+  it("logs an INFO with durationMs (§2.7)", async () => {
+    const registry = makeFakeRegistry();
+    const logger = makeCapturingLogger();
+    let t = 2000;
+    const tool = createTerminalSessionSendKeyTool(baseDeps(registry, { logger, nowMs: () => (t += 3) }));
+
+    await tool.execute("call-1", { sessionId: "s1", keys: ["Up"] });
+    const info = logger.logs.find((l) => l.level === "info");
+    expect(info?.obj.durationMs).toBeTypeOf("number");
+    expect(info?.obj.toolName).toBe("terminal_session_send_key");
+  });
+});
+
+describe("terminal-tools — resize delegation", () => {
+  it("calls registry.resize with {cols,rows} and returns { ok:true }", async () => {
+    const registry = makeFakeRegistry();
+    const tool = createTerminalSessionResizeTool(baseDeps(registry));
+
+    const res = await tool.execute("call-1", { sessionId: "s1", cols: 100, rows: 30 });
+
+    expect(registry.resizeCalls).toHaveLength(1);
+    expect(registry.resizeCalls[0]).toEqual({ sessionId: "s1", args: { cols: 100, rows: 30 } });
+    expect(res.details).toEqual({ ok: true });
+  });
+
+  it("forwards { ok:false } from the registry unchanged (absent/wedged session)", async () => {
+    const registry = makeFakeRegistry({ resizeImpl: async () => ({ ok: false }) });
+    const tool = createTerminalSessionResizeTool(baseDeps(registry));
+
+    const res = await tool.execute("call-1", { sessionId: "missing", cols: 80, rows: 24 });
+    expect(res.details).toEqual({ ok: false });
+  });
+
+  it("logs an INFO with durationMs (§2.7)", async () => {
+    const registry = makeFakeRegistry();
+    const logger = makeCapturingLogger();
+    let t = 3000;
+    const tool = createTerminalSessionResizeTool(baseDeps(registry, { logger, nowMs: () => (t += 4) }));
+
+    await tool.execute("call-1", { sessionId: "s1", cols: 90, rows: 20 });
+    const info = logger.logs.find((l) => l.level === "info");
+    expect(info?.obj.durationMs).toBeTypeOf("number");
+    expect(info?.obj.toolName).toBe("terminal_session_resize");
+  });
+});
+
+describe("terminal-tools — wait delegation", () => {
+  it("calls registry.wait with the (forIdleMs/forText/forExit/timeoutMs) settle params and returns the snapshot", async () => {
+    const registry = makeFakeRegistry({
+      waitImpl: async () => ({
+        matched: true,
+        isComplete: true,
+        reason: "idle",
+        screen: "quiet",
+        cursor: { x: 2, y: 2 },
+      }),
+    });
+    const tool = createTerminalSessionWaitTool(baseDeps(registry));
+
+    const res = await tool.execute("call-1", { sessionId: "s1", forIdleMs: 120, timeoutMs: 5000 });
+
+    expect(registry.waitCalls).toHaveLength(1);
+    expect(registry.waitCalls[0]).toEqual({
+      sessionId: "s1",
+      args: { forIdleMs: 120, forText: undefined, forExit: undefined, timeoutMs: 5000 },
+    });
+    expect(res.details).toEqual({
+      matched: true,
+      isComplete: true,
+      reason: "idle",
+      screen: "quiet",
+      cursor: { x: 2, y: 2 },
+    });
+  });
+
+  it("forwards a timeout result UNCHANGED — isComplete:false survives (the tool never coerces it to true)", async () => {
+    const registry = makeFakeRegistry({
+      waitImpl: async () => ({
+        matched: false,
+        isComplete: false,
+        reason: "timeout",
+        screen: "still-busy",
+        cursor: { x: 0, y: 0 },
+      }),
+    });
+    const tool = createTerminalSessionWaitTool(baseDeps(registry));
+
+    const res = await tool.execute("call-1", {
+      sessionId: "s1",
+      forText: "never-appears",
+      timeoutMs: 200,
+    });
+    const body = res.details as WaitResult;
+    expect(body.isComplete).toBe(false);
+    expect(body.reason).toBe("timeout");
+    expect(body.matched).toBe(false);
+  });
+
+  it("logs a DEBUG with durationMs (wait is readOnly) (§2.7)", async () => {
+    const registry = makeFakeRegistry();
+    const logger = makeCapturingLogger();
+    let t = 4000;
+    const tool = createTerminalSessionWaitTool(baseDeps(registry, { logger, nowMs: () => (t += 6) }));
+
+    await tool.execute("call-1", { sessionId: "s1", forIdleMs: 100 });
+    const dbg = logger.logs.find((l) => l.level === "debug" && l.obj.toolName === "terminal_session_wait");
+    expect(dbg).toBeDefined();
+    expect(dbg?.obj.durationMs).toBeTypeOf("number");
   });
 });
