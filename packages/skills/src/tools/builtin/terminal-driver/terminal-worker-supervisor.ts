@@ -20,8 +20,11 @@
  * Only the LOCATION of this block changed.
  *
  * INFRA-FREE (like the registry + every worker-side sibling): value-imports ONLY the
- * terminal-ipc framer + structural types from the registry + node builtins — never the infra
- * or observability packages (Shared Pattern A; the registry MUST NOT cross into those layers).
+ * terminal-ipc framer + node builtins, and type-imports the registry's structural contracts
+ * from the neutral leaf `terminal-session-types.ts` (NOT the registry itself — that would
+ * re-introduce the import cycle the registry's `wireWorkerSupervision` value-import forms);
+ * never the infra or observability packages (Shared Pattern A; the registry MUST NOT cross
+ * into those layers).
  *
  * @module
  */
@@ -36,7 +39,7 @@ import type {
   FakeWorkerChild,
   RegistryLogger,
   SessionHandle,
-} from "./terminal-session-registry.js";
+} from "./terminal-session-types.js";
 
 /** Explicit dependencies for {@link wireWorkerSupervision} — the closure locals `ensureWorker` used, passed as params (no module-global state, no hidden closure). */
 export interface WireWorkerSupervisionArgs {

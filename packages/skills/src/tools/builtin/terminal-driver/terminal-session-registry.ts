@@ -47,8 +47,28 @@ import { allocateSessionWorkspace, cleanupSessionWorkspace, resolveCreateWorkspa
 import { sameOwner, type SessionOwner } from "./terminal-session-owner.js";
 import { wireRegistryReaper, type EvictReason, type ReaperCaps } from "./terminal-reaper.js";
 import { wireWorkerSupervision } from "./terminal-worker-supervisor.js";
+// The registry's shared structural contracts the BODY references (deps/handle/worker)
+// type-imported from the neutral leaf terminal-session-types.ts (124-01 cycle break).
+// SessionStatus is no longer referenced in the body (it rides SessionHandle, which moved
+// to the leaf) — it is still re-exported for the public surface below.
+import type {
+  FakeWorkerChild,
+  RegistryLogger,
+  SessionHandle,
+} from "./terminal-session-types.js";
 
 export type { SessionOwner } from "./terminal-session-owner.js";
+// The registry's shared structural contracts moved to the neutral leaf
+// terminal-session-types.ts (124-01) to break the worker-supervisor import cycle
+// (the registry value-imports wireWorkerSupervision, the supervisor needed these
+// types back). RE-EXPORTED here so every existing `from "./terminal-session-registry.js"`
+// importer (tool layer, barrel, round-trip tests) keeps working — type-only, no churn.
+export type {
+  FakeWorkerChild,
+  RegistryLogger,
+  SessionHandle,
+  SessionStatus,
+} from "./terminal-session-types.js";
 
 /**
  * The per-session emulator scrollback depth (TR-14) — the SINGLE source the create
@@ -60,30 +80,10 @@ export const DEFAULT_SCROLLBACK = 1000;
 // ---------------------------------------------------------------------------
 // Injected dependency contracts
 // ---------------------------------------------------------------------------
-
-/**
- * A structural logger — the minimal `{ info, debug, warn, error }` surface. NOT
- * `getLogger` from `@comis/infra` (the registry must never value-import infra).
- */
-export interface RegistryLogger {
-  debug(obj: Record<string, unknown>, msg: string): void;
-  info(obj: Record<string, unknown>, msg: string): void;
-  warn(obj: Record<string, unknown>, msg: string): void;
-  error(obj: Record<string, unknown>, msg: string): void;
-}
-
-/**
- * The structural shape of the spawned worker child — a subset of
- * `ChildProcess`. The registry writes request frames to `stdin`, reads reply
- * frames off `stdout`, and supervises via `on("error"/"close")`.
- */
-export interface FakeWorkerChild {
-  pid?: number;
-  stdin: { write(chunk: Buffer): boolean } | null;
-  stdout: { on(event: "data", cb: (chunk: Buffer) => void): void } | null;
-  on(event: string, cb: (arg?: unknown) => void): FakeWorkerChild;
-  kill(signal?: string): void;
-}
+//
+// RegistryLogger + FakeWorkerChild moved to the neutral leaf terminal-session-types.ts
+// (124-01) to break the worker-supervisor import cycle; type-imported above and
+// re-exported so the public surface is unchanged.
 
 /** Details handed to `onSpawnFailed` when the worker reports a failed backend spawn (HR-03). */
 export interface SpawnFailureInfo {
@@ -132,28 +132,10 @@ export interface TerminalSessionRegistryDeps extends ReaperCaps {
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
-
-/** The lifecycle status of a terminal session. */
-export type SessionStatus = "running" | "exited" | "lost";
-
-/** A daemon-side session record. */
-export interface SessionHandle {
-  sessionId: string;
-  allowId: string;
-  /** The canonical command (bin) the session drives — for `list`/audit display. */
-  command: string;
-  status: SessionStatus;
-  cols: number;
-  rows: number;
-  lastActivity: number;
-  /** Session start epoch ms (stamped at `create`) — the reaper's wall-clock-age signal (OPS-06). */
-  startedAt: number;
-  exitCode?: number;
-  /** The registry-allocated per-session jail workspace dir (gap 2), removed best-effort on kill so the throwaway dir does not leak. Set ONLY when the registry allocated it (a caller-supplied workspace is the caller's to clean). */
-  workspace?: string;
-  /** The origin that owns this session — `(agentId, sessionKey)` (TR-13/TR-09). Stamped at `create`; `list`/`read`/`get`/`kill`/`send*` filter on it (two subagents are mutually invisible). */
-  owner: SessionOwner;
-}
+//
+// SessionStatus + SessionHandle moved to the neutral leaf terminal-session-types.ts
+// (124-01, closure of the worker-supervisor cycle break); type-imported above and
+// re-exported so the public surface is unchanged.
 
 /** A `create` request — the daemon passes buildDirectSpawn's `{bin,argv}` (M-1). */
 export interface CreateRequest {

@@ -41,7 +41,6 @@ import {
   systemClearTimeout,
   type SystemTimeoutHandle,
   type EgressControlPort,
-  type EgressMaterialization,
 } from "@comis/core";
 import { isFsyncDisabledByPermissionModel } from "@comis/shared";
 
@@ -58,12 +57,22 @@ import type { TerminalReplyFrame, TerminalRequestFrame } from "./terminal-ipc.js
 import { encodeKeyChord } from "./terminal-key-grammar.js";
 import { sanitizeTraceId, WORKER_TRUST_LEVEL } from "./terminal-worker-context.js";
 import { attachBackend } from "./terminal-worker-backend-attach.js";
+// The worker's structural contracts the entry BODY references (deps/defaults/closures)
+// type-imported from the neutral leaf terminal-worker-types.ts (124-01 cycle break).
+// FakePtyLike is no longer referenced in the body (its consumers PtyModuleLike +
+// SessionState moved to the leaf) — it is still re-exported for the public surface below.
+import type {
+  PipeChildLike,
+  PtyModuleLike,
+  SessionState,
+  WorkerBackend,
+  WorkerLogger,
+} from "./terminal-worker-types.js";
 import {
   buildReadResult,
   createSessionEmulator,
   diffSnapshot,
   readSnapshotParams,
-  type EmulatorSnapshot,
   type ReadResult,
   type SessionEmulator,
 } from "./terminal-render.js";
@@ -85,42 +94,12 @@ const SCROLLBACK_DEFAULT = 1000;
 // ---------------------------------------------------------------------------
 // Injected dependency contracts
 // ---------------------------------------------------------------------------
-
-/** Structural logger — the minimal `{info,debug,warn,error}` surface; NOT `@comis/infra`'s `getLogger` (the worker never value-imports infra); the daemon injects the real logger. */
-export interface WorkerLogger {
-  debug(obj: Record<string, unknown>, msg: string): void;
-  info(obj: Record<string, unknown>, msg: string): void;
-  warn(obj: Record<string, unknown>, msg: string): void;
-  error(obj: Record<string, unknown>, msg: string): void;
-}
-
-/** Structural node-pty session handle (subset of `IPty`): `onData`→ring, `onExit`→markExited (payload ignored — only the exit signal matters), write/resize/kill forwarded. */
-export interface FakePtyLike {
-  pid: number;
-  onData(cb: (data: string) => void): void;
-  onExit(cb: (e: { exitCode: number; signal?: number }) => void): void;
-  write(data: string): void;
-  resize(cols: number, rows: number): void;
-  kill(signal?: string): void;
-}
-
-/** Structural node-pty module shape (only `spawn` is used). */
-export interface PtyModuleLike {
-  spawn(
-    bin: string,
-    argv: string[],
-    opts: { cols: number; rows: number; env: NodeJS.ProcessEnv },
-  ): FakePtyLike;
-}
-
-/** Pipe-backend spawn shape — a structural subset of `child_process.spawn`'s return; `stdout.on("data")`→ring, close/error flip `alive`. */
-export interface PipeChildLike {
-  pid?: number;
-  stdout: { on(event: "data", cb: (chunk: Buffer) => void): void } | null;
-  stdin: { write(data: string): void } | null;
-  on(event: "close" | "error", cb: (arg?: unknown) => void): void;
-  kill(signal?: string): void;
-}
+//
+// WorkerLogger + FakePtyLike + PtyModuleLike + PipeChildLike + WorkerBackend +
+// SessionState moved to the neutral leaf terminal-worker-types.ts (124-01) to break
+// the backend-attach import cycle (the entry value-imports attachBackend, backend-attach
+// needed these types back). Type-imported above; re-exported below so the public surface
+// (TerminalWorkerDeps + the worker tests' structural-type imports) is unchanged.
 
 /** The durable-fs ops the worker uses — injected so the fsync-thrower test runs on macOS. */
 export interface WorkerFsPort {
@@ -171,9 +150,10 @@ export interface TerminalWorkerDeps {
 // ---------------------------------------------------------------------------
 // Frame result shapes
 // ---------------------------------------------------------------------------
-
-/** Which backend a session is driven by — `degraded` is the pipe fallback (TR-08). */
-export type WorkerBackend = "pty" | "degraded";
+//
+// WorkerBackend moved to the neutral leaf terminal-worker-types.ts (124-01,
+// closure of the backend-attach cycle break — SessionState references it);
+// type-imported above and re-exported below so the public surface is unchanged.
 
 /** The create-frame reply payload. */
 interface CreateResult {
@@ -209,44 +189,22 @@ interface WaitResult {
   cursor: { x: number; y: number };
 }
 
-/**
- * A closure-local per-session record (NOT module-global). Exported as a worker-internal
- * structural type so the extracted backend-attach sibling ({@link attachBackend} in
- * `terminal-worker-backend-attach.ts`) can type the `state` it feeds; it is NOT a
- * public-surface contract (not re-exported by the barrel) — purely intra-module.
- */
-export interface SessionState {
-  backend: WorkerBackend;
-  cols: number;
-  rows: number;
-  /** The accumulated stdout ring (P0: a growing string; a true ring is P2/121). */
-  ring: string;
-  alive: boolean;
-  pty?: FakePtyLike;
-  pipe?: PipeChildLike;
-  /** Per-session @xterm emulator (P2/121) — SOURCE OF TRUTH for `read` (grid+cursor+alt). Closure-local; fed by {@link appendRing}, serialized by `handleRead`, resized by `handleResize`. */
-  emu?: SessionEmulator;
-  /** Latest emulator write-parse promise (P2/121): `appendRing` chains each `emu.write(chunk)` (serialized, @xterm-PARSE-backed); `handleRead` awaits it so a settled frame reflects every byte (§2.4). */
-  writeFlush?: Promise<void>;
-  /** Previous read's emulator snapshot (TR-14): `handleRead` diffs the new one against this (per-session screen-diff) then stores it. */
-  lastSnapshot?: EmulatorSnapshot;
-  /** Settle ring-grow subscribers ({@link SettleDeps}.onRingChange), closure-local; `appendRing` notifies these. */
-  ringListeners: Set<() => void>;
-  /** Settle exit subscribers (onExit half); the pipe close/error + live pty exit notify these. */
-  exitListeners: Set<() => void>;
-  /** Operator-declared sandbox scope (SEC-02) off the create frame — materialized into the bwrap jail by the 122-06 composer. */
-  scope?: TerminalScope;
-  /** Session workspace root (create frame) — the always-bound jail workspace. */
-  workspace?: string;
-  /** Session working directory (create frame) — the jail `--chdir` target. */
-  cwd?: string;
-  /**
-   * The egress materialization for `network: listed-hosts` (122-05/06). Disposed
-   * ONCE on session teardown ({@link markExited}) so the per-session socket is
-   * cleaned up (no leak). Absent for `none`/`full`.
-   */
-  egress?: EgressMaterialization;
-}
+// SessionState (the closure-local per-session record the backend-attach sibling types its
+// `state` against) moved to the neutral leaf terminal-worker-types.ts (124-01) — see the
+// re-export below. It is NOT re-exported by the barrel (purely intra-module).
+//
+// The worker's structural contracts (WorkerLogger, FakePtyLike, PtyModuleLike,
+// PipeChildLike, WorkerBackend, SessionState) RE-EXPORTED from the neutral leaf
+// terminal-worker-types.ts (124-01) so every existing `from "./terminal-worker-entry.js"`
+// importer (the worker tests, the render-live harness) keeps working — type-only, no churn.
+export type {
+  FakePtyLike,
+  PipeChildLike,
+  PtyModuleLike,
+  SessionState,
+  WorkerBackend,
+  WorkerLogger,
+} from "./terminal-worker-types.js";
 
 /** The worker's public surface — `handle` dispatches a frame; `writeDurable` persists state. */
 export interface TerminalWorker {

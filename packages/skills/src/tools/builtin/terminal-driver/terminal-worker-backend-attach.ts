@@ -15,9 +15,11 @@
  * `bwrap [scope args] -- bin argv` (the plan is composed upstream) — no unjailed path. Only
  * the LOCATION of this block changed.
  *
- * INFRA-FREE (like every worker-side sibling): value-imports ONLY structural types from the
- * entry + node builtins — never the infra or observability packages (Shared Pattern A; the
- * worker MUST NOT cross into those layers).
+ * INFRA-FREE (like every worker-side sibling): value-imports ONLY node builtins, and
+ * type-imports the worker's structural contracts from the neutral leaf
+ * `terminal-worker-types.ts` (NOT the entry itself — that would re-introduce the import
+ * cycle the entry's `attachBackend` value-import forms); never the infra or observability
+ * packages (Shared Pattern A; the worker MUST NOT cross into those layers).
  *
  * @module
  */
@@ -27,7 +29,7 @@ import type {
   PtyModuleLike,
   SessionState,
   WorkerLogger,
-} from "./terminal-worker-entry.js";
+} from "./terminal-worker-types.js";
 
 /** The composed spawn plan a backend attaches to — the `{bin,argv,env}` ride VERBATIM after the bwrap composer's `--` (M-1). */
 interface BackendSpawnPlan {
