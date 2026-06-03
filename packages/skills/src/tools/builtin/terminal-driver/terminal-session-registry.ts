@@ -50,6 +50,16 @@ import {
   type TerminalReplyFrame,
   type TerminalRequestFrame,
 } from "./terminal-ipc.js";
+import type { ReadOptions, SnapshotDiff } from "./terminal-render.js";
+
+/**
+ * The per-session emulator scrollback depth (TR-14) the registry defaults
+ * `create` to — the SINGLE source the create tool defaults to (121-04), the
+ * value Plan 01 hard-coded worker-side now sourced here. Operator-overridable via
+ * config later; NOT agent-dialable (no `scrollback` param on the create tool).
+ * Bounds per-session emulator memory to `(rows + scrollback) × cols` cells.
+ */
+export const DEFAULT_SCROLLBACK = 1000;
 
 // ---------------------------------------------------------------------------
 // Injected dependency contracts
@@ -162,6 +172,13 @@ export interface CreateRequest {
   argv: string[];
   cols: number;
   rows: number;
+  /**
+   * The per-session emulator scrollback depth (TR-14) carried into the create
+   * frame so the worker's `handleCreate` builds `Terminal({cols,rows,scrollback})`.
+   * The create tool always supplies {@link DEFAULT_SCROLLBACK}; an omitted value
+   * falls back to it in `create`. NOT agent-dialable — const/config-sourced.
+   */
+  scrollback?: number;
 }
 
 /** The `create` result handed back to the tool layer. */
@@ -180,6 +197,12 @@ export interface TerminalView {
   rows: number;
   alt: boolean;
   alive: boolean;
+  /**
+   * The per-read screen-diff vs the prior read (TR-14, Plan 03). ADDITIVE: the
+   * worker includes it when an emulator snapshot exists; the not-found / degraded
+   * early returns omit it. Rides `reply.result` through `read` to the tool layer.
+   */
+  diff?: SnapshotDiff;
 }
 
 /**
@@ -213,7 +236,13 @@ export interface SessionListing {
 /** The registry's public surface. */
 export interface TerminalSessionRegistry {
   create(req: CreateRequest): Promise<CreateResult>;
-  read(sessionId: string): Promise<TerminalView>;
+  /**
+   * Round-trip a `read` frame and resolve the rendered view. `opts` (TR-02/14)
+   * forwards `{format,scrollback,includeAltBuffer}` into the frame; the reply's
+   * `diff` (Plan 03 screen-diff) rides back on the view. A bare `read(sessionId)`
+   * forwards no render opts (the worker applies its defaults).
+   */
+  read(sessionId: string, opts?: ReadOptions): Promise<TerminalView>;
   /**
    * Forward a `send_text` frame (TR-03) and resolve the post-action
    * `{screen,cursor}` subset. Degrades to `{screen:"",cursor:{0,0}}` for an
@@ -556,6 +585,10 @@ export function createTerminalSessionRegistry(
       argv: req.argv,
       cols: req.cols,
       rows: req.rows,
+      // TR-14: thread the per-session scrollback ceiling so handleCreate builds
+      // Terminal({cols,rows,scrollback}). Defaults to DEFAULT_SCROLLBACK when the
+      // caller omits one (the create tool always supplies it; this is the safety net).
+      scrollback: req.scrollback ?? DEFAULT_SCROLLBACK,
     });
     pending.set(`${sessionId}:${createFrame.requestId}`, (reply) => {
       if (reply.ok) return; // backend spawned — leave the session running.
@@ -579,10 +612,10 @@ export function createTerminalSessionRegistry(
     return { sessionId, allowId: req.allowId, cols: req.cols, rows: req.rows };
   }
 
-  async function read(sessionId: string): Promise<TerminalView> {
+  async function read(sessionId: string, opts?: ReadOptions): Promise<TerminalView> {
     const handle = sessions.get(sessionId);
     if (handle === undefined || handle.status !== "running") {
-      // Not found / not alive — a minimal view the 119-04 tool layer maps.
+      // Not found / not alive — a minimal view the 119-04 tool layer maps (no diff).
       return {
         screen: "",
         cursor: { x: 0, y: 0 },
@@ -592,7 +625,9 @@ export function createTerminalSessionRegistry(
         alive: false,
       };
     }
-    const reply = await request(sessionId, "read", { sessionId });
+    // TR-02/14: forward the render opts into the read frame (handleRead reads
+    // format/scrollback, Plan 02). A bare read (opts undefined) spreads nothing.
+    const reply = await request(sessionId, "read", { sessionId, ...(opts ?? {}) });
     handle.lastActivity = nowMs();
     if (!reply.ok || reply.result === undefined) {
       return { screen: "", cursor: { x: 0, y: 0 }, cols: handle.cols, rows: handle.rows, alt: false, alive: false };

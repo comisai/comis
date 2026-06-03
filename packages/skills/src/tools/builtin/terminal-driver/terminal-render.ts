@@ -82,6 +82,22 @@ export interface SnapshotOptions {
 }
 
 /**
+ * The render options the `terminal_session_read` tool threads through
+ * `registry.read` into the worker's read frame (TR-02/14) — {@link SnapshotOptions}
+ * plus `includeAltBuffer`. Lives here (cohesive with the other render-param types)
+ * so the registry stays under the 800-line cap. All optional — a bare
+ * `read(sessionId)` forwards none; the worker applies its render defaults.
+ */
+export interface ReadOptions {
+  /** `text` (plain grid) | `ansi` (SGR-preserving) | `html` (fragment). */
+  format?: RenderFormat;
+  /** Off-screen lines above the viewport to include (bounded by the construction-time ceiling). */
+  scrollback?: number;
+  /** Whether to include the alternate screen buffer (forwarded to the worker's render dispatch). */
+  includeAltBuffer?: boolean;
+}
+
+/**
  * The rendered grid snapshot — the `{screen,cursor,cols,rows,alt}` subset of the
  * worker's `read` view (the worker adds `alive`). `screen` is the plain visible
  * viewport text by default; `cursor`/`alt` are the REAL emulator state.

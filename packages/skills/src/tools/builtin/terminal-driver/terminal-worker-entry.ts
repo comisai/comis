@@ -436,6 +436,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const argv = Array.isArray(p["argv"]) ? (p["argv"] as string[]) : [];
     const cols = typeof p["cols"] === "number" ? p["cols"] : 80;
     const rows = typeof p["rows"] === "number" ? p["rows"] : 24;
+    // 121-04: the create frame now carries the per-session scrollback ceiling
+    // (the registry sources it from DEFAULT_SCROLLBACK / config — NOT agent input).
+    // Fall back to the worker's SCROLLBACK_DEFAULT only when the frame omits it.
+    const scrollback = typeof p["scrollback"] === "number" ? p["scrollback"] : SCROLLBACK_DEFAULT;
 
     const state: SessionState = {
       backend: "pty",
@@ -449,9 +453,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
 
     // Construct the per-session @xterm emulator BEFORE wiring the backend's
     // onData (so the first chunk is rendered). Built for BOTH backends — the
-    // emulator renders whatever bytes arrive (pty OR degraded pipe). Plan 04
-    // makes the scrollback config/param-driven.
-    state.emu = createEmulator({ cols, rows, scrollback: SCROLLBACK_DEFAULT });
+    // emulator renders whatever bytes arrive (pty OR degraded pipe). 121-04
+    // threads the scrollback from the create frame (the registry's
+    // DEFAULT_SCROLLBACK / config, never agent input).
+    state.emu = createEmulator({ cols, rows, scrollback });
 
     let pty: PtyModuleLike | undefined;
     try {

@@ -1286,6 +1286,22 @@ describe("createTerminalWorker — 121-01 read serializes the REAL @xterm grid (
     expect(recEmu.lastConstruct()?.cols).toBe(80);
     expect(recEmu.lastConstruct()?.rows).toBe(24);
     expect(recEmu.lastConstruct()?.scrollback).toBeGreaterThan(0);
+  });
+
+  it("constructs the emulator with the scrollback carried on the create frame (121-04)", async () => {
+    // 121-04: the create frame now carries the per-session scrollback ceiling
+    // (the registry sources it from DEFAULT_SCROLLBACK / config). The worker must
+    // read it from the frame — NOT hard-code SCROLLBACK_DEFAULT. Pre-patch the
+    // construction ignored the frame and always used 1000, so this fails.
+    const rec = makeRecordingBackend();
+    const recEmu = makeRecordingEmulator();
+    const worker = createTerminalWorker(
+      baseDeps({ loadPty: () => ({ spawn: rec.spawn }), createEmulator: recEmu.createEmulator }),
+    );
+    await worker.handle(
+      createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24, scrollback: 250 }),
+    );
+    expect(recEmu.lastConstruct()?.scrollback).toBe(250);
 
     // Every data chunk is fed into the emulator's write (the grid ingest). Plan
     // 02 chains the writes through state.writeFlush (a serialized in-order queue
