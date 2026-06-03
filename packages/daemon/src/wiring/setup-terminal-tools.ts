@@ -195,7 +195,7 @@ export function buildTerminalReaperHooks(
       deps.eventBus.emit("terminal:session_evicted", { sessionId, agentId, reason, durationMs, timestamp });
       deps.eventBus.emit("terminal:session_state", { sessionId, agentId, state: "lost", durationMs, timestamp });
       deps.skillsLogger.warn(
-        { sessionId, agentId, reason, durationMs, hint: "terminal session evicted by reaper", errorKind: "resource" },
+        { sessionId, agentId, reason, durationMs, hint: "terminal session evicted by reaper", errorKind: "resource" as const },
         "terminal session evicted",
       );
     },
