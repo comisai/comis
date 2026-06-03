@@ -59,12 +59,25 @@ import { isFsyncDisabledByPermissionModel } from "@comis/shared";
 import type { TerminalReplyFrame, TerminalRequestFrame } from "./terminal-ipc.js";
 import { encodeKeyChord } from "./terminal-key-grammar.js";
 import {
+  buildReadResult,
+  createSessionEmulator,
+  type ReadResult,
+  type SessionEmulator,
+} from "./terminal-render.js";
+import {
   runSettle,
   SETTLE_DEFAULT_IDLE_MS,
   type SettleDeps,
   type SettleParams,
   type SettleResult,
 } from "./terminal-settle.js";
+
+/**
+ * The per-session emulator scrollback depth (retained rows above the viewport).
+ * A sane default here; Plan 04 makes it config/param-driven. Bounds per-session
+ * emulator memory to `(rows + 1000) × cols` cells.
+ */
+const SCROLLBACK_DEFAULT = 1000;
 
 // ---------------------------------------------------------------------------
 // Injected dependency contracts
@@ -163,6 +176,12 @@ export interface TerminalWorkerDeps {
   setTimer?: (cb: () => void, ms: number) => unknown;
   /** Cancel a `setTimer` handle (default: `systemClearTimeout`). */
   clearTimer?: (handle: unknown) => void;
+  /**
+   * Construct a per-session @xterm emulator (P2/121). Default:
+   * `createSessionEmulator`. Injectable so a test can substitute a recording
+   * emulator to assert the wiring (mirrors the `loadPty`/`spawnPipe` pattern).
+   */
+  createEmulator?: (opts: { cols: number; rows: number; scrollback: number }) => SessionEmulator;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,20 +197,6 @@ interface CreateResult {
   backend: WorkerBackend;
   cols: number;
   rows: number;
-}
-
-/**
- * The read-frame reply payload — the P0 minimal terminal view (H-1). `screen`
- * is the raw per-session stdout ring; the full @xterm grid + real cursor/alt is
- * P2/121. `alive` reflects whether the backend is still running.
- */
-interface ReadResult {
-  screen: string;
-  cursor: { x: number; y: number };
-  cols: number;
-  rows: number;
-  alt: boolean;
-  alive: boolean;
 }
 
 /**
@@ -234,6 +239,12 @@ interface SessionState {
   alive: boolean;
   pty?: FakePtyLike;
   pipe?: PipeChildLike;
+  /**
+   * The per-session @xterm emulator (P2/121) — the SOURCE OF TRUTH for the `read`
+   * snapshot (real grid + cursor + alt). Closure-local (NOT module-global). Fed
+   * by {@link appendRing}, serialized by `handleRead`, resized by `handleResize`.
+   */
+  emu?: SessionEmulator;
   /**
    * Settle subscribers notified when this session's ring grows (the
    * `onRingChange` half of {@link SettleDeps}). Closure-local per session — NOT
@@ -373,14 +384,22 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     });
   const clearTimer =
     deps.clearTimer ?? ((handle: unknown) => systemClearTimeout(handle as SystemTimeoutHandle));
+  // The per-session @xterm emulator factory (P2/121). Default: the real pure-JS
+  // wrapper; a test injects a recording emulator to assert the wiring.
+  const createEmulator = deps.createEmulator ?? createSessionEmulator;
 
   /**
-   * Append a chunk to a session's stdout ring and notify the settle's
-   * ring-change subscribers (the `onRingChange` half of {@link SettleDeps}) so a
-   * pending `wait`/settle sees the new bytes.
+   * Append a chunk to a session's stdout ring AND feed it into the per-session
+   * @xterm emulator (the grid ingest), then notify the settle's ring-change
+   * subscribers (the `onRingChange` half of {@link SettleDeps}). The ring is the
+   * RAW byte feed the settle observes + the degraded fallback view; the emulator
+   * is the source of truth for the rendered `read` snapshot. The emulator write
+   * is fired un-awaited here (no `void` cast) — Plan 02 wraps it in a write-flush
+   * promise so `read` can await the parse before serializing a settled frame.
    */
   function appendRing(state: SessionState, chunk: string): void {
     state.ring += chunk;
+    state.emu?.write(chunk);
     for (const cb of state.ringListeners) cb();
   }
 
@@ -452,6 +471,12 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
       exitListeners: new Set(),
     };
 
+    // Construct the per-session @xterm emulator BEFORE wiring the backend's
+    // onData (so the first chunk is rendered). Built for BOTH backends — the
+    // emulator renders whatever bytes arrive (pty OR degraded pipe). Plan 04
+    // makes the scrollback config/param-driven.
+    state.emu = createEmulator({ cols, rows, scrollback: SCROLLBACK_DEFAULT });
+
     let pty: PtyModuleLike | undefined;
     try {
       pty = deps.loadPty();
@@ -500,9 +525,11 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   }
 
   /**
-   * Handle a `read` frame (H-1). Returns the P0 minimal view from the
-   * per-session stdout ring: `{screen,cursor,cols,rows,alt,alive}`. Full @xterm
-   * grid rendering (real cursor/alt-screen) is P2/121.
+   * Handle a `read` frame (H-1). Serializes the per-session @xterm emulator grid
+   * (real cursor + real alt, P2/121) into `{screen,cursor,cols,rows,alt,alive}`.
+   * When the emulator is present it is the SOLE source; the raw ring is the
+   * fallback only for an emulator-absent path (NOT a dual path on the live
+   * backend) — see {@link buildReadResult}.
    */
   function handleRead(frame: TerminalRequestFrame): ReadResult {
     const sessionId = String(frame.params["sessionId"] ?? frame.sessionId);
@@ -510,14 +537,12 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     if (state === undefined) {
       return { screen: "", cursor: { x: 0, y: 0 }, cols: 0, rows: 0, alt: false, alive: false };
     }
-    return {
-      screen: state.ring,
-      cursor: { x: 0, y: 0 },
+    return buildReadResult(state.emu?.snapshot(), {
+      ring: state.ring,
       cols: state.cols,
       rows: state.rows,
-      alt: false,
       alive: state.alive,
-    };
+    });
   }
 
   /** The not-alive minimal `{screen,cursor}` for an absent/gone session. */
@@ -601,10 +626,10 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
   }
 
   /**
-   * Handle a `resize` frame (TR-03). Resizes the PTY winsize (pty backend) and
-   * records the ring geometry on the session (P1 records cols/rows; the real
-   * @xterm grid resize is P2/121). The degraded pipe backend has no winsize —
-   * geometry is recorded for P2. Replies `{ ok }`.
+   * Handle a `resize` frame (TR-03). Resizes the PTY winsize (pty backend), the
+   * per-session @xterm emulator grid (P2/121 — reflows the rendered grid on BOTH
+   * backends), and records the ring geometry. The degraded pipe backend has no
+   * winsize, but its emulator grid still reflows. Replies `{ ok }`.
    */
   function handleResize(frame: TerminalRequestFrame): ResizeResult {
     const startedAt = nowMs();
@@ -616,6 +641,7 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     const rows = typeof frame.params["rows"] === "number" ? frame.params["rows"] : state.rows;
 
     state.pty?.resize(cols, rows); // pty backend; the pipe backend has no winsize
+    state.emu?.resize(cols, rows); // reflow the @xterm grid on both backends
     state.cols = cols;
     state.rows = rows;
 

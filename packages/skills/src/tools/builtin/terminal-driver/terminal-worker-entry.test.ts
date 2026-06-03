@@ -36,6 +36,19 @@ import { encodeFrame, type TerminalRequestFrame } from "./terminal-ipc.js";
 
 const TRACE_ID = "11111111-2222-4333-8444-555555555555";
 
+/**
+ * Flush the per-session @xterm emulator's pending write-parse. `@xterm/headless`
+ * parses its write buffer on a MACROTASK (a timer), so a single microtask yield
+ * is NOT enough for the grid to reflect just-emitted bytes. Plan 01's `appendRing`
+ * fires `emu.write(chunk)` un-awaited (Plan 02 makes `read` itself await the
+ * flush); until then a test awaits a real macrotask before reading the grid.
+ */
+function flushEmulator(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
 /** A no-op structural logger that records the last call per level. */
 function makeLogger() {
   return {
@@ -335,6 +348,9 @@ describe("createTerminalWorker — TR-08 backend selection", () => {
       createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }),
     );
     pipe.emit("pipe-out\n");
+    // P2/121: read serializes the @xterm grid (not the raw ring), so the
+    // rendered viewport CONTAINS the emitted line after the parse flush.
+    await flushEmulator();
 
     let read = await worker.handle({
       sessionId: "s1",
@@ -343,7 +359,7 @@ describe("createTerminalWorker — TR-08 backend selection", () => {
       method: "read",
       params: { sessionId: "s1" },
     });
-    expect((read.result as { screen: string; alive: boolean }).screen).toBe("pipe-out\n");
+    expect((read.result as { screen: string; alive: boolean }).screen).toContain("pipe-out");
     expect((read.result as { alive: boolean }).alive).toBe(true);
 
     pipe.close();
@@ -478,7 +494,7 @@ describe("createTerminalWorker — LR-01 inbound context is validated, not trust
 });
 
 describe("createTerminalWorker — H-1 read frame handler", () => {
-  it("returns {screen,cursor,cols,rows,alt,alive} from the per-session stdout ring", async () => {
+  it("returns {screen,cursor,cols,rows,alt,alive} from the per-session @xterm grid", async () => {
     const fake = makeFakeBackend();
     const ptyLib = { spawn: fake.spawn };
     const worker = createTerminalWorker(baseDeps({ loadPty: () => ptyLib }));
@@ -486,8 +502,9 @@ describe("createTerminalWorker — H-1 read frame handler", () => {
     await worker.handle(
       createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 100, rows: 40 }),
     );
-    // The backend emits stdout into the per-session ring.
+    // The backend emits stdout; the per-session emulator renders it into the grid.
     fake.emit("hello\n");
+    await flushEmulator(); // @xterm parses on a macrotask
 
     const readReply = await worker.handle({
       sessionId: "s1",
@@ -506,8 +523,12 @@ describe("createTerminalWorker — H-1 read frame handler", () => {
       alt: boolean;
       alive: boolean;
     };
-    expect(view.screen).toBe("hello\n"); // the accumulated ring content
-    expect(view.cursor).toEqual({ x: 0, y: 0 });
+    // P2/121: the screen is the rendered grid (CONTAINS the line), the cursor is
+    // REAL — after "hello\n" the bare LF moves DOWN a row without a carriage
+    // return, so the cursor is {x:5, y:1} (column 5 = after "hello", row 1), NOT
+    // the P1 {0,0} placeholder.
+    expect(view.screen).toContain("hello");
+    expect(view.cursor).toEqual({ x: 5, y: 1 });
     expect(view.cols).toBe(100);
     expect(view.rows).toBe(40);
     expect(view.alt).toBe(false);
@@ -1180,8 +1201,8 @@ describe("createTerminalWorker — 121-01 read serializes the REAL @xterm grid (
 
     // Clear + home + "abc": the real emulator lands the cursor at column 3.
     rec.emit("\x1b[2J\x1b[Habc");
-    // Yield so the (now-tracked) emulator write-parse completes before the read.
-    await Promise.resolve();
+    // Wait for the @xterm macrotask parse-flush so the read sees the grid.
+    await flushEmulator();
 
     const reply = await worker.handle(readFrame());
     const view = reply.result as {
@@ -1208,14 +1229,14 @@ describe("createTerminalWorker — 121-01 read serializes the REAL @xterm grid (
 
     rec.emit("\x1b[?1049h"); // enter alt screen
     rec.emit("VIM");
-    await Promise.resolve();
+    await flushEmulator();
     let reply = await worker.handle(readFrame());
     let view = reply.result as { screen: string; alt: boolean };
     expect(view.alt).toBe(true);
     expect(view.screen).toContain("VIM");
 
     rec.emit("\x1b[?1049l"); // leave alt screen
-    await Promise.resolve();
+    await flushEmulator();
     reply = await worker.handle(readFrame());
     view = reply.result as { screen: string; alt: boolean };
     expect(view.alt).toBe(false);
@@ -1275,7 +1296,7 @@ describe("createTerminalWorker — 121-01 read serializes the REAL @xterm grid (
     await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: [], cols: 80, rows: 24 }));
 
     pipe.emit("degraded-line\n");
-    await Promise.resolve();
+    await flushEmulator();
     const reply = await worker.handle(readFrame());
     const view = reply.result as { screen: string; alive: boolean };
 

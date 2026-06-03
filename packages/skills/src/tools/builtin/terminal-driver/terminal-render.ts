@@ -163,3 +163,60 @@ export function createSessionEmulator(opts: SessionEmulatorOptions): SessionEmul
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// read-result assembly (kept here so the worker stays under the 800-line cap)
+// ---------------------------------------------------------------------------
+
+/**
+ * The worker's `read` reply view (H-1): the rendered grid + real cursor + real
+ * alt-screen flag (P2/121), serialized from the per-session emulator. The raw
+ * stdout ring is retained only as the emulator-absent / degraded fallback (NOT a
+ * dual path on the live backend). `alive` reflects whether the backend runs.
+ */
+export interface ReadResult {
+  screen: string;
+  cursor: { x: number; y: number };
+  cols: number;
+  rows: number;
+  alt: boolean;
+  alive: boolean;
+}
+
+/** The session geometry/liveness the worker pairs with a snapshot to build a read view. */
+export interface ReadResultContext {
+  /** The raw stdout ring — the emulator-absent / degraded fallback view. */
+  ring: string;
+  /** The session's recorded column count (fallback when no snapshot). */
+  cols: number;
+  /** The session's recorded row count (fallback when no snapshot). */
+  rows: number;
+  /** Whether the backend is still alive. */
+  alive: boolean;
+}
+
+/**
+ * Assemble the worker's `read` reply from an emulator snapshot + the session
+ * context. When `snap` is present (the live emulator-backed path) it is the SOLE
+ * source for `screen`/`cursor`/`cols`/`rows`/`alt`; when absent (emulator not
+ * constructed) the raw `ring` + recorded geometry + `{0,0}` cursor is the
+ * degraded fallback — NOT a dual path on the live backend. `alive` always comes
+ * from the session context.
+ *
+ * @param snap - The emulator snapshot, or `undefined` when no emulator exists.
+ * @param ctx - The session ring/geometry/liveness fallback.
+ * @returns The `{screen,cursor,cols,rows,alt,alive}` read view.
+ */
+export function buildReadResult(
+  snap: EmulatorSnapshot | undefined,
+  ctx: ReadResultContext,
+): ReadResult {
+  return {
+    screen: snap?.screen ?? ctx.ring,
+    cursor: snap?.cursor ?? { x: 0, y: 0 },
+    cols: snap?.cols ?? ctx.cols,
+    rows: snap?.rows ?? ctx.rows,
+    alt: snap?.alt ?? false,
+    alive: ctx.alive,
+  };
+}
