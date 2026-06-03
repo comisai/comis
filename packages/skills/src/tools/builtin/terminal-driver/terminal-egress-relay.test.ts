@@ -20,10 +20,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { buildEgressRelayLaunch } from "./terminal-egress-relay.js";
+import {
+  buildEgressRelayLaunch,
+  RELAY_INIT_SCRIPT_URL,
+} from "./terminal-egress-relay.js";
 
 describe("buildEgressRelayLaunch — in-jail relay-as-init launcher builder (SEC-07)", () => {
   it("returns the HTTPS_PROXY/HTTP_PROXY env pointing the child at the in-jail relay port", () => {
@@ -47,6 +50,31 @@ describe("buildEgressRelayLaunch — in-jail relay-as-init launcher builder (SEC
     const joined = out.relayArgv.join(" ");
     expect(joined).toContain("/tmp/sess.sock");
     expect(joined).toContain("18080");
+  });
+
+  it("relayArgv invokes the RUNNABLE relay-init script via process.execPath, ending with `--` before the child", () => {
+    // 122-fix: the relayArgv is no longer a bare sentinel name — it is the real
+    // in-jail launch: `node <relay-init script> --socket <sock> --port <port> --`,
+    // so the worker can append `bin ...childArgv` after the `--` and the kernel
+    // brings up the relay-as-init for real (the 118 G-3 transport). This was the
+    // SEC-07 production gap: the launcher pointed at a script that did not exist.
+    const out = buildEgressRelayLaunch({ socketPath: "/tmp/sess.sock", relayPort: 18080 });
+    // arg0 is the Node runtime (the script is run as a subprocess).
+    expect(out.relayArgv[0]).toBe(process.execPath);
+    // arg1 is the relay-init script path (resolved from the module URL).
+    expect(out.relayArgv[1]).toBe(fileURLToPath(RELAY_INIT_SCRIPT_URL));
+    // The flags carry the bridge coordinates and terminate with `--`.
+    expect(out.relayArgv).toContain("--socket");
+    expect(out.relayArgv).toContain("/tmp/sess.sock");
+    expect(out.relayArgv).toContain("--port");
+    expect(out.relayArgv).toContain("18080");
+    expect(out.relayArgv[out.relayArgv.length - 1]).toBe("--");
+  });
+
+  it("points at a relay-init script that actually exists on disk (the launcher target is real)", () => {
+    // The exported script URL must resolve to a real file — the bug was a launcher
+    // that referenced a not-yet-built binary, leaving listed-hosts egress dead.
+    expect(existsSync(fileURLToPath(RELAY_INIT_SCRIPT_URL))).toBe(true);
   });
 
   it("the socketPath round-trips so the caller can bind-mount it (buildScopeArgs relaySocketPath)", () => {
