@@ -857,4 +857,49 @@ describe("brokerStop runs after shutdownBackgroundProcesses (shutdown ordering)"
     // brokerStop shutdownOrder must be higher than background-processes shutdownOrder
     expect(brokerEntry![0].shutdownOrder).toBeGreaterThan(bgEntry![0].shutdownOrder);
   });
+
+  // -------------------------------------------------------------------------
+  // Data-dir singleton lock release (D14) — acquire/release path symmetry
+  // -------------------------------------------------------------------------
+  //
+  // The lock is acquired at boot on the env-resolved dataDir
+  // (COMIS_DATA_DIR ?? ~/.comis, daemon.ts) BEFORE config bootstrap. The
+  // `dataDir` dep here, however, is the config-resolved value
+  // (`container.config.dataDir || dataDir`), and core's resolveConfigPaths
+  // defaults an empty config.dataDir to ~/.comis WITHOUT consulting
+  // COMIS_DATA_DIR. So whenever COMIS_DATA_DIR points elsewhere, releasing at
+  // `dataDir` unlinks the wrong directory and the real lock leaks — every
+  // in-process restart (integration harness) then dies with EEXIST because
+  // the lock's PID (the test process itself) is still alive, and a crashed
+  // production daemon leaves a stale lock until PID-liveness recovery.
+  // The dedicated `lockDataDir` dep carries the boot dataDir so release is
+  // symmetric with acquire.
+
+  it("releases the data-dir lock at the boot dataDir (lockDataDir), not the config-resolved dataDir", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "shutdown-configdir-"));
+    const bootDir = mkdtempSync(join(tmpdir(), "shutdown-bootdir-"));
+    const { writeFileSync, existsSync } = await import("node:fs");
+    try {
+      // A lock in each dir: the boot-dir lock is the daemon's own (acquired
+      // at boot); the config-dir lock belongs to a hypothetical other daemon
+      // whose dataDir config points there — not ours to release.
+      writeFileSync(join(bootDir, ".daemon.lock"), String(process.pid));
+      writeFileSync(join(configDir, ".daemon.lock"), "99999");
+
+      const deps = createMinimalDeps({
+        dataDir: configDir,
+        lockDataDir: bootDir,
+      } as Partial<ShutdownDeps>);
+
+      const setupShutdown = await getSetupShutdown();
+      const result = setupShutdown(deps);
+      await result.shutdownHandle.trigger("SIGTERM");
+
+      expect(existsSync(join(bootDir, ".daemon.lock")), "boot-dir lock must be released").toBe(false);
+      expect(existsSync(join(configDir, ".daemon.lock")), "config-dir lock is not ours to release").toBe(true);
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+      rmSync(bootDir, { recursive: true, force: true });
+    }
+  });
 });
