@@ -274,6 +274,29 @@ describe("terminal-wake-dispatch (recurring wake-FSM)", () => {
     expect(persisted?.dispatchState).toBe("woken");
   });
 
+  it("forgetSession drops the FSM in-memory state so a re-used id starts fresh (IN-03/WR-02)", async () => {
+    // A session mid-wake (woken, pendingFrame=req-1) when the daemon died — the
+    // dedupe gate keys on it, so the same requestId would normally coalesce.
+    persistWakeStateSync(dataDir, {
+      sessionId: "sess-gone",
+      owner: OWNER,
+      dispatchState: "woken",
+      hopCount: 1,
+      pendingFrame: "req-1",
+    });
+    const h = makeHarness(dataDir);
+    fsm = createTerminalWakeDispatcher(h.deps);
+
+    // forgetSession reclaims the in-memory state (the end-of-life hook calls this).
+    fsm.forgetSession("sess-gone");
+
+    // With the state forgotten, the SAME requestId is no longer deduped — it wakes a
+    // fresh turn (proving the WakeState entry was actually dropped, not just orphaned).
+    h.bus.fire(wake("sess-gone", "req-1"));
+    await Promise.resolve();
+    expect(h.wakeOneTurn).toHaveBeenCalledTimes(1);
+  });
+
   it("treats a NEW requestId on the same session (after the prior answered) as a fresh wake", async () => {
     const h = makeHarness(dataDir);
     fsm = createTerminalWakeDispatcher(h.deps);

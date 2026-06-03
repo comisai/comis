@@ -49,7 +49,7 @@ import {
   type WakeDispatcherBus,
 } from "./terminal-wake-dispatch.js";
 import { buildWokenTurnDriver, type TerminalAttentionConfig, type WokenTurnNotify } from "./terminal-wake-turn.js";
-import type { PersistedWakeOwner } from "./terminal-wake-persistence.js";
+import { removeWakeStateFile, type PersistedWakeOwner } from "./terminal-wake-persistence.js";
 
 /** Dependencies for the keystone wake wiring. */
 export interface SetupTerminalWakeDeps {
@@ -148,10 +148,39 @@ export function setupTerminalWake(deps: SetupTerminalWakeDeps): TerminalWakeCont
     logger: deps.logger,
   });
 
+  // WR-02 (+ IN-03/IN-04): reclaim ALL per-session attention state on end-of-life so
+  // a milestone-length daemon never leaks the loop-guard ring, the durable wake-state
+  // file, or the FSM in-memory state. Wired to the SAME eviction/exit signals the P4
+  // reaper + the fd3 PTY-exit hook already publish (setup-terminal-tools.ts).
+  const onSessionGone = (sessionId: string): void => {
+    // Both total/never-throw.
+    loopGuard.forget(sessionId);
+    dispatcher.forgetSession(sessionId);
+    // removeWakeStateFile re-raises a non-ENOENT fs fault (@allow-throw) — wrap it so a
+    // cleanup failure inside this bus listener can NEVER become an uncaughtException that
+    // crashes the daemon (IN-04). Surface the fault to the log with an actionable hint.
+    try {
+      removeWakeStateFile(deps.dataDir, sessionId);
+    } catch (err) {
+      log.warn(
+        { sessionId, err, hint: "could not remove wake-state file on session end-of-life; it will be dropped on the next boot's first wake", errorKind: "resource" as const, step: "wake_cleanup_failed" },
+        "terminal wake-state cleanup failed",
+      );
+    }
+  };
+  const onEvicted = (e: { sessionId: string }): void => onSessionGone(e.sessionId);
+  const onStateChange = (e: { sessionId: string; state: string }): void => {
+    if (e.state === "exited" || e.state === "lost") onSessionGone(e.sessionId);
+  };
+  deps.eventBus.on("terminal:session_evicted", onEvicted);
+  deps.eventBus.on("terminal:session_state", onStateChange);
+
   log.info({ step: "terminal_wake_subscribed" }, "terminal wake-dispatch FSM subscribed");
 
   return {
     async shutdown(): Promise<void> {
+      deps.eventBus.off("terminal:session_evicted", onEvicted);
+      deps.eventBus.off("terminal:session_state", onStateChange);
       await dispatcher.shutdown();
     },
   };

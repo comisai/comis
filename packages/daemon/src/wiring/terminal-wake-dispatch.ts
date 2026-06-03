@@ -94,6 +94,15 @@ export interface WakeDispatcherBus {
 
 /** Public-facing handle on the wake dispatcher. */
 export interface TerminalWakeDispatcher {
+  /**
+   * Drop the in-memory FSM state for a session that has ended (killed/evicted/exited)
+   * — IN-03/WR-02. The `states` map is otherwise only pruned when a NEW wake arrives
+   * for an already-dead session (the active-check), so a session that goes quiet then
+   * dies would leak its `WakeState` for the daemon's lifetime. The end-of-life hook in
+   * `setupTerminalWake` calls this (alongside the loop-guard + wake-file cleanup). Total
+   * / never-throws; a no-op for an unknown id.
+   */
+  forgetSession(sessionId: string): void;
   /** Unsubscribe from the bus + drain in-flight woken turns. Idempotent, awaitable. */
   shutdown(): Promise<void>;
 }
@@ -372,6 +381,12 @@ export function createTerminalWakeDispatcher(
   }
 
   return {
+    forgetSession(sessionId: string): void {
+      // IN-03/WR-02: reclaim the in-memory FSM state for an ended session. Total +
+      // never-throws (Map.delete is a no-op for an unknown id). The durable wake-file
+      // + loop-guard ring are reclaimed by the setupTerminalWake end-of-life hook.
+      states.delete(sessionId);
+    },
     async shutdown(): Promise<void> {
       if (stopped) return;
       stopped = true;

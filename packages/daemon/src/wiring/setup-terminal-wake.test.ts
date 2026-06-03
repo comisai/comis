@@ -18,11 +18,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { setupTerminalWake, type SetupTerminalWakeDeps } from "./setup-terminal-wake.js";
+import { WAKE_DIR_NAME } from "./terminal-wake-persistence.js";
 
 // ---------------------------------------------------------------------------
 // A capturing TypedEventBus-shaped fake: records emits + fires `on` handlers.
@@ -236,5 +237,71 @@ describe("setupTerminalWake — the keystone subscribe + woken-turn driver (124-
     built.bus.fireInputNeeded("s-1", "a");
     await flush();
     expect(built.registry.status).not.toHaveBeenCalled();
+  });
+
+  // The path the FSM persists per-session durable wake-state to.
+  const wakeFile = (id: string): string => join(dataDir, WAKE_DIR_NAME, `${id}.json`);
+
+  it("WR-02: terminal:session_evicted removes the session's durable wake-state file (no per-session disk leak)", async () => {
+    built = build(dataDir, { screen: "Press enter to continue" });
+    // A wake persists the FSM's durable state for the session.
+    built.bus.fireInputNeeded("s-leak", "a");
+    await flush();
+    expect(existsSync(wakeFile("s-leak")), "the FSM must persist a wake-state file on a wake").toBe(true);
+
+    // The reaper evicts the session → its durable wake-state must be reclaimed.
+    built.bus.emit("terminal:session_evicted", {
+      sessionId: "s-leak",
+      agentId: "a",
+      reason: "idle",
+      durationMs: 1,
+      timestamp: 2,
+    });
+    await flush();
+    expect(existsSync(wakeFile("s-leak")), "session_evicted must remove the wake-state file").toBe(false);
+  });
+
+  it("WR-02: terminal:session_state(exited|lost) removes the wake-state file too (PTY exit end-of-life)", async () => {
+    built = build(dataDir, { screen: "Press enter to continue" });
+    built.bus.fireInputNeeded("s-exit", "a");
+    await flush();
+    expect(existsSync(wakeFile("s-exit"))).toBe(true);
+
+    built.bus.emit("terminal:session_state", {
+      sessionId: "s-exit",
+      agentId: "a",
+      state: "exited",
+      durationMs: 0,
+      timestamp: 3,
+    });
+    await flush();
+    expect(existsSync(wakeFile("s-exit")), "a PTY exit must remove the wake-state file").toBe(false);
+  });
+
+  it("WR-02: a still-running session_state transition (created|running) does NOT remove the wake-state file", async () => {
+    built = build(dataDir, { screen: "Press enter to continue" });
+    built.bus.fireInputNeeded("s-live", "a");
+    await flush();
+    expect(existsSync(wakeFile("s-live"))).toBe(true);
+
+    // A non-terminal lifecycle transition must not reclaim a live session's state.
+    built.bus.emit("terminal:session_state", {
+      sessionId: "s-live",
+      agentId: "a",
+      state: "running",
+      durationMs: 0,
+      timestamp: 4,
+    });
+    await flush();
+    expect(existsSync(wakeFile("s-live")), "a running transition must NOT remove the file").toBe(true);
+  });
+
+  it("WR-02: end-of-life cleanup is unsubscribed on shutdown (a post-shutdown eviction does not throw)", async () => {
+    built = build(dataDir, { screen: "Press enter to continue" });
+    await built.handle.shutdown();
+    // After shutdown the cleanup subscriptions are gone — a late eviction is a no-op.
+    expect(() =>
+      built!.bus.emit("terminal:session_evicted", { sessionId: "s-x", agentId: "a", reason: "idle", durationMs: 1, timestamp: 5 }),
+    ).not.toThrow();
   });
 });
