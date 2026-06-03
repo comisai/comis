@@ -422,7 +422,20 @@ export function createTerminalWorker(deps: TerminalWorkerDeps): TerminalWorker {
     // `emitter.observe` (in settleSession) — which writes a fd3 frame ONLY on a state
     // transition. No emitter (no writeFd3) ⇒ the classify-and-emit step is skipped.
     if (writeFd3 !== undefined) {
-      state.emitter = createAttentionEmitter({ sessionId, writeFd3 });
+      const emitter = createAttentionEmitter({ sessionId, writeFd3 });
+      state.emitter = emitter;
+      // The exit wake (124-05 gap-close): `markExited` fires this so a child that exits
+      // with NO settle pending still pushes its exited transition on fd3 — TR-11's
+      // no-poll wake holds for completion, not just prompts (without it an event-driven
+      // agent whose long command finished while it sat idle is NEVER woken; the
+      // `claude --help` soak run is exactly that shape). Same single-homed classify
+      // seam as the settle path; the edge-triggered emitter dedups a concurrent
+      // settle-resolved observe of the same exit. Fire-and-forget; never throws.
+      state.observeExit = () => {
+        void observeSettledFrame({ state, emitter, settled: true, nowMs, stuckMs }).catch(() => {
+          /* best-effort: an emit failure must never break the exit path */
+        });
+      };
     }
 
     // Register the session SYNCHRONOUSLY (before the async spawn-plan await) so a

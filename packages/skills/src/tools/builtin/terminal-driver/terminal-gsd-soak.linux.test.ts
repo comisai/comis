@@ -210,12 +210,17 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
         };
 
         // Observe the no-poll fd3 events + assert the daemon-equivalent never crashes on a frame.
+        // `fd3Frames` collects EVERY pushed transition (input_needed / stuck / session_state) —
+        // a run that completes WITHOUT ever prompting (e.g. `claude --help`) pushes no
+        // input_needed but still pushes its exited transition on fd3.
         const inputNeededEvents: TerminalEventFrame[] = [];
+        const fd3Frames: TerminalEventFrame[] = [];
         let workerCrashed = false;
         const registry = createTerminalSessionRegistry({
           spawnWorker: makeBridgedPtyWorkerChild((f) => {
             try {
-              if (f.event === "input_needed") inputNeededEvents.push(f);
+              fd3Frames.push(f);
+              if (f.event === "terminal:input_needed") inputNeededEvents.push(f);
             } catch {
               workerCrashed = true; // a frame handler must NEVER throw to the host (OPS-01)
             }
@@ -310,8 +315,16 @@ describe.skipIf(!isLinux() || !claudeAvailable() || !bwrapAvailable())(
         expect(wokenTurns).toBeLessThanOrEqual(MAX_INTERACTIONS);
         // 3) maxConcurrentAttentionTurns honored — at most MAX_CONCURRENT in flight at once.
         expect(maxInFlightObserved).toBeLessThanOrEqual(MAX_CONCURRENT_ATTENTION_TURNS);
-        // 4) The no-poll mechanism fired (the worker pushed input_needed on the prompt transitions).
-        expect(inputNeededEvents.length).toBeGreaterThanOrEqual(1);
+        // 4) The no-poll mechanism fired: the worker PUSHED this run's transitions on fd3.
+        //    A prompting run (the bash stand-in; a parked claude) pushes ≥1 input_needed —
+        //    one per woken park. A run that completes WITHOUT ever prompting (the operator
+        //    points COMIS_SOAK_CLAUDE_ARGS at e.g. `--help`) has NO awaiting-input
+        //    transition to push, but its exited transition still rides fd3
+        //    (`terminal:session_state`) — either way the agent is woken by a push, never a spin.
+        if (wokenTurns > 0) {
+          expect(inputNeededEvents.length).toBeGreaterThanOrEqual(1);
+        }
+        expect(fd3Frames.length).toBeGreaterThanOrEqual(1);
         // 5) OPS-01: no worker/daemon crash across the whole run (a frame handler never threw).
         expect(workerCrashed).toBe(false);
 

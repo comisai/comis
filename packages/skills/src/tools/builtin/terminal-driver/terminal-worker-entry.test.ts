@@ -2187,6 +2187,76 @@ describe("createTerminalWorker — TR-11 fd3 attention emit on a settled frame (
     expect(reply.ok).toBe(true);
     expect((reply.result as { reason: string }).reason).toBe("idle");
   });
+
+  it("a child that exits with NO settle pending still pushes terminal:session_state(exited) on fd3 (the exit wake — TR-11 holds for completion, not just prompts)", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const fd3 = makeFd3Capture();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: rec.spawn }),
+        setTimer: sched.setTimer,
+        clearTimer: sched.clearTimer,
+        writeFd3: fd3.writeFd3,
+      }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: ["-c", "true"], cols: 80, rows: 24 }));
+
+    // Output, then the child EXITS while the agent has NOTHING in flight — no wait,
+    // no read, no send (the "long command finished while the agent sat idle" shape;
+    // ALSO the `claude --help` soak shape: print + exit, never a prompt). Pre-patch
+    // the ONLY emit site is the settle path, so this exit pushes NOTHING and an
+    // event-driven agent would never be woken — it would have to poll (the exact
+    // anti-pattern TR-11 forbids).
+    rec.emit("done\n");
+    await flushEmulator();
+    rec.emitExit({ exitCode: 0 });
+    // Drain the fire-and-forget exit observe (awaits the emulator parse internally).
+    await flushEmulator();
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushEmulator();
+
+    const exitFrames = fd3.frames().filter((f) => f.event === "terminal:session_state");
+    expect(exitFrames).toHaveLength(1); // the exited transition rode fd3 — push, no poll
+    expect(exitFrames[0]!.sessionId).toBe("s1");
+    expect(exitFrames[0]!.payload).toMatchObject({ state: "exited" });
+    // Redaction-safe: no screen/text on the wire.
+    expect(exitFrames[0]!.payload).not.toHaveProperty("screen");
+  });
+
+  it("an exit that resolves a PENDING settle pushes the exited transition exactly ONCE (the exit observe + the settle observe dedup edge-triggered)", async () => {
+    const sched = makeFakeScheduler();
+    const rec = makeRecordingBackend();
+    const fd3 = makeFd3Capture();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: rec.spawn }),
+        setTimer: sched.setTimer,
+        clearTimer: sched.clearTimer,
+        writeFd3: fd3.writeFd3,
+      }),
+    );
+    await worker.handle(createFrame({ sessionId: "s1", bin: "/bin/bash", argv: ["-c", "true"], cols: 80, rows: 24 }));
+    rec.emit("working...\n");
+
+    // A wait({forExit}) is IN FLIGHT when the child exits: the exit resolves the settle
+    // (whose own observe classifies exited) AND fires the exit-path observe — the
+    // edge-triggered emitter must collapse them into ONE session_state frame.
+    const p = worker.handle(waitFrame({ forExit: true, timeoutMs: 5_000 }));
+    await Promise.resolve();
+    await flushEmulator();
+    rec.emitExit({ exitCode: 0 });
+    await p;
+    await flushEmulator();
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushEmulator();
+
+    const exitFrames = fd3.frames().filter((f) => f.event === "terminal:session_state");
+    expect(exitFrames).toHaveLength(1); // edge-triggered: never a double push for one exit
+    expect(exitFrames[0]!.payload).toMatchObject({ state: "exited" });
+  });
 });
 
 // ===========================================================================

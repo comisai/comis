@@ -80,6 +80,12 @@ export function markExited(state: SessionState, logger: WorkerLogger, exitCode?:
     });
   }
   for (const cb of state.exitListeners) cb();
+  // The exit wake (124-05 gap-close, TR-11): push the exited transition on fd3 even when
+  // NO settle is pending (no wait/read in flight — the "finished while the agent sat idle"
+  // shape). The hook is the worker's single-homed classify-and-emit seam; the edge-triggered
+  // emitter dedups it against a settle the exit listeners just resolved, and a 2nd exit
+  // signal (close AND error) re-observes the SAME exited state → no double frame.
+  state.observeExit?.();
 }
 
 /** Explicit dependencies for {@link attachBackend} — the closure locals `handleCreate` used, passed as params (no module-global state, no hidden closure). */

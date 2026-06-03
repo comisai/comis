@@ -128,6 +128,8 @@ export interface SessionState {
   lastSnapshot?: EmulatorSnapshot;
   /** The per-session attention emitter (124-05): the worker hands each settled frame's `Classification` to `emitter.observe`, which writes a fd3 `TerminalEventFrame` on a state TRANSITION only (TR-11, no poll). Absent when the worker was built with no `writeFd3` (the emit is best-effort). */
   emitter?: AttentionEmitter;
+  /** The exit-wake observe hook (124-05 gap-close): bound by `handleCreate` alongside {@link emitter}; `markExited` fires it so a child that exits with NO settle pending STILL pushes its `terminal:session_state(exited)` transition on fd3 (TR-11 holds for completion, not just prompts — without this an event-driven agent is never woken on exit and must poll). Fire-and-forget + never throws; the edge-triggered emitter dedups it against a concurrent settle-path observe. Absent when no emitter is wired. */
+  observeExit?: () => void;
   /** Previously-CLASSIFIED emulator snapshot (124-05): the attention diff anchor, kept SEPARATE from {@link lastSnapshot} (read's diff) so the two never fight over one field. */
   lastClassifiedSnapshot?: EmulatorSnapshot;
   /** Epoch ms of the last observed PROGRESS (classified screen changed) — the OPS-04 stuck-by-progress signal; `noProgressMs = nowMs - lastProgressMs`. Stamped by the classify glue against the worker's injected clock. */
