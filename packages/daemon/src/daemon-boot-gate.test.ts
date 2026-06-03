@@ -237,7 +237,6 @@ describe("daemon boot gate — writeMasterKeyIfAbsent call gate (REQ-17)", () =>
     tmpDir = mkdtempSync(pathResolve(tmpdir(), "comis-boot-gate-test-"));
     process.env["COMIS_DATA_DIR"] = tmpDir;
     process.env["COMIS_CONFIG_PATHS"] = pathResolve(tmpDir, "config.yaml");
-    delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
     delete process.env["SECRETS_MASTER_KEY"];
   });
 
@@ -326,7 +325,6 @@ describe("daemon boot gate — storageMode vs post-bootstrap security.storage di
     tmpDir = mkdtempSync(pathResolve(tmpdir(), "comis-wr03-test-"));
     process.env["COMIS_DATA_DIR"] = tmpDir;
     process.env["COMIS_CONFIG_PATHS"] = pathResolve(tmpDir, "config.yaml");
-    delete process.env["COMIS_DISABLE_ENCRYPTED_SECRETS"];
     delete process.env["SECRETS_MASTER_KEY"];
   });
 

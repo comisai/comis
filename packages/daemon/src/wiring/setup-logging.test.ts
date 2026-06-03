@@ -151,7 +151,7 @@ describe("setupLogging", () => {
     );
   });
 
-  it("defaults to 'info' when logLevel is undefined", async () => {
+  it("defaults to 'debug' when logLevel is undefined", async () => {
     const container = createMinimalContainer({ logLevel: undefined });
 
     const setupLogging = await getSetupLogging();
@@ -163,7 +163,7 @@ describe("setupLogging", () => {
     });
 
     expect(mockCreateTracingLogger).toHaveBeenCalledWith(
-      expect.objectContaining({ level: "info" }),
+      expect.objectContaining({ level: "debug" }),
     );
   });
 

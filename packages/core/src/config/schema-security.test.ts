@@ -70,11 +70,11 @@ describe("CredentialStorageMode type covers encrypted, file, and env", () => {
 // ---------------------------------------------------------------------------
 
 describe("AgentToAgentConfigSchema.subAgentSessionPersistence", () => {
-  it("defaults to false when omitted", () => {
+  it("defaults to true when omitted", () => {
     const result = AgentToAgentConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.subAgentSessionPersistence).toBe(false);
+      expect(result.data.subAgentSessionPersistence).toBe(true);
     }
   });
 
@@ -109,7 +109,7 @@ describe("AgentToAgentConfigSchema.subAgentSessionPersistence", () => {
     const result = SecurityConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.agentToAgent.subAgentSessionPersistence).toBe(false);
+      expect(result.data.agentToAgent.subAgentSessionPersistence).toBe(true);
     }
   });
 

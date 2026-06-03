@@ -448,15 +448,15 @@ container. There is no middle ground.
 
 ### Secrets management
 
-Comis supports two secrets-storage modes. **The encrypted `secrets.db` is
-encrypted-by-default starting with v1.1** — the master key is auto-generated
-on first boot and written to `~/.comis/.env` (mode 0600). To opt out and run
-in envfile-only mode, set `COMIS_DISABLE_ENCRYPTED_SECRETS=1`.
+Comis supports three credential-storage modes, selected via `security.storage`
+in `config.yaml`. **The encrypted `secrets.db` is the default** — the master key
+is auto-generated on first boot and written to `~/.comis/.env` (mode 0600). To
+opt out, set `security.storage: env` (or `file`).
 
-| Mode | When to use | How it works |
+| Mode (`security.storage`) | When to use | How it works |
 |---|---|---|
-| **Encrypted `secrets.db` (default)** | All deployments. The encrypted store is active immediately on first boot — no manual key generation required. | On first boot with no `SECRETS_MASTER_KEY` present, the daemon auto-generates a 32-byte master key, writes it to `<data dir>/.env` (mode 0600), and opens `secrets.db` on the same boot. **Back up `~/.comis/.env`** — losing `SECRETS_MASTER_KEY` makes `secrets.db` permanently unreadable (AES-256-GCM, no key escrow). |
-| **`.env` file only (opt-out)** | Single-tenant deployments where you want to manage credentials exclusively via env vars and do not need the encrypted store. | Set `COMIS_DISABLE_ENCRYPTED_SECRETS=1`. The daemon boots in envfile-only mode and emits a startup WARN. Provider keys and channel tokens come from compose's `environment:` pass-through and from `<data dir>/.env`. The daemon does **not** create `secrets.db`. |
+| **`encrypted` (default)** | All deployments. The encrypted store is active immediately on first boot — no manual key generation required. | On first boot with no `SECRETS_MASTER_KEY` present, the daemon auto-generates a 32-byte master key, writes it to `<data dir>/.env` (mode 0600), and opens `secrets.db` on the same boot. **Back up `~/.comis/.env`** — losing `SECRETS_MASTER_KEY` makes `secrets.db` permanently unreadable (AES-256-GCM, no key escrow). |
+| **`env` / `file` (opt-out)** | Single-tenant deployments where you want to manage credentials exclusively via env vars (`env`) or plaintext-at-0600 files (`file`) and do not need the encrypted store. | Set `security.storage: env` (or `file`). The daemon boots in that mode and emits a startup WARN. Provider keys and channel tokens come from compose's `environment:` pass-through and from `<data dir>/.env`. In `env` mode the daemon does **not** create `secrets.db`. |
 
 #### Important caveat about `secrets.db` inside Docker
 

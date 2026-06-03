@@ -64,7 +64,7 @@ describe("Config Schema Validation", () => {
 
       // Scalar defaults
       expect(result.value.tenantId).toBe("default");
-      expect(result.value.logLevel).toBe("info");
+      expect(result.value.logLevel).toBe("debug");
       expect(result.value.dataDir).toBe("");
 
       // Object sections should all exist and be objects.

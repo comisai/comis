@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
 import { z } from "zod";
-import { SecretsConfigSchema } from "./schema-secrets.js";
 import { SubagentContextConfigSchema } from "../domain/subagent-context-config.js";
 
 /**
@@ -46,7 +45,7 @@ const AgentToAgentBaseSchema = z.strictObject({
     /** MCP tool inheritance policy for sub-agents: "inherit" passes MCP tools, "none" excludes them */
     subAgentMcpTools: z.enum(["inherit", "none"]).default("inherit"),
     /** When true, sub-agents write JSONL session logs to disk instead of using ephemeral in-memory sessions */
-    subAgentSessionPersistence: z.boolean().default(false),
+    subAgentSessionPersistence: z.boolean().default(true),
     /** Per-graph node concurrency limit (how many nodes run in parallel within a single graph) */
     graphMaxConcurrency: z.number().int().positive().optional(),
     /** Maximum result text length per node output (characters) */
@@ -73,8 +72,6 @@ export const SecurityConfigSchema = z.strictObject({
     actionConfirmation: ActionConfirmationConfigSchema.default(() => ActionConfirmationConfigSchema.parse({})),
     /** Agent-to-agent session messaging policy */
     agentToAgent: AgentToAgentConfigSchema.default(() => AgentToAgentConfigSchema.parse({})),
-    /** Encrypted secrets store configuration */
-    secrets: SecretsConfigSchema.default(() => SecretsConfigSchema.parse({})),
     /**
      * Secret egress guard behavior for file write/edit tools.
      * - "warn"  (default): write proceeds with scrubbed content + redirect hint (safe for .env.example, test fixtures)

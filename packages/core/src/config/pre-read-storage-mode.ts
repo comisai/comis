@@ -11,17 +11,6 @@
  * Layered-config precedence: later files override earlier ones, matching
  * `bootstrap()`'s YAML merge semantics.
  *
- * The function also detects legacy credential-storage keys in the YAML files
- * and returns `"legacy"` so the daemon boot gate can fail cleanly before any
- * key material is written. The specific migration error is emitted by the
- * daemon gate (not here) to keep this pre-read function pure.
- *
- * Note: the legacy env var (removed in v1.5) is NOT checked here — the
- * daemon reads it separately via `systemGetEnv` before calling this function
- * (same pattern as the replaced `preReadSecretsEnabled`).
- *
- * Replaces: `preReadSecretsEnabled` from `pre-read-secrets-enabled.ts`.
- *
  * @module
  */
 
@@ -31,16 +20,13 @@ import type { CredentialStorageMode } from "./schema-security.js";
 
 /**
  * The return type for the daemon boot gate pre-read.
- * - `"encrypted" | "file" | "env"` — clean mode, maps directly to security.storage
- * - `"legacy"` — a legacy key was detected in YAML; caller must fail boot with
- *   a migration error (see `checkLegacyConfigKeys` in `migration-guard.ts`)
+ * - `"encrypted" | "file" | "env"` — maps directly to security.storage
  */
-export type StorageModePreRead = CredentialStorageMode | "legacy";
+export type StorageModePreRead = CredentialStorageMode;
 
 /**
  * Pre-reads `security.storage` from YAML config files (layered, last-wins
- * override) before full config parse. Returns the mode or `"legacy"` if any
- * legacy key is detected in the YAML.
+ * override) before full config parse.
  *
  * The daemon calls this BEFORE `writeMasterKeyIfAbsent` to ensure file/env
  * mode first boots do not create key material (REQ-17).
@@ -54,7 +40,6 @@ export type StorageModePreRead = CredentialStorageMode | "legacy";
  * @returns
  *   - `"encrypted"` (schema default) when no config path explicitly sets the mode
  *   - `"file"` / `"env"` when `security.storage` is set to that value
- *   - `"legacy"` when a removed legacy credential-storage key is present in the YAML
  */
 export function preReadStorageMode(
   configPaths: readonly string[],
@@ -80,20 +65,6 @@ export function preReadStorageMode(
     }
     const raw = parsed as Record<string, unknown>;
 
-    // Detect removed legacy key: root "oauth" section with "storage" field
-    if (
-      typeof raw["oauth"] === "object" &&
-      raw["oauth"] !== null &&
-      typeof (raw["oauth"] as Record<string, unknown>)["storage"] === "string"
-    ) {
-      // STICKY/TERMINAL (CR-01): a legacy key in ANY layer must win over a
-      // later valid `security.storage`. Returning early prevents a subsequent
-      // overlay's `security.storage: encrypted` from masking the legacy key,
-      // which would let the daemon boot gate write key material BEFORE the
-      // migration guard fails the boot (REQ-17 violation).
-      return "legacy";
-    }
-
     const secSection = raw["security"];
     if (
       typeof secSection !== "object" ||
@@ -103,18 +74,6 @@ export function preReadStorageMode(
       continue;
     }
     const sec = secSection as Record<string, unknown>;
-
-    // Detect removed legacy key: security.secrets "enabled" boolean field
-    const secretsSection = sec["secrets"];
-    if (
-      typeof secretsSection === "object" &&
-      secretsSection !== null &&
-      !Array.isArray(secretsSection) &&
-      typeof (secretsSection as Record<string, unknown>)["enabled"] === "boolean"
-    ) {
-      // STICKY/TERMINAL (CR-01): see the oauth.storage branch above.
-      return "legacy";
-    }
 
     // Read security.storage if present and valid
     const storageVal = sec["storage"];

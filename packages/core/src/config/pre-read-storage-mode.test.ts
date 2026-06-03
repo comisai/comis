@@ -96,42 +96,6 @@ describe("preReadStorageMode (REQ-17)", () => {
   });
 
   // ------------------------------------------------------------------
-  // Legacy key detection
-  // ------------------------------------------------------------------
-
-  it("returns legacy when security.secrets.enabled: false is present", () => {
-    const filePath = writeYaml(
-      "config.yaml",
-      "security:\n  secrets:\n    enabled: false\n",
-    );
-    expect(preReadStorageMode([filePath])).toBe("legacy");
-  });
-
-  it("returns legacy when security.secrets.enabled: true is present", () => {
-    const filePath = writeYaml(
-      "config.yaml",
-      "security:\n  secrets:\n    enabled: true\n",
-    );
-    expect(preReadStorageMode([filePath])).toBe("legacy");
-  });
-
-  it("returns legacy when oauth.storage is present at root level", () => {
-    const filePath = writeYaml(
-      "config.yaml",
-      "oauth:\n  storage: file\n",
-    );
-    expect(preReadStorageMode([filePath])).toBe("legacy");
-  });
-
-  it("returns legacy when oauth.storage: encrypted is present", () => {
-    const filePath = writeYaml(
-      "config.yaml",
-      "oauth:\n  storage: encrypted\n",
-    );
-    expect(preReadStorageMode([filePath])).toBe("legacy");
-  });
-
-  // ------------------------------------------------------------------
   // Last-wins layered override
   // ------------------------------------------------------------------
 
@@ -157,40 +121,6 @@ describe("preReadStorageMode (REQ-17)", () => {
       "security:\n  storage: file\n",
     );
     expect(preReadStorageMode([base, overlay])).toBe("file");
-  });
-
-  // ------------------------------------------------------------------
-  // Legacy sentinel is STICKY/TERMINAL across layers (CR-01, REQ-17/REQ-02)
-  //
-  // A legacy key in ANY layer must win over a valid `security.storage` in a
-  // later layer. Otherwise a base config carrying a removed legacy key plus an
-  // overlay with `security.storage: encrypted` would pre-read as "encrypted" —
-  // and the daemon boot gate would write SECRETS_MASTER_KEY/secrets.db BEFORE
-  // the migration guard fails the boot, violating REQ-17 ("legacy config fails
-  // cleanly WITHOUT writing key material").
-  // ------------------------------------------------------------------
-
-  it("returns legacy when a legacy oauth.storage in the base is overlaid by a valid security.storage", () => {
-    const base = writeYaml("config.yaml", "oauth:\n  storage: file\n");
-    const overlay = writeYaml(
-      "config.local.yaml",
-      "security:\n  storage: file\n",
-    );
-    expect(preReadStorageMode([base, overlay])).toBe("legacy");
-  });
-
-  it("returns legacy (no key-material) when legacy secrets.enabled in base is overlaid by security.storage: encrypted", () => {
-    const base = writeYaml(
-      "config.yaml",
-      "security:\n  secrets:\n    enabled: false\n",
-    );
-    const overlay = writeYaml(
-      "config.local.yaml",
-      "security:\n  storage: encrypted\n",
-    );
-    // Must NOT return "encrypted" — that would trigger key-material creation
-    // for a config that must fail boot cleanly (REQ-17).
-    expect(preReadStorageMode([base, overlay])).toBe("legacy");
   });
 
   it("skips missing paths in the middle of the list", () => {
@@ -229,15 +159,6 @@ describe("preReadStorageMode (REQ-17)", () => {
       "config.yaml",
       "security:\n  storage: \"somethingUnknown\"\n",
     );
-    expect(preReadStorageMode([filePath])).toBe("encrypted");
-  });
-
-  it("ignores security.secrets when enabled is not a boolean", () => {
-    const filePath = writeYaml(
-      "config.yaml",
-      "security:\n  secrets:\n    enabled: \"false\"\n",
-    );
-    // Not a boolean — migration guard ignores; no legacy detected
     expect(preReadStorageMode([filePath])).toBe("encrypted");
   });
 });

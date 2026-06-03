@@ -19,7 +19,7 @@ import { systemGetEnv, systemNowDate } from "@comis/core";
 /** Default minimal config YAML content. */
 const DEFAULT_CONFIG = `# Comis configuration
 tenantId: default
-logLevel: info
+logLevel: debug
 `;
 
 /**

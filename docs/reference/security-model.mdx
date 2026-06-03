@@ -866,17 +866,16 @@ are not evaluated. Comis logs a configuration warning in this case.
 Source: `ApprovalsConfigSchema` and `checkApprovalsConfig()` in `packages/core/src/config/schema-approvals.ts`
 </Info>
 
-### SecretsConfigSchema
+### Secrets storage
 
-Global encrypted secrets store under `security.secrets`.
+The credential store backend is selected globally via `security.storage`.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `secrets.enabled` | `boolean` | `false` | Enable encrypted secrets store |
-| `secrets.dbPath` | `string` | `"secrets.db"` | Path to secrets database relative to data directory |
+| `security.storage` | `"encrypted" \| "file" \| "env"` | `"encrypted"` | Credential storage backend: `encrypted` (AES-256-GCM SQLite), `file` (plaintext JSON at 0600), or `env` (read-only, reads `.env`/`process.env`). The database path is fixed at `<dataDir>/secrets.db` and is not configurable. |
 
 <Info>
-Source: `SecretsConfigSchema` in `packages/core/src/config/schema-secrets.ts`
+Source: `SecurityConfigSchema` in `packages/core/src/config/schema-security.ts`
 </Info>
 
 ### AgentSecretsConfigSchema

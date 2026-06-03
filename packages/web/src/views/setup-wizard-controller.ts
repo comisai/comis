@@ -320,7 +320,7 @@ export function createDefaultWizardData(): WizardData {
   return {
     tenantId: "default",
     dataDir: "~/.comis",
-    logLevel: "info",
+    logLevel: "debug",
     gatewayHost: "127.0.0.1",
     gatewayPort: 4766,
     providerName: "",

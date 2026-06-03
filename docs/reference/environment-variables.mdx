@@ -165,19 +165,9 @@ Providing this variable explicitly overrides the auto-generated value.
 export SECRETS_MASTER_KEY="a1b2c3d4e5f6..."
 ```
 
-### `COMIS_DISABLE_ENCRYPTED_SECRETS`
-
-| Property | Value |
-|----------|-------|
-| **Used by** | Daemon |
-| **Format** | `1`, `true`, or `on` to disable; unset to enable (default) |
-| **Default** | (unset — encrypted store is active) |
-
-Set to `1`, `true`, or `on` to disable auto-init of the encrypted secrets store and run in envfile-only mode. The daemon emits a startup WARN when this flag is active. Use only if you need to manage secrets manually in `.env` files and do not want the encrypted store.
-
-```bash
-export COMIS_DISABLE_ENCRYPTED_SECRETS=1
-```
+To run without the encrypted store, set `security.storage: env` (or `file`) in
+`config.yaml`. The daemon emits a startup WARN when a non-encrypted storage mode
+is active.
 
 ## OAuth Variables
 

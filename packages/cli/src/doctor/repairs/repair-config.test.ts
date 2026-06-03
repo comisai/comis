@@ -56,6 +56,12 @@ describe("repairConfig", () => {
       expect.stringContaining("tenantId"),
       { mode: 0o600 },
     );
+    // Default scaffold ships debug verbosity.
+    expect(writeFileSync).toHaveBeenCalledWith(
+      "/custom/config.yaml",
+      expect.stringContaining("logLevel: debug"),
+      { mode: 0o600 },
+    );
   });
 
   it("backs up corrupt config before writing defaults", async () => {

@@ -110,8 +110,8 @@ can't respond to channel events. **Use the $7/mo Starter plan or higher.**
     The encrypted secrets store is **enabled by default**. On first boot, Comis
     auto-generates a master key and writes it to `~/.comis/.env` (mode 0600).
     **Back up this file** — losing `SECRETS_MASTER_KEY` makes `secrets.db`
-    permanently unreadable. To disable the encrypted store (envfile-only mode),
-    set `COMIS_DISABLE_ENCRYPTED_SECRETS=1`.
+    permanently unreadable. To disable the encrypted store, set
+    `security.storage: env` (or `file`) in `config.yaml`.
     </Tip>
   </Step>
 

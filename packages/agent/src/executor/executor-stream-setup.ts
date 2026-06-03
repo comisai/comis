@@ -76,61 +76,6 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 // ---------------------------------------------------------------------------
-// Tracing-deprecation log idempotency (per-session squelch)
-// ---------------------------------------------------------------------------
-
-/**
- * Module-level Set tracking session keys for which the
- * `agents.<name>.tracing.enabled` deprecation log has already been emitted.
- *
- * The set never clears within the daemon lifetime — one log per session per
- * daemon process is the design intent.
- *
- * Exposed for testing via `__testing__shouldEmitTracingDeprecation` and
- * `__testing__resetTracingDeprecation`.
- */
-const TRACING_DEPRECATION_EMITTED = new Set<string>();
-
-/**
- * Pure predicate: should the deprecation log emit for this session?
- *
- * Returns `true` iff:
- *   1. The legacy `agents.<name>.tracing.enabled` is set to true.
- *   2. The new `diagnostics.cacheTrace.enabled` is NOT set.
- *   3. The `formattedKey` has not been seen by this process yet.
- *
- * Side effect: when returning `true`, the `formattedKey` is added to the
- * squelch set. Subsequent calls with the same key return `false`.
- *
- * @internal Exported via `__testing__shouldEmitTracingDeprecation` for tests.
- */
-function shouldEmitTracingDeprecation(input: {
-  tracingEnabled: boolean;
-  cacheTraceEnabled: boolean;
-  formattedKey: string;
-}): boolean {
-  if (!input.tracingEnabled) return false;
-  if (input.cacheTraceEnabled) return false;
-  if (TRACING_DEPRECATION_EMITTED.has(input.formattedKey)) return false;
-  TRACING_DEPRECATION_EMITTED.add(input.formattedKey);
-  return true;
-}
-
-/**
- * Test-only export for the deprecation predicate.
- * @internal
- */
-export const __testing__shouldEmitTracingDeprecation = shouldEmitTracingDeprecation;
-
-/**
- * Test-only reset for the deprecation squelch set.
- * @internal
- */
-export function __testing__resetTracingDeprecation(): void {
-  TRACING_DEPRECATION_EMITTED.clear();
-}
-
-// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -240,31 +185,6 @@ export function setupStreamWrappers(params: StreamSetupParams): StreamSetupResul
     getAdaptiveRetention, getExecutionCacheRetention, getExecutionMinTokensOverride,
     onBreakpointsPlaced, onGeminiCacheHit,
   } = params;
-
-  // Deprecation warning for the legacy `agents.<name>.tracing.enabled`.
-  // When the operator has set the legacy flag but not the new
-  // `diagnostics.cacheTrace.enabled` (signaled via params.cacheTrace
-  // presence — daemon wiring instantiates the recorder when the new
-  // key is on), advise them once per session to split the gates. The
-  // squelch is keyed by `formattedKey` and lives for the daemon's
-  // lifetime — one log per session per daemon process.
-  if (
-    shouldEmitTracingDeprecation({
-      tracingEnabled: config.tracing?.enabled === true,
-      cacheTraceEnabled: cacheTrace !== undefined,
-      formattedKey,
-    })
-  ) {
-    deps.logger.info(
-      {
-        agentId,
-        sessionId: formattedKey,
-        hint: "Set diagnostics.cacheTrace.enabled explicitly; agents.<name>.tracing.enabled will gate only api-payload-trace in v2.3.",
-        errorKind: "config" as ErrorKind,
-      },
-      "agents.<name>.tracing.enabled deprecated for cache-trace; honored 1 release",
-    );
-  }
 
   // Mutable holder for context engine -- allows the requestBodyInjector
   // callback closure to reference contextEngine before it's created (assigned below).

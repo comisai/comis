@@ -87,17 +87,11 @@
  * authoritative validation; the contract parse is type narrowing +
  * a coarse defense-in-depth gate.
  *
- * **Param-name reality.** The actual handler reads
- * `{ section, key, value }` with a fallback to the legacy `path`
- * parameter (config-handlers.ts:494-501). The contract reflects the
- * post-fallback canonical shape:
- *   `{ section, key?, value, path? }` — `path` is kept for legacy
- * CLI compatibility (`comis config set <dot-path> <value>` parses the
- * dot-path into section+key locally, but the wire protocol still
- * accepts `path`). `config.rollback` reads `sha` (handler:1092);
- * `config.gc` reads `olderThan?: string` (handler:1130). Contracts
- * model the actual handler-read names verbatim (single source of
- * truth).
+ * **Param-name reality.** The actual handler reads the canonical
+ * `{ section, key, value }` shape. `config.rollback` reads `sha`
+ * (handler:1092); `config.gc` reads `olderThan?: string`
+ * (handler:1130). Contracts model the actual handler-read names
+ * verbatim (single source of truth).
  *
  * @module
  */
@@ -284,15 +278,10 @@ export const ConfigSchemaContract = defineContract({
  * `AppConfigSchema.safeParse(merged)` (handler:626); the contract's
  * loose modeling is intentional.
  *
- * Request: `{ section, key?, value, path? }`. The handler accepts
- * EITHER the canonical `{ section, key, value }` shape (handler:496)
- * OR the legacy `{ path: "dot.path", value }` shape (handler:495
- * falls back when `section` is absent). Both are modelled in the
- * contract so the legacy CLI path keeps working (the
- * `comis config set <dot-path> <value>` command in
- * `packages/cli/src/commands/config.ts` parses the dot-path into
- * `section + key` LOCALLY before the RPC call, but a future CLI
- * could send the legacy `path` form).
+ * Request: `{ section, key?, value }` — the canonical shape the handler
+ * accepts (handler:496). The `comis config set <dot-path> <value>`
+ * command in `packages/cli/src/commands/config.ts` parses the dot-path
+ * into `section + key` LOCALLY before the RPC call.
  *
  * Response: `{ patched: true, section, key?, value, restarting: true }`
  * (handler:786). On rate-limit or validation failure the handler

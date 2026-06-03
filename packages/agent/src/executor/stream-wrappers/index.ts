@@ -31,8 +31,7 @@ export type { ConfigResolverConfig } from "./config-resolver.js";
 // were removed when cache-trace moved to
 // @comis/observability/cache-trace/*. Operators using
 // `diagnostics.cacheTrace.enabled` get the schema-versioned artifact;
-// the legacy `agents.<name>.tracing.enabled` now only gates the
-// api-payload-trace below.
+// `agents.<name>.tracing.enabled` gates the api-payload-trace below.
 
 export { createApiPayloadTraceWriter } from "./api-payload-trace-writer.js";
 export type { ApiPayloadTraceConfig } from "./api-payload-trace-writer.js";

@@ -484,11 +484,11 @@ someone gains access to your server's file system.
     production deployment where server files could potentially be accessed by
     unauthorized parties.
 
-    **Do I need to configure it?** Yes -- disabled by default because it
-    requires a master key. See [Secrets](/security/secrets) to set up the
-    encrypted store.
+    **Do I need to configure it?** No -- enabled by default. See
+    [Secrets](/security/secrets) to manage the master key or switch the
+    storage backend.
 
-    Default: `security.secrets.enabled: false`
+    Default: `security.storage: encrypted`
   </Accordion>
 
   <Accordion title="Centralized Secret Access (SecretManager)" icon="key">

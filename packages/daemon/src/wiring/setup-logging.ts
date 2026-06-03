@@ -59,7 +59,7 @@ export function setupLogging(deps: {
   // the cross-stream policy. The logRotation policy takes
   // precedence over daemon.logging.maxSize/maxFiles for daemon.log.
   const loggingConfig = container.config.daemon?.logging;
-  const configLogLevel = container.config.logLevel ?? "info";
+  const configLogLevel = container.config.logLevel ?? "debug";
   const logRotation = container.config.observability?.logRotation
     ? {
         maxSizeBytes: container.config.observability.logRotation.maxSizeBytes,
@@ -70,7 +70,7 @@ export function setupLogging(deps: {
     ? createFileTransport(loggingConfig, configLogLevel, logRotation)
     : undefined;
 
-  // 2. Create tracing logger (use config logLevel or default to "info")
+  // 2. Create tracing logger (use config logLevel or default to "debug")
   const rawLogger = _createTracingLogger({
     name: "comis-daemon",
     level: configLogLevel,

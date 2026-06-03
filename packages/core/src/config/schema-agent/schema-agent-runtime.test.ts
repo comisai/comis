@@ -23,6 +23,7 @@ describe("per-agent activity config block (TURN-08)", () => {
     expect(cfg.activity.theme).toBe("default");
     expect(cfg.activity.emergencyDisabled).toBe(false);
     expect(cfg.activity.channels).toEqual({});
+    expect(cfg.activity.defaultChannelEnabled).toBe(true);
   });
 
   it("accepts every activity.verbosity level and rejects an unknown one", () => {

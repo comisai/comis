@@ -59,7 +59,7 @@ function getDefaultModel(provider?: string): string {
  */
 function buildConfigObject(state: WizardState): Record<string, unknown> {
   const config: Record<string, unknown> = {
-    logLevel: "info",
+    logLevel: "debug",
     dataDir: state.dataDir ?? safePath(homedir(), ".comis", "data"),
   };
 

@@ -193,21 +193,20 @@ export const ActivityConfigSchema = z.strictObject({
      *  and final-message delivery are unaffected. Enforcement is Phase 76. */
     emergencyDisabled: z.boolean().default(false),
     /** Renderer-scoped enable map (§22.2), keyed by TurnActivityContext.rendererKey.
-     *  A missing entry follows `defaultChannelEnabled` (default false → disabled),
-     *  the rollout barrier inside the one-milestone ship. An explicit `enabled`
-     *  always wins: `true` renders, `false` opts that renderer out even under
-     *  default-on (kill-switch safety). */
+     *  A missing entry follows `defaultChannelEnabled` (default true → enabled).
+     *  An explicit `enabled` always wins: `true` renders, `false` opts that
+     *  renderer out even under default-on (kill-switch safety). */
     channels: z
       .record(z.string(), z.strictObject({ enabled: z.boolean().default(false) }))
       .default({}),
-    /** Operator opt-in to DEFAULT-ON (§22.2): when true, any renderer for this
-     *  agent that has no explicit `channels[rendererKey]` entry renders, and the
-     *  operator opts a specific renderer OUT via `channels[rendererKey].enabled:
-     *  false`. Defaults false so the shipped Day-0 posture stays fail-closed
-     *  (every renderer off until enabled) — this is an additive per-agent control
-     *  an operator sets, not a change to the global default. `emergencyDisabled`
-     *  overrides it; an agent absent from the config map stays fail-closed. */
-    defaultChannelEnabled: z.boolean().default(false),
+    /** Operator opt-out from DEFAULT-ON (§22.2): when true (the default), any
+     *  renderer for this agent that has no explicit `channels[rendererKey]` entry
+     *  renders, and the operator opts a specific renderer OUT via
+     *  `channels[rendererKey].enabled: false`. Set it to `false` to restore the
+     *  fail-closed posture (every renderer off until explicitly enabled).
+     *  `emergencyDisabled` overrides it; an agent entirely absent from the config
+     *  map still collapses to fail-closed at the kill-switch resolver. */
+    defaultChannelEnabled: z.boolean().default(true),
   });
 
 /**

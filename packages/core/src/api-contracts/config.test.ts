@@ -564,17 +564,6 @@ describe("config + env + gateway-infrastructure contracts", () => {
     ).not.toThrow();
   });
 
-  it("env.set: response rejects the legacy envfile storage variant", () => {
-    expect(() =>
-      EnvSetContract.response.parse({
-        set: true,
-        key: "OPENAI_API_KEY",
-        storage: "envfile",
-        restarting: true,
-      }),
-    ).toThrow();
-  });
-
   it("env.set: response rejects an unknown storage value", () => {
     expect(() =>
       EnvSetContract.response.parse({
