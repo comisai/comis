@@ -24,12 +24,14 @@
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "node:events";
 
+import { createFakeTimers } from "../../../../../../test/support/fake-timers.js";
 import {
   createTerminalSessionRegistry,
   DEFAULT_SCROLLBACK,
   type TerminalSessionRegistryDeps,
   type FakeWorkerChild,
 } from "./terminal-session-registry.js";
+import type { EvictReason } from "./terminal-reaper.js";
 import type { TerminalScope } from "./allowlist-matcher.js";
 import {
   encodeFrame,
@@ -1326,5 +1328,110 @@ describe("createTerminalSessionRegistry — cleanup() is owner-agnostic (tears d
     await reg.cleanup();
     // cleanup evicts both owners' sessions (it is NOT owner-scoped).
     expect(reg.size()).toBe(0);
+  });
+});
+
+// ===========================================================================
+// 123-04 (P4) — compose the reaper into the registry (TR-06, OPS-06). On
+// maxSessions overflow at create the idlest session is evicted (max_sessions);
+// cleanup() stops the sweep (no leaked interval); EVERY eviction runs the single
+// audited site — drop + cleanupSessionWorkspace + onEvict(reason) + onCapForget
+// (so the cap-state map is forgotten on the reap path, not only the tool kill).
+//
+// RED on the pre-patch registry: the deps have no maxSessions/idleTtlMs/timers/
+// onEvict/onCapForget, there is no reaper.checkOverflow() in create, no
+// reaper.stop() in cleanup, and no public evict() — so an over-cap create keeps
+// all 3 sessions, the fake-timer interval is never armed, and onCapForget never
+// fires.
+// ===========================================================================
+
+describe("createTerminalSessionRegistry — 123-04 reaper composition (TR-06/OPS-06)", () => {
+  const subA = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-A" };
+
+  /** baseDeps + the reaper wiring: fake timers, an onEvict + onCapForget spy. */
+  function reaperDeps(spawnWorker: TerminalSessionRegistryDeps["spawnWorker"], over: Partial<TerminalSessionRegistryDeps> = {}) {
+    const timers = createFakeTimers(0);
+    const onEvict = vi.fn<(info: { sessionId: string; reason: EvictReason; durationMs: number }) => void>();
+    const onCapForget = vi.fn<(sessionId: string) => void>();
+    const deps = baseDeps(spawnWorker, {
+      maxSessions: 2,
+      idleTtlMs: 0,
+      wallClockMs: 0,
+      sweepIntervalMs: 1000,
+      timers,
+      onEvict,
+      onCapForget,
+      ...over,
+    });
+    return { deps, timers, onEvict, onCapForget };
+  }
+
+  it("Test A — overflow on create: a 3rd session over maxSessions 2 evicts the idlest (reason max_sessions), size==2", async () => {
+    const fake = makeIsolatingWorker();
+    const { deps, onEvict } = reaperDeps(() => fake.child);
+    const reg = createTerminalSessionRegistry(deps);
+
+    await reg.create(bashReq, subA);
+    await reg.create(bashReq, subA);
+    await reg.create(bashReq, subA);
+
+    // The over-cap create evicts the single idlest down to the cap.
+    expect(reg.size()).toBe(2);
+    expect(onEvict).toHaveBeenCalledTimes(1);
+    expect(onEvict.mock.calls[0][0].reason).toBe("max_sessions");
+  });
+
+  it("Test B — cleanup() stops the sweep: the fake-timer interval is cancelled (no leaked sweep)", async () => {
+    const fake = makeIsolatingWorker();
+    const { deps, timers } = reaperDeps(() => fake.child, { maxSessions: 10 });
+    const reg = createTerminalSessionRegistry(deps);
+
+    // The sweep interval is armed at construction.
+    const armed = timers.unrefRecord().filter((e) => e.kind === "interval");
+    expect(armed).toHaveLength(1);
+    expect(armed[0].unrefCalled).toBe(true);
+
+    await reg.cleanup();
+
+    // cleanup() must stop the reaper FIRST — the interval is now cancelled.
+    expect(timers.unrefRecord().filter((e) => e.kind === "interval")[0].cancelled).toBe(true);
+  });
+
+  it("Test C — audited eviction + cap-forget: evict() drops the session AND fires onEvict(reason) + onCapForget(sessionId)", async () => {
+    const fake = makeIsolatingWorker();
+    const { deps, onEvict, onCapForget } = reaperDeps(() => fake.child, { maxSessions: 10 });
+    const reg = createTerminalSessionRegistry(deps);
+
+    const s = await reg.create(bashReq, subA);
+
+    // The public evict() entry point (Plan 05 reuses it for max_interactions) —
+    // owner-checked, then the single audited eviction site that reuses the kill
+    // drop + cleanupSessionWorkspace (proven gone from list) + onEvict + onCapForget.
+    await reg.evict(s.sessionId, subA, "max_interactions");
+
+    // The session is gone from the owner's list (the drop + workspace cleanup ran).
+    expect(reg.list(subA)).toHaveLength(0);
+    // The audited reason fired with the session's wall-clock durationMs.
+    expect(onEvict).toHaveBeenCalledTimes(1);
+    expect(onEvict.mock.calls[0][0]).toMatchObject({ sessionId: s.sessionId, reason: "max_interactions" });
+    expect(typeof onEvict.mock.calls[0][0].durationMs).toBe("number");
+    // The cap-state map is forgotten on the reap path (Warning-4: no SessionCaps leak).
+    expect(onCapForget).toHaveBeenCalledWith(s.sessionId);
+  });
+
+  it("Test C2 — evict() is owner-scoped: a cross-owner evict is a no-op (the session survives, no cap-forget)", async () => {
+    const fake = makeIsolatingWorker();
+    const other = { agentId: "a", sessionKey: "default:user:sub-agent:uuid-OTHER" };
+    const { deps, onEvict, onCapForget } = reaperDeps(() => fake.child, { maxSessions: 10 });
+    const reg = createTerminalSessionRegistry(deps);
+
+    const s = await reg.create(bashReq, subA);
+
+    await reg.evict(s.sessionId, other, "max_interactions");
+
+    // A foreign owner cannot evict — the session survives and nothing fired.
+    expect(reg.list(subA).map((r) => r.sessionId)).toContain(s.sessionId);
+    expect(onEvict).not.toHaveBeenCalled();
+    expect(onCapForget).not.toHaveBeenCalled();
   });
 });

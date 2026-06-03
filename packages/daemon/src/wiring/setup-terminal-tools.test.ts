@@ -21,8 +21,9 @@
 
 import { describe, it, expect, vi } from "vitest";
 
-import { wireTerminalTools, mapAllowEntry, buildTerminalSharedDeps } from "./setup-terminal-tools.js";
+import { wireTerminalTools, mapAllowEntry, buildTerminalSharedDeps, buildTerminalReaperHooks } from "./setup-terminal-tools.js";
 import { createMockLogger } from "../../../../test/support/mock-logger.js";
+import { createFakeTimers } from "../../../../test/support/fake-timers.js";
 import type { TerminalSessionRegistry } from "@comis/skills/tools";
 import type { TerminalAllowEntry, EgressControlPort } from "@comis/core";
 
@@ -283,5 +284,73 @@ describe("wireTerminalTools — still fail-closed at this phase (config not yet 
     await expect(
       createTool!.execute("call-1", { allowId: "bash", command: "/bin/bash" }),
     ).rejects.toThrow(/\[permission_denied\]/);
+  });
+});
+
+// ===========================================================================
+// 123-04 Test D (TR-06/OPS-06) — the daemon wires the reaper eviction audit. The
+// onEvict hook emits terminal:session_evicted (reason) + terminal:session_state
+// (state lost) + a WARN log (hint + errorKind resource); onCapForget is wired to
+// caps.forget; worker.{maxSessions,idleTtlMs} + the entry limits.wallClockMs +
+// the TimerPort thread into the registry's reaper deps.
+//
+// RED on pre-patch: buildTerminalReaperHooks does not exist; TerminalWiringDeps
+// has no workerCaps/timers/caps; the shared deps do not carry them.
+// ===========================================================================
+
+describe("buildTerminalReaperHooks — the daemon eviction audit (Test D, OPS-06)", () => {
+  function makeReaperDeps() {
+    const emitted: Array<{ event: string; payload: Record<string, unknown> }> = [];
+    const eventBus = { emit: (event: string, payload: Record<string, unknown>) => { emitted.push({ event, payload }); return true; } };
+    const caps = { forget: vi.fn(), startSession: vi.fn(), consumeRequest: vi.fn(), consumeInteraction: vi.fn(), checkWallClock: vi.fn() };
+    const skillsLogger = createMockLogger();
+    const deps = {
+      dataDir: "/tmp/comis-terminal-reaper-test",
+      skillsLogger,
+      eventBus,
+      sandboxProvider: {} as never,
+      workerCaps: { maxSessions: 4, idleTtlMs: 60_000, wallClockMs: 0, stuckMs: 30_000 },
+      timers: createFakeTimers(0),
+      caps,
+    };
+    return { deps, emitted, caps, skillsLogger };
+  }
+
+  it("onEvict emits terminal:session_evicted (reason) + terminal:session_state (lost) + a WARN log", () => {
+    const { deps, emitted, skillsLogger } = makeReaperDeps();
+    const hooks = buildTerminalReaperHooks("agent-a", deps as never);
+
+    hooks.onEvict({ sessionId: "s-1", reason: "idle", durationMs: 1234 });
+
+    const evicted = emitted.find((e) => e.event === "terminal:session_evicted");
+    expect(evicted).toBeDefined();
+    expect(evicted!.payload).toMatchObject({ sessionId: "s-1", agentId: "agent-a", reason: "idle", durationMs: 1234 });
+
+    const state = emitted.find((e) => e.event === "terminal:session_state");
+    expect(state).toBeDefined();
+    expect(state!.payload).toMatchObject({ sessionId: "s-1", agentId: "agent-a", state: "lost", durationMs: 1234 });
+
+    // The audited WARN carries the reason as hint + errorKind resource.
+    expect(skillsLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "s-1", agentId: "agent-a", reason: "idle", errorKind: "resource" }),
+      expect.any(String),
+    );
+  });
+
+  it("onCapForget is wired to caps.forget (the cap-state map is dropped on the reap path)", () => {
+    const { deps, caps } = makeReaperDeps();
+    const hooks = buildTerminalReaperHooks("agent-a", deps as never);
+
+    hooks.onCapForget("s-2");
+
+    expect(caps.forget).toHaveBeenCalledWith("s-2");
+  });
+
+  it("wireTerminalTools accepts workerCaps + timers + caps on TerminalWiringDeps and wires nine tools (no throw)", () => {
+    const { deps } = makeReaperDeps();
+    const tools: ToolLike[] = [];
+    const registries = new Map<string, TerminalSessionRegistry>();
+    wireTerminalTools(tools as never, registries, "agent-a", deps as never);
+    expect(tools).toHaveLength(9);
   });
 });
