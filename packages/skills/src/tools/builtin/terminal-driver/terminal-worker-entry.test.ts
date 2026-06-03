@@ -752,6 +752,229 @@ describe("createTerminalWorker — 122-06 the scope materializes into the bwrap 
   });
 });
 
+// ===========================================================================
+// 122-06 Task 2: listed-hosts egress materialization + dispose-on-teardown +
+// the worker-path SEC-16 fail-closed. macOS asserts the WIRING (materialize
+// called, socket bound via the composer, HTTPS_PROXY set, dispose called) — the
+// LIVE relay-as-init bridge is the VPS suite (122-07).
+// ===========================================================================
+
+/**
+ * A fake {@link EgressControlPort} whose `materialize(hosts)` records its calls and
+ * returns a fixed socket path + a spy `dispose`. Drives the listed-hosts wiring
+ * assertions without standing up a real proxy server (the LIVE bridge is VPS-only).
+ */
+function makeFakeEgressControl(socketPath = "/tmp/e.sock") {
+  const materialize = vi.fn(async (_hosts: string[]) => ({
+    socketPath,
+    dispose,
+  }));
+  const dispose = vi.fn(async () => {});
+  return { egressControl: { materialize }, materialize, dispose, socketPath };
+}
+
+describe("createTerminalWorker — 122-06 listed-hosts egress materialization (SEC-07)", () => {
+  it("materializes the relay, binds the socket via the composer, and sets HTTPS_PROXY", async () => {
+    const fake = makeFakeBackend();
+    const egress = makeFakeEgressControl("/tmp/e.sock");
+    let recordedEnv: NodeJS.ProcessEnv | undefined;
+    const recordingSpawn = vi.fn(
+      (bin: string, argv: string[], opts: { cols: number; rows: number; env: NodeJS.ProcessEnv }) => {
+        recordedEnv = opts.env;
+        return fake.spawn(bin, argv);
+      },
+    );
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: recordingSpawn }),
+        bwrapPath: "/usr/bin/bwrap",
+        egressControl: egress.egressControl,
+      }),
+    );
+
+    await worker.handle(
+      createFrame({
+        sessionId: "s1",
+        bin: "/bin/curl",
+        argv: ["https://api.example.com"],
+        cols: 80,
+        rows: 24,
+        scope: {
+          filesystem: "workspace",
+          network: "listed-hosts",
+          hosts: ["api.example.com"],
+          credentialHome: "exclude",
+          uid: "dedicated",
+        },
+        workspace: "/work/a",
+        cwd: "/work/a",
+      }),
+    );
+
+    // materialize was called with exactly the scope's hosts.
+    expect(egress.materialize).toHaveBeenCalledTimes(1);
+    expect(egress.materialize).toHaveBeenCalledWith(["api.example.com"]);
+    // The returned socket is bound via the composer's relaySocketPath.
+    const argv = fake.lastSpawn()?.argv ?? [];
+    expect(argv.join(" ")).toContain("--bind /tmp/e.sock /tmp/e.sock");
+    // The child env carries HTTPS_PROXY pointing at the in-jail relay loopback.
+    expect(recordedEnv?.["HTTPS_PROXY"]).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  });
+
+  it("does NOT materialize for network:none (deny-all)", async () => {
+    const fake = makeFakeBackend();
+    const egress = makeFakeEgressControl();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: fake.spawn }),
+        bwrapPath: "/usr/bin/bwrap",
+        egressControl: egress.egressControl,
+      }),
+    );
+    await worker.handle(
+      createFrame({
+        sessionId: "s1",
+        bin: "/bin/bash",
+        argv: [],
+        cols: 80,
+        rows: 24,
+        scope: { filesystem: "workspace", network: "none", credentialHome: "exclude", uid: "dedicated" },
+        workspace: "/work/a",
+        cwd: "/work/a",
+      }),
+    );
+    expect(egress.materialize).not.toHaveBeenCalled();
+  });
+
+  it("does NOT materialize for network:full (--share-net)", async () => {
+    const fake = makeFakeBackend();
+    const egress = makeFakeEgressControl();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: fake.spawn }),
+        bwrapPath: "/usr/bin/bwrap",
+        egressControl: egress.egressControl,
+      }),
+    );
+    await worker.handle(
+      createFrame({
+        sessionId: "s1",
+        bin: "/bin/bash",
+        argv: [],
+        cols: 80,
+        rows: 24,
+        scope: { filesystem: "workspace", network: "full", credentialHome: "exclude", uid: "dedicated" },
+        workspace: "/work/a",
+        cwd: "/work/a",
+      }),
+    );
+    expect(egress.materialize).not.toHaveBeenCalled();
+  });
+
+  it("disposes the egress materialization ONCE when the listed-hosts session exits (no leak)", async () => {
+    const fake = makeFakeBackend();
+    const egress = makeFakeEgressControl();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: fake.spawn }),
+        bwrapPath: "/usr/bin/bwrap",
+        egressControl: egress.egressControl,
+      }),
+    );
+    await worker.handle(
+      createFrame({
+        sessionId: "s1",
+        bin: "/bin/curl",
+        argv: [],
+        cols: 80,
+        rows: 24,
+        scope: {
+          filesystem: "workspace",
+          network: "listed-hosts",
+          hosts: ["api.example.com"],
+          credentialHome: "exclude",
+          uid: "dedicated",
+        },
+        workspace: "/work/a",
+        cwd: "/work/a",
+      }),
+    );
+    expect(egress.dispose).not.toHaveBeenCalled();
+    // The backend exits — and exit AND a duplicate signal both fire — dispose once.
+    fake.emitExit({ exitCode: 0 });
+    fake.emitExit({ exitCode: 0 });
+    // dispose is async; allow the microtask to settle.
+    await Promise.resolve();
+    expect(egress.dispose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createTerminalWorker — 122-06 SEC-16 worker-path fail-closed", () => {
+  it("does NOT spawn (ok:false) when bwrapPath is undefined — never an unjailed child", async () => {
+    const fake = makeFakeBackend();
+    const pipe = makeFakePipeBackend();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: fake.spawn }),
+        spawnPipe: pipe.spawnPipe,
+        bwrapPath: undefined, // no provider materialized a jail
+      }),
+    );
+
+    const reply = await worker.handle(
+      createFrame({
+        sessionId: "s1",
+        bin: "/bin/bash",
+        argv: [],
+        cols: 80,
+        rows: 24,
+        scope: { filesystem: "workspace", network: "none", credentialHome: "exclude", uid: "dedicated" },
+        workspace: "/work/a",
+        cwd: "/work/a",
+      }),
+    );
+
+    // The create reply is a failure — the registry flips the session lost (HR-03).
+    expect(reply.ok).toBe(false);
+    // NEITHER backend spawned — no unjailed fallback.
+    expect(fake.spawn).not.toHaveBeenCalled();
+    expect(pipe.spawnPipe).not.toHaveBeenCalled();
+  });
+
+  it("does NOT spawn (ok:false) when listed-hosts has no egress port (fail-closed)", async () => {
+    const fake = makeFakeBackend();
+    const worker = createTerminalWorker(
+      baseDeps({
+        loadPty: () => ({ spawn: fake.spawn }),
+        bwrapPath: "/usr/bin/bwrap",
+        egressControl: undefined, // listed-hosts demands a port; absent ⇒ fail-closed
+      }),
+    );
+
+    const reply = await worker.handle(
+      createFrame({
+        sessionId: "s1",
+        bin: "/bin/curl",
+        argv: [],
+        cols: 80,
+        rows: 24,
+        scope: {
+          filesystem: "workspace",
+          network: "listed-hosts",
+          hosts: ["api.example.com"],
+          credentialHome: "exclude",
+          uid: "dedicated",
+        },
+        workspace: "/work/a",
+        cwd: "/work/a",
+      }),
+    );
+
+    expect(reply.ok).toBe(false);
+    expect(fake.spawn).not.toHaveBeenCalled();
+  });
+});
+
 describe("createTerminalWorker — G-4 durable write under disabled fsync", () => {
   it("swallows ONLY the disabled-fsync refusal and still completes write+rename", () => {
     const written = new Map<string, string>();
